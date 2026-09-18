@@ -1,5 +1,19 @@
 name: Update lolhtml
 
+# bun builds oven-sh/lol-html, a fork of cloudflare/lol-html that adds
+# content-handler suspension (`HtmlRewriter::resume()`). LOLHTML_COMMIT in
+# scripts/build/deps/lolhtml.ts is a commit of the fork, and bun does not
+# compile against upstream, so this workflow cannot bump the pin the way the
+# other update-*.yml workflows do: someone has to rebase the fork's `bun` branch
+# onto the new upstream tag first.
+#
+# What it does instead: compare upstream's latest release with
+# LOLHTML_UPSTREAM_BASE, the upstream commit the fork is rebased onto, and open
+# one issue per upstream release that the base does not contain.
+#
+# test/internal/source-lints/update-lolhtml.test.ts runs the script below
+# against a fake API.
+
 permissions:
   contents: read
 
@@ -12,107 +26,86 @@ jobs:
   check-update:
     if: github.repository == 'oven-sh/bun'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
+      issues: write
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Check lolhtml version
-        id: check-version
-        run: |
-          set -euo pipefail
-
-          DEP_FILE=scripts/build/deps/lolhtml.ts
-          CURRENT_VERSION=$(sed -nE 's/^const LOLHTML_COMMIT = "([0-9a-f]{40})";$/\1/p' "$DEP_FILE")
-
-          if [ -z "$CURRENT_VERSION" ]; then
-            echo "Error: Could not find LOLHTML_COMMIT in $DEP_FILE"
-            exit 1
-          fi
-
-          # Validate that it looks like a git hash
-          if ! [[ $CURRENT_VERSION =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Error: Invalid git hash format in $DEP_FILE"
-            echo "Found: $CURRENT_VERSION"
-            echo "Expected: 40 character hexadecimal string"
-            exit 1
-          fi
-
-          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-
-          LATEST_RELEASE=$(curl -sL https://api.github.com/repos/cloudflare/lol-html/releases/latest)
-          if [ -z "$LATEST_RELEASE" ]; then
-            echo "Error: Failed to fetch latest release from GitHub API"
-            exit 1
-          fi
-
-          LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
-          if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
-            echo "Error: Could not extract tag name from GitHub API response"
-            exit 1
-          fi
-
-          # Get the commit SHA that the tag points to
-          # This handles both lightweight tags (direct commit refs) and annotated tags (tag objects)
-          TAG_REF_RESPONSE=$(curl -sL "https://api.github.com/repos/cloudflare/lol-html/git/refs/tags/$LATEST_TAG")
-          LATEST_TAG_SHA=$(echo "$TAG_REF_RESPONSE" | jq -r '.object.sha')
-          TAG_OBJECT_TYPE=$(echo "$TAG_REF_RESPONSE" | jq -r '.object.type')
-
-          if [ -z "$LATEST_TAG_SHA" ] || [ "$LATEST_TAG_SHA" = "null" ]; then
-            echo "Error: Could not fetch SHA for tag $LATEST_TAG"
-            exit 1
-          fi
-
-          if [ "$TAG_OBJECT_TYPE" = "tag" ]; then
-            # This is an annotated tag, we need to get the commit it points to
-            LATEST_SHA=$(curl -sL "https://api.github.com/repos/cloudflare/lol-html/git/tags/$LATEST_TAG_SHA" | jq -r '.object.sha')
-            if [ -z "$LATEST_SHA" ] || [ "$LATEST_SHA" = "null" ]; then
-              echo "Error: Could not fetch commit SHA for annotated tag $LATEST_TAG @ $LATEST_TAG_SHA"
-              exit 1
-            fi
-          else
-            # This is a lightweight tag pointing directly to a commit
-            LATEST_SHA="$LATEST_TAG_SHA"
-          fi
-
-          if ! [[ $LATEST_SHA =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Error: Invalid SHA format received from GitHub"
-            echo "Found: $LATEST_SHA"
-            echo "Expected: 40 character hexadecimal string"
-            exit 1
-          fi
-
-          echo "latest=$LATEST_SHA" >> $GITHUB_OUTPUT
-          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
-
-      - name: Update version if needed
-        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
-        env:
-          LATEST: ${{ steps.check-version.outputs.latest }}
-        run: |
-          set -euo pipefail
-          sed -i -E 's/^(const LOLHTML_COMMIT = ")[0-9a-f]{40}(";)$/\1'"$LATEST"'\2/' scripts/build/deps/lolhtml.ts
-
-      - name: Create Pull Request
-        if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+      - name: Open an issue if the fork is behind upstream
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          add-paths: |
-            scripts/build/deps/lolhtml.ts
-          commit-message: "deps: update lolhtml to ${{ steps.check-version.outputs.tag }} (${{ steps.check-version.outputs.latest }})"
-          title: "deps: update lolhtml to ${{ steps.check-version.outputs.tag }}"
-          delete-branch: true
-          branch: deps/update-lolhtml
-          body: |
-            ## What does this PR do?
+          script: |
+            const DEP_FILE = "scripts/build/deps/lolhtml.ts";
+            const upstream = { owner: "cloudflare", repo: "lol-html" };
 
-            Updates lolhtml to version ${{ steps.check-version.outputs.tag }}
+            const base = require("node:fs")
+              .readFileSync(DEP_FILE, "utf8")
+              .match(/^const LOLHTML_UPSTREAM_BASE = "([0-9a-f]{40})";/m)?.[1];
+            if (!base) {
+              core.setFailed(`Could not find LOLHTML_UPSTREAM_BASE in ${DEP_FILE}`);
+              return;
+            }
 
-            Compare: https://github.com/cloudflare/lol-html/compare/${{ steps.check-version.outputs.current }}...${{ steps.check-version.outputs.latest }}
+            const { data: release } = await github.rest.repos.getLatestRelease(upstream);
+            const tag = release.tag_name;
+            if (!/^[\w.-]+$/.test(tag)) {
+              core.setFailed(`Unexpected tag name from ${upstream.owner}/${upstream.repo}: ${JSON.stringify(tag)}`);
+              return;
+            }
 
-            Auto-updated by [this workflow](https://github.com/oven-sh/bun/actions/workflows/update-lolhtml.yml)
+            // A lightweight tag points at the commit. An annotated tag points at a tag object that does.
+            const { data: ref } = await github.rest.git.getRef({ ...upstream, ref: `tags/${tag}` });
+            let latest = ref.object.sha;
+            if (ref.object.type === "tag") {
+              const { data: annotated } = await github.rest.git.getTag({ ...upstream, tag_sha: latest });
+              latest = annotated.object.sha;
+            }
+
+            // The base is not always a tag: 77127cd2 was v2.7.2 plus one Cargo.lock commit. So ask
+            // whether the base contains the release, not whether the two are the same commit.
+            const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+              ...upstream,
+              basehead: `${base}...${latest}`,
+              per_page: 1,
+            });
+            if (comparison.status === "identical" || comparison.status === "behind") {
+              core.info(`The fork's upstream base ${base} contains ${tag} (${latest}). Nothing to do.`);
+              return;
+            }
+
+            // One issue per release, open or closed: a release that was skipped on purpose stays closed.
+            const { owner, repo } = context.repo;
+            const title = `deps: rebase the lol-html fork onto ${tag}`;
+            const { data: found } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${owner}/${repo} is:issue in:title "${title}"`,
+            });
+            const existing = found.items.find(issue => issue.title === title);
+            if (existing) {
+              core.info(`#${existing.number} already tracks ${tag}. Nothing to do.`);
+              return;
+            }
+
+            const body = [
+              `cloudflare/lol-html released [${tag}](${release.html_url}).`,
+              "",
+              "bun builds the fork [oven-sh/lol-html](https://github.com/oven-sh/lol-html) (branch `bun`), which adds content-handler suspension to upstream.",
+              `\`${DEP_FILE}\` records the upstream commit that the fork is rebased onto, \`LOLHTML_UPSTREAM_BASE\`, as \`${base}\`.`,
+              `That commit does not contain ${tag}: https://github.com/cloudflare/lol-html/compare/${base}...${latest}`,
+              "",
+              "To update:",
+              "",
+              `1. In oven-sh/lol-html, fetch \`${tag}\` from upstream and run \`git rebase --onto ${tag} ${base} bun\`. Run \`cargo test\`, then push the branch.`,
+              `2. In \`${DEP_FILE}\`, set \`LOLHTML_COMMIT\` to the new head of \`bun\` and \`LOLHTML_UPSTREAM_BASE\` to \`${latest}\`.`,
+              "3. Update the `lol_html` entry in `Cargo.lock`. The build runs cargo with `--locked`.",
+              "",
+              "Do not set `LOLHTML_COMMIT` to an upstream commit. `src/runtime/api/html_rewriter.rs` needs `HtmlRewriter::resume()`, and only the fork has it.",
+              "",
+              `Opened by [this workflow](https://github.com/${owner}/${repo}/actions/workflows/update-lolhtml.yml).`,
+            ].join("\n");
+            const { data: issue } = await github.rest.issues.create({ owner, repo, title, body });
+            core.info(`Opened #${issue.number}: ${title}`);

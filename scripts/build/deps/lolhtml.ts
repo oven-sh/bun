@@ -22,7 +22,10 @@
 import type { Dependency } from "../source.ts";
 
 // oven-sh/lol-html is cloudflare/lol-html plus content-handler suspension
-// (`HtmlRewriter::resume()`), maintained on the `bun` branch. The upstream
+// (`HtmlRewriter::resume()`), maintained on the `bun` branch. LOLHTML_COMMIT is
+// a commit of the fork, never of upstream. .github/workflows/update-lolhtml.yml
+// reads LOLHTML_UPSTREAM_BASE and opens an issue when upstream releases a tag
+// that it does not contain, so update both constants together. The upstream
 // base commit is recorded here so a rebase onto a new upstream tag is
 // `git rebase --onto <new-tag> <LOLHTML_UPSTREAM_BASE> bun` in the fork.
 const LOLHTML_UPSTREAM_BASE = "77127cd2b8545998756e8d64e36ee2313c4bb312"; // v2.7.2

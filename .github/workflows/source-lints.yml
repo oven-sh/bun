@@ -33,6 +33,7 @@ on:
       - "test/internal/source-lints/**"
       - ".github/workflows/source-lints.yml"
       - ".github/workflows/comment-cop.yml"
+      - ".github/workflows/update-*.yml"
       - ".github/actions/setup-bun/**"
   pull_request:
     paths:
@@ -57,6 +58,7 @@ on:
       - "test/internal/source-lints/**"
       - ".github/workflows/source-lints.yml"
       - ".github/workflows/comment-cop.yml"
+      - ".github/workflows/update-*.yml"
       - ".github/actions/setup-bun/**"
   merge_group:
 

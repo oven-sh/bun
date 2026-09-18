@@ -2959,14 +2959,14 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     }
     using server = Bun.serve({
       port: 0,
-      fetch: req => new Response(tarballs.get(new URL(req.url).pathname) ?? null),
+      fetch: req => new Response(tarballs.get(new URL(req.url).pathname.replace("/mirror", "")) ?? null),
     });
     await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" }));
 
-    // The query string makes a second literal for the first tarball, as in the report.
+    // `/mirror` is a second literal for the first tarball, as `?1` is in the report.
     for (const [path, version] of [
       ["/pkga-1.0.0.tgz", "1.0.0"],
-      ["/pkga-1.0.0.tgz?1", "1.0.0"],
+      ["/mirror/pkga-1.0.0.tgz", "1.0.0"],
       ["/pkga-1.0.0.tgz", "1.0.0"],
       ["/pkga-2.0.0.tgz", "2.0.0"],
     ]) {

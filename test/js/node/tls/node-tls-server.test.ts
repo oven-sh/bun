@@ -2685,3 +2685,79 @@ describe("pauseOnConnect", () => {
     }
   });
 });
+
+// tls.DEFAULT_CIPHERS is the process-wide cipher policy. Node applies it to
+// every secure context built without an explicit `ciphers`, so a server
+// created after the assignment refuses the suites the policy excludes.
+it("tls.DEFAULT_CIPHERS applies to servers created without a ciphers option", async () => {
+  const script = `
+    import tls from "node:tls";
+    import https from "node:https";
+    import { once } from "node:events";
+    const cert = ${JSON.stringify({ key: cert1.key, cert: cert1.cert })};
+
+    function probe(port, ciphers) {
+      return new Promise(resolve => {
+        const c = tls.connect({ port, host: "127.0.0.1", ciphers, maxVersion: "TLSv1.2", rejectUnauthorized: false });
+        c.on("secureConnect", () => {
+          const name = c.getCipher().name;
+          c.end();
+          resolve("ok:" + name);
+        });
+        c.on("error", e => resolve("err:" + e.code));
+      });
+    }
+    async function listen(server) {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      return server;
+    }
+    // The policy in effect when a server starts listening is the one it keeps.
+    tls.DEFAULT_CIPHERS = "ECDHE-RSA-AES128-GCM-SHA256";
+    const tlsServer = await listen(tls.createServer(cert, s => s.end("x")));
+    const httpsServer = await listen(https.createServer(cert, (req, res) => res.end("x")));
+    const bunServer = Bun.serve({ port: 0, tls: cert, fetch: () => new Response("x") });
+    tls.DEFAULT_CIPHERS = "TLS_AES_128_GCM_SHA256";
+    const tls13OnlyServer = await listen(tls.createServer(cert, s => s.end("x")));
+
+    const ports = {
+      tls: tlsServer.address().port,
+      https: httpsServer.address().port,
+      serve: bunServer.port,
+      tls13Only: tls13OnlyServer.address().port,
+    };
+    const results = {};
+    await Promise.all(
+      Object.entries(ports).map(async ([name, port]) => {
+        const [excluded, allowed] = await Promise.all([
+          probe(port, "ECDHE-RSA-AES256-GCM-SHA384"),
+          probe(port, "ECDHE-RSA-AES128-GCM-SHA256"),
+        ]);
+        results[name] = { excluded, allowed };
+      }),
+    );
+    tlsServer.close();
+    httpsServer.close();
+    tls13OnlyServer.close();
+    await bunServer.stop(true);
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    tls: { excluded: "err:ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE", allowed: "ok:ECDHE-RSA-AES128-GCM-SHA256" },
+    https: { excluded: "err:ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE", allowed: "ok:ECDHE-RSA-AES128-GCM-SHA256" },
+    serve: { excluded: "err:ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE", allowed: "ok:ECDHE-RSA-AES128-GCM-SHA256" },
+    tls13Only: {
+      excluded: "err:ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+      allowed: "err:ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+    },
+  });
+  expect(exitCode).toBe(0);
+});

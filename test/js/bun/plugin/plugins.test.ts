@@ -953,6 +953,7 @@ it.concurrent("an onResolve path with a null byte is not opened as a file", asyn
 
       console.log(
         JSON.stringify({
+          importFileName: await attempt(async () => (await import("file-name.mod")).value),
           requireFileName: await attempt(() => require("file-name" + ".mod").value),
           requireDirectoryName: await attempt(() => require("directory-name" + ".mod").value),
           requireAddon: await attempt(() => require("addon" + ".mod")),
@@ -978,6 +979,7 @@ it.concurrent("an onResolve path with a null byte is not opened as a file", asyn
 
   // The fixture catches its own failures, so empty stdout means it crashed.
   expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    importFileName: "threw: ERR_MODULE_NOT_FOUND",
     requireFileName: 'threw: ENOENT reading "<file name>"',
     requireDirectoryName: 'threw: ENOENT reading "<directory name>"',
     requireAddon: "threw: ERR_INVALID_ARG_VALUE",

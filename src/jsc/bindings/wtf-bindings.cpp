@@ -6,6 +6,7 @@
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
 #include <wtf/DateMath.h>
+#include "JavaScriptCore/JSDateMath-v8.h"
 #include <wtf/NumberOfCores.h>
 #include <atomic>
 #include <cassert>
@@ -237,22 +238,15 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
-extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
+// `Date.parse` without a VM: the V8 parser that bun's runtime selects
+// (useV8DateParser in ZigGlobalObject.cpp), with the host tz for local-time input.
+extern "C" double Bun__parseDateString(const unsigned char* string, size_t length)
 {
-    bool isLocalTime;
-    return WTF::parseES5Date({ string, length }, isLocalTime);
-}
-
-// Same parser order as JSC::DateCache::parseDate (the `Date.parse` path).
-extern "C" double WTF__parseDate(const Latin1Character* string, size_t length)
-{
-    bool isLocalTime;
-    double value = WTF::parseES5Date({ string, length }, isLocalTime);
-    if (std::isnan(value))
-        value = WTF::parseDate({ string, length }, isLocalTime);
+    bool isLocalTime = false;
+    double value = v8::ParseDateTimeString(string, length, isLocalTime);
     if (isLocalTime && std::isfinite(value))
         value -= WTF::calculateLocalTimeOffset(value, WTF::TimeType::LocalTime).offset;
-    return value;
+    return v8::TimeClip(value);
 }
 
 namespace Bun {

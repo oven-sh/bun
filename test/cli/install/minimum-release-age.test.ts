@@ -748,6 +748,43 @@ describe("minimum-release-age", () => {
           return Response.json(packageData);
         }
 
+        // TEST PACKAGE: local-time-timestamp-package (a publish time with no
+        // zone is local time, read in the TZ of the install process)
+        if (url.pathname === "/local-time-timestamp-package") {
+          const packageData = {
+            name: "local-time-timestamp-package",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "local-time-timestamp-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/local-time-timestamp-package/-/local-time-timestamp-package-1.0.0.tgz`,
+                  integrity: "sha512-old==",
+                },
+              },
+              "2.0.0": {
+                name: "local-time-timestamp-package",
+                version: "2.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/local-time-timestamp-package/-/local-time-timestamp-package-2.0.0.tgz`,
+                  integrity: "sha512-local==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": daysAgo(20),
+              // 4 days 23 hours ago, as wall time in UTC-12 ("YYYY-MM-DD HH:mm:ss").
+              // Read as UTC it would be 5 days 11 hours old and pass a 5 day gate.
+              "2.0.0": new Date(currentTime - 5 * DAY_MS + 60 * 60 * MS_PER_SECOND).toLocaleString("sv-SE", {
+                timeZone: "Etc/GMT+12",
+              }),
+            },
+          };
+
+          return Response.json(packageData);
+        }
+
         // TEST PACKAGE 11: exact-threshold-package (exactly at age boundary)
         if (url.pathname === "/exact-threshold-package") {
           const packageData = {
@@ -2305,6 +2342,32 @@ describe("minimum-release-age", () => {
       expect(lockfile).toContain("non-iso-timestamp-package@1.0.0");
       expect(lockfile).not.toContain("non-iso-timestamp-package@2.0.0");
       expect(lockfile).not.toContain("non-iso-timestamp-package@3.0.0");
+    });
+
+    test("reads a publish time with no zone as local time", async () => {
+      using dir = tempDir("local-time-timestamp", {
+        "package.json": JSON.stringify({
+          dependencies: { "local-time-timestamp-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: { ...bunEnv, TZ: "Etc/GMT+12" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error");
+      expect(stdout).toContain("local-time-timestamp-package@1.0.0");
+      expect(exitCode).toBe(0);
+
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("local-time-timestamp-package@1.0.0");
+      expect(lockfile).not.toContain("local-time-timestamp-package@2.0.0");
     });
   });
 

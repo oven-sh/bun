@@ -73,6 +73,9 @@ asInterface(ReadonlyStringSet, "ReadonlyStringSet");
 
 type Limits = Record<string, number>;
 
+// From the table that native code reads and writes limits with, so that there is one list.
+const limitNames: string[] = $newRustFunction("runtime/webgpu/adapter.rs", "limitNames", 0)();
+
 class GPUSupportedLimits {
   #limits: Limits;
 
@@ -82,39 +85,8 @@ class GPUSupportedLimits {
   }
 
   static {
-    for (const name of [
-      "maxTextureDimension1D",
-      "maxTextureDimension2D",
-      "maxTextureDimension3D",
-      "maxTextureArrayLayers",
-      "maxBindGroups",
-      "maxBindGroupsPlusVertexBuffers",
-      "maxBindingsPerBindGroup",
-      "maxDynamicUniformBuffersPerPipelineLayout",
-      "maxDynamicStorageBuffersPerPipelineLayout",
-      "maxSampledTexturesPerShaderStage",
-      "maxSamplersPerShaderStage",
-      "maxStorageBuffersPerShaderStage",
-      "maxStorageTexturesPerShaderStage",
-      "maxUniformBuffersPerShaderStage",
-      "maxUniformBufferBindingSize",
-      "maxStorageBufferBindingSize",
-      "minUniformBufferOffsetAlignment",
-      "minStorageBufferOffsetAlignment",
-      "maxVertexBuffers",
-      "maxBufferSize",
-      "maxVertexAttributes",
-      "maxVertexBufferArrayStride",
-      "maxInterStageShaderVariables",
-      "maxColorAttachments",
-      "maxColorAttachmentBytesPerSample",
-      "maxComputeWorkgroupStorageSize",
-      "maxComputeInvocationsPerWorkgroup",
-      "maxComputeWorkgroupSizeX",
-      "maxComputeWorkgroupSizeY",
-      "maxComputeWorkgroupSizeZ",
-      "maxComputeWorkgroupsPerDimension",
-    ]) {
+    for (let i = 0; i < limitNames.length; i++) {
+      const name = limitNames[i];
       Object.defineProperty(this.prototype, name, {
         get(this: GPUSupportedLimits) {
           return this.#limits[name];

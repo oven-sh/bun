@@ -1,6 +1,6 @@
 //! `navigator.gpu` and the `GPU*` classes (<https://www.w3.org/TR/webgpu/>) on wgpu-core.
 
-mod adapter;
+pub(crate) mod adapter;
 mod args;
 mod bind;
 mod buffer;

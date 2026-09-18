@@ -122,6 +122,17 @@ pub(crate) fn features_to_js(
     js_module(global, "createSupportedFeatures", &[names])
 }
 
+/// The names of the limits, for `internal/webgpu` to define the getters of `GPUSupportedLimits` from: `bun_webgpu::names::LIMITS` is the only list.
+#[bun_jsc::host_fn]
+pub(crate) fn limit_names(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let names = JSValue::create_empty_array(global, bun_webgpu::names::LIMITS.len())?;
+    for (index, limit) in bun_webgpu::names::LIMITS.iter().enumerate() {
+        let name = bun_core::String::static_(limit.name).to_js(global)?;
+        names.put_index(global, index as u32, name)?;
+    }
+    Ok(names)
+}
+
 /// A `GPUSupportedLimits` holding `limits`.
 pub(crate) fn limits_to_js(global: &JSGlobalObject, limits: &wgt::Limits) -> JsResult<JSValue> {
     let object = JSValue::create_empty_object(global, bun_webgpu::names::LIMITS.len());

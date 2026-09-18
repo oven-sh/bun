@@ -268,8 +268,7 @@ impl core::fmt::Display for StagingPath<'_> {
     }
 }
 
-/// Renames a fully linked `StagingPath` (relative to `dir`) onto `dest`. Fails if
-/// `dest` is occupied; the caller then links in place, as before staging existed.
+/// Renames a fully linked `StagingPath` (relative to `dir`) onto `dest`, which has to be free.
 pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) -> sys::Maybe<()> {
     #[cfg(windows)]
     {
@@ -2398,8 +2397,7 @@ impl<'a> PackageInstall<'a> {
             }
             let _ = destination_dir.delete_tree(staging.as_bytes());
         }
-        // Link in place, as before staging existed: `dest` is occupied (a workspace with two names
-        // has its packages installed once per name), or macOS < 15 refuses a path past MAXPATHLEN.
+        // No staging here (a stale one in the way, `dest` occupied, rename refused): link in place.
         self.install_into(destination_dir, dest, method, resolution_tag)
     }
 

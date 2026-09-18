@@ -1459,8 +1459,7 @@ impl Task {
                         && !link_in_place
                         && installer.commit_local_store_package(self.entry_id).is_err()
                     {
-                        // The rename cannot land (macOS < 15 refuses paths past MAXPATHLEN):
-                        // run the step again, linking in place as before staging existed.
+                        // The rename was refused: run the step again, linking in place.
                         link_in_place = true;
                         continue 'step;
                     }
@@ -2530,10 +2529,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Empties a project-local entry's final and staging paths before it is linked.
-    /// An existing package leaves its final path in one step, by a rename onto the
-    /// staging path, so that a delete cut short never leaves part of it there.
-    /// Returns false if either path cannot be emptied: link in place then.
+    /// Frees a project-local entry's final and staging paths. False: link in place.
     pub(crate) fn clear_local_store_package(&self, entry_id: StoreEntryId) -> bool {
         debug_assert!(!self.entry_uses_global_store(entry_id));
         let mut staging = AutoPath::init_top_level_dir();
@@ -2545,6 +2541,7 @@ impl<'a> Installer<'a> {
             let _ = Fd::cwd().delete_tree(final_.slice());
             return false;
         }
+        // A delete can be cut short, so an existing package first leaves its final path in one step.
         match sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z()) {
             sys::Result::Ok(()) => Fd::cwd().delete_tree(staging.slice()).is_ok(),
             sys::Result::Err(err) if err.get_errno() == sys::Errno::ENOENT => true,

@@ -503,6 +503,43 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
+it("native inspect.custom functions do not return the scope object of a bare call", () => {
+  const classes = [
+    ByteLengthQueuingStrategy,
+    CountQueuingStrategy,
+    CryptoKey,
+    PerformanceEntry,
+    ReadableByteStreamController,
+    ReadableStream,
+    ReadableStreamBYOBReader,
+    ReadableStreamBYOBRequest,
+    ReadableStreamDefaultController,
+    ReadableStreamDefaultReader,
+    TransformStream,
+    TransformStreamDefaultController,
+    URL,
+    URLSearchParams,
+    WritableStream,
+    WritableStreamDefaultController,
+    WritableStreamDefaultWriter,
+  ];
+  const results = classes.map(klass => {
+    const inspectCustom = klass.prototype[util.inspect.custom];
+    // Closing over the binding makes the bare call below pass a scope object as `this`.
+    // A negative depth takes the early-return path in every one of these functions.
+    const bare = () => inspectCustom(-1, {});
+    // An ordinary wrong receiver must still come back unchanged: util.inspect relies on
+    // that to fall through to its default formatting.
+    const ordinaryReceiver = {};
+    const roundTripped = inspectCustom.call(ordinaryReceiver, -1, {}) === ordinaryReceiver;
+    return [klass.name, typeof inspectCustom, bare(), roundTripped];
+  });
+  expect(results).toEqual(classes.map(klass => [klass.name, "function", undefined, true]));
+
+  const inspectURL = URL.prototype[util.inspect.custom];
+  expect(inspectURL.call(new URL("http://example.com/"), 2, {})).toContain("http://example.com/");
+});
+
 describe("Functions with names", () => {
   const closures = [
     () => function f() {},

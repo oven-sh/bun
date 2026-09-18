@@ -1209,6 +1209,9 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
   HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED = 16,
   HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
+  HTTP_PARSER_ERROR_EMPTY_CONTENT_LENGTH = 18,
+  HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW = 19,
+  HTTP_PARSER_ERROR_DUPLICATE_CONTENT_LENGTH = 20,
 }
 // Native callback fired when the HTTP parser rejects incoming bytes. Builds
 // the same error object Node's parser produces and routes it through
@@ -1234,19 +1237,37 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
     return;
   }
 
-  let err;
+  // Node sets err.reason to the llhttp reason string and the message to
+  // "Parse Error: <reason>". The Content-Length arms set reason. Each of their
+  // parser errors stands for exactly one llhttp code and reason, so the reason
+  // is right for every input. The other arms leave reason unset.
+  let err, reason;
   switch (errorCode) {
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING:
       err = $HPE_INVALID_CHUNK_SIZE("Parse Error: Invalid character in chunk size");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_CONTENT_LENGTH:
-      err = $HPE_UNEXPECTED_CONTENT_LENGTH("Parse Error");
+      reason = "Invalid character in Content-Length";
+      err = $HPE_INVALID_CONTENT_LENGTH(`Parse Error: ${reason}`);
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_EMPTY_CONTENT_LENGTH:
+      reason = "Empty Content-Length";
+      err = $HPE_INVALID_CONTENT_LENGTH(`Parse Error: ${reason}`);
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_CONTENT_LENGTH_OVERFLOW:
+      reason = "Content-Length overflow";
+      err = $HPE_INVALID_CONTENT_LENGTH(`Parse Error: ${reason}`);
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_DUPLICATE_CONTENT_LENGTH:
+      reason = "Duplicate Content-Length";
+      err = $HPE_UNEXPECTED_CONTENT_LENGTH(`Parse Error: ${reason}`);
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING:
       err = $HPE_INVALID_TRANSFER_ENCODING("Parse Error: Request has invalid `Transfer-Encoding`");
       break;
     case HttpParserError.HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH:
-      err = $HPE_INVALID_CONTENT_LENGTH("Parse Error: Content-Length can't be present with Transfer-Encoding");
+      reason = "Content-Length can't be present with Transfer-Encoding";
+      err = $HPE_INVALID_CONTENT_LENGTH(`Parse Error: ${reason}`);
       break;
     case HttpParserError.HTTP_PARSER_ERROR_INVALID_REQUEST:
       err = $HPE_INVALID_CONSTANT("Parse Error: Expected HTTP/");
@@ -1289,6 +1310,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
       err = $HPE_INTERNAL("Parse Error");
       break;
   }
+  if (reason !== undefined) err.reason = reason;
   err.rawPacket = Buffer.from(rawPacket);
   socketOnError.$call(nodeSocket, err);
 }

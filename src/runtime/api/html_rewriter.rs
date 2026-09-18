@@ -3115,10 +3115,8 @@ impl Element {
             return Err(global_object.throw_value(err));
         };
 
-        // `element` is attached, so `invalidate()` has not cleared `pipe` yet.
-        let Some(pipe) = self.pipe.get() else {
-            return Ok(JSValue::NULL);
-        };
+        // Only `invalidate()` clears `pipe`, and it detaches `element` in the same call.
+        let pipe = self.pipe.get().expect("attached Element without its pipe");
         let slot = pipe.hold_end_tag_callback(global_object, replaced, function)?;
         let (Some(slot), None) = (slot, replaced) else {
             // No end tag can come, or the earlier call's handler now reads the new callback.

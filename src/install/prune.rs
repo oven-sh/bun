@@ -764,12 +764,13 @@ struct SavedTree {
 }
 
 /// Hoists `manager.lockfile` into the tree an install of `features` lays out for every workspace
-/// (`Lockfile::filter`): the self-contained barrier applied, disabled and bundled dependencies left out.
-/// Returns the tree it replaced.
+/// (`Lockfile::filter`): the self-contained barrier applied, disabled dependencies left out, and the
+/// rows a tarball ships kept but not installed.
+/// Returns the tree it replaced and the shipped rows of the new one.
 fn hoist_install_tree(
     manager: &mut PackageManager,
     features: InstallFeatures,
-) -> Result<SavedTree, tree::SubtreeError> {
+) -> Result<(SavedTree, tree::ShippedRows), tree::SubtreeError> {
     let saved = SavedTree {
         trees: core::mem::take(&mut manager.lockfile.buffers.trees),
         hoisted_dependencies: core::mem::take(&mut manager.lockfile.buffers.hoisted_dependencies),
@@ -784,7 +785,7 @@ fn hoist_install_tree(
         }
     });
     match result {
-        Ok(_) => Ok(saved),
+        Ok(result) => Ok((saved, result.shipped_rows)),
         Err(err) => {
             restore_tree(&mut manager.lockfile, saved);
             Err(err)
@@ -1126,9 +1127,9 @@ fn plan_hoisted(
         return;
     }
 
-    if hoist_install_tree(manager, install_features(manager)).is_err() {
+    let Ok((_, shipped_rows)) = hoist_install_tree(manager, install_features(manager)) else {
         manager.crash();
-    }
+    };
 
     let quiet = manager.options.log_level == LogLevel::Silent;
     let features = manager.options.local_package_features;
@@ -1166,6 +1167,10 @@ fn plan_hoisted(
         }
         let protected: &[Box<[u8]>] = if importer == 0 { root_protected } else { &[] };
         let tree_id = tree_idx as tree::Id;
+        // A folder that a tarball shipped is not bun's to prune.
+        if shipped_rows.contains_tree(trees, tree_id) {
+            continue;
+        }
         let owner = tree_owner(lockfile, tree_idx);
         if owner != invalid_package_id && (owner as usize) < pkg_res.len() {
             visited.set(owner as usize);
@@ -1308,7 +1313,8 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
 /// self-contained barrier, so only it says what a self-contained workspace keeps. The tree carries every
 /// dependency type, so a copy under a dependency that `--production` / `--omit` skipped this run stays.
 pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
-    let Ok(saved) = hoist_install_tree(manager, full_install_features(install_features(manager)))
+    let Ok((saved, _)) =
+        hoist_install_tree(manager, full_install_features(install_features(manager)))
     else {
         return;
     };

@@ -1,0 +1,23 @@
+{
+  "_id": "bundled-shipped-inner",
+  "name": "bundled-shipped-inner",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shipped-inner",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "no-deps": "1.0.0"
+      },
+      "_id": "bundled-shipped-inner@1.0.0",
+      "dist": {
+        "integrity": "sha512-/vU7+aqmW8g3XUsoxssb5hrOtkpeKS/xYX5AQzKa1Kl4gv+mP8ZaMocle5tDniffE9XwT5MQ09NMk7XES5T8Pg==",
+        "shasum": "662ee78db32b1ec889b612d9e42e76cd3b74616d",
+        "tarball": "http://localhost:4873/bundled-shipped-inner/-/bundled-shipped-inner-1.0.0.tgz"
+      }
+    }
+  }
+}

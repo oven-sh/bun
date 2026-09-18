@@ -1376,6 +1376,146 @@ describe("bundledDependencies", () => {
       await check();
     });
 
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) bundled copy keeps a nested dependency from hoisting above it`, async () => {
+      // `bundled-transitive` bundles `no-deps@1.0.0` and depends on `one-dep@1.0.0`,
+      // which depends on `no-deps@1.0.1`. Only `one-dep` is aliased at the root, so
+      // `one-dep@1.0.0` nests under `bundled-transitive`. Its `no-deps@1.0.1` must not
+      // hoist to the root: the bundled `no-deps@1.0.0` would shadow it (#43351).
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-shadow",
+          dependencies: {
+            "bundled-transitive": "1.0.0",
+            "one-dep": "npm:no-deps@2.0.0",
+          },
+        }),
+      );
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        expect(
+          await Promise.all([
+            file(join(packageDir, "node_modules", "one-dep", "package.json")).json(),
+            file(
+              join(packageDir, "node_modules", "bundled-transitive", "node_modules", "no-deps", "package.json"),
+            ).json(),
+            file(
+              join(packageDir, "node_modules", "bundled-transitive", "node_modules", "one-dep", "package.json"),
+            ).json(),
+            file(
+              join(
+                packageDir,
+                "node_modules",
+                "bundled-transitive",
+                "node_modules",
+                "one-dep",
+                "node_modules",
+                "no-deps",
+                "package.json",
+              ),
+            ).json(),
+            exists(join(packageDir, "node_modules", "no-deps")),
+          ]),
+        ).toEqual([
+          { name: "no-deps", version: "2.0.0" },
+          { name: "no-deps", version: "1.0.0" },
+          { name: "one-dep", version: "1.0.0", dependencies: { "no-deps": "1.0.1" } },
+          { name: "no-deps", version: "1.0.1" },
+          false,
+        ]);
+      }
+
+      await check();
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) folders a bundle ships next to it keep a nested dependency from hoisting`, async () => {
+      // `bundled-shipped-host` bundles `bundled-shipped-inner`, which depends on `no-deps@1.0.0`.
+      // The tarball ships `no-deps@1.0.0` flattened next to the bundled package, as `npm pack`
+      // does. `one-dep@1.0.0` nests under the host and needs `no-deps@1.0.1`. It must get its
+      // own copy below itself, and nothing is installed under the shipped folders.
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-shipped",
+          dependencies: {
+            "bundled-shipped-host": "1.0.0",
+            "one-dep": "npm:no-deps@2.0.0",
+          },
+        }),
+      );
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        const host = join(packageDir, "node_modules", "bundled-shipped-host", "node_modules");
+        expect(
+          await Promise.all([
+            file(join(packageDir, "node_modules", "one-dep", "package.json")).json(),
+            exists(join(packageDir, "node_modules", "no-deps")),
+            file(join(host, "bundled-shipped-inner", "package.json")).json(),
+            exists(join(host, "bundled-shipped-inner", "node_modules")),
+            file(join(host, "no-deps", "package.json")).json(),
+            file(join(host, "one-dep", "package.json")).json(),
+            file(join(host, "one-dep", "node_modules", "no-deps", "package.json")).json(),
+          ]),
+        ).toEqual([
+          { name: "no-deps", version: "2.0.0" },
+          false,
+          { name: "bundled-shipped-inner", version: "1.0.0", main: "index.js", dependencies: { "no-deps": "1.0.0" } },
+          false,
+          { name: "no-deps", version: "1.0.0" },
+          { name: "one-dep", version: "1.0.0", dependencies: { "no-deps": "1.0.1" } },
+          { name: "no-deps", version: "1.0.1" },
+        ]);
+      }
+
+      await check();
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
+
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) git dependencies`, async () => {
       await Promise.all([
         write(

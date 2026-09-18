@@ -1429,6 +1429,42 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     });
   }
 
+  // The parser of connection A must not take an upgrade of connection B, done
+  // from A's body handler, for an upgrade of A: the request pipelined behind
+  // A's body still gets its response, and A closes on Connection: close.
+  it("upgrades a parked request from another connection's body handler and keeps parsing that connection", async () => {
+    const wss = new WebSocketServer({ noServer: true });
+    const connections: unknown[] = [];
+    const server = createServer((req, res) => {
+      if (req.method !== "POST") return res.end(req.url);
+      req.on("end", () => {
+        wss.handleUpgrade(upgrade.req, upgrade.socket, upgrade.head, ws => connections.push(ws));
+        res.end("posted");
+      });
+      req.resume();
+    });
+    // Connection B: the Upgrade request, parked by the 'upgrade' listener.
+    await using upgrade = await receiveUpgrade(upgradeRequest(), server);
+
+    // Connection A: a POST whose 'end' upgrades B, and a request behind it.
+    const other = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    other.on("error", () => {});
+    let data = "";
+    other.on("data", chunk => (data += chunk.toString("latin1")));
+    const closed = new Promise<void>(resolve => other.once("close", resolve));
+    await once(other, "connect");
+    other.write(
+      "POST /post HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello" +
+        "GET /after HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    await closed;
+    expect(data.match(/posted|\/after/g)).toEqual(["posted", "/after"]);
+
+    expect(connections).toHaveLength(1);
+    expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+    wss.close();
+  });
+
   it("leaves a connection alone that another WebSocketServer on the same http.Server took", async () => {
     const server = createServer();
     // Registered first, so it sees the socket before either WebSocketServer does.

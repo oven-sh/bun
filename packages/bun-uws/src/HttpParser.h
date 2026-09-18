@@ -1417,17 +1417,20 @@ struct HttpResponseData;
             } else if (contentLengthStringLen) {
                 if constexpr (!ConsumeMinimally) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
-                    void *returnedUser = dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
-                    if (returnedUser != user) {
-                        /* The handler closed, shut down or upgraded the socket. This
-                         * parser lives in its HttpResponseData, which is gone with it. */
-                        return HttpParserResult::success(consumedTotal + emittable, returnedUser);
-                    }
+                    bool fin = emittable == remainingStreamingBytes;
+                    /* Account for the chunk before the handler runs, like the chunked
+                     * branch does. An upgrade from the handler destroys the
+                     * HttpResponseData this parser lives in, so nothing of it may be
+                     * touched after the call. */
                     remainingStreamingBytes -= emittable;
+                    consumedTotal += emittable;
+                    void *returnedUser = dataHandler(user, std::string_view(data, emittable), fin);
+                    if (returnedUser != user) {
+                        return HttpParserResult::success(consumedTotal, returnedUser);
+                    }
 
                     data += emittable;
                     length -= emittable;
-                    consumedTotal += emittable;
                 }
             } else {
                 /* If we came here without a body; emit an empty data chunk to signal no data */
@@ -1496,17 +1499,17 @@ public:
 
                 // this is exactly the same as below!
                 // todo: refactor this
+                /* The parser state is updated before the handler runs: an upgrade
+                 * from the handler destroys the HttpResponseData this parser lives
+                 * in, so nothing of it may be touched after the call. */
                 if (remainingStreamingBytes >= length) {
-                    void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == length);
-                    if (returnedUser != user) {
-                        /* The handler closed, shut down or upgraded the socket. This
-                         * parser lives in its HttpResponseData, which is gone with it. */
-                        return HttpParserResult::success(0, returnedUser);
-                    }
+                    bool fin = remainingStreamingBytes == length;
                     remainingStreamingBytes -= length;
-                    return HttpParserResult::success(0, user);
+                    void *returnedUser = dataHandler(user, std::string_view(data, length), fin);
+                    return HttpParserResult::success(0, returnedUser);
                 } else {
                     unsigned int emittable = (unsigned int) remainingStreamingBytes;
+                    remainingStreamingBytes = 0;
                     void *returnedUser = dataHandler(user, std::string_view(data, emittable), true);
                     if (returnedUser != user) {
                         return HttpParserResult::success(0, returnedUser);
@@ -1514,8 +1517,6 @@ public:
 
                     data += emittable;
                     length -= emittable;
-
-                    remainingStreamingBytes = 0;
                 }
             }
 
@@ -1585,14 +1586,13 @@ public:
                     } else {
                         // this is exactly the same as above!
                         if (remainingStreamingBytes >= (unsigned int) length) {
-                            void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == (unsigned int) length);
-                            if (returnedUser != user) {
-                                return HttpParserResult::success(0, returnedUser);
-                            }
+                            bool fin = remainingStreamingBytes == (unsigned int) length;
                             remainingStreamingBytes -= length;
-                            return HttpParserResult::success(0, user);
+                            void *returnedUser = dataHandler(user, std::string_view(data, length), fin);
+                            return HttpParserResult::success(0, returnedUser);
                         } else {
                             unsigned int emittable = (unsigned int) remainingStreamingBytes;
+                            remainingStreamingBytes = 0;
                             void *returnedUser = dataHandler(user, std::string_view(data, emittable), true);
                             if (returnedUser != user) {
                                 return HttpParserResult::success(0, returnedUser);
@@ -1600,8 +1600,6 @@ public:
 
                             data += emittable;
                             length -= emittable;
-
-                            remainingStreamingBytes = 0;
                         }
                     }
                 }

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isLinux } from "harness";
 import { join } from "path";
 
 describe("text-loader", () => {
@@ -67,4 +67,31 @@ describe("text-loader", () => {
       });
     });
   }
+
+  // procfs files are regular files whose st_size is 0. The loader probes the
+  // first 16 KiB without a stat. When the probe fills, the stat size is not
+  // the length of the file and the loader must read to EOF.
+  it.skipIf(!isLinux)("loads a procfs file larger than the 16 KiB probe", async () => {
+    const path = "/proc/self/environ";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const p = ${JSON.stringify(path)};
+         const stat = require("fs").statSync(p).size;
+         const expected = require("fs").readFileSync(p, "latin1");
+         const imported = (await import(p, { with: { type: "text" } })).default;
+         console.log(JSON.stringify({ stat, expected: expected.length, imported: imported.length, same: imported === expected }));`,
+      ],
+      env: { ...bunEnv, BIG_ENV_VALUE: Buffer.alloc(100_000, "x").toString() },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout);
+    expect(result.expected).toBeGreaterThan(100_000);
+    expect(result).toEqual({ stat: 0, expected: result.expected, imported: result.expected, same: true });
+    expect(exitCode).toBe(0);
+  });
 });

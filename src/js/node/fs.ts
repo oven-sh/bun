@@ -560,15 +560,15 @@ var access = function access(path, mode, callback) {
       // Normalize here so the native parser sees exactly that set.
       options = { ...options };
     }
-    if (!options?.recursive) {
-      // node validates in JS and reports ERR_FS_EISDIR for directories
+    if (!options?.force || !options?.recursive) {
+      // node lstats first: ERR_FS_EISDIR for directories, other lstat errors rethrown as-is
       let stats;
       try {
         stats = fs.lstatSync(path);
-      } catch {
-        // let the native call produce the error (respects force/ENOENT)
+      } catch (err) {
+        if (err?.code !== "ENOENT") throw err;
       }
-      if (stats?.isDirectory()) {
+      if (stats?.isDirectory() && !options?.recursive) {
         throw require("internal/fs/cp-sync").fsEisdirError({
           code: "EISDIR",
           message: "is a directory",

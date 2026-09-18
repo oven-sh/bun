@@ -1978,6 +1978,23 @@ test.concurrent("`bun update <name> -r` keeps a member's optional entry that no 
   expect(exitCode).toBe(0);
 });
 
+// --latest swaps the declared range for `latest` before the install. Every release here is younger than the minimum release age, so nothing resolves and the range comes back.
+test.concurrent.each([
+  ["a plain entry", { leaf: "^1.0.0" }, "leaf"],
+  ["an npm: alias", { aliased: "npm:leaf@^1.0.0" }, "aliased"],
+])("`bun update <name> --latest` restores the range of %s that it could not resolve", async (_, entries, name) => {
+  const today = { leaf: { "1.0.0": daysAgo(0), "1.1.0": daysAgo(0) } };
+  using server = await serveRegistry(TAGGED_FREE, {}, { times: today });
+  const packageJson = { name: "foo", optionalDependencies: entries };
+  const dir = await installServed(server, "update-latest-unresolved-", packageJson);
+
+  const { stderr, exitCode } = await run(dir, "update", name, "--latest", "--minimum-release-age", THREE_DAYS_SECONDS);
+  expect(errorLines(stderr)).toStrictEqual([]);
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect((await lock(dir)).workspaces[""].optionalDependencies).toStrictEqual(entries);
+  expect(exitCode).toBe(0);
+});
+
 // `bun add npm:<name>` has no key to find its row by after the write-back renames the row, so the request keeps the package the first binding gave it.
 test.concurrent("`bun add npm:<name>` hands the added package to the security scanner", async () => {
   using server = await serveRegistry(TAGGED_FREE);

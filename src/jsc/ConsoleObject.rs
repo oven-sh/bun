@@ -685,6 +685,11 @@ impl<'a> TablePrinter<'a> {
         })
     }
 
+    /// Cells start at nesting level `depth`, out of the formatter's `max_depth`.
+    pub fn set_start_depth(&mut self, depth: u16) {
+        self.value_formatter.depth = depth.min(self.value_formatter.max_depth);
+    }
+
     /// Format `value` exactly once (bare for strings, quoted otherwise),
     /// appending its rendered bytes to the shared `cell_text` scratch, and
     /// return the recorded byte range plus its visible width.
@@ -1602,6 +1607,8 @@ pub mod formatter {
         pub(crate) indent: u32,
         pub depth: u16,
         pub(crate) max_depth: u16,
+        /// `max_depth` before the error property dump narrowed it.
+        pub(crate) outer_max_depth: Option<u16>,
         pub quote_strings: bool,
         pub quote_keys: bool,
         pub(crate) failed: bool,
@@ -1632,6 +1639,7 @@ pub mod formatter {
                 indent: 0,
                 depth: 0,
                 max_depth: 8,
+                outer_max_depth: None,
                 quote_strings: false,
                 quote_keys: false,
                 failed: false,
@@ -1670,6 +1678,7 @@ pub mod formatter {
                 indent: self.indent,
                 depth: self.depth,
                 max_depth: self.max_depth,
+                outer_max_depth: self.outer_max_depth,
                 quote_strings: self.quote_strings,
                 quote_keys: self.quote_keys,
                 failed: self.failed,
@@ -1743,6 +1752,11 @@ pub mod formatter {
 
         pub fn add_for_new_line(&mut self, len: usize) {
             self.estimated_line_length = self.estimated_line_length.saturating_add(len);
+        }
+
+        /// Depth cap for the `cause` and `AggregateError.errors` walks.
+        pub(crate) fn error_chain_max_depth(&self) -> u16 {
+            self.outer_max_depth.unwrap_or(self.max_depth)
         }
     }
 
@@ -4233,6 +4247,10 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
+            let len = value.get_length(self.global_this)?;
+            if len != 0 && self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, "Array");
+            }
             // Cache once: `disable_inspect_custom` does not change inside this
             // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
             // which prevents calling `&self` methods while it is live.
@@ -4247,8 +4265,6 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-
-            let len = value.get_length(self.global_this)?;
 
             // TODO: DerivedArray does not get passed along in JSType, and it's
             // not clear why.
@@ -4594,6 +4610,10 @@ pub mod formatter {
                 return Ok(());
             }
 
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, map_name);
+            }
+
             if self.single_line {
                 let _ = write!(writer_, "{map_name}({length}) {{ ");
             } else {
@@ -4653,6 +4673,9 @@ pub mod formatter {
             value: JSValue,
             label: &'static str,
         ) -> JsResult<()> {
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, label);
+            }
             let prev_quote_strings = self.quote_strings;
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
@@ -4734,6 +4757,10 @@ pub mod formatter {
             if length == 0 {
                 let _ = write!(writer_, "{set_name} {{}}");
                 return Ok(());
+            }
+
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, set_name);
             }
 
             if self.single_line {
@@ -4836,6 +4863,9 @@ pub mod formatter {
                 EventType::ErrorEvent => "ErrorEvent",
                 _ => unreachable!(),
             };
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, event_tag_name);
+            }
             let _ = writeln!(
                 writer_,
                 "{}{}{} {{",
@@ -5418,6 +5448,23 @@ pub mod formatter {
                 pf!("<r><cyan>"),
                 display_name,
                 pf!("<r>")
+            );
+            Ok(())
+        }
+
+        #[inline(never)]
+        fn print_depth_exceeded_marker<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            name: &str,
+        ) -> JsResult<()> {
+            self.add_for_new_line(name.len() + 6);
+            let _ = write!(
+                writer_,
+                "{}[{} ...]{}",
+                pfmt!("<r><cyan>", C),
+                name,
+                pfmt!("<r>", C)
             );
             Ok(())
         }

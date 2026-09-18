@@ -897,7 +897,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     auto setReturnValue = [&](JSC::JSValue value) -> void {
         if (auto* returnValuesArray = fn->returnValues.get()) {
             returnValuesArray->push(globalObject, value);
-            RETURN_IF_EXCEPTION(scope, {});
+            RETURN_IF_EXCEPTION(scope, void());
             returnValueIndex = returnValuesArray->length() - 1;
         } else {
             JSC::ObjectInitializationScope object(vm);

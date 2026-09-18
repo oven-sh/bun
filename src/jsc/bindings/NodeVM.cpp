@@ -421,7 +421,8 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
     } else {
         // Process parameters and body
         unsigned parameterCount = args.size() - 1;
-        StringBuilder paramString;
+        // The params come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
+        StringBuilder paramString { OverflowPolicy::RecordOverflow };
 
         for (unsigned i = 0; i < parameterCount; ++i) {
             auto param = args.at(i).toWTFString(globalObject);
@@ -432,6 +433,11 @@ String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& a
             }
 
             paramString.append(param);
+        }
+
+        if (paramString.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
         }
 
         auto body = args.at(parameterCount).toWTFString(globalObject);
@@ -530,10 +536,13 @@ static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const St
         for (unsigned i = 1; i < caretColumn1Based; i++)
             caretLine.append(i <= sourceLineText.length() && sourceLineText[i - 1] == '\t' ? '\t' : ' ');
         caretLine.append('^');
-        prepend = makeString(url, ':', reportedLine, '\n', sourceLineText, '\n', caretLine.toString(), "\n\n"_s, stack);
+        prepend = tryMakeString(url, ':', reportedLine, '\n', sourceLineText, '\n', caretLine.toString(), "\n\n"_s, stack);
     } else {
-        prepend = makeString(url, ':', reportedLine, '\n', stack);
+        prepend = tryMakeString(url, ':', reportedLine, '\n', stack);
     }
+    // The URL and the stack come from JS. Past `String::MaxLength` `makeString` calls `CRASH()`. The error keeps its stack, without the header.
+    if (prepend.isNull()) [[unlikely]]
+        return;
     const auto& decoratedName = WebCore::builtinNames(vm).vmErrorDecoratedPrivateName();
     errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, prepend), JSC::PropertyAttribute::DontEnum | 0);
     errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
@@ -1663,7 +1672,12 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
     scope.release();
-    promise->reject(vm, createError(globalObject, makeString("Could not import the module '"_s, moduleNameString.data, "'."_s)));
+    // The specifier comes from JS. Past `String::MaxLength`, `makeString` calls `CRASH()` and `tryMakeString` returns null.
+    auto message = tryMakeString("Could not import the module '"_s, moduleNameString.data, "'."_s);
+    if (!message) [[unlikely]]
+        promise->reject(vm, createOutOfMemoryError(globalObject));
+    else
+        promise->reject(vm, createError(globalObject, message));
     return promise;
 }
 

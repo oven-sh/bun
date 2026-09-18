@@ -363,6 +363,14 @@ WTF::String toCrossThreadShareable(const WTF::String& string)
     return makeThreadShareable(*impl);
 }
 
+std::optional<UTF8View> UTF8View::tryCreate(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, WTF::StringView view)
+{
+    auto result = tryCreate(view);
+    if (!result) [[unlikely]]
+        throwOutOfMemoryError(globalObject, scope);
+    return result;
+}
+
 }
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)

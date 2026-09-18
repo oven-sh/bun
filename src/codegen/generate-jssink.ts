@@ -232,8 +232,8 @@ public:
     SinkID m_sinkId;
     SinkSource m_sourceKind { SinkSource::None };
     mutable WriteBarrier<JSC::JSCell> m_source;
-    mutable WriteBarrier<JSC::JSPromise> m_closePromise; // DirectStream: readDirectStream's result while pull() is sync and open
-    mutable WriteBarrier<JSC::Unknown> m_failReason; // close(error)'s error, so the owner's promise rejects even though pull() itself resolved
+    mutable WriteBarrier<JSC::JSPromise> m_closePromise; // DirectStream: readDirectStream's result, taken by whatever closes the controller
+    mutable WriteBarrier<JSC::Unknown> m_failReason; // close(error)'s error, so the owner's promise rejects with it even when detach() or readDirectStream only see it afterwards
     // Strong, and cleared as soon as the pipe is over, so a controller the user still holds does not keep the stream alive.
     mutable WriteBarrier<JSC::JSObject> m_readableStream;
     // While a native sink pipes a stream in, it roots only this cell; this and m_readableStream hold the rest (streams.rs PipeCell).

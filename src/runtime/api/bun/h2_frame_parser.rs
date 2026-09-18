@@ -696,9 +696,13 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm
-            .event_loop_ref()
-            .run_callback(callback, &self.global(), context, data);
+        self.vm.event_loop_ref().run_callback(
+            bun_event_loop::ContextId::NONE,
+            callback,
+            &self.global(),
+            context,
+            data,
+        );
         true
     }
 
@@ -709,9 +713,13 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm
-            .event_loop_ref()
-            .run_callback(callback, &self.global(), JSValue::UNDEFINED, data);
+        self.vm.event_loop_ref().run_callback(
+            bun_event_loop::ContextId::NONE,
+            callback,
+            &self.global(),
+            JSValue::UNDEFINED,
+            data,
+        );
         true
     }
 
@@ -728,6 +736,7 @@ impl Handlers {
             return JSValue::ZERO;
         }
         self.vm.event_loop_ref().run_callback_with_result(
+            bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
             this_value,
@@ -1029,6 +1038,9 @@ impl core::ops::DerefMut for GuardedStream<'_> {
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::release)]
 pub struct H2FrameParser {
+    /// A session is closed from script (`detach_from_js`, when its socket closes). The script of a
+    /// `Bun.ModuleGraph` that was disposed is told nothing, so the graph's context closes it.
+    abort_handle: bun_jsc::AbortHandle,
     strong_this: JsCell<JsRef>,
     global_this: GlobalRef, // JSC_BORROW — read-only after construction
     // allocator field dropped — global mimalloc
@@ -6342,6 +6354,7 @@ impl H2FrameParser {
                 continue;
             };
             this.handlers.get().vm.event_loop_mut().run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global_object,
                 this_value,
@@ -7410,6 +7423,7 @@ impl H2FrameParser {
         let handlers = Handlers::from_js(global_object, handler_js, this_value)?;
 
         let init = H2FrameParser {
+            abort_handle: bun_jsc::AbortHandle::for_owner::<H2FrameParser>(),
             ref_count: bun_ptr::RefCount::init(),
             native_keepalives: Cell::new(0),
             handlers: JsCell::new(handlers),
@@ -7630,6 +7644,12 @@ impl H2FrameParser {
         this_ref
             .strong_this
             .with_mut(|s| s.set_strong(this_value, global_object));
+        let vm = global_object.bun_vm();
+        if let Some(context) = vm.as_graph_context(vm.context_of_caller(callframe)) {
+            // SAFETY: `this` is heap-pinned (pool slot or Box); it leaves its context in
+            // `release_from_js` or when it drops.
+            unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
+        }
 
         // Note: `HPACK::init` returns a C-allocated wrapper that must be
         // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
@@ -7654,6 +7674,15 @@ impl H2FrameParser {
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        this.release_from_js();
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// The session is over: free its streams, let go of the socket, and stop keeping the wrapper
+    /// (and through it the handlers and their context object) alive.
+    fn release_from_js(&self) {
+        let this = self;
+        this.abort_handle.leave();
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
         let mut it = StreamResumableIterator::init(this);
@@ -7668,7 +7697,6 @@ impl H2FrameParser {
             JSH2FrameParser::Gc::context.clear(this_value, &this.global_this);
             this.strong_this.with_mut(|s| s.set_weak(this_value));
         }
-        Ok(JSValue::UNDEFINED)
     }
 
     /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
@@ -7716,6 +7744,12 @@ impl H2FrameParser {
         }
     }
 }
+
+bun_jsc::impl_abort_handle_owner!(H2FrameParser, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ not dropped). The wrapper this makes
+    // collectible is not finalized under this call.
+    unsafe { (*this).release_from_js() }
+});
 
 impl Drop for H2FrameParser {
     fn drop(&mut self) {

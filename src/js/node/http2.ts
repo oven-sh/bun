@@ -28,7 +28,7 @@
  */
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
-const { STATUS_CODES } = require("internal/http");
+const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
@@ -425,12 +425,6 @@ const {
   validateAbortSignal,
 } = require("internal/validators");
 
-let utcCache;
-
-function utcDate() {
-  if (!utcCache) cache();
-  return utcCache;
-}
 function emitEventNT(self: any, event: string, ...args: any[]) {
   if (self.listenerCount(event) > 0) {
     self.emit(event, ...args);
@@ -459,16 +453,6 @@ function emitErrorNT(self: any, error: any, destroy: boolean) {
 function emitOutofStreamErrorNT(self: any) {
   self.destroy($ERR_HTTP2_OUT_OF_STREAMS());
 }
-function cache() {
-  const d = new Date();
-  utcCache = d.toUTCString();
-  setTimeout(resetCache, 1000 - d.getMilliseconds()).unref();
-}
-
-function resetCache() {
-  utcCache = undefined;
-}
-
 function getAuthority(headers) {
   // For non-CONNECT requests, HTTP/2 allows either :authority
   // or Host to be used equivalently. The first is preferred

@@ -456,7 +456,10 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
 
     String missingSpecifier;
     if (!isModuleGraphLinked(record, missingSpecifier)) {
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, makeString("request for '"_s, missingSpecifier, "' is not in cache"_s));
+        // The specifier comes from the module's source, so from JS.
+        MessageBuilder message;
+        message.append("request for '"_s, missingSpecifier, "' is not in cache"_s);
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
         return {};
     }
 

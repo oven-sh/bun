@@ -57,23 +57,23 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     // The message and the frames come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
     WTF::StringBuilder sb { WTF::OverflowPolicy::RecordOverflow };
 
-    JSC::JSString* messageString = nullptr;
-    auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
+    // The header is Error.prototype.toString() of the error, as in V8's default formatter.
+    JSValue nameValue = errorObject->get(lexicalGlobalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});
-    if (errorMessage) {
-        auto* str = errorMessage.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (str->length() > 0) {
-            auto value = str->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            messageString = str;
-            sb.append("Error: "_s);
-            sb.append(value.data);
-        } else {
-            sb.append("Error"_s);
+    WTF::String name = nameValue.isUndefined() ? WTF::String("Error"_s) : nameValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue messageValue = errorObject->get(lexicalGlobalObject, vm.propertyNames->message);
+    RETURN_IF_EXCEPTION(scope, {});
+    WTF::String message = messageValue.isUndefined() ? emptyString() : messageValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!name.isEmpty()) {
+        sb.append(name);
+        if (!message.isEmpty()) {
+            sb.append(": "_s);
+            sb.append(message);
         }
-    } else {
-        sb.append("Error"_s);
+    } else if (!message.isEmpty()) {
+        sb.append(message);
     }
 
     for (size_t i = 0; i < framesCount; i++) {
@@ -96,13 +96,8 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         }
     }
 
-    if (sb.hasOverflowed()) [[unlikely]] {
-        if (!messageString)
-            return jsNontrivialString(vm, "Error"_s);
-        auto message = messageString->value(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        return jsString(vm, stackTraceHeaderOnly("Error"_s, message.data));
-    }
+    if (sb.hasOverflowed()) [[unlikely]]
+        return jsString(vm, stackTraceHeaderOnly(name, message));
 
     return jsString(vm, sb.toString());
 }

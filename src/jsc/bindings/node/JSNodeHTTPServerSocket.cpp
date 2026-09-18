@@ -141,8 +141,7 @@ void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody, WebCore::JSNode
         upgradeToTunnelModeImpl<false>(socket, afterBody);
     }
     /* The exchange leaves HTTP here: let the response release the server's
-     * pending-request accounting (see Flags::TUNNELED in NodeHTTPResponse.rs).
-     * Not currentResponseObject: a pipelined request is queued instead. */
+     * pending-request accounting (see Flags::TUNNELED in NodeHTTPResponse.rs). */
     if (response != nullptr && response->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_markTunneled(response->m_ctx);
     }
@@ -427,8 +426,7 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
-/* A pipelined CONNECT stays queued for good, which keeps markDone() from marking the connection idle.
- * No request follows it, so it holds no reads. */
+/* A pipelined CONNECT stays queued so that the connection never counts as idle. No request follows it, so it holds no reads. */
 template<bool SSL>
 static bool queuedResponsesHoldReads(uWS::NodeHttpResponseData<SSL>* httpResponseData)
 {

@@ -726,7 +726,7 @@ postMessage(onlyInWorker());
 setInterval(keptAlive, 1000);
 postMessage(keptAlive());
 `,
-  // `expect` is a jest global here: every thread of `bun test` loads this
+  // `expect` is a jest global here: under --coverage every thread loads this
   // module with a `bun:test` import injected in front of it.
   "helpers.ts": `export function assertPositive(n: number) {
   expect(n).toBeGreaterThan(0);

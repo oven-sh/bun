@@ -783,10 +783,11 @@ impl WebWorker {
                 (hooks.apply_standalone_runtime_flags)(b, graph);
             }
 
-            // As `TestCommand` sets up the main VM, so that a module loads the
-            // same way on every thread of `bun test`.
-            b.options.rewrite_jest_for_tests = rewrite_jest_for_tests;
+            // As `TestCommand` sets up the main VM. The report merges a
+            // module's reports by byte offset, so it has to print the same
+            // way on every thread.
             if code_coverage {
+                b.options.rewrite_jest_for_tests = rewrite_jest_for_tests;
                 b.options.code_coverage = true;
                 b.options.minify_syntax = false;
                 b.options.minify_identifiers = false;

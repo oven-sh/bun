@@ -11,7 +11,9 @@ use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::{CommandLineArguments, PackageID, PackageManager, Subcommand, package_manager};
+use bun_install::{
+    CommandLineArguments, PackageID, PackageManager, ResolutionTag, Subcommand, package_manager,
+};
 use bun_semver as semver;
 
 use crate::command;
@@ -244,26 +246,32 @@ impl<'a> GlobPattern<'a> {
         }
     }
 
-    fn matches_version(&self, version: &[u8]) -> bool {
-        if self.version_pattern.is_empty() || self.version_pattern == b"latest" {
+    /// `version` is the semver version of the package when it has one (an npm
+    /// resolution, or a workspace with a version in its package.json). Its
+    /// slices point into `string_bytes`. `resolution` is the printed resolution
+    /// (`1.2.3`, `workspace:packages/a`, `github:user/repo#sha`).
+    fn matches_version(
+        &self,
+        version: Option<semver::Version>,
+        string_bytes: &[u8],
+        resolution: &[u8],
+    ) -> bool {
+        if self.version_pattern.is_empty()
+            || self.version_pattern == b"latest"
+            || self.version_pattern == b"*"
+        {
             return true;
         }
 
-        if let Some(query) = &self.version_query {
-            let sliced = semver::SlicedString::init(version, version);
-            let version_result = semver::Version::parse(sliced);
-
-            if version_result.valid {
-                let semver_version = version_result.version.min();
-                return query.satisfies(semver_version, self.version_pattern, version);
-            }
+        if let (Some(query), Some(version)) = (&self.version_query, version) {
+            return query.satisfies(version, self.version_pattern, string_bytes);
         }
 
-        if strings::eql(version, self.version_pattern) {
+        if strings::eql(resolution, self.version_pattern) {
             return true;
         }
 
-        version.starts_with(self.version_pattern)
+        resolution.starts_with(self.version_pattern)
     }
 }
 
@@ -381,6 +389,7 @@ impl WhyCommand {
         // `items_name()` / `items_dependencies()` / … directly, so we read
         // columns by index instead of materialising a `Package` row.
         let pkg_names = packages.items_name();
+        let pkg_name_hashes = packages.items_name_hash();
         let _pkg_dependencies = packages.items_dependencies();
         let _pkg_resolutions = packages.items_resolutions();
         let pkg_resolution = packages.items_resolution();
@@ -455,7 +464,17 @@ impl WhyCommand {
             .expect("unreachable");
             let version: Box<[u8]> = version_buf.into_boxed_slice();
 
-            if !glob.matches_version(&version) {
+            let resolution = &pkg_resolution[pkg_idx];
+            let semver_version = match resolution.tag {
+                ResolutionTag::Npm => Some(resolution.npm().version),
+                ResolutionTag::Workspace => lockfile
+                    .workspace_versions
+                    .get(&pkg_name_hashes[pkg_idx])
+                    .copied(),
+                _ => None,
+            };
+
+            if !glob.matches_version(semver_version, string_bytes, &version) {
                 continue;
             }
 

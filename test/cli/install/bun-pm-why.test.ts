@@ -219,6 +219,74 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     expect(output).toContain("pkg-b@");
   });
 
+  describe("version in the query for a package without an npm resolution", () => {
+    // `bun why` reads only the lockfile, so a static bun.lock keeps this off the network.
+    // The github package has no semver version, so only `*` (and no version) can match it.
+    const files = {
+      "package.json": JSON.stringify({
+        name: "ws-root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { "gh-pkg": "github:owner/repo#abc1234" },
+      }),
+      "packages/pkg-a/package.json": JSON.stringify({ name: "pkg-a", version: "1.2.3" }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": { name: "ws-root", dependencies: { "gh-pkg": "github:owner/repo#abc1234" } },
+          "packages/pkg-a": { name: "pkg-a", version: "1.2.3" },
+        },
+        packages: {
+          "gh-pkg": ["gh-pkg@github:owner/repo#abc1234", {}, "abc1234"],
+          "pkg-a": ["pkg-a@workspace:packages/pkg-a"],
+        },
+      }),
+    };
+
+    async function why(cwd: string, query: string) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd.split(" "), query],
+        cwd,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // The glob keeps this independent of exact-name matching.
+    it.each(["pkg-*@1.2.3", "pkg-*@^1", "pkg-*@>=1.0.0 <2", "pkg-*@*"])(
+      "matches the workspace version for %s",
+      async query => {
+        using dir = tempDir(`why-workspace-version-${i++}`, files);
+        const { stdout, stderr, exitCode } = await why(String(dir), query);
+        expect(stderr).toBe("");
+        expect(stdout).toContain("pkg-a@workspace:packages/pkg-a");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    it.each(["pkg-*@^2", "pkg-*@1.2.4"])("does not match the workspace version for %s", async query => {
+      using dir = tempDir(`why-workspace-version-${i++}`, files);
+      const { stdout, exitCode } = await why(String(dir), query);
+      expect(stdout).toContain(`No packages matching '${query}' found in lockfile`);
+      expect(exitCode).toBe(1);
+    });
+
+    it("matches a github resolution for * and not for a semver range", async () => {
+      using dir = tempDir(`why-github-version-${i++}`, files);
+      const star = await why(String(dir), "gh-*@*");
+      expect(star.stderr).toBe("");
+      expect(star.stdout).toContain("gh-pkg@github:owner/repo#abc1234");
+      expect(star.exitCode).toBe(0);
+
+      const range = await why(String(dir), "gh-*@^1");
+      expect(range.stdout).toContain("No packages matching 'gh-*@^1' found in lockfile");
+      expect(range.exitCode).toBe(1);
+    });
+  });
+
   it("should handle npm aliases", async () => {
     await using tmpDir = tempDir(`why-alias-${i++}`, {
       "package.json": JSON.stringify({

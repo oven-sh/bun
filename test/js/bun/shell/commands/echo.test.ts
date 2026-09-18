@@ -1,4 +1,6 @@
-import { describe } from "bun:test";
+import { $ } from "bun";
+import { describe, expect, test } from "bun:test";
+import { isLinux } from "harness";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -91,4 +93,9 @@ describe("echo special cases", async () => {
     .stdout("a\n")
     .stderr("")
     .runAsTest("mixed trailing newlines still collapse to one");
+
+  test.if(isLinux)("write error exits 1", async () => {
+    const { exitCode } = await $`echo hello > /dev/full`.nothrow().quiet();
+    expect(exitCode).toBe(1);
+  });
 });

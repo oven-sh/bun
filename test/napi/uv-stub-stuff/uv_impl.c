@@ -103,6 +103,47 @@ static napi_value test_uv_once(napi_env env, napi_callback_info info) {
   return ret;
 }
 
+// Test uv_cwd
+static napi_value test_cwd(napi_env env, napi_callback_info info) {
+  napi_value obj;
+  napi_create_object(env, &obj);
+
+  napi_value v;
+
+  napi_create_int32(env, UV_EINVAL, &v);
+  napi_set_named_property(env, obj, "UV_EINVAL", v);
+  napi_create_int32(env, UV_ENOBUFS, &v);
+  napi_set_named_property(env, obj, "UV_ENOBUFS", v);
+
+  size_t zero = 0;
+  size_t one = 1;
+  char dummy[1];
+  napi_create_int32(env, uv_cwd(NULL, &one), &v);
+  napi_set_named_property(env, obj, "nullBuffer", v);
+  napi_create_int32(env, uv_cwd(dummy, NULL), &v);
+  napi_set_named_property(env, obj, "nullSize", v);
+  napi_create_int32(env, uv_cwd(dummy, &zero), &v);
+  napi_set_named_property(env, obj, "zeroSize", v);
+
+  char small[2];
+  size_t small_size = sizeof(small);
+  napi_create_int32(env, uv_cwd(small, &small_size), &v);
+  napi_set_named_property(env, obj, "smallRc", v);
+  napi_create_int64(env, (int64_t)small_size, &v);
+  napi_set_named_property(env, obj, "smallRequired", v);
+
+  char buf[4096];
+  size_t size = sizeof(buf);
+  napi_create_int32(env, uv_cwd(buf, &size), &v);
+  napi_set_named_property(env, obj, "rc", v);
+  napi_create_string_utf8(env, buf, size, &v);
+  napi_set_named_property(env, obj, "cwd", v);
+  napi_create_int64(env, (int64_t)size, &v);
+  napi_set_named_property(env, obj, "size", v);
+
+  return obj;
+}
+
 // Test uv_hrtime
 static napi_value test_hrtime(napi_env env, napi_callback_info info) {
   uint64_t time1 = uv_hrtime();
@@ -205,6 +246,9 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_uv_once, NULL, &fn);
   napi_set_named_property(env, exports, "testUvOnce", fn);
+
+  napi_create_function(env, NULL, 0, test_cwd, NULL, &fn);
+  napi_set_named_property(env, exports, "testCwd", fn);
 
   napi_create_function(env, NULL, 0, test_hrtime, NULL, &fn);
   napi_set_named_property(env, exports, "testHrtime", fn);

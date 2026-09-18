@@ -2372,7 +2372,10 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
-                    let file_map_result = _file_map_result;
+                    let mut file_map_result = _file_map_result;
+                    // An in-memory file has no tsconfig.json: it gets the JSX options of the build.
+                    // SAFETY: see `transpiler` note above.
+                    file_map_result.jsx = unsafe { &(*transpiler).options.jsx }.clone();
                     let mut path_primary = file_map_result.path_pair.primary;
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
@@ -3746,7 +3749,7 @@ pub mod bv2_impl {
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
                 loader,
-                side_effects: loader.side_effects(),
+                side_effects: resolve_result.primary_side_effects_data,
                 ..Default::default()
             })?;
             // `ParseTask::init` takes `bun_ast::Index`; both Index newtypes
@@ -3760,7 +3763,10 @@ pub mod bv2_impl {
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
             let task: &mut ParseTask = self.arena_create(task_val);
             task.loader = Some(loader);
-            task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
+            task.jsx.development = self
+                .transpiler_for_target(known_target)
+                .options
+                .forced_jsx_development();
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
             task.known_target = known_target;
@@ -4601,6 +4607,45 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        /// A module that an `onResolve` path created takes what the resolver attaches to the file (side effects,
+        /// module type, JSX and decorator settings) if the path is byte for byte the one the resolver gives that
+        /// file. Another import can then reach the same module through the resolver, and the one that lands first
+        /// creates it, so both have to describe it the same way. Any other path (not on disk, in `files`, through
+        /// a symlink, not normalized) stays a plugin module. This runs once `onLoad` is done: the resolver lists a
+        /// directory only once, and `onLoad` can write the files that the module imports.
+        pub(crate) fn adopt_resolver_result(&mut self, task: &mut ParseTask) {
+            let Some(kind) = task.created_by_on_resolve.take() else {
+                return;
+            };
+            if !task.path.is_file()
+                || self
+                    .file_map
+                    .is_some_and(|files| files.contains(task.path.text))
+            {
+                return;
+            }
+            let transpiler = self.transpiler_for_target(task.known_target);
+            let Ok(result) = transpiler.resolver.resolve(
+                task.path.name().dir_with_trailing_slash(),
+                task.path.text,
+                kind,
+            ) else {
+                return;
+            };
+            if result.flags.is_external()
+                || result
+                    .path_const()
+                    .is_none_or(|resolved| resolved.text != task.path.text)
+            {
+                return;
+            }
+            let jsx_development = transpiler.options.forced_jsx_development();
+            task.set_resolver_result(&result);
+            task.jsx.development = jsx_development;
+            self.graph.input_files.items_side_effects_mut()[task.source_index.get() as usize] =
+                task.side_effects;
+        }
+
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             if load.deferred_in.take() == Some(this.graph.defer_epoch) {
                 // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
@@ -4648,6 +4693,7 @@ pub mod bv2_impl {
                     // If it's a file namespace, we should run it through the parser like normal.
                     // The file could be on disk.
                     if source.path.is_file() {
+                        this.adopt_resolver_result(load.parse_task_mut());
                         this.graph.pool().schedule(load.parse_task_mut());
                         return;
                     }
@@ -4668,6 +4714,7 @@ pub mod bv2_impl {
                     this.decrement_scan_counter();
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
+                    this.adopt_resolver_result(load.parse_task_mut());
                     // `code`: LoadSuccess { source_code, loader }
                     // When a plugin returns a file loader, we always need to populate additional_files
                     let should_copy_for_bundling = code.loader.should_copy_for_bundling();
@@ -5005,29 +5052,6 @@ pub mod bv2_impl {
                                     .filter(|_| path.text == &*resolve.import_record.specifier),
                             );
 
-                            // A file on disk gets the package.json and tsconfig.json that enclose it, as it
-                            // does when the resolver finds it: another import can reach the same file that
-                            // way, and whichever import lands first creates the module.
-                            let transpiler =
-                                this.transpiler_for_target(resolve.import_record.original_target);
-                            let resolve_result = path
-                                .is_file()
-                                .then(|| {
-                                    transpiler
-                                        .resolver
-                                        .result_for_resolved_file(path, resolve.import_record.kind)
-                                })
-                                .flatten()
-                                .unwrap_or_else(|| _resolver::Result {
-                                    path_pair: _resolver::PathPair {
-                                        primary: path,
-                                        secondary: None,
-                                    },
-                                    jsx: transpiler.options.jsx.clone(),
-                                    ..Default::default()
-                                });
-                            let jsx_development = transpiler.options.forced_jsx_development();
-
                             this.graph
                                 .input_files
                                 .append(crate::Graph::InputFile {
@@ -5039,20 +5063,40 @@ pub mod bv2_impl {
                                         ..Default::default()
                                     },
                                     loader,
-                                    side_effects: resolve_result.primary_side_effects_data,
+                                    side_effects: bun_ast::SideEffects::HasSideEffects,
                                     ..Default::default()
                                 })
                                 .expect("unreachable");
-                            let mut task_val = ParseTask::init(
-                                &resolve_result,
-                                bun_ast::Index::init(source_index.get()),
-                                this,
-                            );
-                            task_val.jsx.development = jsx_development;
-                            task_val.loader = Some(loader);
-                            task_val.known_target = resolve.import_record.original_target;
-                            task_val.is_entry_point =
-                                resolve.import_record.kind == ImportKind::EntryPointBuild;
+                            let task_val = ParseTask {
+                                // SAFETY: `from_mut(this)` is the live bundle (write provenance);
+                                // outlives the task.
+                                ctx: Some(unsafe {
+                                    bun_ptr::ParentRef::from_raw_mut(
+                                        std::ptr::from_mut::<BundleV2>(this)
+                                            .cast::<BundleV2<'static>>(),
+                                    )
+                                }),
+                                path,
+                                // unknown at this point:
+                                contents_or_fd: parse_task::ContentsOrFd::Fd {
+                                    dir: bun_sys::Fd::INVALID,
+                                    file: bun_sys::Fd::INVALID,
+                                },
+                                side_effects: bun_ast::SideEffects::HasSideEffects,
+                                jsx: this
+                                    .transpiler_for_target(resolve.import_record.original_target)
+                                    .options
+                                    .jsx
+                                    .clone(),
+                                source_index: bun_ast::Index::init(source_index.get()),
+                                module_type: options::ModuleType::Unknown,
+                                loader: Some(loader),
+                                known_target: resolve.import_record.original_target,
+                                is_entry_point: resolve.import_record.kind
+                                    == ImportKind::EntryPointBuild,
+                                created_by_on_resolve: Some(resolve.import_record.kind),
+                                ..Default::default()
+                            };
                             // Arena-owned.
                             // SAFETY: arena outlives the bundle pass.
                             let task: &mut ParseTask = this.arena_create(task_val);
@@ -5061,6 +5105,7 @@ pub mod bv2_impl {
                             this.increment_scan_counter();
 
                             if !this.enqueue_on_load_plugin_if_needed(task) {
+                                this.adopt_resolver_result(task);
                                 if loader.should_copy_for_bundling() {
                                     let additional_files: &mut bun_alloc::AstVec<
                                         crate::AdditionalFile,

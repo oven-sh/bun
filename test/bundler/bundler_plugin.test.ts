@@ -1904,9 +1904,10 @@ describe("bundler", () => {
     "node_modules/react/jsx-dev-runtime.js": jsxRuntime("react"),
   };
 
-  // A file on disk that onResolve names is compiled and tree-shaken with the package.json and
-  // tsconfig.json that enclose it, like the same file when the resolver finds it.
-  for (const resolvedBy of ["onResolve", "resolver"] as const) {
+  // A file is compiled and tree-shaken with the package.json and tsconfig.json that enclose it, whichever
+  // way the build reaches it: the resolver alone, an onResolve callback that names the file, or the
+  // resolver after every onResolve callback returned nothing.
+  for (const resolvedBy of ["the resolver", "onResolve", "the resolver after onResolve declined"] as const) {
     test.concurrent(`plugin/file resolved by ${resolvedBy} uses its package.json and tsconfig.json`, async () => {
       const targets = {
         "component": "app/component.tsx",
@@ -1914,13 +1915,14 @@ describe("bundler", () => {
         "unused": "node_modules/side-effect-free/unused.js",
         "importer": "esm-pkg/importer.js",
       };
+      const alias = resolvedBy === "onResolve";
       using dir = tempDir("plugin-resolved-file-metadata", {
         ...fakeJsxRuntimes,
         "entry.js": `
-          import { Component } from "${resolvedBy === "onResolve" ? "alias/component" : "./app/component.tsx"}";
-          import { secondDecoratorArgument } from "${resolvedBy === "onResolve" ? "alias/decorated" : "./app/decorated.ts"}";
-          import "${resolvedBy === "onResolve" ? "alias/unused" : "side-effect-free/unused.js"}";
-          import { defaultImportOfCommonJS } from "${resolvedBy === "onResolve" ? "alias/importer" : "./esm-pkg/importer.js"}";
+          import { Component } from "${alias ? "alias/component" : "./app/component.tsx"}";
+          import { secondDecoratorArgument } from "${alias ? "alias/decorated" : "./app/decorated.ts"}";
+          import "${alias ? "alias/unused" : "side-effect-free/unused.js"}";
+          import { defaultImportOfCommonJS } from "${alias ? "alias/importer" : "./esm-pkg/importer.js"}";
           console.log(JSON.stringify({
             jsxImportSource: Component(),
             secondDecoratorArgument,
@@ -1954,18 +1956,22 @@ describe("bundler", () => {
         target: "bun",
         throw: false,
         plugins:
-          resolvedBy === "onResolve"
-            ? [
+          resolvedBy === "the resolver"
+            ? []
+            : [
                 {
-                  name: "alias",
+                  name: resolvedBy,
                   setup(build) {
-                    build.onResolve({ filter: /^alias\// }, args => ({
-                      path: join(root, targets[args.path.slice("alias/".length) as keyof typeof targets]),
-                    }));
+                    if (alias) {
+                      build.onResolve({ filter: /^alias\// }, args => ({
+                        path: join(root, targets[args.path.slice("alias/".length) as keyof typeof targets]),
+                      }));
+                    } else {
+                      build.onResolve({ filter: /.*/ }, () => undefined);
+                    }
                   },
                 },
-              ]
-            : [],
+              ],
       });
       expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
         success: true,
@@ -1991,62 +1997,158 @@ describe("bundler", () => {
     });
   }
 
-  // The import that lands first creates the module, so a file that onResolve and the resolver both reach
-  // has to come out the same in either order. The onLoad callback reports that the module exists, and the
-  // other import waits for it.
-  test.concurrent("plugin/file reached by onResolve and by the resolver builds the same in either order", async () => {
-    using dir = tempDir("plugin-resolved-file-join-order", {
-      ...fakeJsxRuntimes,
+  // The import that lands first creates the module, so a file that onResolve names and that the resolver
+  // also finds has to come out the same in either order. The onLoad callback reports that the module
+  // exists, and the other import waits for it.
+  for (const otherImport of ["the resolver", "the resolver after onResolve declined"] as const) {
+    test.concurrent(
+      `plugin/file reached by onResolve and by ${otherImport} builds the same in either order`,
+      async () => {
+        using dir = tempDir("plugin-resolved-file-join-order", {
+          ...fakeJsxRuntimes,
+          "entry.js": `
+          import "late";
+          import { Component } from "alias/component";
+          console.log(Component());
+        `,
+          "late.js": `import "./app/component.tsx";`,
+          "app/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
+          "app/component.tsx": `export const Component = () => <div />;`,
+        });
+        const root = String(dir);
+
+        async function build(first: "onResolve" | "the other import") {
+          const componentExists = Promise.withResolvers<void>();
+          const result = await Bun.build({
+            entrypoints: [join(root, "entry.js")],
+            throw: false,
+            plugins: [
+              {
+                name: "order",
+                setup(build) {
+                  build.onLoad({ filter: /component\.tsx$/ }, () => {
+                    componentExists.resolve();
+                    return undefined;
+                  });
+                  build.onResolve({ filter: /^alias\/component$/ }, async () => {
+                    if (first === "the other import") await componentExists.promise;
+                    return { path: join(root, "app", "component.tsx") };
+                  });
+                  build.onResolve({ filter: /^late$/ }, async () => {
+                    if (first === "onResolve") await componentExists.promise;
+                    return { path: join(root, "late.js") };
+                  });
+                  if (otherImport === "the resolver after onResolve declined") {
+                    build.onResolve({ filter: /component\.tsx$/ }, () => undefined);
+                  }
+                },
+              },
+            ],
+          });
+          expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+            success: true,
+            logs: [],
+          });
+          const text = await result.outputs[0].text();
+          return { usesPreact: text.includes(`"preact"`), usesReact: text.includes(`"react"`), text };
+        }
+
+        const onResolveFirst = await build("onResolve");
+        const otherImportFirst = await build("the other import");
+        expect({ usesPreact: onResolveFirst.usesPreact, usesReact: onResolveFirst.usesReact }).toEqual({
+          usesPreact: true,
+          usesReact: false,
+        });
+        expect(onResolveFirst.text).toBe(otherImportFirst.text);
+      },
+    );
+  }
+
+  // A module that only a plugin can name stays a plugin module: the "sideEffects" of the package.json
+  // above it does not remove it. The resolver cannot find a path that is not on disk, a file in `files`,
+  // or a spelling it would not print, so no other import can create these modules.
+  test.concurrent("plugin/onResolve path the resolver cannot name keeps its side effects", async () => {
+    using dir = tempDir("plugin-resolved-file-not-on-disk", {
+      "package.json": JSON.stringify({ name: "app", sideEffects: false }),
       "entry.js": `
-        import "late";
-        import { Component } from "alias/component";
-        console.log(Component());
+        import "alias/not-on-disk";
+        import "alias/in-files";
+        import "alias/doubled-slash";
+        console.log("entry");
       `,
-      "late.js": `import "./app/component.tsx";`,
-      "app/tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
-      "app/component.tsx": `export const Component = () => <div />;`,
+      "src/real.js": `console.log("doubled slash ran");`,
+    });
+    const root = String(dir);
+    const targets = {
+      "not-on-disk": join(root, "src", "not-on-disk.js"),
+      "in-files": join(root, "src", "in-files.js"),
+      "doubled-slash": join(root, "src") + path.sep + path.sep + "real.js",
+    };
+
+    const result = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      files: { [targets["in-files"]]: `console.log("in files ran");` },
+      throw: false,
+      plugins: [
+        {
+          name: "alias",
+          setup(build) {
+            build.onResolve({ filter: /^alias\// }, args => ({
+              path: targets[args.path.slice("alias/".length) as keyof typeof targets],
+            }));
+            build.onLoad({ filter: /not-on-disk\.js$/ }, () => ({
+              contents: `console.log("not on disk ran");`,
+              loader: "js",
+            }));
+          },
+        },
+      ],
+    });
+    expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+      success: true,
+      logs: [],
+    });
+    const text = await result.outputs[0].text();
+    expect({
+      notOnDisk: text.includes("not on disk ran"),
+      inFiles: text.includes("in files ran"),
+      doubledSlash: text.includes("doubled slash ran"),
+    }).toEqual({ notOnDisk: true, inFiles: true, doubledSlash: true });
+  });
+
+  // The resolver lists a directory once. The bundler asks it about a file that onResolve named only after
+  // onLoad ran, so a file that onLoad writes next to the module is in that list.
+  test.concurrent("plugin/onLoad can write a file that the module it loads imports", async () => {
+    using dir = tempDir("plugin-resolved-file-onload-writes", {
+      "entry.js": `import "alias/generated";`,
+      "generated/module.js": `console.log("replaced by onLoad");`,
     });
     const root = String(dir);
 
-    async function build(first: "onResolve" | "resolver") {
-      const componentExists = Promise.withResolvers<void>();
-      const result = await Bun.build({
-        entrypoints: [join(root, "entry.js")],
-        throw: false,
-        plugins: [
-          {
-            name: "order",
-            setup(build) {
-              build.onLoad({ filter: /component\.tsx$/ }, () => {
-                componentExists.resolve();
-                return undefined;
-              });
-              build.onResolve({ filter: /^alias\/component$/ }, async () => {
-                if (first === "resolver") await componentExists.promise;
-                return { path: join(root, "app", "component.tsx") };
-              });
-              build.onResolve({ filter: /^late$/ }, async () => {
-                if (first === "onResolve") await componentExists.promise;
-                return { path: join(root, "late.js") };
-              });
-            },
+    const result = await Bun.build({
+      entrypoints: [join(root, "entry.js")],
+      throw: false,
+      plugins: [
+        {
+          name: "generate",
+          setup(build) {
+            build.onResolve({ filter: /^alias\/generated$/ }, () => ({ path: join(root, "generated", "module.js") }));
+            build.onLoad({ filter: /generated[\\/]module\.js$/ }, async () => {
+              await Bun.write(join(root, "generated", "sibling.js"), `console.log("sibling ran");`);
+              return { contents: `import "./sibling.js"; console.log("module ran");`, loader: "js" };
+            });
           },
-        ],
-      });
-      expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
-        success: true,
-        logs: [],
-      });
-      const text = await result.outputs[0].text();
-      return { usesPreact: text.includes(`"preact"`), usesReact: text.includes(`"react"`), text };
-    }
-
-    const onResolveFirst = await build("onResolve");
-    const resolverFirst = await build("resolver");
-    expect({ usesPreact: onResolveFirst.usesPreact, usesReact: onResolveFirst.usesReact }).toEqual({
-      usesPreact: true,
-      usesReact: false,
+        },
+      ],
     });
-    expect(onResolveFirst.text).toBe(resolverFirst.text);
+    expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+      success: true,
+      logs: [],
+    });
+    const text = await result.outputs[0].text();
+    expect({ sibling: text.includes("sibling ran"), module: text.includes("module ran") }).toEqual({
+      sibling: true,
+      module: true,
+    });
   });
 });

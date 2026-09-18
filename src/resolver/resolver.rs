@@ -1397,7 +1397,7 @@ impl<'a> Resolver<'a> {
                 if result.path_pair.primary.namespace() != b"node"
                     && !result.flags.is_standalone_module()
                 {
-                    if let Err(err) = self.finalize_result(&mut result, kind, true) {
+                    if let Err(err) = self.finalize_result(&mut result, kind) {
                         self.extension_order = original_order;
                         return ResultUnion::Failure(err);
                     }
@@ -1508,39 +1508,10 @@ impl<'a> Resolver<'a> {
         self.resolve(source_dir, import_path, kind)
     }
 
-    /// The `Result` an import of the absolute path `path` gets from the resolver, for a file
-    /// that something else resolved (a bundler plugin's `onResolve`). The path stays as given:
-    /// no extension is probed and no symlink is followed. `None` when the directory of `path`
-    /// is not on disk.
-    pub fn result_for_resolved_file(
-        &mut self,
-        path: Path,
-        kind: ast::ImportKind,
-    ) -> Option<Result> {
-        // As in `resolve`: a path with a null byte names nothing on disk, and the directory
-        // cache asserts that it gets none.
-        if strings::index_of_char(path.text, 0).is_some() {
-            return None;
-        }
-        self.read_dir_info_ignore_error(path.name().dir)?;
-        let mut result = Result {
-            path_pair: PathPair {
-                primary: path,
-                secondary: None,
-            },
-            jsx: self.opts.jsx.clone(),
-            import_kind: kind,
-            ..Default::default()
-        };
-        self.finalize_result(&mut result, kind, false).ok()?;
-        Some(result)
-    }
-
     pub(crate) fn finalize_result(
         &mut self,
         result: &mut Result,
         kind: ast::ImportKind,
-        follow_symlinks: bool,
     ) -> crate::CrateResult<()> {
         if result.flags.is_external() {
             return Ok(());
@@ -1610,7 +1581,7 @@ impl<'a> Resolver<'a> {
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
-            if follow_symlinks && let Some(query) = dir.get_entry(self.generation, name.filename) {
+            if let Some(query) = dir.get_entry(self.generation, name.filename) {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };

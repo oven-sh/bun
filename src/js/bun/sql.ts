@@ -263,8 +263,7 @@ const SQL: typeof Bun.SQL = function SQL(
     query.reject(pool.connectionClosedError());
   }
 
-  /// unsafe() on a transaction or reserved handle. BEGIN, COMMIT, ROLLBACK and SAVEPOINT do not come
-  /// through here: close() stops accepting queries and then still has to send ROLLBACK.
+  // Not for COMMIT and ROLLBACK: close() stops accepting queries and then still has to send ROLLBACK.
   function unsafeQueryFromHandle(
     state: TransactionState,
     pooledConnection: PooledPostgresConnection,

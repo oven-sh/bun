@@ -1558,6 +1558,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = e.data.e_array().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
+            p.maybe_parenthesized_assign_error(e_.parenthesized_assign);
         }
         let items = e_.items.slice_mut();
         let mut spread_item_count: usize = 0;
@@ -1667,6 +1668,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut e_ = e.data.e_object().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
+            p.maybe_parenthesized_assign_error(e_.parenthesized_assign);
         }
 
         let mut has_spread = false;
@@ -1706,8 +1708,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_spread = true;
             }
 
-            // Extract the initializer for expressions like "({ a: b = c } = d)"
+            // Extract the initializer for "({ a: b = c } = d)". A rest property takes none.
             if in_.assign_target != js_ast::AssignTarget::None
+                && property.kind != G::PropertyKind::Spread
                 && property.initializer.is_none()
                 && property.value.is_some()
             {
@@ -1719,6 +1722,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         property.value = Some(bin.left);
                     }
                 }
+            }
+
+            // "({ ...[a] } = d)" is a syntax error.
+            if in_.assign_target != js_ast::AssignTarget::None
+                && property.kind == G::PropertyKind::Spread
+                && let Some(value) = &property.value
+                && matches!(value.data, Data::EArray(..) | Data::EObject(..))
+            {
+                p.log()
+                    .add_error(Some(p.source), value.loc, b"Invalid assignment target");
             }
 
             if let Some(value) = &mut property.value {

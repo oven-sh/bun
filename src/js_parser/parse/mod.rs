@@ -74,7 +74,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let had_pure_comment_before =
             self.lexer.has_pure_comment_before && !self.options.ignore_dce_annotations;
+        let paren_assign_before = errors
+            .as_deref()
+            .and_then(|errors| errors.parenthesized_assign);
         *expr = self.parse_prefix(level, errors.as_deref_mut(), flags)?;
+        let paren_assign_prefix = match errors.as_deref() {
+            Some(errors) if errors.parenthesized_assign != paren_assign_before => {
+                Self::assign_ptr(expr)
+            }
+            _ => None,
+        };
         // `errors` is reborrowed via as_deref_mut for each call site.
 
         // There is no formal spec for "__PURE__" comments but from reverse-
@@ -95,8 +104,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        self.parse_suffix(expr, level, errors, flags)?;
+        self.parse_suffix(expr, level, errors.as_deref_mut(), flags)?;
+
+        // Only a bare "(a = 1)" item counts: "[(a = {}).b] = [1]" is valid.
+        if let (Some(errors), Some(prefix)) = (errors, paren_assign_prefix)
+            && Self::assign_ptr(expr) != Some(prefix)
+        {
+            errors.parenthesized_assign = paren_assign_before;
+        }
         Ok(())
+    }
+
+    fn assign_ptr(expr: &Expr) -> Option<*const E::Binary> {
+        match &expr.data {
+            js_ast::ExprData::EBinary(e) if e.op == js_ast::OpCode::BinAssign => {
+                Some(e.as_ptr().cast_const())
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
@@ -449,9 +474,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.latest_arrow_arg_loc = p.lexer.loc();
 
             let mut item = Expr::EMPTY;
+            let parenthesized_assign = errors.parenthesized_assign;
             p.parse_expr_or_bindings(Level::Comma, Some(&mut errors), &mut item)?;
 
             if is_spread {
+                // "...(a = 1)" is already an invalid rest argument without the parentheses
+                errors.parenthesized_assign = parenthesized_assign;
                 item = p.new_expr(E::Spread { value: item }, loc);
             }
 
@@ -577,6 +605,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_arrow_fn || opts.force_arrow_fn {
                 p.maybe_comma_spread_error(comma_after_spread);
                 p.log_arrow_arg_errors(&mut arrow_arg_errors);
+                if let Some(paren) = errors.parenthesized_assign {
+                    p.log().add_error(
+                        Some(p.source),
+                        paren,
+                        b"Unexpected parentheses in binding pattern",
+                    );
+                }
 
                 // Now that we've decided we're an arrow function, report binding pattern
                 // conversion errors

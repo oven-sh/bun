@@ -216,7 +216,6 @@ declare function $cancel(): TODO;
 declare function $close(): TODO;
 declare function $code(): TODO;
 declare function $createFIFO(): TODO;
-declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
 declare function $data(): TODO;
 declare function $decode(): TODO;
 declare function $dirname(): TODO;

@@ -275,28 +275,13 @@ fn no_processed_pred(id: BlockId) -> CompilerDiagnostic {
 // Post-dominator frontier
 // =============================================================================
 
-/// Computes the post-dominator frontier of every block. The frontier of a
-/// block `target` is the set of immediate predecessors of `target`, or of a
-/// block that `target` post-dominates, that `target` does not strictly
-/// post-dominate themselves. Intuitively, these are the earliest blocks from
-/// which execution branches such that it may or may not reach the target block.
-/// A block can be in its own frontier: the test at the end of a `do`/`while`
-/// loop decides whether its own block runs again.
-///
-/// Not in upstream, which computes one frontier at a time (`post_dominator_frontier`)
-/// and walks every ancestor of the target to find the blocks that the target
-/// post-dominates (`post_dominators_of`). That is quadratic in the number of
-/// blocks. This walks the post-dominator tree instead: an edge `pred -> block`
-/// puts `pred` in the frontier of `block` and of each post-dominator of
-/// `block`, up to the immediate post-dominator of `pred`. From there on, every
-/// block post-dominates `pred` too.
+/// The post-dominator frontier of every block. Not in upstream, whose `post_dominator_frontier` walks every ancestor of one target per call.
 pub fn post_dominator_frontiers(
     func: &HirFunction,
     post_dominators: &PostDominator,
 ) -> HashMap<BlockId, Vec<BlockId>> {
     let mut frontiers: HashMap<BlockId, Vec<BlockId>> = HashMap::default();
-    // `(pred, block)`, sorted, so that a frontier gets every copy of one
-    // predecessor in a row.
+    // Sorted by `pred`, so that a frontier gets every copy of one predecessor in a row.
     let mut edges: Vec<(BlockId, BlockId)> = Vec::new();
     for (block_id, block) in &func.body.blocks {
         frontiers.insert(*block_id, Vec::new());
@@ -306,17 +291,13 @@ pub fn post_dominator_frontiers(
 
     for (pred, block_id) in edges {
         let pred_post_dominator = post_dominators.get(pred);
-        // A block that cannot reach the exit has no post-dominator. Upstream
-        // takes such a block as post-dominated by itself when it is its own
-        // predecessor.
+        // Upstream takes a block with no post-dominator as post-dominated by itself when it is its own predecessor.
         if pred == block_id && pred_post_dominator.is_none() {
             continue;
         }
         let mut target_id = block_id;
         while Some(target_id) != pred_post_dominator {
-            // The walk stops at the post-dominator of `pred`, so it gets to
-            // the synthetic exit node, which has no frontier, only if `preds`
-            // does not match the terminals.
+            // Only the synthetic exit node has no frontier. The walk gets there only if `preds` does not match the terminals.
             let Some(frontier) = frontiers.get_mut(&target_id) else {
                 break;
             };

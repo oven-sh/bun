@@ -62,8 +62,8 @@ pub(crate) fn infer_mutation_aliasing_effects(
     env: &mut Environment,
     is_function_expression: bool,
 ) -> Result<(), CompilerDiagnostic> {
-    // ValueIds are dense and pass-local so `InferenceState.values` can be
-    // indexed by them; allocation starts at 0 and continues via `Context.next_value_id`.
+    // ValueIds are dense and pass-local so `InferenceState.values` can be a
+    // `ChunkedVec`; allocation starts at 0 and continues via `Context.next_value_id`.
     let mut next_value_id = 0u32;
 
     let sets = RefCell::new(ValueIdSetStore::default());
@@ -257,8 +257,8 @@ pub(crate) fn infer_mutation_aliasing_effects(
 /// after its own turn only if it is the target of an edge from the same or a
 /// later block, or if such a target reaches it. Every other block is processed
 /// exactly once and `states_by_block` never reads its incoming state back. A
-/// state holds a pointer for every [`CHUNK_LEN`] identifiers of the function,
-/// so keeping one per block of a long loop-free function is quadratic.
+/// state is a pointer per [`CHUNK_LEN`] identifiers, so keeping one per block of a
+/// long loop-free function is quadratic.
 fn blocks_reachable_from_back_edges(func: &HirFunction) -> HashSet<BlockId> {
     let position: HashMap<BlockId, usize> = func
         .body
@@ -319,21 +319,11 @@ fn hashset_of(r: ValueReason) -> ValueReasonSet {
 
 /// 16-byte points-to set for an identifier.
 ///
-/// Typical cardinality is 1; phis with N predecessors merge N sets. Up to
-/// [`ValueIdSet::INLINE_CAP`] ids are stored inline. The ids of a larger set
-/// are in the [`ValueIdSetStore`] of the pass, and the cell holds their offset.
-/// The store keeps one copy of each sequence of ids, so two cells with the
-/// same bits are the same set, and a set that many states hold costs each of
-/// them 16 bytes.
-///
-/// The ids stay in the order in which they were added, like the `Set` of the
-/// TypeScript original. The order is observable: `freeze_function_captures_transitive`
-/// freezes one value of a set, and what that freezes decides whether the walk
-/// from the next value skips a capture.
+/// Typical cardinality is 1; phis with N predecessors merge N sets. The inline
+/// storage holds up to 3 `ValueId`s in 12 bytes; the 4th byte word is the
+/// length. Past 3 entries, `ids[0]` is the offset of the ids in the [`ValueIdSetStore`] of the pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct ValueIdSet {
-    /// `len <= INLINE_CAP`: the ids, then zeros. Otherwise `ids[0].0` is the
-    /// offset of the ids in the store, then zeros.
     ids: [ValueId; ValueIdSet::INLINE_CAP],
     len: u32,
 }
@@ -372,11 +362,7 @@ impl ValueIdSet {
     }
 }
 
-/// The ids of every [`ValueIdSet`] of one pass that does not fit inline.
-///
-/// A set is never removed or changed. The states of all blocks share the
-/// store, so a merge sees at once that both sides hold the same set, and a
-/// large set is not copied into every state that holds it.
+/// The ids of every [`ValueIdSet`] of one pass that does not fit inline: one copy per sequence, shared by all states.
 #[derive(Debug, Default)]
 struct ValueIdSetStore {
     ids: Vec<ValueId>,
@@ -390,8 +376,7 @@ struct ValueIdSetStore {
 }
 
 impl ValueIdSetStore {
-    /// The ids of `a`, then the ids of `b` that `a` does not have. It is `a`
-    /// itself when `a` has them all.
+    /// `a` itself if it has every id of `b`, else `a` then the new ids of `b`: `freeze_function_captures_transitive` observes the order.
     fn union(&mut self, a: ValueIdSet, b: ValueIdSet) -> ValueIdSet {
         if a == b || b.is_empty() {
             return a;
@@ -447,8 +432,7 @@ impl ValueIdSetStore {
         };
         let end = u32::try_from(self.ids.len()).expect("ValueIdSetStore offset fits in u32");
         let start = *self.offsets.entry(hash).or_insert(end);
-        // On a hash collision the set gets a copy of its own. Nothing relies
-        // on equal sets having equal offsets.
+        // After a hash collision a set gets a copy of its own: equal sets need not have equal offsets.
         if self.ids.get(start as usize..start as usize + ids.len()) == Some(ids) {
             set.ids[0] = ValueId(start);
         } else {
@@ -460,18 +444,10 @@ impl ValueIdSetStore {
 }
 
 // =============================================================================
-// ChunkedVec — dense map that clones share
+// ChunkedVec: dense map that clones share
 // =============================================================================
 
-/// A dense map from an index to a `T`. An index that was never set holds
-/// `T::default()`.
-///
-/// The fixpoint clones the state for every block and merges two states at
-/// every join. With a flat `Vec` that is a copy and a compare of every entry,
-/// for each block: quadratic in a function with many blocks. Here the entries
-/// are in chunks, and a clone shares a chunk until one side writes to it. Two
-/// states that meet at a join come from one state, and differ only in the
-/// chunks that the blocks between wrote to. `merge_from` skips the rest.
+/// A dense map whose clones share a chunk until one writes to it, so a clone per block and a merge per join do not touch every entry.
 #[derive(Clone)]
 struct ChunkedVec<T> {
     chunks: Vec<Rc<[T; CHUNK_LEN]>>,
@@ -493,8 +469,7 @@ impl<T: Copy + PartialEq + Default> ChunkedVec<T> {
     }
 
     fn set(&mut self, index: usize, value: T) {
-        // A block that the fixpoint visits again writes most of its entries
-        // again, unchanged. That must not take the chunk out of sharing.
+        // A block that the fixpoint visits again writes most entries unchanged. That must not unshare the chunk.
         if self.get(index) == value {
             return;
         }
@@ -506,8 +481,7 @@ impl<T: Copy + PartialEq + Default> ChunkedVec<T> {
         Rc::make_mut(&mut self.chunks[chunk_index])[index % CHUNK_LEN] = value;
     }
 
-    /// Sets each entry to `merge(entry, other entry)`, for the entries that
-    /// differ. Returns `true` if an entry changed.
+    /// Merges the entries that differ with `merge`. Returns `true` if an entry changed.
     fn merge_from(&mut self, other: &Self, mut merge: impl FnMut(T, T) -> T) -> bool {
         if self.chunks.len() < other.chunks.len() {
             self.chunks
@@ -531,8 +505,7 @@ impl<T: Copy + PartialEq + Default> ChunkedVec<T> {
                 *value = merged;
             }
             if same_as_other {
-                // Share the chunk of `other`, also when nothing changed. Else
-                // every later merge of the two compares the entries again.
+                // Also when nothing changed, or every later merge of the two compares these entries again.
                 *this_chunk = Rc::clone(other_chunk);
             } else if chunk_changed {
                 match Rc::get_mut(this_chunk) {
@@ -565,21 +538,14 @@ impl<T: Copy + PartialEq + Default + std::fmt::Debug> std::fmt::Debug for Chunke
 
 /// The abstract state tracked during inference.
 ///
-/// Not in upstream, which keeps a `HashMap` for each of the two maps, with a
-/// `HashSet` per identifier, and clones them for every block. `ValueId`s are
-/// pass-local and start at 0, and `IdentifierId` indexes `env.identifiers`, so
-/// both maps are a [`ChunkedVec`]. `env.identifiers` is shared across the
-/// top-level component and all nested closures. A nested function expression
-/// has a handful of live ids there, and every other chunk of its `variables`
-/// is one shared empty chunk.
+/// Not in upstream, which clones two `HashMap`s per block. Both maps are dense, also for a nested function: its unused chunks are one shared chunk.
 #[derive(Debug, Clone)]
 struct InferenceState<'a> {
     /// Kind of each allocation site, indexed by `ValueId.0`. `None` = unset.
     values: ChunkedVec<Option<AbstractValue>>,
     /// Points-to set per identifier, indexed by `IdentifierId.0`. Empty = undefined.
     variables: ChunkedVec<ValueIdSet>,
-    /// The ids of the sets in `variables` that do not fit inline. Every state
-    /// of the pass shares it.
+    /// The ids of the sets in `variables` that do not fit inline, shared by every state of the pass.
     sets: &'a RefCell<ValueIdSetStore>,
     uninitialized_access: std::cell::Cell<Option<(IdentifierId, Option<SourceLocation>)>>,
 }

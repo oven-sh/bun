@@ -371,7 +371,10 @@ export const context: TestContext = {
       }
     }
 
-    this.__subscriberClientPool = [];
+    // Empty the array in place: valkey.test.ts spreads this context into one
+    // copy per connection type, and the copies share this array. Assigning a
+    // new array here would leave the other copy's subscribers uncleaned.
+    this.__subscriberClientPool.length = 0;
   },
 };
 export { context as ctx };
@@ -679,15 +682,8 @@ export function awaitableCounter(timeoutMs: number = 1000) {
   const incrementBy = (count: number) => {
     currentCount += count;
 
-    for (const [value, alarm, resolve] of activeResolvers) {
-      alarm.close();
-
-      if (currentCount >= value) {
-        resolve(currentCount);
-      }
-    }
-
-    // Remove resolved promises
+    // Resolve the waiters whose target is reached and cancel only their alarms.
+    // A waiter that is still short of its target keeps its timeout.
     const remaining: typeof activeResolvers = [];
     for (const [value, alarm, resolve] of activeResolvers) {
       if (currentCount >= value) {

@@ -964,6 +964,31 @@ describe("package-lock.json migration fixes", () => {
     expect(fs.existsSync(join(String(dir), "node_modules/alias/index.js"))).toBeTrue();
   });
 
+  // A git resolution is written to bun.lock as "git+" + the repository URL, so a
+  // dependency on a plain git:// host comes back as "git+git://...". The lockfile
+  // parser has to accept that spelling, otherwise every later install throws the
+  // lockfile away ("Unexpected resolution") and --frozen-lockfile can never pass.
+  test.concurrent("git:// hosts round-trip through bun.lock", async () => {
+    const dependencies = {
+      g: "git://example.com/user/g.git",
+      h: "git://example.com/user/h.git#v1",
+    };
+    using dir = synthetic("npm-migrate-git-protocol", {
+      "package.json": JSON.stringify({ name: "git-protocol", dependencies }),
+      "package-lock.json": npmLock("git-protocol", {
+        "": { name: "git-protocol", dependencies },
+        "node_modules/g": { version: "1.0.0", resolved: `git://example.com/user/g.git#${sha(1)}` },
+        "node_modules/h": { version: "1.0.0", resolved: `git://example.com/user/h.git#${sha(2)}` },
+      }),
+    });
+
+    const { lock } = await migrate(dir);
+    expect(lock.workspaces[""].dependencies).toStrictEqual(dependencies);
+    expect(lock.packages.g[0]).toBe(`g@git+git://example.com/user/g.git#${sha(1)}`);
+    expect(lock.packages.h[0]).toBe(`h@git+git://example.com/user/h.git#${sha(2)}`);
+    await frozen(dir);
+  });
+
   test.concurrent("root bundleDependencies keeps its subtree (B2)", async () => {
     using dir = fixture("testing-rebuild-bundle--a");
     const { text, lock } = await migrate(dir);

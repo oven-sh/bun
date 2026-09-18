@@ -16,6 +16,10 @@ pub const MAX_FRAME_SIZE_DEFAULT: u32 = 16_384; // 2^14
 pub const MAX_FRAME_SIZE_LOWER: u32 = 16_384; // 2^14
 pub const MAX_FRAME_SIZE_UPPER: u32 = 16_777_215; // 2^24 - 1
 
+/// §6.5.2 SETTINGS_HEADER_TABLE_SIZE initial value: the size of both HPACK dynamic tables until
+/// a SETTINGS frame has changed it.
+pub const DEFAULT_HEADER_TABLE_SIZE: u32 = 4_096;
+
 /// §6.9.1 flow-control window bounds.
 pub const DEFAULT_WINDOW_SIZE: u32 = 65_535; // 2^16 - 1
 pub const MAX_WINDOW_SIZE: u32 = 2_147_483_647; // 2^31 - 1

@@ -332,7 +332,7 @@ impl Connection {
             max_settings: 32,
             send_window: SendWindow::new(wire::DEFAULT_WINDOW_SIZE),
             recv_window: RecvWindow::new(wire::DEFAULT_WINDOW_SIZE),
-            hpack: hpack::Coder::new(local.header_table_size),
+            hpack: hpack::Coder::new(),
             streams: HashMap::new(),
             header_block_in_flight: None,
             header_block: Vec::new(),
@@ -695,6 +695,10 @@ impl Connection {
             // The peer has acknowledged this submission: header-list enforcement may now use the
             // limit it carried.
             self.enforced_max_header_list_size = acked.settings.max_header_list_size;
+            // Likewise the HPACK decoder: the peer encoded every header block before this ACK
+            // against the previous table size.
+            self.hpack
+                .set_decoder_capacity(acked.settings.header_table_size);
             sink.on_local_settings(&acked.settings);
             return false;
         }
@@ -2082,7 +2086,7 @@ mod tests {
 
     /// Encode a header block with a standalone coder (mirrors a real peer's encoder).
     fn encode_block(pairs: &[(&[u8], &[u8])]) -> Vec<u8> {
-        let mut coder = hpack::Coder::new(4096);
+        let mut coder = hpack::Coder::new();
         let mut buf = vec![0u8; 4096];
         let mut off = 0usize;
         for (name, value) in pairs {

@@ -7655,8 +7655,15 @@ impl H2FrameParser {
         // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
         // before freeing). Wrapping it in `heap::take` and letting `Box` drop
         // would `mi_free` the struct but leak the encoder/decoder internals.
+        //
+        // This handle only encodes. The peer's decoder starts with a 4096-byte table whatever our
+        // own headerTableSize is, so the encoder must not start above that.
         this_ref.hpack.set(Some(lshpack::HpackHandle::new(
-            this_ref.local_settings.get().header_table_size,
+            this_ref
+                .local_settings
+                .get()
+                .header_table_size
+                .min(crate::api::h2::wire::DEFAULT_HEADER_TABLE_SIZE),
         )));
         if is_server {
             let _ = this_ref.set_settings(this_ref.local_settings.get());

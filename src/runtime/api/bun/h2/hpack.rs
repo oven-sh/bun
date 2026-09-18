@@ -10,6 +10,8 @@
 
 use bun_http::lshpack::{DecodeResult, HpackError, HpackHandle};
 
+use super::wire::DEFAULT_HEADER_TABLE_SIZE;
+
 /// RFC 7541 §6.3: a Dynamic Table Size Update integer never needs more than 6 bytes for a u32.
 pub const MAX_SIZE_UPDATE_BYTES: usize = 6;
 
@@ -22,12 +24,22 @@ pub struct Coder {
 }
 
 impl Coder {
-    pub fn new(max_capacity: u32) -> Self {
+    /// Both tables start at the SETTINGS_HEADER_TABLE_SIZE initial value. The peer's SETTINGS move
+    /// the encoder (`queue_encoder_capacity`). Our SETTINGS move the decoder, but only once the
+    /// peer has ACKed them (`set_decoder_capacity`).
+    pub fn new() -> Self {
         Coder {
-            hpack: HpackHandle::new(max_capacity),
-            enc_capacity: max_capacity,
+            hpack: HpackHandle::new(DEFAULT_HEADER_TABLE_SIZE),
+            enc_capacity: DEFAULT_HEADER_TABLE_SIZE,
             pending_enc_capacity: None,
         }
+    }
+
+    /// Apply a SETTINGS_HEADER_TABLE_SIZE of ours that the peer has ACKed. RFC 7541 §6.3: the
+    /// limit on the peer's size updates is the last value it acknowledged, and until the ACK it
+    /// still encodes against the previous one (RFC 9113 §6.5.3).
+    pub fn set_decoder_capacity(&mut self, capacity: u32) {
+        self.hpack.set_decoder_max_capacity(capacity);
     }
 
     /// Schedule an encoder capacity change from a received SETTINGS_HEADER_TABLE_SIZE. Applied

@@ -519,6 +519,18 @@ void lshpack_wrapper_enc_set_max_capacity(lshpack_wrapper* self, unsigned max_ca
     lshpack_enc_set_max_capacity(&self->enc, max_capacity);
 }
 
+// The limit on the peer's RFC 7541 §6.3 Dynamic Table Size Updates. The table itself only changes
+// size when the peer's encoder says so, except that it cannot stay above a lowered limit (what
+// nghttp2_hd_inflate_change_table_size does). lshpack_dec_set_max_capacity() alone is the
+// init-time setter: it would also grow the table to the limit.
+void lshpack_wrapper_dec_set_max_capacity(lshpack_wrapper* self, unsigned max_capacity)
+{
+    if (max_capacity < self->dec.hpd_cur_max_capacity)
+        lshpack_dec_set_max_capacity(&self->dec, max_capacity);
+    else
+        self->dec.hpd_max_capacity = max_capacity;
+}
+
 void lshpack_wrapper_deinit(lshpack_wrapper* self)
 {
     lshpack_dec_cleanup(&self->dec);

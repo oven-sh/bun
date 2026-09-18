@@ -196,19 +196,21 @@ it("--offline skips an optional dependency that is not in the cache", async () =
 
 // The install phase can also meet an optional dependency that is not in the cache: the lockfile
 // resolves it, but no earlier install placed it (it is for another platform), or the cache lost it.
-// --offline leaves it out, and with it everything below it. Only a package that something
-// installed requires is an error.
+// --offline skips it. What is below it is then not required by anything that is installed, so a
+// cache miss there is not an error. A package that an installed package requires still is.
 describe.concurrent("--offline with an optional dependency that is not in the cache", () => {
   const otherCpu = process.arch === "arm64" ? "x64" : "arm64";
-  const packages: Record<string, object> = {
-    "host": { optionalDependencies: { native: "1.0.0" } },
-    "native": { dependencies: { leaf: "1.0.0" } },
-    "host-other-cpu": { optionalDependencies: { "native-other-cpu": "1.0.0" } },
-    "native-other-cpu": { cpu: [otherCpu], dependencies: { leaf: "1.0.0" } },
-    "uses-leaf": { dependencies: { leaf: "1.0.0" } },
-    "uses-native": { dependencies: { native: "1.0.0" } },
-    "leaf": {},
-    "plain": {},
+  // name -> version -> the rest of its package.json
+  const packages: Record<string, Record<string, object>> = {
+    "host": { "1.0.0": { optionalDependencies: { native: "1.0.0" } } },
+    "native": { "1.0.0": { dependencies: { leaf: "1.0.0" } } },
+    "host-other-cpu": { "1.0.0": { optionalDependencies: { "native-other-cpu": "1.0.0" } } },
+    "native-other-cpu": { "1.0.0": { cpu: [otherCpu], dependencies: { leaf: "1.0.0" } } },
+    "uses-leaf": { "1.0.0": { dependencies: { leaf: "1.0.0" } } },
+    "uses-leaf-2": { "1.0.0": { dependencies: { leaf: "2.0.0" } } },
+    "uses-native": { "1.0.0": { dependencies: { native: "1.0.0" } } },
+    "leaf": { "1.0.0": {}, "2.0.0": {} },
+    "plain": { "1.0.0": {} },
   };
   const tarballs: Record<string, Uint8Array> = {};
   // A git dependency that depends on leaf.
@@ -217,9 +219,14 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
   let gitNative = "";
 
   beforeAll(async () => {
-    for (const name of Object.keys(packages)) {
-      const manifest = JSON.stringify({ name, version: "1.0.0", ...packages[name] });
-      tarballs[name] = await new Bun.Archive({ "package/package.json": manifest }, { compress: "gzip" }).bytes();
+    for (const [name, versions] of Object.entries(packages)) {
+      for (const [version, rest] of Object.entries(versions)) {
+        const manifest = JSON.stringify({ name, version, ...rest });
+        tarballs[`${name}-${version}.tgz`] = await new Bun.Archive(
+          { "package/package.json": manifest },
+          { compress: "gzip" },
+        ).bytes();
+      }
     }
     if (!hasGit) return;
     gitDir = tempDir("offline-optional-git", {
@@ -255,17 +262,14 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       fetch(request) {
         const { origin, pathname } = new URL(request.url);
         requests.push(pathname);
-        const tarballOf = pathname.match(/^\/(.+)-1\.0\.0\.tgz$/)?.[1];
-        const name = tarballOf ?? pathname.slice(1);
+        const name = pathname.slice(1);
+        if (name in tarballs) return new Response(tarballs[name]);
         if (!(name in packages)) return new Response("not found", { status: 404 });
-        if (tarballOf) return new Response(tarballs[name]);
-        return Response.json({
-          name,
-          "dist-tags": { latest: "1.0.0" },
-          versions: {
-            "1.0.0": { name, version: "1.0.0", ...packages[name], dist: { tarball: `${origin}/${name}-1.0.0.tgz` } },
-          },
-        });
+        const versions: Record<string, object> = {};
+        for (const [version, rest] of Object.entries(packages[name])) {
+          versions[version] = { name, version, ...rest, dist: { tarball: `${origin}/${name}-${version}.tgz` } };
+        }
+        return Response.json({ name, "dist-tags": { latest: Object.keys(versions).at(-1) }, versions });
       },
     });
   }
@@ -286,10 +290,20 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       names.some(name => entry === name || entry.startsWith(name + "@"));
   const gitCacheEntries = (entry: string) => entry.endsWith(".git") || entry.startsWith("@G@");
 
-  /** Installs online, removes the `evict` entries from the cache, then installs again with --offline and no node_modules. */
+  /**
+   * Installs online, removes the `evict` entries from the cache, then installs again with
+   * --offline, without node_modules unless `keepNodeModules` is set.
+   */
   async function installOfflineAfterOnline(
     linker: "hoisted" | "isolated",
-    project: { manifest: object; evict?: (cacheEntry: string) => boolean; offlineArgs?: string[] },
+    project: {
+      manifest: object;
+      evict?: (cacheEntry: string) => boolean;
+      offlineArgs?: string[];
+      keepNodeModules?: boolean;
+      /** Folders below node_modules to return the installed version of. */
+      versionsOf?: string[];
+    },
   ) {
     const requests: string[] = [];
     await using registry = serveRegistry(requests);
@@ -313,16 +327,21 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
     for (const entry of await readdirSorted(cache)) {
       if (project.evict?.(entry)) await rm(join(cache, entry), { recursive: true, force: true });
     }
-    await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+    if (!project.keepNodeModules) await rm(join(cwd, "node_modules"), { recursive: true, force: true });
 
     const before = requests.length;
     const offline = await install(cwd, ["--offline", ...(project.offlineArgs ?? [])]);
+    const versions: Record<string, string> = {};
+    for (const folder of project.versionsOf ?? []) {
+      versions[folder] = (await Bun.file(join(cwd, "node_modules", folder, "package.json")).json()).version;
+    }
     return {
       err: offline.err,
       code: offline.code,
       installed: await installedPackages(cwd, linker),
       requests: requests.slice(before),
       lockfileChanged: lockfile !== (await Bun.file(join(cwd, "bun.lock")).text()),
+      versions,
     };
   }
 
@@ -334,27 +353,27 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
         offlineArgs: [`--cpu=${otherCpu}`],
       });
       expect(err).not.toContain("error:");
-      expect(result).toEqual({ installed: ["host-other-cpu"], requests: [], lockfileChanged: false });
+      expect(result).toEqual({ installed: ["host-other-cpu"], requests: [], lockfileChanged: false, versions: {} });
       expect(code).toBe(0);
     });
 
-    it("leaves out the optional dependency and everything below it", async () => {
+    it("does not report what is below the optional dependency", async () => {
       const { err, code, ...result } = await installOfflineAfterOnline(linker, {
         manifest: { dependencies: { host: "1.0.0" } },
         evict: cacheEntriesOf("native", "leaf"),
       });
       expect(err).not.toContain("error:");
-      expect(result).toEqual({ installed: ["host"], requests: [], lockfileChanged: false });
+      expect(result).toEqual({ installed: ["host"], requests: [], lockfileChanged: false, versions: {} });
       expect(code).toBe(0);
     });
 
-    it.skipIf(!hasGit)("leaves out an optional git dependency and everything below it", async () => {
+    it.skipIf(!hasGit)("does not report what is below an optional git dependency", async () => {
       const { err, code, ...result } = await installOfflineAfterOnline(linker, {
         manifest: { dependencies: { plain: "1.0.0" }, optionalDependencies: { "git-native": gitNative } },
         evict: entry => gitCacheEntries(entry) || cacheEntriesOf("leaf")(entry),
       });
       expect(err).not.toContain("error:");
-      expect(result).toEqual({ installed: ["plain"], requests: [], lockfileChanged: false });
+      expect(result).toEqual({ installed: ["plain"], requests: [], lockfileChanged: false, versions: {} });
       expect(code).toBe(0);
     });
 
@@ -364,7 +383,12 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
         evict: entry => entry.startsWith("@G@"),
       });
       expect(err).not.toContain("error:");
-      expect(result).toEqual({ installed: ["git-native", "leaf", "plain"], requests: [], lockfileChanged: false });
+      expect(result).toEqual({
+        installed: ["git-native", "leaf", "plain"],
+        requests: [],
+        lockfileChanged: false,
+        versions: {},
+      });
       expect(code).toBe(0);
     });
 
@@ -382,6 +406,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
         missing: "leaf",
       },
       {
+        // host is placed first, so the folder of native carries the optional dependency.
         title: "that is optional for one installed package and required by another",
         dependencies: { host: "1.0.0", "uses-native": "1.0.0" },
         evict: ["native"],
@@ -395,6 +420,25 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       expect(r.err).toContain(`error: --offline: "${missing}" is not in the cache`);
       expect(r.requests).toEqual([]);
       expect(r.code).toBe(1);
+    });
+
+    it("leaves an installed node_modules alone when the cache is gone", async () => {
+      // The root's optional dependency is placed first, so leaf@1.0.0 below it takes the root
+      // folder and leaf@2.0.0 nests. The layout must not depend on what is in the cache.
+      const { err, code, ...result } = await installOfflineAfterOnline(linker, {
+        manifest: { optionalDependencies: { native: "1.0.0" }, dependencies: { "uses-leaf-2": "1.0.0" } },
+        evict: () => true,
+        keepNodeModules: true,
+        versionsOf: linker === "hoisted" ? ["leaf", "uses-leaf-2/node_modules/leaf"] : [],
+      });
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({
+        installed: ["leaf", ...(linker === "isolated" ? ["leaf"] : []), "native", "uses-leaf-2"],
+        requests: [],
+        lockfileChanged: false,
+        versions: linker === "hoisted" ? { "leaf": "1.0.0", "uses-leaf-2/node_modules/leaf": "2.0.0" } : {},
+      });
+      expect(code).toBe(0);
     });
   });
 });

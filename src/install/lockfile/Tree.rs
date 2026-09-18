@@ -600,21 +600,6 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
-    if dep.behavior.is_optional()
-        && manager
-            .offline_uncached
-            .as_ref()
-            .is_some_and(|uncached| uncached.is_set_allow_out_of_bound(pkg_id as usize, false))
-    {
-        if manager.options.log_level.is_verbose() {
-            bun_core::pretty_errorln!(
-                "<d>Skip installing<r> <b>{}<r> <d>- not in the cache<r>",
-                bstr::BStr::new(lockfile.str(&pkg_names[pkg_id as usize]))
-            );
-        }
-        return true;
-    }
-
     if parent_pkg_id != 0 {
         return false;
     }

@@ -1141,8 +1141,6 @@ pub(crate) fn install_isolated_packages(
 ) -> Result<crate::package_install::Summary, AllocError> {
     analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
-    manager.offline_uncached = package_manager::enqueue::offline_uncached_packages(manager);
-
     // Take a raw pointer so column borrows below don't tie up `&mut manager`
     // (which owns the lockfile).
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
@@ -1156,16 +1154,14 @@ pub(crate) fn install_isolated_packages(
     } else {
         Timings::Quiet
     };
-    let store = build_store(
+    let store: Store = build_store(
         &*manager,
         &*lockfile,
         install_root_dependencies,
         workspace_filters,
         packages_to_install,
         timings,
-    );
-    manager.offline_uncached = None;
-    let store: Store = store?;
+    )?;
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {
@@ -2414,6 +2410,16 @@ pub(crate) fn install_isolated_packages(
 
                     let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
 
+                    // Under --offline every package that is not downloaded is a cache miss, and
+                    // `report_offline_misses` decides later which misses are errors.
+                    let not_downloaded = if installer.manager().options.offline
+                        == crate::package_manager_real::options::OfflineMode::Offline
+                    {
+                        installer::CompleteState::Skipped
+                    } else {
+                        installer::CompleteState::Fail
+                    };
+
                     match pkg_res_tag {
                         ResolutionTag::Npm => {
                             match installer.manager_mut().enqueue_package_for_download(
@@ -2437,8 +2443,7 @@ pub(crate) fn install_isolated_packages(
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
                                         .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    installer.on_task_complete(entry_id, not_downloaded);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2477,8 +2482,7 @@ pub(crate) fn install_isolated_packages(
                                 // --offline and not cached: nothing was queued
                                 entry_steps[entry_id.get() as usize]
                                     .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                installer
-                                    .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                installer.on_task_complete(entry_id, not_downloaded);
                                 continue;
                             }
                         }
@@ -2507,8 +2511,7 @@ pub(crate) fn install_isolated_packages(
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
                                         .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    installer.on_task_complete(entry_id, not_downloaded);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2563,8 +2566,7 @@ pub(crate) fn install_isolated_packages(
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
                                         .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    installer.on_task_complete(entry_id, not_downloaded);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2681,6 +2683,13 @@ pub(crate) fn install_isolated_packages(
 
             debug_assert!(done);
         }
+
+        package_manager::enqueue::report_offline_misses(
+            installer.manager_mut(),
+            workspace_filters,
+            install_root_dependencies,
+            packages_to_install,
+        );
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));

@@ -733,8 +733,9 @@ pub enum ForTarballError {
     OutOfMemory,
     #[error("InvalidURL")]
     InvalidURL,
-    /// `--offline` and the tarball is not in the cache. Already reported (once per
-    /// package); callers treat it like `AlreadyFailed`.
+    /// `--offline` and the tarball is not in the cache. The resolve phase already reported it
+    /// (once per package), the install phase recorded it for `report_offline_misses`; callers
+    /// treat it like `AlreadyFailed`.
     #[error("TarballFailedToDownload")]
     Offline,
     /// Returned by `enqueue_*_for_download` when the dedupe map already records

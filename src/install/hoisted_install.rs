@@ -76,8 +76,7 @@ pub(crate) fn install_hoisted_packages(
         .hoisted_dependencies
         .clone_from(&original_tree_dep_ids);
 
-    this.offline_uncached = package_manager::enqueue::offline_uncached_packages(this);
-    let filtered = {
+    {
         // `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -96,9 +95,9 @@ pub(crate) fn install_hoisted_packages(
                 install_root_dependencies,
                 workspace_filters,
                 packages_to_install,
-            )
+            )?;
         }
-    };
+    }
     // Re-derive after `filter()` so every subsequent `this` use (progress
     // setup through the install loop) is a fresh child of `mgr_ptr` under
     // Stacked Borrows — `&mut *mgr_ptr` inside the block above popped the
@@ -107,9 +106,6 @@ pub(crate) fn install_hoisted_packages(
     // fn param; the line-77 reborrow's tag was popped by `&mut *mgr_ptr` in the
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
-    // `prune::remove_collapsed_copies` hoists again after this install, and must see every package.
-    this.offline_uncached = None;
-    filtered?;
 
     let _restore_buffers = scopeguard::guard(
         (original_trees, original_tree_dep_ids),
@@ -621,6 +617,13 @@ pub(crate) fn install_hoisted_packages(
             }
         }
     }
+
+    package_manager::enqueue::report_offline_misses(
+        this,
+        workspace_filters,
+        install_root_dependencies,
+        packages_to_install,
+    );
 
     Ok(summary)
 }

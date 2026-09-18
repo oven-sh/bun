@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::FileSystem;
+use bun_collections::DynamicBitSet;
 use bun_core::{Output, UnwrapOrOom, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
 use bun_paths as Path;
@@ -20,11 +21,12 @@ use crate::dependency;
 use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
 use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
+use crate::lockfile::tree::{InstalledPackages, placed_packages};
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
-    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
-    get_cache_directory, get_preinstall_state, get_temporary_directory, run_tasks,
-    set_preinstall_state,
+    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, WorkspaceFilter,
+    determine_preinstall_state, get_cache_directory, get_preinstall_state, get_temporary_directory,
+    run_tasks, set_preinstall_state,
 };
 use crate::package_manager_task as Task;
 use crate::patch_install::EnqueueAfterState;
@@ -155,20 +157,19 @@ pub fn enqueue_tarball_for_download(
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), EnqueueTarballForDownloadError> {
     let task_id = Task::Id::for_tarball(url);
+    // Recorded even if the task failed before: every install of a run reports its own misses.
+    if offline_tarball_miss(
+        this,
+        task_id,
+        OfflineMiss {
+            package_id,
+            dependency_id,
+        },
+    ) {
+        return Err(EnqueueTarballForDownloadError::Offline);
+    }
     if this.network_task_has_failed(task_id) {
         return Err(EnqueueTarballForDownloadError::AlreadyFailed);
-    }
-    if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
-        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-            .behavior
-            .is_required();
-        let name = this
-            .lockfile
-            .str(&this.lockfile.packages.get(package_id as usize).name)
-            .to_vec();
-        if offline_tarball_miss(this, task_id, &name, is_required) {
-            return Err(EnqueueTarballForDownloadError::Offline);
-        }
     }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
@@ -257,13 +258,14 @@ pub enum GitEnqueueResult {
     /// a task was queued (or joined an existing one); completion arrives via the task queue
     Queued,
     /// `--offline` and the repository is not cached: nothing was queued (already reported
-    /// if required); the caller must count the package as failed/skipped itself
+    /// if required, or recorded for `report_offline_misses`); the caller counts it as skipped
     OfflineMiss,
 }
 
 pub fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
+    package_id: PackageID,
     alias: &[u8],
     resolution: &Resolution,
     task_context: TaskCallbackContext,
@@ -289,7 +291,11 @@ pub fn enqueue_git_for_checkout(
         let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
             .behavior
             .is_required();
-        if offline_git_miss(this, clone_id, alias, is_required) {
+        let miss = OfflineMiss {
+            package_id,
+            dependency_id,
+        };
+        if offline_git_miss(this, clone_id, alias, is_required, Some(miss)) {
             return GitEnqueueResult::OfflineMiss;
         }
     }
@@ -342,40 +348,168 @@ pub fn enqueue_git_for_checkout(
 
 /// Under `--offline`, an install-phase request for a package that is not in the cache
 /// (these helpers are only reached after the cache lookup missed): report it once if
-/// required, skip if optional, and never register a task nobody will complete.
-fn offline_tarball_miss(
-    this: &mut PackageManager,
-    task_id: Task::Id,
-    name: &[u8],
-    is_required: bool,
-) -> bool {
+/// required (in `report_offline_misses`), skip if optional, never register a task nobody completes.
+fn offline_tarball_miss(this: &mut PackageManager, task_id: Task::Id, miss: OfflineMiss) -> bool {
     if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
         return false;
     }
-    if is_required && !this.network_task_has_failed(task_id) {
+    let is_required = this.lockfile.buffers.dependencies[miss.dependency_id as usize]
+        .behavior
+        .is_required();
+    let first_required_miss = is_required && !this.network_task_has_failed(task_id);
+    if first_required_miss {
         // reserve + mark failed so later dependents take the already-failed path
         let _ = this.has_created_network_task(task_id, true);
         this.mark_network_task_failed(task_id);
+    }
+    if !this.options.runtime_auto_install {
+        this.offline_install.misses.push(miss);
+    } else if first_required_miss {
+        // No install phase follows, so nothing would report a recorded miss.
+        log_offline_miss(this, miss);
+    }
+    true
+}
+
+#[derive(Default)]
+pub(crate) struct OfflineInstall {
+    pub(crate) misses: Vec<OfflineMiss>,
+    /// `bit[package_id]`: the install phase installed a folder of the package, or found one in place.
+    pub(crate) present: DynamicBitSet,
+}
+
+impl PackageManager {
+    /// A linker calls this for every package folder that it installs or finds in place.
+    pub(crate) fn note_package_present(&mut self, package_id: PackageID) {
+        if self.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
+            return;
+        }
+        let present = &mut self.offline_install.present;
+        if present.bit_length() <= package_id as usize {
+            present
+                .resize(
+                    self.lockfile.packages.len().max(package_id as usize + 1),
+                    false,
+                )
+                .unwrap_or_oom();
+        }
+        present.set(package_id as usize);
+    }
+}
+
+/// A package that the install phase of an `--offline` install did not find in the cache.
+#[derive(Clone, Copy)]
+pub(crate) struct OfflineMiss {
+    // Not `resolutions[dependency_id]`: the isolated linker can bind a peer to another package.
+    pub(crate) package_id: PackageID,
+    pub(crate) dependency_id: DependencyID,
+}
+
+fn log_offline_miss(this: &PackageManager, miss: OfflineMiss) {
+    let lockfile = &this.lockfile;
+    let package = lockfile.packages.get(miss.package_id as usize);
+    if package.resolution.tag == ResolutionTag::Git {
+        let alias = lockfile.buffers.dependencies[miss.dependency_id as usize].name;
+        let _ = this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "--offline: git repository for \"{}\" is not in the cache",
+                bstr::BStr::new(lockfile.str(&alias))
+            ),
+        );
+    } else {
         let _ = this.log_mut().add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
                 "--offline: \"{}\" is not in the cache",
-                bstr::BStr::new(name)
+                bstr::BStr::new(lockfile.str(&package.name))
             ),
         );
     }
-    true
+}
+
+/// Reports the recorded `--offline` misses that an installed package requires, and counts them.
+pub(crate) fn report_offline_misses(
+    this: &mut PackageManager,
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    packages_to_install: Option<&[PackageID]>,
+) -> u32 {
+    let OfflineInstall { misses, present } = core::mem::take(&mut this.offline_install);
+    if misses.is_empty() {
+        return 0;
+    }
+    let this: &PackageManager = this;
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+
+    let package_count = lockfile.packages.len();
+    let mut missed = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
+    let mut not_installed = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
+    let mut slot_is_required = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
+    for miss in &misses {
+        missed.set(miss.package_id as usize);
+        // A package can have several folders. It requires its dependencies if one of them is in place.
+        if !present.is_set_allow_out_of_bound(miss.package_id as usize, false) {
+            not_installed.set(miss.package_id as usize);
+        }
+        if dependencies[miss.dependency_id as usize]
+            .behavior
+            .is_required()
+        {
+            slot_is_required.set(miss.package_id as usize);
+        }
+    }
+
+    let walk = |not_installed: Option<&DynamicBitSet>| {
+        placed_packages(
+            lockfile,
+            this,
+            workspace_filters,
+            install_root_dependencies,
+            packages_to_install,
+            InstalledPackages {
+                not_installed,
+                in_place: Some(&present),
+            },
+        )
+        .unwrap_or_oom()
+    };
+    let installed = walk(Some(&not_installed));
+    let everything = walk(None);
+
+    let mut reported = 0;
+    for &miss in &misses {
+        let package_id = miss.package_id as usize;
+        if !missed.is_set(package_id) {
+            continue;
+        }
+        missed.unset(package_id);
+        // The dependency of its slot judges, as before, a miss that the walk can not: unreached, or a peer of an installed package.
+        let walk_can_not_judge =
+            !everything.seen.is_set(package_id) || installed.peers.is_set(package_id);
+        let is_error = installed.required.is_set(package_id)
+            || (walk_can_not_judge && slot_is_required.is_set(package_id));
+        if is_error {
+            reported += 1;
+            log_offline_miss(this, miss);
+        }
+    }
+    reported
 }
 
 /// Under `--offline`, a git dependency whose clone is not already in the cache cannot
 /// be installed: report it (once, and only if some edge requires it) instead of
 /// spawning `git`. Returns true when the clone must not be enqueued.
+/// `installing`: the install phase records its miss, and reports it later.
 fn offline_git_miss(
     this: &mut PackageManager,
     clone_id: Task::Id,
     name: &[u8],
     is_required: bool,
+    installing: Option<OfflineMiss>,
 ) -> bool {
     if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
         return false;
@@ -395,19 +529,24 @@ fn offline_git_miss(
     if cached {
         return false;
     }
+    if let Some(miss) = installing {
+        this.offline_install.misses.push(miss);
+    }
     if is_required {
         if !this.network_task_has_failed(clone_id) {
             // reserve + mark failed: reported once, later dependents see the failure
             let _ = this.has_created_network_task(clone_id, true);
             this.mark_network_task_failed(clone_id);
-            let _ = this.log_mut().add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "--offline: git repository for \"{}\" is not in the cache",
-                    bstr::BStr::new(name)
-                ),
-            );
+            if installing.is_none() {
+                let _ = this.log_mut().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "--offline: git repository for \"{}\" is not in the cache",
+                        bstr::BStr::new(name)
+                    ),
+                );
+            }
         }
     } else {
         // let a later required edge on the same repository report it
@@ -463,16 +602,19 @@ pub fn enqueue_package_for_download(
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), EnqueuePackageForDownloadError> {
     let task_id = Task::Id::for_npm_package(name, version);
+    // Recorded even if the task failed before: every install of a run reports its own misses.
+    if offline_tarball_miss(
+        this,
+        task_id,
+        OfflineMiss {
+            package_id,
+            dependency_id,
+        },
+    ) {
+        return Err(EnqueuePackageForDownloadError::Offline);
+    }
     if this.network_task_has_failed(task_id) {
         return Err(EnqueuePackageForDownloadError::AlreadyFailed);
-    }
-    {
-        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-            .behavior
-            .is_required();
-        if offline_tarball_miss(this, task_id, name, is_required) {
-            return Err(EnqueuePackageForDownloadError::Offline);
-        }
     }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
@@ -1500,7 +1642,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 if this.has_created_network_task(clone_id, dependency.behavior.is_required()) {
                     return Ok(());
                 }
-                if offline_git_miss(this, clone_id, alias, dependency.behavior.is_required()) {
+                if offline_git_miss(
+                    this,
+                    clone_id,
+                    alias,
+                    dependency.behavior.is_required(),
+                    None,
+                ) {
                     return Ok(());
                 }
 
@@ -3235,6 +3383,7 @@ impl PackageManager {
     pub(crate) fn enqueue_git_for_checkout(
         &mut self,
         dependency_id: DependencyID,
+        package_id: PackageID,
         alias: &[u8],
         resolution: &Resolution,
         task_context: TaskCallbackContext,
@@ -3243,6 +3392,7 @@ impl PackageManager {
         enqueue_git_for_checkout(
             self,
             dependency_id,
+            package_id,
             alias,
             resolution,
             task_context,

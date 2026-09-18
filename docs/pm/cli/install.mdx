@@ -194,6 +194,8 @@ bun install --offline
 
 An install is only certain to cache the packages that it places in `node_modules`. To warm the cache for an `--offline` install, run an install on the same platform that places at least the same packages. An install with `--production` or `--omit` does not cache the groups it leaves out.
 
+`--offline` skips an optional dependency that is not cached, and anything below it that is not cached either. A package that an installed package requires is still an error.
+
 See [lockfile](/pm/lockfile) for more on `bun.lock`.
 
 ---

@@ -733,7 +733,7 @@ pub enum ForTarballError {
     OutOfMemory,
     #[error("InvalidURL")]
     InvalidURL,
-    /// `--offline` and the tarball is not in the cache. Already reported (once per
+    /// `--offline` and the tarball is not in the cache. Reported or recorded already (once per
     /// package); callers treat it like `AlreadyFailed`.
     #[error("TarballFailedToDownload")]
     Offline,

@@ -25,11 +25,19 @@ import {
 /** One entry per query, in order: its rows, or the error it rejected with. */
 async function settle(queries: PromiseLike<any>[]) {
   return (await Promise.allSettled(queries)).map(result =>
-    result.status === "fulfilled"
-      ? [...result.value]
-      : { name: result.reason.name, code: result.reason.code, message: result.reason.message },
+    result.status === "fulfilled" ? [...result.value] : describeError(result.reason),
   );
 }
+const describeError = (err: any) => ({ name: err.name, code: err.code, message: err.message, hint: err.hint });
+
+// The rejected query may be an INSERT that the server stored, so the error says
+// that only the decoding failed.
+const undecodable = (code: string) => ({
+  name: "PostgresError",
+  code,
+  message: "Failed to read data",
+  hint: "The query may have run on the server. The client could not decode a value in its result.",
+});
 
 describeWithContainer("postgres", { image: "postgres_plain", concurrent: true }, container => {
   const connect = () =>
@@ -52,11 +60,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     // The row after it belongs to the same query and is dropped with it.
     expect(await settle([rows("{1}"), rows("{2};{{1,2},{3,4}};{5}"), rows("{6};{7}"), rows("{8}")])).toEqual([
       [{ v: new Int32Array([1]) }],
-      {
-        name: "PostgresError",
-        code: "ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET",
-        message: "Failed to read data",
-      },
+      undecodable("ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET"),
       [{ v: new Int32Array([6]) }, { v: new Int32Array([7]) }],
       [{ v: new Int32Array([8]) }],
     ]);
@@ -76,11 +80,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         sql`select 'B' as v; select v::int4[] from (values ('{1}'), ('[0:1]={2,3}'), ('{4}')) t(v); select 'C' as v`.simple(),
         sql`select 'D' as v`.simple(),
       ]),
-    ).toEqual([
-      [{ v: "A" }],
-      { name: "PostgresError", code: "ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT", message: "Failed to read data" },
-      [{ v: "D" }],
-    ]);
+    ).toEqual([[{ v: "A" }], undecodable("ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT"), [{ v: "D" }]]);
     expect([...(await sql`select pg_backend_pid() as pid`)]).toEqual([{ pid }]);
   });
 });
@@ -91,11 +91,31 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
 // produce belongs in describeWithContainer. All wire-protocol bytes come from
 // test/js/sql/wire-frames.ts.
 //
-// The mock speaks the extended protocol for one statement shape, `select
-// $1::jsonb as v`. It answers an Execute with one DataRow per ';'-separated
-// piece of the bound text. The piece "hold" sends no row: the mock keeps back
-// everything after it, for every query, until `release()`.
-async function jsonbEchoServer() {
+// The mock speaks the extended protocol for one statement shape, `select $1 as
+// v`. It answers an Execute with one DataRow per ';'-separated piece of the
+// bound text. The piece "bad" becomes the cell the client cannot decode. The
+// piece "hold" sends no row: the mock keeps back everything after it, for every
+// query, until `release()`.
+//
+// The two column kinds fail in the two places a row can fail: a text[] cell is
+// decoded while the DataRow is read, a jsonb cell when the row becomes a JS object.
+const columnKinds = {
+  "text[] with explicit bounds": {
+    typeOid: 1009,
+    cell: (piece: string) => (piece === "bad" ? "[0:1]={a,b}" : `{${piece}}`),
+    value: (piece: string): unknown => [piece],
+    rejection: undecodable("ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT"),
+  },
+  "jsonb that is not JSON": {
+    typeOid: 3802,
+    cell: (piece: string) => (piece === "bad" ? "not json" : piece),
+    value: (piece: string): unknown => JSON.parse(piece),
+    rejection: { name: "SyntaxError", message: 'JSON Parse error: Unexpected identifier "not"' },
+  },
+};
+type ColumnKind = (typeof columnKinds)[keyof typeof columnKinds];
+
+async function echoServer(kind: ColumnKind) {
   let connections = 0;
   let release = () => {};
   const { port, server } = await listeningServer(socket => {
@@ -127,14 +147,17 @@ async function jsonbEchoServer() {
           case "P":
             return send(pgParseComplete());
           case "D":
-            return send(pgParameterDescription([25 /* text */]), pgRowDescription([{ name: "v", typeOid: 3802 }]));
+            return send(
+              pgParameterDescription([25 /* text */]),
+              pgRowDescription([{ name: "v", typeOid: kind.typeOid }]),
+            );
           case "B":
             bound = pgBindParameters(body)[0]!.toString().split(";");
             return send(pgBindComplete());
           case "E":
             for (const piece of bound) {
               if (piece === "hold") held ??= [];
-              else send(pgDataRow([Buffer.from(piece)]));
+              else send(pgDataRow([Buffer.from(kind.cell(piece))]));
             }
             return send(pgCommandComplete("SELECT " + bound.length));
           case "S":
@@ -148,65 +171,63 @@ async function jsonbEchoServer() {
   return { port, server, release: () => release(), connections: () => connections };
 }
 
-describe.concurrent("postgres mock", () => {
-  test("a pipelined query with a jsonb column that is not JSON rejects alone", async () => {
-    const mock = await jsonbEchoServer();
-    try {
-      await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });
-      const echo = (text: string) => sql`select ${text}::jsonb as v`;
-      await echo("0");
+for (const [name, kind] of Object.entries(columnKinds)) {
+  describe.concurrent("postgres mock, " + name, () => {
+    const row = (piece: string) => ({ v: kind.value(piece) });
 
-      const results = await settle([echo('{"a":1}'), echo("1;not json;2"), echo('{"b":2}'), echo("3")]);
-      results.push([...(await echo("4"))]);
-      expect({ results, connections: mock.connections() }).toEqual({
-        results: [
-          [{ v: { a: 1 } }],
-          { name: "SyntaxError", message: 'JSON Parse error: Unexpected identifier "not"' },
-          [{ v: { b: 2 } }],
-          [{ v: 3 }],
-          [{ v: 4 }],
-        ],
-        connections: 1,
-      });
-    } finally {
-      mock.server.close();
-    }
+    test("a pipelined query with a row the client cannot decode rejects alone", async () => {
+      const mock = await echoServer(kind);
+      try {
+        await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });
+        const echo = (text: string) => sql`select ${text} as v`;
+        await echo("0");
+
+        const results = await settle([echo("1"), echo("2;bad;3"), echo("4;5"), echo("6")]);
+        results.push([...(await echo("7"))]);
+        expect({ results, connections: mock.connections() }).toEqual({
+          results: [[row("1")], kind.rejection, [row("4"), row("5")], [row("6")], [row("7")]],
+          connections: 1,
+        });
+      } finally {
+        mock.server.close();
+      }
+    });
+
+    test("rows that arrive after the rejection stay with the rejected query", async () => {
+      const mock = await echoServer(kind);
+      try {
+        await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });
+        const echo = (text: string) => sql`select ${text} as v`;
+        await echo("0");
+
+        // execute() sends a query at once, so these three are pipelined in this order.
+        const first = echo("1").execute();
+        const rejected = echo("2;bad;hold;3").execute();
+        const next = echo("4").execute();
+        // `rejected` rejects while the server still holds the rest of its
+        // response: a row, its CommandComplete and its ReadyForQuery. A statement
+        // that is not prepared yet cannot be pipelined, so this enqueue makes the
+        // connection walk its request queue at exactly that point. The held row
+        // must not go to `next`, which is the request behind the rejected one.
+        let unprepared!: PromiseLike<any>;
+        const rejection = await rejected.catch((err: Error) => {
+          unprepared = sql`select ${"5"} as v -- not prepared yet`.execute();
+          mock.release();
+          return describeError(err);
+        });
+
+        expect({
+          rejection,
+          results: await settle([first, next, unprepared]),
+          connections: mock.connections(),
+        }).toEqual({
+          rejection: kind.rejection,
+          results: [[row("1")], [row("4")], [row("5")]],
+          connections: 1,
+        });
+      } finally {
+        mock.server.close();
+      }
+    });
   });
-
-  test("rows that arrive after the rejection stay with the rejected query", async () => {
-    const mock = await jsonbEchoServer();
-    try {
-      await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });
-      const echo = (text: string) => sql`select ${text}::jsonb as v`;
-      await echo("0");
-
-      // execute() sends a query at once, so these three are pipelined in this order.
-      const first = echo("1").execute();
-      const undecodable = echo("2;not json;hold;3").execute();
-      const next = echo("4").execute();
-      // `undecodable` rejects while the server still holds the rest of its
-      // response: a row, its CommandComplete and its ReadyForQuery. A statement
-      // that is not prepared yet cannot be pipelined, so this enqueue makes the
-      // connection walk its request queue at exactly that point. The held row
-      // must not go to `next`, which is the request behind the rejected one.
-      let unprepared!: PromiseLike<any>;
-      const rejection = await undecodable.catch((err: Error) => {
-        unprepared = sql`select ${"5"}::jsonb as v -- not prepared yet`.execute();
-        mock.release();
-        return err.message;
-      });
-
-      expect({
-        rejection,
-        results: await settle([first, next, unprepared]),
-        connections: mock.connections(),
-      }).toEqual({
-        rejection: 'JSON Parse error: Unexpected identifier "not"',
-        results: [[{ v: 1 }], [{ v: 4 }], [{ v: 5 }]],
-        connections: 1,
-      });
-    } finally {
-      mock.server.close();
-    }
-  });
-});
+}

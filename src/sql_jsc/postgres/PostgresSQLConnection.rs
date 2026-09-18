@@ -25,7 +25,9 @@ use crate::postgres::AuthenticationState;
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::PostgresSQLStatement;
 use crate::postgres::data_cell as DataCell;
-use crate::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
+use crate::postgres::error_jsc::{
+    create_postgres_error, postgres_error_to_js, postgres_error_to_js_with_hint,
+};
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
 use crate::postgres::postgres_sql_query::{self, RequestCounter, Status as QueryStatus};
@@ -1773,9 +1775,10 @@ impl PostgresSQLConnection {
         if self.global().has_pending_termination_exception() {
             return Err(err);
         }
-        Ok(postgres_error_to_js(
+        Ok(postgres_error_to_js_with_hint(
             self.global(),
             Some(b"Failed to read data"),
+            Some(b"The query may have run on the server. The client could not decode a value in its result."),
             err,
         ))
     }

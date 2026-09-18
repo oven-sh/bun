@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, runBunInstall, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, mkdtempSync, realpathSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -624,6 +624,20 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
         "  └─ dep-a@dep-a (requires file:../dep-c)",
         "     └─ the root package (requires file:./dep-a)",
       ),
+    );
+  });
+
+  // bun.lock cannot hold a package with no name (#17060), but an old bun.lockb can. `bun install` wrote this one
+  // with `saveTextLockfile = false` for the package.json below. `anon/package.json` has no name and depends on
+  // `leaf` with `file:../leaf`.
+  it("should not list a folder package with no name as the root package", async () => {
+    using dir = tempDir(`why-unnamed-folder-${i++}`, {
+      "package.json": JSON.stringify({ dependencies: { anon: "file:./anon" } }),
+      "bun.lockb": readFileSync(join(import.meta.dir, "fixtures", "unnamed-folder-dependency.lockb")),
+    });
+
+    expect(await why(String(dir), "*")).toEqual(
+      explained("leaf@leaf", "  └─ @anon (requires file:../leaf)", "     └─ the root package (requires file:./anon)"),
     );
   });
 

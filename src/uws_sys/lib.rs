@@ -221,6 +221,8 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__close(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__abandon_js_side(this: &mut UpgradedDuplex);
+    safe fn UpgradedDuplex__pause_stream(this: &mut UpgradedDuplex) -> bool;
+    safe fn UpgradedDuplex__resume_stream(this: &mut UpgradedDuplex) -> bool;
 }
 impl UpgradedDuplex {
     #[inline]
@@ -281,6 +283,14 @@ impl UpgradedDuplex {
     #[inline]
     pub(crate) fn abandon_js_side(&mut self) {
         UpgradedDuplex__abandon_js_side(self)
+    }
+    #[inline]
+    pub(crate) fn pause_stream(&mut self) -> bool {
+        UpgradedDuplex__pause_stream(self)
+    }
+    #[inline]
+    pub(crate) fn resume_stream(&mut self) -> bool {
+        UpgradedDuplex__resume_stream(self)
     }
 }
 

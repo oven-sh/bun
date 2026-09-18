@@ -64,9 +64,8 @@ pub(crate) struct UpgradedDuplex {
     /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
     /// the original data-then-EOF order.
     pub pending_end: Cell<bool>,
-    /// The transport delivered EOF (its 'end' event fired). Teardown payloads
-    /// (close_notify) are dropped after this; see [`Self::call_write_or_end`].
-    pub transport_eof: Cell<bool>,
+    /// [`Self::pause_stream`] called `origin.pause()`; [`Self::on_close`] undoes it.
+    pub reads_paused: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -209,12 +208,61 @@ impl UpgradedDuplex {
         js_wrapper.ensure_still_alive();
 
         (this.handlers.on_close)(this.handlers.ctx);
+        // Left paused, a net.Socket transport never reads its peer's FIN and stays open.
+        if this.reads_paused.get() {
+            this.resume_stream();
+        }
         // closes the underlying duplex
         this.call_write_or_end(None, false);
 
         // Early teardown (struct itself is dropped later by parent).
         this.teardown();
         js_wrapper.ensure_still_alive();
+    }
+
+    /// node's `JSStreamSocket.readStop()`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L125
+    #[uws_callback(export = "UpgradedDuplex__pause_stream")]
+    pub(crate) fn pause_stream(&self) -> bool {
+        // Before `start_tls` the handshake still needs the reads, and `on_open` clears the owner's paused flag.
+        if self.wrapper_ref().is_none() {
+            return false;
+        }
+        // Set first and kept on failure: `pause()` is user code that can close this socket, or throw after it paused.
+        self.reads_paused.set(true);
+        self.call_origin("pause")
+    }
+
+    #[uws_callback(export = "UpgradedDuplex__resume_stream")]
+    pub(crate) fn resume_stream(&self) -> bool {
+        if !self.call_origin("resume") {
+            return false;
+        }
+        self.reads_paused.set(false);
+        true
+    }
+
+    /// Calls `origin[name]()`. A throw goes to `on_error`; false when the call did not complete.
+    fn call_origin(&self, name: &str) -> bool {
+        let duplex = self.origin.get();
+        if duplex.is_empty() {
+            return false;
+        }
+        let Some(global) = self.global else {
+            return false;
+        };
+        let method = match duplex.get(&global, name) {
+            Ok(Some(f)) if f.is_callable() => f,
+            Ok(_) => return false,
+            Err(err) => {
+                (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                return false;
+            }
+        };
+        if let Err(err) = method.call(&global, duplex, &[]) {
+            (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+            return false;
+        }
+        true
     }
 
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
@@ -239,8 +287,15 @@ impl UpgradedDuplex {
             // throws writeAfterFIN (EPIPE). The trailing end() is not a write
             // and still goes through the writableEnded probe below, so a
             // half-open transport sees our FIN.
-            if data.is_some() && self.transport_eof.get() {
-                return;
+            if data.is_some() {
+                match Self::readable_got_eof(duplex, &global) {
+                    Ok(false) => {}
+                    Ok(true) => return,
+                    Err(err) => {
+                        (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
+                        return;
+                    }
+                }
             }
             match duplex.get(&global, "writableEnded") {
                 Ok(Some(ended)) if ended.to_boolean() => return,
@@ -274,6 +329,19 @@ impl UpgradedDuplex {
                 (self.handlers.on_error)(self.handlers.ctx, global.take_error(err));
             }
         }
+    }
+
+    /// `_readableState.ended`, not the 'end' event: a paused transport holds 'end' back.
+    fn readable_got_eof(duplex: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        let Some(state) = duplex.get(global, "_readableState")? else {
+            return Ok(false);
+        };
+        if !state.is_object() {
+            return Ok(false);
+        }
+        Ok(state
+            .get(global, "ended")?
+            .is_some_and(|ended| ended.to_boolean()))
     }
 
     fn internal_write(this: *mut Self, encoded_data: &[u8]) {
@@ -408,7 +476,7 @@ impl UpgradedDuplex {
             current_timeout: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
             pending_end: Cell::new(false),
-            transport_eof: Cell::new(false),
+            reads_paused: Cell::new(false),
         }
     }
 
@@ -679,7 +747,7 @@ impl UpgradedDuplex {
         self.ssl_error.set(CertError::default());
         self.pending_data.set(Vec::new());
         self.pending_end.set(false);
-        self.transport_eof.set(false);
+        self.reads_paused.set(false);
     }
 }
 
@@ -738,7 +806,6 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         // SAFETY: see host-fn note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
 
-        this.transport_eof.set(true);
         if this.wrapper_ref().is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
         } else {

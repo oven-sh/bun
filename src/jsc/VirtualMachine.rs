@@ -182,6 +182,9 @@ pub struct VirtualMachine {
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
     main: Option<bun_ptr::RawSlice<u8>>,
+    /// `process.argv[1]` when it is not `main`: the entry path as written
+    /// (absolute, not realpath'd). Same BACKREF invariant as `main`.
+    main_for_argv: Option<bun_ptr::RawSlice<u8>>,
     pub main_entry_point: MainEntryPoint,
     pub did_look_for_server: bool,
     pub main_resolved_path: bun_core::String,
@@ -3447,6 +3450,7 @@ impl VirtualMachine {
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
             addr_of_mut!((*vm).main).write(None);
+            addr_of_mut!((*vm).main_for_argv).write(None);
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
@@ -3654,6 +3658,21 @@ impl VirtualMachine {
         self.entry_point_result.evaluated_as_cjs
             || (self.main_entry_point == MainEntryPoint::Compiled
                 && crate::compiled_program::entry_point_is_commonjs(self.global()))
+    }
+
+    /// `process.argv[1]`: the path as written, else [`Self::main`].
+    #[inline]
+    pub fn main_for_argv(&self) -> Option<&[u8]> {
+        self.main_for_argv
+            .as_ref()
+            .map(|argv| argv.slice())
+            .or_else(|| self.main())
+    }
+
+    /// Caller guarantees `path` outlives this VM (BACKREF; see `main`).
+    #[inline]
+    pub fn set_main_for_argv(&mut self, path: &[u8]) {
+        self.main_for_argv = Some(bun_ptr::RawSlice::new(path));
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until

@@ -710,9 +710,7 @@ function fakeParentPort() {
   return fake;
 }
 
-// In a node:worker_threads worker, several process operations are unsupported.
-// Gate on _isNodeWorker so a raw `new globalThis.Worker` that transitively loads
-// this module does NOT have process.abort/chdir/setuid replaced.
+// Node-only process additions; the process-wide stubs are native (BunProcess.cpp).
 if (!isMainThread && _isNodeWorker) {
   applyWorkerProcessOverrides();
 }
@@ -723,42 +721,24 @@ function applyWorkerProcessOverrides() {
   try {
     Object.defineProperty(proc, "debugPort", { value: 9229, writable: true, configurable: true, enumerable: true });
   } catch {}
-  // process.umask(setMask) is unsupported in workers; the getter still works.
-  const realUmask = proc.umask;
-  function umask(mask?: unknown) {
-    if (mask === undefined) return realUmask.$call(proc);
-    throw $ERR_WORKER_UNSUPPORTED_OPERATION("Setting process.umask() is not supported in workers");
-  }
-  proc.umask = umask;
-  // Disabled, throwing stubs (each carries `.disabled === true`, like node).
-  const disabled = ["abort", "chdir"];
-  if (process.platform !== "win32") {
-    disabled.push("setuid", "seteuid", "setgid", "setegid", "setgroups", "initgroups");
-  }
   // node only disables send/disconnect/channel/connected in workers that inherited an
   // IPC channel (NODE_CHANNEL_FD); otherwise they stay absent so `if (process.send)` works.
-  const hasIpc = !!process.env.NODE_CHANNEL_FD;
-  if (hasIpc) {
-    disabled.push("send", "disconnect");
-  }
-  for (const name of disabled) {
+  if (!process.env.NODE_CHANNEL_FD) return;
+  for (const name of ["send", "disconnect"]) {
     const stub: any = function () {
       throw $ERR_WORKER_UNSUPPORTED_OPERATION(`process.${name}() is not supported in workers`);
     };
     stub.disabled = true;
     Object.defineProperty(proc, name, { configurable: true, writable: true, enumerable: true, value: stub });
   }
-  // IPC accessors throw on access only in a worker that inherited an IPC channel.
-  if (hasIpc) {
-    for (const name of ["channel", "connected"]) {
-      Object.defineProperty(proc, name, {
-        configurable: true,
-        enumerable: false,
-        get() {
-          throw $ERR_WORKER_UNSUPPORTED_OPERATION(`process.${name} is not supported in workers`);
-        },
-      });
-    }
+  for (const name of ["channel", "connected"]) {
+    Object.defineProperty(proc, name, {
+      configurable: true,
+      enumerable: false,
+      get() {
+        throw $ERR_WORKER_UNSUPPORTED_OPERATION(`process.${name} is not supported in workers`);
+      },
+    });
   }
 }
 

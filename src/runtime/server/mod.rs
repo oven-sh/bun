@@ -2351,6 +2351,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // `unsafe { &*p }` pattern with one safe accessor.
         let websocket_ptr: Option<bun_ptr::BackRef<WebSocketServerContext>> =
             self.config.websocket.as_ref().map(bun_ptr::BackRef::new);
+        // One uWS websocket context per server, kept across reloads.
+        let ws_context_key: *const c_void = self_ptr.cast_const().cast();
 
         for user_route in self.user_routes.iter_mut() {
             let ud: *mut c_void = std::ptr::from_mut::<UserRoute<SSL, DEBUG>>(user_route).cast();
@@ -2392,6 +2394,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             ud,
                             1, // id 1 means is a user route
                             ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                            ws_context_key,
                         );
                     }
                 }
@@ -2422,6 +2425,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 ud,
                                 1, // id 1 means is a user route
                                 ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                                ws_context_key,
                             );
                         }
                     }
@@ -2642,6 +2646,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     self_ptr.cast(),
                     0, // id 0 means is a fallback route and ctx is the server
                     ServerWebSocket::behavior::<Self, SSL>(&websocket.to_behavior()),
+                    ws_context_key,
                 );
             }
         }

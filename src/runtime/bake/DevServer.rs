@@ -1320,6 +1320,7 @@ impl DevServer {
             dev,
             0,
             hmr_socket_behavior::<SSL>(),
+            dev.cast_const().cast(),
         );
 
         // Only attach a catch-all handler if the framework has filesystem

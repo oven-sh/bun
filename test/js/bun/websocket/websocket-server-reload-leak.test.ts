@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow } from "harness";
+import { join } from "node:path";
 
 // server.reload({ websocket: { close() {} } }) — i.e. a websocket config
 // without `open` or `message` — is silently discarded by onReloadFromZig.
@@ -62,3 +63,114 @@ test("server.reload() with websocket config lacking open/message does not leak p
   expect(after - before).toBeLessThan(iters);
   expect(exitCode).toBe(0);
 });
+
+// Every ws() registration (the "/*" fallback plus each GET-capable callback
+// route) allocated a uWS WebSocketContext that the app only freed when it was
+// destroyed. So each server.reload() of a websocket-enabled server kept one
+// more generation of contexts. Now the app keeps one context and each ws()
+// registration writes the behavior into it.
+test("server.reload() on a websocket-enabled server does not keep a WebSocketContext per reload", async () => {
+  // 600 reloads of 12 routes keep 7 to 9 MiB of contexts on bun 1.4.3. Fixed:
+  // 0 to 1 MiB, on release and on an ASAN build with the quarantine off.
+  // Each reload registers 13 websocket routes and an ASAN build spends about
+  // 1 ms on each, so the fixture runs for 10 to 15 s there.
+  await expectRssDeltaBelow([join(import.meta.dir, "websocket-server-reload-context-fixture.ts")], {
+    release: 4,
+    debug: 5,
+  });
+}, 60_000);
+
+// With one shared context, the limits of the latest reload apply to sockets
+// that were open before it, like the handlers already did.
+test("server.reload() applies the new websocket maxPayloadLength to sockets opened before the reload", async () => {
+  const config = (maxPayloadLength: number) => ({
+    port: 0,
+    fetch(req: Request, server: Bun.Server) {
+      if (server.upgrade(req)) return;
+      return new Response("not a websocket", { status: 400 });
+    },
+    websocket: {
+      maxPayloadLength,
+      message(ws: Bun.ServerWebSocket, message: string | Buffer) {
+        ws.send(`got ${message.length} bytes`);
+      },
+    },
+  });
+  using server = Bun.serve(config(1 << 20));
+
+  const open = () => {
+    const { promise, resolve, reject } = Promise.withResolvers<WebSocket>();
+    const ws = new WebSocket(server.url);
+    ws.onopen = () => resolve(ws);
+    ws.onerror = reject;
+    return promise;
+  };
+  const ask = (ws: WebSocket, message: string) => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    ws.onmessage = event => resolve(String(event.data));
+    ws.onclose = event => resolve(`closed ${event.code}`);
+    ws.send(message);
+    return promise;
+  };
+
+  const before = await open();
+  const big = Buffer.alloc(1000, "x").toString();
+  expect(await ask(before, big)).toBe("got 1000 bytes");
+
+  server.reload(config(64));
+  const after = await open();
+
+  expect(await ask(before, "small")).toBe("got 5 bytes");
+  expect(await Promise.all([ask(before, big), ask(after, big)])).toEqual(["closed 1006", "closed 1006"]);
+});
+
+// The per-route upgrade data (which route matched, its params) lives in the
+// HTTP route, not in the shared context, so every route still upgrades with
+// its own data, with or without the `/*` fallback, before and after a reload.
+test.each([true, false])(
+  "websocket routes keep their own upgrade data on the shared context (fallback: %p)",
+  async withFallback => {
+    const config = (version: number) => ({
+      port: 0,
+      routes: {
+        "/a/:name": (req: Bun.BunRequest<"/a/:name">, server: Bun.Server) =>
+          server.upgrade(req, { data: `a:${req.params.name}` }) ? undefined : new Response("no", { status: 500 }),
+        "/b/:name": (req: Bun.BunRequest<"/b/:name">, server: Bun.Server) =>
+          server.upgrade(req, { data: `b:${req.params.name}` }) ? undefined : new Response("no", { status: 500 }),
+      },
+      fetch: withFallback
+        ? (req: Request, server: Bun.Server) =>
+            server.upgrade(req, { data: "fallback" }) ? undefined : new Response("no", { status: 500 })
+        : undefined,
+      websocket: {
+        message(ws: Bun.ServerWebSocket<string>, message: string | Buffer) {
+          ws.send(`v${version} ${ws.data} ${message}`);
+        },
+      },
+    });
+
+    const echo = (server: Bun.Server, path: string) => {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      const ws = new WebSocket(new URL(path, server.url));
+      ws.onerror = reject;
+      ws.onclose = event => reject(new Error(`closed ${event.code}`));
+      ws.onmessage = event => {
+        ws.onclose = null;
+        ws.close();
+        resolve(String(event.data));
+      };
+      ws.onopen = () => ws.send("hi");
+      return promise;
+    };
+
+    using server = Bun.serve(config(1));
+    const paths = withFallback ? ["/a/x", "/b/y", "/other"] : ["/a/x", "/b/y"];
+    expect(await Promise.all(paths.map(path => echo(server, path)))).toEqual(
+      withFallback ? ["v1 a:x hi", "v1 b:y hi", "v1 fallback hi"] : ["v1 a:x hi", "v1 b:y hi"],
+    );
+    server.reload(config(2));
+    expect(await Promise.all(paths.map(path => echo(server, path)))).toEqual(
+      withFallback ? ["v2 a:x hi", "v2 b:y hi", "v2 fallback hi"] : ["v2 a:x hi", "v2 b:y hi"],
+    );
+  },
+);

@@ -1127,13 +1127,14 @@ struct HttpResponseData;
             return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
         }
 
-        /* llhttp's F_CONNECTION_UPGRADE for one Connection field value from getHeaders(): "upgrade"
-         * is a whole token of the list. llhttp skips SP and HTAB before a token but only SP after
-         * it, so a tab after the token hides it. getHeaders() trimmed the value: the whitespace it
-         * dropped still follows the value in the buffer, up to the CR.
-         * https://github.com/nodejs/llhttp/blob/v9.4.1/src/llhttp/http.ts#L794-L820 */
-        static bool hasConnectionUpgradeToken(std::string_view value) {
-            const char *p = value.data(), *end = p + value.length();
+        /* llhttp's F_CONNECTION_UPGRADE for one Connection field: "upgrade" is a whole token of the
+         * list. llhttp skips SP and HTAB before a token but only SP after it, so a tab after the
+         * token hides it. A control byte (only a lenient parser lets one in) ends the list grammar
+         * for the field. `connection` is an entry of the header table: getHeaders() trimmed its
+         * value in place, so the whitespace it dropped still follows the value, up to the CR.
+         * https://github.com/nodejs/llhttp/blob/v9.4.1/src/llhttp/http.ts#L794-L826 */
+        static bool hasConnectionUpgradeToken(const HttpRequest::Header &connection) {
+            const char *p = connection.value.data(), *end = p + connection.value.length();
             while (p < end) {
                 while (p < end && isHTTPHeaderValueWhitespace((unsigned char) *p)) {
                     p++;
@@ -1147,8 +1148,10 @@ struct HttpResponseData;
                         return true;
                     }
                 }
-                while (p < end && *p != ',') {
-                    p++;
+                for (; p < end && *p != ','; p++) {
+                    if (((unsigned char) *p < ' ' && *p != '\t') || *p == 0x7f) {
+                        return false;
+                    }
                 }
                 if (p < end) {
                     p++;
@@ -1157,19 +1160,21 @@ struct HttpResponseData;
             return false;
         }
 
-        /* llhttp's `upgrade` flag for a request that is not a CONNECT: F_CONNECTION_UPGRADE, and
-         * F_UPGRADE, an Upgrade field with a non-empty value. An empty field sets no flag, a later
-         * field can. */
+        /* llhttp's `upgrade` flag for a request that is not a CONNECT: F_CONNECTION_UPGRADE, from
+         * Connection or Proxy-Connection, and F_UPGRADE, an Upgrade field with a non-empty value.
+         * An empty field sets no flag, a later field can.
+         * https://github.com/nodejs/llhttp/blob/v9.4.1/src/llhttp/constants.ts#L499-L505 */
         static bool isUpgrade(HttpRequest *req) {
-            if (!req->bf.mightHave("upgrade") || !req->bf.mightHave("connection")) {
+            if (!req->bf.mightHave("upgrade") || !(req->bf.mightHave("connection") || req->bf.mightHave("proxy-connection"))) {
                 return false;
             }
             bool hasUpgradeValue = false, hasConnectionUpgrade = false;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length();) {
                 if (h->key.length() == 7 && !strncasecmp(h->key.data(), "upgrade", 7)) {
                     hasUpgradeValue = hasUpgradeValue || h->value.length();
-                } else if (h->key.length() == 10 && !strncasecmp(h->key.data(), "connection", 10)) {
-                    hasConnectionUpgrade = hasConnectionUpgrade || hasConnectionUpgradeToken(h->value);
+                } else if ((h->key.length() == 10 && !strncasecmp(h->key.data(), "connection", 10))
+                    || (h->key.length() == 16 && !strncasecmp(h->key.data(), "proxy-connection", 16))) {
+                    hasConnectionUpgrade = hasConnectionUpgrade || hasConnectionUpgradeToken(*h);
                 }
             }
             return hasUpgradeValue && hasConnectionUpgrade;

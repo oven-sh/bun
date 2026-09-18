@@ -138,8 +138,8 @@ switch (entryPoint) {
   async function report(dir: string, entryPoint: string, kind: string) {
     const { stdout, stderr, exitCode } = await bunRun([join(dir, "fixture.js"), entryPoint, kind], env);
     const output = stderr
-      .replaceAll(dir, "<dir>")
       .replaceAll("\\", "/")
+      .replaceAll(dir.replaceAll("\\", "/"), "<dir>")
       .split("\n")
       .filter(line => !/^\s+at (?!thrower )/.test(line) && !line.startsWith("Bun v"))
       .join("\n")

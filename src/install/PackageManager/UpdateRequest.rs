@@ -345,11 +345,13 @@ impl PackageManager {
 
     /// In a global install, whether the bins of `package_id` belong in the global bin dir and not
     /// in the global `node_modules/.bin`. The caller checks that the package is in the root
-    /// `node_modules`.
+    /// `node_modules`. `installed` says whether this run installed the package.
     ///
     /// A command that names packages links only those packages. A command that installs the whole
-    /// tree, like a bare `bun update -g`, links every direct dependency of the global package.json.
-    pub(crate) fn links_bins_globally(&self, package_id: PackageID) -> bool {
+    /// tree, like a bare `bun update -g`, links the direct dependencies of the global package.json
+    /// that it installed. It leaves the links of the others alone: two global packages can share
+    /// a bin name, and the one the user named last owns it.
+    pub(crate) fn links_bins_globally(&self, package_id: PackageID, installed: bool) -> bool {
         if !self.options.global {
             return false;
         }
@@ -368,14 +370,16 @@ impl PackageManager {
                 .iter()
                 .any(|request| request.package_id == package_id);
         }
-        self.lockfile
-            .packages
-            .items_resolutions()
-            .first()
-            .is_some_and(|root| {
-                root.get(self.lockfile.buffers.resolutions.as_slice())
-                    .contains(&package_id)
-            })
+        installed
+            && self
+                .lockfile
+                .packages
+                .items_resolutions()
+                .first()
+                .is_some_and(|root| {
+                    root.get(self.lockfile.buffers.resolutions.as_slice())
+                        .contains(&package_id)
+                })
     }
 }
 

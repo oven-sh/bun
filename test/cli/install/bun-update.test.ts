@@ -2944,5 +2944,44 @@ describe("bun update <name> semantics", () => {
         expect(await readdirSorted(globalBinDir)).toEqual([]);
       },
     );
+
+    // map-bin and map-bin-multiple declare the same two bins. The package the user named last owns them.
+    it.concurrent("bun update -g leaves the bins of a package it did not update alone", async () => {
+      const { globalBinDir, runGlobal } = await globalRepo(
+        { "bin-change-dir": "1.0.0", "map-bin": "1.0.2" },
+        { "bin-change-dir": "^1.0.0", "map-bin": "1.0.2" },
+      );
+      const added = await runGlobal("add", "map-bin-multiple@1.0.2");
+      expect(added.stderr).not.toContain("error:");
+      expect(added.exitCode).toBe(0);
+      expect(join(globalBinDir, "map-bin")).toBeValidBin(globalBinTarget("map-bin-multiple", "bin", "map-bin"));
+
+      const { stderr, exitCode } = await runGlobal("update");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await readdirSorted(globalBinDir)).toEqual(binFiles("bin-change-dir", "map-bin", "map_bin"));
+      expect(join(globalBinDir, "bin-change-dir")).toBeValidBin(
+        globalBinTarget("bin-change-dir", "bin-1.0.1", "bin.js"),
+      );
+      expect(join(globalBinDir, "map-bin")).toBeValidBin(globalBinTarget("map-bin-multiple", "bin", "map-bin"));
+      expect(join(globalBinDir, "map_bin")).toBeValidBin(globalBinTarget("map-bin-multiple", "bin", "map-bin"));
+    });
+
+    it.concurrent("bun ci -g links the bins of the packages it installs into the global bin dir", async () => {
+      const { globalDir, globalBinDir, runGlobal } = await globalRepo(BINS_PINNED, BINS_PINNED);
+      await Promise.all([
+        rm(join(globalDir, "node_modules"), { recursive: true, force: true }),
+        rm(globalBinDir, { recursive: true, force: true }),
+      ]);
+
+      const { stderr, exitCode } = await runGlobal("ci");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await readdirSorted(join(globalDir, "node_modules", ".bin"))).toEqual(binFiles("what-bin"));
+      expect(await readdirSorted(globalBinDir)).toEqual(binFiles("bin-change-dir"));
+      expect(join(globalBinDir, "bin-change-dir")).toBeValidBin(
+        globalBinTarget("bin-change-dir", "bin-1.0.0", "bin.js"),
+      );
+    });
   });
 });

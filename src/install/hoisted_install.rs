@@ -585,8 +585,13 @@ pub(crate) fn install_hoisted_packages(
             return Err(crate::Error::InstallFailed);
         }
 
-        // `replace` with a fresh empty so `installer` stays whole
-        // for the `link_remaining_bins` / `complete_remaining_scripts` calls
+        // need to make sure bins are linked before completing any remaining scripts.
+        // this can happen if a package fails to download
+        installer.link_remaining_bins(log_level);
+
+        // Bin linking reads `successfully_installed`, so it moves to the
+        // summary only after the last bins are linked. `replace` with a fresh
+        // empty so `installer` stays whole for `complete_remaining_scripts`
         // below. Route through `installer.summary` because `summary` itself is
         // exclusively borrowed by `installer` for this scope.
         {
@@ -597,9 +602,6 @@ pub(crate) fn install_hoisted_packages(
             installer.summary.successfully_installed = Some(taken);
         }
 
-        // need to make sure bins are linked before completing any remaining scripts.
-        // this can happen if a package fails to download
-        installer.link_remaining_bins(log_level);
         installer.complete_remaining_scripts(log_level);
 
         // .monotonic is okay because this value is only accessed on this thread.

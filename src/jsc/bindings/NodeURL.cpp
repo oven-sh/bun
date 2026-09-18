@@ -3,6 +3,7 @@
 #include "ErrorCode.h"
 #include "wtf/URL.h"
 #include "wtf/URLParser.h"
+#include "wtf/text/StringBuilder.h"
 #include <unicode/uidna.h>
 
 namespace Bun {
@@ -36,17 +37,11 @@ enum class IDNAMode : uint8_t {
     Lenient,
 };
 
-// Runs a uidna_nameTo* conversion with the U_BUFFER_OVERFLOW_ERROR retry
-// protocol; on completion `status`/`info` hold the final results.
+// Runs a uidna_*To* conversion with the U_BUFFER_OVERFLOW_ERROR retry protocol and appends the output to `output`.
 using UIDNAFunction = int32_t (*)(const UIDNA*, const char16_t*, int32_t, char16_t*, int32_t, UIDNAInfo*, UErrorCode*);
 
-static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& input, UErrorCode& status, UIDNAInfo& info)
+static void runUIDNA(UIDNAFunction convert, const UIDNA* idna, std::span<const char16_t> span, StringBuilder& output, UErrorCode& status, UIDNAInfo& info)
 {
-    String domain = input;
-    if (domain.is8Bit())
-        domain.convertTo16Bit();
-    const auto span = domain.span16();
-
     Vector<char16_t, 256> buffer(256);
     int32_t length = convert(idna, span.data(), span.size(), buffer.begin(), buffer.size(), &info, &status);
     if (status == U_BUFFER_OVERFLOW_ERROR) {
@@ -56,8 +51,21 @@ static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& i
         length = convert(idna, span.data(), span.size(), buffer.begin(), buffer.size(), &info, &status);
     }
     if (U_FAILURE(status))
+        return;
+    output.append(std::span { buffer.begin(), static_cast<size_t>(length) });
+}
+
+static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& input, UErrorCode& status, UIDNAInfo& info)
+{
+    String domain = input;
+    if (domain.is8Bit())
+        domain.convertTo16Bit();
+
+    StringBuilder output;
+    runUIDNA(convert, idna, domain.span16(), output, status, info);
+    if (U_FAILURE(status))
         return {};
-    return String(std::span { buffer.begin(), static_cast<size_t>(length) });
+    return output.toString();
 }
 
 // Port of Node's icu-based ToASCII (removed in nodejs/node#55156):
@@ -98,6 +106,47 @@ static String icuToUnicode(const String& input)
     UErrorCode status = U_ZERO_ERROR;
     UIDNAInfo info = UIDNA_INFO_INITIALIZER;
     return runUIDNA(uidna_nameToUnicode, toUnicodeIDNA(), input, status, info);
+}
+
+// Per-label ToUnicode of a parsed host: uidna_nameToUnicode moves the rest of the name for each decoded label.
+static String icuParsedHostToUnicode(const String& host)
+{
+    if (!host.contains("xn--"_s))
+        return host;
+
+    String domain = host;
+    if (domain.is8Bit())
+        domain.convertTo16Bit();
+    const auto span = domain.span16();
+
+    StringBuilder result { OverflowPolicy::RecordOverflow };
+    result.reserveCapacity(span.size());
+    size_t labelStart = 0;
+    while (true) {
+        size_t labelEnd = labelStart;
+        while (labelEnd < span.size() && span[labelEnd] != '.')
+            labelEnd++;
+        auto label = span.subspan(labelStart, labelEnd - labelStart);
+
+        if (label.size() >= 4 && label[0] == 'x' && label[1] == 'n' && label[2] == '-' && label[3] == '-') {
+            UErrorCode status = U_ZERO_ERROR;
+            UIDNAInfo info = UIDNA_INFO_INITIALIZER;
+            runUIDNA(uidna_labelToUnicode, toUnicodeIDNA(), label, result, status, info);
+            if (U_FAILURE(status))
+                return {};
+        } else {
+            result.append(label);
+        }
+
+        if (labelEnd == span.size())
+            break;
+        result.append('.');
+        labelStart = labelEnd + 1;
+    }
+    // The decoded labels can add up to more than String::MaxLength.
+    if (result.hasOverflowed()) [[unlikely]]
+        return {};
+    return result.toString();
 }
 
 // WebKit's host parser fast-paths all-ASCII hosts without decoding xn--
@@ -202,7 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
     if (host.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
 
-    auto unicode = icuToUnicode(host);
+    auto unicode = icuParsedHostToUnicode(host);
     if (unicode.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
     return JSC::JSValue::encode(JSC::jsString(vm, unicode));

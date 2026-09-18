@@ -1242,7 +1242,7 @@ describe.skipIf(isWindows).each([
   { linker: "hoisted", bunfig: "" },
   { linker: "isolated, global store", bunfig: `[install]\nlinker = "isolated"\nglobalStore = true\n` },
 ])("bun patch with the $linker linker", ({ bunfig }) => {
-  test("leaves node_modules/<pkg> as it was when the copy from the cache fails", async () => {
+  test.concurrent("leaves node_modules/<pkg> as it was when the copy from the cache fails", async () => {
     const big = Buffer.alloc(64 * 1024, "x").toString();
     await using dir = tempDir("patch-copy-fails", {
       "package.json": JSON.stringify({

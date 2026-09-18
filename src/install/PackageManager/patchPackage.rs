@@ -1133,13 +1133,27 @@ fn overwrite_package_in_node_modules_folder(
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
 ) -> Result<(), crate::Error> {
-    // The copy lands in a staging folder under the root node_modules and is
-    // renamed over `node_modules_folder_path` once it is complete. A copy
-    // that fails part-way (ENOSPC, an unreadable cache file, an I/O error)
-    // leaves the installed package as it was. The staging folder is not a
-    // sibling of the destination: with the isolated linker's global store
-    // the destination can be reached through a symlink into the shared
-    // cache until `detach_module_folder_from_shared_store` runs below.
+    // The copy lands in a staging folder next to `node_modules_folder_path`
+    // and is swapped into place once it is complete, so a copy that fails
+    // part-way (ENOSPC, an unreadable cache file, an I/O error) leaves the
+    // installed package as it was. A sibling keeps the swap on one filesystem.
+    let parent = resolve_path::dirname::<platform::Auto>(node_modules_folder_path);
+
+    // With the isolated linker's global virtual store, a nested path such as
+    // `node_modules/.bun/<storepath>/node_modules/<pkg>` is reached *through*
+    // a symlink that points into `<cache>/links/`, so a sibling of the
+    // destination would be written into the shared global entry underneath
+    // every other project. Detach the parent first: walk up the path to find
+    // the first symlink ancestor, replace it with a real directory, and
+    // recreate the path below it so the copy lands in a project-local tree.
+    // A symlink at `node_modules_folder_path` itself (the isolated linker's
+    // top-level link) is renamed aside by the swap below. The parent may
+    // also be missing when a hoisted workspace dependency is patched by name.
+    if !parent.is_empty() {
+        detach_module_folder_from_shared_store(parent);
+        let _ = Fd::cwd().make_path(parent);
+    }
+
     let mut tmpname_buf = bun_paths::path_buffer_pool::get();
     let tmpname = bun_paths::fs::FileSystem::tmpname(
         b"patch_tmp",
@@ -1147,7 +1161,7 @@ fn overwrite_package_in_node_modules_folder(
         bun_core::fast_random(),
     )?;
     let staging_path =
-        resolve_path::join::<platform::Posix>(&[b"node_modules", tmpname.as_bytes()]).to_vec();
+        resolve_path::join::<platform::Posix>(&[parent, tmpname.as_bytes()]).to_vec();
     let staging_path: &[u8] = &staging_path;
 
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
@@ -1214,37 +1228,43 @@ fn overwrite_package_in_node_modules_folder(
         return Err(e.into());
     }
 
-    // With the isolated linker's global virtual store, `node_modules_folder_path`
-    // is reached *through* a `node_modules/.bun/<storepath>` symlink that points
-    // into `<cache>/links/`. The rename below would replace the shared global
-    // entry (and its dep symlinks) underneath every other project. Detach
-    // first: walk up the path to find the first symlink ancestor, replace it
-    // with a real directory, and recreate the path below it so the rename
-    // lands in a project-local tree.
-    detach_module_folder_from_shared_store(node_modules_folder_path);
+    // Swap without a window in which neither copy exists: move the installed
+    // package aside, move the staging folder into place, then delete the old
+    // package. `rename` does not follow a symlink at the leaf, so the
+    // isolated linker's top-level link is moved aside as a link.
+    let mut oldname_buf = bun_paths::path_buffer_pool::get();
+    let oldname = bun_paths::fs::FileSystem::tmpname(
+        b"patch_old",
+        &mut oldname_buf[..],
+        bun_core::fast_random(),
+    )?;
+    let old_path = resolve_path::join::<platform::Posix>(&[parent, oldname.as_bytes()]).to_vec();
+    let old_path: &[u8] = &old_path;
 
-    // A hoisted workspace dependency that is patched by name may not be
-    // installed at this path yet, so its parent may not exist.
-    let parent = resolve_path::dirname::<platform::Auto>(node_modules_folder_path);
-    if !parent.is_empty() {
-        let _ = Fd::cwd().make_path(parent);
-    }
+    let mut staging_z = bun_paths::Path::<u8>::from(staging_path)?;
+    let mut old_z = bun_paths::Path::<u8>::from(old_path)?;
+    let mut dest_z = bun_paths::Path::<u8>::from(node_modules_folder_path)?;
 
-    if let Err(e) = sys::renameat_concurrently_a(
-        Fd::cwd(),
-        staging_path,
-        Fd::cwd(),
-        node_modules_folder_path,
-        sys::RenameOptions {
-            move_fallback: true,
-        },
-    ) {
+    let has_old = match sys::renameat(Fd::cwd(), dest_z.slice_z(), Fd::cwd(), old_z.slice_z()) {
+        Ok(()) => true,
+        Err(e) if e.get_errno() == sys::E::ENOENT => false,
+        Err(e) => {
+            let _ = Fd::cwd().delete_tree(staging_path);
+            return Err(e.into());
+        }
+    };
+
+    if let Err(e) = sys::renameat(Fd::cwd(), staging_z.slice_z(), Fd::cwd(), dest_z.slice_z()) {
+        if has_old {
+            let _ = sys::renameat(Fd::cwd(), old_z.slice_z(), Fd::cwd(), dest_z.slice_z());
+        }
         let _ = Fd::cwd().delete_tree(staging_path);
         return Err(e.into());
     }
 
-    // An atomic exchange leaves the old package at the staging path.
-    let _ = Fd::cwd().delete_tree(staging_path);
+    if has_old {
+        let _ = Fd::cwd().delete_tree(old_path);
+    }
     Ok(())
 }
 

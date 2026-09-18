@@ -3671,13 +3671,14 @@ it("an Upgrade request with a non-chunked Transfer-Encoding switches protocols r
   let serverSocket: import("node:net").Socket | undefined;
   let client: import("node:net").Socket | undefined;
   const server = createServer(() => events.push("request"));
-  const { promise: tunneled, resolve: onTunneled } = Promise.withResolvers<void>();
+  const { promise: tunneled, resolve: onTunneled, reject: onTunnelClosed } = Promise.withResolvers<void>();
   server.on("upgrade", (req, socket, head) => {
     serverSocket = socket;
     events.push(`upgrade head=${head.toString()}`);
     req.on("data", d => events.push(`req data=${d.toString()}`));
     req.on("end", () => events.push("req end"));
     socket.on("error", () => {});
+    socket.on("close", () => onTunnelClosed(new Error("the upgrade socket closed: " + JSON.stringify(events))));
     socket.on("data", d => {
       events.push(`tunnel data=${d.toString()}`);
       onTunneled();
@@ -3702,7 +3703,11 @@ it("an Upgrade request with a non-chunked Transfer-Encoding switches protocols r
         buf += d;
         if (buf.includes("\r\n\r\n")) resolve();
       });
-      client!.on("close", () => reject(new Error("the server closed the socket: " + buf)));
+      client!.on("close", () => {
+        const err = new Error("the server closed the socket: " + buf);
+        reject(err);
+        onTunnelClosed(err);
+      });
     });
     client.write(
       "GET /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: identity\r\n\r\nhead",
@@ -3714,6 +3719,56 @@ it("an Upgrade request with a non-chunked Transfer-Encoding switches protocols r
   } finally {
     client?.destroy();
     serverSocket?.destroy();
+    server.close();
+  }
+});
+
+it("the Connection header's upgrade token is a whole comma-separated member, like llhttp", async () => {
+  // Node v26.3.0 contract (verified): "x-upgrade", "upgrade;foo" and
+  // "\"upgrade\"" do not make the request an upgrade. "keep-alive, Upgrade"
+  // does.
+  const seen: string[] = [];
+  const server = createServer((req, res) => {
+    seen.push(`request ${req.url} upgrade=${req.upgrade}`);
+    res.end("ok");
+  });
+  server.on("upgrade", (req, socket) => {
+    seen.push(`upgrade ${req.url}`);
+    socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    for (const [path, connection] of [
+      ["/a", "x-upgrade"],
+      ["/b", "upgrade;foo"],
+      ["/c", '"upgrade"'],
+      ["/d", "keep-alive, Upgrade"],
+    ]) {
+      const client = connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      await once(client, "connect");
+      const response = new Promise<string>(resolve => {
+        let buf = "";
+        client.on("data", d => {
+          buf += d;
+          if (buf.endsWith("ok") || buf.endsWith("\r\n\r\n")) resolve(buf);
+        });
+        client.on("close", () => resolve(buf));
+      });
+      client.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: ${connection}\r\nUpgrade: x\r\n\r\n`);
+      const out = await response;
+      client.destroy();
+      expect(out.split("\r\n")[0]).toBe(path === "/d" ? "HTTP/1.1 101 Switching Protocols" : "HTTP/1.1 200 OK");
+    }
+    expect(seen).toEqual([
+      "request /a upgrade=false",
+      "request /b upgrade=false",
+      "request /c upgrade=false",
+      "upgrade /d",
+    ]);
+  } finally {
     server.close();
   }
 });

@@ -1289,12 +1289,12 @@ struct HttpResponseData;
             bool deferredTransferEncodingError = IsNodeHttp && transferEncoding.has
                 && !transferEncoding.invalid && !transferEncoding.chunked && !contentLengthStringLen;
 
-            /* node:http compat: llhttp decides the body of an Upgrade or CONNECT
-             * request (Upgrade header plus a Connection: upgrade token) as chunked
-             * or Content-Length > 0 and leaves the HTTP parser at the end of the
-             * head before it checks the framing. Such a request with a non-chunked
-             * Transfer-Encoding has no body and no error, whether or not the
-             * handler accepts the upgrade. */
+            /* node:http compat: llhttp leaves the HTTP parser at the end of the
+             * head of every CONNECT request, and of an Upgrade request (Upgrade
+             * header plus a Connection: upgrade token) whose body is neither
+             * chunked nor Content-Length > 0, before it checks the framing. Such
+             * a request with a non-chunked Transfer-Encoding has no body and no
+             * error, whether or not the handler accepts the upgrade. */
             if (deferredTransferEncodingError
                 && (isConnectRequest || (req->getHeader("upgrade").data() && req->hasConnectionUpgrade()))) {
                 deferredTransferEncodingError = false;

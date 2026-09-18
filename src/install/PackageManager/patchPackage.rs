@@ -14,8 +14,8 @@ use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::isolated_install::FileCopier;
 use crate::lockfile_real::package::{Package, PackageColumns as _};
-use crate::lockfile_real::tree;
 use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
+use crate::lockfile_real::{reachable, tree};
 use crate::package_manager_real::PackageManager;
 use crate::package_manager_real::options::{LogLevel, PatchFeatures};
 use crate::package_manager_real::package_manager_directories::{
@@ -249,6 +249,13 @@ pub fn do_patch_commit(
                     Global::crash();
                 }
             };
+
+            crash_if_bundled_path(
+                &lockfile,
+                argument,
+                actual_package.meta.id,
+                lockfile.str(&actual_package.name),
+            );
 
             break 'result (argument.to_vec(), actual_package);
         }
@@ -834,6 +841,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 };
 
                 let name = lockfile.str(&package.name).to_vec();
+                crash_if_bundled_path(lockfile, argument, actual_package.meta.id, &name);
+
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
                     let mut name_and_version = Vec::new();
                     write!(
@@ -1249,6 +1258,144 @@ fn node_modules_folder_for_dependency_id(
     }
 }
 
+/// For each package that only bundled dependencies reach: the package whose tarball ships it.
+struct BundledPackages(Vec<PackageID>);
+
+impl BundledPackages {
+    fn new(lockfile: &Lockfile) -> Self {
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let dependency_lists = lockfile.packages.items_dependencies();
+        let installed = reachable::packages(
+            lockfile,
+            resolutions,
+            reachable::Options {
+                bundled: false,
+                ..reachable::Options::all(0)
+            },
+        );
+
+        let mut bundler_of = vec![invalid_package_id; dependency_lists.len()];
+        let mut queue: Vec<(PackageID, PackageID)> = Vec::new();
+        for (pkg_id, list) in dependency_lists.iter().enumerate() {
+            for dep_id in list.begin() as usize..list.end() as usize {
+                if dependencies[dep_id].behavior.is_bundled() {
+                    queue.push((resolutions[dep_id], pkg_id as PackageID));
+                }
+            }
+        }
+        while let Some((pkg_id, bundler)) = queue.pop() {
+            let Some(slot) = bundler_of.get_mut(pkg_id as usize) else {
+                continue;
+            };
+            if *slot != invalid_package_id || installed.is_set(pkg_id as usize) {
+                continue;
+            }
+            *slot = bundler;
+            let list = dependency_lists[pkg_id as usize];
+            for dep_id in list.begin() as usize..list.end() as usize {
+                queue.push((resolutions[dep_id], bundler));
+            }
+        }
+        Self(bundler_of)
+    }
+
+    fn bundler_of_package(&self, pkg_id: PackageID) -> Option<PackageID> {
+        self.0
+            .get(pkg_id as usize)
+            .copied()
+            .filter(|&bundler| bundler != invalid_package_id)
+    }
+
+    /// The package whose tarball ships what `dep_id` installs, so that bun does not install it.
+    fn bundler_of_dependency(
+        &self,
+        lockfile: &Lockfile,
+        dep_id: DependencyID,
+    ) -> Option<PackageID> {
+        let parent_id = lockfile.get_parent_pkg_of_dependency(dep_id)?;
+        if lockfile.buffers.dependencies[dep_id as usize]
+            .behavior
+            .is_bundled()
+        {
+            return Some(parent_id);
+        }
+        self.bundler_of_package(parent_id)
+    }
+
+    /// The first bundled dependency on `node_modules/a/node_modules/b`, found in the lockfile's tree.
+    fn bundler_on_path(&self, lockfile: &Lockfile, path: &[u8]) -> Option<PackageID> {
+        let top_level_dir = FileSystem::instance().top_level_dir();
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
+        let abs = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+            top_level_dir,
+            &mut abs_buf[..],
+            &[path],
+        )?;
+        let mut components =
+            strings::tokenize_any(resolve_path::relative(top_level_dir, abs), b"/\\");
+
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let trees = lockfile.buffers.trees.as_slice();
+        let mut tree = trees.first()?;
+        let mut alias: Vec<u8> = Vec::new();
+        loop {
+            if components.next()? != b"node_modules" {
+                return None;
+            }
+            alias.clear();
+            alias.extend_from_slice(components.next()?);
+            if alias.starts_with(b"@") {
+                alias.push(b'/');
+                alias.extend_from_slice(components.next()?);
+            }
+            let has_alias = |dep_id: DependencyID| {
+                dependencies
+                    .get(dep_id as usize)
+                    .is_some_and(|dep| dep.name.slice(string_buf) == alias)
+            };
+            let dep_id = tree
+                .dependencies
+                .get(lockfile.buffers.hoisted_dependencies.as_slice())
+                .iter()
+                .copied()
+                .find(|&dep_id| has_alias(dep_id))?;
+            if let Some(bundler) = self.bundler_of_dependency(lockfile, dep_id) {
+                return Some(bundler);
+            }
+            tree = trees
+                .iter()
+                .find(|child| child.parent == tree.id && has_alias(child.dependency_id))?;
+        }
+    }
+}
+
+fn crash_bundled(lockfile: &Lockfile, name: &[u8], bundler: PackageID) -> ! {
+    let bundler = lockfile.str(&lockfile.packages.items_name()[bundler as usize]);
+    bun_core::pretty_errorln!(
+        "<r><red>error<r>: cannot patch <b>{}<r>: it is a bundled dependency of <b>{}<r>, which ships it in its own tarball",
+        bstr::BStr::new(name),
+        bstr::BStr::new(bundler),
+    );
+    bun_core::note!(
+        "to change it, run <cyan>bun patch {}<r> and edit its copy in the node_modules folder of that package",
+        bstr::BStr::new(bundler),
+    );
+    Global::crash();
+}
+
+/// Exits when `path` is inside a bundled dependency, or when `pkg_id` is only ever bundled.
+fn crash_if_bundled_path(lockfile: &Lockfile, path: &[u8], pkg_id: PackageID, name: &[u8]) {
+    let bundled = BundledPackages::new(lockfile);
+    if let Some(bundler) = bundled
+        .bundler_on_path(lockfile, path)
+        .or_else(|| bundled.bundler_of_package(pkg_id))
+    {
+        crash_bundled(lockfile, name, bundler);
+    }
+}
+
 type IdPair = (DependencyID, PackageID);
 
 fn pkg_info_for_name_and_version(
@@ -1267,6 +1414,9 @@ fn pkg_info_for_name_and_version(
     let mut resolution_label = Vec::new();
     let dependencies = lockfile.buffers.dependencies.as_slice();
 
+    let bundled = BundledPackages::new(lockfile);
+    let mut bundler: Option<PackageID> = None;
+
     for (dep_id, dep) in dependencies.iter().enumerate() {
         if dep.name_hash != name_hash {
             continue;
@@ -1277,15 +1427,21 @@ fn pkg_info_for_name_and_version(
         }
         let pkg = *lockfile.packages.get(pkg_id as usize);
         if let Some(v) = version {
-            if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == v {
-                pairs.push((dep_id as DependencyID, pkg_id));
+            if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) != v {
+                continue;
             }
-        } else {
-            pairs.push((dep_id as DependencyID, pkg_id));
         }
+        if let Some(by) = bundled.bundler_of_dependency(lockfile, dep_id as DependencyID) {
+            bundler.get_or_insert(by);
+            continue;
+        }
+        pairs.push((dep_id as DependencyID, pkg_id));
     }
 
     if pairs.is_empty() {
+        if let Some(bundler) = bundler {
+            crash_bundled(lockfile, pkg_maybe_version_to_patch, bundler);
+        }
         bun_core::pretty_errorln!(
             "\n<r><red>error<r>: package <b>{}<r> not found<r>",
             bstr::BStr::new(pkg_maybe_version_to_patch)

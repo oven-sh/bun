@@ -737,6 +737,182 @@ test.each(stoppedRequests)("server.stop(true) inside the handler of %s aborts it
   await stopped!;
 });
 
+// A request head that arrives split over two reads is parsed out of the HTTP
+// parser's per-socket fallback buffer, and the uWS request the dispatch holds
+// views into that buffer. server.stop(true) inside the handler closes the
+// request's own socket right there, and the close destructed the parser with
+// its buffer. Everything that materialises the headers after that read freed
+// memory: `req.headers` inside the handler, and the snapshot the server takes
+// itself when an async handler ends the dispatch. Under a sanitizer it is a
+// heap-use-after-free; without one the headers come back as the bytes of
+// whatever allocation took the block over.
+test.concurrent.each(["lazy", "async"])(
+  "a request head split over two reads survives server.stop(true) in the handler (%s headers)",
+  async mode => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { connect } from "node:net";
+          import { existsSync } from "node:fs";
+
+          const { promise: printed, resolve: finish } = Promise.withResolvers();
+
+          function report(req) {
+            const got = {};
+            for (const [key, value] of req.headers) got[key] = value;
+            console.log([got["x-mark"], String(got["x-pad"]?.length), Object.keys(got).sort().join(",")].join("|"));
+            finish();
+          }
+
+          // Native allocations of many sizes around the size of the freed block
+          // (about 430 bytes). On a build with no sanitizer they take it over,
+          // so a view into it reads their bytes. The names stay far below the
+          // shortest platform path limit (1024 bytes on macOS).
+          function churn() {
+            for (let n = 64; n < 768; n += 8) {
+              const name = Buffer.alloc(n, 0x5a).toString();
+              try { Bun.resolveSync("./" + name, "/tmp"); } catch {}
+              try { existsSync("/tmp/" + name); } catch {}
+            }
+          }
+
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 0,
+            fetch(req, srv) {
+              if (req.url.endsWith("/barrier")) return new Response("ok");
+              srv.stop(true);
+              churn();
+              if (process.env.SPLIT_HEAD_MODE === "lazy") {
+                report(req);
+                return new Response("x");
+              }
+              return (async () => {
+                // Only to make the handler return a pending promise, so that
+                // the server snapshots the headers itself as the dispatch ends.
+                await Bun.sleep(1);
+                report(req);
+                return new Response("x");
+              })();
+            },
+          });
+
+          const head =
+            "GET /a HTTP/1.1\\r\\nHost: x\\r\\nX-Pad: " + Buffer.alloc(300, 0x70).toString() +
+            "\\r\\nX-Mark: " + Buffer.alloc(40, 0x4d).toString() + "\\r\\n\\r\\n";
+          const socket = connect(server.port, "127.0.0.1");
+          socket.on("error", () => {});
+          await new Promise(resolve => socket.once("connect", resolve));
+          socket.setNoDelay(true);
+          // One read that holds a whole request plus the first 22 bytes of the
+          // next head: the server answers the first and parks the rest in the
+          // parser's fallback buffer.
+          const answered = new Promise(resolve => socket.once("data", resolve));
+          socket.write("GET /barrier HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n" + head.slice(0, 22));
+          await answered;
+          // The rest of the head. This request is parsed out of the buffer.
+          socket.write(head.slice(22));
+          await printed;
+          socket.destroy();
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        SPLIT_HEAD_MODE: mode,
+        // symbolize=0 so an unfixed build's ASAN abort exits promptly instead
+        // of spending seconds in llvm-symbolizer.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+      stdout: `${Buffer.alloc(40, 0x4d).toString()}|300|host,x-mark,x-pad`,
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// The same buffer, reached by the client alone: no server API call and no
+// nested event loop. The head is split, the request declares a body it never
+// sends, and `Connection: close` makes the completed response close the socket
+// inside the dispatch. The pending `req.text()` then rejects, and its handler
+// reads a url and headers that the close already freed.
+test.concurrent("a split request head survives a Connection: close response on an unfinished body", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        import { connect } from "node:net";
+
+        const { promise: rejected, resolve: finish } = Promise.withResolvers();
+
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          idleTimeout: 0,
+          fetch(req) {
+            if (req.method === "GET") return new Response("ok");
+            req.text().then(
+              () => { console.log("resolved, expected a reject"); finish(); },
+              error => {
+                const got = {};
+                for (const [key, value] of req.headers) got[key] = value;
+                console.log([error.name, JSON.stringify(req.url), String(got["x-pad"]?.length), Object.keys(got).sort().join(",")].join("|"));
+                finish();
+              },
+            );
+            // Larger than the cork buffer, so the response completes and the
+            // close gate fires while this dispatch is still on the stack.
+            return new Response(Buffer.alloc(20 * 1024, 0x61).toString());
+          },
+        });
+
+        const head =
+          "POST /a HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\nContent-Length: 10\\r\\nX-Pad: " +
+          Buffer.alloc(300, 0x70).toString() + "\\r\\n\\r\\n";
+        const socket = connect(server.port, "127.0.0.1");
+        socket.on("error", () => {});
+        await new Promise(resolve => socket.once("connect", resolve));
+        socket.setNoDelay(true);
+        const answered = new Promise(resolve => socket.once("data", resolve));
+        // One read: a whole GET plus the first 22 bytes of the POST head, which
+        // park in the parser's fallback buffer.
+        socket.write("GET /barrier HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n" + head.slice(0, 22));
+        await answered;
+        socket.on("data", () => {});
+        // The rest of the head, but never the 10 body bytes it declares.
+        socket.write(head.slice(22));
+        await rejected;
+        socket.destroy();
+        server.stop(true);
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+    stdout: `AbortError|"http://x/a"|300|connection,content-length,host,x-pad`,
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A Response the server will never render still owns a body stream that
 // somebody produces into. The server has to cancel it, like a client abort
 // after the stream was attached does, or the producer waits for a pull that

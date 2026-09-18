@@ -138,6 +138,11 @@ static WATCH_SIGINT_LISTENERS: AtomicU32 = AtomicU32::new(0);
 /// count change here (main-thread VM only, platform signal numbers).
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__onSignalListenerCountChanged(number: i32, count: i32) {
+    // The SIGCHLD handler of the spawn waiter thread forwards to the JS listeners.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if number == libc::SIGCHLD {
+        bun_spawn::process::WaiterThread::set_js_listens_for_sigchld(count > 0);
+    }
     let watch_signal = i32::from(WATCH_MODE_KILL_SIGNAL.load(Ordering::Relaxed));
     if watch_signal == 0 {
         return;
@@ -151,6 +156,18 @@ pub(crate) extern "C" fn Bun__onSignalListenerCountChanged(number: i32, count: i
     if number == i32::from(SIGINT_NUMBER) {
         WATCH_SIGINT_LISTENERS.store(count, Ordering::Release);
     }
+}
+
+/// C++ `onDidChangeListeners` changed the disposition of `number` for JS listeners. Native users of it take it back.
+#[cfg(unix)]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__onSignalDispositionChanged(number: i32) {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if number == libc::SIGCHLD {
+        bun_spawn::process::WaiterThread::on_sigchld_disposition_changed();
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    let _ = number;
 }
 
 /// Watcher-thread query: only ever true for `bun run --watch` (the count is

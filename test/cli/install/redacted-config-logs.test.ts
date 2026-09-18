@@ -141,6 +141,38 @@ test("bunfig password value is masked in config error output", async () => {
   expect(coloredExit).toBe(1);
 });
 
+test.concurrent("bunfig token value is masked when the error is on a long line", async () => {
+  // The key is more than 40 bytes before the error and more than 80 bytes
+  // of comment follow it, so the excerpt window would cut `token = ` away.
+  const secret = Buffer.alloc(72, "SECRET").toString();
+  const padding = Buffer.alloc(120, "x").toString();
+  using dir = tempDir("redacted-bunfig-long-line", {
+    "bunfig.toml": `[install]\ntoken = "${secret}" ] # ${padding}\n`,
+    "package.json": "{}",
+  });
+
+  for (const env of [
+    { ...bunEnv, NO_COLOR: "1" },
+    { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+  ]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(out).not.toContain("SECRET");
+    expect(err).not.toContain("SECRET");
+    expect(err).toContain(`"${"*".repeat(secret.length)}"`);
+    expect(err).toContain("Expected a newline or end of file after a key/value pair");
+    expect(exitCode).toBe(1);
+  }
+});
+
 describe.concurrent("redact", async () => {
   const tests = [
     {

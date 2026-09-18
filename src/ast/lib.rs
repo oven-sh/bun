@@ -697,6 +697,27 @@ impl Default for Location {
     }
 }
 
+/// How much of the source line `Location::line_text` keeps.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineText {
+    /// About 120 bytes around the error.
+    Windowed,
+    /// The whole line. The printer redacts a secret by the key in front of
+    /// it (`token = "..."`), so a message with
+    /// `redact_sensitive_information` must not lose the key to the window.
+    Whole,
+}
+
+impl LineText {
+    fn for_msg(redact_sensitive_information: bool) -> LineText {
+        if redact_sensitive_information {
+            LineText::Whole
+        } else {
+            LineText::Windowed
+        }
+    }
+}
+
 impl Location {
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
@@ -763,7 +784,7 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, None)
+        Self::init_or_null_impl(_source, r, None, LineText::Windowed)
     }
 
     /// `init_or_null`, but computing the line/column through a
@@ -773,14 +794,16 @@ impl Location {
         _source: Option<&Source>,
         r: Range,
         tracker: &mut LineColumnTracker,
+        line_text: LineText,
     ) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, Some(tracker))
+        Self::init_or_null_impl(_source, r, Some(tracker), line_text)
     }
 
     fn init_or_null_impl(
         _source: Option<&Source>,
         r: Range,
         tracker: Option<&mut LineColumnTracker>,
+        line_text: LineText,
     ) -> Option<Location> {
         if let Some(source) = _source {
             if r.is_empty() {
@@ -805,7 +828,7 @@ impl Location {
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
-            if full_line.len() > 80 + offset_in_line {
+            if line_text == LineText::Windowed && full_line.len() > 80 + offset_in_line {
                 let mut lo = offset_in_line.saturating_sub(40);
                 let mut hi = (offset_in_line + 80).min(full_line.len());
                 while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
@@ -833,7 +856,8 @@ impl Location {
                 // drops on the parse-error path *before* `process_fetch_log`
                 // clones the `Msg` into a `BuildMessage`, so own the bytes here
                 // instead of borrowing `source.contents`. `full_line` is
-                // bounded (≤ ~120 bytes) and only materialized on diagnostic
+                // bounded (≤ ~120 bytes, or one line of a config file for
+                // `LineText::Whole`) and only materialized on diagnostic
                 // paths.
                 line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
@@ -1473,11 +1497,22 @@ impl Log {
         r: Range,
         text: impl IntoText,
     ) -> Data {
+        self.tracked_range_data_with(source, r, text, LineText::Windowed)
+    }
+
+    fn tracked_range_data_with(
+        &mut self,
+        source: Option<&Source>,
+        r: Range,
+        text: impl IntoText,
+        line_text: LineText,
+    ) -> Data {
         let location = if source.is_some() {
             Location::init_or_null_tracked(
                 source,
                 r,
                 self.line_column_tracker.get_or_insert_default(),
+                line_text,
             )
         } else {
             Location::init_or_null(source, r)
@@ -1631,7 +1666,12 @@ impl Log {
             _ => {}
         }
         let data = self
-            .tracked_range_data(source, r, text)
+            .tracked_range_data_with(
+                source,
+                r,
+                text,
+                LineText::for_msg(redact_sensitive_information),
+            )
             .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind,
@@ -2120,13 +2160,14 @@ impl Log {
     #[cold]
     pub fn add_error_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
         self.errors += 1;
-        let data = self.tracked_range_data(
+        let data = self.tracked_range_data_with(
             opts.source,
             Range {
                 loc: opts.loc,
                 len: opts.len,
             },
             text,
+            LineText::for_msg(opts.redact_sensitive_information),
         );
         self.add_msg(Msg {
             kind: Kind::Err,

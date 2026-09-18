@@ -53,8 +53,7 @@ pub struct PatchCommitResult {
     pub(crate) not_in_workspace_root: bool,
 }
 
-/// The folder that `bun patch --commit` diffed. With the isolated linker that folder took the
-/// place of a link, and the install of the commit puts the link back.
+/// The folder that `bun patch --commit` diffed. The isolated linker puts its link back.
 pub struct CommittedPatch {
     real_path: Box<[u8]>,
     /// False when the diff was empty: the folder equals the package, and no patch is recorded.
@@ -301,8 +300,7 @@ pub fn do_patch_commit(
         }
     };
 
-    // A link into the isolated store is not a copy from `bun patch`. `git diff` would record the
-    // link itself (`new file mode 120000`), and no install can apply that patch.
+    // `git diff` records a link as `new file mode 120000`, and no install can apply that.
     if !is_real_dir_not_symlink(&changes_dir) {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: <b>{}<r> is not a folder that bun patch prepared",

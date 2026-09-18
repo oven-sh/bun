@@ -32,9 +32,7 @@ impl Symlinker {
         }
     }
 
-    /// The directory moves aside before the link is written, and is deleted after. `dest` holds
-    /// all of the directory or the link at every point, so a failure leaves no partly deleted
-    /// copy for the next `bun patch --commit` to diff.
+    /// The directory moves aside first, so a failure never leaves a partly deleted copy at `dest`.
     fn replace_directory(&mut self) -> bun_sys::Result<()> {
         let mut aside =
             bun_paths::Path::<u8>::from(self.dest.dirname().unwrap_or(b".")).assume_ok();
@@ -104,9 +102,7 @@ impl Symlinker {
                                 // directory, leave it: this is the `bun patch <pkg>`
                                 // workspace (a detached copy the user is editing
                                 // before `--commit`), and `deleteTree` here would
-                                // silently destroy their in-progress edits. After
-                                // `--commit` those edits are in the store, and
-                                // `ReplaceDirectory` puts the link back. If it's
+                                // silently destroy their in-progress edits. If it's
                                 // a regular file, replace it.
                                 _ => {
                                     #[cfg(windows)]
@@ -182,6 +178,6 @@ impl Symlinker {
 pub enum Strategy {
     ExpectExisting,
     ExpectMissing,
-    /// `ExpectExisting`, except that a real directory at `dest` is deleted and replaced by the link.
+    /// `ExpectExisting`, but the link replaces a real directory that `bun patch --commit` diffed.
     ReplaceDirectory,
 }

@@ -2310,8 +2310,7 @@ impl<'a> Installer<'a> {
         Ok(changed)
     }
 
-    /// True when `store_path`, the package directory of `entry_id`, has what `committed` diffed:
-    /// the tag file of the new patch, or the package as it is when the diff was empty.
+    /// `store_path` has the tag file of the committed patch, or exists when the diff was empty.
     fn store_holds_commit(
         &self,
         committed: &CommittedPatch,
@@ -2342,10 +2341,7 @@ impl<'a> Installer<'a> {
         has_tag
     }
 
-    /// `bun patch` swaps the link of a root or workspace dependency for a detached copy of the
-    /// package, and `Strategy::ExpectExisting` keeps a real directory. `bun patch --commit` puts
-    /// the link back here, on the main thread after every task is done: a patch that did not
-    /// apply leaves no tag in the store, and then the copy with the edits stays.
+    /// After every task: a patch that did not apply leaves no tag, and then the copy stays.
     pub(crate) fn relink_committed_patch(&mut self) {
         let Some(committed) = self.manager().committed_patch.as_ref() else {
             return;

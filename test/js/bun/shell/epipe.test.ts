@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -149,5 +150,79 @@ describe.if(isPosix)("command output after the stdout reader went away", () => {
   test.concurrent("relayed subprocess output", async () => {
     using dir = tempDir("shell-epipe-subprocess", {});
     await expectFixtureToSettle("subprocess", String(dir));
+  });
+});
+
+// The builtin cat queues one chunk per read. It must not finish while one of
+// them is still queued: the node is reused by the next command, which then
+// receives the completions of those chunks.
+describe.if(isPosix)("cat whose input ends while its output is still queued", () => {
+  const size = 1024 * 1024;
+
+  function spawnCat(dir: string) {
+    return Bun.spawn({
+      cmd: [bunExe(), "-e", "await Bun.$`cat fifo; echo tail`.nothrow(); console.error('settled');"],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  }
+
+  // Lets cat write "first\n", so that its output has drained once. Then feeds it `size` bytes and
+  // the end of its input while nothing reads its stdout.
+  async function feed(dir: string, reader: ReadableStreamDefaultReader<Uint8Array>) {
+    const received: Uint8Array[] = [];
+    // "r+" does not wait for cat to open the other end.
+    const input = await open(join(dir, "fifo"), "r+");
+    try {
+      await input.writeFile("first\n");
+      while (Buffer.concat(received).length < "first\n".length) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        received.push(value);
+      }
+      expect(Buffer.concat(received).toString()).toBe("first\n");
+      await input.writeFile(Buffer.alloc(size, "a"));
+    } finally {
+      await input.close();
+    }
+    return received;
+  }
+
+  test.concurrent("every byte is written before the next command runs", async () => {
+    using dir = tempDir("shell-cat-fifo-read", {});
+    expect(await Bun.spawn(["mkfifo", join(String(dir), "fifo")]).exited).toBe(0);
+    await using proc = spawnCat(String(dir));
+    const stderr = proc.stderr.text();
+    const reader = proc.stdout.getReader();
+    const received = await feed(String(dir), reader);
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      received.push(value);
+    }
+    const stdout = Buffer.concat(received);
+    expect({
+      bytes: stdout.length,
+      intact: stdout.equals(Buffer.concat([Buffer.from("first\n"), Buffer.alloc(size, "a"), Buffer.from("tail\n")])),
+      stderr: await stderr,
+      exitCode: await proc.exited,
+    }).toEqual({ bytes: "first\n".length + size + "tail\n".length, intact: true, stderr: "settled\n", exitCode: 0 });
+  });
+
+  test.concurrent("the queued chunks fail when the stdout reader goes away", async () => {
+    using dir = tempDir("shell-cat-fifo-close", {});
+    expect(await Bun.spawn(["mkfifo", join(String(dir), "fifo")]).exited).toBe(0);
+    await using proc = spawnCat(String(dir));
+    const stderr = proc.stderr.text();
+    const reader = proc.stdout.getReader();
+    await feed(String(dir), reader);
+    await reader.cancel();
+    expect({ stderr: await stderr, exitCode: await proc.exited, signalCode: proc.signalCode }).toEqual({
+      stderr: "settled\n",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

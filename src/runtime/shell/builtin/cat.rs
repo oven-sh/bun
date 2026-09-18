@@ -33,7 +33,6 @@ pub enum CatState {
         reader: Option<Arc<IOReader>>,
         chunks_queued: usize,
         chunks_done: usize,
-        out_done: bool,
         in_done: bool,
     },
     WaitingWriteErr,
@@ -89,7 +88,6 @@ impl Cat {
                 reader: None,
                 chunks_queued: 0,
                 chunks_done: 0,
-                out_done: false,
                 in_done: false,
             }
         };
@@ -216,14 +214,12 @@ impl Cat {
                     chunks_done,
                     chunks_queued,
                     in_done,
-                    out_done,
                     ..
                 } = &mut Self::state_mut(interp, cmd).state
                 {
                     *chunks_done = 0;
                     *chunks_queued = 0;
                     *in_done = false;
-                    *out_done = false;
                     *slot = Some(Arc::clone(&reader));
                 }
                 reader.add_reader(ReaderChildPtr {
@@ -295,14 +291,10 @@ impl Cat {
                 chunks_queued,
                 chunks_done,
                 in_done,
-                out_done,
                 ..
             } => {
                 *chunks_done += 1;
-                if *chunks_done >= *chunks_queued {
-                    *out_done = true;
-                }
-                if *in_done && *out_done {
+                if *in_done && *chunks_done >= *chunks_queued {
                     Step::Next
                 } else {
                     Step::Suspend
@@ -373,13 +365,12 @@ impl Cat {
                 chunks_queued,
                 chunks_done,
                 in_done,
-                out_done,
                 reader,
                 ..
             } => {
                 *in_done = true;
                 if errno != 0 {
-                    if *out_done || !stdout_needs_io {
+                    if *chunks_done >= *chunks_queued || !stdout_needs_io {
                         // Drop the reader ref.
                         *reader = None;
                         Step::Done(errno)
@@ -387,7 +378,7 @@ impl Cat {
                         cancel = true;
                         Step::Suspend
                     }
-                } else if *out_done || *chunks_done >= *chunks_queued || !stdout_needs_io {
+                } else if *chunks_done >= *chunks_queued || !stdout_needs_io {
                     Step::Next
                 } else {
                     Step::Suspend

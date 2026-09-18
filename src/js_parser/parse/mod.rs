@@ -243,7 +243,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_decorators = has_decorators || opts.has_argument_decorators;
             } else {
                 // The property was dropped (e.g. a TypeScript overload signature or
-                // abstract method), which drops its decorators and computed key too.
+                // "declare" field), which drops its decorators and computed key too.
+                if !class_opts.is_type_script_declare && opts.ts_decorators.len() > 0 {
+                    p.log().add_range_error(
+                        Some(p.source),
+                        bun_ast::Range {
+                            loc: first_decorator_loc,
+                            len: 1,
+                        },
+                        b"Decorators are not valid here",
+                    );
+                }
                 // Discard any scopes recorded while parsing them or the visit pass
                 // will hit a scope order mismatch.
                 p.discard_scopes_up_to(property_scope_index);
@@ -1683,13 +1693,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if Self::IS_TYPESCRIPT_ENABLED
                         && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
                     {
+                        // ".mts" and ".cts" files reject a "<" that a JSX file would read as an element
+                        let less_than_range = p.lexer.range();
+                        let is_ambiguous_less_than =
+                            p.options.ts_no_ambiguous_less_than && !p.is_ts_arrow_fn_jsx()?;
                         match p
                             .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
                             ) {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 p.lexer.next()?;
-                                return p.parse_paren_expr(
+                                let expr = p.parse_paren_expr(
                                     async_range.loc,
                                     level,
                                     ParenExprOpts {
@@ -1698,7 +1712,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             == SkipTypeParameterResult::DefinitelyTypeParameters,
                                         ..Default::default()
                                     },
-                                );
+                                )?;
+                                // "async<T>(x)" is a call of a function named "async" and stays valid
+                                if is_ambiguous_less_than
+                                    && matches!(expr.data, js_ast::ExprData::EArrow(_))
+                                {
+                                    p.log().add_range_error(
+                                        Some(p.source),
+                                        less_than_range,
+                                        b"This syntax is not allowed in files with the \".mts\" or \".cts\" extension",
+                                    );
+                                }
+                                return Ok(expr);
                             }
                         }
                     }

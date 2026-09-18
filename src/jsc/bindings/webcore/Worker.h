@@ -51,6 +51,11 @@ public:
     static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, const String& url, WorkerOptions&&);
     ~Worker();
 
+    // HTML: the constructor parses its script URL and throws a SyntaxError when that fails. Bun also
+    // accepts paths and module specifiers, so a string with no URL scheme is returned unchanged for the
+    // resolver; a file: URL becomes its filesystem path. Used for the entry point and for each preload.
+    static ExceptionOr<String> resolveScriptURL(const String&);
+
     // ActiveDOMObject.
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }

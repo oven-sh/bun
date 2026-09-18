@@ -98,7 +98,11 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
                 return {};
             description = WTF::String();
         }
-        name = description.isNull() ? WTF::String("<error>"_s) : makeString("<error: "_s, description, '>');
+        // The description comes from JS: past `String::MaxLength` makeString() calls `CRASH()`.
+        if (!description.isNull())
+            name = tryMakeString("<error: "_s, description, '>');
+        if (description.isNull() || name.isNull())
+            name = "<error>"_s;
     } else {
         message = stackTraceHeaderMessage(vm, lexicalGlobalObject, errorObject);
         RETURN_IF_EXCEPTION(scope, {});

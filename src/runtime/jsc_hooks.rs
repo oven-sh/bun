@@ -915,11 +915,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
-    #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
-        // SAFETY: `el` is the live per-thread event loop.
-        unsafe { (*el).wakeup() };
-    }
 
     // ── pending unref ───────────────────────────────────────────────────
     #[cfg(unix)]
@@ -983,6 +978,15 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         let has_pending_immediate = has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
+        // `get_timeout` ignores `has_pending_immediate` on Windows, so a task
+        // left in the queue (a tick that hit its refill cap, or a hot-reload
+        // task's early return) has to wake the poll here. Otherwise the loop
+        // blocks until another thread posts.
+        #[cfg(windows)]
+        if has_pending_immediate {
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*el).wakeup() };
+        }
         // Fold the QUIC deadline into the poll timeout.
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
@@ -1076,11 +1080,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
-    #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
-        // SAFETY: `el` is the live per-thread event loop.
-        unsafe { (*el).wakeup() };
-    }
 
     #[cfg(unix)]
     {
@@ -1121,6 +1120,12 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         let has_pending_immediate = has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
+        // See `auto_tick`: a queued task must wake the libuv poll itself.
+        #[cfg(windows)]
+        if has_pending_immediate {
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*el).wakeup() };
+        }
         // SAFETY: `loop_` is the live per-thread uws loop.
         let quic_next_tick_us = unsafe {
             let ild = &(*loop_).internal_loop_data;

@@ -50,7 +50,7 @@ public:
     EventListenerMap();
 
     bool isEmpty() const { return m_entries.isEmpty(); }
-    bool contains(const AtomString& eventType) const { return find(eventType); }
+    bool contains(const AtomString& eventType) const { return findEntry(eventType); }
     bool containsActive(const AtomString& eventType) const;
 
     void clear();
@@ -58,13 +58,30 @@ public:
     RegisteredEventListener* add(const AtomString& eventType, Ref<EventListener>&&, const RegisteredEventListener::Options&);
     bool remove(const AtomString& eventType, EventListener&, bool useCapture);
     WEBCORE_EXPORT EventListenerVector* find(const AtomString& eventType);
-    const EventListenerVector* find(const AtomString& eventType) const { return const_cast<EventListenerMap*>(this)->find(eventType); }
     Vector<AtomString> eventTypes() const;
 
     template<typename Visitor> void visitJSEventListeners(Visitor&);
     Lock& lock() { return m_lock; }
 
 private:
+    // remove() empties a slot of `listeners` and leaves it in place, so that removing N listeners
+    // in the order they were added (a dispatch to N once listeners) does not shift the tail N times.
+    // An entry always holds at least one listener, and find() closes the empty slots before it
+    // hands the vector out: nothing outside this class sees one.
+    struct Entry {
+        void closeEmptySlots();
+
+        AtomString type;
+        EventListenerVector listeners;
+        unsigned emptySlotCount { 0 };
+        // Where remove() looks first: next to the slot it emptied last, because listeners mostly
+        // leave in the order they were added, or in the reverse order.
+        unsigned searchStart { 0 };
+    };
+
+    Entry* findEntry(const AtomString& eventType);
+    const Entry* findEntry(const AtomString& eventType) const { return const_cast<EventListenerMap*>(this)->findEntry(eventType); }
+
     void releaseAssertOrSetThreadUID()
     {
         if (!m_threadUID) {
@@ -77,7 +94,7 @@ private:
         RELEASE_ASSERT(Thread::mayBeGCThread());
     }
 
-    Vector<std::pair<AtomString, EventListenerVector>, 0, CrashOnOverflow, 4> m_entries;
+    Vector<Entry, 0, CrashOnOverflow, 4> m_entries;
     Lock m_lock;
     uint32_t m_threadUID { 0 };
 };
@@ -87,8 +104,10 @@ void EventListenerMap::visitJSEventListeners(Visitor& visitor)
 {
     Locker locker { m_lock };
     for (auto& entry : m_entries) {
-        for (auto& eventListener : entry.second)
-            eventListener->callback().visitJSFunction(visitor);
+        for (auto& eventListener : entry.listeners) {
+            if (eventListener)
+                eventListener->callback().visitJSFunction(visitor);
+        }
     }
 }
 

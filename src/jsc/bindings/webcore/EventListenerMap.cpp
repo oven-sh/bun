@@ -45,12 +45,12 @@ EventListenerMap::EventListenerMap() = default;
 
 bool EventListenerMap::containsActive(const AtomString& eventType) const
 {
-    auto* listeners = find(eventType);
-    if (!listeners)
+    auto* entry = findEntry(eventType);
+    if (!entry)
         return false;
 
-    for (auto& eventListener : *listeners) {
-        if (!eventListener->isPassive())
+    for (auto& eventListener : entry->listeners) {
+        if (eventListener && !eventListener->isPassive())
             return true;
     }
     return false;
@@ -62,8 +62,10 @@ void EventListenerMap::clear()
     Locker locker { m_lock };
 
     for (auto& entry : m_entries) {
-        for (auto& listener : entry.second)
-            listener->markAsRemoved();
+        for (auto& listener : entry.listeners) {
+            if (listener)
+                listener->markAsRemoved();
+        }
     }
 
     m_entries.clear();
@@ -72,16 +74,27 @@ void EventListenerMap::clear()
 Vector<AtomString> EventListenerMap::eventTypes() const
 {
     return m_entries.map([](auto& entry) {
-        return entry.first;
+        return entry.type;
     });
 }
 
-static inline size_t findListener(const EventListenerVector& listeners, EventListener& listener, bool useCapture)
+// Scans forward from slot 0 and from searchStart in turn. remove() passes the slot where it expects
+// the listener, and the scan from slot 0 keeps a wrong guess within twice the cost of a plain scan.
+// add() rejects a duplicate, so at most one listener matches.
+static inline size_t findListener(const EventListenerVector& listeners, EventListener& listener, bool useCapture, size_t searchStart = 0)
 {
-    for (size_t i = 0; i < listeners.size(); ++i) {
-        auto& registeredListener = listeners[i];
-        if (registeredListener->callback() == listener && registeredListener->useCapture() == useCapture)
-            return i;
+    auto matches = [&](size_t index) {
+        auto& registeredListener = listeners[index];
+        return registeredListener && registeredListener->callback() == listener && registeredListener->useCapture() == useCapture;
+    };
+
+    size_t size = listeners.size();
+    searchStart = std::min(searchStart, size);
+    for (size_t low = 0, high = searchStart; low < searchStart || high < size; ++low, ++high) {
+        if (high < size && matches(high))
+            return high;
+        if (low < searchStart && matches(low))
+            return low;
     }
     return notFound;
 }
@@ -91,30 +104,37 @@ RegisteredEventListener* EventListenerMap::add(const AtomString& eventType, Ref<
     releaseAssertOrSetThreadUID();
     Locker locker { m_lock };
 
-    if (auto* listeners = find(eventType)) {
-        if (findListener(*listeners, listener, options.capture) != notFound)
+    if (auto* entry = findEntry(eventType)) {
+        if (findListener(entry->listeners, listener, options.capture) != notFound)
             return nullptr; // Duplicate listener.
         auto registeredListener = RegisteredEventListener::create(WTF::move(listener), options);
         auto* result = registeredListener.ptr();
-        listeners->append(WTF::move(registeredListener));
+        entry->listeners.append(WTF::move(registeredListener));
         return result;
     }
 
     auto registeredListener = RegisteredEventListener::create(WTF::move(listener), options);
     auto* result = registeredListener.ptr();
-    m_entries.append({ eventType, EventListenerVector { WTF::move(registeredListener) } });
+    m_entries.append(Entry { eventType, EventListenerVector { WTF::move(registeredListener) } });
     return result;
 }
 
-static bool removeListenerFromVector(EventListenerVector& listeners, EventListener& listener, bool useCapture)
+void EventListenerMap::Entry::closeEmptySlots()
 {
-    size_t indexOfRemovedListener = findListener(listeners, listener, useCapture);
-    if (indexOfRemovedListener == notFound) [[unlikely]]
-        return false;
-
-    listeners[indexOfRemovedListener]->markAsRemoved();
-    listeners.removeAt(indexOfRemovedListener);
-    return true;
+    unsigned listenerCount = 0;
+    unsigned listenerCountBeforeSearchStart = 0;
+    for (unsigned i = 0; i < listeners.size(); ++i) {
+        if (!listeners[i])
+            continue;
+        if (i < searchStart)
+            ++listenerCountBeforeSearchStart;
+        if (listenerCount != i)
+            listeners[listenerCount] = WTF::move(listeners[i]);
+        ++listenerCount;
+    }
+    listeners.shrink(listenerCount);
+    emptySlotCount = 0;
+    searchStart = listenerCountBeforeSearchStart;
 }
 
 bool EventListenerMap::remove(const AtomString& eventType, EventListener& listener, bool useCapture)
@@ -123,25 +143,65 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
     Locker locker { m_lock };
 
     for (unsigned i = 0; i < m_entries.size(); ++i) {
-        if (m_entries[i].first == eventType) {
-            bool wasRemoved = removeListenerFromVector(m_entries[i].second, listener, useCapture);
-            if (m_entries[i].second.isEmpty())
-                m_entries.removeAt(i);
-            return wasRemoved;
+        auto& entry = m_entries[i];
+        if (entry.type != eventType)
+            continue;
+
+        auto& listeners = entry.listeners;
+        size_t index = findListener(listeners, listener, useCapture, entry.searchStart);
+        if (index == notFound) [[unlikely]]
+            return false;
+
+        listeners[index]->markAsRemoved();
+        if (listeners.size() - entry.emptySlotCount == 1) {
+            m_entries.removeAt(i);
+            return true;
         }
+
+        if (index + 1 == listeners.size()) {
+            // Nothing to shift. Another listener remains, so the loop ends.
+            listeners.removeLast();
+            while (!listeners.last()) {
+                listeners.removeLast();
+                --entry.emptySlotCount;
+            }
+            entry.searchStart = listeners.size() - 1;
+            return true;
+        }
+
+        listeners[index] = nullptr;
+        entry.searchStart = index + 1;
+        // Closing the slots only when they are as many as the listeners keeps a removal O(1), amortized.
+        if (++entry.emptySlotCount >= listeners.size() - entry.emptySlotCount)
+            entry.closeEmptySlots();
+        return true;
     }
 
     return false;
 }
 
-EventListenerVector* EventListenerMap::find(const AtomString& eventType)
+EventListenerMap::Entry* EventListenerMap::findEntry(const AtomString& eventType)
 {
     for (auto& entry : m_entries) {
-        if (entry.first == eventType)
-            return &entry.second;
+        if (entry.type == eventType)
+            return &entry;
     }
 
     return nullptr;
+}
+
+EventListenerVector* EventListenerMap::find(const AtomString& eventType)
+{
+    auto* entry = findEntry(eventType);
+    if (!entry)
+        return nullptr;
+
+    if (entry->emptySlotCount) {
+        releaseAssertOrSetThreadUID();
+        Locker locker { m_lock };
+        entry->closeEmptySlots();
+    }
+    return &entry->listeners;
 }
 
 } // namespace WebCore

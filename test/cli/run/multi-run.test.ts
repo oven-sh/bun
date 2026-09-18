@@ -2380,6 +2380,28 @@ describe.concurrent.skipIf(isWindows)("signals", () => {
     expect(exitCode).toBe(143);
   });
 
+  test("a signal that arrives while the scripts are still being started is caught and forwarded", async () => {
+    // The first script signals the runner as soon as its shell starts, while
+    // the runner is still spawning the others.
+    const scripts: Record<string, string> = { s0: "kill -TERM $PPID; exec sleep 10" };
+    for (let i = 1; i < 12; i++) scripts[`s${i}`] = "exec sleep 10";
+    const names = Object.keys(scripts);
+    using dir = tempDir("mr-sig-start", { "package.json": JSON.stringify({ scripts }) });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--parallel", ...names],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    for (const name of names) {
+      expect(stderr).toMatch(new RegExp(`^${name}\\s+\\| Signaled: SIGTERM`, "m"));
+    }
+    // The runner exits with 143; it is not killed by the signal itself.
+    expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 143, signalCode: null });
+  });
+
   test("sequential: SIGINT stops the chain and exits 130 even though the script exited 0", async () => {
     using dir = tempDir("mr-sig-seq", trapPackage("SIGINT"));
     const r = await runAndSignal(["--sequential", "a", "b"], String(dir), "SIGINT", 1);

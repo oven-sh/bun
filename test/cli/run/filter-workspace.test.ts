@@ -1378,6 +1378,34 @@ describe.skipIf(isWindows)("signals", () => {
     expect(r.exitCode).toBe(143);
   });
 
+  test("a signal that arrives while the packages are still being started is caught and forwarded", async () => {
+    // The first package signals the runner as soon as its shell starts, while
+    // the runner is still spawning the others.
+    const names = Array.from({ length: 8 }, (_, i) => `p${i}`);
+    const packages: Record<string, Record<string, string>> = {};
+    for (const name of names) {
+      const go = name === "p0" ? "kill -TERM $PPID; exec sleep 10" : "exec sleep 10";
+      packages[name] = { "package.json": JSON.stringify({ name, scripts: { go } }) };
+    }
+    using dir = tempDir("filter-signal-start", {
+      packages,
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "go"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    for (const name of names) {
+      expect(stdout).toContain(`${name} go: Signaled with code SIGTERM`);
+    }
+    // The runner exits with 143; it is not killed by the signal itself.
+    expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 143, signalCode: null });
+  });
+
   // With --no-orphans the packages get SIGKILL when the runner dies. The
   // forwarded SIGTERM must reach them before that.
   test("--no-orphans: SIGTERM reaches every package before the runner exits", async () => {

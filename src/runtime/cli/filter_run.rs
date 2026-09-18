@@ -1022,6 +1022,11 @@ pub(crate) fn run_scripts_with_filter(
         }
     }
 
+    // Before the first spawn: a signal that still has its default action
+    // would end the runner and leave the scripts already started running.
+    // SAFETY: event_loop is the live thread-local MiniEventLoop singleton.
+    run_abort::install(unsafe { (*event_loop).loop_ptr() });
+
     // Collect the roots before starting any: a script that has already exited
     // when `start()` watches it can finish (and cascade) inside `start()`,
     // which zeroes `remaining_dependencies` of later handles it started.
@@ -1038,9 +1043,6 @@ pub(crate) fn run_scripts_with_filter(
             Global::exit(1);
         }
     }
-
-    // SAFETY: event_loop is the live thread-local MiniEventLoop singleton.
-    run_abort::install(unsafe { (*event_loop).loop_ptr() });
 
     let mut signaled = false;
     while !state.is_done() {

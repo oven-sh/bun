@@ -352,3 +352,22 @@ what-bin@1.0.0:
   integrity sha512-sa99On1k5aDqCvpni/TQ6rLzYprUWBlb8fNwWOzbjDlM24fRr7FKDOuaBO/Y9WEIcZuzoPkCW5EkBCpflj8REQ==
 "
 `;
+
+exports[`binaries text lockfile updates with new bin entry for folder dependencies 1`] = `
+"{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "foo",
+      "dependencies": {
+        "change-bin": "./change-bin",
+      },
+    },
+  },
+  "packages": {
+    "change-bin": ["change-bin@file:change-bin", { "bin": { "change-bin-1": "./change-bin-1.js", "change-bin-2": "./change-bin-2.js" } }],
+  }
+}
+"
+`;

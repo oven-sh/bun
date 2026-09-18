@@ -124,6 +124,11 @@ pub struct FetchTasklet {
     /// The response body stream while this tasklet is its producer.
     pub(crate) response_stream: crate::webcore::byte_stream::ProducerHold,
     pub(crate) request_headers: Headers,
+    /// `Content-Length` framing a streaming body; `write_request_data` counts against it.
+    pub(crate) declared_request_body_len: Option<u64>,
+    pub(crate) request_body_len_written: u64,
+    /// The count missed and `WriteMessageType::LengthMismatch` was sent.
+    pub(crate) request_body_mismatched: bool,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
     /// `JsCell`: the ByteStream's drain signal reaches `on_stream_drained` through a shared ref.
@@ -1326,6 +1331,22 @@ impl FetchTasklet {
             }
         }
 
+        if fail == http::Error::RequestBodyLengthMismatch
+            && let Some(declared) = self.declared_request_body_len
+        {
+            let written = self.request_body_len_written;
+            let err = self
+                .global_this
+                .err(
+                    jsc::ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+                    format_args!(
+                        "Request body of {written} bytes does not match the Content-Length of {declared}"
+                    ),
+                )
+                .to_js();
+            return BodyValueError::JSValue(StrongOptional::create(err, &self.global_this));
+        }
+
         // some times we don't have metadata so we also check http.url
         // Without the URL's userinfo: errors get logged.
         let path = if let Some(metadata) = &self.metadata {
@@ -1953,6 +1974,9 @@ impl FetchTasklet {
             native_response: JsCell::new(None),
             response_stream: Default::default(),
             request_headers: fetch_options.headers,
+            declared_request_body_len: None,
+            request_body_len_written: 0,
+            request_body_mismatched: false,
             promise,
             concurrent_task: ConcurrentTask::default(),
             poll_ref: JsCell::new(KeepAlive::default()),
@@ -2117,6 +2141,11 @@ impl FetchTasklet {
         http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
+            // An upgraded connection tunnels its "body", so those bytes are not counted.
+            let framing = fetch_options.stream_framing;
+            if !fetch_tasklet.upgraded_connection {
+                fetch_tasklet.declared_request_body_len = framing.content_length;
+            }
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
             // thread), so the same raw pointer can be handed to both sides.
             let buffer = ThreadSafeStreamBuffer::new(ThreadSafeStreamBuffer::default());
@@ -2134,6 +2163,7 @@ impl FetchTasklet {
                 http::HTTPRequestBody::Stream(http::http_request_body::Stream {
                     buffer: core::ptr::NonNull::new(buffer),
                     ended: false,
+                    framing,
                 });
         }
         // TODO is this necessary? the http client already sets the redirect type,
@@ -2222,14 +2252,19 @@ impl FetchTasklet {
         Ok(())
     }
 
-    /// Whether the request body should skip chunked transfer encoding framing.
-    /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
-    /// set Content-Length without setting Transfer-Encoding.
+    /// True for upgraded connections, HTTP/2 (DATA frames) and `Content-Length` framing.
     pub(crate) fn skip_chunked_framing(&self) -> bool {
-        self.upgraded_connection
-            || self.result.is_http2
-            || (self.request_headers.get(b"content-length").is_some()
-                && self.request_headers.get(b"transfer-encoding").is_none())
+        self.upgraded_connection || self.result.is_http2 || self.declared_request_body_len.is_some()
+    }
+
+    /// The HTTP thread decides: only it knows whether a followed redirect already dropped the body.
+    fn report_content_length_mismatch(&mut self, written: u64) {
+        self.request_body_len_written = written;
+        self.request_body_mismatched = true;
+        if let Some(http_) = self.http.as_mut() {
+            http::http_thread()
+                .schedule_request_write(http_, http::http_thread::WriteMessageType::LengthMismatch);
+        }
     }
 
     /// Called from `FetchRequestBodySink::write_*`; `high_water_mark` is the
@@ -2240,7 +2275,7 @@ impl FetchTasklet {
         data: RequestBodyChunk<'_>,
         high_water_mark: usize,
     ) -> Writable {
-        if self.signal_aborted() {
+        if self.signal_aborted() || self.request_body_mismatched {
             return Writable::Done;
         }
         // An empty chunk is a no-op on every framing path. It must not reach
@@ -2253,6 +2288,20 @@ impl FetchTasklet {
         bun_output::scoped_log!(FetchTasklet, "writeRequestData {}", utf8_len);
         if utf8_len == 0 {
             return Writable::Owned(0);
+        }
+        // A surplus byte would sit where a keep-alive peer parses the next request.
+        if let Some(declared) = self.declared_request_body_len {
+            let written = self
+                .request_body_len_written
+                .saturating_add(utf8_len as u64);
+            if written > declared {
+                self.report_content_length_mismatch(written);
+                return Writable::Err(bun_sys::Error::from_code(
+                    bun_sys::E::ECANCELED,
+                    bun_sys::Tag::write,
+                ));
+            }
+            self.request_body_len_written = written;
         }
         let len = utf8_len as BlobSizeType;
         let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
@@ -2304,6 +2353,12 @@ impl FetchTasklet {
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(FetchTasklet, "writeEndRequest hasError? {}", err.is_some());
         let this_ptr = std::ptr::from_mut(self);
+        if self.request_body_mismatched {
+            // The pump ending on the `Writable::Err` the mismatch gave it; already reported.
+            // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
+            FetchTasklet::deref(this_ptr);
+            return;
+        }
         if let Some(js_error) = err {
             if self.signal_store.aborted.load(Ordering::Relaxed) || self.abort_reason.has() {
                 // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
@@ -2316,6 +2371,16 @@ impl FetchTasklet {
             self.abort_task();
         } else {
             if self.signal_store.aborted.load(Ordering::Relaxed) {
+                // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
+                FetchTasklet::deref(this_ptr);
+                return;
+            }
+            // Short of the announced length, the peer would wait for the rest forever.
+            let written = self.request_body_len_written;
+            if let Some(declared) = self.declared_request_body_len
+                && written < declared
+            {
+                self.report_content_length_mismatch(written);
                 // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
                 FetchTasklet::deref(this_ptr);
                 return;
@@ -2684,6 +2749,8 @@ pub struct FetchOptions {
     pub method: Method,
     pub(crate) headers: Headers,
     pub(crate) body: HTTPRequestBody,
+    /// For a `ReadableStream` body; `transfer_encoding` points into `headers.buf`.
+    pub(crate) stream_framing: http::http_request_body::StreamFraming,
     pub(crate) disable_timeout: bool,
     /// Per-request idle-timeout override, from `fetch(url, { timeout: <ms> })`.
     pub(crate) idle_timeout_seconds: Option<core::ffi::c_uint>,

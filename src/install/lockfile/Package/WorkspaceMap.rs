@@ -256,8 +256,7 @@ struct WorkspaceRoot<'a> {
     real_dir: Option<Box<[u8]>>,
 }
 
-/// How a rejection is reported. A glob pattern reports its first rejected match and
-/// stays `Silent` for the rest, which would repeat the same error.
+/// A glob reports its first rejected match. The rest would repeat it.
 #[derive(Clone, Copy, PartialEq)]
 enum Report {
     Error,
@@ -274,8 +273,7 @@ impl WorkspaceRoot<'_> {
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
     ) -> bool {
-        // An absolute entry can be another spelling of a directory inside the root: a
-        // symlinked ancestor (`/tmp` on macOS), an automount. `rejects_real_path` decides it.
+        // Could be another spelling of a directory inside the root (`/tmp` on macOS).
         if path::is_absolute(entry) {
             return false;
         }
@@ -348,8 +346,7 @@ impl WorkspaceRoot<'_> {
             return false;
         }
         if report == Report::Error {
-            // The resolved path only when it is not the entry's own: `..` spellings and an
-            // absolute entry outside the root resolve to themselves.
+            // A `..` spelling, or an absolute entry outside the root, resolves to itself.
             if real_dir == abs_workspace_dir {
                 log.add_error_fmt(
                     Some(source),
@@ -649,8 +646,7 @@ impl WorkspaceMap {
                     return Err(crate::Error::GlobError);
                 }
 
-                // The other matches of this pattern are still members: an install that runs
-                // in one of them has to find it (`PackageManager::init`).
+                // The pattern's other matches stay members, for `PackageManager::init`.
                 let mut report = Report::Error;
                 'next_match: loop {
                     let matched_path_owned = match iter.next()? {

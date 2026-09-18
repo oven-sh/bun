@@ -190,7 +190,7 @@ pub(crate) fn write_request(
     );
 
     if has_expect_continue && (has_inline_body || is_streaming) {
-        stream.awaiting_continue = true;
+        stream.awaiting_continue = Some(std::time::Instant::now());
     }
 
     write_header_block(
@@ -306,7 +306,7 @@ pub(crate) fn write_data_windowed(
 /// Push as much of `stream`'s request body as the send windows allow.
 /// Buffers into `write_buffer`; caller flushes.
 pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, cap: usize) {
-    if stream.local_closed() || stream.awaiting_continue || stream.fatal_error.is_some() {
+    if stream.local_closed() || stream.awaiting_continue.is_some() || stream.fatal_error.is_some() {
         return;
     }
     let Some(client_ptr) = stream.client else {

@@ -5,6 +5,7 @@
 
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+use std::time::Instant;
 
 use crate::Error;
 use bun_picohttp as picohttp;
@@ -52,7 +53,8 @@ pub struct Stream {
     pub(crate) headers_end_stream: bool,
     /// Expect: 100-continue is in effect: hold the request body until a 1xx
     /// or final status arrives.
-    pub(crate) awaiting_continue: bool,
+    /// The time the HEADERS were queued. `EXPECT_CONTINUE_TIMEOUT` later, a timer tick ends the hold too.
+    pub(crate) awaiting_continue: Option<Instant>,
     pub(crate) fatal_error: Option<Error>,
     /// DATA bytes consumed since the last WINDOW_UPDATE for this stream.
     pub(crate) unacked_bytes: u32,
@@ -139,7 +141,7 @@ impl Stream {
             rst_done: false,
             headers_ready: false,
             headers_end_stream: false,
-            awaiting_continue: false,
+            awaiting_continue: None,
             fatal_error: None,
             unacked_bytes: 0,
             data_bytes_received: 0,

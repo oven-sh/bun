@@ -405,7 +405,9 @@ test("no --only flag with multiple files", async () => {
 // The runner calls some test callbacks from outside an event loop task: the first tests of a
 // file, and the test after one that timed out. A promise reaction must not run inside a
 // native call that such a test makes. Here an HTMLRewriter handler calls reader.cancel(),
-// which settles the pending read of the stream in native code.
+// which settles the pending read of the stream in native code. A jest timer control is the
+// exception that suites rely on: there it runs the reactions of each timer before the next
+// timer, but not inside a control that one of those reactions calls.
 test.concurrent("a promise reaction does not run inside a native call that a test makes", async () => {
   using dir = tempDir("bun-test-run-to-completion", {
     "order.ts": `
@@ -447,9 +449,36 @@ test.concurrent("a promise reaction does not run inside a native call that a tes
       test("async", () => new Promise(resolve => setImmediate(resolve)));
       test("next", () => cancelInsideHandler("test after an async test"));
     `,
+    "timer-control.test.ts": `
+      import { jest, test } from "bun:test";
+      test("first", () => {
+        jest.useFakeTimers();
+        const order: string[] = [];
+        new Promise(resolve => setTimeout(resolve, 10)).then(() => {
+          setTimeout(() => {
+            order.push("inner timer");
+            Promise.resolve().then(() => order.push("inner timer reaction"));
+          }, 5);
+          jest.advanceTimersByTime(5);
+          order.push("inner control returned");
+        });
+        setTimeout(() => order.push("second timer"), 20);
+        jest.advanceTimersByTime(20);
+        order.push("control returned");
+        jest.useRealTimers();
+        console.log(JSON.stringify({ label: "timer control in the first test of a file", order }));
+      });
+    `,
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "./first.test.ts", "./after-timeout.test.ts", "./after-async.test.ts"],
+    cmd: [
+      bunExe(),
+      "test",
+      "./first.test.ts",
+      "./after-timeout.test.ts",
+      "./after-async.test.ts",
+      "./timer-control.test.ts",
+    ],
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
@@ -468,8 +497,15 @@ test.concurrent("a promise reaction does not run inside a native call that a tes
     "first test of a file": order,
     "test after a timed out test": order,
     "test after an async test": order,
+    "timer control in the first test of a file": [
+      "inner timer",
+      "inner control returned",
+      "inner timer reaction",
+      "second timer",
+      "control returned",
+    ],
   });
   // The one failure is the test that times out.
-  expect(stderr).toContain(" 1 fail");
-  expect(exitCode).toBe(1);
+  const count = (what: string) => Number(stderr.match(new RegExp(`^\\s*(\\d+) ${what}$`, "m"))?.[1]);
+  expect({ pass: count("pass"), fail: count("fail"), exitCode }).toEqual({ pass: 5, fail: 1, exitCode: 1 });
 });

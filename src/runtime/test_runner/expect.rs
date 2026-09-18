@@ -471,6 +471,15 @@ impl Expect {
         }
     }
 
+    /// A matcher's wait for `promise`: the event loop runs inside the matcher until it settles.
+    fn wait_for_promise(global_this: &JSGlobalObject, promise: bun_jsc::AnyPromise) -> JsResult<()> {
+        let vm = global_this.bun_vm();
+        let _suspended = bun_test::RunnerEntry::suspend(vm);
+        vm.as_mut()
+            .wait_for_promise(promise)
+            .map_err(|stopped| stopped.throw(global_this))
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -489,12 +498,7 @@ impl Expect {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
 
-                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+                    Self::wait_for_promise(global_this, promise)?;
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -869,9 +873,9 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            let waited = vm.wait_for_promise(promise);
+            let waited = Self::wait_for_promise(global_this, promise);
             scope.apply(vm);
-            waited.map_err(|stopped| stopped.throw(global_this))?;
+            waited?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));
@@ -1442,12 +1446,7 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+            Self::wait_for_promise(global_this, promise)?;
 
             result = promise.result(vm);
             result.ensure_still_alive();

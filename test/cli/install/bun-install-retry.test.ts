@@ -751,3 +751,142 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
     });
   });
 });
+
+// The hoisted linker places a package once, under one of the dependencies on it,
+// and the failed download of that package is an error only if that dependency is
+// required. The result must not depend on which dependency owns the slot.
+describe.concurrent("hoisted linker: a failed download of a package that a peer needs", () => {
+  // The registry serves `packages`. Once `fail()` is called, that tarball answers 404.
+  async function registry(packages: ({ name: string; version: string } & Record<string, unknown>)[]) {
+    const ctx = await createTestContext({ linker: "hoisted" });
+    const registry = ctx.registry_url.slice(0, -1);
+    const failing = new Set<string>();
+    const tarballs = new Map<string, Uint8Array>();
+    for (const pkg of packages) {
+      tarballs.set(
+        `/${pkg.name}-${pkg.version}.tgz`,
+        await new Bun.Archive({ "package/package.json": JSON.stringify(pkg) }, { compress: "gzip" }).bytes(),
+      );
+    }
+    setContextHandler(ctx, request => {
+      const pathname = new URL(request.url).pathname.slice(`/${ctx.id}`.length);
+      if (tarballs.has(pathname)) {
+        if (failing.has(pathname)) return new Response("no", { status: 404 });
+        return new Response(tarballs.get(pathname));
+      }
+      const name = pathname.slice(1);
+      const versions = packages.filter(pkg => pkg.name === name);
+      if (versions.length === 0) return new Response("unexpected", { status: 404 });
+      return Response.json({
+        name,
+        "dist-tags": { latest: versions[0].version },
+        versions: Object.fromEntries(
+          versions.map(pkg => [pkg.version, { ...pkg, dist: { tarball: `${registry}/${name}-${pkg.version}.tgz` } }]),
+        ),
+      });
+    });
+    return {
+      dir: ctx.package_dir,
+      tarball: (name: string, version: string) => `${registry}/${name}-${version}.tgz`,
+      fail: (name: string, version: string) => failing.add(`/${name}-${version}.tgz`),
+      [Symbol.dispose]: () => destroyTestContext(ctx),
+    };
+  }
+
+  async function install(dir: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--no-progress", "--ignore-scripts"],
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const lines = err.split(/\r?\n/);
+    return {
+      warnLines: lines.filter(l => l.startsWith("warn:")),
+      errorLines: lines.filter(l => l.startsWith("error:")),
+      exitCode,
+    };
+  }
+
+  // Dependencies sort by name, so the parent named `aaa` owns node_modules/baz.
+  it.each([
+    ["the parent with the peer", "aaa", "zzz"],
+    ["the parent with the optional dependency", "zzz", "aaa"],
+  ])("is an error when %s sorts first", async (_, peerHost, optionalHost) => {
+    using t = await registry([
+      { name: peerHost, version: "1.0.0", peerDependencies: { baz: "1.0.0" } },
+      { name: optionalHost, version: "1.0.0", optionalDependencies: { baz: "1.0.0" } },
+      { name: "baz", version: "1.0.0" },
+    ]);
+    await writeFile(
+      join(t.dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { [peerHost]: "1.0.0", [optionalHost]: "1.0.0" } }),
+    );
+    expect(await install(t.dir)).toEqual({ warnLines: [], errorLines: [], exitCode: 0 });
+
+    // `cache: false` keeps the cache in node_modules/.cache, so this also empties the cache.
+    await rm(join(t.dir, "node_modules"), { recursive: true, force: true });
+    t.fail("baz", "1.0.0");
+    expect(await install(t.dir)).toEqual({
+      warnLines: [],
+      errorLines: [`error: GET ${t.tarball("baz", "1.0.0")} - 404`],
+      exitCode: 1,
+    });
+  });
+
+  // A root dependency provides a peer whatever its version. The peer resolves to
+  // baz@1.0.0 in the lockfile, but the install binds it to the root's baz@2.0.0.
+  it("is an error when the peer is bound to the root's optional version of the package", async () => {
+    using t = await registry([
+      { name: "aaa", version: "1.0.0", peerDependencies: { baz: "1.0.0" } },
+      { name: "baz", version: "1.0.0" },
+      { name: "baz", version: "2.0.0" },
+    ]);
+    await writeFile(
+      join(t.dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { aaa: "1.0.0" },
+        optionalDependencies: { baz: "2.0.0" },
+      }),
+    );
+    const incorrectPeer = 'warn: incorrect peer dependency "baz@2.0.0"';
+    expect(await install(t.dir)).toEqual({ warnLines: [incorrectPeer], errorLines: [], exitCode: 0 });
+    expect(await file(join(t.dir, "node_modules", "baz", "package.json")).json()).toMatchObject({ version: "2.0.0" });
+
+    await rm(join(t.dir, "node_modules"), { recursive: true, force: true });
+    t.fail("baz", "2.0.0");
+    expect(await install(t.dir)).toEqual({
+      warnLines: [],
+      errorLines: [`error: GET ${t.tarball("baz", "2.0.0")} - 404`],
+      exitCode: 1,
+    });
+  });
+
+  // A name in both groups of one package.json is an optional peer. The
+  // optionalDependencies entry owns the slot and decides.
+  it("is a warning when the same package.json lists the peer in optionalDependencies", async () => {
+    using t = await registry([{ name: "baz", version: "1.0.0" }]);
+    await writeFile(
+      join(t.dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        optionalDependencies: { baz: "1.0.0" },
+        peerDependencies: { baz: "1.0.0" },
+      }),
+    );
+    expect(await install(t.dir)).toEqual({ warnLines: [], errorLines: [], exitCode: 0 });
+
+    await rm(join(t.dir, "node_modules"), { recursive: true, force: true });
+    t.fail("baz", "1.0.0");
+    expect(await install(t.dir)).toEqual({
+      warnLines: [`warn: GET ${t.tarball("baz", "1.0.0")} - 404`],
+      errorLines: [],
+      exitCode: 0,
+    });
+  });
+});

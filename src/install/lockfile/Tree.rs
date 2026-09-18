@@ -123,7 +123,11 @@ impl Tree {
 
 enum HoistDependencyResult {
     DependencyLoop,
-    Hoisted,
+    /// Deduplicated onto a placed dependency on this package.
+    Hoisted(PackageID),
+    /// Deduplicated onto a placed dependency of the same parent with the same name. That
+    /// dependency's group decides, for example an `optionalDependencies` entry over a peer.
+    HoistedOntoSibling,
     Resolve(PackageID),
     ResolveReplace(ResolveReplace),
     ResolveLater,
@@ -443,6 +447,9 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
+    /// The packages that a dependency without `Behavior::OPTIONAL` is placed as or deduplicated
+    /// onto. A peer can be bound to another package than the one it resolves to. Only `Filter`.
+    pub(crate) required_packages: DynamicBitSet,
 }
 
 pub struct BuilderEntry {
@@ -460,6 +467,7 @@ bun_collections::multi_array_columns! {
 pub(crate) struct CleanResult {
     pub trees: Vec<Tree>,
     pub dep_ids: Vec<DependencyID>,
+    pub required_packages: DynamicBitSet,
 }
 
 impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
@@ -485,6 +493,18 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
     fn buf(&self) -> &[u8] {
         self.lockfile().buffers.string_bytes.as_slice()
+    }
+
+    /// `dependency` is linked, bound to `pkg_id`.
+    fn mark_required(&mut self, dependency: &Dependency, pkg_id: PackageID) {
+        if METHOD == BuilderMethod::Filter
+            && !dependency
+                .behavior
+                .contains(crate::dependency::Behavior::OPTIONAL)
+            && (pkg_id as usize) < self.required_packages.bit_length()
+        {
+            self.required_packages.set(pkg_id as usize);
+        }
     }
 
     /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
@@ -529,7 +549,11 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         slice.deinit_owned();
 
-        Ok(CleanResult { trees, dep_ids })
+        Ok(CleanResult {
+            trees,
+            dep_ids,
+            required_packages: core::mem::take(&mut self.required_packages),
+        })
     }
 }
 
@@ -620,6 +644,9 @@ pub(crate) struct RequiredPackages<'a> {
     workspace_filters: &'a [WorkspaceFilter],
     install_root_dependencies: bool,
     packages_to_install: Option<&'a [PackageID]>,
+    /// `Builder::required_packages` of the hoisted install tree. It knows the package each
+    /// peer is bound to. A package appended after the hoist is past its end.
+    tree: DynamicBitSet,
     /// Walked on the first question that the asking dependency cannot answer.
     packages: Option<DynamicBitSet>,
 }
@@ -630,10 +657,26 @@ impl<'a> RequiredPackages<'a> {
         install_root_dependencies: bool,
         packages_to_install: Option<&'a [PackageID]>,
     ) -> Self {
+        Self::from_tree(
+            DynamicBitSet::default(),
+            workspace_filters,
+            install_root_dependencies,
+            packages_to_install,
+        )
+    }
+
+    /// `tree` is what `Lockfile::filter` returns.
+    pub(crate) fn from_tree(
+        tree: DynamicBitSet,
+        workspace_filters: &'a [WorkspaceFilter],
+        install_root_dependencies: bool,
+        packages_to_install: Option<&'a [PackageID]>,
+    ) -> Self {
         Self {
             workspace_filters,
             install_root_dependencies,
             packages_to_install,
+            tree,
             packages: None,
         }
     }
@@ -651,6 +694,9 @@ impl<'a> RequiredPackages<'a> {
             .contains(crate::dependency::Behavior::OPTIONAL)
         {
             return true;
+        }
+        if (package_id as usize) < self.tree.bit_length() {
+            return self.tree.is_set(package_id as usize);
         }
         // Walk again if the install appended a package since.
         let packages = match &mut self.packages {
@@ -894,20 +940,22 @@ impl Tree {
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
                     // A peer an ancestor edge already provides dedupes instead of nesting
                     // a second copy of the folder (#40561).
-                    if dependency.behavior.is_peer()
-                        && matches!(
-                            Tree::hoist_dependency::<true, METHOD>(
-                                next_id,
-                                hoist_root_id,
-                                pkg_id,
-                                dep_id,
-                                resolution_list,
-                                builder,
-                            ),
-                            HoistDependencyResult::Hoisted
-                        )
-                    {
-                        break 'hoisted HoistDependencyResult::Hoisted;
+                    if dependency.behavior.is_peer() {
+                        let hoisted = Tree::hoist_dependency::<true, METHOD>(
+                            next_id,
+                            hoist_root_id,
+                            pkg_id,
+                            dep_id,
+                            resolution_list,
+                            builder,
+                        );
+                        if matches!(
+                            hoisted,
+                            HoistDependencyResult::Hoisted(_)
+                                | HoistDependencyResult::HoistedOntoSibling
+                        ) {
+                            break 'hoisted hoisted;
+                        }
                     }
 
                     // Folder packages never hoist, so a cycle between them would nest forever.
@@ -941,7 +989,12 @@ impl Tree {
             };
 
             match hoisted {
-                HoistDependencyResult::DependencyLoop | HoistDependencyResult::Hoisted => continue,
+                HoistDependencyResult::DependencyLoop
+                | HoistDependencyResult::HoistedOntoSibling => continue,
+                HoistDependencyResult::Hoisted(bound_pkg_id) => {
+                    builder.mark_required(dependency, bound_pkg_id);
+                    continue;
+                }
 
                 HoistDependencyResult::Resolve(res_id) => {
                     debug_assert!(pkg_id == invalid_package_id);
@@ -972,6 +1025,7 @@ impl Tree {
                 }
                 HoistDependencyResult::ResolveReplace(replace) => {
                     debug_assert!(pkg_id != invalid_package_id);
+                    builder.mark_required(dependency, pkg_id);
                     builder.late_bound_optional_peer = true;
                     builder.resolutions[replace.dep_id as usize] = pkg_id;
                     if let Some(entry) = builder
@@ -1026,6 +1080,7 @@ impl Tree {
                     entry.value_ptr.put(dep_id, ())?;
                 }
                 HoistDependencyResult::Placement(dest) => {
+                    builder.mark_required(dependency, pkg_id);
                     {
                         // Go through ListExt
                         // accessors sequentially so the &mut borrows do not overlap.
@@ -1122,14 +1177,14 @@ impl Tree {
                 return HoistDependencyResult::Resolve(res_id); // 1
             }
 
-            if res_id == package_id {
-                // this dependency is the same package as the other, hoist
-                return HoistDependencyResult::Hoisted; // 1
-            }
-
             if input_dep_range.contains(dep_id) {
                 // same package lists this name in another dependency group
-                return HoistDependencyResult::Hoisted; // 1
+                return HoistDependencyResult::HoistedOntoSibling; // 1
+            }
+
+            if res_id == package_id {
+                // this dependency is the same package as the other, hoist
+                return HoistDependencyResult::Hoisted(res_id); // 1
             }
 
             // now we either keep the dependency at this place in the tree,
@@ -1142,7 +1197,7 @@ impl Tree {
                     {
                         HoistDependencyResult::Rebind(res_id)
                     } else {
-                        HoistDependencyResult::Hoisted
+                        HoistDependencyResult::Hoisted(res_id)
                     }
                 };
 

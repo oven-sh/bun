@@ -55,6 +55,7 @@
 #include "CryptoAlgorithmMLDSA.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
+#include "CryptoKeyHMAC.h"
 #include "CryptoKeyRSA.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
@@ -2121,8 +2122,10 @@ bool SubtleCrypto::supports(JSC::JSGlobalObject& state, const String& operation,
         case CryptoAlgorithmIdentifier::PBKDF2:
             break;
         case CryptoAlgorithmIdentifier::HMAC: {
+            // The ML-KEM shared secret that becomes the key is 32 bytes for every parameter set.
+            constexpr size_t sharedSecretSize = 32;
             auto hmacLength = downcast<CryptoAlgorithmHmacKeyParams>(*additionalParams).length;
-            if (!hmacLength || *hmacLength == 256)
+            if (!hmacLength || CryptoKeyHMAC::lengthIsValidForKeyData(*hmacLength, sharedSecretSize))
                 break;
             return false;
         }

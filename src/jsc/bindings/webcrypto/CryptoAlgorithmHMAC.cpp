@@ -114,10 +114,6 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
         exceptionCallback(DataError, "HmacImportParams.length cannot be 0"_s);
         return;
     }
-    if (hmacParameters.length && *hmacParameters.length % 8) {
-        exceptionCallback(NotSupportedError, "Unsupported HmacImportParams.length"_s);
-        return;
-    }
 
     RefPtr<CryptoKeyHMAC> result;
     switch (format) {
@@ -128,7 +124,7 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
             exceptionCallback(DataError, "Zero-length key is not supported"_s);
             return;
         }
-        if (hmacParameters.length && *hmacParameters.length != keyData.size() * 8) {
+        if (hmacParameters.length && !CryptoKeyHMAC::lengthIsValidForKeyData(*hmacParameters.length, keyData.size())) {
             exceptionCallback(DataError, "Invalid key length"_s);
             return;
         }
@@ -198,7 +194,7 @@ void CryptoAlgorithmHMAC::importKey(CryptoKeyFormat format, KeyData&& data, cons
             exceptionCallback(DataError, "Zero-length key is not supported"_s);
             return;
         }
-        if (hmacParameters.length && *hmacParameters.length != keyBytes->size() * 8) {
+        if (hmacParameters.length && !CryptoKeyHMAC::lengthIsValidForKeyData(*hmacParameters.length, keyBytes->size())) {
             exceptionCallback(DataError, "Invalid key length"_s);
             return;
         }

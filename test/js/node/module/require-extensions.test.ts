@@ -1,6 +1,6 @@
 import assert from "assert";
 import { expect, mock, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -161,6 +161,159 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
   } finally {
     require.extensions[".cjs"] = original;
   }
+});
+test("default loader throws when module._compile was replaced with a non-function", async () => {
+  // Spawned because the unfixed behavior for primitives is a segfault, not an exception.
+  using dir = tempDir("extensions-bad-compile", {
+    "plain.js": `module.exports = "plain";`,
+    "plain.ts": `const value: string = "plain ts"; module.exports = value;`,
+    "run.cjs": `
+      const Module = require("module");
+      const path = require("path");
+      const file = path.join(__dirname, "plain.js");
+      const original = Module._extensions[".js"];
+      const values = [
+        ["undefined", undefined],
+        ["null", null],
+        ["number", 42],
+        ["boolean", true],
+        ["string", "not a function"],
+        ["object", {}],
+        ["symbol", Symbol("compile")],
+        ["bigint", 1n],
+      ];
+      const caught = fn => {
+        try {
+          fn();
+          return { threw: false };
+        } catch (e) {
+          return { isTypeError: e instanceof TypeError, message: e.message };
+        }
+      };
+
+      const viaRequire = values.map(([kind, value]) => {
+        Module._extensions[".js"] = function (module, filename) {
+          module._compile = value;
+          return original(module, filename);
+        };
+        return { kind, ...caught(() => require(file)), cached: file in require.cache };
+      });
+      Module._extensions[".js"] = original;
+      const afterwards = require(file);
+
+      const viaDirectCall = values.map(([kind, value]) => {
+        const m = new Module(file, module);
+        m.filename = file;
+        m._compile = value;
+        return { kind, ...caught(() => original(m, file)) };
+      });
+
+      const tsFile = path.join(__dirname, "plain.ts");
+      const tsModule = new Module(tsFile, module);
+      tsModule.filename = tsFile;
+      tsModule._compile = undefined;
+      const viaTsLoader = caught(() => Module._extensions[".ts"](tsModule, tsFile));
+
+      console.log(JSON.stringify({ viaRequire, afterwards, viaDirectCall, viaTsLoader }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const kinds = ["undefined", "null", "number", "boolean", "string", "object", "symbol", "bigint"];
+  const typeError = { isTypeError: true, message: "module._compile is not a function" };
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    viaRequire: kinds.map(kind => ({ kind, ...typeError, cached: false })),
+    afterwards: "plain",
+    viaDirectCall: kinds.map(kind => ({ kind, ...typeError })),
+    viaTsLoader: typeError,
+  });
+  expect(exitCode).toBe(0);
+});
+test("custom require extension still applies when the entry is a transpiler cache hit", async () => {
+  // A main module restored from the runtime transpiler cache used to leave the
+  // VM in its pre-load state, so require() of an unknown extension skipped
+  // require.extensions and fell back to the JS loader on warm-cache runs.
+  const padding = "// " + Buffer.alloc(4096, "x").toString() + "\n";
+  using dir = tempDir("extensions-transpiler-cache", {
+    "transpiler-cache/.keep": "",
+    "c.custom": `module.exports = 'c dot custom';`,
+    // Padded past the cache's minimum source size so the entry is cached.
+    "main.cjs": `require("module")._extensions[".custom"] = function (module, filename) {
+  module._compile("module.exports = 'custom';", filename);
+};
+console.log(require("./c.custom"));
+${padding}`,
+  });
+  const env = {
+    ...bunEnv,
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: path.join(String(dir), "transpiler-cache"),
+    // Debug builds save cache entries but ignore them on load unless this is set.
+    BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+  };
+  // Run twice: the first run populates the cache, the second must still
+  // dispatch to the custom extension.
+  for (let run = 0; run < 2; run++) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("custom\n");
+    expect(exitCode).toBe(0);
+  }
+});
+test("custom require extension still applies when the entry is a prebundled module", async () => {
+  // An already-bundled main module (the `// @bun` pragma emitted by
+  // `bun build --target=bun`) takes the same early return as a transpiler
+  // cache hit and used to leave the VM in its pre-load state.
+  using dir = tempDir("extensions-already-bundled", {
+    "c.custom": `module.exports = 'c dot custom';`,
+    "entry.js": `const Module = require("module");
+Module._extensions[".custom"] = function (module, filename) {
+  module._compile("module.exports = 'custom';", filename);
+};
+console.log(require("./c.custom"));
+`,
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.js", "--target=bun", "--format=cjs", "--external=*.custom", "--outfile=out.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [buildStdout, buildStderr, buildExit] = await Promise.all([
+    build.stdout.text(),
+    build.stderr.text(),
+    build.exited,
+  ]);
+  expect(buildStderr).toBe("");
+  expect(buildExit).toBe(0);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "out.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("custom\n");
+  expect(exitCode).toBe(0);
 });
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions

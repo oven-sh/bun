@@ -283,6 +283,21 @@ async function verbatimTree(linker: Linker) {
   return { packageDir, full };
 }
 
+// The root no longer lists "other", and bun.lock lists it at `otherPath(packageDir)`.
+async function relocatedOtherTree(otherPath: (packageDir: string) => string, onDisk: string[]) {
+  const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  await writeTree(packageDir, turboOutput, onDisk);
+  const path = otherPath(packageDir);
+  const lock = (await fullLockfile("hoisted")).replaceAll("packages/other", path);
+  expect(lock).toContain(`"${path}": {`);
+  expect(lock).toContain(`"other@workspace:${path}"`);
+  await write(join(packageDir, "bun.lock"), lock);
+  return { packageDir, lock };
+}
+
+// bun.lock holds an absolute path for a workspace on another Windows drive.
+const absoluteOtherPath = (packageDir: string) => join(packageDir, "packages", "other").replaceAll("\\", "/");
+
 const lockText = (dir: string) => file(join(dir, "bun.lock")).text();
 
 async function editApp(dir: string, edit: (app: any) => void) {
@@ -1299,6 +1314,43 @@ describe("hoisted", () => {
     await frozen(packageDir, "hoisted", 1);
 
     expect(await lockText(packageDir)).toBe(full);
+  });
+
+  test.concurrent("a workspace at an absolute path in bun.lock that is on disk is not treated as pruned", async () => {
+    const { packageDir, lock } = await relocatedOtherTree(absoluteOtherPath, Object.keys(monorepo.packages));
+
+    const { stderr } = await frozen(packageDir, "hoisted", 1);
+
+    expect(stderr).not.toContain("skipped");
+    expect(await lockText(packageDir)).toBe(lock);
+  });
+
+  test.concurrent(
+    "a workspace at an absolute path in bun.lock that is missing from disk is treated as pruned",
+    async () => {
+      const { packageDir, lock } = await relocatedOtherTree(absoluteOtherPath, survivors);
+
+      const { stderr } = await frozen(packageDir, "hoisted", 0);
+
+      expect(stderr).toContain(prunedNote);
+      expect(await lockText(packageDir)).toBe(lock);
+    },
+  );
+
+  test.concurrent.each<[string, (packageDir: string) => string]>([
+    ["an absolute path", absoluteOtherPath],
+    ["a path that does not fit a path buffer", () => Buffer.alloc(100_000, "a").toString()],
+  ])("a plain install removes an unlisted workspace that bun.lock lists at %s", async (_, otherPath) => {
+    const { packageDir } = await relocatedOtherTree(otherPath, Object.keys(monorepo.packages));
+    const { full: expected } = await fullInstall("hoisted", {
+      root: turboOutput.root,
+      packages: { "packages/app": appPackageJson, "packages/shared": sharedPackageJson },
+    });
+
+    const { stderr } = await install(packageDir, "hoisted");
+
+    expect(stderr).toContain("Saved lockfile");
+    expect(await lockText(packageDir)).toBe(expected);
   });
 
   test.concurrent(

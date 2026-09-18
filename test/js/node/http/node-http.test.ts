@@ -332,14 +332,15 @@ describe("node:http", () => {
 
     // Node's Writable.prototype.write uses the default encoding for a falsy
     // encoding argument, so res.write(chunk, "") and res.end(chunk, "") write utf8.
-    test("write and end accept an empty-string encoding (#43370)", async () => {
+    test.each(["write", "end"])("res.%s accepts an empty-string encoding (#43370)", async method => {
+      const body = "héllo wörld ✓";
       await using server = http.createServer((req, res) => {
         try {
-          if (req.url === "/write") {
-            res.write("ok", "");
+          if (method === "write") {
+            res.write(body, "");
             res.end();
           } else {
-            res.end("ok", "");
+            res.end(body, "");
           }
         } catch (e: any) {
           res.statusCode = 500;
@@ -349,11 +350,9 @@ describe("node:http", () => {
       await once(server.listen(0, "127.0.0.1"), "listening");
       const { port } = server.address() as AddressInfo;
 
-      for (const path of ["/end", "/write"]) {
-        const response = await fetch(`http://127.0.0.1:${port}${path}`);
-        expect(await response.text()).toBe("ok");
-        expect(response.status).toBe(200);
-      }
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe(body);
+      expect(response.status).toBe(200);
     });
   });
 

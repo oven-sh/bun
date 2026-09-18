@@ -1356,8 +1356,7 @@ mod border_handler_body {
 
             // Helper macros.
 
-            // The buffered logical value that, compiled, lands in this rule on a physical side:
-            // a block value, or an inline pair with equal values (see `flush_overridden_inline`).
+            // The buffered logical value that compiles into this rule on a physical side.
             macro_rules! compiled_side {
                 (border_top, $prop:ident) => {
                     self.border_block_start.$prop.as_ref()
@@ -1419,8 +1418,7 @@ mod border_handler_body {
                 }};
             }
 
-            // A 4-side shorthand: every fallback flush runs before any side is stored, so a
-            // fallback written out for a later side does not split the shorthand.
+            // Every fallback flush runs before any side is stored, so the shorthand stays whole.
             macro_rules! four_sides_helper {
                 ($prop:ident, $val:expr) => {{
                     flush_helper!(border_top, $prop, &$val.top, Physical);

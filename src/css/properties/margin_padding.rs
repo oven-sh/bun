@@ -449,8 +449,7 @@ impl SizeHandlerImpl {
             PhysicalSlot::Right => self.right.is_some(),
         }
     }
-    /// Whether a logical value is buffered that, compiled, lands in this rule on this physical
-    /// side: a block value, or an inline pair with equal values (see `flush_compiled_inline`).
+    /// Whether a buffered logical value compiles into this rule on this physical side.
     fn compiled_slot_is_some(&self, spec: &'static SizeSpec, slot: PhysicalSlot) -> bool {
         match slot {
             PhysicalSlot::Top => self.block_start.is_some(),

@@ -6030,6 +6030,92 @@ describe.concurrent("write() after end()", () => {
     });
     expect([closedBeforeLateWrite, events]).toEqual([true, ["finish", ...lateWriteEvents]]);
   });
+
+  // A chunk written before end() goes out without END_STREAM, which then comes from _final. The
+  // Writable never calls _final on an errored stream, and the stream still has to end.
+  describe("last write in flight at end()", () => {
+    const big = Buffer.alloc(300 * 1024, "a");
+
+    it("server stream", async () => {
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write("done");
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, 4]);
+    });
+
+    it("client stream", async () => {
+      const events = await request((client, req, late) => {
+        // A write on a pending stream is dispatched at 'ready', after end(), and ends the stream itself.
+        req.on("ready", () => {
+          req.write("body");
+          req.end();
+          req.write("late", late);
+        });
+      });
+      expect(events).toEqual(lateWriteEvents);
+    });
+
+    it("write blocked on flow control", async () => {
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write(big);
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, big.length]);
+    });
+
+    it("write blocked on flow control, late write on a later turn", async () => {
+      // The peer has not read anything yet on the next turn, so the write is still blocked.
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write(big);
+        stream.end();
+        setImmediate(() => stream.write("late", late));
+      });
+      expect(result).toEqual([lateWriteEvents, big.length]);
+    });
+
+    it("destroy() in the callback of the blocked write does not truncate the body", async () => {
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write(big, () => stream.destroy());
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, big.length]);
+    });
+
+    it("close(code) in the same tick still resets the stream", async () => {
+      const result = serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.write("done");
+        stream.end();
+        stream.write("late", late);
+        stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      });
+      await expect(result).rejects.toThrow("NGHTTP2_INTERNAL_ERROR");
+    });
+
+    // END_STREAM goes out when the write completes, before 'error' is emitted (node submits it
+    // before 'error' too), so a reset from the 'error' listener comes after a clean end.
+    it.each([
+      ["close(code)", stream => stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR)],
+      ["destroy(err)", (stream, err) => stream.destroy(err)],
+    ])("%s from the 'error' listener follows a clean end", async (_, reset) => {
+      const result = await serve((stream, late) => {
+        stream.on("error", err => reset(stream, err));
+        stream.respond({ ":status": 200 });
+        stream.write("done");
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, 4]);
+    });
+  });
 });
 
 it("write() completes its callback on a later turn, not inside write()", async () => {

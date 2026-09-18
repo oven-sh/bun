@@ -385,6 +385,34 @@ describe("bun patch --commit with the isolated linker", () => {
     expect(loaded.exitCode).toBe(0);
   });
 
+  // The hoisted layout nests no-deps@1.0.0 under has-bin-entries, so its copy lands inside the first copy.
+  test.concurrent("keeps the edited copy when it holds the copy of a nested package", async () => {
+    const packageDir = await install(false, {
+      "package.json": JSON.stringify({
+        name: "foo",
+        dependencies: { "has-bin-entries": "1.0.0", "no-deps": "2.0.0" },
+      }),
+    });
+    const copy = await patch(packageDir, "has-bin-entries", "node_modules/has-bin-entries");
+    await addPatchedExport(copy);
+
+    const nested = "node_modules/has-bin-entries/node_modules/no-deps";
+    const prepare = await runBun(packageDir, "patch", "no-deps@1.0.0");
+    expect(prepare.stderr).not.toContain("error:");
+    expect(prepare.stdout).toContain(`edit the following folder:\n\n  ${nested}\n`);
+    expect(prepare.exitCode).toBe(0);
+    await Bun.write(join(packageDir, nested, "edit.js"), "module.exports = 'in progress';\n");
+
+    const commit = await runBun(packageDir, "patch", "--commit", "has-bin-entries");
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+
+    expect({
+      copy: isLink(copy),
+      edit: await Bun.file(join(packageDir, nested, "edit.js")).text(),
+    }).toEqual({ copy: false, edit: "module.exports = 'in progress';\n" });
+  });
+
   // git prints `Binary files ... differ` for it, and the patch parser drops that file.
   test.concurrent("keeps the edited copy when the diff has a binary file", async () => {
     const packageDir = await install(false, rootOnly);

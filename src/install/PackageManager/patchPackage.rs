@@ -408,6 +408,10 @@ pub fn do_patch_commit(
 
             break 'has_nested_node_modules true;
         };
+        // The diff leaves that folder out. It can hold the `bun patch` copy of a nested package.
+        if has_nested_node_modules {
+            manager.committed_patch = None;
+        }
 
         let patch_tag_tmpname = match bun_paths::fs::FileSystem::tmpname(
             b"patch_tmp",

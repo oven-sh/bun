@@ -2222,30 +2222,38 @@ describe("'online' precedes the worker's first message", () => {
     expect(code).toBe(1);
   });
 
-  test("a transferred MessagePort closes when the worker entry does not resolve", async () => {
-    using dir = tempDir("worker-missing-entry-transferred-port", {});
-    const worker = new Worker(join(String(dir), "missing.js"));
-    const { port1, port2 } = new MessageChannel();
-    const events: string[] = [];
-    worker.on("online", () => events.push("online"));
-    worker.on("error", error => events.push(`error:${error.code}`));
-    const portClosed = once(port1, "close").then(() => events.push("port-close"));
-    const exit = new Promise<number>(resolve =>
-      worker.on("exit", code => {
-        events.push(`exit:${code}`);
-        resolve(code);
-      }),
-    );
-    worker.postMessage({ port: port2 }, [port2]);
+  test.each(["workerData", "postMessage"] as const)(
+    "a %s transferred MessagePort closes when the worker entry does not resolve",
+    async transferRoute => {
+      using dir = tempDir("worker-missing-entry-transferred-port", {});
+      const { port1, port2 } = new MessageChannel();
+      const worker = new Worker(
+        join(String(dir), "missing.js"),
+        transferRoute === "workerData" ? { workerData: { port: port2 }, transferList: [port2] } : undefined,
+      );
+      const events: string[] = [];
+      worker.on("online", () => events.push("online"));
+      worker.on("error", error => events.push(`error:${error.code}`));
+      const portClosed = once(port1, "close").then(() => events.push("port-close"));
+      const exit = new Promise<number>(resolve =>
+        worker.on("exit", code => {
+          events.push(`exit:${code}`);
+          resolve(code);
+        }),
+      );
+      if (transferRoute === "postMessage") {
+        worker.postMessage({ port: port2 }, [port2]);
+      }
 
-    const code = await exit;
-    await portClosed;
+      const code = await exit;
+      await portClosed;
 
-    expect({ code, events }).toEqual({
-      code: 1,
-      events: ["online", "error:MODULE_NOT_FOUND", "exit:1", "port-close"],
-    });
-  });
+      expect({ code, events }).toEqual({
+        code: 1,
+        events: ["online", "error:MODULE_NOT_FOUND", "exit:1", "port-close"],
+      });
+    },
+  );
 });
 
 // ─── worker teardown vs. work still in flight ────────────────────────────────

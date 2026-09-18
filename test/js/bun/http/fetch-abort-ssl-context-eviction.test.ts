@@ -1,3 +1,4 @@
+import { blackholeListener } from "blackhole";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 
@@ -9,9 +10,10 @@ import { bunEnv, bunExe, isASAN } from "harness";
 // active (non-pooled) sockets.
 //
 // This test fills the cache past ssl_context_cache_max_size (60) with distinct
-// TLS configs whose connects never complete (TEST-NET-1), so every cache entry
-// has an active connecting socket. The 61st distinct config triggers
-// evictOldestSslContext. Aborting all requests then drains the tracker.
+// TLS configs whose connects never complete (a blackhole listener), so every
+// cache entry has an active connecting socket. The 61st distinct config
+// triggers evictOldestSslContext. Aborting all requests then drains the
+// tracker.
 //
 // In debug+ASAN builds the existing assertUnpoisoned check at
 // HTTPThread.processEvents catches the freed socket deterministically, so one
@@ -19,13 +21,16 @@ import { bunEnv, bunExe, isASAN } from "harness";
 // reused; the fixture spams same-size-class allocations to make that likely
 // (~30% per run before the fix), so loop a few times.
 test("aborting fetches whose custom SSL context was evicted does not crash", async () => {
-  // The fixture relies on connects to TEST-NET-1 staying in-flight; strip any
-  // ambient HTTP(S) proxy so those connects aren't intercepted. Raise the
-  // per-process request cap so all 65+200 requests plus both barriers start in
-  // one FIFO drain pass (default cap is 256; 65+200+1 would defer the second
-  // barrier behind async .invalid DNS failures).
+  // The fixture relies on its connects staying in-flight; strip any ambient
+  // HTTP(S) proxy so those connects aren't intercepted. Raise the per-process
+  // request cap so all 65+200 requests plus both barriers start in one FIFO
+  // drain pass (default cap is 256; 65+200+1 would defer the second barrier
+  // behind async .invalid DNS failures).
   const env: Record<string, string | undefined> = { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "512" };
   for (const k of ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"]) delete env[k];
+
+  using blackhole = await blackholeListener();
+  const fixture = fixtureFor(`https://${blackhole.hostname}:${blackhole.port}/`);
 
   const runs = isASAN ? 1 : 5;
   const results = await Promise.all(
@@ -51,7 +56,7 @@ test("aborting fetches whose custom SSL context was evicted does not crash", asy
 // fetch queued after the 65 SSL fetches therefore cannot start until every
 // SSL context exists and eviction has fired for indices 60..64, so awaiting
 // that barrier fetch replaces the 5s/0.5s sleeps the original fixture used.
-const fixture = /* js */ `
+const fixtureFor = (blackholeUrl: string) => /* js */ `
 const N = 65; // > ssl_context_cache_max_size (60)
 const controllers = [];
 const promises = [];
@@ -66,7 +71,7 @@ for (let i = 0; i < N; i++) {
   const ac = new AbortController();
   controllers.push(ac);
   promises.push(
-    fetch("https://192.0.2.1/", {
+    fetch(${JSON.stringify(blackholeUrl)}, {
       signal: ac.signal,
       tls: { serverName: "host" + i + ".test" },
     }).catch(() => {})

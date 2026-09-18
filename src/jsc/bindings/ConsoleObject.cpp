@@ -6,6 +6,7 @@
 
 #include <JavaScriptCore/ConsoleClient.h>
 #include <JavaScriptCore/ConsoleMessage.h>
+#include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include <wtf/text/WTFString.h>
@@ -128,4 +129,95 @@ void ConsoleObject::profileEnd(JSC::JSGlobalObject* globalObject, const String& 
     }
 }
 
+}
+
+// `JSC::forEachInIterable` with the iterator protocol bounded: by the collection's element count when it has one, else by `budget`. `sizeAlreadyRead` is a Map or Set `size` the caller read, or -1. True when elements were left.
+extern "C" bool Bun__ConsoleObject__forEachLimited(JSC::EncodedJSValue encodedIterable, JSC::JSGlobalObject* globalObject, uint32_t budget, int32_t sizeAlreadyRead, void* ctx, void (*callback)(JSC::VM*, JSC::JSGlobalObject*, void* ctx, JSC::EncodedJSValue))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue iterable = JSC::JSValue::decode(encodedIterable);
+    JSC::JSCell* sentinel = vm.orderedHashTableSentinel();
+
+    auto visit = [&](JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue value) {
+        callback(&vm, globalObject, ctx, JSC::JSValue::encode(value));
+    };
+
+    // The walks `forEachInIterable` takes when user code cannot observe the iteration. The collection itself bounds them.
+    if (JSC::getIterationMode(iterable) == JSC::IterationMode::FastArray) {
+        JSC::forEachInFastArray(globalObject, iterable, uncheckedDowncast<JSC::JSArray>(iterable), visit);
+        RETURN_IF_EXCEPTION(scope, false);
+        return false;
+    }
+    auto* map = dynamicDowncast<JSC::JSMap>(iterable);
+    if (map && map->isIteratorProtocolFastAndNonObservable()) {
+        JSC::JSCell* storage = map->storageOrSentinel(vm);
+        if (storage != sentinel) {
+            JSC::forEachInMapStorage(vm, globalObject, storage, 0, JSC::IterationKind::Entries, visit);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        return false;
+    }
+    auto* set = dynamicDowncast<JSC::JSSet>(iterable);
+    if (set && set->isIteratorProtocolFastAndNonObservable()) {
+        JSC::JSCell* storage = set->storageOrSentinel(vm);
+        if (storage != sentinel) {
+            JSC::forEachInSetStorage(vm, globalObject, storage, 0, visit);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        return false;
+    }
+
+    uint64_t bound = budget;
+    if (map || set) {
+        // Node's rule for a replaced iterator: it gets as many steps as the collection reports entries.
+        double size = sizeAlreadyRead;
+        if (sizeAlreadyRead < 0) {
+            JSC::JSObject* collection = map ? static_cast<JSC::JSObject*>(map) : set;
+            JSC::JSValue sizeValue = collection->get(globalObject, vm.propertyNames->size);
+            RETURN_IF_EXCEPTION(scope, false);
+            size = sizeValue.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        // A size that is not a finite count says nothing about where the walk ends, so the budget stays.
+        if (std::isfinite(size) && size >= 0)
+            bound = size < static_cast<double>(UINT32_MAX) ? static_cast<uint64_t>(size) : UINT32_MAX;
+    } else if (auto* array = dynamicDowncast<JSC::JSArray>(iterable))
+        bound = array->length();
+    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(iterable))
+        bound = view->length();
+    else if (auto* mapIterator = dynamicDowncast<JSC::JSMapIterator>(iterable)) {
+        if (auto* iterated = dynamicDowncast<JSC::JSMap>(mapIterator->internalField(JSC::JSMapIterator::Field::IteratedObject).get()))
+            bound = iterated->size();
+    } else if (auto* setIterator = dynamicDowncast<JSC::JSSetIterator>(iterable)) {
+        if (auto* iterated = dynamicDowncast<JSC::JSSet>(setIterator->internalField(JSC::JSSetIterator::Field::IteratedObject).get()))
+            bound = iterated->size();
+    }
+
+    JSC::IterationRecord iterationRecord = JSC::iteratorForIterable(globalObject, iterable);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    bool truncated = false;
+    for (uint64_t visited = 0;; visited++) {
+        JSC::JSValue next = JSC::iteratorStep(globalObject, iterationRecord);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (next.isFalse())
+            return false;
+
+        if (visited >= bound) {
+            truncated = true;
+            break;
+        }
+
+        JSC::JSValue nextValue = JSC::iteratorValue(globalObject, next);
+        RETURN_IF_EXCEPTION(scope, false);
+
+        callback(&vm, globalObject, ctx, JSC::JSValue::encode(nextValue));
+        if (scope.exception()) [[unlikely]]
+            break;
+    }
+
+    scope.release();
+    JSC::iteratorClose(globalObject, iterationRecord.iterator);
+    return truncated;
 }

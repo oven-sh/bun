@@ -2377,9 +2377,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Whether the entry writes its dependency links on every install. A store entry relinks
-    /// instead: a link that it misses counts as a change, and that would run its scripts again.
-    /// A global store entry is shared: its link resolves once another install downloads the entry.
+    /// A store entry relinks instead: a link it misses is a change, and that runs its scripts again.
     fn links_each_install(&self, entry_id: StoreEntryId) -> bool {
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
         let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];

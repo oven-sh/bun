@@ -1698,10 +1698,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 // A chunk entry whose last build failed has
                                 // `Unknown` content; re-enqueue it like a
                                 // direct edit of that file would.
-                                let k = bun_ptr::RawSlice::new(
-                                    &*self.bundled_files.keys()[dep.get() as usize],
-                                );
-                                entry_points.append_js(k.slice(), bake::Graph::Client)?;
+                                self.append_client_entry_point(entry_points, dep.get() as usize)?;
                             }
                             it = entry.next_dependency;
                         }
@@ -1737,7 +1734,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         // failure is downstream of it (a css root importing a
                         // failed css entry); re-enqueue them too.
                         if self.bundled_files.values()[index].failed {
-                            let mut it = self.first_dep[index];
+                            let mut it = self.edge_lists[index].first_dep;
                             while let Some(edge_index) = it {
                                 let entry = self.edges[edge_index.get() as usize];
                                 let dep = entry.dependency;
@@ -1750,13 +1747,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     continue;
                                 }
                                 self.stale_files.set(dep.get() as usize);
-                                let k = bun_ptr::RawSlice::new(
-                                    &*self.bundled_files.keys()[dep.get() as usize],
-                                );
                                 if dep_is_css_root {
+                                    let k = bun_ptr::RawSlice::new(
+                                        &*self.bundled_files.keys()[dep.get() as usize],
+                                    );
                                     entry_points.append_css(k.slice())?;
                                 } else {
-                                    entry_points.append_js(k.slice(), bake::Graph::Client)?;
+                                    self.append_client_entry_point(
+                                        entry_points,
+                                        dep.get() as usize,
+                                    )?;
                                 }
                             }
                         }

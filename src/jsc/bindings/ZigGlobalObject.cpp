@@ -813,6 +813,18 @@ bool GlobalObject::hasPendingModuleLoad(const JSC::Identifier& key) const
     return false;
 }
 
+void GlobalObject::trackPendingModuleLoad(const JSC::Identifier& key, JSC::ScriptFetchParameters::Type type, JSC::JSPromise* promise)
+{
+    if (pendingModuleLoads.size() >= m_pendingModuleLoadsPruneAt) {
+        pendingModuleLoads.removeIf([](auto& entry) {
+            auto* tracked = entry.value.get();
+            return !tracked || tracked->status() != JSC::JSPromise::Status::Pending;
+        });
+        m_pendingModuleLoadsPruneAt = std::max<size_t>(16, pendingModuleLoads.size() * 2);
+    }
+    pendingModuleLoads.set(PendingModuleLoadKey { key.impl(), type }, JSC::Weak<JSC::JSPromise>(promise));
+}
+
 // Fulfillment reaction on a Module.runMain load, whose promise settles with the
 // evaluation result. Argument 1 is the resolved key; returns its namespace.
 BUN_DEFINE_HOST_FUNCTION(Bun__moduleNamespaceForKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1230,7 +1242,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
     , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
-    , pendingModuleLoads(vm)
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
@@ -1245,7 +1256,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
     , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
-    , pendingModuleLoads(vm)
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);

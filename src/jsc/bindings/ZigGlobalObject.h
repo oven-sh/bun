@@ -60,7 +60,8 @@ struct node_module;
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ScriptFetchParameters.h>
-#include <JavaScriptCore/WeakGCMap.h>
+#include <JavaScriptCore/Weak.h>
+#include <wtf/HashMap.h>
 #include <JavaScriptCore/JSTypeInfo.h>
 #include <JavaScriptCore/Structure.h>
 #include "DOMConstructors.h"
@@ -763,20 +764,19 @@ public:
     // fulfills with the module namespace. While one is pending, a second
     // import() of the pair joins it and moduleLoaderResolve keeps the key's
     // failed registry entries. The loader settles the promise after it has
-    // recorded a failure, so a settled one guards nothing; it stays until it is
-    // collected or the pair loads again. Weak: a load that can still settle is
-    // reachable from its own reaction chain.
-    JSC::WeakGCMap<PendingModuleLoadKey, JSC::JSPromise, PendingModuleLoadKeyHash> pendingModuleLoads;
+    // recorded a failure, so a settled one guards nothing.
+    // Not a WeakGCMap: the GC prunes those with no atom table set, and a key
+    // here can hold the last ref of its atom. trackPendingModuleLoad prunes.
+    WTF::HashMap<PendingModuleLoadKey, JSC::Weak<JSC::JSPromise>, PendingModuleLoadKeyHash> pendingModuleLoads;
     JSC::JSPromise* pendingModuleLoad(const JSC::Identifier& key, JSC::ScriptFetchParameters::Type type) const
     {
-        auto* promise = pendingModuleLoads.get({ key.impl(), type });
+        auto it = pendingModuleLoads.find({ key.impl(), type });
+        auto* promise = it == pendingModuleLoads.end() ? nullptr : it->value.get();
         return promise && promise->status() == JSC::JSPromise::Status::Pending ? promise : nullptr;
     }
     bool hasPendingModuleLoad(const JSC::Identifier& key) const;
-    void trackPendingModuleLoad(const JSC::Identifier& key, JSC::ScriptFetchParameters::Type type, JSC::JSPromise* promise)
-    {
-        pendingModuleLoads.set({ key.impl(), type }, JSC::Weak<JSC::JSPromise>(promise));
-    }
+    void trackPendingModuleLoad(const JSC::Identifier& key, JSC::ScriptFetchParameters::Type type, JSC::JSPromise* promise);
+    size_t m_pendingModuleLoadsPruneAt { 16 };
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider

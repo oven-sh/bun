@@ -112,6 +112,9 @@ test("import() of a module that failed to load retries after the file changes", 
       fs.writeFileSync("j.mjs", "export const v = 42;");
       const j = await Promise.all([import("./j.mjs"), import("./j.mjs")]);
       console.log("J", j[0].v, j[1].v, j[0] === j[1]);
+      // The import() promises above are garbage now. Collecting them leaves
+      // dead handles in the pending-load map, which the loads below prune.
+      Bun.gc(true);
       // K callers of one key share one fetch: one outcome for all of them and
       // one transpile, not K. Without the join, a sibling fetch that failed
       // after another one evaluated (a file caught mid-save) poisoned the key.

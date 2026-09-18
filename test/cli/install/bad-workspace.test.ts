@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -311,4 +311,246 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
       expect(exitCode).toBe(1);
     },
   );
+});
+
+// `bun install` creates `<member>/node_modules` for every workspace member, so a member
+// outside the root is a write into a directory the project does not own. A cloned
+// repository could name the directories next to it (the user's other projects) as its
+// members: the sibling then loads the clone's code, with no lifecycle script involved.
+describe.concurrent("workspaces entries outside the workspace root", () => {
+  // A clone in `clone/` next to the user's own project in `victim/`. `inner@1.99.0` in the
+  // clone satisfies the range the victim depends on, so a member link written into
+  // `victim/node_modules` makes the victim load the clone's copy.
+  const SIBLING_PROJECTS = {
+    "victim/package.json": JSON.stringify({ name: "victim", dependencies: { inner: "^1.0.0" } }),
+    "clone/packages/inner/package.json": JSON.stringify({ name: "inner", version: "1.99.0", main: "index.js" }),
+    "clone/packages/inner/index.js": `module.exports = "from the clone";`,
+  };
+
+  // The install fails, names the entry, and leaves both projects as they were.
+  async function expectRejected(dir: string, message: string, cwd = join(dir, "clone")) {
+    const { stderr, exitCode } = await runInstall(cwd);
+
+    expect(stderr).toContain(`error: ${message}\n`);
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(dir, "victim", "node_modules"))).toBe(false);
+    expect(existsSync(join(dir, "clone", "bun.lock"))).toBe(false);
+    expect(existsSync(join(cwd, "bun.lock"))).toBe(false);
+  }
+
+  test("a listed sibling directory is rejected", async () => {
+    using dir = tempDir("bad-workspace-sibling-path", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "../victim"]),
+    });
+
+    await expectRejected(String(dir), `Workspace "../victim" is outside the workspace root`);
+  });
+
+  test("a glob that leaves the root is rejected", async () => {
+    using dir = tempDir("bad-workspace-sibling-glob", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "../*"]),
+    });
+
+    // The glob walker reports the match with the platform separator.
+    await expectRejected(String(dir), `Workspace "${join("..", "victim")}" is outside the workspace root`);
+  });
+
+  test("an absolute path outside the root is rejected", async () => {
+    using dir = tempDir("bad-workspace-absolute-outside", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": ({ root }) => rootPackageJson(["packages/*", join(root, "victim")]),
+    });
+
+    await expectRejected(String(dir), `Workspace "${join(String(dir), "victim")}" is outside the workspace root`);
+  });
+
+  test("a path that climbs out and back in is rejected", async () => {
+    using dir = tempDir("bad-workspace-climb-out-and-back", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "packages/../../victim"]),
+    });
+
+    await expectRejected(String(dir), `Workspace "packages/../../victim" is outside the workspace root`);
+  });
+
+  // A backslash is a separator on every platform here, so this is `../victim`.
+  test("a sibling directory spelled with a backslash is rejected", async () => {
+    using dir = tempDir("bad-workspace-sibling-backslash", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "..\\victim"]),
+    });
+
+    await expectRejected(String(dir), `Workspace "..\\victim" is outside the workspace root`);
+  });
+
+  // The pnpm migration moves `packages` from pnpm-workspace.yaml into `workspaces` in
+  // package.json, and the same install then reads that manifest.
+  test("a sibling directory named in pnpm-workspace.yaml is rejected", async () => {
+    using dir = tempDir("bad-workspace-sibling-pnpm", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": JSON.stringify({ name: "root" }),
+      "clone/pnpm-workspace.yaml": `packages:\n  - 'packages/*'\n  - '../victim'\n`,
+      "clone/pnpm-lock.yaml": [
+        `lockfileVersion: '9.0'`,
+        ``,
+        `settings:`,
+        `  autoInstallPeers: true`,
+        `  excludeLinksFromLockfile: false`,
+        ``,
+        `importers:`,
+        ``,
+        `  .:`,
+        `    dependencies: {}`,
+        ``,
+        `  packages/inner:`,
+        `    dependencies: {}`,
+        ``,
+      ].join("\n"),
+    });
+
+    await expectRejected(String(dir), `Workspace "../victim" is outside the workspace root`);
+    expect(JSON.parse(readFileSync(join(String(dir), "clone", "package.json"), "utf8")).workspaces).toEqual([
+      "packages/*",
+      "../victim",
+    ]);
+  });
+
+  // git stores symlinks, so the clone can ship one. The entry is inside the root by its
+  // path, and the directory that receives `node_modules` is not. A junction on Windows.
+  test("a listed symlink to a sibling directory is rejected", async () => {
+    using dir = tempDir("bad-workspace-symlink-path", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "link"]),
+    });
+    const victim = join(String(dir), "victim");
+    symlinkSync(victim, join(String(dir), "clone", "link"), "junction");
+
+    await expectRejected(String(dir), `Workspace "link" is outside the workspace root: it resolves to "${victim}"`);
+  });
+
+  test("a glob under a symlink that leaves the root is rejected", async () => {
+    using dir = tempDir("bad-workspace-symlink-glob", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "up/*"]),
+    });
+    const victim = join(String(dir), "victim");
+    symlinkSync(String(dir), join(String(dir), "clone", "up"), "junction");
+
+    await expectRejected(
+      String(dir),
+      `Workspace "${join("up", "victim")}" is outside the workspace root: it resolves to "${victim}"`,
+    );
+  });
+
+  // The search for the root, upward from a member, reads the same manifest. It must not
+  // take the rejected entry as "this is not a workspace root" and install the member alone.
+  test("an install inside a member reports a listed sibling directory", async () => {
+    using dir = tempDir("bad-workspace-sibling-from-member", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "../victim"]),
+    });
+
+    await expectRejected(
+      String(dir),
+      `Workspace "../victim" is outside the workspace root`,
+      join(String(dir), "clone", "packages", "inner"),
+    );
+  });
+
+  test("an install inside a member reports a glob under a symlink that leaves the root", async () => {
+    using dir = tempDir("bad-workspace-symlink-from-member", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "up/*"]),
+    });
+    const victim = join(String(dir), "victim");
+    symlinkSync(String(dir), join(String(dir), "clone", "up"), "junction");
+
+    await expectRejected(
+      String(dir),
+      `Workspace "${join("up", "victim")}" is outside the workspace root: it resolves to "${victim}"`,
+      join(String(dir), "clone", "packages", "inner"),
+    );
+  });
+
+  // The root directory is the resolved path of the manifest, so an absolute entry spelled
+  // through a symlinked ancestor names a directory inside the root, not an escape. It is
+  // recorded under the path relative to the root as written, which is what bun did before
+  // this check existed.
+  test("an absolute path inside the root through a symlinked ancestor is still a workspace", async () => {
+    using dir = tempDir("bad-workspace-absolute-through-symlink", SIBLING_PROJECTS);
+    // <dir>/link/clone/packages/inner is <dir>/clone/packages/inner through <dir>/link.
+    symlinkSync(String(dir), join(String(dir), "link"), "junction");
+    writeFileSync(
+      join(String(dir), "clone", "package.json"),
+      rootPackageJson([join(String(dir), "link", "clone", "packages", "inner")]),
+    );
+
+    const { stderr, exitCode } = await runInstall(join(String(dir), "clone"));
+
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(Object.values(install_test_helpers.parseLockfile(join(String(dir), "clone")).workspace_paths)).toEqual([
+      "../link/clone/packages/inner",
+    ]);
+  });
+
+  // One rejected match of a glob must not hide the pattern's other matches: an install that
+  // runs in one of them still has to find its own root. `../*/packages/*` matches a
+  // directory in each sibling project and `packages/inner` in the clone itself.
+  test("a glob reports one error and keeps its other matches", async () => {
+    using dir = tempDir("bad-workspace-glob-keeps-matches", {
+      // Each sibling member depends on `inner`, so an install that adopted it would write
+      // its `node_modules`.
+      "victimA/packages/a/package.json": JSON.stringify({ name: "victim-a-pkg", dependencies: { inner: "^1.0.0" } }),
+      "victimB/packages/b/package.json": JSON.stringify({ name: "victim-b-pkg", dependencies: { inner: "^1.0.0" } }),
+      "clone/package.json": rootPackageJson(["../*/packages/*"]),
+      "clone/packages/inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
+    });
+
+    const { stderr, exitCode } = await runInstall(join(String(dir), "clone", "packages", "inner"));
+
+    // One error, whichever sibling the walker reports first.
+    expect(stderr.match(/is outside the workspace root/g)).toHaveLength(1);
+    expect(stderr).toMatch(
+      /error: Workspace "\.\.[\\/]victim[AB][\\/]packages[\\/][ab]" is outside the workspace root/,
+    );
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "clone", "packages", "inner", "bun.lock"))).toBe(false);
+    expect(existsSync(join(String(dir), "clone", "bun.lock"))).toBe(false);
+    expect(existsSync(join(String(dir), "victimA", "packages", "a", "node_modules"))).toBe(false);
+    expect(existsSync(join(String(dir), "victimB", "packages", "b", "node_modules"))).toBe(false);
+  });
+
+  test("a symlink to a directory inside the root is still a workspace", async () => {
+    using dir = tempDir("bad-workspace-symlink-inside", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["link"]),
+    });
+    symlinkSync(join(String(dir), "clone", "packages", "inner"), join(String(dir), "clone", "link"), "junction");
+
+    const { stderr, exitCode } = await runInstall(join(String(dir), "clone"));
+
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(Object.values(install_test_helpers.parseLockfile(join(String(dir), "clone")).workspace_paths)).toEqual([
+      "link",
+    ]);
+  });
+
+  test("an absolute path inside the root is still a workspace", async () => {
+    using dir = tempDir("bad-workspace-absolute-inside", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": ({ root }) => rootPackageJson([join(root, "clone", "packages", "inner")]),
+    });
+
+    const { stderr, exitCode } = await runInstall(join(String(dir), "clone"));
+
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(Object.values(install_test_helpers.parseLockfile(join(String(dir), "clone")).workspace_paths)).toEqual([
+      "packages/inner",
+    ]);
+  });
 });

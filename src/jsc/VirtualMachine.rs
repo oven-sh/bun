@@ -7147,8 +7147,7 @@ impl VirtualMachine {
                     formatter.format::<false>(tag, writer, error_instance, global_ref)
                 };
                 writer.write_all(b"\n")?;
-                // What the value threw while it was printed is not what is reported here, and the
-                // frames of the throw are still to be printed.
+                // What the value throws while it is printed is not the error being reported.
                 if allow_side_effects && global_ref.has_exception() {
                     global_ref.clear_exception();
                 }
@@ -7208,14 +7207,14 @@ impl VirtualMachine {
         Ok(())
     }
 
-    /// The object a `JSC::Exception` holds, when the name-and-message line does not already say all of it:
-    /// a primitive is that line, an `Error` is printed from the exception, and a `BuildMessage` or
-    /// `ResolveMessage` is its message.
+    /// The object in a `JSC::Exception`, unless the message line already says all of it.
     fn thrown_object_to_show(exception: JSValue) -> Option<JSValue> {
         let thrown = exception.to_error()?;
+        // A primitive is the message line. An `Error` is printed from the exception itself.
         if !thrown.is_object() || thrown.is_error() {
             return None;
         }
+        // A `BuildMessage` or `ResolveMessage` is its message.
         if thrown.js_type() == jsc::JSType::DOMWrapper
             && (thrown.as_class_ref::<crate::BuildMessage>().is_some()
                 || thrown.as_class_ref::<crate::ResolveMessage>().is_some())

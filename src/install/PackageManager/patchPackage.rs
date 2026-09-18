@@ -1133,10 +1133,8 @@ fn overwrite_package_in_node_modules_folder(
     cache_dir_subpath: &[u8],
     node_modules_folder_path: &[u8],
 ) -> Result<(), crate::Error> {
-    // The copy lands in a sibling staging folder (same filesystem) and is
-    // swapped in once it is complete, so a failed copy leaves the package as
-    // it was. The parent is detached from the global store first, so the
-    // staging folder is never written through a symlink into the shared cache.
+    // Copy into a sibling staging folder, then swap it in. Detach the parent
+    // first so the staging folder is not written into the shared global store.
     let parent = resolve_path::dirname::<platform::Auto>(node_modules_folder_path);
     if !parent.is_empty() {
         detach_module_folder_from_shared_store(parent);
@@ -1217,9 +1215,8 @@ fn overwrite_package_in_node_modules_folder(
         return Err(e.into());
     }
 
-    // Move the old package aside (a leaf symlink moves as a link), then the
-    // staging folder into place, so the destination is never deleted before
-    // the new copy is in place.
+    // Old package aside, staging folder in: the destination is never deleted
+    // before the new copy is in place. A leaf symlink moves as a link.
     let mut oldname_buf = bun_paths::path_buffer_pool::get();
     let oldname = bun_paths::fs::FileSystem::tmpname(
         b"patch_old",

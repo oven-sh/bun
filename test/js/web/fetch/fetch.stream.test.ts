@@ -1527,3 +1527,78 @@ test("fetch zstd streaming body delivers the whole flushed chunk at once", async
   }
   expect(rest).toBe(secondLine);
 });
+
+// A download cut short by its signal must never read as complete: every way of
+// consuming the body rejects with the abort, whenever the abort lands after
+// the head.
+test("an abort after the response head errors every kind of body consumer", async () => {
+  // Announces 1 MB, sends 1 KB, and stalls.
+  const sockets = new Set<Socket>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        sockets.add(socket);
+      },
+      close(socket) {
+        sockets.delete(socket);
+      },
+      data(socket) {
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n" + Buffer.alloc(1000, "x").toString());
+      },
+    },
+  });
+  const url = `http://127.0.0.1:${server.port}/`;
+  async function drain(stream: ReadableStream) {
+    let received = 0;
+    const reader = stream.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return received;
+      received += value.length;
+    }
+  }
+  const consumers: Record<string, (response: Response) => Promise<unknown>> = {
+    reader: response => drain(response.body!),
+    forAwait: async response => {
+      for await (const _ of response.body!);
+    },
+    text: response => response.text(),
+    bytesAfterBodyAccess: response => (response.body, response.bytes()),
+    originalAfterClone: response => (response.clone().body, drain(response.body!)),
+    clone: response => drain(response.clone().body!),
+    tee: response => {
+      const [kept, dropped] = response.body!.tee();
+      dropped.cancel();
+      return drain(kept);
+    },
+    pipeThrough: response => drain(response.body!.pipeThrough(new TransformStream())),
+    rewrapped: response => drain(new Response(response.body).body!),
+  };
+  const aborts: Record<string, (controller: AbortController) => void> = {
+    sync: controller => controller.abort(),
+    microtask: controller => queueMicrotask(() => controller.abort()),
+    macrotask: controller => setImmediate(() => controller.abort()),
+  };
+  try {
+    const outcomes: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    for (const [consumerName, consume] of Object.entries(consumers)) {
+      for (const [abortName, abort] of Object.entries(aborts)) {
+        const controller = new AbortController();
+        const response = await fetch(url, { signal: controller.signal });
+        const consumed = consume(response);
+        abort(controller);
+        expected[`${consumerName}/${abortName}`] = "AbortError";
+        outcomes[`${consumerName}/${abortName}`] = await consumed.then(
+          value => `ended cleanly (${value})`,
+          e => e.name,
+        );
+      }
+    }
+    expect(outcomes).toEqual(expected);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+  }
+});

@@ -426,6 +426,10 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // and shadow-memory bookkeeping agree. Nightly-only flag; the pinned
     // toolchain in `rust-toolchain.toml` is nightly.
     rustflags.push("-Zsanitizer=address");
+    // The C/C++ side's `-fsanitize-address-use-after-return=never` (flags.ts).
+    // rustc builds the ASAN pass in `runtime` mode and has no flag to change
+    // that; the pass's own LLVM option overrides the mode.
+    rustflags.push("-Cllvm-args=-asan-use-after-return=never");
     rustflags.push("--cfg=bun_asan");
   }
   // `bun_debug`: the cargo profile is `dev` (a Debug-buildtype build).
@@ -554,7 +558,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // LLVM bitcode is forward-compatible (newer reads older), so this works
     // when the linker's LLVM ≥ rustc's bundled LLVM. resolveConfig() swaps
     // `cfg.ld` to rustc's bundled rust-lld when rustc's LLVM major is ahead
-    // of clang's — see workarounds.ts "rust-lld-for-crosslang-lto".
+    // of clang's (the wantRustLld block in config.ts).
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit

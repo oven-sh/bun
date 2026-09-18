@@ -90,6 +90,18 @@ impl HmrSocket {
                 {
                     self.referenced_source_maps.insert(source_map_id, ());
                 }
+                // `on_js_request` only serves a current generation and only
+                // `invalidate_client_bundle` retires one. A generation no route
+                // bundle has means the route was rebuilt after this client's
+                // script was served, and the `hot_update` for that went out
+                // before this socket subscribed.
+                let is_current = dev
+                    .route_bundles
+                    .iter()
+                    .any(|route_bundle| route_bundle.client_script_generation == generation);
+                if !is_current {
+                    let _ = ws.send(&[MessageId::FullReload.char()], Opcode::Binary, false, true);
+                }
             }
             x if x == IncomingMessageId::Subscribe as u8 => {
                 let mut new_bits = HmrTopicBits::empty();

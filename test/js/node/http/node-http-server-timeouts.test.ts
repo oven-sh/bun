@@ -123,6 +123,50 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  test("server.setTimeout() fires close to the configured time for a client that never sends", async () => {
+    // A client that connects and never writes: 'connection' must fire on TCP
+    // accept and the inactivity timer must start then, not after a kernel-side
+    // deferred-accept window.
+    const server = http.createServer((req, res) => res.end("ok"));
+    let connectionAt: number | undefined;
+    let timeoutAt: number | undefined;
+    server.on("connection", () => {
+      connectionAt ??= Date.now() - t0;
+    });
+    server.setTimeout(500, socket => {
+      timeoutAt ??= Date.now() - t0;
+      socket.destroy();
+    });
+    const port = await listen(server);
+    let t0 = Date.now();
+    try {
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<number>();
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.resume();
+      socket.on("connect", () => {
+        t0 = Date.now();
+      });
+      socket.on("close", () => onClosed(Date.now() - t0));
+      const closedAt = await closed;
+      // The deferred-accept window is a full second at minimum, so these bounds
+      // distinguish "accepted immediately" from "accepted after defer" without
+      // being tight enough to flake under ASAN.
+      expect({
+        connectionSeenPromptly: connectionAt !== undefined && connectionAt < 900,
+        timeoutNearConfigured: timeoutAt !== undefined && timeoutAt < 1250,
+        closedNearConfigured: closedAt < 1250,
+      }).toEqual({
+        connectionSeenPromptly: true,
+        timeoutNearConfigured: true,
+        closedNearConfigured: true,
+      });
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   test("keepAliveTimeout closes an idle keep-alive connection after the response", async () => {
     const server = http.createServer((req, res) => {
       req.resume();

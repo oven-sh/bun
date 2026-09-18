@@ -289,7 +289,7 @@ describe("fs.watch", () => {
 
   // The first watcher is still open, and still the one registered for the path, when the directory
   // comes back. The second has to watch the new directory, not join the one whose directory is gone.
-  async function watchAgain(afterTheFirstHeard: boolean) {
+  async function watchAgain(afterTheFirstHeard: boolean, how: "deleted" | "moved" = "deleted") {
     using dir = tempDir("watch-again", { watched: {} });
     const target = path.join(String(dir), "watched");
     const first = fs.watch(target);
@@ -303,7 +303,8 @@ describe("fs.watch", () => {
       first.on("change", event => {
         if (event === "rename" && --renamesLeft === 0) gone.resolve();
       });
-      fs.rmdirSync(target);
+      if (how === "moved") fs.renameSync(target, target + "-moved");
+      else fs.rmdirSync(target);
       // Not awaited on macOS, where the watcher follows the path rather than the directory.
       if (afterTheFirstHeard && !isMacOS) await Promise.race([gone.promise, firstFailed]);
 
@@ -326,6 +327,10 @@ describe("fs.watch", () => {
   test("a directory that was deleted and made again can be watched again", () => watchAgain(true));
   test.skipIf(!isWindows)("a directory made again before its watcher heard of the deletion can be watched again", () =>
     watchAgain(false),
+  );
+  // Nothing tells the watcher of a directory that the directory itself was renamed.
+  test.skipIf(!isWindows)("a directory that was moved away and made again can be watched again", () =>
+    watchAgain(false, "moved"),
   );
 
   test("should emit event when file is deleted", done => {

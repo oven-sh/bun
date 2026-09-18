@@ -1700,6 +1700,46 @@ mod windows_impl {
     /// `FILE_INFO_BY_HANDLE_CLASS::FileStandardInfo`
     const FILE_STANDARD_INFO_CLASS: u32 = 1;
 
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    #[derive(PartialEq, Eq)]
+    struct FILE_ID_INFO {
+        VolumeSerialNumber: u64,
+        FileId: [u8; 16],
+    }
+    /// `FILE_INFO_BY_HANDLE_CLASS::FileIdInfo`
+    const FILE_ID_INFO_CLASS: u32 = 18;
+
+    /// `None` where the file system has no ids to give.
+    fn file_id(file: HANDLE) -> Option<FILE_ID_INFO> {
+        let mut info = FILE_ID_INFO {
+            VolumeSerialNumber: 0,
+            FileId: [0; 16],
+        };
+        // SAFETY: `file` is the caller's live handle; `info` is a valid out-buffer of the given size.
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                file,
+                FILE_ID_INFO_CLASS,
+                core::ptr::from_mut(&mut info).cast(),
+                core::mem::size_of::<FILE_ID_INFO>() as DWORD,
+            )
+        } != 0;
+        ok.then_some(info)
+    }
+
+    /// `dir_path` as `CreateFileW` takes it. A drive root keeps its separator
+    /// (`C:` alone is the drive's current directory).
+    fn dir_path_z(dir_path: &[u16]) -> Vec<u16> {
+        let mut dir_z: Vec<u16> = Vec::with_capacity(dir_path.len() + 2);
+        dir_z.extend_from_slice(dir_path);
+        if dir_path.last() == Some(&u16::from(b':')) {
+            dir_z.push(u16::from(b'\\'));
+        }
+        dir_z.push(0);
+        dir_z
+    }
+
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn GetLongPathNameW(short_path: *const u16, long_path: *mut u16, len: DWORD) -> DWORD;
@@ -1812,15 +1852,38 @@ mod windows_impl {
         }
 
         /// Whether the directory `watcher` reads changes from is still the one
-        /// its path names: not once that directory was deleted, whether or not
-        /// the reader thread has heard of it yet. Caller holds `manager.mutex`.
+        /// its path names: not once that directory was deleted or moved away,
+        /// whether or not the reader thread has heard of it yet. Caller holds
+        /// `manager.mutex`.
         pub(super) fn watches_its_path(watcher: &PathWatcher) -> bool {
             let request = watcher.platform.request;
             // SAFETY: a watcher's request is live under `manager.mutex`.
-            !request.is_null()
-                && unsafe {
-                    (*request).dir != w::INVALID_HANDLE_VALUE && !(*request).directory_is_gone()
+            let (dir, dir_z) = unsafe {
+                if request.is_null() || (*request).dir == w::INVALID_HANDLE_VALUE {
+                    return false;
                 }
+                ((*request).dir, dir_path_z(&(*request).dir_path))
+            };
+            // No access rights: only the id is wanted.
+            // SAFETY: `dir_z` is NUL-terminated; the other pointers are null.
+            let named = unsafe {
+                w::CreateFileW(
+                    dir_z.as_ptr(),
+                    0,
+                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                    core::ptr::null_mut(),
+                    w::OPEN_EXISTING,
+                    w::FILE_FLAG_BACKUP_SEMANTICS,
+                    core::ptr::null_mut(),
+                )
+            };
+            if named == w::INVALID_HANDLE_VALUE {
+                return false;
+            }
+            let same = matches!((file_id(dir), file_id(named)), (Some(a), Some(b)) if a == b);
+            // SAFETY: `named` is the live handle opened above.
+            unsafe { w::CloseHandle(named) };
+            same
         }
 
         /// Caller holds `manager.mutex`.
@@ -1867,14 +1930,7 @@ mod windows_impl {
                 _ => dir_path,
             };
 
-            // A drive root keeps its separator (`C:` alone is the drive's
-            // current directory).
-            let mut dir_z: Vec<u16> = Vec::with_capacity(dir_path.len() + 2);
-            dir_z.extend_from_slice(dir_path);
-            if dir_path.last() == Some(&u16::from(b':')) {
-                dir_z.push(u16::from(b'\\'));
-            }
-            dir_z.push(0);
+            let dir_z = dir_path_z(dir_path);
 
             // SAFETY: `dir_z` is NUL-terminated; the other pointers are null.
             let dir = unsafe {
@@ -2112,10 +2168,9 @@ mod windows_impl {
         }
 
         fn is_deleted_directory(&self) -> bool {
-            self.file_name.is_none() && self.directory_is_gone()
-        }
-
-        fn directory_is_gone(&self) -> bool {
+            if self.file_name.is_some() {
+                return false;
+            }
             let mut info = FILE_STANDARD_INFO {
                 AllocationSize: 0,
                 EndOfFile: 0,

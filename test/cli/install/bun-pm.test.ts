@@ -1084,3 +1084,43 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+test("bun pm with no subcommand and bun pm --help print the same indented usage text", async () => {
+  using dir = tempDir("bun-pm-usage", {
+    "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
+  });
+
+  async function run(args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", ...args],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  const [noArgs, help] = await Promise.all([run([]), run(["--help"])]);
+  expect(help).toBe(noArgs);
+
+  const lines = noArgs.split("\n");
+  expect(lines.slice(0, 7)).toEqual([
+    "",
+    "Usage: bun pm [flags] [<command>]",
+    "",
+    "  Run package manager utilities.",
+    "",
+    "Commands:",
+    "",
+  ]);
+  expect(lines).toContain("  bun pm scan                 scan all packages in lockfile for security vulnerabilities");
+  expect(lines).toContain("  ├ --dry-run                 do everything except for writing the tarball to disk");
+  expect(lines).toContain(
+    "  bun pm diff [a] [b]           show what changed between two versions of a package (or vs a folder/tarball)",
+  );
+  expect(lines).toContain("  bun pm default-trusted      print the default trusted dependencies list");
+});

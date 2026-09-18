@@ -179,6 +179,96 @@ it("should support static routes", () => {
   expect(filePath).toBe(`${dir}/posts/hey.tsx`);
 });
 
+it("matches a dynamic route with uppercase letters by its on-disk spelling, like a static route", () => {
+  function matchAll(files: string[], urls: string[]) {
+    const { dir } = make(files);
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+    return Object.fromEntries(
+      urls.map(url => {
+        const match = router.match(url);
+        return [url, match && { name: match.name, params: match.params }];
+      }),
+    );
+  }
+
+  // A static route matches its on-disk spelling and its lowercased spelling. So does a dynamic route.
+  expect(
+    matchAll(
+      [
+        "About.tsx",
+        "Api/V1/Status.tsx",
+        "Api/V1/[id].tsx",
+        "Blog/[Slug].tsx",
+        "Docs/[...path].tsx",
+        "Wiki/[[...page]].tsx",
+        "[user]/Settings.tsx",
+      ],
+      [
+        "/About",
+        "/about",
+        "/ABOUT",
+        "/Api/V1/Status",
+        "/api/v1/status",
+        "/Api/v1/Status",
+        "/Api/V1/7",
+        "/api/v1/7",
+        "/Api/v1/7",
+        "/Blog/Hello",
+        "/blog/Hello",
+        "/BLOG/Hello",
+        "/Docs/Api/v1",
+        "/docs/Api/v1",
+        "/Wiki",
+        "/wiki",
+        "/Wiki/Home/Edit",
+        "/wiki/Home/Edit",
+        "/Jarred/Settings",
+        "/Jarred/settings",
+      ],
+    ),
+  ).toEqual({
+    "/About": { name: "/About", params: {} },
+    "/about": { name: "/About", params: {} },
+    "/ABOUT": null,
+    "/Api/V1/Status": { name: "/Api/V1/Status", params: {} },
+    "/api/v1/status": { name: "/Api/V1/Status", params: {} },
+    "/Api/v1/Status": null,
+    "/Api/V1/7": { name: "/Api/V1/[id]", params: { id: "7" } },
+    "/api/v1/7": { name: "/Api/V1/[id]", params: { id: "7" } },
+    "/Api/v1/7": null,
+    "/Blog/Hello": { name: "/Blog/[Slug]", params: { Slug: "Hello" } },
+    "/blog/Hello": { name: "/Blog/[Slug]", params: { Slug: "Hello" } },
+    "/BLOG/Hello": null,
+    "/Docs/Api/v1": { name: "/Docs/[...path]", params: { path: "Api/v1" } },
+    "/docs/Api/v1": { name: "/Docs/[...path]", params: { path: "Api/v1" } },
+    "/Wiki": { name: "/Wiki/[[...page]]", params: {} },
+    "/wiki": { name: "/Wiki/[[...page]]", params: {} },
+    "/Wiki/Home/Edit": { name: "/Wiki/[[...page]]", params: { page: "Home/Edit" } },
+    "/wiki/Home/Edit": { name: "/Wiki/[[...page]]", params: { page: "Home/Edit" } },
+    "/Jarred/Settings": { name: "/[user]/Settings", params: { user: "Jarred" } },
+    "/Jarred/settings": { name: "/[user]/Settings", params: { user: "Jarred" } },
+  });
+
+  // The on-disk spelling must not fall through to a less specific route.
+  expect(matchAll(["Users/[id].tsx", "[section]/[id].tsx"], ["/Users/1", "/users/1", "/USERS/1"])).toEqual({
+    "/Users/1": { name: "/Users/[id]", params: { id: "1" } },
+    "/users/1": { name: "/Users/[id]", params: { id: "1" } },
+    "/USERS/1": { name: "/[section]/[id]", params: { section: "USERS", id: "1" } },
+  });
+
+  // "/[user]/Settings/[...rest]" consumes `user`, then fails in both spellings because nothing is
+  // left for `rest`. The route that does match must not inherit that param.
+  expect(
+    matchAll(["[user]/Settings/[...rest].tsx", "help/[...topic].tsx"], ["/help/Settings", "/help/settings"]),
+  ).toEqual({
+    "/help/Settings": { name: "/help/[...topic]", params: { topic: "Settings" } },
+    "/help/settings": { name: "/help/[...topic]", params: { topic: "settings" } },
+  });
+});
+
 it("should support optional catch-all routes", () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx", "posts/hey.tsx", "posts/[[...id]].tsx"]);

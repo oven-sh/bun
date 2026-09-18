@@ -426,9 +426,14 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
     }
 }
 
-/* Bound `timeout` by the socket-timeout sweep deadline (NULL == forever). */
+/* Bound `timeout` by the socket-timeout sweep deadline and the next scheduled
+ * connect attempt (NULL == forever). */
 static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
     long long ns = us_internal_sweep_timeout_ns(loop);
+    long long connect_ns = us_internal_connect_attempt_timeout_ns(loop);
+    if (connect_ns >= 0 && (ns < 0 || connect_ns < ns)) {
+        ns = connect_ns;
+    }
     if (ns < 0) {
         return timeout;
     }
@@ -463,6 +468,7 @@ void us_loop_run(struct us_loop_t *loop) {
         us_internal_dispatch_ready_polls(loop);
         us_internal_drain_ready_polls(loop);
         us_internal_sweep_if_due(loop);
+        us_internal_connect_attempts_if_due(loop);
 
         /* Emit post callback */
         us_internal_loop_post(loop);
@@ -548,6 +554,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);
     us_internal_sweep_if_due(loop);
+    us_internal_connect_attempts_if_due(loop);
 
     /* Emit post callback */
     us_internal_loop_post(loop);

@@ -405,9 +405,10 @@ test("no --only flag with multiple files", async () => {
 // The runner calls some test callbacks from outside an event loop task: the first tests of a
 // file, and the test after one that timed out. A promise reaction must not run inside a
 // native call that such a test makes. Here an HTMLRewriter handler calls reader.cancel(),
-// which settles the pending read of the stream in native code. A jest timer control is the
-// exception that suites rely on: there it runs the reactions of each timer before the next
-// timer, but not inside a control that one of those reactions calls.
+// which settles the pending read of the stream in native code. A jest timer control and a
+// matcher that waits for a promise are the exceptions that suites rely on: there they run the
+// reactions of each callback before the next callback, but a control does not run them inside
+// a control that one of those reactions calls.
 test.concurrent("a promise reaction does not run inside a native call that a test makes", async () => {
   using dir = tempDir("bun-test-run-to-completion", {
     "order.ts": `
@@ -469,6 +470,37 @@ test.concurrent("a promise reaction does not run inside a native call that a tes
         console.log(JSON.stringify({ label: "timer control in the first test of a file", order }));
       });
     `,
+    "matcher-wait.test.ts": `
+      import { expect, test } from "bun:test";
+      expect.extend({
+        async toSettle(received: Promise<unknown>) {
+          await received;
+          return { pass: true, message: () => "" };
+        },
+      });
+      test("first", async () => {
+        for (const matcher of [".resolves", ".rejects", "toThrow of an async function", "async custom matcher"]) {
+          const order: string[] = [];
+          const fulfills = matcher === ".resolves" || matcher === "async custom matcher";
+          const settled = new Promise<void>((resolve, reject) => {
+            setImmediate(() => {
+              order.push("first immediate");
+              Promise.resolve().then(() => order.push("first immediate reaction"));
+            });
+            setImmediate(() => {
+              order.push("second immediate");
+              fulfills ? resolve() : reject(new Error("rejected"));
+            });
+          });
+          if (matcher === ".resolves") await expect(settled).resolves.toBeUndefined();
+          else if (matcher === ".rejects") await expect(settled).rejects.toThrow("rejected");
+          else if (matcher === "toThrow of an async function") expect(() => settled).toThrow("rejected");
+          // @ts-expect-error
+          else await expect(settled).toSettle();
+          console.log(JSON.stringify({ label: matcher + " in the first test of a file", order }));
+        }
+      });
+    `,
   });
   await using proc = Bun.spawn({
     cmd: [
@@ -478,6 +510,7 @@ test.concurrent("a promise reaction does not run inside a native call that a tes
       "./after-timeout.test.ts",
       "./after-async.test.ts",
       "./timer-control.test.ts",
+      "./matcher-wait.test.ts",
     ],
     cwd: String(dir),
     stdout: "pipe",
@@ -493,6 +526,7 @@ test.concurrent("a promise reaction does not run inside a native call that a tes
       .map(({ label, order }) => [label, order]),
   );
   const order = ["handler start", "handler end", "reader.closed"];
+  const waitOrder = ["first immediate", "first immediate reaction", "second immediate"];
   expect(orders).toEqual({
     "first test of a file": order,
     "test after a timed out test": order,
@@ -504,8 +538,12 @@ test.concurrent("a promise reaction does not run inside a native call that a tes
       "second timer",
       "control returned",
     ],
+    ".resolves in the first test of a file": waitOrder,
+    ".rejects in the first test of a file": waitOrder,
+    "toThrow of an async function in the first test of a file": waitOrder,
+    "async custom matcher in the first test of a file": waitOrder,
   });
   // The one failure is the test that times out.
   const count = (what: string) => Number(stderr.match(new RegExp(`^\\s*(\\d+) ${what}$`, "m"))?.[1]);
-  expect({ pass: count("pass"), fail: count("fail"), exitCode }).toEqual({ pass: 5, fail: 1, exitCode: 1 });
+  expect({ pass: count("pass"), fail: count("fail"), exitCode }).toEqual({ pass: 6, fail: 1, exitCode: 1 });
 });

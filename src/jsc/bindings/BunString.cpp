@@ -41,6 +41,7 @@
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringToIntegerConversion.h"
 #include "ErrorCode.h"
+#include "ObjectBindings.h"
 
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
@@ -879,10 +880,11 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
     auto& vm = global->vm();
     WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
     Identifier id = Identifier::fromString(vm, str);
-    auto existingValue = target->getIfPropertyExists(global, id);
+    // Own lookup: a key such as `constructor` also names an Object.prototype property.
+    JSC::JSValue existingValue = Bun::getOwnPropertyIfExists(global, target, id);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!existingValue.isEmpty()) {
+    if (!existingValue.isUndefined()) {
         // If existing value is already an array, push to it
         if (existingValue.isObject() && existingValue.getObject()->inherits<JSC::JSArray>()) {
             JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(existingValue.getObject());

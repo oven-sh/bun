@@ -1528,8 +1528,8 @@ impl JSValue {
         crate::call_check_slow(global, || JSC__JSValue__putIndex(self, global, i, out))
     }
     /// `JSValue.putBunStringOneOrArray` — put `key`/`value` into
-    /// `self`. If `key` is already present on the object, create an array for
-    /// the values (used by FrameworkRouter catch-all params).
+    /// `self`. If `key` is already an own property of the object, create an
+    /// array for the values (used by FrameworkRouter catch-all params).
     pub fn put_bun_string_one_or_array(
         self,
         global: &JSGlobalObject,

@@ -165,6 +165,111 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     );
   }
 
+  // Calls `write` on one side from inside its 'connection' (server) or
+  // 'connect' (client) listener, so under the native open dispatch. Resolves
+  // once both sockets are closed.
+  async function writeInsideOpenDispatch(
+    side: "client" | "server",
+    write: (s: net.Socket, fd: number, headWritten: (err?: Error | null) => void) => void,
+  ) {
+    let headError: NodeJS.ErrnoException | null | undefined;
+    let socketError: NodeJS.ErrnoException | undefined;
+    let received = Buffer.alloc(0);
+    const sockets: net.Socket[] = [];
+    const closed: Promise<void>[] = [];
+    function track(s: net.Socket) {
+      sockets.push(s);
+      closed.push(new Promise<void>(resolve => s.once("close", () => resolve())));
+    }
+    function writer(s: net.Socket) {
+      s.on("error", err => (socketError = err));
+      const fd = (s as any)._handle.fd as number;
+      // An fd-less rule would match every socket in the process.
+      expect(fd).toBeGreaterThanOrEqual(0);
+      write(s, fd, err => (headError = err ?? null));
+    }
+    function reader(s: net.Socket) {
+      s.on("error", () => {});
+      s.on("data", c => (received = Buffer.concat([received, c])));
+    }
+
+    const server = net.createServer(s => {
+      track(s);
+      if (side === "server") writer(s);
+      else reader(s);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = net.connect({ port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+    track(client);
+    if (side === "client") client.once("connect", () => writer(client));
+    else reader(client);
+
+    try {
+      await Promise.all([once(client, "connect"), once(server, "connection")]);
+      await Promise.all(closed);
+    } finally {
+      for (const s of sockets) s.destroy();
+      server.close();
+    }
+
+    const shape = (err: NodeJS.ErrnoException | null | undefined) => err && { code: err.code, syscall: err.syscall };
+    return { headError: shape(headError), socketError: shape(socketError), received };
+  }
+
+  for (const side of ["client", "server"] as const) {
+    // The remainder of a short send made under the open dispatch is flushed
+    // when that dispatch ends, not by a writable event. A fatal errno from
+    // that flush must fail the write and destroy the socket. Reporting it as
+    // drained let the next write go out on the same connection with the
+    // dropped bytes missing from the middle of the stream.
+    test.each(["EPIPE", "ECONNRESET"] as const)(
+      `send → %s on the flush that ends the open dispatch fails the write (${side} writer)`,
+      async errno => {
+        const head = Buffer.from(Array.from({ length: 200 }, (_, i) => i & 0xff));
+        const body = Buffer.alloc(4096, 0xee);
+        const { received, ...errors } = await writeInsideOpenDispatch(side, (s, fd, headWritten) => {
+          // send #0: 1 byte accepted, the other 199 stay in
+          // buffered_data_for_node_net.
+          fault.set({ syscall: "send", action: "short", bytes: 1, repeat: 1, fd });
+          s.write(head, headWritten);
+          // send #1: the flush of that remainder once the listener returns.
+          fault.set({ syscall: "send", action: "errno", errno, repeat: 1, fd });
+          s.write(body);
+          s.end();
+        });
+
+        // The peer may only see bytes from before the failed send: head[0].
+        const stream = Buffer.concat([head, body]);
+        expect({
+          ...errors,
+          received: { length: received.length, isPrefixOfStream: received.equals(stream.subarray(0, received.length)) },
+        }).toEqual({
+          headError: { code: errno, syscall: "write" },
+          socketError: { code: errno, syscall: "write" },
+          received: { length: 1, isPrefixOfStream: true },
+        });
+      },
+    );
+
+    // A send the kernel rejects outright fails the write in JS. Its bytes must
+    // not stay queued: that flush sent them again, so the peer could receive
+    // a write that JS had been told failed.
+    test(`send → ECONNRESET on a write under the open dispatch is not sent again (${side} writer)`, async () => {
+      const { received, ...errors } = await writeInsideOpenDispatch(side, (s, fd, headWritten) => {
+        // One shot: a second send of the same bytes would succeed.
+        fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: 1, fd });
+        s.write(Buffer.alloc(200, "h"), headWritten);
+      });
+
+      expect({ ...errors, received: received.length }).toEqual({
+        headError: { code: "ECONNRESET", syscall: "write" },
+        socketError: { code: "ECONNRESET", syscall: "write" },
+        received: 0,
+      });
+    });
+  }
+
   // us_socket_write_check_error gives send() errnos that are neither
   // would-block/transient nor known peer-gone (EPROTOTYPE: macOS returns it
   // racily from send() on healthy sockets) a bounded retry through the

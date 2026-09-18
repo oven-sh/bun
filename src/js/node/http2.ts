@@ -3950,12 +3950,12 @@ function initOriginSet(session: Http2Session) {
   }
   return originSet;
 }
-function removeOriginFromSet(session: Http2Session, stream: ClientHttp2Stream) {
-  const originSet = session[bunHTTP2OriginSet];
-  const origin = `https://${stream.authority}`;
-  if (originSet && origin) {
-    originSet.delete(origin);
-  }
+function removeOriginFromSet(session: ClientHttp2Session, stream: ClientHttp2Stream) {
+  if (!session.encrypted) return;
+  // Like node's stream[kOrigin]: the :scheme and the authority the request was sent with. The
+  // set is created here if nothing read it yet, so the removal holds for a later originSet read.
+  const origin = `${stream.sentHeaders?.[":scheme"]}://${stream.authority}`;
+  initOriginSet(session).delete(origin);
 }
 class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
@@ -5926,6 +5926,9 @@ class ClientHttp2Session extends Http2Session {
       // given order. The derived object form (original-case keys, array values
       // for duplicates) backs sentHeaders.
       let rawHeadersList: any[] | null = null;
+      // The host value of a raw-form request, found with a case-insensitive name match. It is
+      // the origin of the request when the array carries no :authority.
+      let rawHost;
       if (headers == undefined) {
         headers = {};
       } else if ($isArray(headers)) {
@@ -5950,14 +5953,13 @@ class ClientHttp2Session extends Http2Session {
         if (method !== HTTP2_METHOD_CONNECT || protocol !== undefined) {
           // `raw` is a flat [name, value, ...] array - scan the name slots for a host header
           // instead of reading a string key off the array.
-          let rawHasHost = false;
           for (let i = 0; i < raw.length; i += 2) {
             if (typeof raw[i] === "string" && raw[i].toLowerCase() === HTTP2_HEADER_HOST) {
-              rawHasHost = true;
+              rawHost = raw[i + 1];
               break;
             }
           }
-          if (authority === undefined && !rawHasHost) {
+          if (authority === undefined && rawHost === undefined) {
             authority = this.#authority;
             additionalPseudoHeaders.push(HTTP2_HEADER_AUTHORITY, authority);
           }
@@ -6072,11 +6074,11 @@ class ClientHttp2Session extends Http2Session {
         method = "GET";
         headers[":method"] = method;
       }
-      // `authority` is the origin of the request (node's stream[kOrigin], from getAuthority()):
-      // :authority, else host, else the session authority. A 421 removes it from originSet.
+      // `authority` is the authority of the request, like node's getAuthority(): :authority, else
+      // host, else the session authority. A 421 removes `${:scheme}://${authority}` from originSet.
       let authority = headers[":authority"];
       if (!authority) {
-        const host = headers["host"];
+        const host = headers["host"] || rawHost;
         if (host) {
           authority = host;
         } else {

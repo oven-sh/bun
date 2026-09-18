@@ -3,6 +3,7 @@ const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapt
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
+const noop = () => {};
 
 var fetch = Bun.fetch;
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
@@ -102,6 +103,61 @@ class BodyReadable extends ReadableFromWeb {
   async text() {
     this.#consume();
     return await this.#response.text();
+  }
+
+  async bytes() {
+    this.#consume();
+    return await this.#response.bytes();
+  }
+
+  // Port of https://github.com/nodejs/undici/blob/v6.21.3/lib/api/readable.js#L158-L199
+  async dump(opts) {
+    const signal = opts?.signal;
+
+    if (signal != null && (typeof signal !== "object" || !("aborted" in signal))) {
+      throw new InvalidArgumentError("signal must be an AbortSignal");
+    }
+
+    let limit = Number.isFinite(opts?.limit) ? opts.limit : 128 * 1024;
+
+    signal?.throwIfAborted();
+
+    if (this._readableState.closeEmitted) {
+      // A closed stream is disturbed, so real undici reports bodyUsed as true.
+      this.#bodyUsed = true;
+      return null;
+    }
+
+    return await new Promise((resolve, reject) => {
+      this.#bodyUsed = true;
+
+      const contentLength = Number(this.#response.headers.get("content-length"));
+      if (contentLength > limit) {
+        this.destroy(new AbortError());
+      }
+
+      const onAbort = () => {
+        this.destroy(signal.reason ?? new AbortError());
+      };
+      signal?.addEventListener("abort", onAbort);
+
+      this.on("close", function () {
+        signal?.removeEventListener("abort", onAbort);
+        if (signal?.aborted) {
+          reject(signal.reason ?? new AbortError());
+        } else {
+          resolve(null);
+        }
+      })
+        .on("error", noop)
+        .on("data", function (chunk) {
+          limit -= chunk.length;
+          if (limit <= 0) {
+            this.destroy();
+          }
+        })
+        .resume();
+    });
   }
 }
 

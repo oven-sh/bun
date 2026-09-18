@@ -209,6 +209,10 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
     "uses-leaf": { "1.0.0": { dependencies: { leaf: "1.0.0" } } },
     "uses-leaf-2": { "1.0.0": { dependencies: { leaf: "2.0.0" } } },
     "uses-native": { "1.0.0": { dependencies: { native: "1.0.0" } } },
+    "optional-peer-native": {
+      "1.0.0": { peerDependencies: { native: "1.0.0" }, peerDependenciesMeta: { native: { optional: true } } },
+    },
+    "scanner": { "1.0.0": { main: "index.js" } },
     "leaf": { "1.0.0": {}, "2.0.0": {} },
     "plain": { "1.0.0": {} },
   };
@@ -223,7 +227,10 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       for (const [version, rest] of Object.entries(versions)) {
         const manifest = JSON.stringify({ name, version, ...rest });
         tarballs[`${name}-${version}.tgz`] = await new Bun.Archive(
-          { "package/package.json": manifest },
+          {
+            "package/package.json": manifest,
+            "package/index.js": `exports.scanner = { version: "1", scan: async () => [] };`,
+          },
           { compress: "gzip" },
         ).bytes();
       }
@@ -301,6 +308,8 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       evict?: (cacheEntry: string) => boolean;
       offlineArgs?: string[];
       keepNodeModules?: boolean;
+      /** The `install.security.scanner` of bunfig.toml. */
+      scanner?: string;
       /** Folders below node_modules to return the installed version of. */
       versionsOf?: string[];
     },
@@ -315,7 +324,13 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
     await writeFile(
       join(cwd, "bunfig.toml"),
       Bun.TOML.stringify({
-        install: { cache: { dir: cache }, registry: registry.url.href, saveTextLockfile: true, linker },
+        install: {
+          cache: { dir: cache },
+          registry: registry.url.href,
+          saveTextLockfile: true,
+          linker,
+          ...(project.scanner ? { security: { scanner: project.scanner } } : {}),
+        },
       }),
     );
 
@@ -421,6 +436,37 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       expect(r.requests).toEqual([]);
       expect(r.code).toBe(1);
     });
+
+    it("skips a package that is optional for one package and an optional peer of another", async () => {
+      const { err, code, ...result } = await installOfflineAfterOnline(linker, {
+        manifest: { optionalDependencies: { native: "1.0.0" }, dependencies: { "optional-peer-native": "1.0.0" } },
+        evict: cacheEntriesOf("native", "leaf"),
+      });
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({
+        installed: ["optional-peer-native"],
+        requests: [],
+        lockfileChanged: false,
+        versions: {},
+      });
+      expect(code).toBe(0);
+    });
+
+    // Each install with a scanner also runs the scanner in a second process, like bun-install-security-provider.test.ts.
+    it("fails the install of a security scanner that is not in the cache", async () => {
+      const r = await installOfflineAfterOnline(linker, {
+        manifest: { devDependencies: { scanner: "1.0.0" } },
+        scanner: "scanner",
+        evict: cacheEntriesOf("scanner"),
+      });
+      expect(r.err).toContain(
+        linker === "isolated"
+          ? "error: failed to install security scanner package"
+          : "error: no packages were installed during security scanner installation",
+      );
+      expect(r.requests).toEqual([]);
+      expect(r.code).toBe(1);
+    }, 30_000);
 
     it("leaves an installed node_modules alone when the cache is gone", async () => {
       // The root's optional dependency is placed first, so leaf@1.0.0 below it takes the root

@@ -2472,6 +2472,7 @@ pub(crate) fn install_isolated_packages(
                         ResolutionTag::Git => {
                             if installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
+                                pkg_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
@@ -2683,7 +2684,7 @@ pub(crate) fn install_isolated_packages(
             debug_assert!(done);
         }
 
-        package_manager::enqueue::report_offline_misses(
+        installer.summary.fail += package_manager::enqueue::report_offline_misses(
             installer.manager_mut(),
             workspace_filters,
             install_root_dependencies,

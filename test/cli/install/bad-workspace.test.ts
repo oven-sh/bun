@@ -351,15 +351,10 @@ describe.concurrent("workspace packages outside the workspace root", () => {
     await expectRejected(String(dir), "../victim");
   });
 
-  // A `..` resolves against whatever the component before it turns out to be, and the clone
-  // picks that: `sym -> .` makes `sym/..` the root's parent, and a `missing` directory that
-  // the install creates itself does the same. The message differs by platform, because Win32
-  // collapses a `..` before the filesystem sees it, so assert only that the path is named.
-  test.each([
-    ["a symlink", "sym/../victim", true],
-    ["a directory the install creates", "missing/../../victim", false],
-  ])("a bun.lock path with a .. component below %s is refused", async (_name, workspacePath, needsSymlink) => {
-    using dir = tempDir("bad-workspace-lockfile-dotdot", {
+  // A `..` resolves against whatever the component before it turns out to be, and a hostile
+  // `bun.lock` picks that. The tree is the same for both spellings below.
+  function lockfileNaming(workspacePath: string) {
+    return {
       ...SIBLING_PROJECTS,
       "clone/package.json": cloneRoot({ dependencies: { tool: "workspace:tools/tool" } }),
       "clone/tools/tool/package.json": JSON.stringify({ name: "tool" }),
@@ -378,12 +373,26 @@ describe.concurrent("workspace packages outside the workspace root", () => {
           tool: ["tool@workspace:tools/tool"],
         },
       }),
-    });
-    if (needsSymlink) {
-      symlinkSync(join(String(dir), "clone"), join(String(dir), "clone", "sym"), "junction");
-    }
+    };
+  }
 
-    await expectRefused(String(dir), `error: workspace "${workspacePath}" `, ["--linker", "isolated"]);
+  // `sym -> .` makes `sym/..` the root's parent, so the path names the sibling. A lexical
+  // check would collapse `sym/..` first and see `<root>/victim`. POSIX only: Win32 collapses
+  // the `..` before the filesystem sees it, so the path stays inside the root there.
+  test.skipIf(isWindows)("a bun.lock path whose .. follows a symlink is rejected", async () => {
+    using dir = tempDir("bad-workspace-lockfile-dotdot-symlink", lockfileNaming("sym/../victim"));
+    symlinkSync(join(String(dir), "clone"), join(String(dir), "clone", "sym"), "junction");
+
+    await expectRejected(String(dir), "sym/../victim", ["--linker", "isolated"]);
+  });
+
+  // `missing` does not exist when the check runs, and the install creates it, so the `..`
+  // below it lands wherever that directory ends up. Win32 collapses the `..` first and the
+  // path names the sibling outright, so only the refusal itself is asserted.
+  test("a bun.lock path whose .. is below a missing directory is refused", async () => {
+    using dir = tempDir("bad-workspace-lockfile-dotdot-missing", lockfileNaming("missing/../../victim"));
+
+    await expectRefused(String(dir), `error: workspace "missing/../../victim" `, ["--linker", "isolated"]);
   });
 
   // The path is in `workspace_paths` from the manifest parse, which the isolated linker

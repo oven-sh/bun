@@ -1,4 +1,4 @@
-// Runs in Node.js and in Bun: `node --test <file>` and `bun test <file>`.
+// Also runs in Node.js (`node --test <file>`), so it uses node:test and imports only Node modules.
 import assert from "node:assert";
 import { once } from "node:events";
 import { join } from "node:path";

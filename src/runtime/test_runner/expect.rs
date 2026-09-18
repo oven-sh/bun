@@ -472,11 +472,9 @@ impl Expect {
     }
 
     /// A matcher's wait for `promise`: the event loop runs inside the matcher until it settles.
-    fn wait_for_promise(global_this: &JSGlobalObject, promise: bun_jsc::AnyPromise) -> JsResult<()> {
-        let vm = global_this.bun_vm();
+    fn wait_for_promise(vm: &mut VirtualMachine, global_this: &JSGlobalObject, promise: bun_jsc::AnyPromise) -> JsResult<()> {
         let _suspended = bun_test::RunnerEntry::suspend(vm);
-        vm.as_mut()
-            .wait_for_promise(promise)
+        vm.wait_for_promise(promise)
             .map_err(|stopped| stopped.throw(global_this))
     }
 
@@ -498,7 +496,7 @@ impl Expect {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
 
-                    Self::wait_for_promise(global_this, promise)?;
+                    Self::wait_for_promise(global_this.bun_vm().as_mut(), global_this, promise)?;
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -873,7 +871,7 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            let waited = Self::wait_for_promise(global_this, promise);
+            let waited = Self::wait_for_promise(vm, global_this, promise);
             scope.apply(vm);
             waited?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
@@ -1446,7 +1444,7 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            Self::wait_for_promise(global_this, promise)?;
+            Self::wait_for_promise(global_this.bun_vm().as_mut(), global_this, promise)?;
 
             result = promise.result(vm);
             result.ensure_still_alive();

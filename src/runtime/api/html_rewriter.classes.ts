@@ -312,6 +312,8 @@ export default [
       "handlerError",
       "suspensionPromise",
       "handlers",
+      // The array of `element.onEndTag()` callbacks that have not run yet.
+      "endTagHandlers",
     ],
   }),
 ];

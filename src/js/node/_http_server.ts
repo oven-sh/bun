@@ -1327,6 +1327,12 @@ function detachSocketListenersForHandoff(socket) {
   socket.removeListener("error", socketOnError);
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
   socket.on("end", onReadableStreamEnd);
+  // The socket can be flowing here: IncomingMessage._read resumes it for every
+  // earlier request on the connection. A flowing stream does not buffer, so
+  // tunnel bytes that arrive before the 'connect'/'upgrade' listener attaches
+  // its reader would be lost. Node.js resets this at the same point
+  // (onParserExecuteCommon).
+  socket.readableFlowing = null;
 }
 function resolveHandoffPromise(promise) {
   $resolvePromise(promise, undefined);

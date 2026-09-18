@@ -3660,6 +3660,80 @@ it("req.upgrade is true inside the 'connect' listener", async () => {
   }
 });
 
+// Reading an earlier request on the connection, or a 'data' listener from the 'connection' event,
+// leaves the socket flowing. The handoff to 'connect' / 'upgrade' resets that: a listener that
+// attaches its reader later (a proxy does so once its upstream connects) still gets every byte the
+// client sent in between. Every expectation below is Node v26.3.0's.
+describe.each([
+  ["CONNECT", "connect", "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"],
+  ["Upgrade", "upgrade", "GET /chat HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: custom\r\n\r\n"],
+])("%s handoff of a socket that was flowing", (_name, eventName, handoffRequest) => {
+  it.each([
+    ["after a request in an earlier read", "earlier-read"],
+    ["after a request in the same read", "same-read"],
+    ["after a 'connection' listener read the socket", "connection-listener"],
+  ])("buffers tunnel bytes until the listener reads them (%s)", async (_why, flowedBy) => {
+    await using server = createServer((req, res) => res.end(req.url));
+    if (flowedBy === "connection-listener") {
+      server.on("connection", socket => socket.on("data", () => {}));
+    }
+    const { promise: handedOff, resolve: resolveHandedOff } = Promise.withResolvers<{
+      socket: Duplex;
+      head: string;
+      flowing: boolean | null;
+    }>();
+    server.on(eventName, (req, socket, head) => {
+      resolveHandedOff({ socket, head: head.toString(), flowing: socket.readableFlowing });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { promise: firstAnswered, resolve: resolveFirstAnswered } = Promise.withResolvers<void>();
+    let received = "";
+    // noDelay: the server never answers the handoff request, so Nagle's algorithm would hold the
+    // next small write until the delayed ACK, long after the barrier below.
+    const client = connect({ port, host: "127.0.0.1", noDelay: true });
+    client.on("data", data => {
+      received += data;
+      if (received.endsWith("/first")) resolveFirstAnswered();
+    });
+    const firstRequest = "GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    if (flowedBy === "earlier-read") {
+      client.write(firstRequest);
+      await firstAnswered;
+      client.write(handoffRequest);
+    } else if (flowedBy === "same-read") {
+      client.write(firstRequest + handoffRequest);
+    } else {
+      client.write(handoffRequest);
+    }
+
+    const { socket, head, flowing: flowingAtHandoff } = await handedOff;
+    client.write("early,");
+    // Nothing reads the tunnel yet, so the server reports no progress on it. A whole request on a
+    // second connection is the barrier: the server has read "early," by the time it has answered
+    // and closed that connection.
+    const barrier = connect(port, "127.0.0.1");
+    barrier.resume();
+    barrier.end("GET /barrier HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+    await once(barrier, "close");
+
+    const atAttach = { flowing: socket.readableFlowing, buffered: socket.readableLength };
+    let tunneled = head;
+    socket.on("data", chunk => (tunneled += chunk));
+    const ended = once(socket, "end");
+    client.end("late");
+    await ended;
+    socket.end();
+
+    expect({ flowingAtHandoff, atAttach, tunneled }).toEqual({
+      flowingAtHandoff: null,
+      atAttach: { flowing: null, buffered: 6 },
+      tunneled: "early,late",
+    });
+  });
+});
+
 it("plain HEAD with flushHeaders carries no auto-chunked framing", async () => {
   // No explicit framing headers: the native flushHeaders must not enter
   // chunked mode for a HEAD response, and end() must not write a terminator.

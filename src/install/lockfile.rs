@@ -2887,7 +2887,6 @@ pub(crate) struct ManifestSections {
 
 impl ManifestSections {
     /// The first section where `self` differs from `loaded`, with its package.json's directory.
-    /// Trusted and patched lists are only compared when `loaded` recorded one.
     pub(crate) fn changed_since(&self, loaded: &ManifestSections) -> Option<(&'static str, &[u8])> {
         if self.workspaces.len() != loaded.workspaces.len() {
             return Some(("workspaces", b""));
@@ -2898,22 +2897,28 @@ impl ManifestSections {
             }
         }
 
-        if let Some(recorded) = loaded.trusted_dependencies.as_deref() {
+        // A pruned checkout declares fewer trusted names, and its bun.lock may lack either list.
+        let maybe_pruned = loaded.workspaces.len() > 1;
+
+        let recorded = loaded.trusted_dependencies.as_deref();
+        if recorded.is_some() || !maybe_pruned {
+            let recorded = recorded.unwrap_or_default();
             let declared = self.trusted_dependencies.as_deref().unwrap_or_default();
             let added = declared
                 .iter()
                 .any(|name| recorded.binary_search(name).is_err());
-            // With workspaces the recorded list is a union a partial checkout cannot reproduce.
-            let removed = loaded.workspaces.len() == 1 && declared.len() < recorded.len();
+            let removed = !maybe_pruned && declared.len() < recorded.len();
             if added || removed {
                 return Some(("trustedDependencies", b""));
             }
         }
 
-        if let Some(recorded) = loaded.patched_dependencies.as_deref() {
-            if self.patched_dependencies.as_deref().unwrap_or_default() != recorded {
-                return Some(("patchedDependencies", b""));
-            }
+        let recorded = loaded.patched_dependencies.as_deref();
+        if (recorded.is_some() || !maybe_pruned)
+            && self.patched_dependencies.as_deref().unwrap_or_default()
+                != recorded.unwrap_or_default()
+        {
+            return Some(("patchedDependencies", b""));
         }
         None
     }

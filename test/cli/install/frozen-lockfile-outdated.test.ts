@@ -156,7 +156,17 @@ const rewrittenByInstall: Record<string, Edit> = {
     section: "trustedDependencies",
     root: json => ({ ...json, trustedDependencies: ["a-dep", "no-deps"] }),
   },
-  // Removals only count without workspaces: bun.lock records the union of every workspace's list, see below.
+  // The rest only counts without workspaces: a pruned workspace checkout can lack names or the whole list, see below.
+  "the first trustedDependencies list is added": {
+    section: "trustedDependencies",
+    from: without(singlePackage, "trustedDependencies"),
+    root: json => ({ ...json, trustedDependencies: ["a-dep"] }),
+  },
+  "the first patchedDependencies entry is added": {
+    section: "patchedDependencies",
+    from: without(singlePackage, "patchedDependencies"),
+    root: json => ({ ...json, patchedDependencies: { "a-dep@1.0.1": "patches/a-dep@1.0.1.patch" } }),
+  },
   "trustedDependencies is emptied": {
     section: "trustedDependencies",
     from: singlePackage,
@@ -195,6 +205,39 @@ describe.concurrent("--frozen-lockfile fails on a package.json edit that bun ins
     const after = await bun(packageDir, "install", "--frozen-lockfile");
 
     expect(after.stderr).not.toContain("error:");
+    expect(after.exitCode).toBe(0);
+  });
+
+  // While bun.lock does not record the trust, the differ reports the package as newly trusted on every install and its
+  // lifecycle scripts run again on the installed tree. Only a plain install can record it, so a frozen one has to stop.
+  test("a newly trusted package's postinstall is not run by every frozen install", async () => {
+    const untrusted = { name: "root", version: "1.0.0", dependencies: { "lifecycle-postinstall": "1.0.0" } };
+    const { packageDir, lock } = await installed(untrusted);
+    // A BunFile keeps the size it first saw, so every read takes a new one.
+    const postinstallTxt = () => file(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"));
+    expect(await postinstallTxt().exists()).toBeFalse();
+    await writeRoot(packageDir, { ...untrusted, trustedDependencies: ["lifecycle-postinstall"] });
+
+    for (const _ of [1, 2]) {
+      const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).toContain(sectionNote("trustedDependencies"));
+      expect(await postinstallTxt().exists()).toBeFalse();
+      expect(await lockText(packageDir)).toBe(lock);
+      expect(frozen.exitCode).toBe(1);
+    }
+
+    const plain = await bun(packageDir, "install");
+
+    expect(plain.stderr).toContain("Saved lockfile");
+    expect(await postinstallTxt().text()).toBe("postinstall!");
+    expect(plain.exitCode).toBe(0);
+
+    const after = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(after.stderr).not.toContain("error:");
+    // The script writes "postinstall exists!" when it runs a second time.
+    expect(await postinstallTxt().text()).toBe("postinstall!");
     expect(after.exitCode).toBe(0);
   });
 
@@ -320,21 +363,23 @@ describe.concurrent("--frozen-lockfile still passes", () => {
   });
 
   // `turbo prune` releases have dropped either section from bun.lock while copying the root package.json that declares
-  // it (vercel/turborepo#11027, vercel/turborepo#13740), so a list bun.lock never recorded is not compared.
-  describe.each(["trustedDependencies", "patchedDependencies"])("a %s list that bun.lock never recorded", section => {
-    test.each([root, singlePackage])("%#", async base => {
-      const { packageDir, lock } = await installed(without(base, section));
+  // it (vercel/turborepo#11027, vercel/turborepo#13740), so in a workspace project a list bun.lock never recorded is
+  // not compared. Without workspaces there is no pruned checkout, and the first list fails (see above).
+  test.each(["trustedDependencies", "patchedDependencies"])(
+    "a %s list that a workspace project's bun.lock never recorded",
+    async section => {
+      const { packageDir, lock } = await installed(without(root, section));
       expect(lock).not.toContain(section);
       // The stale names make the differ report a change in the patchedDependencies case too.
-      await writeRoot(packageDir, { ...base, trustedDependencies: staleTrustedDependencies });
+      await writeRoot(packageDir, { ...root, trustedDependencies: staleTrustedDependencies });
 
       const frozen = await bun(packageDir, "install", "--frozen-lockfile");
 
       expect(frozen.stderr).not.toContain("error:");
       expect(await lockText(packageDir)).toBe(lock);
       expect(frozen.exitCode).toBe(0);
-    });
-  });
+    },
+  );
 
   test("trustedDependencies declared by a workspace", async () => {
     const { packageDir, lock } = await installed(

@@ -1301,8 +1301,10 @@ describe("hoisted", () => {
     expect(await lockText(packageDir)).toBe(full);
   });
 
+  // Without workspaces there is no pruned checkout, so a stripped trustedDependencies section is a frozen failure there
+  // (frozen-lockfile-outdated.test.ts). The difference here is a name bun.lock does not record because it is not installed.
   test.concurrent(
-    "single-package project: trustedDependencies stripped from bun.lock does not drop a peer-held package under --frozen-lockfile",
+    "single-package project: a trustedDependencies-only difference does not drop a peer-held package under --frozen-lockfile",
     async () => {
       const single: Tree = {
         root: {
@@ -1315,7 +1317,7 @@ describe("hoisted", () => {
       const { full } = await fullInstall("hoisted", single);
       expect(full).toContain('"trustedDependencies"');
       // The 8-space row is the root's declared dependency; the package entry stays, held only by optional-peer-deps' peer slot.
-      const pruned = full.replace(/\n        "no-deps": "1\.0\.0",/, "").replace(trustedDependenciesSection, "");
+      const pruned = full.replace(/\n        "no-deps": "1\.0\.0",/, "");
       expect(pruned).not.toBe(full);
       expect(pruned).toContain('"no-deps": ["no-deps@1.0.0"');
       const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
@@ -1324,7 +1326,7 @@ describe("hoisted", () => {
         JSON.stringify({
           name: "single",
           dependencies: { "optional-peer-deps": "1.0.0" },
-          trustedDependencies: ["optional-peer-deps"],
+          trustedDependencies: ["optional-peer-deps", "not-installed"],
         }),
       );
       await write(join(packageDir, "bun.lock"), pruned);

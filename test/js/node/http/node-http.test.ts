@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
+import { inspect } from "node:util";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -4025,6 +4026,74 @@ it("a non-200 CONNECT through a proxy that holds the connection open is destroye
     for (const s of proxySockets) s.destroy();
     proxy.close();
   }
+});
+
+// nodejs/node 3e9954a88b (CVE-2026-48615)
+it.each([
+  ["username and password", "user:s3cret", "user:s3cret"],
+  ["username only", "s3cret", "s3cret:"],
+  ["password only", ":s3cret", ":s3cret"],
+  ["percent-encoded", "us%40er:s3cret%3A", "us@er:s3cret:"],
+])("ERR_PROXY_TUNNEL does not expose the proxy credentials (%s)", async (_name, userinfo, credentials) => {
+  const { promise: proxyAuthorization, resolve: onProxyAuthorization } = Promise.withResolvers<string | undefined>();
+  const proxy = createServer();
+  proxy.on("connect", (req, socket) => {
+    onProxyAuthorization(req.headers["proxy-authorization"]);
+    socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nConnection: close\r\n\r\n");
+  });
+  try {
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    const proxyPort = (proxy.address() as AddressInfo).port;
+
+    const agent = new https.Agent({ proxyEnv: { HTTPS_PROXY: `http://${userinfo}@127.0.0.1:${proxyPort}` } });
+    try {
+      const { promise: errored, resolve: onError } = Promise.withResolvers<any>();
+      const req = https.request({ host: "example.com", port: 443, path: "/", agent }, () => {});
+      req.on("error", onError);
+      req.end();
+
+      const err = await errored;
+      expect({ code: err.code, statusCode: err.statusCode, message: err.message }).toEqual({
+        code: "ERR_PROXY_TUNNEL",
+        statusCode: 407,
+        message: `Failed to establish tunnel to example.com:443 via http://127.0.0.1:${proxyPort}/: HTTP/1.1 407 Proxy Authentication Required`,
+      });
+      expect(inspect(err)).not.toContain("s3cret");
+      // The proxy still receives the credentials.
+      expect(await proxyAuthorization).toBe(`Basic ${Buffer.from(credentials).toString("base64")}`);
+    } finally {
+      agent.destroy();
+    }
+  } finally {
+    proxy.close();
+  }
+});
+
+// Deliberate divergence from Node v26, which prints the raw proxy URL in these messages, credentials
+// included. Bun removes the userinfo. The message for a URL without credentials is the same as in Node.
+it.each([
+  ["port out of range", "http://user:s3cret@proxy.example.com:99999", "http://proxy.example.com:99999"],
+  ["LF in the password", "http://user:s3c\nret@proxy.example.com:8080", "http://proxy.example.com:8080"],
+  ["unescaped / in the password", "http://user:s3/cret@proxy.example.com:8080", "http://proxy.example.com:8080"],
+  ["unescaped @ in the password", "http://user:s3@cret@proxy.example.com:99999", "http://proxy.example.com:99999"],
+  ["space in the host", "http://user:s3cret@proxy example.com:8080", "http://proxy example.com:8080"],
+  ["no credentials", "http://proxy.example.com:99999", "http://proxy.example.com:99999"],
+])("ERR_PROXY_INVALID_CONFIG does not expose the proxy credentials (%s)", (_name, proxyUrl, printed) => {
+  const errors = [
+    () => new Agent({ proxyEnv: { HTTP_PROXY: proxyUrl } }),
+    () => new https.Agent({ proxyEnv: { HTTPS_PROXY: proxyUrl } }),
+    // Call the returned restore function, so that a missing throw does not replace the global agents.
+    () => (http as any).setGlobalProxyFromEnv({ HTTPS_PROXY: proxyUrl })(),
+  ].map(create => {
+    try {
+      create();
+    } catch (err: any) {
+      return { code: err.code, message: err.message };
+    }
+  });
+  const expected = { code: "ERR_PROXY_INVALID_CONFIG", message: `Invalid proxy URL: ${printed}` };
+  expect(errors).toEqual([expected, expected, expected]);
 });
 
 // Node.js v26 removed res.writeHeader (DEP0063 end-of-life, nodejs/node#60635).

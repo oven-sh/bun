@@ -2,7 +2,6 @@
     clippy::disallowed_types,
     clippy::disallowed_methods,
     unreachable_pub,
-    dead_code,
     reason = "ported from facebook/react react_compiler_hir; uses std collections by design"
 )]
 #![allow(

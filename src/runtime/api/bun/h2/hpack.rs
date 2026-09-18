@@ -6,8 +6,6 @@
 //! lockstep. Decode results alias a shared buffer and MUST be copied before the next call
 //! (see lshpack.rs).
 
-#![allow(dead_code)]
-
 use bun_http::lshpack::{DecodeResult, HpackError, HpackHandle};
 
 /// RFC 7541 §6.3: a Dynamic Table Size Update integer never needs more than 6 bytes for a u32.

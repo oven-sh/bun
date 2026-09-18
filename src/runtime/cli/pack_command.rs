@@ -2646,9 +2646,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 }
             };
 
-            let fd: Fd = match file
-                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
-            {
+            let fd: Fd = match file.make_lib_uv_owned_for_syscall(bun_sys::Tag::open) {
                 Ok(fd) => fd,
                 Err(err) => {
                     Output::err(

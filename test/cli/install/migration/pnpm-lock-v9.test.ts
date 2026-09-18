@@ -1330,6 +1330,15 @@ snapshots:
       expect(again.exitCode).toBe(0);
       expect(await bunLockOf(packageDir)).toBe(bunLock);
 
+      // yarn.lock gets no row for it: there is no range to print and no entry to point at.
+      const yarn = await run(packageDir, "install", "--yarn");
+
+      expect(yarn.stderr).not.toContain("error:");
+      expect(yarn.exitCode).toBe(0);
+      const yarnLock = await Bun.file(join(packageDir, "yarn.lock")).text();
+      expect(yarnLock).toContain(`  dependencies:\n    one-dep "1.0.0"\n`);
+      expect(yarnLock).not.toContain(`no-deps ""`);
+
       // An override re-enqueues every edge with its name. The bundled edge still gets no version.
       await Bun.write(
         join(packageDir, "package.json"),

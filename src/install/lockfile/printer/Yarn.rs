@@ -233,6 +233,11 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
                 let mut behavior = Behavior::default();
                 let mut dependency_behavior_change_count: u8 = 0;
                 for dep in dependencies {
+                    // It has no range to print and no entry to point at.
+                    if dep.is_bundled_without_range() {
+                        continue;
+                    }
+
                     if !dep.behavior.eq(&behavior) {
                         if dep.behavior.is_optional() {
                             writer.write_all(b"  optionalDependencies:\n")?;

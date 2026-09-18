@@ -1270,7 +1270,10 @@ describe.concurrent("hand-edited bun.lock that lists workspaces but has no packa
 // bundled-unpublished@1.0.0 bundles "unpublished-dep", which the registry does not have. bun.lock
 // has no entry for it, and the package that ships it names it in `bundledDependencies`.
 describe.concurrent("hand-edited bun.lock bundledDependencies", () => {
-  async function installWithBundledDependencies(bundledDependencies: unknown) {
+  async function installWithBundledDependencies(
+    bundledDependencies: unknown,
+    dependencies: Record<string, string> | null = { "unpublished-dep": "1.0.0" },
+  ) {
     const { packageDir, packageJson } = await registry.createTestDir();
     const manifest = await file(
       join(import.meta.dir, "registry", "packages", "bundled-unpublished", "package.json"),
@@ -1284,7 +1287,7 @@ describe.concurrent("hand-edited bun.lock bundledDependencies", () => {
           "bundled-unpublished": [
             "bundled-unpublished@1.0.0",
             `${registry.registryUrl()}bundled-unpublished/-/bundled-unpublished-1.0.0.tgz`,
-            { dependencies: { "unpublished-dep": "1.0.0" }, bundledDependencies },
+            { ...(dependencies && { dependencies }), bundledDependencies },
             manifest.versions["1.0.0"].dist.integrity,
           ],
         },
@@ -1309,7 +1312,12 @@ describe.concurrent("hand-edited bun.lock bundledDependencies", () => {
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
-    return { out: normalizeBunSnapshot(out, packageDir), err: normalizeBunSnapshot(err, packageDir), exitCode };
+    return {
+      packageDir,
+      out: normalizeBunSnapshot(out, packageDir),
+      err: normalizeBunSnapshot(err, packageDir),
+      exitCode,
+    };
   }
 
   it("loads a package whose bundled dependency has no entry", async () => {
@@ -1326,8 +1334,8 @@ describe.concurrent("hand-edited bun.lock bundledDependencies", () => {
   });
 
   // A migrated pnpm-lock.yaml has no range for a bundled name, so bun.lock lists the name in no dependency group.
-  it("loads a listed name that is in no dependency group, and ignores one that is not a folder name", async () => {
-    const { out, err, exitCode } = await installWithBundledDependencies(["unpublished-dep", "no-range", "../x"]);
+  it("a listed name that is in no dependency group is a bundled dependency, and one that is not a folder name is ignored", async () => {
+    const { packageDir, out, err, exitCode } = await installWithBundledDependencies(["unpublished-dep", "../x"], null);
     expect(err).toMatchInlineSnapshot(`""`);
     expect(out).toMatchInlineSnapshot(`
       "bun install <version> (<revision>)
@@ -1337,6 +1345,20 @@ describe.concurrent("hand-edited bun.lock bundledDependencies", () => {
       1 package installed"
     `);
     expect(exitCode).toBe(0);
+
+    // Only the listed name tells `bun prune` that the tarball ships this copy.
+    await using prune = spawn({ cmd: [bunExe(), "prune"], cwd: packageDir, env, stdout: "pipe", stderr: "pipe" });
+    const [pruneOut, pruneErr, pruneExitCode] = await Promise.all([
+      prune.stdout.text(),
+      prune.stderr.text(),
+      prune.exited,
+    ]);
+    expect(pruneErr).toBe("");
+    expect(pruneOut).toContain("Checked 1 installed package across 1 folder (nothing to prune)");
+    expect(pruneExitCode).toBe(0);
+    expect(
+      await exists(join(packageDir, "node_modules", "bundled-unpublished", "node_modules", "unpublished-dep")),
+    ).toBe(true);
   });
 
   it("rejects a value that is not an array", async () => {

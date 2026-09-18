@@ -23,6 +23,9 @@ pub struct FakeTimers {
     active: bool,
     /// Depth of [`FakeTimers::fire`] calls on the stack; each covers the callback and its microtask drain.
     firing: u32,
+    /// The runner called the test callback on the stack from outside the event loop, so the
+    /// runner's entry is the outermost one. [`FakeTimers::fire`] reads it.
+    runner_entry_is_outermost: bool,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
     /// - peek/takeFirst (provided by TimerHeap)
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
@@ -181,6 +184,11 @@ impl FakeTimers {
         if self.active && self.firing > 0 { 1 } else { 0 }
     }
 
+    /// Returns the previous value, for the runner to restore once its callback has returned.
+    pub(crate) fn set_runner_entry_is_outermost(&mut self, value: bool) -> bool {
+        core::mem::replace(&mut self.runner_entry_is_outermost, value)
+    }
+
     fn activate(&mut self, js_now: f64, global: &JSGlobalObject) {
         self.active = true;
         CURRENT_TIME.set(global, &Timespec::EPOCH, Some(js_now));
@@ -257,7 +265,7 @@ impl FakeTimers {
     /// timer whose callback threw is reported and the drain goes on; only the
     /// VM's termination stops it, thrown to the `jest` host function driving it.
     fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) -> JsResult<()> {
-        let _vm = global.bun_vm();
+        let vm = global.bun_vm();
 
         // SAFETY: `next` was just popped from our heap; live until callback completes.
         let now_el = unsafe { (*next).next };
@@ -275,13 +283,26 @@ impl FakeTimers {
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
         let fired = unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        // The exit of a timer that the event loop fires is the outermost one: a microtask
+        // checkpoint. Under a timer control it is nested and runs none. When nothing but the
+        // runner's entry is beneath the control, the control runs the checkpoint itself: suites
+        // rely on a promise chain between two timers advancing inside one control call there.
+        // SAFETY: as above.
+        let checkpoint = if fired.is_ok()
+            && unsafe { (*all).fake_timers.runner_entry_is_outermost }
+            && vm.event_loop_shared().entered_event_loop_count == 1
+        {
+            vm.event_loop_mut().drain_microtasks()
+        } else {
+            Ok(())
+        };
         // SAFETY: as above; the callback has returned.
         unsafe { (*all).fake_timers.firing -= 1 };
         match fired {
-            Ok(()) => Ok(()),
-            Err(err) => bun_jsc::task::report_error_or_terminate(global, err)
-                .map_err(|stopped| stopped.throw(global)),
+            Ok(()) => checkpoint,
+            Err(err) => bun_jsc::task::report_error_or_terminate(global, err),
         }
+        .map_err(|stopped| stopped.throw(global))
     }
 
     fn execute_until(global: &JSGlobalObject, until: Timespec) -> JsResult<()> {

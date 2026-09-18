@@ -401,3 +401,75 @@ test("no --only flag with multiple files", async () => {
   `);
   expect(exitCode).toBe(0);
 });
+
+// The runner calls some test callbacks from outside an event loop task: the first tests of a
+// file, and the test after one that timed out. A promise reaction must not run inside a
+// native call that such a test makes. Here an HTMLRewriter handler calls reader.cancel(),
+// which settles the pending read of the stream in native code.
+test.concurrent("a promise reaction does not run inside a native call that a test makes", async () => {
+  using dir = tempDir("bun-test-run-to-completion", {
+    "order.ts": `
+      export async function cancelInsideHandler(label: string) {
+        let controller!: ReadableStreamDefaultController;
+        const input = new ReadableStream({ start: c => void (controller = c) });
+        const order: string[] = [];
+        const response = new HTMLRewriter()
+          .on("p", {
+            element() {
+              order.push("handler start");
+              reader.cancel();
+              order.push("handler end");
+            },
+          })
+          .transform(new Response(input));
+        const reader = response.body!.getReader();
+        const closed = reader.closed.then(() => order.push("reader.closed"));
+        controller.enqueue(new TextEncoder().encode("<p>x</p>"));
+        controller.close();
+        await closed;
+        console.log(JSON.stringify({ label, order }));
+      }
+    `,
+    "first.test.ts": `
+      import { test } from "bun:test";
+      import { cancelInsideHandler } from "./order";
+      test("first", () => cancelInsideHandler("first test of a file"));
+    `,
+    "after-timeout.test.ts": `
+      import { test } from "bun:test";
+      import { cancelInsideHandler } from "./order";
+      test("times out", () => new Promise(() => {}), 1);
+      test("next", () => cancelInsideHandler("test after a timed out test"));
+    `,
+    "after-async.test.ts": `
+      import { test } from "bun:test";
+      import { cancelInsideHandler } from "./order";
+      test("async", () => new Promise(resolve => setImmediate(resolve)));
+      test("next", () => cancelInsideHandler("test after an async test"));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./first.test.ts", "./after-timeout.test.ts", "./after-async.test.ts"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const orders = Object.fromEntries(
+    stdout
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line))
+      .map(({ label, order }) => [label, order]),
+  );
+  const order = ["handler start", "handler end", "reader.closed"];
+  expect(orders).toEqual({
+    "first test of a file": order,
+    "test after a timed out test": order,
+    "test after an async test": order,
+  });
+  // The one failure is the test that times out.
+  expect(stderr).toContain(" 1 fail");
+  expect(exitCode).toBe(1);
+});

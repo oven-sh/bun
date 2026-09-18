@@ -1137,12 +1137,25 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
-            cfg_callback,
-            global_this,
-            JSValue::UNDEFINED,
-            args_slice,
-        ) {
+        // The runner is also called from outside `EventLoop::tick()`: for the first callbacks of a
+        // file, and after a test timeout. It holds an entry across the callback and the microtask
+        // drain after it, as every other dispatcher does. A native `enter()`/`exit()` pair that
+        // this JS reaches is then a nested pair, and its exit does not run a microtask checkpoint
+        // in the middle of the JS.
+        let runner_entry_is_outermost = vm.event_loop_shared().entered_event_loop_count == 0;
+        let was_outermost = vm_timer().fake_timers.set_runner_entry_is_outermost(runner_entry_is_outermost);
+        let called = {
+            let _entered = vm.enter_event_loop_scope_without_checkpoint();
+            vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
+                bun_event_loop::ContextId::NONE,
+                cfg_callback,
+                global_this,
+                JSValue::UNDEFINED,
+                args_slice,
+            )
+        };
+        vm_timer().fake_timers.set_runner_entry_is_outermost(was_outermost);
+        let result: JSValue = match called {
             Ok(v) => v,
             Err(_) => {
                 global_this.clear_termination_exception();

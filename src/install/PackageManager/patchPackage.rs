@@ -70,7 +70,8 @@ fn package_for_folder(
             continue;
         }
         has_npm = true;
-        if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == version {
+        let label = print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf);
+        if without_build(label) == without_build(version) {
             return Ok(pkg);
         }
     }
@@ -83,7 +84,18 @@ fn package_for_folder(
     }
 }
 
-fn folder_lookup_error(err: FolderLookupError, folder: &[u8], name: &[u8], version: &[u8]) -> ! {
+/// The npm registry drops build metadata from a version. The package.json in the tarball keeps it.
+fn without_build(version: &[u8]) -> &[u8] {
+    &version[..strings::last_index_of_char(version, b'+').unwrap_or(version.len())]
+}
+
+fn folder_lookup_error(
+    err: FolderLookupError,
+    command: &str,
+    folder: &[u8],
+    name: &[u8],
+    version: &[u8],
+) -> ! {
     match err {
         FolderLookupError::NotInLockfile => bun_core::pretty_error!(
             "<r><red>error<r>: cannot patch <b>{}<r>: <b>{}@{}<r> is not in the lockfile<r>\n",
@@ -92,9 +104,10 @@ fn folder_lookup_error(err: FolderLookupError, folder: &[u8], name: &[u8], versi
             bstr::BStr::new(version),
         ),
         FolderLookupError::Ambiguous => bun_core::pretty_error!(
-            "<r><red>error<r>: cannot patch <b>{}<r>: more than one package named <b>{}<r> has a git, tarball or folder resolution. Run <b>bun patch {}@\\<label\\><r> with the label from the lockfile instead.<r>\n",
+            "<r><red>error<r>: cannot patch <b>{}<r>: more than one package named <b>{}<r> has a git, tarball or folder resolution. Run <b>{} {}@\\<label\\><r> with the label from the lockfile instead.<r>\n",
             bstr::BStr::new(folder),
             bstr::BStr::new(name),
+            command,
             bstr::BStr::new(name),
         ),
     }
@@ -278,6 +291,7 @@ pub fn do_patch_commit(
                 Ok(pkg) => pkg,
                 Err(err) => folder_lookup_error(
                     err,
+                    "bun patch --commit",
                     argument,
                     package.name.slice(lockfile.buffers.string_bytes.as_slice()),
                     version,
@@ -841,9 +855,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let actual_package = match package_for_folder(lockfile, package.name_hash, version)
                 {
                     Ok(pkg) => pkg,
-                    Err(err) => {
-                        folder_lookup_error(err, argument, package.name.slice(strbuf), version)
-                    }
+                    Err(err) => folder_lookup_error(
+                        err,
+                        "bun patch",
+                        argument,
+                        package.name.slice(strbuf),
+                        version,
+                    ),
                 };
 
                 let name = lockfile.str(&package.name).to_vec();

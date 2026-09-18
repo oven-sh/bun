@@ -1384,11 +1384,47 @@ describe("a folder whose version is not in the lockfile as the target", () => {
       expect(install.stderr).not.toContain("error:");
       expect(install.exitCode).toBe(0);
 
-      const { stderr, exitCode } = await runBun(packageDir, "patch", "node_modules/bar");
-      expect(stderr).toEndWith(
+      const prepare = await runBun(packageDir, "patch", "node_modules/bar");
+      expect(prepare.stderr).toEndWith(
         "error: cannot patch node_modules/bar: more than one package named bar has a git, tarball or folder resolution. Run bun patch bar@<label> with the label from the lockfile instead.\n",
       );
-      expect(exitCode).toBe(1);
+      expect(prepare.exitCode).toBe(1);
+
+      // The commit hint must not name the prepare command. That would overwrite the folder.
+      const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bar");
+      expect(commit.stderr).toEndWith(
+        "error: cannot patch node_modules/bar: more than one package named bar has a git, tarball or folder resolution. Run bun patch --commit bar@<label> with the label from the lockfile instead.\n",
+      );
+      expect(commit.exitCode).toBe(1);
+    });
+
+    // no-deps-build-metadata@1.0.0 ships "version": "1.0.0+123" in its package.json. The registry
+    // drops the build metadata, so the lockfile label is 1.0.0.
+    test.concurrent("bun patch <path> ignores build metadata in the folder's version", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: { "package.json": JSON.stringify({ name: "foo", dependencies: { "no-deps-build-metadata": "1.0.0" } }) },
+      });
+      const install = await runBun(packageDir, "install");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+
+      const prepare = await runBun(packageDir, "patch", "node_modules/no-deps-build-metadata");
+      expect(prepare.stderr).not.toContain("error:");
+      expect(prepare.stdout).toContain("To patch no-deps-build-metadata, edit the following folder:");
+      expect(prepare.exitCode).toBe(0);
+
+      await Bun.write(
+        join(packageDir, "node_modules", "no-deps-build-metadata", "index.js"),
+        "module.exports = 'patched';\n",
+      );
+
+      const commit = await runBun(packageDir, "patch", "--commit", "node_modules/no-deps-build-metadata");
+      expect(commit.stderr).not.toContain("error:");
+      expect(commit.exitCode).toBe(0);
+      expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
+        "no-deps-build-metadata@1.0.0": "patches/no-deps-build-metadata@1.0.0.patch",
+      });
     });
 
     // Passes without the fix. It fails if the version check is too strict.

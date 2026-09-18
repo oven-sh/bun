@@ -1327,20 +1327,29 @@ describe("an npm: aliased dependency", () => {
     });
   }
 
-  test.concurrent("bun patch <package name> asks for a version when an alias installs another one", async () => {
-    const packageDir = await createProject({ "my-alias": "npm:no-deps@1.0.0", "no-deps": "2.0.0" });
+  test.concurrent("bun patch <package name> asks for a version when two aliases install different ones", async () => {
+    const packageDir = await createProject({ "a1": "npm:no-deps@1.0.0", "a2": "npm:no-deps@2.0.0" });
 
     const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "no-deps");
     expect(stderr).toContain(
       "error: Found multiple versions of no-deps, please specify a precise version from the following list:\n" +
-        "  no-deps@2.0.0\n" +
-        "  no-deps@1.0.0\n",
+        "  no-deps@1.0.0\n" +
+        "  no-deps@2.0.0\n",
     );
     expect(stdout).not.toContain("To patch");
     expect(exitCode).toBe(1);
 
-    await expectPrepared(packageDir, "no-deps@1.0.0", "node_modules/my-alias");
+    await expectPrepared(packageDir, "no-deps@1.0.0", "node_modules/a1");
+    await expectPrepared(packageDir, "no-deps@2.0.0", "node_modules/a2");
+    await expectPrepared(packageDir, "a2", "node_modules/a2");
+  });
+
+  // An alias of another version does not make the name of a dependency ambiguous.
+  test.concurrent("bun patch <package name> selects the dependency with that name before an alias", async () => {
+    const packageDir = await createProject({ "my-alias": "npm:no-deps@1.0.0", "no-deps": "2.0.0" });
+    await expectPrepared(packageDir, "no-deps", "node_modules/no-deps");
     await expectPrepared(packageDir, "no-deps@2.0.0", "node_modules/no-deps");
+    await expectPrepared(packageDir, "no-deps@1.0.0", "node_modules/my-alias");
     await expectPrepared(packageDir, "my-alias", "node_modules/my-alias");
   });
 

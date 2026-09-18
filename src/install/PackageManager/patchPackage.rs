@@ -1221,14 +1221,14 @@ type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::Nod
 fn node_modules_folder_for_dependency_ids(
     iterator: &mut NodeModulesIterator<'_>,
     ids: &[IdPair],
-) -> Option<(DependencyID, Vec<u8>)> {
+) -> Option<(IdPair, Vec<u8>)> {
     loop {
         let node_modules = iterator.next(None)?;
-        if let Some(id) = ids
+        if let Some(&id) = ids
             .iter()
             .find(|id| node_modules.dependencies.contains(&id.0))
         {
-            return Some((id.0, node_modules.relative_path.as_bytes().to_vec()));
+            return Some((id, node_modules.relative_path.as_bytes().to_vec()));
         }
     }
 }
@@ -1251,9 +1251,9 @@ type IdPair = (DependencyID, PackageID);
 /// Returns the package that `name` (and `version`, when given) selects, the node_modules folder
 /// that holds it, and the name of its folder there.
 ///
-/// `name` selects a dependency by its name in package.json or by the name of the package it
-/// resolves to. An `npm:` alias makes the two differ: the first names the folder, the second keys
-/// the patch.
+/// `name` is the name of a dependency in package.json, which names the folder. An `npm:` alias
+/// installs a package under another name. When no dependency has `name`, it selects the
+/// dependencies that resolve to a package with that name, the name that keys the patch.
 fn pkg_info_for_name_and_version(
     lockfile: &Lockfile,
     iterator: &mut NodeModulesIterator<'_>,
@@ -1262,6 +1262,7 @@ fn pkg_info_for_name_and_version(
     version: Option<&[u8]>,
 ) -> (PackageID, Vec<u8>, Vec<u8>) {
     let mut pairs: Vec<IdPair> = Vec::with_capacity(8);
+    let mut aliased: Vec<IdPair> = Vec::new();
 
     let name_hash = string_hash(name);
 
@@ -1288,22 +1289,28 @@ fn pkg_info_for_name_and_version(
         if pkg_id == invalid_package_id {
             continue;
         }
-        if dep.name_hash != name_hash && pkg_name_hashes[pkg_id as usize] != name_hash {
+        let matches = if dep.name_hash == name_hash {
+            &mut pairs
+        } else if pkg_name_hashes[pkg_id as usize] == name_hash {
+            &mut aliased
+        } else {
             continue;
-        }
+        };
         let pkg = *lockfile.packages.get(pkg_id as usize);
         if let Some(v) = version {
             if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == v {
-                pairs.push((dep_id as DependencyID, pkg_id));
+                matches.push((dep_id as DependencyID, pkg_id));
             }
         } else {
-            pairs.push((dep_id as DependencyID, pkg_id));
+            matches.push((dep_id as DependencyID, pkg_id));
         }
     }
 
-    // One node_modules folder can hold the package as `name` and under an alias. The folder lookup
-    // takes the first pair it finds there, so the folder that has `name` goes first.
-    pairs.sort_by_key(|&(dep_id, _)| dependencies[dep_id as usize].name_hash != name_hash);
+    // A fallback, not a union: an alias of another version somewhere in the tree does not make a
+    // name that selects a dependency ambiguous.
+    if pairs.is_empty() {
+        pairs = aliased;
+    }
 
     if pairs.is_empty() {
         bun_core::pretty_errorln!(
@@ -1333,8 +1340,9 @@ fn pkg_info_for_name_and_version(
         // we found multiple dependents of the supplied pkg + version
         // the final package in the node_modules might be hoisted
         // so we are going to try looking for each dep id in node_modules
-        let (_, pkg_id) = pairs[0];
-        let (dep_id, folder) = match node_modules_folder_for_dependency_ids(iterator, &pairs) {
+        let ((dep_id, pkg_id), folder) = match node_modules_folder_for_dependency_ids(
+            iterator, &pairs,
+        ) {
             Some(f) => f,
             None => {
                 bun_core::pretty_error!(
@@ -1386,7 +1394,7 @@ fn pkg_info_for_name_and_version(
     // Disambiguate case a) from b)
     if count as usize == pairs.len() {
         // It may be hoisted, so we'll try the first one that matches
-        let (dep_id, folder) = match node_modules_folder_for_dependency_ids(iterator, &pairs) {
+        let ((dep_id, _), folder) = match node_modules_folder_for_dependency_ids(iterator, &pairs) {
             Some(f) => f,
             None => {
                 bun_core::pretty_error!(

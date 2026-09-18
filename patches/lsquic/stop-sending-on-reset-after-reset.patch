@@ -1,0 +1,34 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1311,13 +1311,6 @@
+     /* bun: record so lsquic_stream_get_error_code can surface it. */
+     stream->error_code = error_code;
+ 
+-    if (stream->stream_if->on_reset && !(stream->sm_dflags & SMDF_ONRESET1)
+-                            && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
+-    {
+-        stream->stream_if->on_reset(stream, stream->st_ctx, 1);
+-        stream->sm_dflags |= SMDF_ONRESET1;
+-    }
+-
+     /* Let user collect error: */
+     maybe_conn_to_tickable_if_writeable(stream, 0);
+ 
+@@ -1341,6 +1334,17 @@
+             TAILQ_REMOVE(&stream->conn_pub->sending_streams, stream, next_send_stream);
+     }
+ 
++    /* bun: notify after RESET_STREAM is queued and the stale sending flags
++     * are cleared. Upstream notified first, so an on_reset that closed the
++     * stream sent a FIN in place of the reset, and the STOP_SENDING it
++     * queued for the read half was dropped by the block above. */
++    if (stream->stream_if->on_reset && !(stream->sm_dflags & SMDF_ONRESET1)
++                            && !(stream->stream_flags & STREAM_ONCLOSE_DONE))
++    {
++        stream->stream_if->on_reset(stream, stream->st_ctx, 1);
++        stream->sm_dflags |= SMDF_ONRESET1;
++    }
++
+     maybe_finish_stream(stream);
+     maybe_schedule_call_on_close(stream);
+ }

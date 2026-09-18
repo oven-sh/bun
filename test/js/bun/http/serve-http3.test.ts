@@ -1613,6 +1613,57 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       expect(Number(count)).toBeGreaterThan(0);
     });
   });
+
+  // The client cancels the response with STOP_SENDING while its request side
+  // is still open. lsquic resets the server's send half and drops the stream
+  // from its write queue, so the response is never told. The server has to
+  // close the stream itself: the request aborts and the client's upload gets
+  // STOP_SENDING (RFC 9114 section 4.1.1).
+  test("req.signal aborts on client STOP_SENDING while the request body is still open", async () => {
+    const aborted = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch(req) {
+        req.signal.addEventListener("abort", () => aborted.resolve());
+        return new Response(Buffer.alloc(8 * 1024 * 1024, "x"));
+      },
+    });
+
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 10 },
+      onerror() {},
+    });
+    const stream = await client.createBidirectionalStream();
+    const closed = stream.closed.then(
+      () => "closed",
+      (err: Error) => `closed: ${err.message}`,
+    );
+    stream.sendHeaders({ ...requestHeaders("/"), ":method": "POST" });
+    // No end: the request side stays open.
+    stream.writer.writeSync(new TextEncoder().encode("the start of an upload"));
+
+    let received = 0;
+    for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+      for (const chunk of batch) received += chunk.length;
+      if (received > 64 * 1024) break;
+    }
+    expect(server.pendingRequests).toBe(1);
+    stream.stopSending(0x10cn); // H3_REQUEST_CANCELLED
+
+    await aborted.promise;
+    // The server reset its response and stopped the upload: the stream is gone.
+    expect(await closed).toBe("closed: QUIC application error 268: stream reset with code 268");
+    // The request leaves pendingRequests once the aborted response is dropped.
+    while (server.pendingRequests !== 0) await Bun.sleep(1);
+    if (!client.destroyed) client.close().catch(() => {});
+  });
 });
 
 describe("Bun.serve HTTP/3 production", () => {

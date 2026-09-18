@@ -3413,3 +3413,39 @@ test("react-compiler freezes the captures of a function in the order of its valu
 
   expect({ ab: await memoized("ab.jsx"), ba: await memoized("ba.jsx") }).toEqual({ ab: false, ba: true });
 });
+
+// The test of a `do`/`while` loop decides whether its own block runs again, so
+// that block is in its own post-dominator frontier. InferReactivePlaces needs
+// that entry to see that `x` follows `props.n`. Without it the element is
+// memoized with no dependency, and the second render returns the first.
+itBundled("react-compiler/DoWhileTestControlsItsOwnBlock", {
+  files: {
+    "/entry.jsx": /* jsx */ `
+      function Counter(props) {
+        let x = 0;
+        let i = 0;
+        do {
+          x += 1;
+          i++;
+        } while (i < props.n);
+        return <div>{x}</div>;
+      }
+      console.log(JSON.stringify([Counter({ n: 1 }).p.children, Counter({ n: 3 }).p.children]));
+    `,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+    // One cache for the one component, kept between the two renders.
+    "/node_modules/react/compiler-runtime.js": `
+      let cache;
+      exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+    `,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  },
+  reactCompiler: true,
+  target: "browser",
+  backend: "api",
+  run: { stdout: "[1,3]" },
+  onAfterBundle(api) {
+    expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+  },
+});

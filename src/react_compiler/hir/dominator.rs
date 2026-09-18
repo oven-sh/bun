@@ -277,9 +277,11 @@ fn no_processed_pred(id: BlockId) -> CompilerDiagnostic {
 
 /// Computes the post-dominator frontier of every block. The frontier of a
 /// block `target` is the set of immediate predecessors of `target`, or of a
-/// block that `target` post-dominates, that `target` does not post-dominate
-/// themselves. Intuitively, these are the earliest blocks from which execution
-/// branches such that it may or may not reach the target block.
+/// block that `target` post-dominates, that `target` does not strictly
+/// post-dominate themselves. Intuitively, these are the earliest blocks from
+/// which execution branches such that it may or may not reach the target block.
+/// A block can be in its own frontier: the test at the end of a `do`/`while`
+/// loop decides whether its own block runs again.
 ///
 /// Not in upstream, which computes one frontier at a time (`post_dominator_frontier`)
 /// and walks every ancestor of the target to find the blocks that the target

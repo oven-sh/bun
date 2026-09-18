@@ -127,24 +127,6 @@ fn entry_pathname_utf8(entry: &libarchive::lib::Entry) -> Result<Vec<u8>, bun_al
     bun_core::strings::to_utf8_list_with_type(Vec::new(), entry.pathname_w().as_slice())
 }
 
-/// The next entry of an archive opened with `read_open_memory`, or `None` at
-/// the end of the archive. On `Err`, `error_string()` has libarchive's message.
-fn read_next_entry(
-    archive: &libarchive::lib::Archive,
-) -> crate::Result<Option<&libarchive::lib::Entry>> {
-    use libarchive::lib;
-    let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    loop {
-        return match archive.read_next_header(&mut entry) {
-            lib::Result::Ok | lib::Result::Warn => Ok(Some(lib::Entry::opaque_ref(entry))),
-            lib::Result::Eof => Ok(None),
-            // libarchive skipped a header block with a bad checksum.
-            lib::Result::Retry => continue,
-            lib::Result::Failed | lib::Result::Fatal => Err(crate::Error::ReadError),
-        };
-    }
-}
-
 /// Count the number of files in an archive
 fn count_files_in_archive(data: &[u8]) -> u32 {
     use libarchive::lib;
@@ -157,7 +139,7 @@ fn count_files_in_archive(data: &[u8]) -> u32 {
 
     // The inspect output has no error channel: a failed header read ends the count.
     let mut count: u32 = 0;
-    while let Ok(Some(entry)) = read_next_entry(&archive) {
+    while let Ok(Some(entry)) = archive.read_next_memory_entry() {
         if entry.filetype() == FILETYPE_REGULAR {
             count += 1;
         }
@@ -1067,7 +1049,7 @@ impl FilesContext {
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
         loop {
-            let entry_ref = match read_next_entry(&archive) {
+            let entry_ref = match archive.read_next_memory_entry() {
                 Ok(Some(entry)) => entry,
                 Ok(None) => break,
                 Err(_) => return Ok(Self::read_error(&archive)),
@@ -1346,7 +1328,10 @@ fn extract_to_disk_filtered(
     // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
     let buf = unsafe { stack_buf.as_bytes_mut() };
 
-    while let Some(entry_ref) = read_next_entry(&archive)? {
+    while let Some(entry_ref) = archive
+        .read_next_memory_entry()
+        .map_err(|_| crate::Error::ReadError)?
+    {
         // Same platform split as `FilesContext::do_run`; see `entry_pathname_utf8`.
         #[cfg(not(windows))]
         let raw_pathname_z = entry_ref.pathname();

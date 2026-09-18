@@ -1891,17 +1891,16 @@ describe.concurrent("per-edge effective range", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("bun dedupe moves an edge whose scoped rule is a range onto the version its sibling's rule pins", async () => {
+  test("an edge whose scoped rule is a range shares the version its sibling's rule pins", async () => {
     const dir = await project({
       dependencies: twoParents,
       overrides: { "one-fixed-dep@1": { "no-deps": "^1.0.0" }, "one-fixed-dep@2": { "no-deps": "1.0.0" } },
     });
     await installOk(dir);
-    expect(await versionSeenBy(dir, "ofd1", "no-deps")).toBe("1.1.0");
+    expect(await versionSeenBy(dir, "ofd1", "no-deps")).toBe("1.0.0");
     expect(await versionSeenBy(dir, "ofd2", "no-deps")).toBe("1.0.0");
     const { out, exitCode } = await run(dir, "dedupe", "--check");
-    expect(out).toContain("~ no-deps 1.1.0 -> 1.0.0");
-    expect(out).toContain("1 duplicate version can be removed");
-    expect(exitCode).toBe(1);
+    expect(out).toContain("No duplicates");
+    expect(exitCode).toBe(0);
   });
 });

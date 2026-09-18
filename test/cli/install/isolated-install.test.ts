@@ -1355,15 +1355,13 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
 }
 
 test("ranged peer dependency resolution is stable across installs from bun.lock", async () => {
-  // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. The graph contains both
-  // no-deps@1.0.1 (exact pin via normal-dep-and-dev-dep, hoisted to the root
-  // of the saved tree) and no-deps@1.1.0 (via two-range-deps). The fresh
-  // resolve binds the peer edge to the highest satisfying version (1.1.0) in
-  // its deferred-peer phase; reloading bun.lock used to re-derive the edge
-  // from the saved tree paths instead, rebinding it to the hoisted 1.0.1.
-  // That silently changed the runtime dependency tree on the second install
-  // and re-keyed the isolated store entry (`+<peer hash>` suffix) on every
-  // warm install.
+  // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. normal-dep-and-dev-dep
+  // pins no-deps@1.0.1 and the root pins 1.1.0 (a root row survives the
+  // post-resolve collapse), so the graph keeps two versions the peer's range
+  // accepts and the edge binds to the highest, 1.1.0. Reloading bun.lock used
+  // to re-derive the edge from the saved tree paths instead of the saved
+  // resolution, which re-keyed the isolated store entry (`+<peer hash>`
+  // suffix) on every warm install.
   const { packageJson, packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
   });
@@ -1376,6 +1374,7 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
         "peer-deps-fixed": "1.0.0",
         "normal-dep-and-dev-dep": "1.0.0",
         "two-range-deps": "1.0.0",
+        "no-deps": "1.1.0",
       },
     }),
   );
@@ -1383,8 +1382,11 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   await runBunInstall(bunEnv, packageDir);
 
   const bunDir = join(packageDir, "node_modules", ".bun");
-  // highest satisfying ^1.0.0 in the graph; `toContain` prints the full
-  // listing when the entry is missing or keyed with a different peer hash
+  expect((await readdirSorted(bunDir)).filter(e => e.startsWith("no-deps@"))).toEqual([
+    "no-deps@1.0.1",
+    "no-deps@1.1.0",
+  ]);
+  // `toContain` prints the full listing when the entry is missing or keyed with a different peer hash
   const entryName = "peer-deps-fixed@1.0.0+7ff199101204a65d";
   expect(await readdirSorted(bunDir)).toContain(entryName);
   expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({

@@ -263,8 +263,6 @@ struct Pin {
 #[derive(Default)]
 pub struct TransitiveUpdate {
     pins: Vec<Pin>,
-    /// Kept for `print_plan` when no install summary will print the rows (`--dry-run`, `--lockfile-only`).
-    report: Option<Report>,
 }
 
 impl TransitiveUpdate {
@@ -286,13 +284,9 @@ impl TransitiveUpdate {
             }
             edges
         };
-        let (pins, report) = plan_edges(manager, &edges, direct)?;
-        register_moved(manager, &report.moved)?;
-        let printed_here = manager.options.dry_run || manager.options.lockfile_only;
-        Ok(TransitiveUpdate {
-            pins,
-            report: printed_here.then_some(report),
-        })
+        let (pins, moved) = plan_edges(manager, &edges, direct)?;
+        register_moved(manager, &moved)?;
+        Ok(TransitiveUpdate { pins })
     }
 
     /// Runs after the differ's own enqueues (including its override/catalog invalidation loops) so the pins win; edges the differ moved off their package are left to it.
@@ -348,13 +342,13 @@ impl TransitiveUpdate {
             return;
         }
         let dry_run = options.dry_run;
-        let mut rows = self
-            .report
-            .as_ref()
-            .map_or_else(Vec::new, |report| report.rows.clone());
+        // Read back from the resolutions so rows the collapse re-pointed print where they landed.
+        let pinned: Vec<(DependencyID, PackageID)> =
+            self.pins.iter().map(|pin| (pin.dep_id, pin.from)).collect();
         let mut pairs = direct.moved_pairs(&manager.lockfile);
         pairs.extend(named_pairs(&manager.lockfile, named));
-        rows.extend(rows_between(manager, pairs));
+        pairs.extend(named_pairs(&manager.lockfile, &pinned));
+        let mut rows = rows_between(manager, pairs);
         sort_dedup_rows(&mut rows);
         let kept = kept_patched_rows(manager);
         if !dry_run && rows.is_empty() && kept.is_empty() {
@@ -417,9 +411,9 @@ pub(crate) fn refresh_children_of(
         }
         edges
     };
-    let (pins, report) = plan_edges(manager, &edges, &DirectDependencies::default())?;
-    register_moved(manager, &report.moved)?;
-    let update = TransitiveUpdate { pins, report: None };
+    let (pins, moved) = plan_edges(manager, &edges, &DirectDependencies::default())?;
+    register_moved(manager, &moved)?;
+    let update = TransitiveUpdate { pins };
     update.enqueue(manager)?;
     Ok(update
         .pins
@@ -535,13 +529,6 @@ struct Row {
     to: Box<[u8]>,
     /// The `latest` dist-tag when it is newer than `to`; empty otherwise.
     later: Box<[u8]>,
-}
-
-#[derive(Default)]
-struct Report {
-    rows: Vec<Row>,
-    /// Pre-clean ids of the instances at least one row moves away from.
-    moved: Vec<PackageID>,
 }
 
 /// Registers each npm package of `moved` (pre-clean ids) like a `bun update <name>` request so the install summary prints its update row; a name with several moving instances keeps its lowest original.
@@ -1018,12 +1005,12 @@ pub(crate) fn plannable_peer_rows(
     rows
 }
 
-/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag.
+/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag. Also returns the pre-clean ids of the instances at least one row moves away from.
 fn plan_edges(
     manager: &mut PackageManager,
     edges: &DynamicBitSet,
     direct: &DirectDependencies,
-) -> crate::Result<(Vec<Pin>, Report)> {
+) -> crate::Result<(Vec<Pin>, Vec<PackageID>)> {
     let mut instances: Vec<Instance> = Vec::new();
     let mut kept: Vec<PackageID> = Vec::new();
     {
@@ -1122,7 +1109,7 @@ fn plan_edges(
     }
     instances.retain(|inst| !inst.wants.is_empty());
     if instances.is_empty() {
-        return Ok((Vec::new(), Report::default()));
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
@@ -1136,7 +1123,7 @@ fn plan_edges(
     let pkg_names = manager.lockfile.packages.items_name();
 
     let mut pins: Vec<Pin> = Vec::new();
-    let mut report = Report::default();
+    let mut moved: Vec<PackageID> = Vec::new();
     let mut unchecked: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
     // Non-inline prerelease strings of planned versions live in the manifest buffer; copied into the lockfile's below.
     let mut pre_strings: Vec<(core::ops::Range<usize>, u64, Box<[u8]>)> = Vec::new();
@@ -1162,9 +1149,9 @@ fn plan_edges(
         };
         let manifest: &PackageManifest = manifest;
         let manifest_buf: &[u8] = &manifest.string_buf;
-        let rows_before = report.rows.len();
+        let pins_before = pins.len();
         for want in &inst.wants {
-            let (v, to, later) = if want.version.tag == DependencyVersionTag::Npm {
+            let to = if want.version.tag == DependencyVersionTag::Npm {
                 let range = &want.version.npm().version;
                 let Some(found) = manifest
                     .find_best_version_with_filter(range, buf, min_age, excludes)
@@ -1184,7 +1171,7 @@ fn plan_edges(
                         Box::from(v.tag.pre.slice(manifest_buf)),
                     ));
                 }
-                (v, Some(v), later_than(manifest, v, min_age, excludes))
+                Some(v)
             } else {
                 let tag = want.version.dist_tag().tag.slice(buf);
                 let Some(found) = manifest
@@ -1196,22 +1183,16 @@ fn plan_edges(
                 if found.version.order(inst.current, manifest_buf, buf) == Ordering::Equal {
                     continue;
                 }
-                (found.version, None, Box::default())
+                None
             };
             pins.extend(want.dep_ids.iter().map(|&dep_id| Pin {
                 dep_id,
                 from: inst.pkg_id,
                 to,
             }));
-            report.rows.push(Row {
-                name: Box::from(name),
-                from: text(inst.current.fmt(buf)),
-                to: text(v.fmt(manifest_buf)),
-                later,
-            });
         }
-        if report.rows.len() != rows_before {
-            report.moved.push(inst.pkg_id);
+        if pins.len() != pins_before {
+            moved.push(inst.pkg_id);
         }
     }
     index_sort::sort_vec_unstable_by(&mut unchecked, |a, b| a.cmp(b));
@@ -1230,25 +1211,5 @@ fn plan_edges(
         }
     }
 
-    sort_dedup_rows(&mut report.rows);
-    Ok((pins, report))
-}
-
-/// The `latest` dist-tag when it is newer than the release `v` an in-range move stops at, like the `+` rows' `(vX available)`.
-fn later_than(
-    manifest: &PackageManifest,
-    v: Semver::Version,
-    min_age: Option<f64>,
-    excludes: Option<&[&[u8]]>,
-) -> Box<[u8]> {
-    if v.tag.has_pre() {
-        return Box::default();
-    }
-    let manifest_buf: &[u8] = &manifest.string_buf;
-    let latest = manifest
-        .find_by_dist_tag_with_filter(b"latest", min_age, excludes)
-        .unwrap()
-        .map(|found| found.version)
-        .filter(|latest| latest.order(v, manifest_buf, manifest_buf) == Ordering::Greater);
-    latest.map_or_else(Box::default, |latest| text(latest.fmt(manifest_buf)))
+    Ok((pins, moved))
 }

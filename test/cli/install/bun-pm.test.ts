@@ -943,6 +943,29 @@ test.each([
   expect(exitCode).toBe(0);
 });
 
+test.each([["pm", "--help"], ["pm"]])("bun %s %s lists -g under bun pm ls", async (...cmd) => {
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "pm-help", version: "1.0.0" }));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...cmd],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const lines = stdout.split("\n").map(line => line.trim());
+  const lsIndex = lines.findIndex(line => line.startsWith("bun pm ls "));
+  expect(lsIndex).toBeGreaterThan(-1);
+  const lsFlags = [];
+  for (let i = lsIndex + 1; i < lines.length && /^[├└] /.test(lines[i]); i++) {
+    lsFlags.push(lines[i].split(/\s+/)[1]);
+  }
+  expect(lsFlags).toEqual(["--all", "--trusted", "-g"]);
+  expect(exitCode).toBe(0);
+});
+
 test("bun list --all shows full dependency tree", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

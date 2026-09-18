@@ -2931,9 +2931,7 @@ impl RunCommand {
         Ok(false)
     }
 
-    /// Node's `path.resolve(argv[1])`: absolute against cwd, `.`/`..`
-    /// collapsed, trailing separator stripped, symlinks left as-is. `None`
-    /// when that is `entry_path`.
+    /// Node's `path.resolve(argv[1])`, or `None` when it is `entry_path`.
     fn absolutize_for_argv(target: &[u8], entry_path: &[u8]) -> Option<Box<[u8]>> {
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd_len = bun_core::getcwd_or_exe_dir(&mut cwd_buf).as_bytes().len();
@@ -2952,8 +2950,7 @@ impl RunCommand {
         while joined.len() > root_len && joined[joined.len() - 1] == paths::SEP {
             joined = &joined[..joined.len() - 1];
         }
-        // A Windows cwd or argument that is not spelled as on disk differs from
-        // `entry_path` by case alone. That is the same path, not a symlink.
+        // Windows keeps the typed casing in the cwd; the fd path is canonical.
         let is_entry_path = if cfg!(windows) {
             bun_core::strings::eql_case_insensitive_ascii(joined, entry_path, true)
         } else {
@@ -2965,9 +2962,8 @@ impl RunCommand {
         Some(joined.to_vec().into_boxed_slice())
     }
 
-    /// Whether `path` reaches the file `entry` describes. The kernel applies
-    /// `..` after it follows a symlinked directory and `absolutize_for_argv`
-    /// before, so the typed path can name another file, or none.
+    /// `path` names the file `entry` describes. The lexical `..` in
+    /// `absolutize_for_argv` can differ from the kernel's after a symlink.
     fn names_entry_file(path: &[u8], entry: &bun_sys::Stat) -> bool {
         if path.len() >= MAX_PATH_BYTES {
             return false;

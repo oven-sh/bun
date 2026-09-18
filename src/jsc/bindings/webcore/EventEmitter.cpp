@@ -197,7 +197,8 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
             if (!thisObject)
                 return false;
 
-            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
+            // Not thisObject->globalObject(): a WebAssembly GC reference has no realm.
+            Bun__reportUnhandledError(scriptExecutionContext()->jsGlobalObject(), JSValue::encode(arguments.at(0)));
             return false;
         }
         return false;

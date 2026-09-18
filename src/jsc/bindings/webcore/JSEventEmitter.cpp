@@ -336,32 +336,32 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_prependOnceLis
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_addListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_addListenerBody>(*lexicalGlobalObject, *callFrame, "addListener");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_addListenerBody, DefineEvents::Yes>(*lexicalGlobalObject, *callFrame, "addListener");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_addOnceListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_addOnceListenerBody>(*lexicalGlobalObject, *callFrame, "once");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_addOnceListenerBody, DefineEvents::Yes>(*lexicalGlobalObject, *callFrame, "once");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_getMaxListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_getMaxListenersBody>(*lexicalGlobalObject, *callFrame, "getMaxListeners");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_getMaxListenersBody, DefineEvents::No>(*lexicalGlobalObject, *callFrame, "getMaxListeners");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_setMaxListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_setMaxListenersBody>(*lexicalGlobalObject, *callFrame, "setMaxListeners");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_setMaxListenersBody, DefineEvents::Yes>(*lexicalGlobalObject, *callFrame, "setMaxListeners");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_prependListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_prependListenerBody>(*lexicalGlobalObject, *callFrame, "prependListener");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_prependListenerBody, DefineEvents::Yes>(*lexicalGlobalObject, *callFrame, "prependListener");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_prependOnceListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_prependOnceListenerBody>(*lexicalGlobalObject, *callFrame, "prependOnceListener");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_prependOnceListenerBody, DefineEvents::Yes>(*lexicalGlobalObject, *callFrame, "prependOnceListener");
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
@@ -397,7 +397,7 @@ inline JSC::EncodedJSValue JSEventEmitter::removeListener(JSC::JSGlobalObject* l
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_removeListener, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_removeListenerBody>(*lexicalGlobalObject, *callFrame, "removeListener");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_removeListenerBody, DefineEvents::No>(*lexicalGlobalObject, *callFrame, "removeListener");
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeAllListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
@@ -422,7 +422,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeAllListe
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_removeAllListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_removeAllListenersBody>(*lexicalGlobalObject, *callFrame, "removeAllListeners");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_removeAllListenersBody, DefineEvents::No>(*lexicalGlobalObject, *callFrame, "removeAllListeners");
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_emitBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
@@ -444,7 +444,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_emitBody(JSC::
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_emit, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_emitBody>(*lexicalGlobalObject, *callFrame, "emit");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_emitBody, DefineEvents::No>(*lexicalGlobalObject, *callFrame, "emit");
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_eventNamesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
@@ -464,7 +464,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_eventNamesBody
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_eventNames, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_eventNamesBody>(*lexicalGlobalObject, *callFrame, "eventNames");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_eventNamesBody, DefineEvents::No>(*lexicalGlobalObject, *callFrame, "eventNames");
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenerCountBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
@@ -481,7 +481,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenerCountB
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listenerCount, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenerCountBody>(*lexicalGlobalObject, *callFrame, "listeners");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenerCountBody, DefineEvents::No>(*lexicalGlobalObject, *callFrame, "listenerCount");
 }
 
 static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
@@ -504,7 +504,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenersBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenersBody>(*lexicalGlobalObject, *callFrame, "listeners");
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenersBody, DefineEvents::No>(*lexicalGlobalObject, *callFrame, "listeners");
 }
 
 JSC::GCClient::IsoSubspace* JSEventEmitter::subspaceForImpl(JSC::VM& vm)

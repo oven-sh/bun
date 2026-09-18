@@ -302,7 +302,7 @@ describe.skipIf(skip)("node:https server under injected syscall faults", () => {
       expect(await received.promise).toBe(size);
       expect(await proc.exited).toBe(0);
     },
-    // A debug/ASAN child needs seconds to load node:https and listen.
+    // Only fault-injection (debug/ASAN) builds run this, and there the child took 3.3 to 6.5 s to load node:https and answer.
     30_000,
   );
 });

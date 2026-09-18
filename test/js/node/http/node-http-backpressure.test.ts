@@ -13,6 +13,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import path from "node:path";
+import { finished } from "node:stream";
 import nodeTls from "node:tls";
 
 describe("backpressure", () => {
@@ -544,13 +545,25 @@ describe("backpressure", () => {
     // emits 'finish', so the order is the same when the bytes never leave.
     it("a client that goes away without reading still completes the response, in the same order", async () => {
       const events: string[] = [];
+      const state: Record<string, unknown> = {};
       const handled = Promise.withResolvers<void>();
       const closed = Promise.withResolvers<void>();
       await using server = createServer(false, (req, res) => {
-        res.on("finish", () => events.push("finish"));
+        res.on("finish", () => {
+          events.push("finish");
+          state.writableFinishedAtFinish = res.writableFinished;
+        });
         res.on("close", () => {
           events.push("close");
-          closed.resolve();
+          state.writableFinishedAtClose = res.writableFinished;
+          // The response did finish: stream.finished() agrees, and a late end() says so instead of waiting.
+          finished(res, err => {
+            state.streamFinished = err?.code ?? "ok";
+            res.end((lateErr?: NodeJS.ErrnoException) => {
+              state.lateEnd = lateErr?.code;
+              closed.resolve();
+            });
+          });
         });
         writeBodyInChunks(
           res,
@@ -566,6 +579,12 @@ describe("backpressure", () => {
       client.destroy();
       await closed.promise;
       expect(events).toEqual(["write callback", "finish", "end callback", "close"]);
+      expect(state).toEqual({
+        writableFinishedAtFinish: true,
+        writableFinishedAtClose: true,
+        streamFinished: "ok",
+        lateEnd: "ERR_STREAM_ALREADY_FINISHED",
+      });
     });
 
     it("a request pipelined behind the unfinished response is answered after it, intact", async () => {

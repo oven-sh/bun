@@ -20,7 +20,7 @@ use bun_alloc::ArenaVecExt as _;
 use crate::values as css_values;
 use css_values::angle::Angle;
 use css_values::length::{LengthPercentage, LengthValue};
-use css_values::number::{CSSNumber, CSSNumberFns};
+use css_values::number::{CSSNumber, CSSNumberFns, parse_non_negative, peek_number_literal};
 use css_values::percentage::{DimensionPercentage, Percentage};
 
 use bun_collections::VecExt;
@@ -93,9 +93,15 @@ pub enum AbsoluteFontWeight {
 }
 
 impl AbsoluteFontWeight {
-    // Payload (`CSSNumber`) first, then keyword variants.
+    // Payload (`<number [1,1000]>`) first, then keyword variants.
     fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
+        if let Ok(n) = input.try_parse(|i: &mut css::Parser| {
+            // The range applies to a literal; a math result clamps to it instead.
+            if peek_number_literal(i).is_some_and(|n| !(1.0..=1000.0).contains(&n)) {
+                return Err(i.new_custom_error(ParserError::invalid_value));
+            }
+            CSSNumberFns::parse(i).map(|n| n.clamp(1.0, 1000.0))
+        }) {
             return Ok(AbsoluteFontWeight::Weight(n));
         }
         let location = input.current_source_location();
@@ -143,6 +149,7 @@ impl AbsoluteFontWeight {
 #[derive(Clone, PartialEq, css::Parse, css::ToCss)]
 pub enum FontSize {
     /// An explicit size.
+    #[css(non_negative)]
     Length(LengthPercentage),
     /// An absolute font size keyword.
     Absolute(AbsoluteFontSize),
@@ -229,7 +236,7 @@ impl FontStretch {
         if let Ok(kw) = input.try_parse(FontStretchKeyword::parse) {
             return Ok(FontStretch::Keyword(kw));
         }
-        Percentage::parse(input).map(FontStretch::Percentage)
+        parse_non_negative(input, Percentage::parse).map(FontStretch::Percentage)
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
@@ -642,10 +649,10 @@ impl LineHeight {
         {
             return Ok(LineHeight::Normal);
         }
-        if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
+        if let Ok(n) = input.try_parse(|i| parse_non_negative(i, CSSNumberFns::parse)) {
             return Ok(LineHeight::Number(n));
         }
-        LengthPercentage::parse(input).map(LineHeight::Length)
+        parse_non_negative(input, LengthPercentage::parse).map(LineHeight::Length)
     }
 
     pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {

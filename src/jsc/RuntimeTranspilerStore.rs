@@ -451,9 +451,7 @@ unsafe impl unbounded_queue::Linked for TranspilerJob {
     }
 }
 
-/// Per-worker output buffer. Its backing `Vec<u8>` stays with the worker
-/// while the worker is idle (capped at 512 K / 2 M below). The parse arena
-/// does not: see [`WorkerArena`].
+/// Per-worker output buffer, reused across `run()` calls (capped at 512 K / 2 M below).
 //
 // `#[thread_local]` not `thread_local!`: the macro's `LocalKey::__getit`
 // wrapper showed up on the
@@ -461,15 +459,10 @@ unsafe impl unbounded_queue::Linked for TranspilerJob {
 #[thread_local]
 static SOURCE_CODE_PRINTER: Cell<Option<NonNull<BufferPrinter>>> = Cell::new(None);
 
-/// The parse arena of one worker thread. It outlives a job only while the
-/// worker has more tasks to run, so a burst of small modules does not pay
-/// `mi_heap_new`, a fresh page for every size class and `mi_heap_destroy` once
-/// per module. `release_task` frees it when the worker runs out of tasks: an
-/// arena that stayed with an idle worker was a +12 % RSS regression on
-/// `server/elysia` (~40 workers on a 64-core box, each with one or two dead ASTs).
+/// One parse arena per worker for its back-to-back jobs: a heap per module costs more than a small parse.
 struct WorkerArena {
     arena: Arena,
-    /// On this worker's idle queue for as long as `self` is in [`WORKER_ARENA`].
+    /// Frees `self` when the worker runs out of tasks: arenas kept by idle workers cost +12 % RSS (server/elysia).
     release_task: WorkPoolTask,
 }
 
@@ -477,10 +470,7 @@ struct WorkerArena {
 static WORKER_ARENA: Cell<Option<NonNull<WorkerArena>>> = Cell::new(None);
 
 impl WorkerArena {
-    /// Dead AST that the arena carries from one job to the next; past it the
-    /// next job gets a fresh heap, as every job did before. Small on purpose:
-    /// a larger limit buys no CPU for small modules and raises the RSS that
-    /// stays after a burst.
+    /// Dead blocks a job may leave for the next. More adds RSS after a burst, and no CPU gain for small modules.
     const RETAIN_LIMIT: usize = 64 * 1024;
 
     fn for_current_worker() -> NonNull<WorkerArena> {
@@ -507,8 +497,7 @@ impl WorkerArena {
         this
     }
 
-    /// # Safety
-    /// Call on the thread that owns `this`, with no borrow of `this.arena` alive.
+    /// SAFETY: call on the thread that owns `this`, with no borrow of `this.arena` alive.
     unsafe fn recycle(this: NonNull<WorkerArena>, smol: bool) {
         // SAFETY: per the contract above, this is the only reference.
         let arena = unsafe { &mut (*this.as_ptr()).arena };
@@ -721,8 +710,7 @@ impl TranspilerJob {
             return;
         }
 
-        // `borrowing()`: the AST node store and the `AstVec` spill share
-        // `arena`'s heap and are bulk-freed with it (see `WorkerArena`).
+        // `borrowing()`: the AST node store and the `AstVec` spill live in `arena`'s heap and are freed with it.
         let mut ast_memory_store = ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_store.enter();
 
@@ -764,13 +752,11 @@ impl TranspilerJob {
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =
             core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
-        // SAFETY: lifetime erasure — `Transpiler<'a>`'s `'a` only constrains the
-        // `allocator` field (and resolver opts that share it), which we
-        // immediately overwrite below via `set_arena(arena)` to the worker's
-        // arena above. `_recycle_arena` is declared before `transpiler_storage`,
-        // so it resets the arena after; the bytewise copy is never dropped
-        // (ManuallyDrop), so no borrow tied to the shortened `'a` outlives
-        // the arena's blocks.
+        // SAFETY: lifetime erasure. `Transpiler<'a>`'s `'a` only constrains the
+        // `allocator` field (and resolver opts that share it), which
+        // `set_arena(arena)` overwrites below. `_recycle_arena` is declared
+        // before `transpiler_storage` and the bytewise copy is never dropped
+        // (ManuallyDrop), so no borrow tied to `'a` outlives the arena's blocks.
         let transpiler: &mut Transpiler<'_> =
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
         transpiler.set_arena(arena);
@@ -1180,8 +1166,7 @@ impl TranspilerJob {
                 },
             );
             transpiler.print_with_source_map(
-                // Same `arena` that `transpiler.set_arena(arena)` and
-                // `parse_options.arena` used to build `parse_result.ast`.
+                // The `arena` that built `parse_result.ast`.
                 arena,
                 parse_result,
                 &mut printer,
@@ -1243,9 +1228,6 @@ impl TranspilerJob {
             ..Default::default()
         };
 
-        // `ast_memory_store` drops here (after `_ast_scope` restores the
-        // thread-local AST heap pointer), then `_recycle_arena` runs. Nothing
-        // references a parse / AST allocation made by this call past this
-        // point — `source_code` above is a fresh WTF::String copy.
+        // `source_code` is a fresh WTF::String copy: nothing points into the arena when `_recycle_arena` runs.
     }
 }

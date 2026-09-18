@@ -204,7 +204,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     expect(exitCode).toBe(0);
   });
 
-  it("should handle npm aliases", async () => {
+  it("should find an aliased package by its real name", async () => {
     // The lockfile stores an aliased package under its real name, so the alias itself is not a match.
     const realName = await why(alias, "no-deps");
     expect(realName.stdout).toMatchInlineSnapshot(`
@@ -383,6 +383,16 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       "
     `);
     expect(unmatched.exitCode).toBe(1);
+  });
+
+  // An exact name with a version is compared as one string against the package name, so it
+  // never matches. #43284 fixes this.
+  it.todo("should support version constraints on an exact name", async () => {
+    const { stdout, exitCode } = await why(basic, "no-deps@^1.0.0");
+    expect(stdout).toBe(
+      "no-deps@1.0.0\n  └─ one-fixed-dep@1.0.0 (requires 1.0.0)\n     └─ basic-test (requires 1.0.0)\n\n",
+    );
+    expect(exitCode).toBe(0);
   });
 
   it("should handle nested workspaces", async () => {

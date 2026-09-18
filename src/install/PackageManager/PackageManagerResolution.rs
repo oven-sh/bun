@@ -550,8 +550,7 @@ fn workspace_containment<'b>(
 /// `<root>/<path>` and a NUL, not normalized: only the OS resolves a `..` after a symlink.
 fn write_absolute_path(buf: &mut [u8], root: &[u8], mut path: &[u8]) -> Option<usize> {
     let absolute = bun_paths::is_absolute(path);
-    // A trailing separator makes `lstat` follow the last component, which the walk reads.
-    // `/` and `C:\` are the exception: the separator is part of the root's own name.
+    // A trailing separator makes `lstat` follow the last component, except on a bare root.
     while let [rest @ .., last] = path {
         if !bun_paths::is_sep_any(*last) || rest.is_empty() || rest.last() == Some(&b':') {
             break;

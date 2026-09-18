@@ -769,8 +769,14 @@ test("failed script of a bun link target linked only as an optional dependency k
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect(await link.stdout.text()).toContain('Success! Registered "x"');
-  expect(await link.exited).toBe(0);
+  const [linkStdout, linkStderr, linkExitCode] = await Promise.all([
+    link.stdout.text(),
+    link.stderr.text(),
+    link.exited,
+  ]);
+  expect(linkStderr).not.toContain("error:");
+  expect(linkStdout).toContain('Success! Registered "x"');
+  expect(linkExitCode).toBe(0);
 
   await using proc = spawn({
     cmd: [bunExe(), "install", "--verbose"],

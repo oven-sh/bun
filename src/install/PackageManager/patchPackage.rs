@@ -61,9 +61,9 @@ pub struct CommittedPatch {
 }
 
 impl CommittedPatch {
-    fn new(folder: &[u8]) -> Option<CommittedPatch> {
+    fn new(folder: &[u8]) -> sys::Result<CommittedPatch> {
         let mut buf = bun_paths::path_buffer_pool::get();
-        Some(CommittedPatch {
+        Ok(CommittedPatch {
             real_path: Box::from(real_path_of_folder(folder, &mut buf)?),
             has_changes: true,
         })
@@ -75,15 +75,13 @@ impl CommittedPatch {
             return false;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
-        real_path_of_folder(path, &mut buf).is_some_and(|real_path| real_path == &*self.real_path)
+        real_path_of_folder(path, &mut buf).is_ok_and(|real_path| real_path == &*self.real_path)
     }
 }
 
-fn real_path_of_folder<'a>(folder: &[u8], buf: &'a mut PathBuffer) -> Option<&'a [u8]> {
-    let dir = Dir::cwd()
-        .open_dir(folder, sys::OpenDirOptions::default())
-        .ok()?;
-    dir.get_fd_path(buf).ok().map(|real_path| &*real_path)
+fn real_path_of_folder<'a>(folder: &[u8], buf: &'a mut PathBuffer) -> sys::Result<&'a [u8]> {
+    let dir = Dir::cwd().open_dir(folder, sys::OpenDirOptions::default())?;
+    dir.get_fd_path(buf).map(|real_path| &*real_path)
 }
 
 /// - Arg is the dir containing the package with changes OR name and version
@@ -312,7 +310,17 @@ pub fn do_patch_commit(
         );
         Global::crash();
     }
-    manager.committed_patch = CommittedPatch::new(&changes_dir);
+    manager.committed_patch = match CommittedPatch::new(&changes_dir) {
+        Ok(committed) => Some(committed),
+        Err(e) => {
+            Output::err(
+                e,
+                "failed to open directory <b>{s}<r>",
+                (bstr::BStr::new(&changes_dir),),
+            );
+            Global::crash();
+        }
+    };
 
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
@@ -588,6 +596,17 @@ pub fn do_patch_commit(
                 committed.has_changes = false;
             }
             return Ok(None);
+        }
+
+        // The patch parser drops such a file, so the folder has edits that the patch lacks.
+        if strings::split(&contents, b"\n")
+            .any(|line| line.starts_with(b"Binary files ") && line.ends_with(b" differ"))
+        {
+            bun_core::warn!(
+                "git cannot diff binary files as text. The patch does not include the changes to them in <b>{}<r>",
+                bstr::BStr::new(new_folder),
+            );
+            manager.committed_patch = None;
         }
 
         break 'brk contents;

@@ -227,12 +227,11 @@ describe("bun patch --commit with the isolated linker", () => {
     }),
   };
 
-  test.concurrent.each([
+  describe.each([
     { globalStore: false, commitArg: "has-bin-entries" },
     { globalStore: true, commitArg: "node_modules/has-bin-entries" },
-  ])(
-    "links node_modules/<pkg> into node_modules/.bun again (globalStore: $globalStore, --commit $commitArg)",
-    async ({ globalStore, commitArg }) => {
+  ])("globalStore: $globalStore, --commit $commitArg", ({ globalStore, commitArg }) => {
+    test.concurrent("links node_modules/<pkg> into node_modules/.bun again", async () => {
       const packageDir = await install(globalStore, rootOnly);
       const committed = await patch(packageDir, "has-bin-entries", "node_modules/has-bin-entries");
       const uncommitted = await patch(packageDir, "a-dep", "node_modules/a-dep");
@@ -273,8 +272,8 @@ describe("bun patch --commit with the isolated linker", () => {
       expect(again.stderr).toContain(NOT_PREPARED);
       expect(again.exitCode).toBe(1);
       expect(await Bun.file(patchFile).text()).toBe(patchText);
-    },
-  );
+    });
+  });
 
   test.concurrent("refuses to commit a link that bun patch did not replace", async () => {
     const packageDir = await install(false, rootOnly);
@@ -384,6 +383,20 @@ describe("bun patch --commit with the isolated linker", () => {
     expect(loaded.stderr).toBe("");
     expect(loaded.stdout).toBe("1.0.0 true 1.0.0\n");
     expect(loaded.exitCode).toBe(0);
+  });
+
+  // git prints `Binary files ... differ` for it, and the patch parser drops that file.
+  test.concurrent("keeps the edited copy when the diff has a binary file", async () => {
+    const packageDir = await install(false, rootOnly);
+    const copy = await patch(packageDir, "has-bin-entries", "node_modules/has-bin-entries");
+    await addPatchedExport(copy);
+    await Bun.write(join(copy, "data.bin"), new Uint8Array([0, 1, 2, 0, 255, 254, 0, 10]));
+
+    const commit = await runBun(packageDir, "patch", "--commit", "has-bin-entries");
+    expect(commit.stderr).toContain("The patch does not include the changes to them in");
+    expect(commit.exitCode).toBe(0);
+
+    expect({ copy: isLink(copy), data: existsSync(join(copy, "data.bin")) }).toEqual({ copy: false, data: true });
   });
 
   // A patch that adds a symlink does not apply (`bad_file_mode`). Windows is skipped: git records

@@ -46,7 +46,8 @@ impl Symlinker {
 
         bun_sys::renameat(Fd::cwd(), self.dest.slice_z(), Fd::cwd(), aside.slice_z())?;
         if let Err(err) = self.symlink() {
-            let _ = bun_sys::renameat(Fd::cwd(), aside.slice_z(), Fd::cwd(), self.dest.slice_z());
+            // When the copy cannot move back, this error names where it is.
+            bun_sys::renameat(Fd::cwd(), aside.slice_z(), Fd::cwd(), self.dest.slice_z())?;
             return Err(err);
         }
         let _ = Fd::cwd().delete_tree(aside.slice_z());

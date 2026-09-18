@@ -318,8 +318,8 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
             remaining -= batch.size();
 
         while (!batch.isEmpty()) {
-            // The receiving VM is being stopped: nothing more is delivered (the
-            // rest is dropped with the proxy).
+            // The receiving VM is being stopped: nothing more is delivered. The rest of the
+            // worker's inbox is dropped once the worker is gone, the parent's with the proxy.
             if (context.isJSExecutionForbidden())
                 return false;
             auto message = batch.takeFirst();
@@ -608,8 +608,8 @@ void WorkerMessagingProxy::parentContextWillDestroy()
         m_pendingCrossVMRequests.clear();
     }
     releaseWorkerThread();
-    // The worker can move workerData ports during startup. Join it before
-    // reclaiming ports that never reached the worker global scope.
+    // After the join: until then the worker thread can still be taking its workerData ports,
+    // which it does when it first loads node:worker_threads (createNodeWorkerThreadsBinding).
     dropUndeliveredWorkerMessages();
     m_scriptExecutionContext = nullptr;
 }

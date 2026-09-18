@@ -75,7 +75,7 @@ Bun's YAML parser supports the YAML 1.2 specification, including:
 - **Scalars**: strings, numbers, booleans, null values
 - **Collections**: sequences (arrays) and mappings (objects)
 - **Anchors and Aliases**: reusable nodes with `&` and `*`. Aliased collections share identity. An alias may refer to a collection that contains it, so `Bun.YAML.parse` can return cyclic objects. YAML imported as a module cannot be cyclic.
-- **Tags**: type hints like `!!str`, `!!int`, `!!float`, `!!bool`, `!!null`
+- **Tags**: type hints like `!!str`, `!!int`, `!!float`, `!!bool`, `!!null`, and your own tags through the `tags` option (see [Custom Tags](#custom-tags))
 - **Multi-line strings**: literal (`|`) and folded (`>`) scalars
 - **Comments**: using `#`
 - **Directives**: `%YAML` and `%TAG`
@@ -108,6 +108,67 @@ summary: >
 
 const data = Bun.YAML.parse(yaml);
 ```
+
+#### Custom Tags
+
+By default, a tag the parser does not know is ignored: `!point {x: 1}` parses as `{ x: 1 }`. The `tags` option of `Bun.YAML.parse()` maps tags to handler functions. A handler receives the tagged node and its return value takes the node's place in the result:
+
+```ts
+import { YAML } from "bun";
+
+const text = `
+origin: !point [0, 0]
+motd: !upper hello
+`;
+
+const data = YAML.parse(text, {
+  tags: {
+    "!point": ([x, y]) => ({ x, y }),
+    "!upper": text => text.toUpperCase(),
+  },
+});
+// { origin: { x: 0, y: 0 }, motd: "HELLO" }
+```
+
+A handler is called with two arguments:
+
+- The node without its tag. A scalar arrives as its text, so `!id 123` passes the string `"123"`. A sequence arrives as an array and a mapping as an object. Tagged nodes inside a collection have already been converted.
+- The tag, spelled as in the `tags` option.
+
+Keys of the `tags` option name a tag in one of three ways:
+
+- A local tag: `"!point"`
+- A tag of the `tag:yaml.org,2002:` namespace, with the `!!` shorthand: `"!!timestamp"`
+- A full tag URI, as a document would write it verbatim (`!<tag:example.com,2000:app/point>`) or through a `%TAG` directive: `"tag:example.com,2000:app/point"`
+
+Every alias of an anchored tagged node shares the one value its handler returned. An exception thrown by a handler is thrown by `Bun.YAML.parse()`.
+
+`Bun.YAML.tags` holds the handlers Bun provides. They are only used when passed:
+
+- `!env NAME` is `process.env.NAME`, or `undefined` when the variable is not set.
+- `!env [NAME, fallback]` is `fallback` when the variable is not set.
+
+```ts
+import { YAML } from "bun";
+
+const text = `
+port: !env [PORT, 3000]
+database: !env DATABASE_URL
+`;
+
+const config = YAML.parse(text, { tags: YAML.tags });
+// { port: 3000, database: undefined } when neither variable is set
+
+// Combine them with your own handlers
+YAML.parse(text, {
+  tags: {
+    ...YAML.tags,
+    "!secret": name => vault.read(name),
+  },
+});
+```
+
+Modules imported with `import` or `require` are parsed without tags.
 
 #### Error Handling
 

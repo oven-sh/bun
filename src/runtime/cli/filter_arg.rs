@@ -219,14 +219,15 @@ pub(crate) fn select_packages(
         let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
             &package_json_path,
         ));
-        if ctx.workspaces && dir == &*root_dir {
-            continue;
-        }
         let real_dir: &[u8] =
             match bun_sys::realpath(resolve_path::z(dir, &mut dir_z_buf), &mut real_dir_buf) {
                 Ok(real) => real,
                 Err(_) => dir,
             };
+        // The root is not a workspace package, also when a link under a glob points back at it.
+        if ctx.workspaces && (dir == &*root_dir || real_dir == root_real_dir) {
+            continue;
+        }
         let is_link = is_link_path(&root_dir, root_real_dir, dir, real_dir);
         let slot = by_real_dir.get_or_put(real_dir)?;
         if slot.found_existing {

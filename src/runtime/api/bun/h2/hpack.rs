@@ -65,7 +65,7 @@ impl Coder {
     }
 
     /// Call at the start of every outbound header block. The update stays pending until
-    /// [`Self::size_update_sent`], so a block that is built but never sent does not lose it.
+    /// [`Self::size_update_committed`], so a block that is built but never sent does not lose it.
     pub fn write_pending_size_update(&self, block: &mut Vec<u8>) {
         let Some(min) = self.unannounced_min else {
             return;
@@ -76,7 +76,7 @@ impl Coder {
         write_table_size_update(block, self.enc_capacity);
     }
 
-    pub fn size_update_sent(&mut self) {
+    pub fn size_update_committed(&mut self) {
         self.unannounced_min = None;
     }
 

@@ -1811,6 +1811,7 @@ impl Connection {
     /// it exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
     pub fn send_header_block(&mut self, sink: &impl Sink, stream_id: u32, end_stream: bool) {
         let block = std::mem::take(&mut self.enc_buf);
+        self.hpack.size_update_committed();
         let max = (self.remote_settings.max_frame_size as usize).max(1);
         let total = block.len();
 
@@ -1846,7 +1847,6 @@ impl Connection {
             );
             off += len;
         }
-        self.hpack.size_update_sent();
         self.enc_buf = block;
         self.enc_buf.clear();
 
@@ -1943,6 +1943,7 @@ impl Connection {
     /// promised request headers staged via begin_header_block/encode_header (RFC 9113 §6.6).
     pub fn send_push_promise(&mut self, sink: &impl Sink, parent_id: u32, promised_id: u32) {
         let block = std::mem::take(&mut self.enc_buf);
+        self.hpack.size_update_committed();
         let max = (self.remote_settings.max_frame_size as usize).max(5);
 
         // First frame: PUSH_PROMISE = 4-byte promised id + (head of) the header block.
@@ -1975,7 +1976,6 @@ impl Connection {
             );
             o += len;
         }
-        self.hpack.size_update_sent();
         self.enc_buf = block;
         self.enc_buf.clear();
 

@@ -12,7 +12,7 @@ import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Duplex, Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -1270,6 +1270,115 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 7541 §4.2)", () => {
         client.destroy();
         raw.close();
       }
+    });
+
+    describe("client on a JS transport, where a large header block reaches the transport inside request()", () => {
+      // Larger than the 16 KB cork, so the block goes to the transport's write() before request() returns.
+      const oversized: Record<string, string> = {};
+      for (let i = 0; i < 90; i++) oversized[`x-big-${i}`] = Buffer.alloc(200, "v").toString() + i;
+
+      /** A raw peer on a Duplex. `onHeaders` runs inside the client's write of that HEADERS frame. */
+      function rawPeer(onHeaders: (frame: Frame, peer: Duplex) => void) {
+        let buf = Buffer.alloc(0);
+        let prefaceLeft = PREFACE.length;
+        const peer = new Duplex({
+          read() {},
+          write(chunk: Buffer, _encoding, callback) {
+            buf = Buffer.concat([buf, chunk]);
+            const skip = Math.min(prefaceLeft, buf.length);
+            prefaceLeft -= skip;
+            buf = buf.subarray(skip);
+            while (prefaceLeft === 0 && buf.length >= 9 && buf.length >= 9 + buf.readUIntBE(0, 3)) {
+              const length = buf.readUIntBE(0, 3);
+              const frame: Frame = {
+                length,
+                type: buf.readUInt8(3),
+                flags: buf.readUInt8(4),
+                streamId: buf.readUInt32BE(5) & 0x7fffffff,
+                payload: buf.subarray(9, 9 + length),
+              };
+              buf = buf.subarray(9 + length);
+              if (frame.type === FrameType.SETTINGS && (frame.flags & 0x1) === 0) {
+                peer.push(encodeFrame(FrameType.SETTINGS, 0, 0));
+                peer.push(encodeFrame(FrameType.SETTINGS, 0x1, 0));
+              } else if (frame.type === FrameType.HEADERS) {
+                onHeaders(frame, peer);
+                // On a later tick: the client drops a response that arrives before request() returns.
+                setImmediate(() => peer.push(encodeFrame(FrameType.HEADERS, 0x5, frame.streamId, Buffer.from([0x88]))));
+              }
+            }
+            callback();
+          },
+        });
+        return peer;
+      }
+
+      test("a table size that arrives during that write is announced in the next block", async () => {
+        let insideRequest = false;
+        const seen: { insideRequest: boolean; frame: Frame }[] = [];
+        const peer = rawPeer((frame, peer) => {
+          seen.push({ insideRequest, frame });
+          if (frame.streamId === 3) peer.push(encodeFrame(FrameType.SETTINGS, 0, 0, headerTableSizes(0)));
+        });
+        const client = http2.connect("http://localhost", { createConnection: () => peer });
+        client.on("error", () => {});
+        const get = async (headers: http2.OutgoingHttpHeaders = {}) => {
+          insideRequest = true;
+          const req = client.request({ ":path": "/", ...headers });
+          insideRequest = false;
+          req.on("error", () => {});
+          req.resume();
+          await once(req, "response");
+        };
+        try {
+          await get();
+          await get(oversized);
+          await get();
+          const [, second, third] = seen;
+          // Without this the test does not reach the case it is for.
+          expect({ streamId: second.frame.streamId, insideRequest: second.insideRequest }).toEqual({
+            streamId: 3,
+            insideRequest: true,
+          });
+          expect(headerBlock(third.frame)).toEqual({ sizeUpdates: [0], dynamicIndexes: [] });
+        } finally {
+          client.destroy();
+        }
+      });
+
+      test("a block that user code sends during that write does not repeat the size update", async () => {
+        let client: http2.ClientHttp2Session;
+        const seen: Frame[] = [];
+        const peer = rawPeer((frame, peer) => {
+          seen.push(frame);
+          // Lowered, then raised: the next block has to open with size updates to 0 and to 4096.
+          if (frame.streamId === 1) peer.push(encodeFrame(FrameType.SETTINGS, 0, 0, headerTableSizes(0, 4096)));
+          if (frame.streamId === 3) {
+            const nested = client.request({ ":path": "/nested" });
+            nested.on("error", () => {});
+            nested.resume();
+          }
+        });
+        client = http2.connect("http://localhost", { createConnection: () => peer });
+        client.on("error", () => {});
+        const get = async (headers: http2.OutgoingHttpHeaders = {}) => {
+          const req = client.request({ ":path": "/", ...headers });
+          req.on("error", () => {});
+          req.resume();
+          await once(req, "response");
+        };
+        try {
+          await get();
+          await get(oversized);
+          const [, outer, nested] = seen;
+          expect([outer.streamId, nested?.streamId]).toEqual([3, 5]);
+          expect(outer.payload.subarray(0, 4)).toEqual(Buffer.concat([sizeUpdate(0), sizeUpdate(4096)]));
+          // A second update to 0 makes the peer evict what the outer block has just inserted.
+          expect(headerBlock(nested)).toEqual({ sizeUpdates: [], dynamicIndexes: [] });
+        } finally {
+          client.destroy();
+        }
+      });
     });
   });
 

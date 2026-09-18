@@ -2025,7 +2025,7 @@ impl H2FrameParser {
     }
 
     /// Call before the first field of every outbound header block. Pair with
-    /// `header_block_sent`.
+    /// `commit_header_block`.
     fn begin_header_block(&self, encoded_headers: &mut Vec<u8>) {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
@@ -2034,12 +2034,13 @@ impl H2FrameParser {
         });
     }
 
-    /// Call after the block's frames are written. A block that is dropped before this keeps the
-    /// size update pending for the next one.
-    fn header_block_sent(&self) {
+    /// Call when nothing can drop the block any more, before its first frame byte is written. A
+    /// JS transport can deliver a peer SETTINGS frame during that write, and its size update
+    /// belongs to the next block.
+    fn commit_header_block(&self) {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                hpack.size_update_sent();
+                hpack.size_update_committed();
             }
         });
     }
@@ -5818,6 +5819,7 @@ impl H2FrameParser {
 
         bun_output::scoped_log!(H2FrameParser, "trailers encoded_size {}", encoded_size);
 
+        this.commit_header_block();
         let mut writer = this.to_writer();
 
         if encoded_size <= actual_max_frame_size {
@@ -5871,7 +5873,6 @@ impl H2FrameParser {
                 offset += chunk_size;
             }
         }
-        this.header_block_sent();
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         if stream.state == StreamState::HALF_CLOSED_REMOTE {
@@ -6234,6 +6235,7 @@ impl H2FrameParser {
             }
         }
 
+        this.commit_header_block();
         let max_frame =
             this.remote_settings
                 .get()
@@ -6293,7 +6295,6 @@ impl H2FrameParser {
                 offset += chunk;
             }
         }
-        this.header_block_sent();
 
         let _ = this.flush();
         Ok(JSValue::js_number(promised_id as f64))
@@ -7198,6 +7199,7 @@ impl H2FrameParser {
                 }
             }
 
+            this.commit_header_block();
             let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags,
@@ -7242,6 +7244,7 @@ impl H2FrameParser {
             let first_chunk_size = actual_max_frame_size - priority_overhead;
             let headers_flags = flags & !(HeadersFrameFlags::END_HEADERS as u8);
 
+            this.commit_header_block();
             let headers_frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: headers_flags
@@ -7290,7 +7293,6 @@ impl H2FrameParser {
                 offset += chunk_size;
             }
         }
-        this.header_block_sent();
 
         if end_stream {
             stream.end_after_headers = true;

@@ -675,6 +675,54 @@ test("importing bun:main from HTML entry preload does not crash", async () => {
   await proc.exited;
 });
 
+// The bad port makes Bun.serve() throw in internal/html's start() after its first await: the entry point fails, reported once.
+test.concurrent("bun ./index.html prints a late start() failure once", async () => {
+  using dir = tempDir("html-entry-late-rejection", {
+    "index.html": `<!DOCTYPE html><html><body><h1>Hello</h1></body></html>`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "./index.html", "--port=99999", "--hostname=127.0.0.1"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({
+    stdout,
+    rangeErrorsPrinted: stderr.match(/^RangeError: /gm)?.length ?? 0,
+    exitCode,
+  }).toEqual({ stdout: "", rangeErrorsPrinted: 1, exitCode: 1 });
+  expect(stderr).toContain(`"options.port"`);
+});
+
+test.concurrent("bun ./index.html reports a late start() failure to process listeners once", async () => {
+  using dir = tempDir("html-entry-late-rejection-listeners", {
+    "index.html": `<!DOCTYPE html><html><body><h1>Hello</h1></body></html>`,
+    "listeners.cjs": `
+      process.on("unhandledRejection", err => console.log("unhandledRejection:", err.code));
+      process.on("uncaughtException", (err, origin) => console.log("uncaughtException:", err.code, origin));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./listeners.cjs", "./index.html", "--port=99999", "--hostname=127.0.0.1"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "uncaughtException: ERR_OUT_OF_RANGE unhandledRejection\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/24031
 test.concurrent("subdirectory routes use forward slashes on Windows", async () => {
   await using dir = tempDir("html-subdir-routes", {

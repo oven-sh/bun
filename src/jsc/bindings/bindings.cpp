@@ -3147,8 +3147,7 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* global,
     auto& vm = JSC::getVM(global);
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
     global->moduleLoader()->removeEntry(identifier); // takes the loader's cellLock itself
-    // A CommonJS module is cached in the require map. Its loader entry only re-exports that cached module,
-    // so the next load evaluates the file again only when both are gone.
+    // A CommonJS loader entry only re-exports the module cached in the require map, so re-evaluating needs both gone.
     uncheckedDowncast<Zig::GlobalObject>(global)->requireMap()->remove(global, JSC::jsString(vm, identifier.string()));
 }
 

@@ -2377,7 +2377,12 @@ pub mod parse_worker {
         }
         *step = Step::Parse;
 
-        let entry_contents: &[u8] = entry.contents.as_slice();
+        // The CSS tokenizer needs valid UTF-8; decode before `source` is built so offsets match.
+        let entry_contents: &[u8] = if loader == Loader::Css {
+            strings::replace_invalid_utf8(entry.contents.as_slice(), bump)
+        } else {
+            entry.contents.as_slice()
+        };
         let is_empty = strings::is_all_whitespace(entry_contents);
 
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the

@@ -23,8 +23,8 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
-    initialize_store, invalid_package_id,
+    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, ResolutionTag,
+    buntaghashbuf_make, initialize_store, invalid_package_id,
 };
 
 #[inline]
@@ -160,7 +160,7 @@ pub fn do_patch_commit(
     };
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
-    let (changes_dir, pkg): (Vec<u8>, Package) = match arg_kind {
+    let (changes_dir, pkg, other_store_folders): (Vec<u8>, Package, Vec<Vec<u8>>) = match arg_kind {
         PatchArgKind::Path => 'result: {
             let package_json_path =
                 resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
@@ -251,7 +251,7 @@ pub fn do_patch_commit(
                 }
             };
 
-            break 'result (argument.to_vec(), actual_package);
+            break 'result (argument.to_vec(), actual_package, Vec::new());
         }
         PatchArgKind::NameAndVersion => 'brk: {
             let (name, version) = Dependency::split_name_and_maybe_version(argument);
@@ -264,14 +264,18 @@ pub fn do_patch_commit(
             )
             .as_bytes()
             .to_vec();
-            let changes_dir = installed_module_folder(
+            let (changes_dir, other_store_folders) = installed_module_folder(
                 manager,
                 &lockfile,
                 pkg_id,
                 workspace_package_id,
                 hoisted_folder,
             );
-            break 'brk (changes_dir, *lockfile.packages.get(pkg_id as usize));
+            break 'brk (
+                changes_dir,
+                *lockfile.packages.get(pkg_id as usize),
+                other_store_folders,
+            );
         }
     };
     let changes_dir = resolve_symlinked_folder(changes_dir);
@@ -544,6 +548,19 @@ pub fn do_patch_commit(
                 bstr::BStr::new(old_folder),
                 bstr::BStr::new(new_folder)
             );
+            // `bun patch` in another directory prepares the entry that the workspace there loads.
+            if !other_store_folders.is_empty() {
+                bun_core::pretty!(
+                    "\n<b>{}<r> has more than one folder. To commit another one, run:\n\n",
+                    bstr::BStr::new(name),
+                );
+            }
+            for folder in &other_store_folders {
+                bun_core::pretty!(
+                    "  <cyan>bun patch --commit '{}'<r>\n",
+                    bstr::BStr::new(folder),
+                );
+            }
             Output::flush();
             drop(contents);
             return Ok(None);
@@ -896,7 +913,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     version,
                 );
 
-                let module_folder_ = installed_module_folder(
+                let (module_folder_, _) = installed_module_folder(
                     manager,
                     &manager.lockfile,
                     pkg_id,
@@ -1079,20 +1096,25 @@ fn installed_module_folder(
     pkg_id: PackageID,
     workspace_package_id: PackageID,
     hoisted_folder: Vec<u8>,
-) -> Vec<u8> {
+) -> (Vec<u8>, Vec<Vec<u8>>) {
     if folder_kind(&hoisted_folder) != FolderKind::Missing {
-        return hoisted_folder;
+        return (hoisted_folder, Vec::new());
     }
-    isolated_store_folder(manager, lockfile, pkg_id, workspace_package_id).unwrap_or(hoisted_folder)
+    let mut store_folders =
+        isolated_store_folders(manager, lockfile, pkg_id, workspace_package_id).into_iter();
+    match store_folders.next() {
+        Some(folder) => (folder, store_folders.collect()),
+        None => (hoisted_folder, Vec::new()),
+    }
 }
 
-/// A package has one store entry for each peer resolution: the one that the workspace loads wins.
-fn isolated_store_folder(
+/// A package has one store entry for each peer resolution: the ones that the workspace loads first.
+fn isolated_store_folders(
     manager: &PackageManager,
     lockfile: &Lockfile,
     pkg_id: PackageID,
     workspace_package_id: PackageID,
-) -> Option<Vec<u8>> {
+) -> Vec<Vec<u8>> {
     let store = handle_oom(build_store(
         manager,
         lockfile,
@@ -1103,10 +1125,15 @@ fn isolated_store_folder(
     ));
     let name = lockfile.packages.items_name()[pkg_id as usize]
         .slice(lockfile.buffers.string_bytes.as_slice());
-    let entry_node_ids = store.entries.items_node_id();
+    let resolutions = lockfile.packages.items_resolution();
     let entry_dependencies = store.entries.items_dependencies();
     let node_pkg_ids = store.nodes.items_pkg_id();
-    let entry_pkg_id = |entry: usize| node_pkg_ids[entry_node_ids[entry].get() as usize];
+    let entry_pkgs: Vec<PackageID> = store
+        .entries
+        .items_node_id()
+        .iter()
+        .map(|node_id| node_pkg_ids[node_id.get() as usize])
+        .collect();
 
     let project_folder = |entry: usize| -> Option<Vec<u8>> {
         let mut folder = Vec::new();
@@ -1125,36 +1152,49 @@ fn isolated_store_folder(
         (folder_kind(&folder) == FolderKind::RealDir).then_some(folder)
     };
 
-    // Breadth first from the current package: the nearest entry is the one it loads.
-    let mut seen = vec![false; entry_node_ids.len()];
-    let mut queue: Vec<usize> = Vec::new();
-    if let Some(start) =
-        (0..entry_node_ids.len()).find(|&entry| entry_pkg_id(entry) == workspace_package_id)
+    // Breadth first from the current package, then the entries that it does not load.
+    let mut seen = vec![false; entry_pkgs.len()];
+    let mut queue: Vec<usize> = Vec::with_capacity(entry_pkgs.len());
+    let mut enqueue = |entry: usize, queue: &mut Vec<usize>| {
+        let pkg = entry_pkgs[entry];
+        // Only one entry of a workspace has its dependencies: a `workspace:` range links another.
+        let same_package = matches!(
+            resolutions[pkg as usize].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace
+        );
+        let entries = if same_package {
+            0..entry_pkgs.len()
+        } else {
+            entry..entry + 1
+        };
+        for entry in entries {
+            if entry_pkgs[entry] == pkg && !core::mem::replace(&mut seen[entry], true) {
+                queue.push(entry);
+            }
+        }
+    };
+    if let Some(start) = entry_pkgs
+        .iter()
+        .position(|&pkg| pkg == workspace_package_id)
     {
-        seen[start] = true;
-        queue.push(start);
+        enqueue(start, &mut queue);
     }
     let mut next = 0;
     while let Some(&entry) = queue.get(next) {
         next += 1;
-        if entry_pkg_id(entry) == pkg_id {
-            if let Some(folder) = project_folder(entry) {
-                return Some(folder);
-            }
-        }
         for dependency in entry_dependencies[entry].slice() {
-            let Some(dependency_entry) = dependency.entry_id.try_get() else {
-                continue;
-            };
-            if !core::mem::replace(&mut seen[dependency_entry as usize], true) {
-                queue.push(dependency_entry as usize);
+            if let Some(dependency_entry) = dependency.entry_id.try_get() {
+                enqueue(dependency_entry as usize, &mut queue);
             }
         }
     }
+    queue.extend((0..entry_pkgs.len()).filter(|&entry| !seen[entry]));
 
-    (0..entry_node_ids.len())
-        .filter(|&entry| !seen[entry] && entry_pkg_id(entry) == pkg_id)
-        .find_map(project_folder)
+    queue
+        .into_iter()
+        .filter(|&entry| entry_pkgs[entry] == pkg_id)
+        .filter_map(project_folder)
+        .collect()
 }
 
 /// `git diff --no-index` reads a symlink operand as a file, not as the folder it points to.

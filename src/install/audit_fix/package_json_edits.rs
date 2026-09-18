@@ -2,8 +2,7 @@ use bun_ast::{E, Expr};
 use bun_collections::VecExt as _;
 use bun_collections::index_sort;
 use bun_core::strings;
-use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string, platform};
 use bun_semver::{PinnedVersion, Version};
 
 use crate::bun_fs::FileSystem;
@@ -116,13 +115,11 @@ fn target_for(manager: &PackageManager, owner: PackageID) -> Option<WorkspaceTar
         ResolutionTag::Workspace => {
             let buf = lockfile.buffers.string_bytes.as_slice();
             let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
-            let mut path_buf = path_buffer_pool::get();
             Some(WorkspaceTarget {
                 name: Box::from(lockfile.packages.items_name()[owner as usize].slice(buf)),
                 name_hash: Some(lockfile.packages.items_name_hash()[owner as usize]),
-                package_json_path: join_abs_string_buf::<platform::Auto>(
+                package_json_path: join_abs_string::<platform::Auto>(
                     top_level,
-                    &mut path_buf.0,
                     &[res.workspace().slice(buf), b"package.json"],
                 )
                 .into(),

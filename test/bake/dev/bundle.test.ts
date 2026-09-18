@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import { MAX_PATH_BYTES } from "harness";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -97,6 +98,65 @@ devTest("importing a file before it is created", {
     });
 
     await c.expectMessage("value: 456");
+  },
+});
+// Past a path buffer, and past the 4 KiB thread-local join buffers, on every platform.
+const pastPathBuffer = Math.max(MAX_PATH_BYTES, 4096) + 1024;
+// After a failed resolution the dev server joins the specifier into a path buffer
+// twice: to bust the resolver's directory cache, then to watch the directory it names.
+devTest("unresolved import of a specifier longer than a path buffer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `console.log('value: ' + 123);`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("value: 123");
+
+    const specifier = "./" + Buffer.alloc(pastPathBuffer, "d/").toString() + "x";
+    await dev.write("index.ts", `import ${JSON.stringify(specifier)};`, {
+      errors: [`index.ts:1:8: error: Could not resolve: "${specifier}"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log('value: ' + 456);`);
+    });
+    await c.expectMessage("value: 456");
+  },
+});
+// A CSS url() without "./" skips the cache bust and reaches only the directory watch.
+devTest("unresolved css url() longer than a path buffer", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["styles.css"] }),
+    "styles.css": `
+      body {
+        background-image: url(${Buffer.alloc(pastPathBuffer, "a").toString()});
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("styles.css", `body { color: blue; }`);
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
+// The HTML scanner joins a rooted src with the project root, and a bare src with the page's directory.
+devTest("unresolved html script src longer than a path buffer", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: [
+        "/" + Buffer.alloc(pastPathBuffer, "a").toString() + ".js",
+        Buffer.alloc(pastPathBuffer, "b").toString() + ".js",
+      ],
+    }),
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("index.html", emptyHtmlFile({}));
+    expect((await dev.fetch("/")).status).toBe(200);
   },
 });
 devTest("default export same-scope handling", {

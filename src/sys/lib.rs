@@ -807,7 +807,7 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
         // ENAMETOOLONG on
         // overflow, never silently truncate (would open the wrong directory).
         if path.len() >= buf.len() {
-            return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(path));
         }
         let len = path.len();
         buf[..len].copy_from_slice(path);
@@ -2593,9 +2593,7 @@ mod posix_impl {
         let n = n as usize;
         // Truncation guard + NUL-terminate.
         if n >= buf.len() {
-            return Err(
-                Error::from_code_int(libc::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes())
-            );
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes()));
         }
         buf[n] = 0;
         Ok(n)
@@ -2747,9 +2745,7 @@ mod posix_impl {
         );
         let n = n as usize;
         if n >= buf.len() {
-            return Err(
-                Error::from_code_int(libc::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes())
-            );
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes()));
         }
         buf[n] = 0;
         Ok(n)
@@ -4121,10 +4117,12 @@ mod windows_impl {
         let mut db = bun_paths::path_buffer_pool::get();
         let d = super::get_fd_path(dirfd, &mut db)?;
         let mut dj = bun_paths::path_buffer_pool::get();
-        let d_abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
+        let Some(d_abs) = bun_paths::resolve_path::join_z_buf_checked::<bun_paths::platform::Windows>(
             &mut dj.0,
             &[d, dest.as_bytes()],
-        );
+        ) else {
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::symlink).with_path(dest.as_bytes()));
+        };
         sys_uv::symlink_uv(target, d_abs, 0)
     }
     pub fn readlinkat(fd: impl AsFd, path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
@@ -4133,10 +4131,12 @@ mod windows_impl {
         let mut db = bun_paths::path_buffer_pool::get();
         let d = super::get_fd_path(fd, &mut db)?;
         let mut dj = bun_paths::path_buffer_pool::get();
-        let abs = bun_paths::resolve_path::join_string_buf_z::<bun_paths::platform::Windows>(
+        let Some(abs) = bun_paths::resolve_path::join_z_buf_checked::<bun_paths::platform::Windows>(
             &mut dj.0,
             &[d, path.as_bytes()],
-        );
+        ) else {
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes()));
+        };
         readlink(abs, buf)
     }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
@@ -6116,7 +6116,7 @@ pub fn openat_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd
     let dir = dir.as_fd();
     let mut buf = bun_paths::path_buffer_pool::get();
     if path.len() >= buf.0.len() {
-        return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
+        return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(path));
     }
     buf.0[..path.len()].copy_from_slice(path);
     buf.0[path.len()] = 0;
@@ -6425,7 +6425,8 @@ pub fn normalize_path_windows_opts<'a>(
                 /*PRESERVE_TRAILING_SLASH*/ false,
                 /*ZERO_TERMINATE*/ true,
                 /*ADD_NT_PREFIX*/ true,
-            >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
+            >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>)
+            .ok_or_else(too_long)?;
             let len = norm.len();
             // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
             return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
@@ -6444,7 +6445,8 @@ pub fn normalize_path_windows_opts<'a>(
             /*PRESERVE_TRAILING_SLASH*/ false,
             /*ZERO_TERMINATE*/ true,
             /*ADD_NT_PREFIX*/ false,
-        >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
+        >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>)
+        .ok_or_else(too_long)?;
         let len = norm.len();
         // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
         return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
@@ -6606,6 +6608,7 @@ pub fn normalize_path_windows_opts<'a>(
         b'\\' as u16,
         bun_paths::is_sep_any_t::<u16>,
     )
+    .ok_or_else(too_long)?
     .len();
     // A lone-separator suffix means `rel` collapsed to nothing: drop it for a
     // directory-path prefix, keep it for a bare device name where it selects
@@ -9160,7 +9163,7 @@ pub fn write_file_with_path_buffer(
         PathOrFileDescriptor::Fd(fd) => fd,
         PathOrFileDescriptor::Path(bytes) => {
             if bytes.len() >= path_buf.0.len() {
-                return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(bytes));
+                return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(bytes));
             }
             path_buf.0[..bytes.len()].copy_from_slice(bytes);
             path_buf.0[bytes.len()] = 0;

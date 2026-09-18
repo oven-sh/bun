@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { resolve } from "path";
 
 declare global {
@@ -198,7 +198,6 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -1063,4 +1062,55 @@ it("object loader: an error thrown by a getter on the exports object rejects the
     },
   });
   expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
+});
+
+it.concurrent("an onResolve result longer than a path buffer is an error the importer can catch", async () => {
+  // The path a plugin returns is not checked against anything, and the loader
+  // ran it through fixed-size path buffers, which aborted the process. The
+  // plugin is reached through a namespace so that it is asked about a specifier
+  // that is not on disk. 5000 bytes is longer than a path buffer everywhere but
+  // Windows, where it is an ordinary missing file.
+  using dir = tempDir("plugin-onresolve-long-path", {
+    "preload.js": `
+      Bun.plugin({
+        name: "resolve-to-long-path",
+        setup(build) {
+          build.onResolve({ filter: /.*/, namespace: "zzq" }, () => ({
+            path: "/" + Buffer.alloc(5000, "a").toString(),
+          }));
+        },
+      });
+    `,
+    "entry.js": `
+      const attempt = async fn => {
+        try {
+          await fn();
+          return "loaded";
+        } catch (e) {
+          return e instanceof Error || typeof e?.message === "string" ? "error" : "threw " + typeof e;
+        }
+      };
+      console.log(
+        JSON.stringify({
+          viaRequire: await attempt(() => require("zzq:anything")),
+          viaImport: await attempt(() => import("zzq:anything-else")),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ viaRequire: "error", viaImport: "error" }),
+    stderr: "",
+    exitCode: 0,
+  });
 });

@@ -199,10 +199,13 @@ impl History {
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let path = path::resolve_path::join_z_buf::<path::platform::Auto>(
-            &mut path_buf,
+        // No history file when `$HOME` is too long to hold one.
+        let Some(path) = path::resolve_path::join_z_buf_checked::<path::platform::Auto>(
+            &mut path_buf[..],
             &[home_path, HISTORY_FILENAME],
-        );
+        ) else {
+            return Ok(());
+        };
         self.file_path = Some(Box::<[u8]>::from(path.as_bytes()));
 
         let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path) {
@@ -730,9 +733,7 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
         return ReplResult::SkipEval;
     }
 
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let path_z = path::resolve_path::z(filename, &mut path_buf);
-    let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), path_z) {
+    let content: Box<[u8]> = match sys::File::read_from(Fd::cwd(), filename) {
         sys::Result::Ok(bytes) => bytes.into(),
         sys::Result::Err(err) => {
             repl.print_error(format_args!("{}\n", err));

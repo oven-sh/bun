@@ -17,6 +17,7 @@ import {
   isPosix,
   isWindows,
   libcPathForDlopen,
+  MAX_PATH_BYTES,
   runFixtureMaxRSS,
   tempDir,
   tls,
@@ -5436,5 +5437,51 @@ describe("requests pipelined in one read", () => {
       );
       expect({ ran, responses: responses(reply) }).toEqual({ ran: expected, responses: expected.length });
     });
+  });
+});
+
+// A request path is chosen by the client. A handler that import()s a file named
+// after it hands the module resolver a path of any length, and one that did not
+// fit a path buffer aborted the server process:
+//   panic: range end index 4153 out of range for slice of length 4096
+it("a handler that import()s a path taken from the request survives one longer than a path buffer", async () => {
+  // Joined onto the routes directory this is longer than a path buffer, and
+  // shorter than the specifier length that import() rejects up front. A
+  // request line cannot carry a Windows path buffer (98302 bytes).
+  const pathLength = isWindows ? 4090 : MAX_PATH_BYTES - 6;
+  using dir = tempDir("serve-import-request-path", {
+    "routes/hello.js": `export default "hello";`,
+    "server.js": `
+      import { join } from "node:path";
+      const ROOT = join(import.meta.dir, "routes");
+      using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          try {
+            const route = await import(join(ROOT, new URL(req.url).pathname));
+            return new Response(route.default);
+          } catch {
+            return new Response("no such route", { status: 404 });
+          }
+        },
+      });
+      const long = await fetch(new URL("/" + Buffer.alloc(${pathLength}, "a").toString(), server.url));
+      const good = await fetch(new URL("/hello.js", server.url));
+      console.log(JSON.stringify({ long: long.status, good: [good.status, await good.text()] }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ long: 404, good: [200, "hello"] }),
+    stderr: "",
+    exitCode: 0,
   });
 });

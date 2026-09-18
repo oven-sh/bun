@@ -8,6 +8,7 @@ import {
   isASAN,
   isDebug,
   isWindows,
+  MAX_PATH_BYTES,
   tempDir,
   tempDirWithFiles,
   tempDirWithFilesAnon,
@@ -2215,3 +2216,265 @@ test.skipIf(isWindows)(
   },
   30_000,
 );
+
+describe.concurrent("source whose path is close to or beyond the path buffer size", () => {
+  // The path itself fits in the buffer (and, on Linux and macOS, on disk); the
+  // paths derived from it by relativizing against the cwd below do not.
+  const PATH_LENGTH = MAX_PATH_BYTES - 32;
+  // Not even the path itself fits. Only a plugin or the `files` map can hand the
+  // bundler one of these: nothing on disk can be this long.
+  const OVERSIZED_PATH_LENGTH = MAX_PATH_BYTES * 2;
+
+  async function build(mode: string, length: number) {
+    using dir = tempDir("bun-build-long-source-path", {});
+    // Relativizing against the cwd adds `../` per level of the cwd outside the
+    // common prefix, so a cwd this deep puts the relative form of the long
+    // path past MAX_PATH_BYTES however long the temp dir itself is.
+    const depth = Math.ceil((String(dir).length + 64) / 3);
+    const cwd = join(String(dir), "cwd", ...Array(depth).fill("a"));
+    mkdirSync(cwd, { recursive: true });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "fixtures", "long-source-path-fixture.ts"),
+        mode,
+        String(length),
+        String(dir),
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The bug was a panic, which shows up here as a non-zero exit and the
+    // crash report on stderr.
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const result = JSON.parse(stdout);
+    expect(result.path).toHaveLength(length);
+    // The display form Bun derives from the path, as node computes it.
+    const relativePath = path.relative(result.cwd, result.path).replaceAll("\\", "/");
+    expect(relativePath.length).toBeGreaterThan(MAX_PATH_BYTES);
+    return { ...result, relativePath };
+  }
+
+  async function bundle(mode: string, length = PATH_LENGTH) {
+    const result = await build(mode, length);
+    expect(result.logs).toEqual([]);
+    expect(result.success).toBe(true);
+    return result;
+  }
+
+  // An output path has to fit a path buffer even when nothing is written to
+  // disk. [dir] is the source's directory relative to the root (the cwd here),
+  // with each `..` level written as `_.._`, so a naming template that starts
+  // with it renders an output path even longer than the source path.
+  async function expectOutputPathTooLong(mode: string, template: string, named: "relativePath" | "path") {
+    const result = await build(mode, PATH_LENGTH);
+    const { success, logs, notes, outputs } = result;
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toStartWith(`BuildMessage: Output path for "${result[named]}" is too long (`);
+    expect(logs[0]).toEndWith(` bytes, the limit on this platform is ${MAX_PATH_BYTES - 1 - ".map".length})`);
+    expect(notes).toEqual([`naming template is "${template}"`]);
+    expect(outputs).toEqual([]);
+    expect(success).toBe(false);
+  }
+
+  test("as an in-memory entry point", async () => {
+    const { inputs, sources, relativePath } = await bundle("entry");
+    expect(inputs).toEqual([relativePath]);
+    expect(sources).toEqual([relativePath]);
+  });
+
+  // The output path is the source path without its root, so it still fits. On Windows the
+  // `..` levels up to the drive root are kept as `_.._`, which puts it past the limit.
+  test("as an in-memory entry point named with the default [dir] template", async () => {
+    if (isWindows) return expectOutputPathTooLong("entry-dir", "[dir]/[name].[ext]", "relativePath");
+    const { inputs, sources, outputs, path: entryPath, relativePath } = await bundle("entry-dir");
+    expect(inputs).toEqual([relativePath]);
+    expect(sources).toHaveLength(1);
+    expect(outputs.map((output: string) => output.replaceAll("\\", "/"))).toEqual([
+      expect.stringMatching(/e+entry\.js$/),
+      expect.stringMatching(/e+entry\.js\.map$/),
+    ]);
+    expect(outputs[0].length).toBeGreaterThan(entryPath.length - 8);
+  });
+
+  // On Windows the `files` map never matches a key longer than a path buffer,
+  // so such an entry point fails to resolve before the bundler sees it.
+  test.skipIf(isWindows)("as an in-memory entry point longer than the path buffer", async () => {
+    const { inputs, sources, relativePath } = await bundle("entry", OVERSIZED_PATH_LENGTH);
+    expect(inputs).toEqual([relativePath]);
+    expect(sources).toEqual([relativePath]);
+  });
+
+  test.skipIf(isWindows)(
+    "as an in-memory entry point longer than the path buffer, named with the default [dir] template",
+    async () => {
+      // [dir] is worked out from the entry point's directory, which does not fit either.
+      const { success, logs, path: entryPath } = await build("entry-dir", OVERSIZED_PATH_LENGTH);
+      expect(logs).toEqual([
+        `BuildMessage: ENAMETOOLONG: Failed to get full path for directory '${path.dirname(entryPath)}'`,
+      ]);
+      expect(success).toBe(false);
+    },
+  );
+
+  test("as an in-memory asset", async () => {
+    const { outputs } = await bundle("asset");
+    expect(outputs).toEqual([
+      expect.stringMatching(/(^|[\\/])entry\.js$/),
+      expect.stringMatching(/(^|[\\/])entry\.js\.map$/),
+      expect.stringMatching(/(^|[\\/])e*image-[a-z0-9]+\.png$/),
+    ]);
+  });
+
+  test("as an in-memory asset named with a [dir] template", async () => {
+    // [dir] is relative to the cwd, and every `..` level of it is written as `_.._`.
+    await expectOutputPathTooLong("asset-dir", "./[dir]/[name]-[hash].[ext]", "path");
+  });
+
+  test("as a dynamically imported in-memory module, with chunks named with a [dir] template", async () => {
+    if (isWindows) return expectOutputPathTooLong("chunk-dir", "./[dir]/[name]-[hash].[ext]", "path");
+    const { outputs } = await bundle("chunk-dir");
+    expect(outputs.map((output: string) => output.replaceAll("\\", "/"))).toEqual([
+      "./entry.js",
+      expect.stringMatching(/^\.\/d+\/.*e+lazy-[a-z0-9]+\.js$/),
+      "./entry.js.map",
+      expect.stringMatching(/^\.\/d+\/.*e+lazy-[a-z0-9]+\.js\.map$/),
+    ]);
+  });
+
+  // A real path can only get close to the buffer size where the buffer is
+  // sized after PATH_MAX; the Windows buffer is far larger than any path the
+  // filesystem accepts.
+  test.skipIf(isWindows)("as an entry point on disk", async () => {
+    const { inputs, sources, relativePath } = await bundle("entry-on-disk");
+    expect(inputs).toEqual([relativePath]);
+    expect(sources).toEqual([relativePath]);
+  });
+
+  test.skipIf(isWindows)("as an imported file on disk", async () => {
+    const { inputs, sources, relativePath } = await bundle("import");
+    expect(inputs).toEqual(["entry.js", relativePath]);
+    expect(sources).toEqual([relativePath, "entry.js"]);
+  });
+
+  test.skipIf(isWindows)("as a bun build --no-bundle entry point on disk", async () => {
+    // The transform-only path relativizes the entry for its display path and
+    // for the entry naming placeholders.
+    await bundle("no-bundle");
+  });
+
+  test.skipIf(isWindows)("as an HTML file on disk imported by a server-target entry point", async () => {
+    // The HTML chunk is an entry point of its own, named after its directory.
+    await expectOutputPathTooLong("html-import", "[dir]/[name].[ext]", "relativePath");
+  });
+
+  test.skipIf(isWindows)("as an imported file on disk, with an onResolve plugin that declines it", async () => {
+    const { inputs, sources, relativePath } = await bundle("import-plugin");
+    expect(inputs).toEqual(["entry.js", relativePath]);
+    expect(sources).toEqual([relativePath, "entry.js"]);
+  });
+
+  for (const [description, length] of [
+    ["close to the path buffer size", PATH_LENGTH],
+    ["longer than the path buffer", OVERSIZED_PATH_LENGTH],
+  ] as const) {
+    test(`as a path ${description} returned by an onResolve plugin and loaded by an onLoad plugin`, async () => {
+      const { inputs, sources, relativePath } = await bundle("load-plugin", length);
+      expect(inputs).toEqual(["entry.js", relativePath]);
+      expect(sources).toEqual([relativePath, "entry.js"]);
+    });
+
+    test(`as a path ${description} returned by an onResolve plugin that does not exist on disk`, async () => {
+      const { success, logs, path: resolvedPath } = await build("resolve-plugin", length);
+      // Reading it fails (ENOENT, or ENAMETOOLONG once it is longer than the
+      // filesystem allows) and is reported like any other unreadable import.
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toMatch(/^BuildMessage: (File not found|\w+ reading file:) "/);
+      expect(logs[0]).toContain(`"${resolvedPath}"`);
+      expect(success).toBe(false);
+    });
+  }
+});
+
+describe.concurrent("import paths longer than the path buffer", () => {
+  // Longer than a path buffer on POSIX, and than the fixed 4 KiB join buffer on every platform.
+  const long = Buffer.alloc(5000, "a").toString();
+
+  test("bun build --external <absolute path> keeps the import external", async () => {
+    const external = join(path.resolve("/"), long);
+    using dir = tempDir("bun-build-long-external", {
+      "e.js": `import value from ${JSON.stringify(external)}; console.log(value);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "e.js", "--external", external, "--outdir", "o"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("e.js");
+    // An import that was not external would have failed to resolve.
+    expect(readFileSync(join(String(dir), "o", "e.js"), "utf8")).toContain(long);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun build of an HTML file whose rooted <script src> does not resolve", async () => {
+    using dir = tempDir("bun-build-html-long-rooted-src", {
+      "index.html": `<html><body><script src="/${long}"></script></body></html>`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "index.html", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`error: Could not resolve: "/${long}"`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("Bun.build of an HTML file whose rooted <script src> is near or over the path buffer size", async () => {
+    // Rooted `/...` src values are re-based onto the project root. Sweep the
+    // buffer size so that at least one resolved path lands in the window where
+    // the path itself fits but the extensions the resolver probes do not, plus
+    // one well past it.
+    using dir = tempDir("bun-build-html-rooted-src-sweep", {
+      "build.mjs": `
+        import { writeFileSync } from "node:fs";
+        const max = ${MAX_PATH_BYTES};
+        const lengths = [...Array.from({ length: 16 }, (_, i) => max - 8 + i), max + 1000];
+        const pad = n => Buffer.alloc(Math.max(1, n - import.meta.dir.length), "a");
+        const tags = lengths
+          .flatMap(n => [
+            \`<script src="/\${pad(n - 4)}.js"></script>\`,
+            \`<script src="/foo..\${pad(n - 7)}/"></script>\`,
+          ])
+          .join("");
+        writeFileSync("./index.html", \`<html><body>\${tags}</body></html>\`);
+        const result = await Bun.build({ entrypoints: ["./index.html"], throw: false });
+        console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.name) }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ success: false, logs: expect.arrayContaining(["ResolveMessage"]) });
+    expect(exitCode).toBe(0);
+  });
+});

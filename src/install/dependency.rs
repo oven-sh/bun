@@ -531,11 +531,14 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
     Err(PackageNameError::InvalidPackageName)
 }
 
+/// `NAME_MAX`, above npm's 214. Names are written to fixed path buffers with no length check.
+pub(crate) const MAX_INSTALL_FOLDER_NAME_LEN: usize = 255;
+
 /// A dependency name/alias becomes a directory under `node_modules/`. Names
 /// come from untrusted `package.json` / manifest keys, so reject anything that
 /// could resolve outside that directory. `@scope/name` stays valid.
 pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
-    if name.is_empty() {
+    if name.is_empty() || name.len() > MAX_INSTALL_FOLDER_NAME_LEN {
         return false;
     }
 

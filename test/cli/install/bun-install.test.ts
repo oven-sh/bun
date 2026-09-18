@@ -1,6 +1,6 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
-import { readFileSync, readlinkSync, realpathSync, statSync } from "fs";
+import { mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, writeFileSync } from "fs";
 import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
@@ -8,6 +8,7 @@ import {
   bunEnv as env,
   isWindows,
   joinP,
+  MAX_PATH_BYTES,
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
@@ -17,7 +18,7 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
-import { basename, join, resolve, sep } from "path";
+import { basename, dirname, join, resolve, sep } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -10563,6 +10564,280 @@ it("does not install transitive file: dependencies with overlong folder targets"
   expect(exitCode).toBe(1);
 });
 
+// Resolving a folder dependency appends "/package.json" and a NUL to its absolute path in a
+// path buffer. The absolute path itself is checked against the buffer when package.json is
+// parsed, but the appended bytes were not, so a folder path within 13 bytes of the buffer size
+// aborted the install. Windows' buffer is larger than any path the OS accepts, so the boundary
+// cannot be reached there.
+describe.skipIf(isWindows)("file: dependency whose package.json path is around the path buffer size", () => {
+  // A relative path of exactly `bytes` bytes made of one letter directory names, so that a
+  // path which fits the buffer is rejected by the OS as missing, not as too long.
+  function pathOfLength(bytes: number) {
+    const tail = bytes % 2 === 0 ? "dd" : "d";
+    return Buffer.alloc(bytes - tail.length, "d/").toString() + tail;
+  }
+
+  // `packageJsonPathBytes` is the length of `<project>/<folder>/package.json`.
+  async function installFolderDependency(projectDir: string, packageJsonPathBytes: number) {
+    const folder = pathOfLength(
+      packageJsonPathBytes - Buffer.byteLength(projectDir) - "/".length - "/package.json".length,
+    );
+    await writeFile(
+      join(projectDir, "package.json"),
+      JSON.stringify({ name: "my-app", dependencies: { dep: `file:./${folder}` } }),
+    );
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { folder, err, exitCode };
+  }
+
+  it("is looked up on disk when the path and its NUL terminator fit", async () => {
+    using dir = tempDir("file-dep-path-buffer-fits", {});
+
+    const { folder, err, exitCode } = await installFolderDependency(realpathSync(String(dir)), MAX_PATH_BYTES - 1);
+
+    expect(err).toContain(`error: Could not find package.json for "file:${folder}"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it.each([
+    ["exactly the buffer size, leaving no room for the NUL terminator", 0],
+    // The folder path alone fits; "/package.json" is what does not.
+    ['longer than the buffer by less than the appended "/package.json"', 8],
+  ])("fails with ENAMETOOLONG when it is %s", async (_, extraBytes) => {
+    using dir = tempDir("file-dep-path-buffer-overflow", {});
+
+    const { err, exitCode } = await installFolderDependency(realpathSync(String(dir)), MAX_PATH_BYTES + extraBytes);
+
+    expect(err).toContain("error: ENAMETOOLONG");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// `overrides` and `resolutions` are not rewritten relative to the project when package.json is
+// parsed, so the folder path reaches the resolver as written.
+it.each(["resolutions", "overrides"])(
+  'fails with ENAMETOOLONG for a file: path in root package.json "%s" that does not fit the path buffer',
+  async field => {
+    using dir = tempDir("override-file-dep-too-long", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { dep: "1.0.0" },
+        [field]: { dep: "file:./" + Buffer.alloc(MAX_PATH_BYTES + 1000, "a").toString() },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain("error: ENAMETOOLONG");
+    expect(err).toContain("error occurred while resolving dep");
+    expect(err).toContain("failed to resolve");
+    expect(exitCode).toBe(1);
+  },
+);
+
+// The lockfile is not validated the way package.json is, and each linker copies the folder of
+// a `file:` package from it.
+it.each([
+  ["hoisted", 'refusing to install dependency okpkg with unsafe folder path "aaa'],
+  ["isolated", "ENAMETOOLONG"],
+])(
+  "%s linker does not install a bun.lock folder package whose path does not fit the path buffer",
+  async (linker, message) => {
+    const folder = Buffer.alloc(MAX_PATH_BYTES + 1000, "a").toString();
+    using dir = tempDir("lockfile-folder-too-long", {
+      "package.json": JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { okpkg: "file:./okpkg" } }),
+      "okpkg/package.json": JSON.stringify({ name: "okpkg", version: "1.0.0" }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "foo", dependencies: { okpkg: "file:./okpkg" } } },
+        packages: { okpkg: [`okpkg@file:${folder}`, {}] },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", linker],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain(message);
+    expect(out).not.toContain("1 package installed");
+    expect(await exists(join(String(dir), "node_modules", "okpkg", "package.json"))).toBe(false);
+    expect(exitCode).toBe(1);
+  },
+);
+
+// `--cwd` is staged in a path buffer before chdir. Values that did not leave room for the NUL
+// terminator used to abort the process; the buffer on Windows is larger than any command line,
+// so only POSIX is affected.
+describe.concurrent.skipIf(isWindows)("--cwd that does not fit the path buffer", () => {
+  const name = (length: number) => Buffer.alloc(length, "a").toString();
+
+  it.each([
+    ["install, MAX_PATH_BYTES - 1 bytes (rejected by the kernel)", "install", name(MAX_PATH_BYTES - 1)],
+    ["install, exactly MAX_PATH_BYTES bytes", "install", name(MAX_PATH_BYTES)],
+    ["install, longer than MAX_PATH_BYTES", "install", name(MAX_PATH_BYTES + 1000)],
+    ["install, ./ prefix longer than MAX_PATH_BYTES", "install", "./" + name(MAX_PATH_BYTES + 1000)],
+    ["add, longer than MAX_PATH_BYTES", "add", name(MAX_PATH_BYTES + 1000)],
+  ])("%s", async (_, subcommand, cwd) => {
+    using dir = tempDir("install-cwd-too-long", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), subcommand, "--cwd", cwd, ...(subcommand === "add" ? ["bar"] : [])],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain(`failed to change directory to "${cwd}": ENAMETOOLONG`);
+    expect(out).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// The OS accepts a working directory of up to MAX_PATH_BYTES - 1 bytes, which leaves no room
+// for "/package.json" in a path buffer. Every package manager command starts by looking for
+// that file. Windows' buffer is larger than any directory the OS accepts.
+describe.concurrent.skipIf(isWindows)("cwd whose package.json path does not fit the path buffer", () => {
+  // Moves a directory holding `files` to a path of MAX_PATH_BYTES - 8 bytes below `root`.
+  // The files are written first: at that depth their own paths are longer than the OS accepts.
+  function deepDirectory(root: string, files: Record<string, string>) {
+    const staging = join(root, "staging");
+    mkdirSync(staging);
+    for (const [name, contents] of Object.entries(files)) {
+      writeFileSync(join(staging, name), contents);
+    }
+
+    const bytes = MAX_PATH_BYTES - 8;
+    let path = root;
+    while (Buffer.byteLength(path) < bytes) {
+      const remaining = bytes - Buffer.byteLength(path);
+      // "/" and at least one more byte have to fit, so never leave a remainder of one.
+      let length = Math.min(200, remaining - 1);
+      if (remaining - 1 - length === 1) length -= 1;
+      path += "/" + Buffer.alloc(length, "d").toString();
+    }
+    mkdirSync(dirname(path), { recursive: true });
+    renameSync(staging, path);
+
+    return {
+      path,
+      // Recursive removal cannot name the files either.
+      [Symbol.dispose]: () => renameSync(path, staging),
+    };
+  }
+
+  async function run(cwd: string, args: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stderr: "pipe", env });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  it("bun install walks up to the package.json of the project", async () => {
+    using dir = tempDir("install-deep-cwd", {
+      "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    });
+    const root = realpathSync(String(dir));
+    using deep = deepDirectory(root, {});
+
+    const { out, err, exitCode } = await run(deep.path, ["install"]);
+
+    expect(err).not.toContain("error:");
+    expect(out).toContain("1 package installed");
+    expect(await file(join(root, "node_modules", "dep", "package.json")).json()).toEqual({
+      name: "dep",
+      version: "1.0.0",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["pm ls", ["pm", "ls"]],
+    ["pm bin", ["pm", "bin"]],
+    ["pm hash", ["pm", "hash"]],
+    ["pm pkg get name", ["pm", "pkg", "get", "name"]],
+    ["why dep", ["why", "dep"]],
+  ])("bun %s walks up to the package.json of the project", async (_, args) => {
+    using dir = tempDir("pm-deep-cwd", {
+      "package.json": JSON.stringify({ name: "root", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    });
+    const root = realpathSync(String(dir));
+    expect(await run(root, ["install"])).toMatchObject({ exitCode: 0 });
+    using deep = deepDirectory(root, {});
+
+    const fromRoot = await run(root, args);
+    const fromDeep = await run(deep.path, args);
+
+    expect(fromDeep).toEqual(fromRoot);
+    expect(fromDeep.exitCode).toBe(0);
+  });
+
+  it.each([
+    ["install", ["install"]],
+    ["add", ["add", "./dep"]],
+    ["pm ls", ["pm", "ls"]],
+  ])("bun %s reports a package.json that it cannot name", async (_, args) => {
+    using dir = tempDir("install-deep-package-json", {
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    });
+    const root = realpathSync(String(dir));
+    const packageJson = JSON.stringify({ name: "deep", version: "1.0.0" });
+
+    {
+      using deep = deepDirectory(root, { "package.json": packageJson });
+
+      const { out, err, exitCode } = await run(deep.path, args);
+
+      expect(err).toContain("ENAMETOOLONG");
+      expect(err).toContain(`could not open "${deep.path}/package.json"`);
+      expect(out).not.toContain("installed");
+      expect(exitCode).toBe(1);
+    }
+
+    // `bun add` creates a package.json when it finds none. It must not write over this one,
+    // which is back in `staging` now.
+    expect(await file(join(root, "staging", "package.json")).text()).toBe(packageJson);
+  });
+
+  it("bun pm pkg set does not edit the package.json of an ancestor instead", async () => {
+    const ancestor = JSON.stringify({ name: "ancestor", version: "1.0.0" });
+    using dir = tempDir("pm-pkg-deep-package-json", { "package.json": ancestor });
+    const root = realpathSync(String(dir));
+    using deep = deepDirectory(root, { "package.json": JSON.stringify({ name: "deep", version: "1.0.0" }) });
+
+    const { err, exitCode } = await run(deep.path, ["pm", "pkg", "set", "name=changed"]);
+
+    expect(err).toContain("ENAMETOOLONG");
+    expect(await file(join(root, "package.json")).text()).toBe(ancestor);
+    expect(exitCode).toBe(1);
+  });
+});
+
 for (const field of ["resolutions", "overrides"]) {
   it(`installs a file: dependency pointing outside the project when it came from root package.json "${field}"`, async () => {
     // `overrides` / `resolutions` can only be declared in the root package.json,
@@ -11784,6 +12059,106 @@ it.each([
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
   });
+});
+
+// A registry chooses every string in the manifests it serves. Two of them reach a path
+// buffer: a dependency's name (it becomes the cache folder name) and a `link:` target.
+describe.concurrent("a registry manifest string longer than a path buffer", () => {
+  const long = (length: number) => Buffer.alloc(length, "a").toString();
+
+  // Serves `evil@1.0.0` with the given dependencies, and answers for any other name too,
+  // so that a dependency the manifest lists resolves to a version.
+  function hostileRegistry(dependencies: Record<string, string>) {
+    const requested: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        requested.push(url.pathname);
+        if (url.pathname.includes("/-/")) return new Response("no tarballs here", { status: 404 });
+        const name = decodeURIComponent(url.pathname.slice(1));
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name,
+              version: "1.0.0",
+              dependencies: name === "evil" ? dependencies : {},
+              dist: { tarball: `${url.origin}/${name}/-/${name}-1.0.0.tgz` },
+            },
+          },
+        });
+      },
+    });
+    return { server, requested };
+  }
+
+  async function install(registry: string) {
+    using dir = tempDir("install-hostile-manifest", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { evil: "1.0.0" } }),
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${registry}"\n`,
+    });
+    await using proc = spawn({ cmd: [bunExe(), "install"], cwd: String(dir), stdout: "pipe", stderr: "pipe", env });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { err, exitCode, signalCode: proc.signalCode };
+  }
+
+  it.each([
+    ["one byte short of the buffer", MAX_PATH_BYTES - 1],
+    ["longer than the buffer", MAX_PATH_BYTES + 104],
+  ])("a dependency name %s is an invalid name", async (_, length) => {
+    const name = long(length);
+    const { server, requested } = hostileRegistry({ [name]: "^1.0.0" });
+    await using _server = server;
+
+    const { err, exitCode, signalCode } = await install(`http://localhost:${server.port}/`);
+
+    expect(err).toContain(`error: Invalid dependency name "${name}"`);
+    // The name is refused before bun asks the registry about it.
+    expect(requested.filter(pathname => pathname.includes(name))).toEqual([]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+
+  it("a link: dependency longer than the link buffer fails to resolve", async () => {
+    const target = long(1100);
+    const { server } = hostileRegistry({ zz: `link:${target}` });
+    await using _server = server;
+
+    const { err, exitCode, signalCode } = await install(`http://localhost:${server.port}/`);
+
+    expect(err).toContain(`error: zz@link:${target} failed to resolve`);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
+  });
+});
+
+// bun.lock carries package names too, with no registry taking part. The parser's own length
+// test let a name through that the cache folder name had no room for.
+it.concurrent.each([
+  ["install", ["install"]],
+  ["install --frozen-lockfile", ["install", "--frozen-lockfile"]],
+])("bun %s refuses a bun.lock package name close to the path buffer size", async (_, args) => {
+  const name = Buffer.alloc(MAX_PATH_BYTES - 6, "a").toString();
+  const integrity = "sha512-3soFQbhr/9uislIJVB0TfqbGz06Ebq49i6bEK2g7HYzgfJMggq7zQmQx4EFeR8poUAeorAIXBV4cAInIKQyGww==";
+  using dir = tempDir("install-lockfile-long-name", {
+    "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { evil: "^1.0.0" } }),
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      workspaces: { "": { name: "app", dependencies: { evil: "^1.0.0" } } },
+      packages: {
+        evil: ["evil@1.0.0", "", { dependencies: { [name]: "^1.0.0" } }, integrity],
+        [name]: [`${name}@1.0.0`, "", {}, integrity],
+      },
+    }),
+    // Nothing listens on the discard port, so the lockfile is the only source of names.
+    "bunfig.toml": `[install]\ncache = false\nregistry = "http://127.0.0.1:9/"\n`,
+  });
+
+  await using proc = spawn({ cmd: [bunExe(), ...args], cwd: String(dir), stdout: "pipe", stderr: "pipe", env });
+  const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(err).toContain("error: Invalid package name");
+  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
 });
 
 // A registry response is remote data, so none of these shapes breaks an invariant. The release build

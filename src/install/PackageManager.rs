@@ -1472,6 +1472,21 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
+/// `ENAMETOOLONG` when `dir` has a package.json, else `ENOENT` so that `init` keeps walking up.
+fn unnameable_package_json_error(dir: &[u8]) -> bun_sys::Error {
+    match bun_sys::Dir::open(dir) {
+        Ok(dir) => bun_sys::Error::from_code(
+            if bun_sys::exists_at(dir.fd(), bun_core::zstr!("package.json")) {
+                bun_sys::E::ENAMETOOLONG
+            } else {
+                bun_sys::E::ENOENT
+            },
+            bun_sys::Tag::open,
+        ),
+        Err(e) => e,
+    }
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1584,26 +1599,26 @@ pub fn init(
 
             loop {
                 let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
-                package_json_path_buf[..this_cwd.len()].copy_from_slice(this_cwd);
-                package_json_path_buf[this_cwd.len()..this_cwd.len() + b"/package.json".len()]
-                    .copy_from_slice(b"/package.json");
-                package_json_path_buf[this_cwd.len() + b"/package.json".len()] = 0;
-                // SAFETY: NUL written above
-                let package_json_path = ZStr::from_buf(
-                    &package_json_path_buf[..],
-                    this_cwd.len() + b"/package.json".len(),
-                );
+                let package_json_path_len = this_cwd.len() + b"/package.json".len();
+                let opened = if package_json_path_len < package_json_path_buf.len() {
+                    package_json_path_buf[..this_cwd.len()].copy_from_slice(this_cwd);
+                    package_json_path_buf[this_cwd.len()..package_json_path_len]
+                        .copy_from_slice(b"/package.json");
+                    bun_sys::File::openat(
+                        bun_sys::Fd::cwd(),
+                        &package_json_path_buf[..package_json_path_len],
+                        if need_write {
+                            bun_sys::O::RDWR
+                        } else {
+                            bun_sys::O::RDONLY
+                        } | bun_sys::O::CLOEXEC,
+                        0,
+                    )
+                } else {
+                    Err(unnameable_package_json_error(this_cwd))
+                };
 
-                match bun_sys::File::openat(
-                    bun_sys::Fd::cwd(),
-                    package_json_path.as_bytes(),
-                    if need_write {
-                        bun_sys::O::RDWR
-                    } else {
-                        bun_sys::O::RDONLY
-                    } | bun_sys::O::CLOEXEC,
-                    0,
-                ) {
+                match opened {
                     Ok(f) => break 'child f,
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                         if let Some(parent) = bun_core::dirname(this_cwd) {
@@ -1616,8 +1631,8 @@ pub fn init(
                     Err(e) if e.get_errno() == bun_sys::E::EACCES => {
                         Output::err(
                             "EACCES",
-                            "Permission denied while opening \"{s}\"",
-                            &[&bstr::BStr::new(package_json_path.as_bytes())],
+                            "Permission denied while opening \"{s}/package.json\"",
+                            &[&bstr::BStr::new(this_cwd)],
                         );
                         if need_write {
                             bun_core::note!("package.json must be writable to add packages");
@@ -1632,8 +1647,8 @@ pub fn init(
                         // `Output::err` accepts an error value directly.
                         Output::err(
                             &e,
-                            "could not open \"{s}\"",
-                            &[&bstr::BStr::new(package_json_path.as_bytes())],
+                            "could not open \"{s}/package.json\"",
+                            &[&bstr::BStr::new(this_cwd)],
                         );
                         return Err(e.into());
                     }
@@ -1682,18 +1697,22 @@ pub fn init(
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
                     let mut parent_path_buf = bun_paths::path_buffer_pool::get();
+                    let parent_path_len =
+                        parent_without_trailing_slash.len() + b"/package.json".len();
+                    // The OS refuses a path this long, and every open error below moves on.
+                    if parent_path_len >= parent_path_buf.len() {
+                        this_cwd = parent;
+                        continue;
+                    }
                     parent_path_buf[..parent_without_trailing_slash.len()]
                         .copy_from_slice(parent_without_trailing_slash);
-                    parent_path_buf[parent_without_trailing_slash.len()
-                        ..parent_without_trailing_slash.len() + b"/package.json".len()]
+                    parent_path_buf[parent_without_trailing_slash.len()..parent_path_len]
                         .copy_from_slice(b"/package.json");
-                    parent_path_buf[parent_without_trailing_slash.len() + b"/package.json".len()] =
-                        0;
+                    parent_path_buf[parent_path_len] = 0;
 
                     let json_file = match bun_sys::File::openat(
                         bun_sys::Fd::cwd(),
-                        &parent_path_buf
-                            [..parent_without_trailing_slash.len() + b"/package.json".len()],
+                        &parent_path_buf[..parent_path_len],
                         bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
                         0,
                     ) {
@@ -1868,8 +1887,12 @@ pub fn init(
         let plen = if no_project {
             // Where the file would be; nothing reads it in this mode.
             let p = original_package_json_path.as_bytes();
-            root_buf[..p.len()].copy_from_slice(p);
-            p.len()
+            if p.len() < root_buf.len() {
+                root_buf[..p.len()].copy_from_slice(p);
+                p.len()
+            } else {
+                0
+            }
         } else {
             bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len()
         };
@@ -1936,18 +1959,22 @@ pub fn init(
         // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
         let mut global_len: usize = 0;
         if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
-            let p =
-                resolve_path::join_abs_string_buf_z::<platform::Auto>(xdg_dir, &mut buf, &parts);
-            if bun_sys::exists_z(p) {
-                global_len = p.len();
-            }
+            global_len = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+                xdg_dir,
+                &mut buf[..],
+                &parts,
+            )
+            .filter(|p| bun_sys::exists_z(p))
+            .map_or(0, |p| p.len());
         }
         if global_len == 0 {
             if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
-                global_len = resolve_path::join_abs_string_buf_z::<platform::Auto>(
-                    home_dir, &mut buf, &parts,
+                global_len = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+                    home_dir,
+                    &mut buf[..],
+                    &parts,
                 )
-                .len();
+                .map_or(0, |p| p.len());
             }
         }
 
@@ -2302,11 +2329,9 @@ pub fn init(
             if bun_paths::is_absolute(options.ca_file_name) {
                 abs_ca_file_name = ZBox::from_bytes(options.ca_file_name);
             } else {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
                 abs_ca_file_name =
-                    ZBox::from_bytes(resolve_path::join_abs_string_buf::<platform::Auto>(
+                    ZBox::from_bytes(resolve_path::join_abs_string::<platform::Auto>(
                         &original_cwd_clone,
-                        &mut path_buf,
                         &[options.ca_file_name],
                     ));
             }

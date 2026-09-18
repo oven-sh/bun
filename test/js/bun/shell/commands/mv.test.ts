@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { bunEnv, bunExe, isFreeBSD, isMacOS, isPosix, tempDir } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -233,5 +233,37 @@ describe("mv", async () => {
         rmSync(dst, { recursive: true, force: true });
       }
     });
+  });
+
+  // `mv src dir` builds `basename(src)` in a path buffer before the rename. A
+  // name longer than the buffer took the process down (`panic: range end index
+  // 5000 out of range for slice of length 4096`), so the fixture runs in a child.
+  test("source name longer than the path buffer fails with ENAMETOOLONG", async () => {
+    using dir = tempDir("mv-long-name", {
+      "d": {},
+      "fixture.ts": `
+        import { $ } from "bun";
+        const long = Buffer.alloc(100_000, "a").toString();
+        const { exitCode, stdout, stderr } = await $\`mv \${long} d\`.nothrow().quiet();
+        console.log(JSON.stringify({ exitCode, stdout: stdout.toString(), stderr: stderr.toString().replaceAll(long, "<long>") }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      exitCode: isMacOS || isFreeBSD ? 63 : 36, // the rename's errno, ENAMETOOLONG
+      stdout: "",
+      stderr: `mv: ${join("d", "<long>")}: File name too long\n`,
+    });
+    expect(exitCode).toBe(0);
   });
 });

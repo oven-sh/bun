@@ -617,12 +617,13 @@ impl<'a> NamesIterator<'a> {
 
             let dir = self.destination_node_modules;
 
-            let joined = resolve_path::join_string_buf::<PlatformAuto>(&mut self.buf[..], &parts);
-            let joined_len = joined.len();
-            self.buf[joined_len] = 0;
-            let joined_ = ZStr::from_buf_mut(&mut self.buf, joined_len);
+            let Some(joined) =
+                resolve_path::join_z_buf_checked::<PlatformAuto>(&mut self.buf[..], &parts)
+            else {
+                return Err(Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            };
             let child_dir = sys::Dir::borrow(&dir)
-                .open_at(joined_)
+                .open_at(joined.as_bytes())
                 .map_err(Error::from)?
                 .into_raw();
             self.dir_iterator = Some(sys::iterate_dir(child_dir));
@@ -1038,11 +1039,13 @@ impl<'a> Linker<'a> {
 
         // Create temporary file path
         let mut tmppath_buf = [0u8; MAX_PATH_BYTES];
-        let tmppath = resolve_path::join_abs_string_buf_z::<PlatformAuto>(
+        let Some(tmppath) = resolve_path::join_abs_string_buf_z_checked::<PlatformAuto>(
             dir_path,
             &mut tmppath_buf,
             &[tmpname.as_bytes()],
-        );
+        ) else {
+            return;
+        };
         let mut needs_unlink = true;
         let unlink_guard = scopeguard::guard(&mut needs_unlink, |needs_unlink| {
             if *needs_unlink {
@@ -1170,11 +1173,14 @@ impl<'a> Linker<'a> {
             }
         };
 
-        let rel_target = resolve_path::relative_buf_z(
+        let Some(rel_target) = resolve_path::relative_buf_z_checked(
             self.rel_buf,
             resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes()),
             abs_target.as_bytes(),
-        );
+        ) else {
+            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            return;
+        };
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b"..\\"));
 
         let rel_target_w = strings::to_w_path_normalized(
@@ -1259,8 +1265,12 @@ impl<'a> Linker<'a> {
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
 
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
-        let rel_target =
-            resolve_path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
+        let Some(rel_target) =
+            resolve_path::relative_buf_z_checked(self.rel_buf, abs_dest_dir, abs_target.as_bytes())
+        else {
+            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            return;
+        };
 
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
 
@@ -1805,11 +1815,16 @@ impl<'a> Linker<'a> {
                                 let entry_name = entry.name.slice_u8();
                                 // `self.abs_target_buf` is available now because `path::join_abs_string_z` copied everything into `parse_join_input_buffer`
                                 let abs_target: &ZStr = {
-                                    let r = resolve_path::join_abs_string_buf_z::<PlatformAuto>(
+                                    let Some(r) = resolve_path::join_abs_string_buf_z_checked::<
+                                        PlatformAuto,
+                                    >(
                                         abs_target_dir.as_bytes(),
                                         self.abs_target_buf,
                                         &[entry_name],
-                                    );
+                                    ) else {
+                                        self.skipped_due_to_missing_bin = true;
+                                        continue;
+                                    };
                                     // SAFETY: result lives in `self.abs_target_buf`, which
                                     // `link_bin_or_create_shim` does not write to (only
                                     // `rel_buf`/`node_modules_path`/`seen`/`err`/

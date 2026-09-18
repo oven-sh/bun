@@ -10,7 +10,6 @@ use bun_install::package_manager::workspace_selection::{
     self, Candidate, RootSelection, WorkspaceGraph,
 };
 use bun_parsers::json;
-use bun_paths::path_buffer_pool;
 use bun_paths::{PathBuffer, platform, resolve_path};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys;
@@ -64,11 +63,16 @@ fn get_candidate_package_patterns<'a>(
     'walk: loop {
         'body: {
             let mut name_buf = bun_paths::path_buffer_pool::get();
-            let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
-                workdir,
-                &mut name_buf[..],
-                &[b"package.json".as_slice()],
-            );
+            // A path that does not fit cannot be opened; a parent's shorter one still can.
+            let Some(json_path): Option<&ZStr> =
+                resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+                    workdir,
+                    &mut name_buf[..],
+                    &[b"package.json".as_slice()],
+                )
+            else {
+                break 'body;
+            };
 
             log.msgs.clear();
             log.errors = 0;
@@ -205,19 +209,16 @@ pub(crate) fn select_packages(
         });
     }
 
-    let mut path_buf = path_buffer_pool::get();
     let posix_dirs: Vec<Box<[u8]>> = discovered
         .iter()
         .map(|p| {
-            strings::without_trailing_slash(resolve_path::join_abs_string_buf::<platform::Posix>(
+            strings::without_trailing_slash(resolve_path::join_abs_string::<platform::Posix>(
                 &p.dir,
-                &mut path_buf.0,
                 &[b".".as_slice()],
             ))
             .into()
         })
         .collect();
-    drop(path_buf);
 
     let candidates: Vec<Candidate<'_>> = discovered
         .iter()

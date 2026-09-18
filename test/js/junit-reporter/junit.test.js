@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const xml2js = require("xml2js");
@@ -607,6 +607,28 @@ describe("junit reporter", () => {
     expect(sourceUrlCase.failure[0]._).toContain("at fromSourceUrl (webpack://app/./src/x.ts:1:");
     expect(longPathCase.failure[0]._).toContain(`at fromLongPath (${longPath}:1:`);
     expect(pathCase.failure[0]._).toContain("at fromPath (generated.js:1:");
+  });
+
+  // A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+  it.skipIf(isWindows)("reports a --reporter-outfile longer than PATH_MAX instead of crashing", async () => {
+    using dir = tempDir("junit-long-outfile", {
+      "package.json": "{}",
+      "a.test.js": `import { test, expect } from "bun:test"; test("ok", () => { expect(1).toBe(1); });`,
+    });
+    // 4220 bytes of valid components; copying it into the fixed-size path
+    // buffer used to abort the process after the tests had run.
+    const outfile = "./" + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".xml";
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", outfile, "a.test.js"], {
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("Failed to write JUnit report to ./aaaa");
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(exitCode).toBe(0);
   });
 });
 

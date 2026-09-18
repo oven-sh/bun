@@ -152,13 +152,19 @@ impl FileSystemRouter {
                     root_dir_path = root_dir_path_;
                 } else {
                     let parts: [&[u8]; 1] = [path_];
-                    root_dir_path = Utf8Bytes::Borrowed(path::resolve_path::join_abs_string_buf::<
-                        path::platform::Auto,
-                    >(
-                        Fs::FileSystem::instance().top_level_dir,
-                        &mut out_buf,
-                        &parts,
-                    ));
+                    let Some(joined) =
+                        path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                            Fs::FileSystem::instance().top_level_dir,
+                            &mut out_buf,
+                            &parts,
+                        )
+                    else {
+                        return Err(global_this.throw(format_args!(
+                            "Unable to find directory: {}",
+                            bstr::BStr::new(path_)
+                        )));
+                    };
+                    root_dir_path = Utf8Bytes::Borrowed(joined);
                 }
             }
         } else {

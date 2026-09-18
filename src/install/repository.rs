@@ -32,9 +32,13 @@ impl SloppyGlobalGitConfig {
         };
 
         let mut config_file_path_buf = bun_paths::path_buffer_pool::get();
-        let config_file_path = bun_paths::resolve_path::join_abs_string_buf_z::<
+        let Some(config_file_path) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
             bun_paths::platform::Auto,
-        >(home_dir, &mut config_file_path_buf, &[b".gitconfig"]);
+        >(
+            home_dir, &mut config_file_path_buf[..], &[b".gitconfig"]
+        ) else {
+            return SloppyGlobalGitConfig::default();
+        };
         // MOVE_DOWN: `File::toSource` lives in `bun_logger` (T1→T2 cyclebreak).
         let Ok(source) = bun_ast::to_source(
             config_file_path,

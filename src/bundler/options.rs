@@ -2470,6 +2470,34 @@ impl PathTemplate {
             sanitize_parent_dirs,
         )
     }
+
+    /// Longest output path that fits a `PathBuffer` with a `.map` or `.jsc` suffix and the NUL.
+    pub(crate) const MAX_OUTPUT_PATH_LEN: usize = bun_paths::MAX_PATH_BYTES - 1 - ".map".len();
+
+    /// Logs an error and returns `false` when `output_path` exceeds `MAX_OUTPUT_PATH_LEN`.
+    pub(crate) fn check_output_path(
+        &self,
+        log: &mut bun_ast::Log,
+        input: &[u8],
+        output_path: &[u8],
+    ) -> bool {
+        if output_path.len() <= Self::MAX_OUTPUT_PATH_LEN {
+            return true;
+        }
+        log.add_range_error_fmt_with_note(
+            None,
+            bun_ast::Range::NONE,
+            format_args!(
+                "Output path for {} is too long ({} bytes, the limit on this platform is {})",
+                bun_core::fmt::quote(input),
+                output_path.len(),
+                Self::MAX_OUTPUT_PATH_LEN,
+            ),
+            format_args!("naming template is {}", bun_core::fmt::quote(&self.data)),
+            bun_ast::Range::NONE,
+        );
+        false
+    }
 }
 
 #[derive(Debug, Clone, Default)]

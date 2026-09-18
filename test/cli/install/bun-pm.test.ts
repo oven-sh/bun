@@ -1,7 +1,17 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  MAX_PATH_BYTES,
+  normalizeBunSnapshot,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {
@@ -22,6 +32,35 @@ beforeEach(async () => {
   await dummyBeforeEach();
 });
 afterEach(dummyAfterEach);
+
+it("pm view asks the registry for a package name longer than a path buffer", async () => {
+  // The manifest URL (registry + name) was formatted into a fixed-size path
+  // buffer, and a name that did not fit aborted the process:
+  //   panic: buf_print: buffer too small
+  // Longer than a path buffer on every platform but Windows, where a command
+  // line cannot carry one that is.
+  const name = Buffer.alloc(4100, "a").toString();
+  const urls: string[] = [];
+  setHandler(request => {
+    urls.push(request.url);
+    return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+  });
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "view", name],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(`'${name}@latest' does not exist in this registry`);
+  expect(stdout).toBe("");
+  expect(urls).toEqual([`${root_url}/${name}`]);
+  expect(exitCode).toBe(1);
+});
 
 it("should list top-level dependency", async () => {
   const urls: string[] = [];
@@ -1083,4 +1122,132 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stdout).toInclude("Cleared 'bun install' cache");
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
+});
+
+// The cache directory setting (the first one set of $BUN_INSTALL_CACHE_DIR, --cache-dir,
+// $BUN_INSTALL/install/cache, $XDG_CACHE_HOME/.bun/install/cache, $HOME/.bun/install/cache) is
+// joined into an absolute path. A value that does not fit a path buffer is unusable in the same
+// way as a directory the OS refuses to create, and bun falls back to node_modules/.cache of the
+// project like it does for those. On Windows the buffer holds more than an environment variable
+// or argument can carry.
+describe.concurrent.skipIf(isWindows)("cache directory setting longer than the path buffer", () => {
+  const tooLong = "/" + Buffer.alloc(2 * MAX_PATH_BYTES, "a").toString();
+
+  const project = {
+    "package.json": JSON.stringify({ name: "pm-cache-too-long", version: "1.0.0" }),
+    // $XDG_CONFIG_HOME stands in for $HOME when bun looks for .npmrc and .bunfig.toml, so the
+    // oversized $HOME below is only ever used as a cache directory candidate.
+    "config/.npmrc": "",
+  };
+
+  // Every lower precedence setting points at a usable directory: the fallback must be
+  // node_modules/.cache, not the next candidate.
+  function cacheEnv(dir: string, setting: Record<string, string>): NodeJS.Dict<string> {
+    const spawnEnv: NodeJS.Dict<string> = {
+      ...env,
+      HOME: join(dir, "home"),
+      XDG_CONFIG_HOME: join(dir, "config"),
+    };
+    delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+    delete spawnEnv.BUN_INSTALL;
+    delete spawnEnv.XDG_CACHE_HOME;
+    return { ...spawnEnv, ...setting };
+  }
+
+  async function runPm(dir: string, args: string[], setting: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", ...args],
+      cwd: dir,
+      env: cacheEnv(dir, setting),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each(["BUN_INSTALL_CACHE_DIR", "BUN_INSTALL", "XDG_CACHE_HOME", "HOME"])(
+    "bun pm cache falls back to node_modules/.cache when $%s does not fit",
+    async name => {
+      using dir = tempDir("pm-cache-too-long", project);
+
+      const { stdout, stderr, exitCode } = await runPm(String(dir), ["cache"], { [name]: tooLong });
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe(join(String(dir), "node_modules", ".cache"));
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("bun pm cache falls back to node_modules/.cache when --cache-dir does not fit", async () => {
+    using dir = tempDir("pm-cache-too-long-flag", project);
+
+    const { stdout, stderr, exitCode } = await runPm(String(dir), ["--cache-dir", tooLong, "cache"], {});
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(join(String(dir), "node_modules", ".cache"));
+    expect(exitCode).toBe(0);
+  });
+
+  // A directory that fits the buffer but that the OS rejects (one name longer than NAME_MAX) has
+  // always been handled this way; the oversized values above take the same route.
+  test("bun pm cache falls back to node_modules/.cache when the OS rejects the directory", async () => {
+    using dir = tempDir("pm-cache-os-rejects", project);
+    const tooLongForTheOS = join(String(dir), Buffer.alloc(300, "a").toString());
+
+    const { stdout, stderr, exitCode } = await runPm(String(dir), ["cache"], {
+      BUN_INSTALL_CACHE_DIR: tooLongForTheOS,
+    });
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(join(String(dir), "node_modules", ".cache"));
+    expect(exitCode).toBe(0);
+  });
+
+  // What has to fit is the normalized directory, not the value as written.
+  test("bun pm cache uses a directory that only fits the path buffer once normalized", async () => {
+    using dir = tempDir("pm-cache-long-normalized", project);
+    const cacheDir = `${String(dir)}/${Buffer.alloc("x/../".length * 2000, "x/../").toString()}cache`;
+
+    const { stdout, stderr, exitCode } = await runPm(String(dir), ["cache"], { BUN_INSTALL_CACHE_DIR: cacheDir });
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(join(String(dir), "cache"));
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun pm cache rm` has no fallback: it reports the directory it could not open.
+  test("bun pm cache rm reports ENAMETOOLONG when $BUN_INSTALL_CACHE_DIR does not fit", async () => {
+    using dir = tempDir("pm-cache-rm-too-long", project);
+
+    const { stdout, stderr, exitCode } = await runPm(String(dir), ["cache", "rm"], { BUN_INSTALL_CACHE_DIR: tooLong });
+
+    expect(stderr).toContain("ENAMETOOLONG getting cache directory");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+    expect(await exists(join(String(dir), "node_modules"))).toBeFalse();
+  });
+
+  test("bun install falls back to node_modules/.cache when $BUN_INSTALL_CACHE_DIR does not fit", async () => {
+    using dir = tempDir("pm-cache-too-long-install", {
+      ...project,
+      "package.json": JSON.stringify({ name: "pm-cache-too-long", dependencies: { moo: "./moo" } }),
+      "moo/package.json": JSON.stringify({ name: "moo", version: "0.1.0" }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: cacheEnv(String(dir), { BUN_INSTALL_CACHE_DIR: tooLong }),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(await exists(join(String(dir), "node_modules", "moo", "package.json"))).toBeTrue();
+    expect(await exists(join(String(dir), "node_modules", ".cache"))).toBeTrue();
+  });
 });

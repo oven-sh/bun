@@ -4355,6 +4355,7 @@ pub mod bv2_impl {
                     )
                 };
                 let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
+                let mut has_unusable_output_path = false;
                 let mut templates: Vec<(usize, options::PathTemplate)> = Vec::new();
 
                 for reachable_source in reachable_files {
@@ -4460,6 +4461,15 @@ pub mod bv2_impl {
                             v.into_boxed_slice()
                         };
 
+                        if !template.check_output_path(
+                            self.transpiler.log_mut(),
+                            source.path.pretty,
+                            &output_path,
+                        ) {
+                            has_unusable_output_path = true;
+                            continue;
+                        }
+
                         // Hand the existing `source.contents` buffer to the
                         // OutputFile — no copy: move the contents
                         // out instead of `to_vec()`-cloning,
@@ -4498,6 +4508,9 @@ pub mod bv2_impl {
                 }
 
                 self.graph.additional_output_files = additional_output_files;
+                if has_unusable_output_path {
+                    return Err(crate::Error::BuildFailed);
+                }
             }
             Ok(())
         }
@@ -5420,19 +5433,26 @@ pub mod bv2_impl {
             // Open the output directory and write the metafile relative to it,
             // routed through `bun_sys::File`.
             let mut buf = bun_paths::path_buffer_pool::get();
-            let joined = bun_paths::resolve_path::join_string_buf::<
+            let written = match bun_paths::resolve_path::join_z_buf_checked::<
                 bun_paths::resolve_path::platform::Auto,
-            >(&mut buf.0[..], &[outdir, file_path]);
-            // Create parent directories if needed (relative to outdir).
-            let parent = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Loose>(
-                joined,
-            );
-            if !parent.is_empty() {
-                let _ = bun_sys::mkdir_recursive(parent);
-            }
-            let mut zbuf = bun_paths::path_buffer_pool::get();
-            let joined_z = bun_paths::resolve_path::z(joined, &mut zbuf);
-            match bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, content) {
+            >(&mut buf.0[..], &[outdir, file_path])
+            {
+                Some(joined_z) => {
+                    // Create parent directories if needed (relative to outdir).
+                    let parent = bun_paths::resolve_path::dirname::<
+                        bun_paths::resolve_path::platform::Loose,
+                    >(joined_z.as_bytes());
+                    if !parent.is_empty() {
+                        let _ = bun_sys::mkdir_recursive(parent);
+                    }
+                    bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, content)
+                }
+                None => Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENAMETOOLONG,
+                    bun_sys::Tag::open,
+                )),
+            };
+            match written {
                 Ok(()) => {}
                 Err(err) => {
                     bun_core::warn!(
@@ -6643,10 +6663,14 @@ pub mod bv2_impl {
                                                 [Fs::FileSystem::instance().top_level_dir.len()..];
                                             #[cfg(windows)]
                                             {
-                                                &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
-                                                    specifier_to_use,
-                                                    &mut *buf,
-                                                )
+                                                if specifier_to_use.len() <= buf.len() {
+                                                    &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
+                                                        specifier_to_use,
+                                                        &mut *buf,
+                                                    )
+                                                } else {
+                                                    specifier_to_use
+                                                }
                                             }
                                             #[cfg(not(windows))]
                                             {
@@ -7875,9 +7899,6 @@ pub mod bv2_impl {
     ) -> crate::Result<bun_paths::fs::Path<'static>> {
         use crate::bun_fs::PathResolverExt as _;
         use crate::bun_node_fallbacks;
-        use bun_io::Write as _;
-
-        let mut buf = bun_paths::path_buffer_pool::get();
 
         let is_node = path.namespace == b"node";
         if is_node
@@ -7887,49 +7908,44 @@ pub mod bv2_impl {
             return Ok(*path);
         }
 
-        if path.is_file() || is_node {
-            let mut buf2 = bun_paths::path_buffer_pool::get();
-            let rel = bun_paths::resolve_path::relative_platform_buf::<
+        // `pretty` is only displayed, never opened, so MAX_PATH_BYTES does not bound it.
+        let ssr_prefix: &[u8] = if target == options::Target::ServerComponentsSsr {
+            b"ssr:"
+        } else {
+            b""
+        };
+        let mut prefixed = Vec::new();
+        let mut path_clone: crate::bun_fs::Path<'_> = *path;
+        path_clone.pretty = if path.is_file() || is_node {
+            let rel = bun_paths::resolve_path::relative_platform::<
                 bun_paths::resolve_path::platform::Loose,
                 false,
-            >(&mut **buf2, top_level_dir, path.text);
-            let mut path_clone: crate::bun_fs::Path<'_> = *path;
-            if target == options::Target::ServerComponentsSsr {
-                let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-                let _ = fbs.write_all(b"ssr:");
-                let _ = fbs.write_all(rel);
-                let written = fbs.pos;
-                path_clone.pretty = &buf.0[..written];
+            >(top_level_dir, path.text);
+            if ssr_prefix.is_empty() {
+                rel
             } else {
-                path_clone.pretty = rel;
+                prefixed = [ssr_prefix, rel].concat();
+                &prefixed
             }
-            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
         } else {
-            let mut path_clone: crate::bun_fs::Path<'_> = *path;
-            let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
-            if target == options::Target::ServerComponentsSsr {
-                let _ = fbs.write_all(b"ssr:");
-            }
-            let _ = write_escaped_namespace(&mut fbs, path_clone.namespace);
-            let _ = fbs.write_all(b":");
-            let _ = fbs.write_all(path_clone.text);
-            let written = fbs.pos;
-            path_clone.pretty = &buf.0[..written];
-            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
-        }
+            prefixed.reserve(ssr_prefix.len() + path.namespace.len() + 1 + path.text.len());
+            prefixed.extend_from_slice(ssr_prefix);
+            push_escaped_namespace(&mut prefixed, path.namespace);
+            prefixed.extend_from_slice(b":");
+            prefixed.extend_from_slice(path.text);
+            &prefixed
+        };
+        path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
     }
 
-    fn write_escaped_namespace<W: bun_io::Write + ?Sized>(
-        w: &mut W,
-        slice: &[u8],
-    ) -> bun_io::Result {
-        let mut rest = slice;
+    fn push_escaped_namespace(out: &mut Vec<u8>, namespace: &[u8]) {
+        let mut rest = namespace;
         while let Some(i) = strings::index_of_char(rest, b':') {
-            w.write_all(&rest[..i as usize])?;
-            w.write_all(b"::")?;
+            out.extend_from_slice(&rest[..i as usize]);
+            out.extend_from_slice(b"::");
             rest = &rest[i as usize + 1..];
         }
-        w.write_all(rest)
+        out.extend_from_slice(rest);
     }
 
     #[repr(u8)]

@@ -2365,3 +2365,6 @@ export function readElf64ProgramHeaders(path: string): Elf64ProgramHeader[] {
     closeSync(fd);
   }
 }
+
+/** Size of a Bun path buffer (`bun_core::MAX_PATH_BYTES`): `PATH_MAX` on POSIX, a 32767-unit path as UTF-8 on Windows. */
+export const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux || isAndroid ? 4096 : 1024;

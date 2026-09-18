@@ -175,8 +175,7 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        // Cached listing, so the iterator was not invoked. Walk the entries in
-        // a stable order (regression/issue/26851 relies on it under `--bail`).
+        // Cached listing: the iterator was not invoked. Sorted so the run order is stable.
         if let EntriesOption::Entries(entries) = root {
             let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
             index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {

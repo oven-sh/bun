@@ -113,8 +113,8 @@ use bun_s3_signing::storage_class::StorageClass;
 // re-export hub instead.
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
-    self as s3_simple_request, S3CommitResult, S3DownloadResult, S3PartResult, S3UploadResult,
-    execute_simple_s3_request,
+    self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
+    S3UploadResult, execute_simple_s3_request,
 };
 use crate::webcore::s3::xml_response;
 use bun_collections::index_sort;
@@ -792,7 +792,7 @@ impl MultiPartUpload {
 
     /// We do a best effort to rollback the multipart upload, if it fails we will retry, if it still we just deinit the upload
     pub(crate) fn on_rollback_multi_part_request(
-        result: S3UploadResult,
+        result: S3DeleteResult,
         this: *mut c_void,
     ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
@@ -805,7 +805,17 @@ impl MultiPartUpload {
             BStr::new(self_.upload_id.get())
         );
         match result {
-            S3UploadResult::Failure(_err) => {
+            // NoSuchUpload: the upload id is already gone, a retry cannot change that.
+            S3DeleteResult::Success
+            | S3DeleteResult::NotFound(S3Error {
+                code: b"NoSuchUpload",
+                ..
+            }) => {
+                MultiPartUpload::deref_(this);
+                Ok(())
+            }
+            // Any other 404 can come from a proxy in front of the store.
+            S3DeleteResult::NotFound(_err) | S3DeleteResult::Failure(_err) => {
                 let mut options = self_.options.get();
                 if options.retry > 0 {
                     options.retry -= 1;
@@ -814,10 +824,6 @@ impl MultiPartUpload {
                     self_.rollback_multi_part_request()?;
                     return Ok(());
                 }
-                MultiPartUpload::deref_(this);
-                Ok(())
-            }
-            S3UploadResult::Success => {
                 MultiPartUpload::deref_(this);
                 Ok(())
             }
@@ -883,7 +889,7 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),
+            s3_simple_request::S3Callback::Delete(Self::on_rollback_multi_part_request),
             self.as_ctx_ptr(),
         )
     }

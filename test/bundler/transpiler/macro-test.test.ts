@@ -191,6 +191,60 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+// The walk that turns a macro's result into AST nodes remembers the node it built for each array, object
+// and promise by cell address. A value that only a getter returned is garbage as soon as the walk leaves
+// it, so a later value can be allocated at the same address and must not be taken for the earlier one.
+test("a macro result whose getters return a new array, object or promise on each read is inlined value by value", async () => {
+  const count = 12;
+  using dir = tempDir("macro-getter-made-values", {
+    "m.ts": `
+      // Each read of target[i] makes a new value. Every third read first collects the values made before it.
+      function lazy(target: object, make: (i: number) => unknown) {
+        for (let i = 0; i < ${count}; i++) {
+          Object.defineProperty(target, i, {
+            enumerable: true,
+            get() {
+              if (i % 3 === 0) Bun.gc(true);
+              return make(i);
+            },
+          });
+        }
+        return target;
+      }
+      export function objects() {
+        return lazy({}, i => ({ id: i }));
+      }
+      export function arrays() {
+        return lazy([], i => [i, i + 1]);
+      }
+      export function promises() {
+        return lazy({}, i => Promise.resolve(i));
+      }
+    `,
+    "index.ts": `
+      import { objects, arrays, promises } from "./m.ts" with { type: "macro" };
+      console.log(JSON.stringify({ objects: objects(), arrays: arrays(), promises: promises() }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const indices = Array.from({ length: count }, (_, i) => i);
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect(JSON.parse(stdout.trim().split("\n").pop()!)).toEqual({
+    objects: Object.fromEntries(indices.map(i => [i, { id: i }])),
+    arrays: indices.map(i => [i, i + 1]),
+    promises: Object.fromEntries(indices.map(i => [i, i])),
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A Response or Blob returned from a macro is inlined by its content type: JSON is parsed into an object
 // literal, text becomes a string, anything else becomes a base64 data URL. The type has to be classified
 // with its parameters stripped: `Response.json()` and most servers send `application/json;charset=utf-8`.

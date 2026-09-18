@@ -37,10 +37,17 @@
 /* This cannot be shared */
 thread_local void (*sni_free_cb)(void *);
 
+/* Labels are keyed with the shared SNI name comparison (ASCII case-insensitive). */
+struct sni_label_less {
+    bool operator()(std::string_view a, std::string_view b) const {
+        return us_sni_name_cmp(a.data(), a.length(), b.data(), b.length()) < 0;
+    }
+};
+
 struct sni_node {
     /* Empty nodes must always hold null */
     void *user = nullptr;
-    std::map<std::string_view, std::unique_ptr<sni_node>> children;
+    std::map<std::string_view, std::unique_ptr<sni_node>, sni_label_less> children;
 
     ~sni_node() {
         for (auto &p : children) {

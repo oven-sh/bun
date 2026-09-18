@@ -201,6 +201,11 @@ pub struct Super;
 #[derive(Clone, Copy, Default)]
 pub struct ImportMeta;
 
+impl ImportMeta {
+    /// Sixth parameter of the CommonJS wrapper. JSCommonJSModule.cpp passes `import.meta` for it.
+    pub const CJS_WRAPPER_ARG: &'static [u8] = b"$Bun_import_meta";
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct ImportMetaMain {
     /// If true, print `!import.meta.main` (or `require.main != module`).

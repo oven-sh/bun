@@ -16,7 +16,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
 
 use super::frame::{self, Frame};
-use super::worker::{Worker, WorkerPipe};
+use super::worker::{PendingLine, Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -147,6 +147,7 @@ impl<'a> Coordinator<'a> {
                 return;
             }
             self.vm.event_loop_ref().tick();
+            self.print_arrived_lines();
             self.run_pending_reaps();
             self.maybe_scale_up();
             self.run_pending_reaps();
@@ -408,19 +409,113 @@ impl<'a> Coordinator<'a> {
         }
     }
 
-    fn flush_captured(&mut self, w: &mut Worker) {
-        if w.captured.is_empty() {
+    /// Prints `captured[..end]` under the header of file `idx`.
+    fn print_captured(&mut self, w: &mut Worker, end: usize, idx: Option<u32>) {
+        if end == 0 {
             return;
         }
         self.break_dots();
-        if let Some(idx) = w.inflight {
+        if let Some(idx) = idx {
             self.ensure_header(idx);
         }
-        let _ = Output::error_writer().write_all(&w.captured);
-        if !strings::ends_with_char(&w.captured, b'\n') {
-            let _ = Output::error_writer().write_all(b"\n");
+        let _ = Output::error_writer().write_all(&w.captured[..end]);
+        w.captured.drain(..end);
+        Output::flush();
+    }
+
+    /// Drains the worker's pipes (POSIX only: the worker wrote the result
+    /// line before it sent the frame, so the drain sees it), then prints
+    /// through each result line that has arrived.
+    fn flush_captured_lines(&mut self, w: &mut Worker) {
+        #[cfg(unix)]
+        {
+            let wp: *mut Worker = w;
+            // SAFETY: `wp` is the live worker slot; `w` is not used until
+            // `read` returns.
+            unsafe {
+                for pipe in [&raw mut (*wp).out, &raw mut (*wp).err] {
+                    if !(*pipe).done && (*pipe).reader.get_fd() != bun_sys::Fd::INVALID {
+                        bun_io::BufferedReader::read(&raw mut (*pipe).reader);
+                    }
+                }
+            }
         }
-        w.captured.clear();
+        self.print_pending_lines(w);
+    }
+
+    /// Prints pending results in frame order. A stream line prints with the
+    /// captured output before it once its copy is in `captured`. A dot has
+    /// no copy in the stream, so it takes nothing from `captured`: what the
+    /// test wrote prints with the next stream line or at file end.
+    fn print_pending_lines(&mut self, w: &mut Worker) {
+        while let Some(p) = w.pending_lines.front() {
+            if p.in_stream {
+                let Some(pos) = strings::index_of(&w.captured, &p.line) else {
+                    break;
+                };
+                let (file_idx, end) = (p.file_idx, pos + p.line.len());
+                w.pending_lines.pop_front();
+                self.print_captured(w, end, Some(file_idx));
+                continue;
+            }
+            let p = w.pending_lines.pop_front().expect("front was Some");
+            if p.line.is_empty() {
+                continue;
+            }
+            if !self.dots {
+                self.break_dots();
+                self.ensure_header(p.file_idx);
+            }
+            let _ = Output::error_writer().write_all(&p.line);
+            self.last_printed_dot = self.dots;
+            Output::flush();
+        }
+    }
+
+    /// Windows reads complete through libuv only, so a result line can land
+    /// after its frame. Called once per loop tick.
+    fn print_arrived_lines(&mut self) {
+        for i in 0..self.spawned_count as usize {
+            // SAFETY: `i < spawned_count <= workers.len()`; fresh derivation per slot.
+            let w = unsafe { &mut *self.workers.as_mut_ptr().add(i) };
+            if !w.pending_lines.is_empty() {
+                self.print_pending_lines(w);
+            }
+        }
+    }
+
+    /// File end. On POSIX the drain has read everything, so a line still
+    /// pending never reached the pipe. On Windows it prints with the chunk
+    /// that carries it.
+    fn flush_file_end(&mut self, w: &mut Worker) {
+        if cfg!(unix) {
+            self.flush_captured(w);
+            return;
+        }
+        self.flush_captured_lines(w);
+        if w.pending_lines.is_empty() {
+            self.flush_rest(w);
+        }
+    }
+
+    /// Prints everything, result lines that never reached the pipe included.
+    fn flush_captured(&mut self, w: &mut Worker) {
+        self.flush_captured_lines(w);
+        for p in w.pending_lines.drain(..) {
+            w.captured.extend_from_slice(&p.line);
+        }
+        self.flush_rest(w);
+    }
+
+    fn flush_rest(&mut self, w: &mut Worker) {
+        if w.captured.is_empty() {
+            return;
+        }
+        if !strings::ends_with_char(&w.captured, b'\n') {
+            w.captured.push(b'\n');
+        }
+        let end = w.captured.len();
+        self.print_captured(w, end, w.inflight);
     }
 
     pub(crate) fn on_frame(&mut self, w: &mut Worker, kind: frame::Kind, rd: &mut frame::Reader) {
@@ -442,20 +537,12 @@ impl<'a> Coordinator<'a> {
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.tests.push(Box::from(rd.p));
                 }
-                self.flush_captured(w);
-                if formatted.is_empty() {
-                    return; // e.g. pass under --only-failures
-                }
-                // dots-mode failures print a full line (writeTestStatusLine);
-                // dots themselves are unterminated.
-                let is_dot = self.dots && !strings::ends_with_char(formatted, b'\n');
-                if !is_dot {
-                    self.break_dots();
-                    self.ensure_header(idx);
-                }
-                let _ = Output::error_writer().write_all(formatted);
-                self.last_printed_dot = is_dot;
-                Output::flush();
+                w.pending_lines.push_back(PendingLine {
+                    file_idx: idx,
+                    line: Box::from(formatted),
+                    in_stream: strings::ends_with_char(formatted, b'\n'),
+                });
+                self.flush_captured_lines(w);
             }
             frame::Kind::FileDone => {
                 let mut nums = [0u32; 9];
@@ -477,7 +564,7 @@ impl<'a> Coordinator<'a> {
                     file.elapsed_ns = rd.u64();
                 }
 
-                self.flush_captured(w);
+                self.flush_file_end(w);
                 if self.last_header_idx == Some(idx) {
                     self.end_group();
                 }
@@ -728,6 +815,7 @@ impl<'a> Coordinator<'a> {
             w.out = WorkerPipe::new(core::ptr::null());
             w.err = WorkerPipe::new(core::ptr::null());
             let _ = core::mem::take(&mut w.captured);
+            w.pending_lines.clear();
         }
     }
 

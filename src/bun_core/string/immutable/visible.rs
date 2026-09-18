@@ -76,11 +76,7 @@ pub mod visible {
                 }
             }
 
-            /// Byte index at which the longest suffix of `input` whose visible
-            /// width is <= `max_width` starts. The counterpart of
-            /// [`utf8_index_at_width`]: it drops a prefix that function picks,
-            /// so it never splits a codepoint or an ANSI escape, and the
-            /// suffix does not start with a zero-width codepoint.
+            /// Byte index where the longest suffix of `input` with a visible width <= `max_width` starts.
             pub fn utf8_suffix_index_at_width(input: &[u8], max_width: usize) -> usize {
                 let total = utf8(input);
                 if total <= max_width {
@@ -91,8 +87,7 @@ pub mod visible {
                 if utf8(&input[..index]) >= excess {
                     return index;
                 }
-                // A codepoint is at most 2 columns wide, so a wide one straddles
-                // the cut and the prefix is 1 column short. Drop that codepoint too.
+                // A 2-column codepoint straddles the cut. Drop it too.
                 let index = utf8_index_at_width(input, excess + 1);
                 debug_assert!(utf8(&input[..index]) >= excess);
                 index

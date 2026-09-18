@@ -86,7 +86,7 @@ const lockText = (dir: string) => file(join(dir, "bun.lock")).text();
 
 const frozenError = "error: lockfile had changes, but lockfile is frozen";
 const sectionNote = (section: string, packageJson = "package.json") =>
-  `note: ${section} in ${packageJson} changed since bun.lock was saved`;
+  `note: bun.lock does not match ${section} in ${packageJson}`;
 
 type Edit = {
   section: "dependencies" | "trustedDependencies" | "patchedDependencies";
@@ -102,6 +102,16 @@ const without = (json: PackageJson, key: string) => {
 };
 
 const singlePackage = without(root, "workspaces");
+// Two catalogs with the same range, so only the literal tells `catalog:` from `catalog:other`.
+const twoCatalogs: PackageJson = {
+  ...root,
+  workspaces: {
+    packages: ["packages/*"],
+    catalog: { "no-deps": "^1.0.0" },
+    catalogs: { other: { "no-deps": "^1.0.0" } },
+  },
+  dependencies: { ...root.dependencies, "no-deps": "catalog:" },
+};
 // one-dep@1.0.0 depends on no-deps@1.0.1, so no-deps is in the tree without the root listing it.
 const transitive: PackageJson = { name: "root", version: "1.0.0", dependencies: { "one-dep": "1.0.0" } };
 
@@ -128,6 +138,11 @@ const rewrittenByInstall: Record<string, Edit> = {
     section: "dependencies",
     from: { ...transitive, dependencies: { ...transitive.dependencies, "no-deps": "1.0.1" } },
     root: json => ({ ...json, dependencies: without(json.dependencies, "no-deps") }),
+  },
+  "a catalog: dependency moves to another catalog with the same range": {
+    section: "dependencies",
+    from: twoCatalogs,
+    root: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "catalog:other" } }),
   },
   "a dependency moves from dependencies to devDependencies": {
     section: "dependencies",
@@ -250,7 +265,7 @@ describe.concurrent("--frozen-lockfile fails on a package.json edit that bun ins
 
     expect(normalizeBunSnapshot(stderr, packageDir)).toMatchInlineSnapshot(`
       "error: lockfile had changes, but lockfile is frozen
-      note: dependencies in package.json changed since bun.lock was saved
+      note: bun.lock does not match dependencies in package.json
       note: try re-running without --frozen-lockfile and commit the updated lockfile"
     `);
     expect(normalizeBunSnapshot(stdout, packageDir)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
@@ -426,6 +441,46 @@ describe.concurrent("--frozen-lockfile still passes", () => {
 
     expect(frozen.stderr).not.toContain("error:");
     expect(await lockText(packageDir)).toBe(reformatted);
+    expect(frozen.exitCode).toBe(0);
+  });
+
+  // The next two are lockfiles bun itself wrote for an unedited package.json. A plain install rewrites them, but a red
+  // `bun ci` on an untouched checkout would blame an edit nobody made.
+
+  // bun records a name that is only in peerDependenciesMeta as a `*` optional peer. Older versions did not.
+  test("a bun.lock from before peerDependenciesMeta-only names were recorded", async () => {
+    const { packageDir, lock } = await installed(root, {
+      ...member,
+      peerDependenciesMeta: { "no-deps": { optional: true } },
+    });
+    const optionalPeerRows =
+      ',\n      "peerDependencies": {\n        "no-deps": "*",\n      },\n      "optionalPeers": [\n        "no-deps",\n      ]';
+    expect(lock).toContain(optionalPeerRows);
+    const older = lock.replace(optionalPeerRows, "");
+    await write(join(packageDir, "bun.lock"), older);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(frozen.stderr).not.toContain("error:");
+    expect(await lockText(packageDir)).toBe(older);
+    expect(frozen.exitCode).toBe(0);
+  });
+
+  // Migrating a pnpm-lock.yaml records the catalog's range where package.json says `catalog:`.
+  test("a bun.lock that records a catalog: dependency as the catalog's range", async () => {
+    const { packageDir, lock } = await installed({
+      ...root,
+      workspaces: { packages: ["packages/*"], catalog: { "no-deps": "^1.0.0" } },
+      dependencies: { ...root.dependencies, "no-deps": "catalog:" },
+    });
+    expect(lock).toContain('"no-deps": "catalog:"');
+    const migrated = lock.replace('"no-deps": "catalog:"', '"no-deps": "^1.0.0"');
+    await write(join(packageDir, "bun.lock"), migrated);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(frozen.stderr).not.toContain("error:");
+    expect(await lockText(packageDir)).toBe(migrated);
     expect(frozen.exitCode).toBe(0);
   });
 });

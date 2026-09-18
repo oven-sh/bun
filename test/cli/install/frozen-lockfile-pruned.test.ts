@@ -93,7 +93,7 @@ const patchedMonorepo: Tree = {
   files: { ...monorepo.files, "patches/a-dep@1.0.1.patch": aDepPatch },
 };
 const patchedLockLine = '"a-dep@1.0.1": "patches/a-dep@1.0.1.patch"';
-const changedSectionNote = (section: "overrides" | "the catalog" | "patchedDependencies") =>
+const changedSectionNote = (section: "overrides" | "the catalog") =>
   `note: ${section} in package.json changed since bun.lock was saved`;
 
 const survivorError = (dependent: string, ws = "other") =>
@@ -562,7 +562,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
     const { stderr } = await frozen(packageDir, linker, 1);
 
-    expect(stderr).toContain(changedSectionNote("patchedDependencies"));
+    expect(stderr).toContain("note: bun.lock does not match patchedDependencies in package.json");
     expect(await lockText(packageDir)).toBe(full);
     expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
   });

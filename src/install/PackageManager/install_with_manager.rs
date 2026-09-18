@@ -797,10 +797,9 @@ pub fn install_with_manager(
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
         'frozen_lockfile: {
-            // The package.json section that changed and the directory of that package.json.
-            let mut changed_section: Option<(&'static str, Box<[u8]>)> =
-                frozen_changed_section(manager, root_package_json_path)
-                    .map(|section| (section, Box::default()));
+            let changed_section = frozen_changed_section(manager, root_package_json_path);
+            // A section bun.lock records differently, and the directory of its package.json.
+            let mut mismatch: Option<(&'static str, Box<[u8]>)> = None;
             if changed_section.is_none() {
                 if load_result.loaded_from_text_lockfile() {
                     if bun_core::handle_oom(Lockfile::eql(
@@ -808,15 +807,14 @@ pub fn install_with_manager(
                         &lockfile_before_clean,
                         lockfile_before_clean.loaded_package_count as usize,
                     )) {
-                        // Resolved as locked; a manifest section bun.lock records may still differ.
                         if let Some(loaded) = &loaded_manifest_sections {
-                            changed_section = manager
+                            mismatch = manager
                                 .lockfile
                                 .manifest_sections()
                                 .changed_since(loaded)
                                 .map(|(section, dir)| (section, Box::from(dir)));
                         }
-                        if changed_section.is_none() {
+                        if mismatch.is_none() {
                             break 'frozen_lockfile;
                         }
                     }
@@ -837,13 +835,19 @@ pub fn install_with_manager(
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
                 );
-                if let Some((section, dir)) = &changed_section {
+                if let Some(section) = changed_section {
                     bun_core::note!(
-                        "{} in {}{}package.json changed since {} was saved",
+                        "{} in package.json changed since {} was saved",
+                        section,
+                        loaded_lockfile_name(&load_result)
+                    );
+                } else if let Some((section, dir)) = &mismatch {
+                    bun_core::note!(
+                        "{} does not match {} in {}{}package.json",
+                        loaded_lockfile_name(&load_result),
                         section,
                         bstr::BStr::new(dir),
                         if dir.is_empty() { "" } else { "/" },
-                        loaded_lockfile_name(&load_result)
                     );
                 }
                 bun_core::note!(

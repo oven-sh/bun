@@ -2874,11 +2874,53 @@ impl<'a> EqlSorter<'a> {
     }
 }
 
+/// One dependency row of a workspace entry in bun.lock.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct ManifestDependency {
+    name: Box<[u8]>,
+    /// `Behavior` bits of the dependency groups it is listed under.
+    groups: u8,
+    literal: Box<[u8]>,
+    /// The range a `catalog:` literal stands for.
+    catalog_range: Option<Box<[u8]>>,
+}
+
+impl ManifestDependency {
+    const OPTIONAL_PEER: u8 =
+        dependency::Behavior::PEER.bits() | dependency::Behavior::OPTIONAL.bits();
+
+    /// Migrating a pnpm-lock.yaml records the catalog's range where package.json says `catalog:`.
+    fn is_recorded_as(&self, recorded: &Self) -> bool {
+        self.name == recorded.name
+            && self.groups == recorded.groups
+            && (self.literal == recorded.literal
+                || self.catalog_range.as_ref() == Some(&recorded.literal))
+    }
+
+    /// A `peerDependenciesMeta`-only name is a `*` optional peer; older bun.lock files lack the row.
+    fn may_be_unrecorded(&self) -> bool {
+        self.groups == Self::OPTIONAL_PEER && *self.literal == *b"*"
+    }
+
+    /// Both sorted.
+    fn all_recorded(now: &[Self], recorded: &[Self]) -> bool {
+        let mut recorded = recorded.iter().peekable();
+        for dep in now {
+            if recorded.peek().is_some_and(|row| dep.is_recorded_as(row)) {
+                recorded.next();
+            } else if !dep.may_be_unrecorded() {
+                return false;
+            }
+        }
+        recorded.next().is_none()
+    }
+}
+
 /// The manifest-derived sections of bun.lock, mirrored from `bun_lock::Stringifier::save_from_binary`.
 /// Overrides, catalogs and workspace versions are not part of it.
 pub(crate) struct ManifestSections {
-    /// Workspace path (`""` for the root) with its sorted (name, dependency group bits, literal).
-    workspaces: Vec<(Box<[u8]>, Vec<(Box<[u8]>, u8, Box<[u8]>)>)>,
+    /// Workspace path (`""` for the root) with its sorted dependencies.
+    workspaces: Vec<(Box<[u8]>, Vec<ManifestDependency>)>,
     /// Sorted names that apply to the tree. `None` when the lockfile has no list.
     trusted_dependencies: Option<Vec<Box<[u8]>>>,
     /// Sorted (`name@version`, patch path) that apply to the tree. `None` when there are none.
@@ -2891,9 +2933,14 @@ impl ManifestSections {
         if self.workspaces.len() != loaded.workspaces.len() {
             return Some(("workspaces", b""));
         }
-        for (now, recorded) in self.workspaces.iter().zip(&loaded.workspaces) {
-            if now != recorded {
-                return Some(("dependencies", &now.0));
+        for ((path, now), (recorded_path, recorded)) in
+            self.workspaces.iter().zip(&loaded.workspaces)
+        {
+            if path != recorded_path {
+                return Some(("workspaces", b""));
+            }
+            if !ManifestDependency::all_recorded(now, recorded) {
+                return Some(("dependencies", path));
             }
         }
 
@@ -2947,16 +2994,17 @@ impl Lockfile {
                 ResolutionTag::Workspace => res.workspace().slice(buf),
                 _ => continue,
             };
-            let mut deps: Vec<(Box<[u8]>, u8, Box<[u8]>)> = pkg_deps[pkg_id]
+            let mut deps: Vec<ManifestDependency> = pkg_deps[pkg_id]
                 .get(deps_buf)
                 .iter()
                 .filter(|dep| dep.behavior.intersects(groups))
-                .map(|dep| {
-                    (
-                        Box::from(dep.name.slice(buf)),
-                        dep.behavior.intersection(groups).bits(),
-                        Box::from(dep.version.literal.slice(buf)),
-                    )
+                .map(|dep| ManifestDependency {
+                    name: Box::from(dep.name.slice(buf)),
+                    groups: dep.behavior.intersection(groups).bits(),
+                    literal: Box::from(dep.version.literal.slice(buf)),
+                    catalog_range: (dep.version.tag == dependency::Tag::Catalog).then(|| {
+                        Box::from(self.catalogs.resolve_range(buf, dep).literal.slice(buf))
+                    }),
                 })
                 .collect();
             deps.sort_unstable();

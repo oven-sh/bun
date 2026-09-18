@@ -727,6 +727,8 @@ impl CopyFile {
                                     // or if the output is not a directory
                                     // or if it's a network volume
                                     self.system_error = None;
+                                    // The path can name another file by the time it is opened.
+                                    stat_ = None;
                                 }
                             }
                         }

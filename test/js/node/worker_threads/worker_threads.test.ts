@@ -2256,6 +2256,31 @@ describe("'online' precedes the worker's first message", () => {
   );
 });
 
+// terminate() in the same tick as the constructor stops the thread before it takes its
+// workerData ports or reads parentPort. A thread that wins that race closes them as it exits,
+// so only the close is asserted, not its order against 'exit'.
+describe("a transferred MessagePort closes when terminate() stops the worker before it starts", () => {
+  // Stays referenced, as a Worker in a pool does: a collected Worker drops its ports too.
+  let worker: Worker;
+
+  test.each(["workerData", "postMessage"] as const)("transferred through %s", async transferRoute => {
+    const { port1, port2 } = new MessageChannel();
+    worker = new Worker(
+      "setInterval(() => {}, 1000)",
+      transferRoute === "workerData"
+        ? { eval: true, workerData: { port: port2 }, transferList: [port2] }
+        : { eval: true },
+    );
+    const portClosed = once(port1, "close").then(() => "port-close");
+    if (transferRoute === "postMessage") {
+      worker.postMessage({ port: port2 }, [port2]);
+    }
+
+    await worker.terminate();
+    expect(await portClosed).toBe("port-close");
+  });
+});
+
 // ─── worker teardown vs. work still in flight ────────────────────────────────
 // Each of these terminates a worker (or exits the process) while some off-thread
 // or cross-thread work of that worker is still pending. They exercise the

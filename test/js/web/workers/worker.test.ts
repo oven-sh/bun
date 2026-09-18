@@ -403,6 +403,39 @@ describe("web worker", () => {
     });
   });
 
+  // A message the worker never took from its inbox is dropped when the worker is gone. A port in
+  // that message is closed with it, so the port's peer hears 'close'.
+  describe("a MessagePort posted to a worker that never reads it closes", () => {
+    // Stays referenced, as a Worker in a pool does: a collected Worker drops its inbox too.
+    let worker: Worker;
+
+    test("the entry point does not resolve", async () => {
+      using dir = tempDir("web-worker-missing-entry-port", {});
+      const { port1, port2 } = new MessageChannel();
+      worker = new Worker(path.join(String(dir), "missing.js"));
+      const events: string[] = [];
+      worker.addEventListener("error", () => events.push("error"));
+      worker.addEventListener("close", e => events.push(`close:${e.code}`));
+      const portClosed = once(port1, "close").then(() => events.push("port-close"));
+      worker.postMessage({ port: port2 }, [port2]);
+
+      await portClosed;
+      expect(events).toEqual(["error", "close:1", "port-close"]);
+    });
+
+    // A thread that wins the race against terminate() receives the port and closes it as it
+    // exits, so only the close is asserted.
+    test("terminate() stops the worker before it starts", async () => {
+      const { port1, port2 } = new MessageChannel();
+      worker = new Worker("data:text/javascript,setInterval(() => {}, 1000)");
+      const portClosed = once(port1, "close").then(() => "port-close");
+      worker.postMessage({ port: port2 }, [port2]);
+      worker.terminate();
+
+      expect(await portClosed).toBe("port-close");
+    });
+  });
+
   // As in browsers (and Node's Web Worker), the worker's implicit port opens once the entry's
   // synchronous part has run: a message dispatched while no 'message' handler exists is dropped.
   // node:worker_threads' parentPort is what queues until a listener is attached. #40141

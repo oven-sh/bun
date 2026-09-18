@@ -1,0 +1,22 @@
+{
+  "_id": "lifecycle-postinstall-needs-toolchain",
+  "name": "lifecycle-postinstall-needs-toolchain",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "lifecycle-postinstall-needs-toolchain",
+      "version": "1.0.0",
+      "scripts": {
+        "postinstall": "bun postinstall.js"
+      },
+      "_id": "lifecycle-postinstall-needs-toolchain@1.0.0",
+      "dist": {
+        "integrity": "sha512-90znMYNm9nfPKQbVCt+69sV3fmge3foZ73/URIKQALXMmrBqHV2zAaMBbAYhH9vDtprOHyazIxkC9o0cMO++jw==",
+        "shasum": "8dcb454d811634a63e9b0bbd4f30cfe56de22085",
+        "tarball": "http://localhost:4873/lifecycle-postinstall-needs-toolchain/-/lifecycle-postinstall-needs-toolchain-1.0.0.tgz"
+      }
+    }
+  }
+}

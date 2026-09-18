@@ -862,6 +862,9 @@ impl RunCommand {
 
 const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
+/// In a package directory from when its lifecycle scripts are enqueued until the last one exits 0.
+pub(crate) const SCRIPTS_PENDING_FILE: &str = ".bun-scripts-pending";
+
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).
 const MAX_HEX_HASH_LEN: usize = {
     // u64::MAX in hex is always 16 nibbles.

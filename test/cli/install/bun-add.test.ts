@@ -2686,6 +2686,46 @@ describe("a relative local path typed from a directory below package.json", () =
     expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
   });
 
+  it("a directory named like a tarball keeps its trailing slash and is added as a folder", async () => {
+    const cwd = await makeNestedCwd();
+    const vendored = join(package_dir, "vendor", "lib.tgz");
+    await mkdir(vendored, { recursive: true });
+    await writeFile(join(vendored, "package.json"), JSON.stringify({ name: "lib", version: "3.0.0" }));
+
+    const { stderr, exitCode } = await run(cwd, "add", "../../vendor/lib.tgz/");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "app",
+      version: "0.0.1",
+      dependencies: { lib: "./vendor/lib.tgz/" },
+    });
+    expect(await file(join(package_dir, "node_modules", "lib", "package.json")).json()).toEqual({
+      name: "lib",
+      version: "3.0.0",
+    });
+  });
+
+  // `init` enters the global directory before it records the cwd. With no package.json there, it walks up to this one.
+  it("a -g path is not re-spelled against the global directory", async () => {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
+    await mkdir(join(package_dir, "folder"));
+    await writeFile(join(package_dir, "folder", "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" }));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "-g", "./folder"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL: join(package_dir, ".bun") },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("installed lib@");
+    expect(exitCode).toBe(0);
+  });
+
   // A Windows command line cannot carry a path longer than the path buffer.
   it.skipIf(isWindows)("a path that does not fit a path buffer once joined with the cwd is an error", async () => {
     const cwd = await makeNestedCwd();
@@ -2696,6 +2736,24 @@ describe("a relative local path typed from a directory below package.json", () =
     expect(exitCode).toBe(1);
 
     expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
+  });
+
+  // A Windows command line cannot carry a path longer than the path buffer.
+  it.skipIf(isWindows)("a path whose re-spelled form does not fit a path buffer is an error", async () => {
+    const app = join(package_dir, "a", "b", "c", "d", "e", "f");
+    const cwd = join(app, "src");
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(app, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
+    // The absolute form fits a path buffer. It does not fit after the `../` segments that lead out of `app`.
+    const maxPathBytes = process.platform === "linux" ? 4096 : 1024;
+    const name = Buffer.alloc(maxPathBytes - 8 - (add_dir.length + 1), "a").toString();
+    const typed = `${posix(relative(cwd, add_dir))}/${name}`;
+
+    const { stderr, exitCode } = await run(cwd, "add", typed);
+    expect(stderr).toContain(`ENAMETOOLONG: local path "${typed}" is too long`);
+    expect(exitCode).toBe(1);
+
+    expect(await file(join(app, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
   });
 });
 

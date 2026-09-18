@@ -362,6 +362,17 @@ pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [
         .then_some((prefix, path))
 }
 
+#[cold]
+fn local_path_too_long(request: &UpdateRequest) -> ! {
+    let typed = request.version.literal.slice(request.version_buf());
+    Output::err(
+        "ENAMETOOLONG",
+        "local path \"{}\" is too long",
+        (BStr::new(typed),),
+    );
+    Global::crash();
+}
+
 fn spell_relative_to(
     package_json_path: &[u8],
     request: &UpdateRequest,
@@ -370,6 +381,15 @@ fn spell_relative_to(
 ) -> Vec<u8> {
     let mut buf = path_buffer_pool::get();
     let target_dir = resolve_path::dirname::<platform::Auto>(package_json_path);
+    // `rel` is at most one `../` for each component of `target_dir`, then `abs`.
+    let components = target_dir
+        .iter()
+        .filter(|&&c| Platform::AUTO.is_separator(c))
+        .count()
+        + 1;
+    if abs.len() + components * b"../".len() >= buf.0.len() {
+        local_path_too_long(request);
+    }
     let rel =
         resolve_path::relative_platform_buf::<platform::Auto, true>(&mut buf.0, target_dir, abs);
     let mut positional = Vec::with_capacity(request.name.len() + prefix.len() + rel.len() + 3);
@@ -386,6 +406,11 @@ fn spell_relative_to(
     }
     positional.extend_from_slice(rel);
     resolve_path::platform_to_posix_in_place(&mut positional[path_start..]);
+    // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
+    let typed = request.version.literal.slice(request.version_buf());
+    if typed.ends_with(b"/") && !positional.ends_with(b"/") {
+        positional.push(b'/');
+    }
     positional
 }
 
@@ -393,19 +418,11 @@ fn spell_relative_to(
 fn resolve_from_cwd<'a>(
     original_cwd: &'a [u8],
     buf: &'a mut bun_paths::PathBuffer,
+    request: &UpdateRequest,
     path: &[u8],
 ) -> &'a [u8] {
-    let Some(abs) =
-        join_abs_string_buf_checked::<platform::Auto>(original_cwd, &mut buf.0, &[path])
-    else {
-        Output::err(
-            "ENAMETOOLONG",
-            "local path \"{}\" is too long",
-            (BStr::new(path),),
-        );
-        Global::crash();
-    };
-    abs
+    join_abs_string_buf_checked::<platform::Auto>(original_cwd, &mut buf.0, &[path])
+        .unwrap_or_else(|| local_path_too_long(request))
 }
 
 /// Without --filter the one target is the nearest package.json; from a directory below it, a local path is re-spelled relative to it.
@@ -425,7 +442,7 @@ pub(super) fn respell_local_paths(
             requests.push(request);
             continue;
         };
-        let abs = resolve_from_cwd(original_cwd, &mut buf, path);
+        let abs = resolve_from_cwd(original_cwd, &mut buf, &request, path);
         let positional = spell_relative_to(&package_json_path, &request, prefix, abs);
         let log = manager.log_mut();
         let subcommand = manager.subcommand;
@@ -460,7 +477,7 @@ fn assign_requests(
             requests.push(request);
             continue;
         };
-        let abs: Box<[u8]> = resolve_from_cwd(original_cwd, &mut buf, path).into();
+        let abs: Box<[u8]> = resolve_from_cwd(original_cwd, &mut buf, &request, path).into();
         slots.push(Slot::PerTarget(
             targets
                 .iter()

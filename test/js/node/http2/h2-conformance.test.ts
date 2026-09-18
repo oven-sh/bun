@@ -12,7 +12,7 @@ import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Duplex, Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -756,10 +756,24 @@ class RawH2Server {
   }
 }
 
-/** HPACK string literal: 7-bit length prefix, no Huffman coding. */
+/** RFC 7541 §5.1 prefixed integer. `pattern` holds the opcode bits above the `prefixBits`-bit prefix. */
+function hpackInt(value: number, prefixBits: number, pattern: number): Buffer {
+  const max = (1 << prefixBits) - 1;
+  if (value < max) return Buffer.from([pattern | value]);
+  const bytes = [pattern | max];
+  let rest = value - max;
+  while (rest >= 128) {
+    bytes.push(rest % 128 | 0x80);
+    rest = Math.floor(rest / 128);
+  }
+  bytes.push(rest);
+  return Buffer.from(bytes);
+}
+
+/** HPACK string literal: 7-bit prefixed length, no Huffman coding. */
 function hpackLiteral(str: string): Buffer {
   const bytes = Buffer.from(str, "latin1");
-  return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+  return Buffer.concat([hpackInt(bytes.length, 7, 0x00), bytes]);
 }
 
 describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
@@ -926,6 +940,642 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
       client.destroy();
       raw.close();
     }
+  });
+});
+
+/**
+ * What an HPACK header block (RFC 7541 §6) does with the dynamic table: the §6.3 size updates it
+ * carries, and every index it resolves there (the static table ends at 61).
+ */
+function inspectHeaderBlock(block: Buffer): { sizeUpdates: number[]; dynamicIndexes: number[] } {
+  const sizeUpdates: number[] = [];
+  const dynamicIndexes: number[] = [];
+  let pos = 0;
+  // §5.1 prefixed integer.
+  const readInt = (prefixBits: number) => {
+    const max = (1 << prefixBits) - 1;
+    let value = block[pos++] & max;
+    if (value === max) {
+      let shift = 0;
+      let byte: number;
+      do {
+        byte = block[pos++];
+        value += (byte & 0x7f) * 2 ** shift;
+        shift += 7;
+      } while (byte & 0x80);
+    }
+    return value;
+  };
+  // §5.2 string literal. The Huffman flag sits above the 7-bit length prefix.
+  const skipString = () => {
+    const length = readInt(7);
+    pos += length;
+  };
+  const literalField = (prefixBits: number) => {
+    const nameIndex = readInt(prefixBits);
+    if (nameIndex > 61) dynamicIndexes.push(nameIndex);
+    if (nameIndex === 0) skipString();
+    skipString();
+  };
+  while (pos < block.length) {
+    const first = block[pos];
+    if (first & 0x80) {
+      const index = readInt(7); // §6.1 indexed field
+      if (index > 61) dynamicIndexes.push(index);
+    } else if (first & 0x40) {
+      literalField(6); // §6.2.1 literal with incremental indexing
+    } else if (first & 0x20) {
+      sizeUpdates.push(readInt(5)); // §6.3 dynamic table size update
+    } else {
+      literalField(4); // §6.2.2 and §6.2.3 literal without indexing, never indexed
+    }
+  }
+  return { sizeUpdates, dynamicIndexes };
+}
+
+// Each HPACK dynamic table belongs to the side that decodes with it (RFC 7541 §4.2). The peer's
+// SETTINGS_HEADER_TABLE_SIZE bounds our encoder, and the block after a change has to open with a
+// §6.3 size update. Our own value bounds our decoder, from the moment the peer ACKs it. nginx
+// sends 0 to every h2 upstream and fails a response that uses a dynamic index (#19152). nghttp2
+// (node, curl) answers a missing size update with GOAWAY(COMPRESSION_ERROR).
+describe("SETTINGS_HEADER_TABLE_SIZE (RFC 7541 §4.2)", () => {
+  /** A SETTINGS payload with one HEADER_TABLE_SIZE (0x1) entry per value. */
+  const headerTableSizes = (...values: number[]) => {
+    const payload = Buffer.alloc(6 * values.length);
+    values.forEach((value, i) => {
+      payload.writeUInt16BE(0x1, i * 6);
+      payload.writeUInt32BE(value, i * 6 + 2);
+    });
+    return payload;
+  };
+  /** RFC 7541 §6.3 Dynamic Table Size Update. */
+  const sizeUpdate = (size: number) => hpackInt(size, 5, 0x20);
+  const isSettings = (f: Frame) => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0;
+  /** A SETTINGS frame (not an ACK) that sets HEADER_TABLE_SIZE to `size`. */
+  const setsHeaderTableSize = (f: Frame, size: number) => {
+    if (!isSettings(f)) return false;
+    for (let i = 0; i + 6 <= f.payload.length; i += 6) {
+      if (f.payload.readUInt16BE(i) === 0x1 && f.payload.readUInt32BE(i + 2) === size) return true;
+    }
+    return false;
+  };
+
+  // 40 fields of about 243 bytes each (name + value + 32, RFC 7541 §4.1): a 4096-byte table holds 16.
+  const bigHeaders: Record<string, string> = {};
+  for (let i = 0; i < 40; i++) {
+    bigHeaders[`x-big-${i}`] = String(i).padStart(3, "0") + Buffer.alloc(200, "v").toString();
+  }
+
+  async function listen(
+    onStream: (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => void,
+    options: http2.ServerOptions = {},
+  ) {
+    const h2server = http2.createServer(options);
+    h2server.on("stream", (stream, headers) => {
+      // The raw client goes away as soon as it has the frames it checks. On Windows that resets
+      // a stream that is still open.
+      stream.on("error", () => {});
+      onStream(stream, headers);
+    });
+    h2server.listen(0, "127.0.0.1");
+    await once(h2server, "listening");
+    return { h2server, h2port: (h2server.address() as net.AddressInfo).port };
+  }
+
+  /** A raw client that opens the connection with the given SETTINGS payloads (default: one empty frame). */
+  async function rawClient(h2port: number, ...settingsPayloads: Buffer[]) {
+    const c = await RawH2.connect(h2port);
+    c.sendPreface();
+    if (settingsPayloads.length === 0) c.sendEmptySettings();
+    for (const payload of settingsPayloads) c.sendFrame(FrameType.SETTINGS, 0, 0, payload);
+    await c.waitFor(isSettings);
+    c.sendSettingsAck();
+    return c;
+  }
+
+  /** The header block of a HEADERS or PUSH_PROMISE frame. */
+  function headerBlock(frame: Frame) {
+    // END_HEADERS, not PADDED, no PRIORITY: the payload is the whole header block, after the
+    // 4-byte promised stream id of a PUSH_PROMISE.
+    expect(frame.flags & 0x2c).toBe(0x04);
+    return inspectHeaderBlock(frame.payload.subarray(frame.type === FrameType.PUSH_PROMISE ? 4 : 0));
+  }
+
+  /** A request on `streamId` (default: GET /), then the header block of the response. */
+  async function responseBlock(c: RawH2, streamId: number, request = requestHeaderBlock("GET")) {
+    c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM|END_HEADERS */, streamId, request);
+    return headerBlock(await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === streamId));
+  }
+
+  const respondWithSharedHeader = (stream: http2.ServerHttp2Stream) => {
+    stream.respond({ ":status": 200, "x-shared": "the same value on every response" });
+    stream.end("ok");
+  };
+
+  describe("the peer's value bounds the encoder", () => {
+    test("server: after the peer sends 0, the next response says so and no response uses the table", async () => {
+      const { h2server, h2port } = await listen(respondWithSharedHeader);
+      const c = await rawClient(h2port, headerTableSizes(0));
+      try {
+        expect([await responseBlock(c, 1), await responseBlock(c, 3), await responseBlock(c, 5)]).toEqual([
+          { sizeUpdates: [0], dynamicIndexes: [] },
+          { sizeUpdates: [], dynamicIndexes: [] },
+          { sizeUpdates: [], dynamicIndexes: [] },
+        ]);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    // The peer's decoder evicts at each of its SETTINGS values, so the smallest one since the
+    // last block goes first. nghttp2 rejects a first size update above that minimum.
+    test.each([
+      ["two SETTINGS frames", [headerTableSizes(0), headerTableSizes(4096)]],
+      ["two entries of one SETTINGS frame", [headerTableSizes(0, 4096)]],
+    ])("server: 0 then 4096 in %s is announced as the minimum, then the final size", async (_, settingsPayloads) => {
+      const { h2server, h2port } = await listen(respondWithSharedHeader);
+      const c = await rawClient(h2port, ...settingsPayloads);
+      try {
+        expect(await responseBlock(c, 1)).toEqual({ sizeUpdates: [0, 4096], dynamicIndexes: [] });
+        // The table is in use again: "x-shared" now comes out of it.
+        const second = await responseBlock(c, 3);
+        expect(second.sizeUpdates).toEqual([]);
+        expect(second.dynamicIndexes.length).toBeGreaterThan(0);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    test("server: a header block that is never sent does not swallow the size update", async () => {
+      const dropped = new Error("dropped");
+      let thrown: unknown;
+      const { h2server, h2port } = await listen(stream => {
+        try {
+          // ":status" is already encoded when the value of "x-throws" is read.
+          const throws = {
+            toString() {
+              throw dropped;
+            },
+          };
+          stream.respond({ ":status": 200, "x-throws": throws as unknown as string });
+        } catch (e) {
+          thrown = e;
+        }
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      const c = await rawClient(h2port, headerTableSizes(0));
+      try {
+        expect(await responseBlock(c, 1)).toEqual({ sizeUpdates: [0], dynamicIndexes: [] });
+        expect(thrown).toBe(dropped);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    test("server: trailers say so when the change arrives after the response headers", async () => {
+      const { h2server, h2port } = await listen(stream => {
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "done" }));
+        stream.session!.on("remoteSettings", settings => {
+          if (settings.headerTableSize === 0) stream.end("ok");
+        });
+      });
+      const c = await rawClient(h2port);
+      try {
+        const response = await responseBlock(c, 1);
+        c.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSizes(0));
+        const trailers = await c.waitFor(
+          f => f.type === FrameType.HEADERS && f.streamId === 1 && (f.flags & 0x1) !== 0,
+        );
+        expect([response, headerBlock(trailers)]).toEqual([
+          { sizeUpdates: [], dynamicIndexes: [] },
+          { sizeUpdates: [0], dynamicIndexes: [] },
+        ]);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    test("server: a PUSH_PROMISE says so when it is the first header block", async () => {
+      const { h2server, h2port } = await listen(stream => {
+        stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+          if (err) throw err;
+          // Not a 'stream' event of the server, so `listen` does not cover it.
+          pushed.on("error", () => {});
+          pushed.respond({ ":status": 200 });
+          pushed.end("pushed");
+        });
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      const c = await rawClient(h2port, headerTableSizes(0));
+      try {
+        c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM|END_HEADERS */, 1, requestHeaderBlock("GET"));
+        const promise = await c.waitFor(f => f.type === FrameType.PUSH_PROMISE && f.streamId === 1);
+        const responses = [
+          await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1),
+          await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 2),
+        ];
+        // Let both responses finish, so the teardown below does not cut one off.
+        for (const streamId of [1, 2]) {
+          await c.waitFor(f => f.type === FrameType.DATA && f.streamId === streamId && (f.flags & 0x1) !== 0);
+        }
+        expect([promise, ...responses].map(headerBlock)).toEqual([
+          { sizeUpdates: [0], dynamicIndexes: [] },
+          { sizeUpdates: [], dynamicIndexes: [] },
+          { sizeUpdates: [], dynamicIndexes: [] },
+        ]);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    test("server: a peer table size above 4096 does not grow the encoder's table", async () => {
+      const { h2server, h2port } = await listen(stream => {
+        stream.respond({ ":status": 200, ...bigHeaders });
+        stream.end("ok");
+      });
+      const c = await rawClient(h2port, headerTableSizes(65536));
+      try {
+        const blocks = [await responseBlock(c, 1), await responseBlock(c, 3)];
+        expect(blocks.map(b => b.sizeUpdates)).toEqual([[], []]);
+        // 16 entries fit in 4096 bytes, so no index can go past 61 + 16.
+        expect(Math.max(0, ...blocks.flatMap(b => b.dynamicIndexes))).toBeLessThanOrEqual(77);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    test("server: a local headerTableSize above 4096 does not size the encoder", async () => {
+      // The client's decoder keeps the default 4096 bytes. An encoder that kept 65536 bytes of
+      // entries would point at fields the client has already evicted.
+      const { h2server, h2port } = await listen(
+        stream => {
+          stream.respond({ ":status": 200, ...bigHeaders });
+          stream.end();
+        },
+        { settings: { headerTableSize: 65536 } },
+      );
+      const client = http2.connect(`http://127.0.0.1:${h2port}`);
+      try {
+        for (let i = 0; i < 3; i++) {
+          const req = client.request({ ":path": "/" });
+          const [headers] = await once(req, "response");
+          expect(headers).toMatchObject(bigHeaders);
+          req.resume();
+          await once(req, "close");
+        }
+      } finally {
+        client.close();
+        h2server.close();
+      }
+    });
+
+    test("client: after the server sends 0, the next request says so and no request uses the table", async () => {
+      const raw = await RawH2Server.listen();
+      const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+      client.on("error", () => {});
+      /** Sends a request, answers it with a bare 200, returns the request's header block. */
+      const requestBlock = async (streamId: number, beforeResponse?: () => Promise<unknown>) => {
+        const req = client.request({ ":path": "/", "x-request-id": "abcdef0123456789" });
+        req.on("error", () => {});
+        req.resume();
+        const headers = await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === streamId);
+        await beforeResponse?.();
+        raw.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM|END_HEADERS */, streamId, Buffer.from([0x88]));
+        await once(req, "close");
+        return headerBlock(headers);
+      };
+      try {
+        // The first request leaves before the server's SETTINGS arrives.
+        const first = await requestBlock(1, () => {
+          raw.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSizes(0));
+          raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+          // The client's ACK: from here on its encoder is bound by 0.
+          return raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 1);
+        });
+        expect([first, await requestBlock(3), await requestBlock(5)]).toEqual([
+          { sizeUpdates: [], dynamicIndexes: [] },
+          { sizeUpdates: [0], dynamicIndexes: [] },
+          { sizeUpdates: [], dynamicIndexes: [] },
+        ]);
+      } finally {
+        client.destroy();
+        raw.close();
+      }
+    });
+
+    describe("client on a JS transport, where a large header block reaches the transport inside request()", () => {
+      // Larger than the 16 KB cork, so the block goes to the transport's write() before request() returns.
+      const oversized: Record<string, string> = {};
+      for (let i = 0; i < 90; i++) oversized[`x-big-${i}`] = Buffer.alloc(200, "v").toString() + i;
+
+      /** A raw peer on a Duplex. `onHeaders` runs inside the client's write of that HEADERS frame. */
+      function rawPeer(onHeaders: (frame: Frame, peer: Duplex) => void, settings?: Buffer) {
+        let buf = Buffer.alloc(0);
+        let prefaceLeft = PREFACE.length;
+        const peer = new Duplex({
+          read() {},
+          write(chunk: Buffer, _encoding, callback) {
+            buf = Buffer.concat([buf, chunk]);
+            const skip = Math.min(prefaceLeft, buf.length);
+            prefaceLeft -= skip;
+            buf = buf.subarray(skip);
+            while (prefaceLeft === 0 && buf.length >= 9 && buf.length >= 9 + buf.readUIntBE(0, 3)) {
+              const length = buf.readUIntBE(0, 3);
+              const frame: Frame = {
+                length,
+                type: buf.readUInt8(3),
+                flags: buf.readUInt8(4),
+                streamId: buf.readUInt32BE(5) & 0x7fffffff,
+                payload: buf.subarray(9, 9 + length),
+              };
+              buf = buf.subarray(9 + length);
+              if (frame.type === FrameType.SETTINGS && (frame.flags & 0x1) === 0) {
+                peer.push(encodeFrame(FrameType.SETTINGS, 0, 0, settings));
+                peer.push(encodeFrame(FrameType.SETTINGS, 0x1, 0));
+              } else if (frame.type === FrameType.HEADERS) {
+                onHeaders(frame, peer);
+                // On a later tick: the client drops a response that arrives before request() returns.
+                setImmediate(() => peer.push(encodeFrame(FrameType.HEADERS, 0x5, frame.streamId, Buffer.from([0x88]))));
+              }
+            }
+            callback();
+          },
+        });
+        return peer;
+      }
+
+      test("a table size that arrives during that write is announced in the next block", async () => {
+        let insideRequest = false;
+        const seen: { insideRequest: boolean; frame: Frame }[] = [];
+        const peer = rawPeer((frame, peer) => {
+          seen.push({ insideRequest, frame });
+          if (frame.streamId === 3) peer.push(encodeFrame(FrameType.SETTINGS, 0, 0, headerTableSizes(0)));
+        });
+        const client = http2.connect("http://localhost", { createConnection: () => peer });
+        client.on("error", () => {});
+        const get = async (headers: http2.OutgoingHttpHeaders = {}) => {
+          insideRequest = true;
+          const req = client.request({ ":path": "/", ...headers });
+          insideRequest = false;
+          req.on("error", () => {});
+          req.resume();
+          await once(req, "response");
+        };
+        try {
+          await get();
+          await get(oversized);
+          await get();
+          const [, second, third] = seen;
+          // Without this the test does not reach the case it is for.
+          expect({ streamId: second.frame.streamId, insideRequest: second.insideRequest }).toEqual({
+            streamId: 3,
+            insideRequest: true,
+          });
+          expect(headerBlock(third.frame)).toEqual({ sizeUpdates: [0], dynamicIndexes: [] });
+        } finally {
+          client.destroy();
+        }
+      });
+
+      test("a block that user code sends during that write does not repeat the size update", async () => {
+        let client: http2.ClientHttp2Session;
+        const seen: Frame[] = [];
+        const peer = rawPeer((frame, peer) => {
+          seen.push(frame);
+          // Lowered, then raised: the next block has to open with size updates to 0 and to 4096.
+          if (frame.streamId === 1) peer.push(encodeFrame(FrameType.SETTINGS, 0, 0, headerTableSizes(0, 4096)));
+          if (frame.streamId === 3) {
+            const nested = client.request({ ":path": "/nested" });
+            nested.on("error", () => {});
+            nested.resume();
+          }
+        });
+        client = http2.connect("http://localhost", { createConnection: () => peer });
+        client.on("error", () => {});
+        const get = async (headers: http2.OutgoingHttpHeaders = {}) => {
+          const req = client.request({ ":path": "/", ...headers });
+          req.on("error", () => {});
+          req.resume();
+          await once(req, "response");
+        };
+        try {
+          await get();
+          await get(oversized);
+          const [, outer, nested] = seen;
+          expect([outer.streamId, nested?.streamId]).toEqual([3, 5]);
+          expect(outer.payload.subarray(0, 4)).toEqual(Buffer.concat([sizeUpdate(0), sizeUpdate(4096)]));
+          // A second update to 0 makes the peer evict what the outer block has just inserted.
+          expect(headerBlock(nested)).toEqual({ sizeUpdates: [], dynamicIndexes: [] });
+        } finally {
+          client.destroy();
+        }
+      });
+
+      // User code runs between the fields of a header block. This checks one thing: a size that
+      // arrives there is not lost. The block that is open at that moment can still be wrong,
+      // which is why its last field is the one that delivers the SETTINGS frame.
+      test("a table size that arrives while user code builds a block is announced in the next block", async () => {
+        let insideRequest = false;
+        const seen: Frame[] = [];
+        const peer = rawPeer(frame => seen.push(frame), headerTableSizes(0));
+        const client = http2.connect("http://localhost", { createConnection: () => peer });
+        client.on("error", () => {});
+        const arrivedInsideRequest: boolean[] = [];
+        client.on("remoteSettings", settings => {
+          if (settings.headerTableSize === 4096) arrivedInsideRequest.push(insideRequest);
+        });
+        const get = async (headers: http2.OutgoingHttpHeaders = {}) => {
+          insideRequest = true;
+          const req = client.request({ ":path": "/", ...headers });
+          insideRequest = false;
+          req.on("error", () => {});
+          req.resume();
+          await once(req, "response");
+        };
+        try {
+          await get();
+          const deliversSettings = {
+            toString() {
+              peer.push(encodeFrame(FrameType.SETTINGS, 0, 0, headerTableSizes(4096)));
+              return "value";
+            },
+          };
+          await get({ "x-last": deliversSettings as unknown as string });
+          await get();
+          // Without this the test does not reach the case it is for.
+          expect(arrivedInsideRequest).toEqual([true]);
+          expect(seen.map(frame => headerBlock(frame).sizeUpdates)).toEqual([[0], [], [4096]]);
+        } finally {
+          client.destroy();
+        }
+      });
+    });
+  });
+
+  describe("the local value bounds the decoder once the peer ACKs it", () => {
+    /** A literal field with incremental indexing (§6.2.1): the first one becomes dynamic index 62. */
+    const indexed = (name: string, value: string) =>
+      Buffer.concat([Buffer.from([0x40]), hpackLiteral(name), hpackLiteral(value)]);
+    const DYNAMIC_INDEX_62 = Buffer.from([0x80 | 62]);
+
+    /** A server that records the "x-probe" request header of every stream. */
+    async function probeServer(options: http2.ServerOptions, onFirstStream?: (session: http2.Http2Session) => void) {
+      const probes: (string | undefined)[] = [];
+      const listening = await listen((stream, headers) => {
+        probes.push(headers["x-probe"] as string | undefined);
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+        if (probes.length === 1) onFirstStream?.(stream.session!);
+      }, options);
+      return { ...listening, probes };
+    }
+
+    test("a local 0 does not bind the decoder before the peer ACKs it", async () => {
+      const { h2server, h2port, probes } = await probeServer({ settings: { headerTableSize: 0 } });
+      const c = await RawH2.connect(h2port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        // No ACK for the server's SETTINGS yet: this encoder still works against the default 4096.
+        await responseBlock(c, 1, requestHeaderBlock("GET", indexed("x-probe", "kept in the table")));
+        await responseBlock(c, 3, requestHeaderBlock("GET", DYNAMIC_INDEX_62));
+        expect(probes).toEqual(["kept in the table", "kept in the table"]);
+        expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    test("after the ACK, a size update above the local value is a COMPRESSION_ERROR", async () => {
+      const { h2server, h2port } = await probeServer({ settings: { headerTableSize: 0 } });
+      const c = await rawClient(h2port);
+      try {
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([sizeUpdate(4096), requestHeaderBlock("GET")]));
+        expect(goawayErrorCode(await c.waitForGoaway())).toBe(ErrorCode.COMPRESSION_ERROR);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    // An encoder with a pending size update puts it at the start of its next block, and that
+    // block can be empty trailers. The peers this change makes correct send such blocks.
+    test.each([
+      ["within the limit is a valid block with no field", 4096, "trailers {}"],
+      ["above the limit is a COMPRESSION_ERROR", 8192, "GOAWAY 9"],
+    ])("a trailers block that holds only a size update %s", async (_, size, expected) => {
+      const trailers = Promise.withResolvers<string>();
+      const { h2server, h2port } = await listen(stream => {
+        stream.on("trailers", t => trailers.resolve(`trailers ${JSON.stringify(t)}`));
+        stream.resume();
+      });
+      const c = await rawClient(h2port);
+      try {
+        c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("POST"));
+        c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("body"));
+        c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM|END_HEADERS */, 1, sizeUpdate(size));
+        const goaway = c.waitForGoaway().then(f => `GOAWAY ${goawayErrorCode(f)}`);
+        goaway.catch(() => {});
+        expect(await Promise.race([trailers.promise, goaway])).toBe(expected);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    test("session.state reports the size of each table, not the local setting", async () => {
+      const states: http2.SessionState[] = [];
+      const { h2server, h2port } = await listen(
+        stream => {
+          states.push(stream.session!.state);
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        },
+        { settings: { headerTableSize: 65536 } },
+      );
+      const c = await RawH2.connect(h2port);
+      try {
+        c.sendPreface();
+        c.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSizes(1024));
+        // Request 1 arrives before this peer ACKs the server's 65536. Request 3 arrives after.
+        await responseBlock(c, 1);
+        c.sendSettingsAck();
+        await responseBlock(c, 3);
+        expect(states.map(s => [s.deflateDynamicTableSize, s.inflateDynamicTableSize])).toEqual([
+          [1024, 4096],
+          [1024, 65536],
+        ]);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    test("a raised local value is the new limit once the peer ACKs it, and the table grows", async () => {
+      const RAISED = 8192;
+      const { h2server, h2port, probes } = await probeServer({}, session =>
+        session.settings({ headerTableSize: RAISED }),
+      );
+      const c = await rawClient(h2port);
+      try {
+        await responseBlock(c, 1);
+        await c.waitFor(f => setsHeaderTableSize(f, RAISED));
+        c.sendSettingsAck();
+        // 7 + 6000 + 32 bytes: this entry only fits in the raised table.
+        const big = indexed("x-probe", Buffer.alloc(6000, "p").toString());
+        await responseBlock(c, 3, Buffer.concat([sizeUpdate(RAISED), requestHeaderBlock("GET", big)]));
+        await responseBlock(c, 5, requestHeaderBlock("GET", DYNAMIC_INDEX_62));
+        expect(probes.map(p => p?.length)).toEqual([undefined, 6000, 6000]);
+        expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    // Both halves against each other: the peer's encoder announces the raised size, and the
+    // decoder of the side that raised it has to accept that.
+    test.each([
+      ["server", 1024],
+      ["server", 0],
+      ["client", 1024],
+      ["client", 0],
+    ] as const)("a %s that raises its headerTableSize from %d to 4096 keeps the session", async (side, initial) => {
+      const settings = { headerTableSize: initial };
+      let serverSession!: http2.Http2Session;
+      const { h2server, h2port } = await listen(respondWithSharedHeader, side === "server" ? { settings } : {});
+      h2server.on("session", session => (serverSession = session));
+      const client = http2.connect(`http://127.0.0.1:${h2port}`, side === "client" ? { settings } : {});
+      const get = async () => {
+        const req = client.request({ ":path": "/", "x-request-id": "abcdef0123456789" });
+        const [headers] = await once(req, "response");
+        req.resume();
+        await once(req, "close");
+        return headers[":status"];
+      };
+      try {
+        const statuses = [await get()];
+        const raised = Promise.withResolvers<void>();
+        // The callback runs when the peer's ACK arrives.
+        (side === "server" ? serverSession : client).settings({ headerTableSize: 4096 }, () => raised.resolve());
+        await raised.promise;
+        statuses.push(await get(), await get());
+        expect(statuses).toEqual([200, 200, 200]);
+      } finally {
+        client.close();
+        h2server.close();
+      }
+    });
   });
 });
 

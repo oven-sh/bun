@@ -311,6 +311,81 @@ describe("fetch() decodes Content-Encoding case-insensitively", () => {
       server.close();
     }
   });
+
+  // Bun never sends a TE request header, so per RFC 9112 §5 a server may only
+  // apply chunked. A response carrying one of the compression transfer codings
+  // without chunked has no decoder here and must fail the fetch instead of
+  // handing raw wire bytes (framed by Content-Length) to the caller.
+  it.concurrent.each(["gzip", "x-gzip", "deflate", "br", "zstd"])(
+    "Transfer-Encoding: %s without chunked is rejected",
+    async te => {
+      const server = createNetServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.end(
+            "HTTP/1.1 200 OK\r\n" +
+              `Transfer-Encoding: ${te}\r\n` +
+              "Content-Length: 4\r\n" +
+              "Connection: close\r\n\r\n" +
+              "abcd",
+          );
+        });
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as import("node:net").AddressInfo;
+      try {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `fetch(process.argv[1]).then(
+             async r => console.log(JSON.stringify({ resolved: true, body: await r.text() })),
+             e => console.log(JSON.stringify({ resolved: false, code: e?.code ?? null })),
+           );`,
+            `http://127.0.0.1:${port}/`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({ resolved: false, code: "UnsupportedTransferEncoding" }),
+          stderr: expect.any(String),
+          exitCode: 0,
+        });
+      } finally {
+        server.close();
+      }
+    },
+  );
+
+  // RFC 9112 §6.1: Transfer-Encoding MAY be sent on a HEAD or 304 response to
+  // indicate what would have been applied. There is no body to decode, so the
+  // header is informational and the fetch must resolve like Node/undici.
+  it.concurrent.each([
+    ["HEAD", "200 OK", "gzip"],
+    ["GET", "304 Not Modified", "gzip"],
+    ["GET", "204 No Content", "gzip"],
+    ["HEAD", "200 OK", "compress"],
+  ])("%s -> %s with Transfer-Encoding: %s resolves", async (method, status, te) => {
+    const server = createNetServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        socket.end(`HTTP/1.1 ${status}\r\nTransfer-Encoding: ${te}\r\nConnection: close\r\n\r\n`);
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`, { method });
+      expect({ status: res.status, body: await res.text() }).toEqual({
+        status: Number(status.split(" ")[0]),
+        body: "",
+      });
+    } finally {
+      server.close();
+    }
+  });
 });
 
 it("fetch() with a gzip response works (multiple chunks, TCP server)", async done => {

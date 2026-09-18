@@ -2047,6 +2047,11 @@ pub(crate) fn install_isolated_packages(
                 None
             },
             store: &store,
+            required_packages: RequiredPackages::new(
+                workspace_filters,
+                install_root_dependencies,
+                packages_to_install,
+            ),
             tasks,
             waiters_head: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             next_waiter: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
@@ -2099,12 +2104,6 @@ pub(crate) fn install_isolated_packages(
                 installer.manager_mut(),
             );
         }
-
-        let mut required_packages = RequiredPackages::new(
-            workspace_filters,
-            install_root_dependencies,
-            packages_to_install,
-        );
 
         // add the pending task count upfront
         installer
@@ -2416,7 +2415,9 @@ pub(crate) fn install_isolated_packages(
 
                     let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
                     let is_required =
-                        required_packages.contains(installer.manager(), dep_id, pkg_id);
+                        installer
+                            .required_packages
+                            .contains(installer.manager(), dep_id, pkg_id);
 
                     match pkg_res_tag {
                         ResolutionTag::Npm => {

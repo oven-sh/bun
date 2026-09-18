@@ -210,6 +210,124 @@ test.concurrent("trustedDependencies matches the resolved package name, not the 
   expect(await exited).toBe(0);
 });
 
+// `no-deps-scripted-to-fail` has an `install` script that exits 1. The linker places it once,
+// under the root's optional dependency. `no-deps-scripted-to-deeply-fail` requires it, so the
+// failed script fails the install.
+for (const linker of ["hoisted", "isolated"] as const) {
+  test.concurrent(
+    `a failed script of a package that an optional and a required dependency share (${linker})`,
+    async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: { "no-deps-scripted-to-deeply-fail": "1.0.0" },
+          optionalDependencies: { "no-deps-scripted-to-fail": "1.0.0" },
+          trustedDependencies: ["no-deps-scripted-to-fail"],
+        }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install", `--linker=${linker}`],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(out).toContain("bun install v1.");
+      expect(splitErrLines(err).filter(line => line.startsWith("error:"))).toEqual([
+        'error: install script from "no-deps-scripted-to-fail" exited with 1',
+      ]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test.concurrent(`a failed script of a package that only an optional dependency needs (${linker})`, async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+        optionalDependencies: { "no-deps-scripted-to-fail": "1.0.0" },
+        trustedDependencies: ["no-deps-scripted-to-fail"],
+      }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", `--linker=${linker}`],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
+    expect(exitCode).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "no-deps-scripted-to-fail"))).toBeFalse();
+  });
+}
+
+// The package is already installed and blocked. The second install trusts it and runs its script.
+// Only the hoisted linker runs the scripts of a package that a later install trusts.
+test.concurrent(
+  "a failed script of an installed package that an optional and a required dependency share (hoisted)",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    const pkg = {
+      name: "foo",
+      version: "1.0.0",
+      dependencies: { "no-deps-scripted-to-deeply-fail": "1.0.0" },
+      optionalDependencies: { "no-deps-scripted-to-fail": "1.0.0" },
+    };
+    await writeFile(packageJson, JSON.stringify(pkg));
+    {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--linker=hoisted"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("Blocked 1 postinstall");
+      expect(exitCode).toBe(0);
+    }
+
+    await writeFile(packageJson, JSON.stringify({ ...pkg, trustedDependencies: ["no-deps-scripted-to-fail"] }));
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(out).toContain("bun install v1.");
+    expect(splitErrLines(err).filter(line => line.startsWith("error:"))).toEqual([
+      'error: install script from "no-deps-scripted-to-fail" exited with 1',
+    ]);
+    expect(exitCode).toBe(1);
+  },
+);
+
 test.concurrent(
   "trustedDependencies added on a later install still matches the resolved package name, not the dependency alias",
   async () => {

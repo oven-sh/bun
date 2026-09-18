@@ -340,18 +340,12 @@ export function getStdinStream(
 
   return stream;
 }
-export function initializeNextTickQueue(
-  process: typeof globalThis.process,
-  nextTickQueue,
-  drainMicrotasksFn,
-  reportUncaughtExceptionFn,
-) {
+export function initializeNextTickQueue(process: typeof globalThis.process, nextTickQueue, drainMicrotasksFn) {
   var queue;
   var tickInitHooks;
   var process;
   var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
-  var reportUncaughtException = reportUncaughtExceptionFn;
 
   const { validateFunction } = require("internal/validators");
 
@@ -370,33 +364,32 @@ export function initializeNextTickQueue(
           var frame = tock.frame;
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame);
-          try {
-            if (args === undefined) {
-              callback();
-            } else {
-              switch (args.length) {
-                case 1:
-                  callback(args[0]);
-                  break;
-                case 2:
-                  callback(args[0], args[1]);
-                  break;
-                case 3:
-                  callback(args[0], args[1], args[2]);
-                  break;
-                case 4:
-                  callback(args[0], args[1], args[2], args[3]);
-                  break;
-                default:
-                  callback(...args);
-                  break;
-              }
+          // No catch and no finally: what a tick throws leaves this function as it was thrown, with
+          // the tick's frame still current. JSNextTickQueue::drain reports it there (so an
+          // uncaughtException handler reads the tick's AsyncLocalStorage stores, as in node), puts the
+          // async context back, and calls in again for the ticks after it.
+          if (args === undefined) {
+            callback();
+          } else {
+            switch (args.length) {
+              case 1:
+                callback(args[0]);
+                break;
+              case 2:
+                callback(args[0], args[1]);
+                break;
+              case 3:
+                callback(args[0], args[1], args[2]);
+                break;
+              case 4:
+                callback(args[0], args[1], args[2], args[3]);
+                break;
+              default:
+                callback(...args);
+                break;
             }
-          } catch (e) {
-            reportUncaughtException(e);
-          } finally {
-            $putInternalField($asyncContext, 0, restore);
           }
+          $putInternalField($asyncContext, 0, restore);
         }
 
         drainMicrotasks();

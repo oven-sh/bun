@@ -216,6 +216,15 @@ bitflags::bitflags! {
 /// not a correctness invariant.
 const N_HTTP_METHODS: usize = 36;
 
+bun_jsc::impl_abort_handle_owner!(
+    [const SSL: bool, const DEBUG: bool] NewServer<SSL, DEBUG>,
+    abort_handle,
+    |this, _cause| {
+        // SAFETY: trait contract — `this` is live (armed ⇒ not deinit'd).
+        unsafe { (*this).stop(true) }
+    }
+);
+
 pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) app: Option<*mut uws_sys::NewApp<SSL>>,
     pub(crate) listener: Option<*mut uws_sys::app::ListenSocket<SSL>>,
@@ -269,6 +278,11 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// via a callback the body fires) early-return instead of re-running the
     /// downgrade/teardown while the outer frame still holds `&mut self`.
     deinit_running: core::cell::Cell<bool>,
+    /// Armed while listening: the server stops with the context that started it.
+    pub(crate) abort_handle: jsc::AbortHandle,
+    /// The context of the script that started the server: what a request makes before its
+    /// handler runs (its `AbortSignal`) belongs to it.
+    pub(crate) context: core::cell::Cell<jsc::ContextId>,
     pub(crate) request_pool:
         *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
     /// Null until `listen()` creates an HTTP/2 or HTTP/3 app. Kept as a raw
@@ -809,6 +823,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_ref.request_body.set(Some(body_hive.clone()));
 
         let global = server.global_this();
+        let _context = server.vm().enter_context(server.context.get());
         let signal = jsc::AbortSignal::new(global);
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         ctx_ref.signal.set(core::ptr::NonNull::new(signal));
@@ -1127,6 +1142,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `this` is the live server backref for this request.
         let server = unsafe { &*this };
         let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
+        // The handler and the render of what it returns continue the script that made the server.
+        let _context = server.vm().enter_context(server.context.get());
         let on_request = server.config.on_request;
         debug_assert!(!on_request.is_empty());
 
@@ -1179,6 +1196,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `server` is the live backref stored in `user_route`.
         let server_ref = unsafe { &*server };
         let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
+        // As in `on_request`.
+        let _context = server_ref.vm().enter_context(server_ref.context.get());
         let global = server_ref.global_this();
         let server_request_list =
             Self::js_route_list_get_cached(server_js).expect("routeList cached value missing");
@@ -1261,6 +1280,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         );
         let vm = this_ref.vm_mut();
         let _entered = this_ref.vm().enter_event_loop_scope_without_checkpoint();
+        // The listener and what it starts continue the script that made the server.
+        let _context = this_ref.vm().enter_context(this_ref.context.get());
         req.set_yield(false);
         resp.timeout(this_ref.config.idle_timeout);
 
@@ -1658,10 +1679,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn stop_listening(&mut self, abrupt: bool) {
         // httplog!("stopListening", .{});
 
-        if let Some(handles) = crate::jsc_hooks::active_handles() {
-            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(
-                core::ptr::from_ref(self),
-            )));
+        // A graceful stop leaves connections open, and this handle is how their context's stop
+        // reaches them: it stays until they are gone (`deinit_if_we_can`).
+        if abrupt {
+            self.abort_handle.leave();
         }
 
         if Self::HAS_H3 {
@@ -1881,6 +1902,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         global,
                     ),
                     tracker: jsc::AsyncTaskTracker::init(vm_ref),
+                    context: self.context.get(),
                 },
                 vm_ref,
             );
@@ -1889,6 +1911,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.unref();
         }
         if self.is_drained() {
+            self.abort_handle.leave();
             // No handler is dispatched from here on (`js_value_for_dispatch`), so the wrapper —
             // the handlers' only GC root — may become collectible.
             self.js_value.downgrade();
@@ -2106,11 +2129,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // This should've already been handled in stop_listening; however, when
         // the JS VM terminates, it hypothetically might not call stop_listening.
         server.notify_inspector_server_stopped();
-        if let Some(handles) = crate::jsc_hooks::active_handles() {
-            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(
-                this.cast_const(),
-            )));
-        }
+        server.abort_handle.leave();
 
         if Self::HAS_H3 {
             if let Some(h3a) = server.h3_app.take() {
@@ -2173,6 +2192,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             active_connection_count: core::cell::Cell::new(0),
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
+            abort_handle: jsc::AbortHandle::for_owner::<Self>(),
+            context: core::cell::Cell::new(jsc::ContextId::default()),
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
             // Servers that enable neither HTTP/2 nor HTTP/3 never allocate the
             // ~816 KB mux pool; `listen()` materializes it on demand.
@@ -3607,6 +3628,8 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
 pub trait ServerLike {
     fn global_this(&self) -> &jsc::JSGlobalObject;
     fn vm(&self) -> &jsc::VirtualMachine;
+    /// The context of the script that made the server: what a request starts continues it.
+    fn context(&self) -> &jsc::ScriptExecutionContext;
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&mut self);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
@@ -3633,6 +3656,10 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     #[inline(always)]
     fn vm(&self) -> &jsc::VirtualMachine {
         Self::vm(self)
+    }
+    #[inline]
+    fn context(&self) -> &jsc::ScriptExecutionContext {
+        Self::vm(self).context_of(self.context.get())
     }
     #[inline(always)]
     fn config(&self) -> &ServerConfig {
@@ -3903,6 +3930,12 @@ impl AnyServer {
         any_server_dispatch!(self, |s| s.vm())
     }
 
+    /// The context of the script that made the server.
+    #[inline]
+    pub(crate) fn context_id(&self) -> jsc::ContextId {
+        any_server_dispatch!(self, |s| s.context.get())
+    }
+
     /// Shared borrow of the per-process `JSGlobalObject`. Routes through
     /// [`NewServer::global_this`] (same SAFETY contract: never-null backref,
     /// never moved or freed while any `NewServer` exists).
@@ -3985,10 +4018,6 @@ impl AnyServer {
 
     pub(crate) fn on_static_request_complete(&mut self) {
         any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
-    }
-
-    pub(crate) fn stop(&mut self, abrupt: bool) {
-        any_server_dispatch_mut!(self, |s| s.stop(abrupt))
     }
 
     pub(crate) fn num_subscribers(&self, topic: &[u8]) -> u32 {
@@ -4250,6 +4279,9 @@ pub struct ServerAllConnectionsClosedTask {
     pub(crate) global_object: *const jsc::JSGlobalObject,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) tracker: jsc::AsyncTaskTracker,
+    /// The context of the script that made the server: `stop()`'s promise (and node:http's
+    /// `'close'`, which waits on it) is settled for that script.
+    pub(crate) context: jsc::ContextId,
 }
 
 impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
@@ -4259,6 +4291,10 @@ impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box `schedule` queued.
         drop(unsafe { bun_core::heap::take(this) });
+    }
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract.
+        unsafe { (*this).context }
     }
 }
 

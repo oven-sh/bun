@@ -431,10 +431,6 @@ impl PostgresSQLConnection {
 
     pub(crate) fn setup_tls(&self) {
         debug!("setupTLS");
-        // `vm_mut()` is `'static`, so `tls_group` borrows the VM singleton —
-        // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup = self.vm_mut().postgres_socket_group::<true>();
-
         // At this point we are
         // a plain TCP socket in the Connected state.
         let Socket::SocketTcp(tcp) = self.socket.get() else {
@@ -450,6 +446,11 @@ impl PostgresSQLConnection {
                 AnyPostgresError::TLSUpgradeFailed,
             );
             return;
+        };
+        // SAFETY: `raw` is a live connected socket in its context's Postgres TCP group.
+        let tls_group: &mut bun_uws::SocketGroup = unsafe {
+            bun_jsc::rare_data::SocketGroups::of((*raw).group())
+                .postgres_group::<true>(self.vm_mut().uws_loop())
         };
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
@@ -731,6 +732,7 @@ impl PostgresSQLConnection {
             // Reported here rather than returned: the pending queries are still
             // rejected and the socket closed below whatever `onclose` did.
             self.event_loop().run_callback(
+                bun_event_loop::ContextId::NONE,
                 on_close,
                 self.global(),
                 JSValue::UNDEFINED,
@@ -1072,6 +1074,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // is the canonical safe escape hatch (one audited unsafe in bun_jsc) for
     // `&mut self` helpers like `ssl_ctx_cache()` / `postgres_socket_group()`.
     let vm = global_object.bun_vm().as_mut();
+    // The connection is the calling script's.
+    let context = global_object.bun_vm().context_of_caller(callframe);
     let arguments = callframe.arguments();
     let Some(args) = ConnectionCtorArgs::<SSLMode>::parse(global_object, &mut *vm, arguments)?
     else {
@@ -1226,7 +1230,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
         // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
         // adopts into `postgres_tls_group` after the server's `S`.
-        let group = vm.postgres_socket_group::<false>();
+        let group = vm.postgres_socket_group::<false>(context);
         let path_slice = this.path.slice();
         let result = if !path_slice.is_empty() {
             uws::SocketTCP::connect_unix_group(
@@ -3078,6 +3082,7 @@ impl PostgresSQLConnection {
         let payload_js = bun_string_jsc::create_utf8_for_js(global, payload)
             .map_err(crate::jsc::js_error_to_postgres)?;
         self.event_loop().run_callback(
+            bun_event_loop::ContextId::NONE,
             callback,
             global,
             JSValue::UNDEFINED,

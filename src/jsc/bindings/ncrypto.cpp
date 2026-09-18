@@ -953,13 +953,26 @@ BIOPointer X509View::getInfoAccess() const
     return bio;
 }
 
+static void printValidityTime(BIO* bio, const ASN1_TIME* time)
+{
+    // ASN1_TIME_print refuses a UTCTime "+hhmm" offset that the X509 parser accepts. OpenSSL prints it.
+    int64_t seconds;
+    if (!ASN1_TIME_to_posix(time, &seconds) && ASN1_TIME_to_posix_nonstandard(time, &seconds)) {
+        if (DeleteFnPtr<ASN1_TIME, ASN1_TIME_free> utc { ASN1_TIME_set_posix(nullptr, seconds) }) {
+            ASN1_TIME_print(bio, utc.get());
+            return;
+        }
+    }
+    ASN1_TIME_print(bio, time);
+}
+
 BIOPointer X509View::getValidFrom() const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return {};
     BIOPointer bio(BIO_new(BIO_s_mem()));
     if (!bio) return {};
-    ASN1_TIME_print(bio.get(), X509_get_notBefore(cert_));
+    printValidityTime(bio.get(), X509_get_notBefore(cert_));
     return bio;
 }
 
@@ -969,7 +982,7 @@ BIOPointer X509View::getValidTo() const
     if (cert_ == nullptr) return {};
     BIOPointer bio(BIO_new(BIO_s_mem()));
     if (!bio) return {};
-    ASN1_TIME_print(bio.get(), X509_get_notAfter(cert_));
+    printValidityTime(bio.get(), X509_get_notAfter(cert_));
     return bio;
 }
 

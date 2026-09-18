@@ -69,16 +69,19 @@ const dir = String(
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const file = (name: string) => join(dir, name);
 
-/** A full collection from a timer callback, then a turn for FinalizationRegistry callbacks. Not
- *  from the caller's own continuation: that runs inside a microtask job, which still holds what it
- *  was given (the promise an `await` just resumed from, and through it the module that promise
- *  was fulfilled with). */
+/** A full collection from a setImmediate callback, then a turn for FinalizationRegistry callbacks.
+ *  Not from the caller's own continuation: that runs inside a microtask job, which still holds
+ *  what it was given (the promise an `await` just resumed from, and through it the module that
+ *  promise was fulfilled with). And not from a timer: what these tests drop was last used by
+ *  callbacks the event loop ran itself (a module's load completing, an await resuming), and on
+ *  Windows timers fire from inside `uv_run`, whose frames sit where those callbacks' frames were
+ *  and never write over them. An immediate runs where they ran. */
 function collect(): Promise<void> {
   return new Promise(resolve =>
-    setTimeout(() => {
+    setImmediate(() => {
       Bun.gc(true);
-      setTimeout(resolve, 0);
-    }, 0),
+      setImmediate(resolve);
+    }),
   );
 }
 

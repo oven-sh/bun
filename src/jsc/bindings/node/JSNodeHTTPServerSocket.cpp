@@ -105,6 +105,9 @@ void JSNodeHTTPServerSocket::close()
 }
 
 template<bool SSL>
+static void onNodeHttpReadsResumable(us_socket_t* socket);
+
+template<bool SSL>
 static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
 {
     auto* httpResponseData = (uWS::HttpResponseData<SSL>*)us_socket_ext(socket);
@@ -113,12 +116,14 @@ static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
          * switch into tunnel mode once the message completes (Node 26 delivers
          * the body through the request before raw data starts flowing). */
         httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY;
-    } else {
-        httpResponseData->isConnectRequest = true;
+        return;
     }
+    httpResponseData->isConnectRequest = true;
+    /* resume() on a response does nothing in tunnel mode: lift what paused reads before it (req.pause(), flood prevention). */
+    onNodeHttpReadsResumable<SSL>(socket);
 }
 
-void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody)
+void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response)
 {
     if (!socket || us_socket_is_closed(socket)) {
         return;
@@ -137,8 +142,8 @@ void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody)
     }
     /* The exchange leaves HTTP here: let the response release the server's
      * pending-request accounting (see Flags::TUNNELED in NodeHTTPResponse.rs). */
-    if (auto* res = currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
-        Bun__NodeHTTPResponse_markTunneled(res->m_ctx);
+    if (response != nullptr && response->m_ctx != nullptr) {
+        Bun__NodeHTTPResponse_markTunneled(response->m_ctx);
     }
 }
 
@@ -421,6 +426,13 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
+/* A pipelined CONNECT stays queued so that the connection never counts as idle. No request follows it, so it holds no reads. */
+template<bool SSL>
+static bool queuedResponsesHoldReads(uWS::NodeHttpResponseData<SSL>* httpResponseData)
+{
+    return httpResponseData->nodeHttpQueuedPipelinedCount > 0 && !httpResponseData->isConnectRequest;
+}
+
 /* node:http flood prevention, resume half. Parked pipelined requests (HttpParser::nodeHttpPausedSpill)
  * must replay before fresh reads (ordering) and not synchronously inside the resuming JS operation.
  * Deferred as an event-loop task rooting the JS socket; reads resume once the spill drains without re-pausing. */
@@ -449,7 +461,7 @@ static void replayNodeHttpPausedSpill(us_socket_t* socket)
          * the rest; stay paused until the next resumable event. */
         return;
     }
-    if (httpResponseData->nodeHttpQueuedPipelinedCount > 0
+    if (queuedResponsesHoldReads<SSL>(httpResponseData)
         || reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0) {
         /* The spill drained, but the pipeline has not: keep raw reads paused —
          * the queue-drain / writable events re-enter the hook. */
@@ -471,7 +483,7 @@ static void onNodeHttpReadsResumable(us_socket_t* socket)
             return;
         }
         if (httpResponseData->nodeHttpPausedSpill.isEmpty()
-            && httpResponseData->nodeHttpQueuedPipelinedCount > 0) {
+            && queuedResponsesHoldReads<SSL>(httpResponseData)) {
             return;
         }
     }

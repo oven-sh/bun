@@ -118,9 +118,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel, (JSC::JS
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    // upgradeToTunnel(afterBody): with a truthy argument the switch happens only
+    // upgradeToTunnel(afterBody, response): with a truthy afterBody the switch happens only
     // once the request body has been fully parsed (Upgrade requests with a body).
-    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject));
+    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject), dynamicDowncast<WebCore::JSNodeHTTPResponse>(callFrame->argument(1)));
     return JSValue::encode(JSC::jsUndefined());
 }
 

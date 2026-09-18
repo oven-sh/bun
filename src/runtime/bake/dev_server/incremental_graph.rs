@@ -136,6 +136,17 @@ impl File {
         self.kind
     }
 
+    /// A route or the config needs this file directly. A page that another page imports is still a root.
+    #[inline]
+    pub(crate) fn is_root(&self, side: Side) -> bool {
+        match side {
+            Side::Server => self.is_route,
+            Side::Client => {
+                self.html_route_bundle_index.is_some() || self.is_special_framework_file
+            }
+        }
+    }
+
     /// `ServerFile.stopsDependencyTrace` / `ClientFile.stopsDependencyTrace`.
     #[inline]
     fn stops_dependency_trace(&self, side: Side) -> bool {

@@ -106,6 +106,10 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
 // stringified, everything else through util.inspect. `quotesLikeInspect` quotes strings.
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue arg, bool quotesLikeInspect);
 
+// Appends the value the way util.format's `%s` renders it: a function and an object without a
+// built-in toString go through String(), any other object through util.inspect.
+void JSValueToStringLikeFormatS(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSC::JSValue arg);
+
 enum Bound {
     LOWER,
     UPPER,
@@ -134,7 +138,6 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value, const WTF::String& reason = "is invalid"_s);
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, const WTF::String& reason = "is invalid"_s);
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason = "is invalid"_s);
-JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView encoding);
 JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope&, JSC::JSGlobalObject*, JSValue encodingValue);
 JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& statemsg);
 JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject);

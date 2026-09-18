@@ -809,7 +809,7 @@ JSReadableStream* createReadableByteStream(JSGlobalObject* globalObject, SourceK
 static void throwNotIterable(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue iterable)
 {
     Bun::MessageBuilder builder;
-    Bun::JSValueToStringSafe(globalObject, builder, iterable, false);
+    Bun::JSValueToStringLikeFormatS(globalObject, builder, iterable);
     RETURN_IF_EXCEPTION(scope, );
     builder.append(" must be iterable"_s);
     Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_ARG_NOT_ITERABLE, builder);

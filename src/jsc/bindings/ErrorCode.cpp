@@ -12,8 +12,11 @@
 #include "helpers.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/MathCommon.h"
+#include "JavaScriptCore/ProxyObject.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/Assertions.h"
 #include "wtf/Vector.h"
@@ -351,6 +354,11 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
 {
     ASSERT(!arg.isEmpty());
     if (!arg.isCell()) {
+        // util.inspect and %s keep the sign of -0 (lib/internal/util/inspect.js, formatNumber). ToString drops it.
+        if (arg.isDouble() && JSC::isNegativeZero(arg.asDouble())) {
+            builder.append("-0"_s);
+            return;
+        }
         builder.append(arg.toWTFStringForConsole(globalObject));
         return;
     }
@@ -410,6 +418,124 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
 
     // Node renders objects inline in error messages ("Received { abc: 123 }").
     builder.append(Bun__inspect_singleline(defaultGlobalObject(globalObject), arg).transferToWTFString());
+}
+
+// builtInObjects in node's lib/internal/util/inspect.js: the ECMAScript globals only.
+static bool isBuiltInObjectName(const WTF::String& name)
+{
+    static constexpr ASCIILiteral names[] = {
+        "AggregateError"_s, "Array"_s, "ArrayBuffer"_s, "Atomics"_s, "BigInt"_s, "BigInt64Array"_s,
+        "BigUint64Array"_s, "Boolean"_s, "DataView"_s, "Date"_s, "Error"_s, "EvalError"_s,
+        "FinalizationRegistry"_s, "Float32Array"_s, "Float64Array"_s, "Function"_s, "Infinity"_s,
+        "Int16Array"_s, "Int32Array"_s, "Int8Array"_s, "Intl"_s, "Iterator"_s, "JSON"_s, "Map"_s,
+        "Math"_s, "NaN"_s, "Number"_s, "Object"_s, "Promise"_s, "Proxy"_s, "RangeError"_s,
+        "ReferenceError"_s, "Reflect"_s, "RegExp"_s, "Set"_s, "String"_s, "Symbol"_s, "SyntaxError"_s,
+        "TypeError"_s, "URIError"_s, "Uint16Array"_s, "Uint32Array"_s, "Uint8Array"_s,
+        "Uint8ClampedArray"_s, "WeakMap"_s, "WeakRef"_s, "WeakSet"_s
+    };
+    for (const auto& candidate : names) {
+        if (name == candidate)
+            return true;
+    }
+    return false;
+}
+
+// hasBuiltInToString in node's lib/internal/util/inspect.js.
+static bool hasBuiltInToString(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    while (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object)) {
+        if (proxy->isRevoked())
+            return true;
+        object = proxy->target();
+    }
+
+    const JSC::Identifier& toStringName = vm.propertyNames->toString;
+    const JSC::Identifier& toPrimitiveName = vm.propertyNames->toPrimitiveSymbol;
+    bool walkToString = true;
+    bool walkToPrimitive = true;
+
+    JSValue toString = object->get(globalObject, toStringName);
+    RETURN_IF_EXCEPTION(scope, true);
+    JSValue toPrimitive = object->get(globalObject, toPrimitiveName);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!toString.isCallable()) {
+        if (!toPrimitive.isCallable())
+            return true;
+        walkToString = false;
+    } else {
+        bool ownToString = object->hasOwnProperty(globalObject, toStringName);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (ownToString)
+            return false;
+        walkToPrimitive = toPrimitive.isCallable();
+    }
+    if (walkToPrimitive) {
+        bool ownToPrimitive = object->hasOwnProperty(globalObject, toPrimitiveName);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (ownToPrimitive)
+            return false;
+    }
+
+    // Find the prototype that owns the method, then ask whether its constructor is a built-in.
+    JSObject* pointer = object;
+    while (true) {
+        JSValue prototype = pointer->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (!prototype.isObject())
+            return true;
+        pointer = JSC::asObject(prototype);
+        bool owns = false;
+        if (walkToString) {
+            owns = pointer->hasOwnProperty(globalObject, toStringName);
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        if (!owns && walkToPrimitive) {
+            owns = pointer->hasOwnProperty(globalObject, toPrimitiveName);
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        if (owns)
+            break;
+    }
+
+    JSC::PropertySlot slot(pointer, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasConstructor = pointer->getOwnPropertySlot(pointer, globalObject, vm.propertyNames->constructor, slot);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!hasConstructor || slot.isAccessor())
+        return false;
+    JSValue constructor = slot.getValue(globalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!constructor.isCallable())
+        return false;
+    JSValue name = constructor.get(globalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!name.isString())
+        return false;
+    auto nameString = name.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, true);
+    return isBuiltInObjectName(nameString);
+}
+
+void JSValueToStringLikeFormatS(JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSValue arg)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (arg.isObject()) {
+        // typeof "function" values go through String() in node, so a function prints its source.
+        bool stringify = arg.isCallable();
+        if (!stringify) {
+            stringify = !hasBuiltInToString(globalObject, arg.getObject());
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        if (stringify) {
+            auto string = arg.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            builder.append(string);
+            return;
+        }
+    }
+    RELEASE_AND_RETURN(scope, JSValueToStringSafe(globalObject, builder, arg));
 }
 
 void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, MessageBuilder& builder, JSValue value)
@@ -1260,20 +1386,11 @@ JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGl
     return {};
 }
 
-JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView encoding)
-{
-    MessageBuilder message;
-    message.append("Unknown encoding: "_s, encoding);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, message));
-    throwScope.release();
-    return {};
-}
-
 JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue encodingValue)
 {
     MessageBuilder builder;
     builder.append("Unknown encoding: "_s);
-    JSValueToStringSafe(globalObject, builder, encodingValue);
+    JSValueToStringLikeFormatS(globalObject, builder, encodingValue);
     RELEASE_RETURN_IF_EXCEPTION(scope, {});
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, builder));
     scope.release();
@@ -1878,9 +1995,9 @@ JSC::EncodedJSValue Bun::throwError(JSC::JSGlobalObject* globalObject, JSC::Thro
 
 namespace Bun {
 
-// Error codes whose message is fixed text around one or two stringified
-// arguments; `jsFunctionMakeErrorWithCode` builds these from the table instead
-// of a switch case each.
+// Error codes whose message is fixed text around one or two `%s` arguments;
+// `jsFunctionMakeErrorWithCode` builds these from the table instead of a switch
+// case each.
 struct SimpleErrorMessage {
     Bun::ErrorCode code;
     uint8_t argumentCount;
@@ -1926,6 +2043,7 @@ static constexpr SimpleErrorMessage simpleErrorMessages[] = {
     { ErrorCode::ERR_VM_MODULE_STATUS, 1, { "Module status "_s, ""_s, ""_s } },
     { ErrorCode::ERR_ZSTD_INVALID_PARAM, 1, { ""_s, " is not a valid zstd parameter"_s, ""_s } },
     { ErrorCode::ERR_INSPECTOR_COMMAND, 1, { "Inspector error "_s, ""_s, ""_s } },
+    { ErrorCode::ERR_UNKNOWN_SIGNAL, 1, { "Unknown signal: "_s, ""_s, ""_s } },
 };
 
 static JSC::EncodedJSValue makeSimpleErrorMessage(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, JSC::ThrowScope& scope, const SimpleErrorMessage& entry)
@@ -1933,9 +2051,8 @@ static JSC::EncodedJSValue makeSimpleErrorMessage(JSC::JSGlobalObject* globalObj
     MessageBuilder builder;
     builder.append(entry.pieces[0]);
     for (unsigned i = 0; i < entry.argumentCount; ++i) {
-        auto string = callFrame->argument(i + 1).toWTFString(globalObject);
+        JSValueToStringLikeFormatS(globalObject, builder, callFrame->argument(i + 1));
         RETURN_IF_EXCEPTION(scope, {});
-        builder.append(string);
         builder.append(entry.pieces[i + 1]);
     }
     return JSC::JSValue::encode(createError(globalObject, entry.code, builder));
@@ -2055,7 +2172,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Bun::jsFunctionMakeErrorWithCode, __att
         auto arg0 = callFrame->argument(1);
         MessageBuilder builder;
         builder.append("Unknown encoding: "_s);
-        JSValueToStringSafe(globalObject, builder, arg0);
+        JSValueToStringLikeFormatS(globalObject, builder, arg0);
         RETURN_IF_EXCEPTION(scope, {});
         return JSC::JSValue::encode(createError(globalObject, error, builder));
     }

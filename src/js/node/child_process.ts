@@ -823,7 +823,7 @@ function convertToValidSignal(signal) {
     if (signalName) return signalName;
   }
 
-  throw ERR_UNKNOWN_SIGNAL(signal);
+  throw $ERR_UNKNOWN_SIGNAL(signal);
 }
 
 function sanitizeKillSignal(killSignal) {
@@ -1964,12 +1964,6 @@ function genericNodeError(message, errorProperties) {
   // eslint-disable-next-line no-restricted-syntax
   const err = new Error(message);
   ObjectAssign(err, errorProperties);
-  return err;
-}
-
-function ERR_UNKNOWN_SIGNAL(name) {
-  const err = new TypeError(`Unknown signal: ${name}`);
-  err.code = "ERR_UNKNOWN_SIGNAL";
   return err;
 }
 

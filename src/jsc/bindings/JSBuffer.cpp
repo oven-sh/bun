@@ -324,7 +324,7 @@ static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JS
             Bun::V::validateString(scope, lexicalGlobalObject, arg, "encoding"_s);
             RETURN_IF_EXCEPTION(scope, WebCore::BufferEncodingType::utf8);
         }
-        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, view);
+        Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg);
         return WebCore::BufferEncodingType::utf8;
     }
 
@@ -675,11 +675,7 @@ static JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObj
         std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
         RETURN_IF_EXCEPTION(scope, {});
         if (!encoded) {
-            auto* encodingString = arg1.toString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            const auto& view = encodingString->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, view);
+            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, arg1);
         }
 
         encoding = encoded.value();
@@ -1850,7 +1846,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
 
     if (valueValue.isString()) {
         if (!encoding.has_value()) {
-            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, encodingString);
+            return Bun::ERR::UNKNOWN_ENCODING(scope, lexicalGlobalObject, encodingValue);
         }
         auto* str = valueValue.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, -1);

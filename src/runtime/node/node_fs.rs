@@ -5078,7 +5078,8 @@ impl NodeFS {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
                                 }
-                                let mut w = wrote.get();
+                                // copy_file_range did not move the fd offsets, so the fallback starts again at 0.
+                                let mut w = 0;
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
                                 return r;
@@ -5116,7 +5117,8 @@ impl NodeFS {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
                                 }
-                                let mut w = wrote.get();
+                                // copy_file_range did not move the fd offsets, so the fallback starts again at 0.
+                                let mut w = 0;
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
                                 return r;
@@ -8530,7 +8532,8 @@ impl NodeFS {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
                                 }
-                                let mut w = wrote.get();
+                                // copy_file_range did not move the fd offsets, so the fallback starts again at 0.
+                                let mut w = 0;
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
                                 return r;
@@ -8573,7 +8576,8 @@ impl NodeFS {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
                                 }
-                                let mut w = wrote.get();
+                                // copy_file_range did not move the fd offsets, so the fallback starts again at 0.
+                                let mut w = 0;
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
                                 return r;
@@ -8712,7 +8716,8 @@ impl NodeFS {
                 }
             }
 
-            let mut w = wrote.get();
+            // copy_file_range did not move the fd offsets, so the fallback starts again at 0.
+            let mut w = 0;
             let r = Self::copy_file_using_read_write_loop(src, dest, src_fd, dest_fd, size, &mut w);
             wrote.set(w);
             return r;

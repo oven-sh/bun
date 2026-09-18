@@ -1841,6 +1841,8 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
     "aauser": { "1.0.0": { dependencies: { shared: "^1.0.0" } } },
     "aauser-long": { "1.0.0": { dependencies: { "shared-long-name": "^1.0.0" } } },
     "has-peer": { "1.0.0": { peerDependencies: { shared: "^1.0.0" } } },
+    "needs-1-5": { "1.0.0": { dependencies: { shared: "^1.5.0" } } },
+    "pinner": { "1.0.0": { dependencies: { shared: "1.5.0" } } },
     "plain": { "1.0.0": {} },
     "shared": { "1.0.0": {}, "1.5.0": {}, "2.0.0": {} },
     // Names longer than the eight bytes a lockfile string holds inline.
@@ -1916,6 +1918,18 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
       breakLockfile: entryPointedAt("aauser/shared", "shared", "2.0.0"),
       seen: [
         ["node_modules/aauser", "shared", "shared@1.5.0"],
+        [".", "shared", "shared@2.0.0"],
+      ],
+    },
+    // The version it resolves to again is already in bun.lock, under pinner, so the tree keeps its shape.
+    "a package's dependency that fits a copy nested elsewhere": {
+      packageJsons: {
+        "package.json": { name: "app", dependencies: { "needs-1-5": "1.0.0", pinner: "1.0.0", shared: "2.0.0" } },
+      },
+      breakLockfile: entryPointedAt("needs-1-5/shared", "shared", "1.0.0"),
+      seen: [
+        ["node_modules/needs-1-5", "shared", "shared@1.5.0"],
+        ["node_modules/pinner", "shared", "shared@1.5.0"],
         [".", "shared", "shared@2.0.0"],
       ],
     },
@@ -2144,6 +2158,29 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
     expect(await install(cwd, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
     expect(await file(join(cwd, "bun.lock")).text()).toBe(lockfile);
     expect(await seenFrom(join(cwd, "node_modules", "aauser"), "shared")).toBe("shared@1.5.0");
+  });
+
+  // lib's rows are read again and resolve during this install. aauser is reached only through them.
+  it("a dependency reached only through a workspace that changed is resolved again in that install", async () => {
+    using registry = await serveRegistry(manifests);
+    const lib = (dependencies: Record<string, string>) => ({ name: "lib", version: "1.0.0", dependencies });
+    using dir = createProject(registry.url, "hoisted", {
+      "package.json": { name: "app", workspaces: ["packages/*"], dependencies: { shared: "2.0.0" } },
+      "packages/lib/package.json": lib({ aauser: "1.0.0" }),
+    });
+    const cwd = String(dir);
+    const lockfilePath = join(cwd, "bun.lock");
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    await write(lockfilePath, withoutEntry("aauser/shared")(await file(lockfilePath).text()));
+
+    await write(join(cwd, "packages", "lib", "package.json"), JSON.stringify(lib({ aauser: "1.0.0", plain: "1.0.0" })));
+    await dropNodeModules(cwd);
+    expect(await install(cwd)).toMatchObject({ err: expect.stringContaining("Saved lockfile"), exitCode: 0 });
+    const lockfile = await file(lockfilePath).text();
+    expect(await seenFrom(join(cwd, "node_modules", "aauser"), "shared")).toBe("shared@1.5.0");
+
+    expect(await install(cwd, "--frozen-lockfile")).toMatchObject({ exitCode: 0 });
+    expect(await file(lockfilePath).text()).toBe(lockfile);
   });
 
   // The package leaves with its rows. Resolving them first could fail an install whose only job is to drop them.

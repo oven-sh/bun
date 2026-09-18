@@ -500,8 +500,7 @@ impl<'a> Response<'a> {
         };
 
         match rc {
-            // picohttpparser also returns -1 when it needs a slot past the end
-            // of `src`. It counts a field only after it has parsed it.
+            // A malformed field returns -1 with `num_headers` below `src.len()`.
             -1 if num_headers == src.len() => Err(ParseResponseError::TooManyHeaders),
             -1 => {
                 bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));

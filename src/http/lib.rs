@@ -1047,10 +1047,7 @@ const MAX_REQUEST_HEADERS: usize = 256;
 static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_REQUEST_HEADERS]> =
     bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
 
-/// A response with more header fields fails with `ResponseHeadersTooLarge`, on
-/// any protocol. Like `MAX_RESPONSE_HEADER_BUFFER`, it is a generous fixed
-/// limit on input that the server controls. Node's HTTP client enforces the
-/// same count (`maxHeadersCount`).
+/// Field limit of a response on every protocol. Node's HTTP client enforces the same count.
 const MAX_RESPONSE_HEADERS: usize = 1000;
 
 // this doesn't need to be stack memory because it is immediately cloned after use

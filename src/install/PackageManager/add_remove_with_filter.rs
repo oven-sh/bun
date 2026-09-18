@@ -432,7 +432,10 @@ pub(super) fn respell_local_paths(
     updates: Vec<UpdateRequest>,
 ) -> Vec<UpdateRequest> {
     let package_json_path: Box<[u8]> = manager.original_package_json_path.as_bytes().into();
-    if resolve_path::dirname::<platform::Auto>(&package_json_path) == original_cwd {
+    // With -g, `init` records `original_cwd` after it enters the global directory, so it is not where the user typed the path.
+    if manager.options.global
+        || resolve_path::dirname::<platform::Auto>(&package_json_path) == original_cwd
+    {
         return updates;
     }
     let mut buf = path_buffer_pool::get();

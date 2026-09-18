@@ -284,8 +284,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     add_catalog::prepare(manager, &updates);
 
     // Not `bun update <path>`: it is always rejected, with a `bun add <path>` hint the user runs from the cwd.
-    // Not `-g`: `init` records `original_cwd` after it enters the global directory, so it is not where the user typed the path.
-    if subcommand == Subcommand::Add && !manager.options.global {
+    if subcommand == Subcommand::Add {
         updates =
             super::add_remove_with_filter::respell_local_paths(manager, original_cwd, updates);
     }

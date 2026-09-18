@@ -2757,11 +2757,11 @@ impl TestCommand {
                         if let Some(t) = reporter.timings.as_mut() {
                             t.record_since(file_name.as_bytes(), started);
                         }
+                        reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
                             TestCommand::swap_global_for_test_isolation(reporter, vm);
                         }
-                        reporter.jest.default_timeout_override = u32::MAX;
                     }
                 }
 
@@ -2801,12 +2801,7 @@ impl TestCommand {
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
-    /// The `--isolate` boundary after one run of a test file: stops what the
-    /// run left open, replaces the global, and drops the preload-level hooks
-    /// registered in the old global.
-    ///
-    /// This still runs JS of the old file (microtasks, close handlers), so undo
-    /// what that JS can set, like `setDefaultTimeout()`, after this call.
+    /// The `--isolate` boundary after one run of a test file.
     pub(crate) fn swap_global_for_test_isolation(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
@@ -2817,6 +2812,8 @@ impl TestCommand {
             .jest
             .bun_test_root
             .reset_hook_scope_for_test_isolation();
+        // Last, because the swap still runs the old file's close handlers.
+        reporter.jest.default_timeout_override = u32::MAX;
     }
 
     pub(crate) fn run(
@@ -2884,10 +2881,8 @@ impl TestCommand {
         while repeat_index < repeat_count {
             if repeat_index > 0 {
                 if vm.test_isolation_enabled {
-                    // Under --isolate a rerun starts the way the next file does. The preloads run
-                    // again in the new global, so a preload's setDefaultTimeout() is set again.
+                    // A rerun starts the way the next file does.
                     Self::swap_global_for_test_isolation(reporter, vm);
-                    reporter.jest.default_timeout_override = u32::MAX;
                 } else {
                     // Clear the module cache before re-running
                     vm.clear_entry_point()?;

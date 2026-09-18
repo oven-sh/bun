@@ -236,6 +236,76 @@ for (const { name, connect } of tests) {
     });
     const COMMON_CERT = { ...COMMON_CERT_ };
 
+    it("surfaces the fatal TLS alert when ALPN has no overlap", async () => {
+      await using server = tls.createServer({
+        key: COMMON_CERT.key,
+        cert: COMMON_CERT.cert,
+        ALPNProtocols: ["h2"],
+      });
+      server.on("tlsClientError", () => {});
+      server.on("secureConnection", s => {
+        s.on("error", () => {});
+        s.end();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      let checkServerIdentityCalled = false;
+      const result = await new Promise<{ kind: string; code?: string; library?: string }>(resolve => {
+        const socket = connect({
+          host: "127.0.0.1",
+          port,
+          servername: "localhost",
+          ca: COMMON_CERT.cert,
+          ALPNProtocols: ["xyz"],
+          checkServerIdentity(hostname, cert) {
+            checkServerIdentityCalled = true;
+            return tls.checkServerIdentity(hostname, cert);
+          },
+        });
+        socket.on("secureConnect", () => {
+          resolve({ kind: "secureConnect" });
+          socket.destroy();
+        });
+        socket.on("error", (err: NodeJS.ErrnoException & { library?: string }) => {
+          resolve({ kind: "error", code: err.code, library: err.library });
+        });
+      });
+
+      expect({ ...result, checkServerIdentityCalled }).toEqual({
+        kind: "error",
+        code: "ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL",
+        library: "SSL routines",
+        checkServerIdentityCalled: false,
+      });
+    });
+
+    it("emits error (not secureConnect) on a handshake_failure alert with rejectUnauthorized: false", async () => {
+      await using server = net.createServer(s => {
+        s.resume();
+        // TLS alert record: level fatal (2), description handshake_failure (40).
+        s.end(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]));
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      const result = await new Promise<{ kind: string; code?: string }>(resolve => {
+        const socket = connect({ host: "127.0.0.1", port, servername: "localhost", rejectUnauthorized: false });
+        socket.on("secureConnect", () => {
+          resolve({ kind: "secureConnect" });
+          socket.destroy();
+        });
+        socket.on("error", (err: NodeJS.ErrnoException) => {
+          resolve({ kind: "error", code: err.code });
+        });
+      });
+
+      expect(result).toEqual({
+        kind: "error",
+        code: "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
+      });
+    });
+
     it("Bun.serve() should work with tls and Bun.file()", async () => {
       using server = Bun.serve({
         port: 0,

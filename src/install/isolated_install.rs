@@ -2062,7 +2062,7 @@ pub(crate) fn install_isolated_packages(
                     // SAFETY: `global_store_path` was built with a trailing NUL above.
                     bun_core::ZStr::from_slice_with_nul(b)
                 }),
-            global_store_tmp_suffix: fast_random(),
+            store_tmp_suffix: fast_random(),
             summary: Default::default(),
             task_queue: Default::default(),
         };
@@ -2236,16 +2236,16 @@ pub(crate) fn install_isolated_packages(
                                     .ok()
                                     .unwrap_or(false);
                             }
+                            // Project-local package trees are staged and
+                            // renamed into place too, so the directory
+                            // existing at its final path is the completeness
+                            // signal. `package.json` is one of the first files
+                            // the link writes, so checking it accepts the tree
+                            // an install that exited mid-link left behind.
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
-                            // Capture the length instead of a `ResetScope` so
-                            // `store_path` stays unborrowed.
-                            let scope_for_patch_tag_path = store_path.len();
-                            if pkg_res_tag == ResolutionTag::Npm {
-                                // if it's from npm, it should always have a package.json.
-                                // in other cases, probably yes but i'm less confident.
-                                store_path.append(b"package.json").assume_ok();
-                            }
-                            let exists = sys::exists_z(store_path.slice_z());
+                            let exists = sys::directory_exists_at(Fd::cwd(), store_path.slice_z())
+                                .ok()
+                                .unwrap_or(false);
 
                             break 'needs_install match &patch_info {
                                 installer::PatchInfo::None => !exists,
@@ -2254,7 +2254,6 @@ pub(crate) fn install_isolated_packages(
                                 installer::PatchInfo::Patch(patch) => {
                                     let mut hash_buf: install::BuntagHashBuf = Default::default();
                                     let hash = install::buntaghashbuf_make(&mut hash_buf, patch.contents_hash);
-                                    store_path.set_length(scope_for_patch_tag_path);
                                     store_path.append(&*hash).assume_ok();
                                     !sys::exists_z(store_path.slice_z())
                                 }

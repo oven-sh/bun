@@ -1,8 +1,8 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -3566,6 +3566,90 @@ describe("global virtual store", () => {
     expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
   });
 });
+
+// A failing lifecycle script exits the install while link tasks for other
+// packages are still running. The package tree must not be visible at its
+// final store path until the link finished, or the next install accepts the
+// half-written tree as installed (its `package.json` is one of the first
+// files written) and never repairs it.
+test.skipIf(isWindows)(
+  "a lifecycle script failure does not leave a half-linked package that later installs accept",
+  async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    // Enough files that the link is still in flight when the script exits.
+    const fileCount = 6000;
+    const bigDir = join(packageDir, "big");
+    await mkdir(join(bigDir, "dist"), { recursive: true });
+    await write(join(bigDir, "package.json"), JSON.stringify({ name: "big", version: "1.0.0" }));
+    const writes: Promise<number>[] = [];
+    for (let i = 0; i < fileCount; i++) {
+      writes.push(write(join(bigDir, "dist", `f${i}.js`), "module.exports = 1;\n"));
+    }
+    await Promise.all(writes);
+
+    await using pack = spawn({
+      cmd: [bunExe(), "pm", "pack", "--destination", packageDir],
+      cwd: bigDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await pack.exited).toBe(0);
+    await rm(bigDir, { recursive: true });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-aborted-link",
+        workspaces: ["packages/*"],
+      }),
+    );
+    await write(
+      join(packageDir, "packages", "a", "package.json"),
+      JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { big: "file:../../big-1.0.0.tgz" },
+      }),
+    );
+    // The workspace's postinstall waits until `big` starts linking into the
+    // store, then fails, so the install exits while that link is in progress.
+    const storeNodeModules = join(packageDir, "node_modules", ".bun");
+    await write(
+      join(packageDir, "packages", "failing", "package.json"),
+      JSON.stringify({
+        name: "failing",
+        version: "1.0.0",
+        scripts: {
+          postinstall: `while true; do for d in '${storeNodeModules}'/big@*/node_modules; do [ -d "$d" ] && exit 1; done; done`,
+        },
+      }),
+    );
+
+    await using first = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [firstStderr, firstExitCode] = await Promise.all([first.stderr.text(), first.exited]);
+    expect(firstStderr).toContain('postinstall script from "failing" exited with 1');
+    expect(firstExitCode).toBe(1);
+
+    // Remove the failing script so the next install can finish.
+    await write(
+      join(packageDir, "packages", "failing", "package.json"),
+      JSON.stringify({ name: "failing", version: "1.0.0" }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const dist = join(packageDir, "packages", "a", "node_modules", "big", "dist");
+    expect(readdirSync(dist).length).toBe(fileCount);
+  },
+);
 
 test("rejects dependency aliases that traverse outside node_modules", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

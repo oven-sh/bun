@@ -152,7 +152,7 @@ void AbortSignal::addSourceSignal(AbortSignal& signal)
 void AbortSignal::addDependentSignal(AbortSignal& signal)
 {
     if (m_dependentSignals.add(signal).isNewEntry)
-        m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
+        m_abortObserverCount.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Release the observer count this dependent took on each source in
@@ -161,7 +161,7 @@ void AbortSignal::addDependentSignal(AbortSignal& signal)
 void AbortSignal::releaseSourceObserverCounts()
 {
     for (Ref source : m_sourceSignals)
-        source->m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+        source->m_abortObserverCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void AbortSignal::cancelTimer()
@@ -293,9 +293,9 @@ void AbortSignal::eventListenersDidChange()
     setHasAbortEventListener(hasListeners);
     if (hasListeners != hadListeners) {
         if (hasListeners)
-            m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
+            m_abortObserverCount.fetch_add(1, std::memory_order_relaxed);
         else
-            m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+            m_abortObserverCount.fetch_sub(1, std::memory_order_relaxed);
     }
 }
 
@@ -309,7 +309,7 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
     auto identifier = ++signal.m_algorithmIdentifier;
     Locker locker { signal.m_abortAlgorithmsLock };
     signal.m_abortAlgorithms.append(std::make_pair(identifier, WTF::move(algorithm)));
-    signal.m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
+    signal.m_abortObserverCount.fetch_add(1, std::memory_order_relaxed);
     return identifier;
 }
 
@@ -319,13 +319,13 @@ void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t a
     if (signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
             return pair.first == algorithmIdentifier;
         }))
-        signal.m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+        signal.m_abortObserverCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
 {
     m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTF::move(algorithm)));
-    m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
+    m_abortObserverCount.fetch_add(1, std::memory_order_relaxed);
     return m_algorithmIdentifier;
 }
 
@@ -334,7 +334,7 @@ void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
     if (m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
             return pair.first == algorithmIdentifier;
         }))
-        m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+        m_abortObserverCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)

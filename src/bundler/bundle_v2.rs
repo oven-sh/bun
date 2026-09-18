@@ -4607,12 +4607,7 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        /// A module that an `onResolve` path created takes what the resolver attaches to the file (side effects,
-        /// module type, JSX and decorator settings) if the path is byte for byte the one the resolver gives that
-        /// file. Another import can then reach the same module through the resolver, and the one that lands first
-        /// creates it, so both have to describe it the same way. Any other path (not on disk, in `files`, through
-        /// a symlink, not normalized) stays a plugin module. This runs once `onLoad` is done: the resolver lists a
-        /// directory only once, and `onLoad` can write the files that the module imports.
+        /// A module that `onResolve` made takes the resolver's result if its path is byte for byte the resolver's.
         pub(crate) fn adopt_resolver_result(&mut self, task: &mut ParseTask) {
             let Some(kind) = task.created_by_on_resolve.take() else {
                 return;
@@ -4632,6 +4627,7 @@ pub mod bv2_impl {
             ) else {
                 return;
             };
+            // Only then can another import make this module through the resolver, and the first one to land wins.
             if result.flags.is_external()
                 || result
                     .path_const()
@@ -4714,6 +4710,7 @@ pub mod bv2_impl {
                     this.decrement_scan_counter();
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
+                    // Not before `onLoad`: it can write files the module imports, and the resolver lists a directory once.
                     this.adopt_resolver_result(load.parse_task_mut());
                     // `code`: LoadSuccess { source_code, loader }
                     // When a plugin returns a file loader, we always need to populate additional_files

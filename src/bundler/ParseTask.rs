@@ -116,8 +116,7 @@ pub struct ParseTask {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
-    /// The kind of the import whose `onResolve` answer created this task, until
-    /// `BundleV2::adopt_resolver_result` has asked the resolver about the file.
+    /// The import kind of the `onResolve` answer that made this task, until `BundleV2::adopt_resolver_result` runs.
     pub(crate) created_by_on_resolve: Option<ast::ImportKind>,
 }
 
@@ -276,9 +275,7 @@ impl ParseTask {
             None => (ast::StoreStr::EMPTY, ast::StoreStr::EMPTY),
         };
         self.side_effects = resolve_result.primary_side_effects_data;
-        // D042: resolver-side and bundler-side `jsx::Pragma` are the SAME
-        // nominal type (`bun_options_types::jsx::Pragma`). Preserves
-        // jsxImportSource/runtime/etc. from tsconfig.json.
+        // Carries jsxImportSource, runtime and the rest from the tsconfig.json of the file.
         self.jsx = resolve_result.jsx.clone();
         self.module_type = resolve_result.module_type;
         self.emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();

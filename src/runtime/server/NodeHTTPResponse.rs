@@ -1920,22 +1920,24 @@ impl NodeHTTPResponse {
         let mut string_or_buffer = crate::node::StringOrBuffer::EMPTY;
         if !input_value.is_undefined_or_null() {
             let mut encoding = crate::node::Encoding::Utf8;
-            // Writable.prototype.write treats a falsy encoding as the default.
+            // Writable.prototype.write treats a falsy encoding as the default and
+            // throws ERR_UNKNOWN_ENCODING for anything else it does not know.
             if !encoding_value.is_falsey() {
-                if !encoding_value.is_string() {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"encoding",
-                        b"string",
-                        encoding_value,
-                    ));
-                }
-
-                encoding = match crate::node::Encoding::from_js(encoding_value, global_object)? {
+                let known = if encoding_value.is_string() {
+                    crate::node::Encoding::from_js(encoding_value, global_object)?
+                } else {
+                    None
+                };
+                encoding = match known {
                     Some(e) => e,
                     None => {
-                        return Err(
-                            global_object.throw_invalid_arguments(format_args!("Invalid encoding"))
-                        );
+                        let name = encoding_value.to_bun_string(global_object)?;
+                        return Err(global_object
+                            .err(
+                                bun_jsc::ErrorCode::UNKNOWN_ENCODING,
+                                format_args!("Unknown encoding: {}", name),
+                            )
+                            .throw());
                     }
                 };
             }

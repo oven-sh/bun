@@ -354,6 +354,29 @@ describe("node:http", () => {
       expect(await response.text()).toBe(body);
       expect(response.status).toBe(200);
     });
+
+    test.each(["write", "end"])("res.%s throws ERR_UNKNOWN_ENCODING for an unknown encoding", async method => {
+      const errors: string[] = [];
+      await using server = http.createServer((req, res) => {
+        for (const encoding of ["bogus", 123, {}]) {
+          try {
+            res[method]("x", encoding);
+          } catch (e: any) {
+            errors.push(`${e.code}: ${e.message}`);
+          }
+        }
+        res.end();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      await fetch(`http://127.0.0.1:${port}/`);
+      expect(errors).toEqual([
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: bogus",
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: 123",
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: [object Object]",
+      ]);
+    });
   });
 
   describe("request", () => {

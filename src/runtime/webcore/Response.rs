@@ -166,7 +166,6 @@ impl Drop for BodyAbortListener {
     fn drop(&mut self) {
         let ctx = core::ptr::from_mut(self).cast::<c_void>();
         self.signal.clean_native_bindings(ctx);
-        self.signal.pending_activity_unref();
     }
 }
 
@@ -505,7 +504,6 @@ impl Response {
         context: bun_jsc::ContextId,
     ) {
         let signal_ref = signal.ref_();
-        signal.pending_activity_ref();
         let mut listener = Box::new(BodyAbortListener {
             signal: signal_ref,
             // SAFETY: caller contract; `this` is live and owns the box.

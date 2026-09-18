@@ -843,6 +843,84 @@ it("a client and a server TLSSocket connected through a synchronous in-memory du
   });
 });
 
+it("the last 'data' event fires before the close_notify reply is written to a duplex transport (tls.connect({ socket }))", async () => {
+  // The peer's last application data and its close_notify reach the engine in
+  // one chunk. The engine used to answer the close_notify before it emitted
+  // the data decrypted ahead of it. Node emits the data first.
+  //
+  // TLS 1.2 keeps the record type readable on the wire: 21 is an alert.
+  const version = { minVersion: "TLSv1.2", maxVersion: "TLSv1.2" } as const;
+  // The record types in `bytes`, or null while the last record is incomplete.
+  const recordTypes = (bytes: Buffer) => {
+    const types: number[] = [];
+    let offset = 0;
+    while (offset + 5 <= bytes.length) {
+      const next = offset + 5 + bytes.readUInt16BE(offset + 3);
+      if (next > bytes.length) return null;
+      types.push(bytes[offset]);
+      offset = next;
+    }
+    return offset === bytes.length ? types : null;
+  };
+
+  const log: string[] = [];
+  // Once armed, the server's bytes are held until they end with its complete
+  // close_notify, then pushed to the client as one chunk.
+  let held: Buffer | null = null;
+  const clientSide: Duplex = new Duplex({
+    read() {},
+    write(chunk: Buffer, _encoding, callback) {
+      if (recordTypes(chunk)?.includes(21)) log.push("write close_notify");
+      serverSide.push(chunk);
+      callback();
+    },
+    final(callback) {
+      log.push("transport end");
+      serverSide.push(null);
+      callback();
+    },
+  });
+  const serverSide: Duplex = new Duplex({
+    read() {},
+    write(chunk: Buffer, _encoding, callback) {
+      if (held === null) {
+        clientSide.push(chunk);
+      } else {
+        held = Buffer.concat([held, chunk]);
+        if (recordTypes(held)?.at(-1) === 21) {
+          const burst = held;
+          held = null;
+          log.push(`push ${recordTypes(burst)!.join(",")}`);
+          clientSide.push(burst);
+        }
+      }
+      callback();
+    },
+    final(callback) {
+      clientSide.push(null);
+      callback();
+    },
+  });
+
+  const server = new TLSSocket(serverSide, {
+    isServer: true,
+    secureContext: tls.createSecureContext({ ...COMMON_CERT_, ...version }),
+  });
+  server.on("error", () => {});
+  server.on("data", () => server.end("last"));
+
+  const client = tls.connect({ socket: clientSide, rejectUnauthorized: false, ...version });
+  await once(client, "secureConnect");
+  client.on("data", (chunk: Buffer) => log.push(`data ${chunk}`));
+  client.on("end", () => log.push("end"));
+  held = Buffer.alloc(0);
+  client.write("go");
+  await once(client, "close");
+
+  // 23 is application data. One push carried it and the alert.
+  expect(log).toEqual(["push 23,21", "data last", "write close_notify", "transport end", "end"]);
+});
+
 describe("application data written over a Duplex transport before the handshake completes", () => {
   // Node parks such a write (TLSWrap's pending cleartext) and sends it right
   // after the handshake: the write is still pending when 'secureConnect' /

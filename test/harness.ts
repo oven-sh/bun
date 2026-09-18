@@ -1970,6 +1970,22 @@ export class VerdaccioRegistry {
     return `http://localhost:${this.port}/`;
   }
 
+  /**
+   * The extraction cache folder of a package served by this registry, found
+   * in `cacheDir`: `<name>@<version>@@localhost__<16 hex>@@@1`, where the hex
+   * is the hash of the registry URL. Packages from registry.npmjs.org use
+   * `<name>@<version>@@@1` instead. Throws unless exactly one folder matches.
+   */
+  cacheFolderName(cacheDir: string, name: string, version: string) {
+    const prefix = `${name}@${version}@@localhost__`;
+    const pattern = new RegExp(`^${prefix.replace(/[.@]/g, "\\$&")}[0-9a-f]{16}@@@1$`);
+    const folders = fs.readdirSync(cacheDir).filter(folder => pattern.test(folder));
+    if (folders.length !== 1) {
+      throw new Error(`expected one cache folder for ${name}@${version} in ${cacheDir}, found ${folders.join(", ")}`);
+    }
+    return folders[0];
+  }
+
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
     this.process?.kill(0);

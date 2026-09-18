@@ -2338,6 +2338,7 @@ pub(crate) fn install_isolated_packages(
                             pkg_name.slice(string_buf),
                             pkg_res.npm().version,
                             None,
+                            pkg_res.npm().url.slice(string_buf),
                         ),
                         ResolutionTag::Git => package_manager::cached_git_folder_name(
                             installer.manager(),

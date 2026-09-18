@@ -1102,6 +1102,7 @@ impl Task {
                                     pkg_name.slice(string_buf),
                                     pkg_res.npm().version,
                                     patch_info.contents_hash(),
+                                    pkg_res.npm().url.slice(string_buf),
                                 ),
                                 ResolutionTag::Git => directories::cached_git_folder_name(
                                     manager,

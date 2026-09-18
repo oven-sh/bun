@@ -3553,7 +3553,9 @@ it("Connection: close closes the connection only as a whole list item like llhtt
         if (received.endsWith("ok")) waiter.resolve();
       });
       // A close or error before the body ends fails the case with what was received.
-      client.on("error", err => waiter.reject(new Error(`${name}: ${err.message}; received ${JSON.stringify(received)}`)));
+      client.on("error", err =>
+        waiter.reject(new Error(`${name}: ${err.message}; received ${JSON.stringify(received)}`)),
+      );
       client.on("close", () => waiter.reject(new Error(`${name}: closed; received ${JSON.stringify(received)}`)));
       await waiter.promise;
       const connection = /^connection: (.*)$/im.exec(received)?.[1];

@@ -126,9 +126,6 @@ static inline void rawExit(int status)
 
 #if OS(LINUX)
 
-#ifndef __NR_clone3
-#define __NR_clone3 435
-#endif
 #ifndef CLONE_INTO_CGROUP
 #define CLONE_INTO_CGROUP 0x200000000ULL
 #endif

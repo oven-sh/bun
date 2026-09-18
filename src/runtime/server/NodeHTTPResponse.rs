@@ -1920,7 +1920,8 @@ impl NodeHTTPResponse {
         let mut string_or_buffer = crate::node::StringOrBuffer::EMPTY;
         if !input_value.is_undefined_or_null() {
             let mut encoding = crate::node::Encoding::Utf8;
-            if !encoding_value.is_undefined_or_null() {
+            // Writable.prototype.write treats a falsy encoding as the default.
+            if !encoding_value.is_falsey() {
                 if !encoding_value.is_string() {
                     return Err(global_object.throw_invalid_argument_type_value(
                         b"encoding",

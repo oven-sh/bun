@@ -171,9 +171,24 @@ describe.concurrent("fd leak", () => {
     memLeakTest(...args);
   });
 
-  // Use text of this file so its big enough to cause a leak
-  memLeakTest("ArrayBuffer", () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer(128)}`, 100);
-  memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc(128)}`, 100);
+  // Use text of this file so its big enough to cause a leak. It does not fit
+  // in the target, so `cat` (a subprocess on POSIX, a builtin on Windows) fails.
+  memLeakTest(
+    "ArrayBuffer",
+    () =>
+      TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer(128)}`
+        .exitCode(1)
+        .stderr(stderr => expect(stderr).toEndWith("cat: write error: No space left on device\n")),
+    100,
+  );
+  memLeakTest(
+    "Buffer",
+    () =>
+      TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc(128)}`
+        .exitCode(1)
+        .stderr(stderr => expect(stderr).toEndWith("cat: write error: No space left on device\n")),
+    100,
+  );
   memLeakTest(
     "Blob_something",
     () =>

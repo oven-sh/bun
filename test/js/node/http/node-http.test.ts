@@ -3606,6 +3606,60 @@ it("HEAD response with explicit chunked TE carries no terminating chunk", async 
   }
 });
 
+// https://github.com/oven-sh/bun/issues/43302
+it("a chunked framing error in the body of an accepted Upgrade request does not fire 'clientError'", async () => {
+  // Node v26.3.0 contract (verified): Parser::Execute returns a parse error to
+  // JS only when parser.upgrade is not set. The 'upgrade' listener keeps its
+  // socket, no 'clientError' fires, and the bytes after the error go nowhere.
+  const events: string[] = [];
+  let serverSocket: import("node:net").Socket;
+  const server = createServer(() => events.push("request"));
+  server.on("upgrade", (req, socket, head) => {
+    serverSocket = socket;
+    events.push(`upgrade head=${head.toString()}`);
+    socket.on("error", () => {});
+    socket.on("close", () => events.push("tunnel close"));
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+  });
+  server.on("clientError", (err: any, socket) => {
+    events.push(`clientError ${err.code}`);
+    socket.destroy();
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const client = connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    await once(client, "connect");
+    const received = new Promise<string>((resolve, reject) => {
+      let buf = "";
+      client.on("data", d => {
+        buf += d;
+        if (buf.includes("\r\n\r\n") && !buf.endsWith("alive")) {
+          // The 101 arrived. The server side must still be writable.
+          serverSocket.write("alive");
+        }
+        if (buf.endsWith("alive")) resolve(buf);
+      });
+      client.on("close", () => reject(new Error("the server closed the socket: " + buf)));
+    });
+    // "zz" is not a valid hex chunk size.
+    client.write(
+      "GET /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n",
+    );
+    const out = await received;
+    expect(out).toStartWith("HTTP/1.1 101 Switching Protocols");
+    expect(events).toEqual(["upgrade head="]);
+    expect(serverSocket!.destroyed).toBe(false);
+    client.destroy();
+    serverSocket!.destroy();
+  } finally {
+    server.close();
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/34158
 it("server.close(cb) completes after a raw upgrade once both sockets are destroyed", async () => {
   // Node v26.3.0 contract (verified): after the 'upgrade' handoff, destroying

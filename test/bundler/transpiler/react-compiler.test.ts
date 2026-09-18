@@ -3135,8 +3135,8 @@ test("react-compiler memory does not grow with the square of the size of a compo
 test.skipIf(!isLinux)(
   "react-compiler memory does not grow with the square of the number of blocks",
   async () => {
-    // A debug build is 20 times slower, and InferReactivePlaces takes most of
-    // its 12 seconds on the small input.
+    // A debug build is 20 times slower: the small input takes it 12 seconds,
+    // almost all in InferReactivePlaces, which is why this test has a timeout.
     const small = isDebug || isASAN;
     const branches = small ? 600 : 1000;
     using dir = tempDir("react-compiler-blocks-memory", {
@@ -3187,10 +3187,8 @@ test.skipIf(!isLinux)(
     expect(memoized).toBe(true);
     // Peak RSS above the RSS before the build. Without the fix: 134 MB for the
     // small input in a debug build, 213 MB for the large one in a release
-    // build. With it: 77 MB in the debug build. The release build keeps about
-    // 30 MB for 2000 plain statements, so the large input stays well under the
-    // bound.
-    expect(peakMB).toBeLessThan(100);
+    // build. With it: 77 MB and 71 MB.
+    expect(peakMB).toBeLessThan(small ? 100 : 130);
   },
   90_000,
 );

@@ -1520,7 +1520,7 @@ pub enum DecodeHexError {
 
 /// Source character types accepted by the hex decoder: `u8` (Latin-1) and
 /// `u16` (UTF-16). The associated function routes full pairs through the
-/// matching Highway kernel while `_decode_hex_to_bytes` keeps the generic
+/// matching Highway kernel while `decode_hex_prefix` keeps the generic
 /// scalar path for short inputs.
 ///
 /// A UTF-16 code unit is classified by its low byte, which is what Node's
@@ -1561,25 +1561,34 @@ impl HexChar for u16 {
     }
 }
 
+/// Strict decode: an error when a pair holds a non-hex character, or when a
+/// lone hex digit trails the last pair and `destination` still has room.
 pub fn decode_hex_to_bytes<Char: HexChar>(
     destination: &mut [u8],
     source: &[Char],
 ) -> Result<usize, DecodeHexError> {
-    _decode_hex_to_bytes::<Char, false>(destination, source)
+    let written = decode_hex_prefix(destination, source);
+    // With room left in `destination`, the decoder only stops short of the end
+    // of `source` at something it cannot decode.
+    if written < destination.len() && written * 2 < source.len() {
+        return Err(DecodeHexError::InvalidByteSequence);
+    }
+    Ok(written)
 }
 
+/// Lenient decode (what `Buffer.from(str, "hex")` does): keeps the bytes
+/// decoded before the first pair that holds a non-hex character.
 pub fn decode_hex_to_bytes_truncate<Char: HexChar>(
     destination: &mut [u8],
     source: &[Char],
 ) -> usize {
-    _decode_hex_to_bytes::<Char, true>(destination, source).unwrap_or(0)
+    decode_hex_prefix(destination, source)
 }
 
+/// Decodes whole hex pairs from `source` into `destination` until either runs
+/// out or a pair holds a non-hex character. Returns the number of bytes written.
 #[inline]
-fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
-    destination: &mut [u8],
-    source: &[Char],
-) -> Result<usize, DecodeHexError> {
+fn decode_hex_prefix<Char: HexChar>(destination: &mut [u8], source: &[Char]) -> usize {
     // Highway fast path: decode whole pairs in bulk, stopping at the first
     // invalid pair — the same semantics as the scalar loop below. Short inputs
     // stay scalar; the dynamically-dispatched FFI call isn't worth it for a
@@ -1587,20 +1596,7 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
     const HIGHWAY_MIN_PAIRS: usize = 16;
     let pairs = destination.len().min(source.len() / 2);
     if pairs >= HIGHWAY_MIN_PAIRS {
-        let written = Char::decode_hex_highway(&source[..pairs * 2], &mut destination[..pairs]);
-        if written < pairs {
-            // Stopped at an invalid character.
-            if TRUNCATE {
-                return Ok(written);
-            }
-            return Err(DecodeHexError::InvalidByteSequence);
-        }
-        if !TRUNCATE && destination.len() > pairs && source.len() > pairs * 2 {
-            // Destination space left over with a trailing lone hex digit
-            // (mirrors the `!remain.is_empty() && !input.is_empty()` check below).
-            return Err(DecodeHexError::InvalidByteSequence);
-        }
-        return Ok(pairs);
+        return Char::decode_hex_highway(&source[..pairs * 2], &mut destination[..pairs]);
     }
 
     let dest_len = destination.len();
@@ -1611,23 +1607,14 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
         let a = HEX_TABLE[input[0].hex_byte() as usize];
         let b = HEX_TABLE[input[1].hex_byte() as usize];
         if a == INVALID_CHAR || b == INVALID_CHAR {
-            if TRUNCATE {
-                break;
-            }
-            return Err(DecodeHexError::InvalidByteSequence);
+            break;
         }
         remain[0] = (a << 4) | b;
         remain = &mut remain[1..];
         input = &input[2..];
     }
 
-    if !TRUNCATE {
-        if !remain.is_empty() && !input.is_empty() {
-            return Err(DecodeHexError::InvalidByteSequence);
-        }
-    }
-
-    Ok(dest_len - remain.len())
+    dest_len - remain.len()
 }
 
 pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {

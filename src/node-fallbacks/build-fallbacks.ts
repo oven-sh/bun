@@ -17,13 +17,6 @@ for (const name of allFiles) {
 
 for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
   const name = allFiles[fileIndex];
-  const mod = basename(name, extname(name)).replaceAll(".", "/");
-  const file = allFiles.find(f => f.startsWith(mod));
-  const externals = [...builtins];
-  const i = externals.indexOf(name);
-  if (i !== -1) {
-    externals.splice(i, 1);
-  }
 
   // Build all files at once with specific options
   const externalModules = builtins
@@ -36,7 +29,7 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
     Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
 
   commands.push(
-    buildCommand.then(async text => {
+    buildCommand.then(async () => {
       // This is very brittle. But that should be okay for our usecase
       let outfile = fs
         .readFileSync(`${outdir}/${name}`, "utf8")

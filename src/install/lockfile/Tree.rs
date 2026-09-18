@@ -464,12 +464,9 @@ pub(crate) struct CleanResult {
     pub shipped_rows: ShippedRows,
 }
 
-/// Rows of the install tree that a tarball ships: a bundled dependency and every row placed
-/// from below one. They take their names so the tree matches the saved one, and nothing
-/// installs them. A row bun installs never resolves through one: the lockfile's version of
-/// a shipped row is the registry's, and the tarball may hold another version, or may have
-/// nested the folder instead. Only `BuilderMethod::Filter` fills it. Keyed by
-/// `(tree id, dependency id)`: the same edge can be placed in more than one tree.
+/// `(tree id, dependency id)` of each install-tree row a tarball ships: a bundled dependency
+/// and every row placed below one. Nothing installs them, and no row bun installs resolves
+/// through one. Only `BuilderMethod::Filter` fills it.
 #[derive(Default)]
 pub(crate) struct ShippedRows(ArrayHashMap<(Id, DependencyID), ()>);
 
@@ -662,8 +659,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
 // ──────────────────────────────────────────────────────────────────────────
 
 impl Tree {
-    /// `shipped`: the folder of this subtree came out of a tarball (a bundled dependency or
-    /// something placed below one), so every row it places is shipped too.
+    /// `shipped`: this folder came out of a tarball, so every row it places is shipped too.
     pub(crate) fn process_subtree<const METHOD: BuilderMethod>(
         &self,
         dependency_id: DependencyID,
@@ -747,9 +743,7 @@ impl Tree {
             let pkg_id = builder.resolutions[dep_id as usize];
             let dependency = &dependencies[dep_id as usize];
 
-            // filter out disabled dependencies. A row a tarball ships is placed as in the
-            // saved tree whatever the install features are, so it keeps its name from a
-            // conflicting version. `ShippedRows` keeps the installer off it.
+            // filter out disabled dependencies. A shipped row is placed as in the saved tree.
             if METHOD == BuilderMethod::Filter {
                 if !shipped
                     && !dependency.behavior.is_bundled()
@@ -1032,7 +1026,7 @@ impl Tree {
         package_id: PackageID,
         input_dep_id: DependencyID,
         input_dep_range: DependencyIDSlice,
-        // The dependent's folder came out of a tarball. See `Tree::process_subtree`.
+        // See `Tree::process_subtree`.
         shipped: bool,
         builder: &mut Builder<'_, METHOD>,
     ) -> HoistDependencyResult {
@@ -1058,8 +1052,7 @@ impl Tree {
 
             let res_id = builder.resolutions[dep_id as usize];
 
-            // A row bun installs does not resolve through a row a tarball ships: it keeps its
-            // own copy below its dependent. See `ShippedRows`.
+            // A row bun installs keeps its own copy below its dependent. See `ShippedRows`.
             if METHOD == BuilderMethod::Filter
                 && !shipped
                 && package_id != invalid_package_id

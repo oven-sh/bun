@@ -764,9 +764,7 @@ struct SavedTree {
 }
 
 /// Hoists `manager.lockfile` into the tree an install of `features` lays out for every workspace
-/// (`Lockfile::filter`): the self-contained barrier applied, disabled dependencies left out, and the
-/// rows a tarball ships kept but not installed.
-/// Returns the tree it replaced and the shipped rows of the new one.
+/// (`Lockfile::filter`). Returns the tree it replaced and the rows a tarball ships.
 fn hoist_install_tree(
     manager: &mut PackageManager,
     features: InstallFeatures,
@@ -809,8 +807,7 @@ struct HoistedTree<'a> {
     folders: Vec<TreeFolder>,
     paths: Vec<u8>,
     expected: Vec<(&'a [u8], PackageID)>,
-    /// `bit[expected index]`: a tarball put the folder there. Its version is the tarball's, so
-    /// the folder counts as installed when it exists.
+    /// `bit[expected index]`: a tarball put the folder there, so it matches when it exists.
     shipped: DynamicBitSet,
     quiet: bool,
     /// The expected tree excludes dev/optional/peer dependencies.

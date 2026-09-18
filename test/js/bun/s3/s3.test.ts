@@ -2215,14 +2215,22 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
     message: "Invalid S3 bucket, key combination",
     path: "unsignableKey",
   };
+  const missingCredentials = {
+    name: "S3Error",
+    code: "ERR_S3_MISSING_CREDENTIALS",
+    message: "Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required",
+    path: "obj",
+  };
 
   it.each([
     [
+      // close() after the caller has seen the failure is cleanup, as in a finally block.
       "end() after a part upload failed",
       `${partUploadFailed}
        const write = writer.write("hello");
-       const end = await settle(writer.end());`,
-      { write: 0, end: { ...accessDenied, path: "obj" }, requests: ["create", "part"] },
+       const end = await settle(writer.end());
+       const close = String(writer.close());`,
+      { write: 0, end: { ...accessDenied, path: "obj" }, close: "undefined", requests: ["create", "part"] },
     ],
     [
       "flush() after a part upload failed",
@@ -2240,6 +2248,25 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
        const end = await settle(writer.end());
        await aborted.promise;`,
       { flush: { ...accessDenied, path: "obj" }, end: "resolved 0", requests: ["create", "part"] },
+    ],
+    [
+      // Both pending promises carry the failure. Later calls see an ended writer.
+      "flush() and end() pending when a part upload fails",
+      `const writer = client.file("obj").writer({ partSize, retry: 0 });
+       writer.write(new Uint8Array(partSize));
+       const [flush, end] = await Promise.all([settle(writer.flush()), settle(writer.end())]);
+       await aborted.promise;
+       const write = writer.write("hello");
+       const secondEnd = await settle(writer.end());
+       const close = String(writer.close());`,
+      {
+        flush: { ...accessDenied, path: "obj" },
+        end: { ...accessDenied, path: "obj" },
+        write: 0,
+        secondEnd: "resolved 0",
+        close: "undefined",
+        requests: ["create", "part"],
+      },
     ],
     [
       // close() reports no outcome of the upload, so it drops the failure.
@@ -2263,6 +2290,13 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
       { write: 5, end: invalidPath, requests: [] },
     ],
     [
+      "end() when the client has no credentials",
+      `const writer = new Bun.S3Client({ bucket: "my_bucket" }).file("obj").writer();
+       const write = writer.write("hello");
+       const end = await settle(writer.end());`,
+      { write: 5, end: missingCredentials, requests: [] },
+    ],
+    [
       // The write() that starts the upload took the bytes before the upload failed inside it.
       "end() when CreateMultipartUpload cannot be signed",
       `const writer = client.file(unsignableKey).writer({ partSize });
@@ -2283,8 +2317,19 @@ describe.concurrent("s3 writer() upload failure with no pending promise", () => 
     const results = Object.keys(expected).join(", ");
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `${prelude} ${body} server.stop(true); console.log(JSON.stringify({ ${results} }));`],
-      // The S3 client honors the proxy environment; the stub is on loopback.
-      env: { ...bunEnv, HTTP_PROXY: undefined, HTTPS_PROXY: undefined, http_proxy: undefined, https_proxy: undefined },
+      env: {
+        ...bunEnv,
+        // The S3 client honors the proxy environment; the stub is on loopback.
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+        // A client with no credentials in its options reads them from the environment.
+        S3_ACCESS_KEY_ID: undefined,
+        S3_SECRET_ACCESS_KEY: undefined,
+        AWS_ACCESS_KEY_ID: undefined,
+        AWS_SECRET_ACCESS_KEY: undefined,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

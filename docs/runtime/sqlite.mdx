@@ -493,6 +493,18 @@ SQLite supports signed 64-bit integers, but JavaScript only supports signed 53-b
 
 `bun:sqlite` binds a `number` parameter as `INTEGER` when the value is a safe integer (`Number.isSafeInteger()`). It binds every other `number`, and `-0`, as a floating-point `REAL`. SQLite stores `NaN` as `NULL`.
 
+<Note>
+Bun v1.4.2 and earlier bound a safe integer as `REAL` when it was 2^51 or more, or less than -2^51. A `TEXT` column stored that value with a `.0` suffix, for example `'4503599627370497.0'`. A query that binds the same `number` compares it as `'4503599627370497'` and does not match that row. To convert the rows that an earlier version wrote, run a statement like this one for each affected table and column:
+
+```sql
+UPDATE users SET id = CAST(CAST(id AS REAL) AS INTEGER)
+WHERE id LIKE '%.0' AND abs(CAST(id AS REAL)) BETWEEN 2251799813685248 AND 9007199254740991;
+```
+
+SQLite 3.51 and earlier stored 15 significant digits in that case, for example `'4.5035996273705e+15'`. Those rows do not hold the exact value.
+
+</Note>
+
 ### `safeIntegers: true`
 
 When `safeIntegers` is `true`, `bun:sqlite` returns integers as `bigint` types:

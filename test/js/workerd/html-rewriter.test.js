@@ -1815,6 +1815,48 @@ describe("HTMLRewriter", () => {
     );
   });
 
+  it("nested :not() selectors", () => {
+    const matchedIds = selector => {
+      const ids = [];
+      new HTMLRewriter()
+        .on(selector, {
+          element(element) {
+            ids.push(element.getAttribute("id"));
+          },
+        })
+        .transform(
+          '<main id="main"><div id="div" class="a">1</div><span id="span" class="a">2</span><span id="plain">3</span></main>',
+        );
+      return ids;
+    };
+    const selectors = [
+      ":not(div)",
+      ":not(:not(div))",
+      ":not(:not(:not(div)))",
+      "div:not(:not(span))",
+      "span:not(:not(.a))",
+      ":not(:not(span.a))",
+      ":not(:not(div), :not(.a))",
+    ];
+    expect(Object.fromEntries(selectors.map(selector => [selector, matchedIds(selector)]))).toEqual({
+      ":not(div)": ["main", "span", "plain"],
+      ":not(:not(div))": ["div"],
+      ":not(:not(:not(div)))": ["main", "span", "plain"],
+      "div:not(:not(span))": [],
+      "span:not(:not(.a))": ["span"],
+      ":not(:not(span.a))": ["span"],
+      ":not(:not(div), :not(.a))": ["div"],
+    });
+  });
+
+  it("rejects a combinator inside :not()", () => {
+    for (const selector of [":not(div span)", ":not(div > span)", ":not(:not(div span))"]) {
+      expect(() => new HTMLRewriter().on(selector, {})).toThrow(
+        "Unsupported pseudo-class or pseudo-element in selector.",
+      );
+    }
+  });
+
   it("supports deleting innerContent", async () => {
     expect(
       await new HTMLRewriter()

@@ -271,14 +271,12 @@ const TAG_HANDLERS: [TagHandler; 16] = [
     //     TagHandler::new("iframe[src]", "src", ImportKind::Url),
 ];
 
-const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 3;
-
 #[inline]
 fn lol_err<E>(_: E) -> Error {
     crate::Error::Fail
 }
 
-/// `element_content_handlers` entry with only the element slot populated —
+/// `append_element_content_handler` entry with only the element slot populated —
 /// the only shape this processor registers (leaving the comment/text slots
 /// empty lets lol-html skip lexing that content).
 fn element_entry<'h>(
@@ -310,7 +308,14 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         // until the rewriter holding those closures is gone.
         let this_ptr: *mut T = this;
 
-        let mut element_content_handlers = Vec::with_capacity(SELECTOR_CAP);
+        let mut settings = lol_html::Settings::new()
+            .with_encoding(lol_html::AsciiCompatibleEncoding::utf_8())
+            .with_memory_settings(
+                lol_html::MemorySettings::new()
+                    .with_preallocated_parsing_buffer_size((input.len() / 4).max(1024))
+                    .with_max_allowed_memory_usage(1024 * 1024 * 10),
+            )
+            .with_strict(false);
 
         for tag_info in TAG_HANDLERS {
             let on_element: lol_html::ElementHandler<'_> = Box::new(
@@ -339,7 +344,8 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                     Ok(())
                 },
             );
-            element_content_handlers.push(element_entry(tag_info.selector, on_element)?);
+            settings = settings
+                .append_element_content_handler(element_entry(tag_info.selector, on_element)?);
         }
 
         if VISIT_DOCUMENT_TAGS {
@@ -363,20 +369,9 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                         }
                     },
                 );
-                element_content_handlers.push(element_entry(tag, on_element)?);
+                settings = settings.append_element_content_handler(element_entry(tag, on_element)?);
             }
         }
-
-        let settings = lol_html::Settings {
-            element_content_handlers,
-            encoding: lol_html::AsciiCompatibleEncoding::utf_8(),
-            memory_settings: lol_html::MemorySettings {
-                preallocated_parsing_buffer_size: (input.len() / 4).max(1024),
-                max_allowed_memory_usage: 1024 * 1024 * 10,
-            },
-            strict: false,
-            ..lol_html::Settings::new()
-        };
 
         // lol-html signals end-of-document with one zero-length chunk; the
         // C-API sink routed that to a no-op `done()`, never to `on_write_html`.

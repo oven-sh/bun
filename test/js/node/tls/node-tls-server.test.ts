@@ -1437,6 +1437,33 @@ it("an asynchronous SNICallback resolving cb(null, null) still honors addContext
   await once(server, "close");
 });
 
+it("a listen() that fails after the socket is bound leaves the server closed", async () => {
+  // listen() binds the socket, then wires the handle and loads the addContext()
+  // entries. A throw from any of those steps (an entry the native listener
+  // rejects, for example) must stop the bound listener. address() is the first
+  // step after the bind that a test can make throw, so it stands in for them.
+  const server: Server = createServer(COMMON_CERT, socket => socket.end());
+  server.addContext("alt.example.com", { key: rawKey, cert: cert });
+  const realAddress = server.address;
+  server.address = function () {
+    server.address = realAddress;
+    throw new Error("address() failed after the bind");
+  };
+  server.listen(0, "127.0.0.1");
+  const outcome = await new Promise<string>(resolve => {
+    server.once("listening", () => resolve("listening"));
+    server.once("error", err => resolve(`error: ${err.message}`));
+  });
+  expect(outcome).toBe("error: address() failed after the bind");
+  expect({
+    listening: server.listening,
+    address: server.address(),
+    handleIsNull: (server as any)._handle === null,
+  }).toEqual({ listening: false, address: null, handleIsNull: true });
+  const closeErr = await new Promise<any>(resolve => server.close(resolve));
+  expect(closeErr.code).toBe("ERR_SERVER_NOT_RUNNING");
+});
+
 describe("tls.Server socket destroySoon", () => {
   // destroySoon() after end(big) must deliver every byte even when the TLS write
   // batcher's final flush spills (#31584). The spill/kernel-buffer race hits ~4% of

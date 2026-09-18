@@ -2171,6 +2171,55 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
+    test("--concurrent-scripts=0 still runs the scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      const [trusted, untrusted] = await createPackagesWithScripts(packageDir, packageJson, 2, {
+        "postinstall": "touch postinstall.txt",
+      });
+      await writeFile(
+        packageJson,
+        JSON.stringify({ ...(await file(packageJson).json()), trustedDependencies: [trusted] }),
+      );
+
+      // With a limit of 0 both commands used to wait forever for a free script slot.
+      async function run(...args: string[]) {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args, "--concurrent-scripts=0"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+          // Only matters if the command never returns.
+          timeout: 30_000,
+          killSignal: "SIGKILL",
+        });
+        const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        return { err, out, signalCode: proc.signalCode, exitCode };
+      }
+      const postinstallRan = () =>
+        Promise.all([trusted, untrusted].map(dep => exists(join(packageDir, "node_modules", dep, "postinstall.txt"))));
+
+      expect(await run("install")).toEqual({
+        err: expect.stringContaining("Saved lockfile"),
+        out: expect.stringContaining("Blocked 1 postinstall"),
+        signalCode: null,
+        exitCode: 0,
+      });
+      expect(await postinstallRan()).toEqual([true, false]);
+
+      expect(await run("pm", "trust", "--all")).toEqual({
+        err: expect.not.stringContaining("error:"),
+        out: expect.stringContaining("1 script ran across 1 package"),
+        signalCode: null,
+        exitCode: 0,
+      });
+      expect(await postinstallRan()).toEqual([true, true]);
+    });
+
     test("stress test", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;

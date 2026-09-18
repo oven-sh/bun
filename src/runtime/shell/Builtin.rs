@@ -819,14 +819,12 @@ impl Builtin {
         if let Some(y) = Self::cmd_write_stderr(interp, cmd, &buf) {
             return y;
         }
-        // No-IO path: finish synchronously with exit 1
-        // (Cmd::on_io_writer_chunk's behaviour).
+        // No-IO path: finish with exit 1, as `Cmd::on_io_writer_chunk` does.
         let parent = interp.as_cmd(cmd).base.parent;
         interp.child_done(parent, cmd, 1)
     }
 
-    /// Writes `buf` to the *Cmd's* `io.stderr`. `Some`: the write is
-    /// asynchronous and completes in `Cmd::on_io_writer_chunk`.
+    /// Writes to the *Cmd's* `io.stderr`. `Some`: the write completes in `Cmd::on_io_writer_chunk`.
     pub(crate) fn cmd_write_stderr(interp: &Interpreter, cmd: NodeId, buf: &[u8]) -> Option<Yield> {
         if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
@@ -892,9 +890,7 @@ impl Builtin {
     /// Write `buf` to stdout/stderr without going through IOWriter (the
     /// stream is a captured buffer / arraybuffer / blob / /dev/null).
     ///
-    /// An ArrayBuffer target that cannot hold all of `buf` keeps the bytes that
-    /// fit and returns `Err(ENOSPC)`. The Cmd records it, so a caller that
-    /// drops the result still fails: see `Cmd::redirect_overflow`.
+    /// `Err(ENOSPC)`: an ArrayBuffer target cannot hold all of `buf`. Sets `Cmd::redirect_overflow`.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
     pub(crate) fn write_no_io(
         interp: &Interpreter,

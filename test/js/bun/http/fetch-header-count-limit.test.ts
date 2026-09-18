@@ -160,13 +160,25 @@ describe("response header field count", () => {
     expect(await outcomeOf(server)).toEqual({ rejected: "ResponseHeadersTooLarge" });
   });
 
-  test.concurrent("300 fields that arrive in two reads resolve with every field", async () => {
-    const cookies = makeCookies(300);
+  // The first read ends in the middle of the header block. At the maximum, every slot is
+  // in use when the buffer ends, and the parser must ask for more bytes, not give up.
+  test.concurrent.each([
+    ["300 fields, cut after 280 complete lines", 300, (wire: string) => wire.indexOf("Set-Cookie: c280=")],
+    ["the maximum, cut before the blank line", maxResponseHeaders, (wire: string) => wire.indexOf("\r\n\r\n") + 2],
+    ["the maximum, cut inside the blank line", maxResponseHeaders, (wire: string) => wire.indexOf("\r\n\r\n") + 3],
+  ])("two reads resolve with every field: %s", async (_, total, cutAt) => {
+    const cookies = makeCookies(total);
     const wire = toWire(cookies);
-    // The first read ends after 280 complete field lines, before the end of the header block.
-    const cut = wire.indexOf("Set-Cookie: c280=");
+    const cut = cutAt(wire);
     await using server = await serveRaw(wire.slice(0, cut), wire.slice(cut));
     expect(await outcomeOf(server)).toEqual({ status: 200, cookies, contentLength: "2", body: "ok" });
+  });
+
+  test.concurrent("one field more than the maximum rejects when the first read ends after the last slot", async () => {
+    const wire = toWire(makeCookies(maxResponseHeaders + 1));
+    const cut = wire.indexOf("Content-Length: 2\r\n");
+    await using server = await serveRaw(wire.slice(0, cut), wire.slice(cut));
+    expect(await outcomeOf(server)).toEqual({ rejected: "ResponseHeadersTooLarge" });
   });
 
   test.concurrent("a malformed line after 290 fields still rejects with Malformed_HTTP_Response", async () => {

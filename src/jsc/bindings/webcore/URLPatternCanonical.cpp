@@ -177,7 +177,13 @@ ExceptionOr<String> canonicalizeOpaquePathname(StringView value)
     if (value.isEmpty())
         return value.toString();
 
-    URL dummyURL(makeString("a:"_s, value));
+    // URLParser has no state override, and after "a:" a leading '/' selects the path state rather than the
+    // opaque path state, so such a value is canonicalized like the pathname of "foo://h/b". Give it a host,
+    // otherwise a leading "//" is read as an authority and a leading "/." is dropped by URL::pathStart().
+    // URLParser skips tabs and newlines before it looks for that '/', so skip them here too.
+    auto firstKeptCodeUnit = value.find([](char16_t c) { return c != '\t' && c != '\n' && c != '\r'; });
+    bool hasLeadingSlash = firstKeptCodeUnit != notFound && value[firstKeptCodeUnit] == '/';
+    URL dummyURL(hasLeadingSlash ? makeString("a://a"_s, value) : makeString("a:"_s, value));
 
     if (!dummyURL.isValid())
         return Exception { ExceptionCode::TypeError, "Invalid input to canonicalize a URL opaque path string."_s };

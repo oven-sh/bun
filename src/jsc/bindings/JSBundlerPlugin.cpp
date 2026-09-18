@@ -715,7 +715,6 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundler
     arguments.append(JSValue::decode(encodedBuildResult));
     arguments.append(JSValue::decode(encodedRejection));
 
-    // TODO: use AsyncContextFrame?
     auto result
         = JSC::profiledCall(globalObject, ProfilingReason::API, runOnEndCallbacksFn, callData, plugin, arguments);
     RETURN_IF_EXCEPTION(scope, {});

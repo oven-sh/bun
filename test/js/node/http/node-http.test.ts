@@ -3723,10 +3723,10 @@ it("an Upgrade request with a non-chunked Transfer-Encoding switches protocols r
   }
 });
 
-it("the Connection header's upgrade token is a whole comma-separated member, like llhttp", async () => {
+it("the Connection header's upgrade and close tokens are whole comma-separated members, like llhttp", async () => {
   // Node v26.3.0 contract (verified): "x-upgrade", "upgrade;foo" and
   // "\"upgrade\"" do not make the request an upgrade. "keep-alive, Upgrade"
-  // does.
+  // does. "x-close" does not close the connection, "keep-alive, close" does.
   const seen: string[] = [];
   const server = createServer((req, res) => {
     seen.push(`request ${req.url} upgrade=${req.upgrade}`);
@@ -3745,6 +3745,8 @@ it("the Connection header's upgrade token is a whole comma-separated member, lik
       ["/b", "upgrade;foo"],
       ["/c", '"upgrade"'],
       ["/d", "keep-alive, Upgrade"],
+      ["/e", "x-close"],
+      ["/f", "keep-alive, close"],
     ]) {
       const client = connect(port, "127.0.0.1");
       client.on("error", () => {});
@@ -3761,12 +3763,16 @@ it("the Connection header's upgrade token is a whole comma-separated member, lik
       const out = await response;
       client.destroy();
       expect(out.split("\r\n")[0]).toBe(path === "/d" ? "HTTP/1.1 101 Switching Protocols" : "HTTP/1.1 200 OK");
+      if (path === "/e") expect(out).toContain("\r\nConnection: keep-alive\r\n");
+      if (path === "/f") expect(out).toContain("\r\nConnection: close\r\n");
     }
     expect(seen).toEqual([
       "request /a upgrade=false",
       "request /b upgrade=false",
       "request /c upgrade=false",
       "upgrade /d",
+      "request /e upgrade=false",
+      "request /f upgrade=false",
     ]);
   } finally {
     server.close();

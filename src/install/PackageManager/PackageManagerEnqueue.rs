@@ -146,8 +146,7 @@ pub fn enqueue_dependency_list(
     this.drain_dependency_list();
 }
 
-/// `is_required`: whether the install fails if this download fails. A linker asks once for
-/// every dependency on the package, so it passes `RequiredPackages::contains`.
+/// `is_required` is `RequiredPackages::contains`, not the behavior of `dependency_id` alone.
 pub fn enqueue_tarball_for_download(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -336,11 +335,7 @@ pub fn enqueue_git_for_checkout(
     GitEnqueueResult::Queued
 }
 
-/// Whether the download `task_id` already failed for an install-phase request from a
-/// dependency with `is_required`. `run_tasks` reports a failed download as an error only
-/// if a required dependency had asked for it. So a required request raises a running
-/// download to required, and it does not accept a failure that only optional
-/// dependencies had asked for: it forgets that failure and downloads again.
+/// An optional-only failure was reported as a warning, so a required request downloads again.
 fn download_already_failed(
     this: &mut PackageManager,
     task_id: Task::Id,

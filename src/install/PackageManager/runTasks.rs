@@ -1917,8 +1917,7 @@ pub fn has_created_network_task(
         .get_or_put(task_id)
         .expect("unreachable");
 
-    // if there's an existing network task that is optional, we want to make it non-optional if this one would be required.
-    // A failed task keeps the flag its failure was reported with: `download_already_failed` reads it.
+    // if there's an existing network task that is optional, we want to make it non-optional if this one would be required
     if !gpe.value_ptr.failed {
         gpe.value_ptr.is_required |= is_required;
     }

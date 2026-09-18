@@ -615,11 +615,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     !WorkspaceFilter::is_selected(workspace_filters, pkg_id)
 }
 
-/// Which packages an install requires: the ones that a dependency without
-/// `Behavior::OPTIONAL` resolves to, among the dependencies the install links. A tree slot
-/// or a store entry stands for every dependency on its package, and the dependency that
-/// owns it can be optional while another one is not. A peer dependency counts only as the
-/// owner: the linkers can bind it to another package than the one it resolves to.
+/// The packages that a linked dependency without `Behavior::OPTIONAL` resolves to.
 pub(crate) struct RequiredPackages<'a> {
     workspace_filters: &'a [WorkspaceFilter],
     install_root_dependencies: bool,
@@ -656,8 +652,7 @@ impl<'a> RequiredPackages<'a> {
         {
             return true;
         }
-        // A walk is stale once the install appended a package
-        // (see `PackageInstaller::fix_cached_lockfile_package_slices`).
+        // Walk again if the install appended a package since.
         let packages = match &mut self.packages {
             Some(packages) if packages.bit_length() == lockfile.packages.len() => packages,
             stale => stale.insert(bun_core::handle_oom(required_packages(
@@ -696,9 +691,9 @@ fn required_packages(
             let pkg_id = resolutions[dep_id as usize];
             let behavior = dependencies[dep_id as usize].behavior;
             if pkg_id as usize >= pkg_dependencies.len()
+                // The linkers can bind a peer to another package than the one it resolves to.
                 || behavior.is_peer()
-                // Checked here because `is_filtered_dependency_or_workspace` prints each
-                // disabled package under `--verbose`.
+                // `is_filtered_dependency_or_workspace` would print this package under `--verbose`.
                 || pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os)
                 || is_filtered_dependency_or_workspace(
                     dep_id,

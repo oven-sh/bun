@@ -3545,7 +3545,6 @@ it("Connection: close closes the connection only as a whole list item like llhtt
     for (const [headers, name, verdict] of cases) {
       expected[name] = verdict;
       const client = connect(port, "127.0.0.1");
-      client.on("error", () => {});
       client.write(`GET / HTTP/1.1\r\nHost: x\r\n${headers}\r\n`);
       let received = "";
       let waiter = Promise.withResolvers<void>();
@@ -3553,6 +3552,9 @@ it("Connection: close closes the connection only as a whole list item like llhtt
         received += chunk.toString();
         if (received.endsWith("ok")) waiter.resolve();
       });
+      // A close or error before the body ends fails the case with what was received.
+      client.on("error", err => waiter.reject(new Error(`${name}: ${err.message}; received ${JSON.stringify(received)}`)));
+      client.on("close", () => waiter.reject(new Error(`${name}: closed; received ${JSON.stringify(received)}`)));
       await waiter.promise;
       const connection = /^connection: (.*)$/im.exec(received)?.[1];
       if (connection === "close") {

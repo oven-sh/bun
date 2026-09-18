@@ -16,6 +16,13 @@
 #include <sched.h>
 #include <unistd.h>
 #endif
+#if OS(LINUX)
+#include "JavaScriptCore/JSTypedArrays.h"
+#include <errno.h>
+#include <signal.h>
+#include <wtf/Atomics.h>
+#include <wtf/Threading.h>
+#endif
 
 extern "C" BunString BunString__threadIsolatedCopy(const BunString* str);
 extern "C" void BunString__makeThreadShareable(BunString* str);
@@ -241,6 +248,60 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject
         }
     }
     return JSValue::encode(jsNumber(firstError));
+#endif
+}
+
+// (state, signalNumber, holdMilliseconds, threadDirected): see suspendThreadAndSignalForTesting in internal-for-testing.ts.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_suspendThreadAndSignalForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if OS(LINUX)
+    auto* state = dynamicDowncast<JSC::JSInt32Array>(callFrame->argument(0));
+    if (!state || !state->isShared() || state->length() < 3) {
+        throwTypeError(globalObject, scope, "state must be an Int32Array of at least 3 elements over a SharedArrayBuffer"_s);
+        return {};
+    }
+    int32_t signalNumber = callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    int32_t holdMilliseconds = callFrame->argument(2).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool threadDirected = callFrame->argument(3).toBoolean(globalObject);
+
+    // The helper thread holds its own ref on the SharedArrayBuffer's storage, so the JS side may drop `state` at any time.
+    JSC::ArrayBufferContents storage;
+    if (!state->possiblySharedBuffer()->shareWith(storage)) {
+        throwTypeError(globalObject, scope, "could not share the state buffer"_s);
+        return {};
+    }
+    size_t byteOffset = state->byteOffset();
+    WTF::Thread::create("SuspendForTesting"_s, [thread = Ref { WTF::Thread::currentSingleton() }, handle = pthread_self(), storage = WTF::move(storage), byteOffset, signalNumber, holdMilliseconds, threadDirected] {
+        int32_t* slots = reinterpret_cast<int32_t*>(static_cast<uint8_t*>(storage.data()) + byteOffset);
+        // slots[1]: 0 held, 1 the thread ran while suspended, 2 suspend failed, 3 the send failed.
+        int32_t result = 2;
+        {
+            WTF::ThreadSuspendLocker locker;
+            if (thread->suspend(locker)) {
+                // No allocation until the resume: the suspended thread may hold the allocator lock.
+                int sendError = threadDirected ? pthread_kill(handle, signalNumber) : (kill(getpid(), signalNumber) ? errno : 0);
+                int32_t before = WTF::atomicLoad(&slots[0]);
+                usleep(static_cast<useconds_t>(holdMilliseconds) * 1000);
+                bool moved = WTF::atomicLoad(&slots[0]) != before;
+                thread->resume(locker);
+                if (sendError)
+                    result = 3;
+                else
+                    result = moved ? 1 : 0;
+            }
+        }
+        WTF::atomicStore(&slots[1], result);
+        WTF::atomicStore(&slots[2], 1);
+    })->detach();
+    return JSValue::encode(jsUndefined());
+#else
+    UNUSED_PARAM(callFrame);
+    throwTypeError(globalObject, scope, "suspendThreadAndSignalForTesting is only implemented on Linux"_s);
+    return {};
 #endif
 }
 

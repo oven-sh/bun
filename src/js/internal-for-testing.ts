@@ -696,6 +696,14 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
 export const spawnThreadsForTesting: (iterations: number, fd: number, parallelism: number, detach?: boolean) => number =
   $newCppFunction("InternalForTesting.cpp", "jsFunction_spawnThreadsForTesting", 4);
 
+// Linux only. Suspends the caller with WTF::Thread::suspend, sends `signal` meanwhile, resumes after `holdMilliseconds`. State protocol: test/js/node/process/process-sigpwr.test.ts.
+export const suspendThreadAndSignalForTesting: (
+  state: Int32Array,
+  signal: number,
+  holdMilliseconds: number,
+  threadDirected?: boolean,
+) => void = $newCppFunction("InternalForTesting.cpp", "jsFunction_suspendThreadAndSignalForTesting", 4);
+
 // True when the installed watcher registered a real OS source (a PSI trigger
 // on Linux). The watcher installs silently without one when the kernel
 // refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.

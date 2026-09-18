@@ -353,7 +353,9 @@ describe.concurrent("workspace packages outside the workspace root", () => {
 
   // The clone ships `sym -> .`, so the OS applies the `..` to the root itself and the path
   // names the sibling. A lexical check would collapse `sym/..` first and see `<root>/victim`.
-  test("a bun.lock path that leaves the root through a symlink and .. is rejected", async () => {
+  // POSIX only: Win32 collapses `sym\..` before the filesystem sees it, so the path stays
+  // inside the root there and the install fails with ENOENT instead.
+  test.skipIf(isWindows)("a bun.lock path that leaves the root through a symlink and .. is rejected", async () => {
     using dir = tempDir("bad-workspace-lockfile-symlink-dotdot", {
       ...SIBLING_PROJECTS,
       "clone/package.json": cloneRoot({ dependencies: { tool: "workspace:tools/tool" } }),

@@ -406,18 +406,14 @@ impl PackageManager {
         }
     }
 
-    /// The linkers create `<workspace>/node_modules` for every workspace path, and `bun
-    /// prune` walks the same directories, so a path outside the root is a write outside the
-    /// project. A path reaches the lockfile from `workspaces`, a `workspace:<path>` value in
-    /// a dependency group, `overrides`, a catalog, and `bun.lock`, so the check is on the
-    /// paths the lockfile holds, before anything is written.
+    /// Every workspace path receives a `node_modules` from the linkers, and `bun prune`
+    /// deletes inside it, so one outside the root is a write outside the project.
     pub(crate) fn verify_workspaces_inside_root(&mut self, log_level: LogLevel) {
         let lockfile = &self.lockfile;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
 
-        // Both sources: the isolated linker iterates `workspace_paths`, which keeps an entry
-        // whose package never resolved, and each linker names the directory of a resolved
-        // workspace package from its resolution.
+        // The isolated linker iterates `workspace_paths`, which keeps a path whose package
+        // never resolved.
         let mut paths: Vec<&[u8]> =
             Vec::with_capacity(lockfile.workspace_paths.count() + lockfile.packages.len());
         for path in lockfile.workspace_paths.values() {
@@ -495,9 +491,8 @@ fn workspace_containment<'b>(
     workspace_path: &[u8],
     real_dir_buf: &'b mut bun_paths::PathBuffer,
 ) -> Containment<'b> {
-    // The installer creates and links the directories under `node_modules` itself, so a
-    // workspace path through one of them resolves to something else by the time a linker
-    // uses it. A glob in `workspaces` never matches there either (`IGNORED_PATHS`).
+    // The installer creates the directories under `node_modules` itself, so such a path
+    // resolves elsewhere once the install starts.
     for component in strings::split_any(workspace_path, b"/\\") {
         if component == b"node_modules" {
             return Containment::Refused("is inside node_modules");
@@ -537,9 +532,8 @@ fn workspace_containment<'b>(
     Containment::Outside(real_dir)
 }
 
-/// Writes `<root>/<path>` (or `<path>` when it is absolute) and a NUL into `buf`, and
-/// returns the length without the NUL. The path keeps the spelling the linkers use: a `..`
-/// is not collapsed here, because the OS applies it to the directory a symlink points at.
+/// `<root>/<path>` and a NUL, not normalized, because the OS applies a `..` to the target
+/// of the symlink before it. Returns the length without the NUL.
 fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize> {
     let root: &[u8] = if bun_paths::is_absolute(path) {
         b""
@@ -560,9 +554,8 @@ fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize
     Some(len)
 }
 
-/// The real path of `buf[..len]`, which `buf` holds NUL-terminated. A workspace that
-/// `bun.lock` lists can be missing on disk, so the nearest directory that exists stands in
-/// for it.
+/// `bun.lock` can list a workspace that is missing, so the nearest existing directory of
+/// the NUL-terminated `buf[..len]` stands in for it.
 fn real_path_of_nearest_existing_dir<'b>(
     buf: &mut [u8],
     len: usize,

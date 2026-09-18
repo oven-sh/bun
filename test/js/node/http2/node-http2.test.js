@@ -6329,3 +6329,101 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+describe.concurrent("http2 client 421 removes the origin of the request from originSet", () => {
+  // The server announces a second origin with an ORIGIN frame, so the set holds two origins before
+  // the 421 and the test can see which one the 421 removes.
+  const announcedOrigin = "https://example.test";
+
+  async function originSetAfter421(requestHeaders, { announce = true, readOriginSetBefore = true } = {}) {
+    const server = http2.createSecureServer(TLS_CERT);
+    if (announce) server.on("session", session => session.origin(announcedOrigin));
+    server.on("stream", stream => {
+      stream.respond({ ":status": 421 });
+      stream.end();
+    });
+    const { promise: listening, resolve: onListening } = Promise.withResolvers();
+    server.listen(0, "127.0.0.1", onListening);
+    await listening;
+    const port = server.address().port;
+    const sessionOrigin = `https://localhost:${port}`;
+    try {
+      const client = http2.connect(sessionOrigin, TLS_OPTIONS);
+      const { promise: ready, resolve: onReady, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      client.on("close", () => reject(new Error("session closed before the ORIGIN frame")));
+      if (announce) client.once("origin", onReady);
+      else client.once("connect", () => onReady(undefined));
+      expect(await ready).toEqual(announce ? [announcedOrigin] : undefined);
+      try {
+        const originSetBefore = readOriginSetBefore ? client.originSet : undefined;
+        const { promise: responded, resolve: onResponse, reject: rejectRequest } = Promise.withResolvers();
+        const req = client.request(requestHeaders);
+        req.on("error", rejectRequest);
+        req.on("close", () => rejectRequest(new Error(`stream closed before a response, rstCode ${req.rstCode}`)));
+        req.on("response", onResponse);
+        req.resume();
+        req.end();
+        const status = (await responded)[":status"];
+        return { sessionOrigin, originSetBefore, status, originSet: client.originSet };
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  }
+
+  it("keeps the session origin when the request used host instead of :authority", async () => {
+    const { sessionOrigin, originSetBefore, status, originSet } = await originSetAfter421({
+      ":path": "/",
+      host: "example.test",
+    });
+    expect(originSetBefore).toEqual([sessionOrigin, announcedOrigin]);
+    expect(status).toBe(421);
+    expect(originSet).toEqual([sessionOrigin]);
+  });
+
+  it("keeps the session origin when a raw-form request used Host instead of :authority", async () => {
+    const { sessionOrigin, originSetBefore, status, originSet } = await originSetAfter421([
+      ":path",
+      "/",
+      "Host",
+      "example.test",
+    ]);
+    expect(originSetBefore).toEqual([sessionOrigin, announcedOrigin]);
+    expect(status).toBe(421);
+    expect(originSet).toEqual([sessionOrigin]);
+  });
+
+  it("removes the :authority origin of the request", async () => {
+    const { sessionOrigin, status, originSet } = await originSetAfter421({
+      ":path": "/",
+      ":authority": "example.test",
+    });
+    expect(status).toBe(421);
+    expect(originSet).toEqual([sessionOrigin]);
+  });
+
+  it("removes the session origin when the request used the default :authority", async () => {
+    const { status, originSet } = await originSetAfter421({ ":path": "/" });
+    expect(status).toBe(421);
+    expect(originSet).toEqual([announcedOrigin]);
+  });
+
+  it("removes the session origin when nothing created the set before the 421", async () => {
+    // No ORIGIN frame and no originSet read: the 421 is the first thing that touches the set.
+    const { status, originSet } = await originSetAfter421(
+      { ":path": "/" },
+      { announce: false, readOriginSetBefore: false },
+    );
+    expect(status).toBe(421);
+    expect(originSet).toEqual([]);
+  });
+
+  it("removes the origin of the request with the :scheme the request was sent with", async () => {
+    const { sessionOrigin, status, originSet } = await originSetAfter421({ ":path": "/", ":scheme": "http" });
+    expect(status).toBe(421);
+    expect(originSet).toEqual([sessionOrigin, announcedOrigin]);
+  });
+});

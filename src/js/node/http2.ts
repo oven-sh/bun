@@ -3950,12 +3950,11 @@ function initOriginSet(session: Http2Session) {
   }
   return originSet;
 }
-function removeOriginFromSet(session: Http2Session, stream: ClientHttp2Stream) {
-  const originSet = session[bunHTTP2OriginSet];
-  const origin = `https://${stream.authority}`;
-  if (originSet && origin) {
-    originSet.delete(origin);
-  }
+function removeOriginFromSet(session: ClientHttp2Session, stream: ClientHttp2Stream) {
+  if (!session.encrypted) return;
+  // node: stream[kOrigin] = `${headers[":scheme"]}://${getAuthority(headers)}`
+  const origin = `${stream.sentHeaders?.[":scheme"]}://${stream.authority}`;
+  initOriginSet(session).delete(origin);
 }
 class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
@@ -5926,6 +5925,7 @@ class ClientHttp2Session extends Http2Session {
       // given order. The derived object form (original-case keys, array values
       // for duplicates) backs sentHeaders.
       let rawHeadersList: any[] | null = null;
+      let rawHost;
       if (headers == undefined) {
         headers = {};
       } else if ($isArray(headers)) {
@@ -5950,14 +5950,13 @@ class ClientHttp2Session extends Http2Session {
         if (method !== HTTP2_METHOD_CONNECT || protocol !== undefined) {
           // `raw` is a flat [name, value, ...] array - scan the name slots for a host header
           // instead of reading a string key off the array.
-          let rawHasHost = false;
           for (let i = 0; i < raw.length; i += 2) {
             if (typeof raw[i] === "string" && raw[i].toLowerCase() === HTTP2_HEADER_HOST) {
-              rawHasHost = true;
+              rawHost = raw[i + 1];
               break;
             }
           }
-          if (authority === undefined && !rawHasHost) {
+          if (authority === undefined && rawHost === undefined) {
             authority = this.#authority;
             additionalPseudoHeaders.push(HTTP2_HEADER_AUTHORITY, authority);
           }
@@ -6072,11 +6071,15 @@ class ClientHttp2Session extends Http2Session {
         method = "GET";
         headers[":method"] = method;
       }
+      // node's getAuthority(): :authority, else host. removeOriginFromSet() uses it on a 421.
       let authority = headers[":authority"];
       if (!authority) {
-        // Use precomputed authority (like Node.js's session[kAuthority])
-        authority = this.#authority;
-        if (!headers["host"]) {
+        const host = headers["host"] || rawHost;
+        if (host) {
+          authority = host;
+        } else {
+          // Use precomputed authority (like Node.js's session[kAuthority])
+          authority = this.#authority;
           headers[":authority"] = authority;
         }
       }

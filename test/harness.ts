@@ -114,6 +114,16 @@ for (let key in bunEnv) {
     delete bunEnv[key];
     delete process.env[key];
   }
+
+  // `bun run <script>` exports these to the script, so a test run started through a
+  // package.json script (`bun bd test`) inherits them while CI, which starts `bun test`
+  // directly, does not. Spawned buns honor them: NODE/npm_node_execpath decide whether
+  // the node shim gets created, and most npm_* values (npm_config_user_agent,
+  // npm_package_name, ...) are only set when absent.
+  if (key === "NODE" || key.startsWith("npm_")) {
+    delete ciEnv[key];
+    delete bunEnv[key];
+  }
 }
 
 delete bunEnv.BUN_INSPECT_CONNECT_TO;

@@ -1078,4 +1078,33 @@ body {
       expect(htmlContent).toMatch(/href=".*\.webmanifest"/);
     },
   });
+
+  // lol-html's memory limit counts the parsing buffer's preallocation and one
+  // selector stack entry per open element. Neither may fail the build.
+  for (const [id, body] of [
+    ["html/entry-larger-than-40-mib", Buffer.alloc(41 * 1024 * 1024, "a")],
+    // lol-html does not imply end tags: every <p> stays open until </body>.
+    ["html/many-unclosed-elements", Buffer.alloc(70_000 * "<p>x".length, "<p>x")],
+  ] as const) {
+    itBundled(id, {
+      outdir: "out/",
+      backend: "cli",
+      files: {
+        "/index.html": Buffer.concat([
+          Buffer.from(`<!DOCTYPE html><html><head><script src="./script.js"></script></head><body>\n`),
+          body,
+          Buffer.from(`\n</body></html>`),
+        ]),
+        "/script.js": "console.log('Hello World')",
+      },
+      entryPoints: ["/index.html"],
+      onAfterBundle(api) {
+        const html = api.readFile("out/index.html");
+        const bodyStart = html.indexOf("<body>");
+        expect(html.slice(0, bodyStart)).toMatch(/<script type="module" crossorigin src="\.\/index-[a-z0-9]+\.js">/);
+        // Not `expect(html)`: a failure would print the whole document.
+        expect(html.slice(bodyStart).trimEnd() === `<body>\n${body}\n</body></html>`).toBe(true);
+      },
+    });
+  }
 });

@@ -66,8 +66,7 @@ pub struct FileSink {
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
     pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
-    /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open,
-    /// and for `process.stdout`/`process.stderr` under `bun test --isolate`.
+    /// Armed for a file opened for a `Bun.ModuleGraph`'s script, and for process stdio under `bun test --isolate`.
     abort_handle: bun_jsc::AbortHandle,
     /// `process.stdout`/`process.stderr` under `bun test --isolate`: the stop flushes before it closes.
     flush_on_abort: Cell<bool>,
@@ -276,9 +275,7 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
 }
 
-/// Arms a just-created `process.stdout`/`process.stderr` sink on the realm's
-/// context so the `--isolate` swap ends it. Each isolate global dups the stdio
-/// fd anew; an unclosed dup leaks its epoll registration (EEXIST on fd-number reuse).
+/// Under `bun test --isolate`, arms a new `process.stdout`/`process.stderr` sink on the root context so the global swap ends it.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__trackProcessStdioSinkForTestIsolation(
     global: &JSGlobalObject,

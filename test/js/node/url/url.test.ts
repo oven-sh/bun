@@ -1,4 +1,4 @@
-import { parse } from "url";
+import { parse, urlToHttpOptions } from "url";
 
 describe("Url.prototype.parse", () => {
   it("parses URL correctly", () => {
@@ -78,6 +78,42 @@ it("URL constructor throws ERR_MISSING_ARGS", () => {
 
   // @ts-expect-error
   expect(err?.code).toEqual("ERR_MISSING_ARGS");
+});
+
+describe("urlToHttpOptions", () => {
+  it("throws ERR_INVALID_ARG_TYPE for non-object arguments", () => {
+    // Node.js: validateObject(url, "url", kValidateObjectAllowObjects)
+    for (const value of ["http://h/", 42, true, null, undefined, Symbol("s"), 1n]) {
+      expect(() => urlToHttpOptions(value as any)).toThrow(
+        expect.objectContaining({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: expect.stringContaining('"url" argument must be of type object'),
+        }),
+      );
+    }
+    expect(() => (urlToHttpOptions as any)()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  it("accepts arrays and functions (kValidateObjectAllowObjects)", () => {
+    expect(() => urlToHttpOptions([] as any)).not.toThrow();
+    expect(() => urlToHttpOptions(function () {} as any)).not.toThrow();
+  });
+
+  it("returns a null-prototype object", () => {
+    const opts = urlToHttpOptions(new URL("http://user:pass@foo.bar.com:21/aaa/zzz?l=24#test"));
+    expect(Object.getPrototypeOf(opts)).toBe(null);
+    expect(opts).toEqual({
+      protocol: "http:",
+      hostname: "foo.bar.com",
+      hash: "#test",
+      search: "?l=24",
+      pathname: "/aaa/zzz",
+      path: "/aaa/zzz?l=24",
+      href: "http://user:pass@foo.bar.com:21/aaa/zzz?l=24#test",
+      port: 21,
+      auth: "user:pass",
+    });
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/16705

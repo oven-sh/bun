@@ -9569,6 +9569,72 @@ describe("outdated", () => {
     expect(out).toContain("prereleases-1");
   });
 
+  test("an aliased dependency prints both of its names and a pattern matches either", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "a-dep": "1.0.1",
+          "my-alias": "npm:no-deps@1.0.0",
+          // Two columns wide per character.
+          "別名": "npm:no-deps@1.0.0",
+        },
+        devDependencies: {
+          "dev-alias": "npm:no-deps@1.0.0",
+        },
+      }),
+    );
+    await runBunInstall(env, packageDir);
+
+    const table = async (...args: string[]) => {
+      const out = await runBunOutdated({ ...env, NO_COLOR: "1" }, packageDir, ...args);
+      return out
+        .slice(out.indexOf("\n") + 1)
+        .trimEnd()
+        .split("\n");
+    };
+    // The Package column of every row.
+    const rows = async (...args: string[]) =>
+      (await table(...args))
+        .filter(line => line.startsWith("| ") && !line.startsWith("| Package "))
+        .map(line => line.split("|")[1].trim());
+
+    const myAlias = "my-alias@npm:no-deps";
+    const wideAlias = "別名@npm:no-deps";
+    const devAlias = "dev-alias@npm:no-deps (dev)";
+    const all = await table();
+    expect({
+      all,
+      byPackageName: await rows("no-deps"),
+      byAlias: await rows("my-alias"),
+      byAliasGlob: await rows("*-alias"),
+      notPackageName: await rows("!no-deps"),
+      notAlias: await rows("!my-alias"),
+    }).toEqual({
+      all: [
+        "|---------------------------------------------------------|",
+        "| Package                     | Current | Update | Latest |",
+        "|-----------------------------|---------|--------|--------|",
+        "| a-dep                       | 1.0.1   | 1.0.1  | 1.0.10 |",
+        "|-----------------------------|---------|--------|--------|",
+        "| my-alias@npm:no-deps        | 1.0.0   | 1.0.0  | 2.0.0  |",
+        "|-----------------------------|---------|--------|--------|",
+        "| 別名@npm:no-deps            | 1.0.0   | 1.0.0  | 2.0.0  |",
+        "|-----------------------------|---------|--------|--------|",
+        "| dev-alias@npm:no-deps (dev) | 1.0.0   | 1.0.0  | 2.0.0  |",
+        "|---------------------------------------------------------|",
+      ],
+      byPackageName: [myAlias, wideAlias, devAlias],
+      byAlias: [myAlias],
+      byAliasGlob: [myAlias, devAlias],
+      notPackageName: ["a-dep"],
+      notAlias: ["a-dep", wideAlias, devAlias],
+    });
+    // The borders line up: every line takes the same number of terminal columns.
+    expect(all.map(line => Bun.stringWidth(line))).toEqual(all.map(() => 59));
+  });
+
   test("scoped workspace names", async () => {
     await Promise.all([
       write(

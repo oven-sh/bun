@@ -1,11 +1,12 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+const registry = new VerdaccioRegistry();
 let package_dir: string;
 let i = 0;
 beforeAll(async () => {
@@ -13,9 +14,11 @@ beforeAll(async () => {
 
   package_dir = join(base, `why-test-${Math.random().toString(36).slice(2)}`);
   await mkdir(package_dir, { recursive: true });
+  await registry.start();
 });
 
 afterAll(async () => {
+  registry.stop();
   if (existsSync(package_dir)) {
     await rm(package_dir, { recursive: true, force: true });
   }
@@ -219,40 +222,70 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     expect(output).toContain("pkg-b@");
   });
 
-  it("should handle npm aliases", async () => {
-    await using tmpDir = tempDir(`why-alias-${i++}`, {
-      "package.json": JSON.stringify({
-        name: "foo",
-        version: "0.0.1",
-        dependencies: {
-          "alias-pkg": "npm:lodash@^4.17.21",
-        },
-      }),
+  it("should find a package by its own name and by the alias a dependent gives it", async () => {
+    // `my-alias` and `no-deps` are two versions of one package. The registry's
+    // alias-loop-1 depends on alias-loop-2 as `alias1`.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            "no-deps": "2.0.0",
+            "my-alias": "npm:no-deps@1.0.0",
+            "alias-loop-1": "1.0.0",
+          },
+        }),
+      },
     });
 
-    const install = spawn({
+    await using install = spawn({
       cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tmpDir,
-      env: bunEnv,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-    expect(await install.exited).toBe(0);
-
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), ...cmd.split(" "), "alias-pkg"],
-      cwd: tmpDir,
+      cwd: packageDir,
       env: bunEnv,
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
+    const [, installStderr, installExitCode] = await Promise.all([
+      install.stdout.text(),
+      install.stderr.text(),
+      install.exited,
+    ]);
+    expect(installStderr).toContain("Saved lockfile");
+    expect(installExitCode).toBe(0);
 
-    if ((await exited) === 0) {
-      const output = await stdout.text();
-      expect(output).toContain("alias-pkg@");
-    } else {
-      expect(true).toBe(true);
-    }
+    // One block per matched package, in no fixed order.
+    const why = async (...args: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd.split(" "), ...args],
+        cwd: packageDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { blocks: stdout.trim().split("\n\n").sort(), stderr, exitCode };
+    };
+
+    const viaAlias = "no-deps@1.0.0\n  └─ foo (requires my-alias@npm:no-deps@1.0.0)";
+    const viaName = "no-deps@2.0.0\n  └─ foo (requires 2.0.0)";
+    const [byAlias, byAliasGlob, byPackageName, byTransitiveAlias] = await Promise.all([
+      why("my-alias"),
+      why("my-*"),
+      why("no-deps"),
+      why("alias1", "--top"),
+    ]);
+    expect({ byAlias, byAliasGlob, byPackageName, byTransitiveAlias }).toEqual({
+      byAlias: { blocks: [viaAlias], stderr: "", exitCode: 0 },
+      byAliasGlob: { blocks: [viaAlias], stderr: "", exitCode: 0 },
+      byPackageName: { blocks: [viaAlias, viaName], stderr: "", exitCode: 0 },
+      byTransitiveAlias: {
+        blocks: ["alias-loop-2@1.0.0\n  └─ alias-loop-1@1.0.0 (requires alias1@npm:alias-loop-2@*)"],
+        stderr: "",
+        exitCode: 0,
+      },
+    });
   });
 
   it("should show error for non-existent package", async () => {

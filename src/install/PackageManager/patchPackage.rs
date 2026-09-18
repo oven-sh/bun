@@ -951,9 +951,9 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // into `<cache>/links/`. `deleteTree(module_folder)` would follow that
     // symlink and wipe the shared global entry (and its dep symlinks)
     // underneath every other project, then FileCopier would write the user's
-    // edits into the shared cache. Detach first: walk up `module_folder` to
-    // find the first symlink ancestor, replace it with a real directory, and
-    // recreate the path below it so the copy lands in a project-local tree.
+    // edits into the shared cache. Detach first: replace that symlink with a
+    // real directory and recreate the path below it so the copy lands in a
+    // project-local tree.
     detach_module_folder_from_shared_store(module_folder);
 
     if let Err(e) =
@@ -1040,11 +1040,46 @@ fn is_real_dir_not_symlink(path: &[u8]) -> bool {
     }
 }
 
+/// `path` when it is a symlink (any reparse point on Windows).
+fn symlink_at(path: &[u8]) -> Option<bun_paths::Path<u8>> {
+    let mut p = bun_paths::Path::<u8>::from(path).ok()?;
+    #[cfg(windows)]
+    let is_symlink =
+        sys::get_file_attributes(p.slice_z()).is_some_and(|attrs| attrs.is_reparse_point);
+    // `mode_t` is `u16` on darwin/freebsd, `u32` on linux.
+    #[cfg(not(windows))]
+    let is_symlink = sys::lstat(p.slice_z()).is_ok_and(|st| sys::posix::s_islnk(st.st_mode as u32));
+    is_symlink.then_some(p)
+}
+
+/// The `node_modules/.bun/<storepath>` prefix of `path` when it is a symlink.
+/// `link_project_to_global_store` makes it one for a package in the global
+/// store. It is the only link the isolated linker points into `<cache>/links/`.
+fn global_store_link_in(path: &[u8]) -> Option<bun_paths::Path<u8>> {
+    let mut parents: [&[u8]; 2] = [b"", b""];
+    let mut start = 0;
+    while start < path.len() {
+        let end =
+            strings::index_of_char_usize(&path[start..], SEP).map_or(path.len(), |i| start + i);
+        let component = &path[start..end];
+        if !component.is_empty() {
+            if parents == [b"node_modules".as_slice(), b".bun".as_slice()] {
+                if let Some(link) = symlink_at(&path[..end]) {
+                    return Some(link);
+                }
+            }
+            parents = [parents[1], component];
+        }
+        start = end + 1;
+    }
+    None
+}
+
 fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     // `module_folder` reaches here normalised to forward slashes on every
     // platform (see `pathToPosixBuf` in `preparePatch`). Re-normalise to the
-    // platform separator so `undo()`/`basename()` walk the path correctly on
-    // Windows and the lstat/getFileAttributes calls below see a native path.
+    // platform separator so the component scan and the lstat/getFileAttributes
+    // calls below see a native path.
     #[cfg(windows)]
     let mut native_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
@@ -1057,85 +1092,61 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     #[cfg(not(windows))]
     let native: &[u8] = module_folder;
 
-    let mut p = bun_paths::Path::<u8>::from(native).unwrap();
-    let mut components: usize = 1;
-    for &c in native {
-        if c == SEP {
-            components += 1;
-        }
-    }
-    let mut depth: usize = 0;
-    while depth < components {
-        let is_symlink: bool = {
-            #[cfg(windows)]
-            {
-                match sys::get_file_attributes(p.slice_z()) {
-                    Some(attrs) => attrs.is_reparse_point,
-                    None => return,
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                if let Ok(st) = sys::lstat(p.slice_z()) {
-                    // `mode_t` is `u16` on darwin/freebsd, `u32` on linux.
-                    sys::posix::s_islnk(st.st_mode as u32)
-                } else {
-                    return;
-                }
-            }
-        };
-        if is_symlink {
-            // Windows directory symlinks/junctions are removed with rmdir,
-            // file symlinks with unlink; on POSIX unlink covers both. If
-            // removal fails the symlink is still live, and the caller's
-            // `deleteTree` + `FileCopier` would follow it into the shared
-            // global-store entry — so fail loudly here rather than silently
-            // corrupting the cache.
-            let remove_err: Option<sys::Error> = {
-                #[cfg(windows)]
-                'remove: {
-                    if sys::rmdir(p.slice_z()).is_err() {
-                        if let Err(e) = sys::unlink(p.slice_z()) {
-                            break 'remove if e.get_errno() == sys::E::ENOENT {
-                                None
-                            } else {
-                                Some(e)
-                            };
-                        }
-                    }
-                    break 'remove None;
-                }
-                #[cfg(not(windows))]
-                {
-                    if let Err(e) = sys::unlink(p.slice_z()) {
-                        if e.get_errno() == sys::E::ENOENT {
-                            None
-                        } else {
-                            Some(e)
-                        }
-                    } else {
+    // Everything below a global-store link is inside the shared entry, a
+    // symlink at `module_folder` included, so that link goes first. Without
+    // one, only `module_folder` itself is replaced. Any other symlink on the
+    // way (a workspace link, a symlinked `node_modules`) does not point into
+    // the store: the copy resolves through it.
+    let Some(mut link) = global_store_link_in(native).or_else(|| symlink_at(native)) else {
+        return;
+    };
+
+    // Windows directory symlinks/junctions are removed with rmdir,
+    // file symlinks with unlink; on POSIX unlink covers both. If
+    // removal fails the symlink is still live, and the caller's
+    // `deleteTree` + `FileCopier` would follow it into the shared
+    // global-store entry — so fail loudly here rather than silently
+    // corrupting the cache.
+    let remove_err: Option<sys::Error> = {
+        #[cfg(windows)]
+        'remove: {
+            if sys::rmdir(link.slice_z()).is_err() {
+                if let Err(e) = sys::unlink(link.slice_z()) {
+                    break 'remove if e.get_errno() == sys::E::ENOENT {
                         None
-                    }
+                    } else {
+                        Some(e)
+                    };
                 }
-            };
-            if let Some(e) = remove_err {
-                Output::err(
-                    e,
-                    "failed to detach <b>{s}<r> from the shared package store; refusing to patch through it",
-                    (bstr::BStr::new(p.slice()),),
-                );
-                Global::crash();
             }
-            // Re-create the now-missing path segments below the removed
-            // symlink so `module_folder`'s parent exists for the copy.
-            let parent = resolve_path::dirname::<platform::Auto>(native);
-            if !parent.is_empty() {
-                let _ = Fd::cwd().make_path(parent);
-            }
-            return;
+            break 'remove None;
         }
-        p.undo(1);
-        depth += 1;
+        #[cfg(not(windows))]
+        {
+            if let Err(e) = sys::unlink(link.slice_z()) {
+                if e.get_errno() == sys::E::ENOENT {
+                    None
+                } else {
+                    Some(e)
+                }
+            } else {
+                None
+            }
+        }
+    };
+    if let Some(e) = remove_err {
+        Output::err(
+            e,
+            "failed to detach <b>{s}<r> from the shared package store; refusing to patch through it",
+            (bstr::BStr::new(link.slice()),),
+        );
+        Global::crash();
+    }
+    // Re-create the now-missing path segments below the removed
+    // symlink so `module_folder`'s parent exists for the copy.
+    let parent = resolve_path::dirname::<platform::Auto>(native);
+    if !parent.is_empty() {
+        let _ = Fd::cwd().make_path(parent);
     }
 }
 

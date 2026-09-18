@@ -2257,8 +2257,10 @@ describe("'online' precedes the worker's first message", () => {
 });
 
 // terminate() in the same tick as the constructor stops the thread before it takes its
-// workerData ports or reads parentPort. A thread that wins that race closes them as it exits,
-// so only the close is asserted, not its order against 'exit'.
+// workerData ports or reads parentPort. The thread takes them before any user code runs, so
+// nothing can hold it back, and a thread that wins that race closes them as it exits. So only
+// the close is asserted, not its order against 'exit'. The tests above, where the entry does
+// not resolve, are the ones that cannot pass without the drop.
 describe("a transferred MessagePort closes when terminate() stops the worker before it starts", () => {
   // Stays referenced, as a Worker in a pool does: a collected Worker drops its ports too.
   let worker: Worker;

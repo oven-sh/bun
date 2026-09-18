@@ -423,16 +423,19 @@ describe("web worker", () => {
       expect(events).toEqual(["error", "close:1", "port-close"]);
     });
 
-    // A thread that wins the race against terminate() receives the port and closes it as it
-    // exits, so only the close is asserted.
-    test("terminate() stops the worker before it starts", async () => {
+    // The entry never returns, so the worker never reads its inbox, whether terminate() lands
+    // before the thread starts or while the entry runs.
+    test("terminate() stops a worker whose entry is still running", async () => {
       const { port1, port2 } = new MessageChannel();
-      worker = new Worker("data:text/javascript,setInterval(() => {}, 1000)");
-      const portClosed = once(port1, "close").then(() => "port-close");
+      worker = new Worker("data:text/javascript,for(;;){}");
+      const events: string[] = [];
+      worker.addEventListener("close", () => events.push("close"));
+      const portClosed = once(port1, "close").then(() => events.push("port-close"));
       worker.postMessage({ port: port2 }, [port2]);
       worker.terminate();
 
-      expect(await portClosed).toBe("port-close");
+      await portClosed;
+      expect(events).toEqual(["close", "port-close"]);
     });
   });
 

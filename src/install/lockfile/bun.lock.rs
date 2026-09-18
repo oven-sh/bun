@@ -1089,9 +1089,7 @@ impl Stringifier {
                 }
 
                 // Listed in `bundledDependencies` only, so a bun that does not know the key still loads the file.
-                if resolution_buf[dep_id as usize] == invalid_package_id
-                    && is_bundled_without_range(dep)
-                {
+                if dep.is_bundled_without_range() {
                     continue;
                 }
 
@@ -3465,13 +3463,6 @@ fn child_pkg_path<'a>(
     path_buf[pkg_path.len()] = b'/';
     path_buf[pkg_path.len() + 1..len].copy_from_slice(dep_name);
     Some(&path_buf[..len])
-}
-
-/// A bundled dependency that a migrated lockfile names without a range.
-fn is_bundled_without_range(dep: &Dependency) -> bool {
-    dep.behavior.is_bundled()
-        && dep.version.tag == DependencyVersionTag::Uninitialized
-        && dep.version.literal.is_empty()
 }
 
 /// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.

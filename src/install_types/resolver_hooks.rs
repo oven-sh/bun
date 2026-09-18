@@ -560,6 +560,14 @@ impl Dependency {
         }
         lhs.name.slice(string_buf).cmp(rhs.name.slice(string_buf))
     }
+
+    /// A bundled dependency that a migrated lockfile names without a range. It is never resolved, and
+    /// bun.lock lists only its name, under `bundledDependencies`.
+    pub fn is_bundled_without_range(&self) -> bool {
+        self.behavior.is_bundled()
+            && self.version.tag == DependencyVersionTag::Uninitialized
+            && self.version.literal.is_empty()
+    }
 }
 
 // ─── npm::{Negatable, OperatingSystem, Libc, Architecture} ────────────────

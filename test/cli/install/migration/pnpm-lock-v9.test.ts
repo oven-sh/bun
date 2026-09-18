@@ -1306,10 +1306,10 @@ snapshots:
       expect(install.stderr).not.toContain("error:");
       expect(install.exitCode).toBe(0);
 
+      // Only the name is listed, so a bun that does not know `bundledDependencies` still loads the file.
+      const row = `"bundled-transitive": ["bundled-transitive@1.0.0", "${registry}bundled-transitive/-/bundled-transitive-1.0.0.tgz", { "dependencies": { "one-dep": "1.0.0" }, "bundledDependencies": ["no-deps"] }, "${BUNDLED_TRANSITIVE_1_0_0_INTEGRITY}"]`;
       const bunLock = await bunLockOf(packageDir);
-      expect(bunLock).toContain(
-        `"bundled-transitive": ["bundled-transitive@1.0.0", "${registry}bundled-transitive/-/bundled-transitive-1.0.0.tgz", { "dependencies": { "one-dep": "1.0.0" }, "bundledDependencies": ["no-deps"] }, "${BUNDLED_TRANSITIVE_1_0_0_INTEGRITY}"]`,
-      );
+      expect(bunLock).toContain(row);
       expect(bunLock).toContain(`"no-deps": ["no-deps@1.0.1"`);
       expect(bunLock).not.toContain(`"bundled-transitive/no-deps"`);
 
@@ -1329,6 +1329,24 @@ snapshots:
       expect(again.stderr).not.toContain("error:");
       expect(again.exitCode).toBe(0);
       expect(await bunLockOf(packageDir)).toBe(bunLock);
+
+      // An override re-enqueues every edge with its name. The bundled edge still gets no version.
+      await Bun.write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "bundled",
+          dependencies: { "bundled-transitive": "1.0.0" },
+          overrides: { "no-deps": "1.0.1" },
+        }),
+      );
+      const overridden = await run(packageDir, "install");
+
+      expect(overridden.stderr).not.toContain("error:");
+      expect(overridden.exitCode).toBe(0);
+      const overriddenLock = await bunLockOf(packageDir);
+      expect(overriddenLock).toContain(`"overrides": {\n    "no-deps": "1.0.1",\n  },`);
+      expect(overriddenLock).toContain(row);
+      expect(overriddenLock).not.toContain(`"bundled-transitive/no-deps"`);
     });
 
     test("`true`, a declared peer, and entries that are not a node_modules folder name add no edge", async () => {

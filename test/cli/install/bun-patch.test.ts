@@ -1,6 +1,7 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstatSync, readFileSync } from "fs";
+import { rm } from "fs/promises";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -1232,5 +1233,218 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// `bun install` links a folder dependency (a `file:` directory or a workspace member) in place and
+// never applies a patch to it, and `bun patch --commit` on one failed with "failed to read from
+// cache (readlink)". `bun patch` still prepared it, and read every folder from the project root.
+// bundled-file@2.0.0 declares "bundled-file-dep": "file:vendor/bundled-file-dep" and ships that
+// folder in its tarball, relative to the installed package: ENOENT when the project has no such
+// folder, and the project's unrelated folder copied over the installed package when it has one.
+describe("a folder dependency as the target", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  const shippedFolderRefusal =
+    "error: cannot patch bundled-file-dep: it is a file:vendor/bundled-file-dep dependency, and bun install never applies a patch to a file: folder\n" +
+    "note: to change it, run bun patch bundled-file and edit vendor/bundled-file-dep inside that package, which ships the folder\n";
+  const installedDep = join("node_modules", "bundled-file", "node_modules", "bundled-file-dep");
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`.
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function createProject(packageJson: Record<string, unknown>, files: Record<string, string> = {}) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: { "package.json": JSON.stringify({ name: "proj", ...packageJson }), ...files },
+    });
+    const { stderr, exitCode } = await runBun(packageDir, "install");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return packageDir;
+  }
+
+  async function createProjectWithShippedFolder(files: Record<string, string> = {}) {
+    const packageDir = await createProject({ dependencies: { "bundled-file": "2.0.0" } }, files);
+    expect(await Bun.file(join(packageDir, installedDep, "index.js")).text()).toBe(
+      'module.exports = "bundled-file-dep";\n',
+    );
+    return packageDir;
+  }
+
+  async function expectRefused(packageDir: string, refusal: string, ...args: string[]) {
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", ...args);
+    expect(stderr).toEndWith(refusal);
+    expect(stdout).not.toContain("To patch");
+    expect(exitCode).toBe(1);
+  }
+
+  async function expectShippedFolderRefused(packageDir: string, ...args: string[]) {
+    await expectRefused(packageDir, shippedFolderRefusal, ...args);
+    expect(await Bun.file(join(packageDir, installedDep, "index.js")).text()).toBe(
+      'module.exports = "bundled-file-dep";\n',
+    );
+  }
+
+  test.concurrent("bun patch <name> refuses a folder an installed package ships", async () => {
+    const packageDir = await createProjectWithShippedFolder();
+    await expectShippedFolderRefused(packageDir, "bundled-file-dep");
+    expect(await Bun.file(join(packageDir, "vendor", "bundled-file-dep", "package.json")).exists()).toBe(false);
+  });
+
+  test.concurrent("bun patch <path> refuses a folder an installed package ships", async () => {
+    const packageDir = await createProjectWithShippedFolder();
+    await expectShippedFolderRefused(packageDir, installedDep);
+  });
+
+  test.concurrent("bun patch <name> refuses when the project has an unrelated folder at that path", async () => {
+    const packageDir = await createProjectWithShippedFolder({
+      "vendor/bundled-file-dep/package.json": JSON.stringify({ name: "unrelated", version: "9.9.9" }),
+      "vendor/bundled-file-dep/index.js": 'module.exports = "unrelated";\n',
+    });
+    await expectShippedFolderRefused(packageDir, "bundled-file-dep");
+  });
+
+  test.concurrent("bun patch --commit <path> refuses a folder an installed package ships", async () => {
+    const packageDir = await createProjectWithShippedFolder();
+    await expectShippedFolderRefused(packageDir, "--commit", installedDep);
+    expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toBeUndefined();
+  });
+
+  // A root override writes the path in the root package.json, so the folder is the project's own.
+  test.concurrent("bun patch <name> refuses a file: override of a registry package's dependency", async () => {
+    const packageDir = await createProject(
+      {
+        dependencies: { "bundled-file": "2.0.0" },
+        overrides: { "bundled-file-dep": "file:./vendor/override-dep" },
+      },
+      {
+        "vendor/override-dep/package.json": JSON.stringify({ name: "bundled-file-dep", version: "3.0.0" }),
+        "vendor/override-dep/index.js": 'module.exports = "override-dep";\n',
+      },
+    );
+    await expectRefused(
+      packageDir,
+      "error: cannot patch bundled-file-dep: it is a file:./vendor/override-dep dependency, and bun install never applies a patch to a file: folder\n" +
+        "note: edit ./vendor/override-dep directly\n",
+      "bundled-file-dep",
+    );
+  });
+
+  test.concurrent("bun patch <name> refuses a file: dependency of the project", async () => {
+    const packageDir = await createProject(
+      { dependencies: { "local-dep": "file:./local-dep" } },
+      {
+        "local-dep/package.json": JSON.stringify({ name: "local-dep", version: "1.0.0" }),
+        "local-dep/index.js": 'module.exports = "local-dep";\n',
+      },
+    );
+    const refusal =
+      "error: cannot patch local-dep: it is a file:local-dep dependency, and bun install never applies a patch to a file: folder\n" +
+      "note: edit local-dep directly\n";
+    await expectRefused(packageDir, refusal, "local-dep");
+    await expectRefused(packageDir, refusal, "--commit", "node_modules/local-dep");
+    expect(await Bun.file(join(packageDir, "node_modules", "local-dep", "index.js")).text()).toBe(
+      'module.exports = "local-dep";\n',
+    );
+  });
+
+  test.concurrent("bun patch <name> refuses a workspace member", async () => {
+    const packageDir = await createProject(
+      { workspaces: ["packages/*"], dependencies: { member: "workspace:*" } },
+      {
+        "packages/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
+        "packages/member/index.js": 'module.exports = "member";\n',
+      },
+    );
+    const refusal =
+      "error: cannot patch member: it is a workspace package, and bun install never applies a patch to one\n" +
+      "note: edit packages/member directly\n";
+    await expectRefused(packageDir, refusal, "member");
+    await expectRefused(packageDir, refusal, "--commit", "node_modules/member");
+    expect(lstatSync(join(packageDir, "node_modules", "member")).isSymbolicLink()).toBe(true);
+  });
+
+  test.concurrent("bun patch <name> refuses a link: dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "proj", dependencies: { lib: "link:lib" } }),
+        "lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+        "lib/index.js": 'module.exports = "lib";\n',
+      },
+    });
+    const env = {
+      ...bunEnv,
+      BUN_INSTALL: join(packageDir, ".bun"),
+      BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+    };
+    async function run(cwd: string, ...args: string[]) {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    const link = await run(join(packageDir, "lib"), "link");
+    expect(link.stderr).not.toContain("error:");
+    expect(link.exitCode).toBe(0);
+    const install = await run(packageDir, "install");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+
+    const refusal =
+      "error: cannot patch lib: it is a link: dependency, and bun install never applies a patch to one\n" +
+      "note: edit the linked folder directly\n";
+    for (const args of [["lib"], ["--commit", "node_modules/lib"]]) {
+      const { stdout, stderr, exitCode } = await run(packageDir, "patch", ...args);
+      expect(stderr).toEndWith(refusal);
+      expect(stdout).not.toContain("To patch");
+      expect(exitCode).toBe(1);
+    }
+    expect(lstatSync(join(packageDir, "node_modules", "lib")).isSymbolicLink()).toBe(true);
+  });
+
+  // The remedy the note names: patch the package that ships the folder.
+  test.concurrent("bun patch bundled-file carries an edit to the shipped folder", async () => {
+    const packageDir = await createProjectWithShippedFolder();
+
+    const prepare = await runBun(packageDir, "patch", "bundled-file");
+    expect(prepare.stderr).not.toContain("error:");
+    expect(prepare.exitCode).toBe(0);
+
+    await Bun.write(
+      join(packageDir, "node_modules", "bundled-file", "vendor", "bundled-file-dep", "index.js"),
+      'module.exports = "patched";\n',
+    );
+
+    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bundled-file");
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+    expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
+      "bundled-file@2.0.0": "patches/bundled-file@2.0.0.patch",
+    });
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    const install = await runBun(packageDir, "install");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+    expect(await Bun.file(join(packageDir, installedDep, "index.js")).text()).toBe('module.exports = "patched";\n');
   });
 });

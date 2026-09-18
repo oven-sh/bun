@@ -22,8 +22,8 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
-    initialize_store, invalid_package_id,
+    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, ResolutionTag,
+    buntaghashbuf_make, initialize_store, invalid_package_id,
 };
 
 #[inline]
@@ -270,6 +270,7 @@ pub fn do_patch_commit(
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
     let name = manager.lockfile.str(&pkg.name).to_vec();
+    crash_if_folder_target(&manager.lockfile, pkg.meta.id, &name);
     let cache_result =
         compute_cache_dir_and_subpath(manager, &name, &pkg.resolution, &mut folder_path_buf, None);
     let cache_dir: Fd = cache_result.cache_dir;
@@ -834,6 +835,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 };
 
                 let name = lockfile.str(&package.name).to_vec();
+                crash_if_folder_target(lockfile, actual_package.meta.id, &name);
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
                     let mut name_and_version = Vec::new();
                     write!(
@@ -890,6 +892,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let strbuf = manager.lockfile.buffers.string_bytes.as_slice();
                 let pkg = *manager.lockfile.packages.get(pkg_id as usize);
                 let pkg_name = pkg.name.slice(strbuf).to_vec();
+                crash_if_folder_target(&manager.lockfile, pkg_id, &pkg_name);
 
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
                     let mut name_and_version = Vec::new();
@@ -1247,6 +1250,62 @@ fn node_modules_folder_for_dependency_id(
         }
         return Some(node_modules.relative_path.as_bytes().to_vec());
     }
+}
+
+/// Exits when `pkg_id` is a `file:` directory, a workspace member or a `link:` target.
+fn crash_if_folder_target(lockfile: &Lockfile, pkg_id: PackageID, name: &[u8]) {
+    let strbuf = lockfile.buffers.string_bytes.as_slice();
+    let resolution = &lockfile.packages.items_resolution()[pkg_id as usize];
+    let folder = match resolution.tag {
+        ResolutionTag::Folder => resolution.folder().slice(strbuf),
+        ResolutionTag::Workspace => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: cannot patch <b>{}<r>: it is a workspace package, and bun install never applies a patch to one",
+                bstr::BStr::new(name),
+            );
+            bun_core::note!(
+                "edit <b>{}<r> directly",
+                bstr::BStr::new(resolution.workspace().slice(strbuf)),
+            );
+            Global::crash();
+        }
+        ResolutionTag::Symlink => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: cannot patch <b>{}<r>: it is a link: dependency, and bun install never applies a patch to one",
+                bstr::BStr::new(name),
+            );
+            bun_core::note!("edit the linked folder directly");
+            Global::crash();
+        }
+        _ => return,
+    };
+
+    // A path a registry package declares is relative to that package, which ships the folder.
+    let dependency_id = lockfile
+        .buffers
+        .resolutions
+        .iter()
+        .position(|&resolved| resolved == pkg_id)
+        .map(|id| DependencyID::try_from(id).expect("int cast"));
+    let dependent = dependency_id
+        .filter(|&id| !lockfile.is_trusted_folder_dependency(id))
+        .and_then(|id| lockfile.get_parent_pkg_of_dependency(id))
+        .map(|id| lockfile.str(&lockfile.packages.items_name()[id as usize]));
+
+    bun_core::pretty_errorln!(
+        "<r><red>error<r>: cannot patch <b>{}<r>: it is a <b>file:{}<r> dependency, and bun install never applies a patch to a file: folder",
+        bstr::BStr::new(name),
+        bstr::BStr::new(folder),
+    );
+    match dependent {
+        Some(dependent) => bun_core::note!(
+            "to change it, run <cyan>bun patch {}<r> and edit <b>{}<r> inside that package, which ships the folder",
+            bstr::BStr::new(dependent),
+            bstr::BStr::new(folder),
+        ),
+        None => bun_core::note!("edit <b>{}<r> directly", bstr::BStr::new(folder)),
+    }
+    Global::crash();
 }
 
 type IdPair = (DependencyID, PackageID);

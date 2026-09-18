@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import { generateKeyPairSync } from "crypto";
 import jwt from "jsonwebtoken";
 import jws from "jws";
@@ -8,13 +8,30 @@ describe("signing a token asynchronously", function () {
   describe("when signing a token", function () {
     var secret = "shhhhhh";
 
+    // Each sign() reads Date.now() for `iat`. Freeze the clock so the async
+    // and the sync token cannot differ when a second boundary falls between them.
+    beforeEach(function () {
+      setSystemTime(60000);
+    });
+
+    afterEach(function () {
+      setSystemTime();
+    });
+
     it("should return the same result as singing synchronously", function (done) {
       jwt.sign({ foo: "bar" }, secret, { algorithm: "HS256" }, function (err, asyncToken) {
         if (err) return done(err);
-        var syncToken = jwt.sign({ foo: "bar" }, secret, { algorithm: "HS256" });
-        expect(typeof asyncToken).toBe("string");
-        expect(asyncToken.split(".")).toHaveLength(3);
-        expect(asyncToken).toEqual(syncToken);
+        // jws runs this callback inside a try/catch and routes a throw to the
+        // 'error' listener, which jsonwebtoken wrapped in once(). A failed
+        // expect() here is swallowed and the test only times out. Report it.
+        try {
+          var syncToken = jwt.sign({ foo: "bar" }, secret, { algorithm: "HS256" });
+          expect(typeof asyncToken).toBe("string");
+          expect(asyncToken.split(".")).toHaveLength(3);
+          expect(asyncToken).toEqual(syncToken);
+        } catch (e) {
+          return done(e);
+        }
         done();
       });
     });

@@ -724,6 +724,45 @@ static napi_value test_napi_run_script(const Napi::CallbackInfo &info) {
   return ret;
 }
 
+// napi_run_script of a script that throws: the value returned by
+// napi_get_and_clear_last_exception must be the thrown JS value, usable with
+// napi_typeof and property access.
+static napi_value
+test_napi_run_script_exception_value(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  // info[0] is the GC callback
+  napi_value script = info[1];
+
+  napi_value ret = nullptr;
+  napi_status run_status = napi_run_script(env, script, &ret);
+  bool pending = false;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &pending));
+  printf("run status=%d pending=%d\n", (int)run_status, (int)pending);
+
+  napi_value exc = nullptr;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+
+  napi_valuetype type = (napi_valuetype)99;
+  napi_status typeof_status = napi_typeof(env, exc, &type);
+  bool is_error = false;
+  NODE_API_CALL(env, napi_is_error(env, exc, &is_error));
+  printf("typeof status=%d type=%d is_error=%d\n", (int)typeof_status,
+         (int)type, (int)is_error);
+
+  if (type == napi_object) {
+    napi_value message = nullptr;
+    NODE_API_CALL(env,
+                  napi_get_named_property(env, exc, "message", &message));
+    char buf[128] = {0};
+    size_t len = 0;
+    NODE_API_CALL(env, napi_get_value_string_utf8(env, message, buf,
+                                                  sizeof buf, &len));
+    printf("message=%s\n", buf);
+  }
+
+  return exc;
+}
+
 static napi_value test_napi_throw_with_nullptr(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   const napi_status status = napi_throw(env, nullptr);
@@ -4623,6 +4662,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_many_args);
   REGISTER_FUNCTION(env, exports, test_napi_ref);
   REGISTER_FUNCTION(env, exports, test_napi_run_script);
+  REGISTER_FUNCTION(env, exports, test_napi_run_script_exception_value);
   REGISTER_FUNCTION(env, exports, test_napi_throw_with_nullptr);
   REGISTER_FUNCTION(env, exports, test_extended_error_messages);
   REGISTER_FUNCTION(env, exports, bigint_to_i64);

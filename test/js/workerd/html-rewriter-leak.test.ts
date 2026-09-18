@@ -872,18 +872,17 @@ describe("an output Response that outlives its rewrite does not keep the handler
     // The cancel lands while lol-html is on the stack, and lol-html still has the second <p> to run the handler for.
     "a rewrite that a handler cancels": async () => {
       const input = streamOf("<p>x</p><p>y</p>");
-      const ranAgain = Promise.withResolvers<void>();
       let calls = 0;
       const handler = {
         element() {
           if (++calls === 1) reader.cancel();
-          else ranAgain.resolve();
         },
       };
       const response = new HTMLRewriter().on("p", handler).transform(new Response(input.stream));
       const reader = response.body!.getReader();
       input.send();
-      await ranAgain.promise;
+      // `reader.closed` settles inside the first call, before the second one runs: poll instead.
+      for (let turn = 0; calls < 2 && turn < 100; turn++) await new Promise(resolve => setImmediate(resolve));
       expect(calls).toBe(2);
       return { kept: [response, reader], handler: new WeakRef(handler) };
     },

@@ -1,7 +1,7 @@
-// `--frozen-lockfile` / `bun ci` on a checkout whose package.json was edited after bun.lock was
-// written, in ways that leave every package resolved exactly as locked. A plain `bun install`
-// rewrites bun.lock for these edits, so a frozen install has to fail on them, and it has to keep
-// passing on the edits a plain install does not record.
+// `--frozen-lockfile` / `bun ci` on a checkout where package.json and bun.lock disagree (an edited
+// package.json, a mis-merged bun.lock) in ways that leave every package resolved exactly as locked.
+// A plain `bun install` rewrites bun.lock for these, so a frozen install has to fail on them, and
+// it has to keep passing on the differences a plain install does not record.
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "fs/promises";
@@ -194,7 +194,7 @@ const rewrittenByInstall: Record<string, Edit> = {
   },
 };
 
-describe.concurrent("--frozen-lockfile fails on a package.json edit that bun install writes to bun.lock", () => {
+describe.concurrent("--frozen-lockfile fails when bun install would rewrite bun.lock for", () => {
   test.each(Object.entries(rewrittenByInstall))("%s", async (_name, edit) => {
     const from = edit.from ?? root;
     const { packageDir, lock } = await installed(from);
@@ -253,6 +253,38 @@ describe.concurrent("--frozen-lockfile fails on a package.json edit that bun ins
     expect(after.stderr).not.toContain("error:");
     // The script writes "postinstall exists!" when it runs a second time.
     expect(await postinstallTxt().text()).toBe("postinstall!");
+    expect(after.exitCode).toBe(0);
+  });
+
+  // `git merge` joins two branches' bun.lock without conflict markers when a workspace's block ends with the same line
+  // as the root's, and the new root dependency lands in the workspace's block. The tree is the same either way.
+  test("a root dependency that a merge put into a workspace's block of bun.lock", async () => {
+    const { packageDir, lock } = await installed();
+    const row = '        "no-deps": "^1.0.0",\n';
+    const memberDependencies =
+      '"packages/member": {\n      "name": "member",\n      "version": "1.0.0",\n      "dependencies": {\n        "a-dep": "1.0.1",\n';
+    expect(lock.indexOf(row)).toBeGreaterThan(-1);
+    expect(lock.indexOf(row)).toBeLessThan(lock.indexOf(memberDependencies));
+    const merged = lock.replace(row, "").replace(memberDependencies, memberDependencies + row);
+    expect(merged).not.toBe(lock);
+    await write(join(packageDir, "bun.lock"), merged);
+
+    const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(frozen.stderr).toContain(frozenError);
+    expect(frozen.stderr).toContain(sectionNote("dependencies"));
+    expect(await lockText(packageDir)).toBe(merged);
+    expect(frozen.exitCode).toBe(1);
+
+    const plain = await bun(packageDir, "install");
+
+    expect(plain.stderr).toContain("Saved lockfile");
+    expect(await lockText(packageDir)).toBe(lock);
+    expect(plain.exitCode).toBe(0);
+
+    const after = await bun(packageDir, "install", "--frozen-lockfile");
+
+    expect(after.stderr).not.toContain("error:");
     expect(after.exitCode).toBe(0);
   });
 

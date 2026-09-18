@@ -162,6 +162,65 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
     require.extensions[".cjs"] = original;
   }
 });
+test("calling the default loader again on the same module runs the file again", () => {
+  using dir = tempDir("extensions-retry", {
+    "throws.js": `
+      exports.first = 1;
+      globalThis.extensionsRetryRuns.push("throws");
+      throw new Error("boom");
+    `,
+    "recovers.js": `
+      exports.first = 1;
+      globalThis.extensionsRetryRuns.push("recovers");
+      if (!globalThis.extensionsRetryFixed) throw new Error("not yet");
+      exports.second = 2;
+    `,
+    "twice.js": `
+      globalThis.extensionsRetryRuns.push("twice");
+      exports.runs = globalThis.extensionsRetryRuns.length;
+    `,
+  });
+  const throws = path.join(String(dir), "throws.js");
+  const recovers = path.join(String(dir), "recovers.js");
+  const twice = path.join(String(dir), "twice.js");
+
+  const original = require.extensions[".js"];
+  const caught: string[] = [];
+  globalThis.extensionsRetryRuns = [];
+  try {
+    require.extensions[".js"] = function (module, filename) {
+      if (filename === twice) {
+        original(module, filename);
+        return original(module, filename);
+      }
+      try {
+        return original(module, filename);
+      } catch (e: any) {
+        caught.push(e.message);
+        globalThis.extensionsRetryFixed = filename === recovers;
+      }
+      return original(module, filename);
+    };
+
+    // Both attempts throw: require() throws and nothing stays in the cache.
+    expect(() => require(throws)).toThrow("boom");
+    expect(throws in require.cache).toBe(false);
+
+    // The second attempt succeeds: require() returns the complete exports.
+    expect(require(recovers)).toEqual({ first: 1, second: 2 });
+    expect(require.cache[recovers].loaded).toBe(true);
+
+    // Two calls that both succeed run the file two times.
+    expect(require(twice)).toEqual({ runs: 6 });
+
+    expect(caught).toEqual(["boom", "not yet"]);
+    expect(globalThis.extensionsRetryRuns).toEqual(["throws", "throws", "recovers", "recovers", "twice", "twice"]);
+  } finally {
+    require.extensions[".js"] = original;
+    delete globalThis.extensionsRetryRuns;
+    delete globalThis.extensionsRetryFixed;
+  }
+});
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions
   const files = ["node_modules/next/dist/build/next-config-ts/index.js", "node_modules/@meteorjs/babel/index.js"];

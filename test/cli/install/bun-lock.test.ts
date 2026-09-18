@@ -1319,29 +1319,32 @@ describe.concurrent("a new dependency next to a lockfile that repeats a dependen
     });
   }
 
-  it.each([
-    { block: "the root", member: "" },
-    { block: "a workspace member", member: "packages/a" },
-  ] as const)("bun add, bun.lock with the line repeated by hand in the block of $block", async ({ member }) => {
-    const { packageDir, manifestPath, manifest, lockfilePath, repeated } = await projectWithRepeatedLine(member);
+  // "" is the key of the root in the `workspaces` object of bun.lock.
+  describe.concurrent.each(["", "packages/a"] as const)(
+    'bun.lock with the line repeated by hand in the block of workspace "%s"',
+    member => {
+      it("bun add installs the new dependency", async () => {
+        const { packageDir, manifestPath, manifest, lockfilePath, repeated } = await projectWithRepeatedLine(member);
 
-    // The repeated line alone is not a change.
-    await run(packageDir, packageDir, "install", "--frozen-lockfile");
-    expect(await file(lockfilePath).text()).toBe(repeated);
+        // The repeated line alone is not a change.
+        await run(packageDir, packageDir, "install", "--frozen-lockfile");
+        expect(await file(lockfilePath).text()).toBe(repeated);
 
-    const { err } = await run(packageDir, join(packageDir, member), "add", "a-dep");
-    expect(err).toContain('warn: Duplicate key "no-deps" in object literal');
-    expect(await file(manifestPath).json()).toEqual({
-      ...manifest,
-      dependencies: { "no-deps": "1.0.0", "a-dep": "^1.0.10" },
-    });
-    await expectInstalled(packageDir);
-    const saved = await file(lockfilePath).text();
-    expect(saved).toContain('"a-dep": ["a-dep@1.0.10"');
-    expect(saved.match(line)).toHaveLength(1);
-  });
+        const { err } = await run(packageDir, join(packageDir, member), "add", "a-dep");
+        expect(err).toContain('warn: Duplicate key "no-deps" in object literal');
+        expect(await file(manifestPath).json()).toEqual({
+          ...manifest,
+          dependencies: { "no-deps": "1.0.0", "a-dep": "^1.0.10" },
+        });
+        await expectInstalled(packageDir);
+        const saved = await file(lockfilePath).text();
+        expect(saved).toContain('"a-dep": ["a-dep@1.0.10"');
+        expect(saved.match(line)).toHaveLength(1);
+      });
+    },
+  );
 
-  it("bun install, dependency written into package.json by hand", async () => {
+  it("bun install sees a dependency written into package.json by hand", async () => {
     const { packageDir, manifestPath, manifest, lockfilePath, repeated } = await projectWithRepeatedLine("");
     await write(
       manifestPath,
@@ -1359,28 +1362,27 @@ describe.concurrent("a new dependency next to a lockfile that repeats a dependen
     expect(await file(lockfilePath).text()).toContain('"a-dep": ["a-dep@1.0.10"');
   });
 
-  it.each([
-    { lockfile: "bun.lock", saveTextLockfile: true },
-    { lockfile: "bun.lockb", saveTextLockfile: false },
-  ])(
-    "bun add, $lockfile that bun saved while package.json repeated the line",
-    async ({ lockfile, saveTextLockfile }) => {
-      const { packageDir, packageJson } = await registry.createTestDir({
-        bunfigOpts: { saveTextLockfile, linker: "hoisted" },
-      });
-      await write(packageJson, `{ "name": "foo", "dependencies": { "no-deps": "1.0.0", "no-deps": "1.0.0" } }`);
-      const { err } = await run(packageDir, packageDir, "install");
-      expect(err).toContain('warn: Duplicate dependency: "no-deps" specified in package.json');
-      expect(await exists(join(packageDir, lockfile))).toBeTrue();
+  describe.concurrent.each(["bun.lock", "bun.lockb"] as const)(
+    "%s that bun saved while package.json repeated the line",
+    lockfile => {
+      it("bun add installs the new dependency", async () => {
+        const { packageDir, packageJson } = await registry.createTestDir({
+          bunfigOpts: { saveTextLockfile: lockfile === "bun.lock", linker: "hoisted" },
+        });
+        await write(packageJson, `{ "name": "foo", "dependencies": { "no-deps": "1.0.0", "no-deps": "1.0.0" } }`);
+        const { err } = await run(packageDir, packageDir, "install");
+        expect(err).toContain('warn: Duplicate dependency: "no-deps" specified in package.json');
+        expect(await exists(join(packageDir, lockfile))).toBeTrue();
 
-      // Any tool that reads package.json with JSON.parse writes the key back once.
-      await write(packageJson, JSON.stringify(await file(packageJson).json()));
-      await run(packageDir, packageDir, "add", "a-dep");
-      expect(await file(packageJson).json()).toEqual({
-        name: "foo",
-        dependencies: { "no-deps": "1.0.0", "a-dep": "^1.0.10" },
+        // Any tool that reads package.json with JSON.parse writes the key back once.
+        await write(packageJson, JSON.stringify(await file(packageJson).json()));
+        await run(packageDir, packageDir, "add", "a-dep");
+        expect(await file(packageJson).json()).toEqual({
+          name: "foo",
+          dependencies: { "no-deps": "1.0.0", "a-dep": "^1.0.10" },
+        });
+        await expectInstalled(packageDir);
       });
-      await expectInstalled(packageDir);
     },
   );
 });

@@ -2549,6 +2549,17 @@ describe("css tests", () => {
           rule("border-inline-start-width: 3px; border-left-width: 1px;"),
           { chrome: 90 << 16 },
         );
+        // `border` resets every logical side, so the earlier one is dropped.
+        prefix_test(
+          ".foo { border-inline-start: 3px solid red; border: 1px solid #00f }",
+          rule("border: 1px solid #00f;"),
+          { chrome: 90 << 16 },
+        );
+        prefix_test(
+          ".foo { border-inline-start: 3px solid red; border: 1dvh solid #00f }",
+          rule("border: 1dvh solid #00f;"),
+          { chrome: 90 << 16 },
+        );
       });
     });
 

@@ -1439,14 +1439,24 @@ mod border_handler_body {
                 }};
             }
 
-            // Every line style is supported everywhere, so only width and color can need a fallback.
+            // Only width and color can need a fallback, and only on a physical side: a logical
+            // side's fallback would go into the ltr/rtl rules, which override the rule itself.
             macro_rules! set_border_helper {
-                ($key:ident, $val:expr, $category:expr) => {{
-                    flush_helper!($key, width, &$val.width, $category);
-                    flush_helper!($key, color, &$val.color, $category);
+                ($key:ident, $val:expr, Physical) => {{
+                    flush_helper!($key, width, &$val.width, Physical);
+                    flush_helper!($key, color, &$val.color, Physical);
 
                     self.$key.set_border(arena, $val);
-                    self.category = $category;
+                    self.category = Physical;
+                    self.has_any = true;
+                }};
+                ($key:ident, $val:expr, Logical) => {{
+                    if Logical != self.category && !self.keeps_logical_buffered(Logical, context) {
+                        self.flush(dest, context);
+                    }
+
+                    self.$key.set_border(arena, $val);
+                    self.category = Logical;
                     self.has_any = true;
                 }};
             }
@@ -1570,6 +1580,15 @@ mod border_handler_body {
                 Property::BorderStyle(val) => four_sides_helper!(style, val),
                 Property::BorderColor(val) => four_sides_helper!(color, val),
                 Property::Border(val) => {
+                    flush_helper!(border_top, width, &val.width, Physical);
+                    flush_helper!(border_top, color, &val.color, Physical);
+                    flush_helper!(border_right, width, &val.width, Physical);
+                    flush_helper!(border_right, color, &val.color, Physical);
+                    flush_helper!(border_bottom, width, &val.width, Physical);
+                    flush_helper!(border_bottom, color, &val.color, Physical);
+                    flush_helper!(border_left, width, &val.width, Physical);
+                    flush_helper!(border_left, color, &val.color, Physical);
+
                     self.border_top.set_border(arena, val);
                     self.border_bottom.set_border(arena, val);
                     self.border_left.set_border(arena, val);

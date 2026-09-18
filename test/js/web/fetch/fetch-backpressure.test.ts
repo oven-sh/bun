@@ -898,6 +898,8 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
           const socket = await requested.promise;
           await new Promise<void>(written => socket.write(body, () => written()));
         },
+        // What an origin's keep-alive timeout does: the connection ends after a complete response.
+        end: async () => void (await requested.promise).end(),
       };
     }
 
@@ -998,6 +1000,71 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, connects: proxy.connects() }).toEqual({
         stdout: JSON.stringify({ total: SIZE, digest }),
+        stderr: "",
+        connects: 1,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // The socket of a held body is paused, so the client sees this close only once a consumer
+    // resumes it.
+    test.each(consumers)("%s takes a held body after the origin closed the connection", async (_, consume) => {
+      await using server = await serveWhole("content-length", "with the head");
+      const res = await fetch(server.url);
+      await server.end();
+      expect(await consume(res)).toBe(digest);
+    });
+
+    // A tunnelled socket is never paused, so the close reaches the client while it still holds
+    // the body. `server.closed` settles once the client has closed its side, which is after it
+    // handled the end of the body. Only then does the consumer attach.
+    test.each([
+      ["res.bytes()", `[await res.bytes()]`],
+      ["a streaming reader", `await Array.fromAsync(res.body)`],
+    ])("%s takes a held body after the origin closed the tunnel", async (_, chunks) => {
+      await using server = await serveWhole("content-length", "with the head", true);
+      await using proxy = await serveConnectProxy();
+      const opts = { proxy: proxy.url, tls: { rejectUnauthorized: false } };
+      const script = /* js */ `
+        const res = await fetch(${JSON.stringify(server.url)}, ${JSON.stringify(opts)});
+        process.stdout.write("held\\n");
+        for await (const line of console) if (line === "go") break;
+        const body = Buffer.concat(${chunks});
+        const digest = new Bun.CryptoHasher("md5").update(body).digest("hex");
+        process.stdout.write(JSON.stringify({ total: body.length, digest }) + "\\n");
+      `;
+      // An ambient NO_PROXY that lists 127.0.0.1 makes fetch() ignore its `proxy` option.
+      const env = {
+        ...bunEnv,
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+        HTTP_PROXY: undefined,
+        http_proxy: undefined,
+        HTTPS_PROXY: undefined,
+        https_proxy: undefined,
+        ALL_PROXY: undefined,
+        all_proxy: undefined,
+      };
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = proc.stderr.text();
+      let result = "";
+      for await (const line of forEachLine(proc.stdout)) {
+        if (line === "held") {
+          await server.end();
+          await server.closed;
+          proc.stdin.write("go\n");
+          proc.stdin.end();
+        } else result = line;
+      }
+      const exitCode = await proc.exited;
+      expect({ result, stderr: await stderr, connects: proxy.connects() }).toEqual({
+        result: JSON.stringify({ total: SIZE, digest }),
         stderr: "",
         connects: 1,
       });

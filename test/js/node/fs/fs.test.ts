@@ -1460,7 +1460,10 @@ describe("promises.readFile", async () => {
     for (const encoding of ["utf-16le", "UTF-16LE"] as const) {
       expect(fs.readFileSync(file, encoding)).toBe("hi 👍");
       expect(await promises.readFile(file, encoding)).toBe("hi 👍");
-      expect(fs.readdirSync(String(dir), encoding)).toEqual(fs.readdirSync(String(dir), "utf16le"));
+      // readdir decodes the raw name bytes with the encoding, like node does.
+      expect(fs.readdirSync(String(dir), encoding)).toEqual(
+        fs.readdirSync(String(dir)).map(name => Buffer.from(name).toString("utf16le")),
+      );
 
       const out = join(String(dir), `out-${encoding}.txt`);
       writeFileSync(out, "hi 👍", encoding);

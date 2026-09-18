@@ -315,7 +315,8 @@ impl EncodedPattern {
     }
 
     fn matches(&self, path: &[u8], params: &mut MatchedParams) -> bool {
-        let mut param_num: usize = 0;
+        // A preceding failed pattern may have appended entries; see #30861.
+        params.params.clear();
         let mut it = self.iterate();
         let mut i: usize = 1;
         while let Some(part) = it.next() {
@@ -337,7 +338,7 @@ impl EncodedPattern {
                     }
                     let end = strings::index_of_char_pos(path, b'/', i).unwrap_or(path.len());
                     // Check if we're about to exceed the maximum number of parameters
-                    if param_num >= MatchedParams::MAX_COUNT {
+                    if params.params.len() >= MatchedParams::MAX_COUNT {
                         // TODO: ideally we should throw a nice user message
                         Output::panic(format_args!(
                             "Route pattern matched more than {} parameters. Path: {}",
@@ -345,12 +346,13 @@ impl EncodedPattern {
                             bstr::BStr::new(path)
                         ));
                     }
-                    params.params.resize(param_num + 1).unwrap();
-                    params.params.slice()[param_num] = MatchedParamEntry {
-                        key: bun_ptr::RawSlice::new(name),
-                        value: bun_ptr::RawSlice::new(&path[i..end]),
-                    };
-                    param_num += 1;
+                    params
+                        .params
+                        .append(MatchedParamEntry {
+                            key: bun_ptr::RawSlice::new(name),
+                            value: bun_ptr::RawSlice::new(&path[i..end]),
+                        })
+                        .unwrap();
                     i = if end == path.len() { end } else { end + 1 };
                 }
                 Part::CatchAllOptional(name) | Part::CatchAll(name) => {
@@ -362,17 +364,18 @@ impl EncodedPattern {
                                 .unwrap_or(path.len());
                             if segment_start < segment_end {
                                 // Check if we're about to exceed the maximum number of parameters
-                                if param_num >= MatchedParams::MAX_COUNT {
+                                if params.params.len() >= MatchedParams::MAX_COUNT {
                                     return false;
                                 }
-                                params.params.resize(param_num + 1).unwrap();
-                                params.params.slice()[param_num] = MatchedParamEntry {
-                                    key: bun_ptr::RawSlice::new(name),
-                                    value: bun_ptr::RawSlice::new(
-                                        &path[segment_start..segment_end],
-                                    ),
-                                };
-                                param_num += 1;
+                                params
+                                    .params
+                                    .append(MatchedParamEntry {
+                                        key: bun_ptr::RawSlice::new(name),
+                                        value: bun_ptr::RawSlice::new(
+                                            &path[segment_start..segment_end],
+                                        ),
+                                    })
+                                    .unwrap();
                             }
                             segment_start = if segment_end == path.len() {
                                 segment_end
@@ -1354,8 +1357,7 @@ impl TinyLog {
             }
         };
         self.msg.clear();
-        self.msg.resize(len).unwrap();
-        self.msg.slice().copy_from_slice(&buf[..len]);
+        self.msg.append_slice(&buf[..len]).unwrap();
     }
 
     pub(crate) fn print(&self, rel_path: &[u8]) {

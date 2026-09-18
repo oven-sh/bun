@@ -247,7 +247,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "pgrep squid > /dev/null"]
+      # squid exists as a process before it binds 3128. In that window docker
+      # accepts a connection on the published port and closes it at once, which
+      # the first test through the proxy sees as "Connection ended". Check the
+      # port, not the process. The ubuntu base image has bash.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
       interval: 5s
       timeout: 5s
       retries: 30

@@ -1,6 +1,6 @@
 import { $, randomUUIDv7, sql, SQL } from "bun";
 import { afterAll, describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isDockerEnabled, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDockerServiceEnabled, rss, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 const postgres = (...args) => new SQL(...args);
 
@@ -17,7 +17,7 @@ import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 import { neverAnsweringServer } from "./wire-frames";
 
-if (isDockerEnabled()) {
+if (isDockerServiceEnabled("postgres_plain")) {
   describe("PostgreSQL tests", async () => {
     let container: { port: number; host: string };
     let socketProxy: UnixDomainSocketProxy;
@@ -12601,7 +12601,7 @@ console.log("FIXTURE_DONE");
       expect(exitCode).toBe(0);
     }, 30_000);
   }); // Close "PostgreSQL tests" describe
-} // Close if (isDockerEnabled())
+} // Close if (isDockerServiceEnabled("postgres_plain"))
 
 // Fault-injection test: requires a server that refuses / drops / sends malformed
 // frames, which a healthy container will not do on demand. DO NOT COPY THIS

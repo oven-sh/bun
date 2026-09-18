@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isDockerEnabled } from "harness";
+import { isArm64, isDockerServiceEnabled, isLinux } from "harness";
 import * as dockerCompose from "../../../docker/index.ts";
 
 let url: string = "";
@@ -28,7 +28,15 @@ async function load() {
   return true;
 }
 
-describe.skipIf(!isDockerEnabled())("autobahn", () => {
+// crossbario/autobahn-testsuite is published for amd64 only. The Linux arm64 CI
+// agents run a docker coordinator, so the service gate alone would define the
+// suite there, where it fails with "exec format error". The todo is limited to
+// Linux so that darwin keeps deciding through the service gate as it did with
+// isDockerEnabled(), and on Linux arm64 it also wins over a
+// BUN_TEST_SERVICE_autobahn override. The skip condition is only evaluated when
+// the todo does not apply: a describe cannot carry both, the runner throws.
+const linuxArm64 = isLinux && isArm64;
+describe.todoIf(linuxArm64).skipIf(!linuxArm64 && !isDockerServiceEnabled("autobahn"))("autobahn", () => {
   let wsOptions: any;
 
   beforeAll(async () => {

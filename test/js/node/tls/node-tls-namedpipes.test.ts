@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { expectMaxObjectTypeCount, isWindows, tls } from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import net from "node:net";
+import { join } from "node:path";
 import { connect, createServer } from "node:tls";
 
 it.if(isWindows)("should work with named pipes and tls", async () => {
@@ -137,6 +139,34 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)(
     });
   },
 );
+
+it.if(isWindows)("setSecureContext() rotates the certificate of a server listening on a named pipe", async () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const agent1 = { key: fixture("agent1-key.pem"), cert: fixture("agent1-cert.pem") };
+  const agent3 = { key: fixture("agent3-key.pem"), cert: fixture("agent3-cert.pem") };
+  const pipe = `\\\\.\\pipe\\test\\${randomUUID()}`;
+  const server = createServer({ ...agent1 }, socket => socket.end("hello"));
+  // The common name of the certificate one fresh client is presented with.
+  const presented = () =>
+    new Promise<string>((resolve, reject) => {
+      const client = connect({ path: pipe, rejectUnauthorized: false });
+      client.on("error", reject);
+      client.on("close", () => reject(new Error("the pipe closed before the server sent anything")));
+      client.on("data", () => {
+        resolve(client.getPeerCertificate().subject.CN);
+        client.destroy();
+      });
+    });
+  try {
+    server.listen(pipe);
+    await once(server, "listening");
+    expect(await presented()).toBe("agent1");
+    server.setSecureContext({ ...agent3 });
+    expect(await presented()).toBe("agent3");
+  } finally {
+    server.close();
+  }
+});
 
 it.if(isWindows)("should be able to upgrade a named pipe connection to TLS", async () => {
   await expectMaxObjectTypeCount(expect, "TLSSocket", 3);

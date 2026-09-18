@@ -877,6 +877,50 @@ pub(crate) trait PathOrFdExt {
         Self: Sized;
 }
 
+/// Join a plain relative Windows path onto the process cwd, writing the
+/// unnormalized `cwd ++ '\' ++ path` into `scratch` and returning it.
+///
+/// This is the cwd-resolve half of Node's `path.toNamespacedPath()`, which
+/// Node applies to every `fs` path on Windows. The joined result is
+/// drive-absolute, so the `\\?\`-prefixing branches of the path slicers
+/// apply to it.
+///
+/// Returns `None`, keeping the caller on its existing handling, when the
+/// path is not plain relative (empty, absolute, or drive-relative `C:foo`),
+/// the cwd is unavailable or not drive-letter rooted (e.g. a UNC cwd), or
+/// the join would not fit `scratch`.
+#[cfg(windows)]
+pub(crate) fn join_cwd_windows<'a>(path: &[u8], scratch: &'a mut PathBuffer) -> Option<&'a [u8]> {
+    if path.is_empty() || bun_paths::is_absolute(path) {
+        return None;
+    }
+    // `C:foo` is relative to drive `C`'s own current directory, which only
+    // the Win32 layer tracks; joining it onto the process cwd would be wrong.
+    if path.len() >= 2 && path[1] == b':' && bun_paths::is_drive_letter(path[0]) {
+        return None;
+    }
+    // Reshaped for borrowck: `getcwd` returns a borrow of `scratch`; capture
+    // the length, drop the borrow, then write after it.
+    let cwd_len = match bun_core::getcwd(scratch) {
+        Ok(cwd) => cwd.len(),
+        Err(_) => return None,
+    };
+    if !(cwd_len > 2
+        && bun_paths::is_drive_letter(scratch[0])
+        && scratch[1] == b':'
+        && bun_paths::is_sep_any(scratch[2]))
+    {
+        return None;
+    }
+    let total = cwd_len + 1 + path.len();
+    if total > scratch.len() {
+        return None;
+    }
+    scratch[cwd_len] = b'\\';
+    scratch[cwd_len + 1..total].copy_from_slice(path);
+    Some(&scratch[..total])
+}
+
 impl PathLikeExt for PathLike<'_> {
     // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a

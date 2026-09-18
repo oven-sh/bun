@@ -19,6 +19,40 @@ type PResult<T> = crate::CrateResult<T>;
 // The 30+ per-token `t_*` helpers are private; only `parse_prefix` is surfaced. Helper
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
 
+/// True when the token after an `await` identifier unambiguously starts an
+/// expression, forcing the keyword interpretation. Excludes tagged-template
+/// continuations, TS `!`, ambiguous operators, and contextual keywords.
+fn token_starts_await_expr<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    p: &P<'a, TYPESCRIPT, SCAN_ONLY>,
+) -> bool {
+    match p.lexer.token {
+        T::TImport
+        | T::TFunction
+        | T::TClass
+        | T::TNew
+        | T::TTypeof
+        | T::TVoid
+        | T::TDelete
+        | T::TThis
+        | T::TSuper
+        | T::TNull
+        | T::TTrue
+        | T::TFalse
+        // `await {}` is an await expression (matches esbuild); the ASI
+        // two-statement reading is never intended.
+        | T::TOpenBrace
+        | T::TStringLiteral
+        | T::TNumericLiteral
+        | T::TBigIntegerLiteral
+        | T::TTilde => true,
+        T::TIdentifier => {
+            let raw = p.lexer.raw();
+            raw != b"of" && raw != b"as" && raw != b"satisfies" && raw != b"using"
+        }
+        _ => false,
+    }
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn pfx_t_super(p: &mut Self, level: Level) -> PResult<Expr> {
         let loc = p.lexer.loc();
@@ -154,45 +188,79 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            AsyncPrefixExpression::IsAwait => match p.fn_or_arrow_data_parse.allow_await {
-                AwaitOrYield::ForbidAll => {
-                    p.log().add_range_error(
-                        Some(p.source),
-                        name_range,
-                        b"The keyword \"await\" cannot be used here",
-                    );
-                }
-                AwaitOrYield::AllowExpr => {
-                    if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsAwait {
+            AsyncPrefixExpression::IsAwait => {
+                // At module scope in a non-ESM target, parse unambiguous
+                // `await <expr>` as an await expression so DCE can drop dead
+                // branches; the visit pass rejects any await that survives.
+                let at_module_scope = p.is_at_module_scope();
+                let should_upgrade_to_await_expr = p.fn_or_arrow_data_parse.allow_await
+                    == AwaitOrYield::AllowIdent
+                    && at_module_scope
+                    // Declare-enum bodies push no scope; this flag marks
+                    // TS namespace/enum bodies the scope walk can't see.
+                    && !p.fn_or_arrow_data_parse.is_this_disallowed
+                    && !p.lexer.has_newline_before
+                    && AsyncPrefixExpression::find(raw) == AsyncPrefixExpression::IsAwait
+                    && token_starts_await_expr(p);
+                let effective_allow_await = if should_upgrade_to_await_expr {
+                    AwaitOrYield::AllowExpr
+                } else {
+                    p.fn_or_arrow_data_parse.allow_await
+                };
+
+                match effective_allow_await {
+                    AwaitOrYield::ForbidAll => {
                         p.log().add_range_error(
                             Some(p.source),
                             name_range,
-                            b"The keyword \"await\" cannot be escaped",
+                            b"The keyword \"await\" cannot be used here",
                         );
-                    } else {
-                        if p.fn_or_arrow_data_parse.is_top_level {
-                            p.top_level_await_keyword = name_range;
-                        }
+                    }
+                    AwaitOrYield::AllowExpr => {
+                        if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsAwait {
+                            p.log().add_range_error(
+                                Some(p.source),
+                                name_range,
+                                b"The keyword \"await\" cannot be escaped",
+                            );
+                        } else {
+                            if p.fn_or_arrow_data_parse.is_top_level || at_module_scope {
+                                p.top_level_await_keyword = name_range;
+                            }
 
-                        if p.fn_or_arrow_data_parse.track_arrow_arg_errors {
-                            p.fn_or_arrow_data_parse.arrow_arg_errors.invalid_expr_await =
-                                name_range;
-                        }
+                            if p.fn_or_arrow_data_parse.track_arrow_arg_errors {
+                                p.fn_or_arrow_data_parse.arrow_arg_errors.invalid_expr_await =
+                                    name_range;
+                            }
 
-                        let value = p.parse_expr(Level::Prefix)?;
-                        if p.lexer.token == T::TAsteriskAsterisk {
-                            p.lexer.unexpected()?;
-                            return Err(crate::Error::SyntaxError);
-                        }
+                            // Propagate the upgrade so `await (a + await b)`
+                            // parses as one await expression.
+                            let saved_allow_await = p.fn_or_arrow_data_parse.allow_await;
+                            if should_upgrade_to_await_expr {
+                                p.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowExpr;
+                            }
 
-                        return Ok(p.new_expr(E::Await { value }, loc));
+                            let value_result = p.parse_expr(Level::Prefix);
+
+                            if should_upgrade_to_await_expr {
+                                p.fn_or_arrow_data_parse.allow_await = saved_allow_await;
+                            }
+
+                            let value = value_result?;
+                            if p.lexer.token == T::TAsteriskAsterisk {
+                                p.lexer.unexpected()?;
+                                return Err(crate::Error::SyntaxError);
+                            }
+
+                            return Ok(p.new_expr(E::Await { value }, loc));
+                        }
+                    }
+                    AwaitOrYield::AllowIdent => {
+                        p.lexer.prev_token_was_await_keyword = true;
+                        p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                     }
                 }
-                AwaitOrYield::AllowIdent => {
-                    p.lexer.prev_token_was_await_keyword = true;
-                    p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
-                }
-            },
+            }
 
             AsyncPrefixExpression::IsYield => {
                 match p.fn_or_arrow_data_parse.allow_yield {

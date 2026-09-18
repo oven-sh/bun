@@ -249,8 +249,8 @@ pub fn enqueue_tarball_for_reading(
 pub enum GitEnqueueResult {
     /// a task was queued (or joined an existing one); completion arrives via the task queue
     Queued,
-    /// `--offline` and the repository is not cached: nothing was queued (the miss is recorded
-    /// for `report_offline_misses`); the caller must count the package as skipped itself
+    /// `--offline` and the repository is not cached: nothing was queued (already reported
+    /// if required, or recorded for `report_offline_misses`); the caller counts it as skipped
     OfflineMiss,
 }
 
@@ -334,8 +334,8 @@ pub fn enqueue_git_for_checkout(
 }
 
 /// Under `--offline`, an install-phase request for a package that is not in the cache
-/// (these helpers are only reached after the cache lookup missed): record it for
-/// `report_offline_misses`, and never register a task nobody will complete.
+/// (these helpers are only reached after the cache lookup missed): report it once if
+/// required (in `report_offline_misses`), skip if optional, never register a task nobody completes.
 fn offline_tarball_miss(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -388,13 +388,7 @@ fn log_offline_miss(this: &PackageManager, dependency_id: DependencyID) {
     }
 }
 
-/// Ends the install phase of an `--offline` install: reports the cache misses that are errors.
-///
-/// A miss is an error when a package that was installed requires the missed package. The
-/// installers can not tell at the miss: the hoisted tree keeps one dependency for each folder,
-/// not every package that needs it, and a hoisted package can be installed before its parent.
-/// Judged by that one dependency, a package that was skipped (optional, not in the cache) made
-/// everything below it an error, although nothing installed requires it.
+/// Reports the recorded `--offline` misses that a package which was installed requires.
 pub(crate) fn report_offline_misses(
     this: &mut PackageManager,
     workspace_filters: &[WorkspaceFilter],
@@ -416,8 +410,7 @@ pub(crate) fn report_offline_misses(
         missed.set(resolutions[dependency_id as usize] as usize);
     }
 
-    // Walk what the installers placed, from the root, and stop at each package that was missed:
-    // it is not installed, so it requires nothing.
+    // Stop at a missed package: it is not installed, so nothing is required through it.
     let mut required = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
     let mut visited = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
     let package_dependencies = lockfile.packages.items_dependencies();
@@ -469,9 +462,7 @@ pub(crate) fn report_offline_misses(
 /// Under `--offline`, a git dependency whose clone is not already in the cache cannot
 /// be installed: report it (once, and only if some edge requires it) instead of
 /// spawning `git`. Returns true when the clone must not be enqueued.
-///
-/// The install phase passes the dependency it installs as `installing`. Its miss is recorded
-/// for `report_offline_misses` and not reported here.
+/// `installing`: the install phase records the miss of this dependency, and reports it later.
 fn offline_git_miss(
     this: &mut PackageManager,
     clone_id: Task::Id,

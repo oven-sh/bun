@@ -439,7 +439,7 @@ pub struct PackageManager {
     // `bun update <name>`: packages reachable from the workspaces in scope, see update_scope::plan_named.
     pub(crate) named_update_reachable: Option<bun_collections::DynamicBitSet>,
 
-    // --offline: the dependencies whose package the install phase did not find in the cache; drained by enqueue::report_offline_misses.
+    // --offline: dependencies the install phase missed in the cache; drained by enqueue::report_offline_misses.
     pub(crate) offline_misses: Vec<DependencyID>,
 
     // bun update: patched packages a move was held back for; drained by update_transitive::print_kept_patched.

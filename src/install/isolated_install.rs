@@ -2410,8 +2410,7 @@ pub(crate) fn install_isolated_packages(
 
                     let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
 
-                    // Under --offline every package that is not downloaded is a cache miss, and
-                    // `report_offline_misses` decides later which misses are errors.
+                    // `report_offline_misses` decides which --offline misses are errors.
                     let not_downloaded = if installer.manager().options.offline
                         == crate::package_manager_real::options::OfflineMode::Offline
                     {

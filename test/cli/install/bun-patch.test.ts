@@ -1329,9 +1329,14 @@ describe("a bundled dependency as the target", () => {
       const { packageDir } = await installedProject(linker, { "bundled-1": "1.0.0", "no-deps": "1.0.0" });
       const marker = await markBundledCopy(packageDir);
 
-      const byPath = await runBun(packageDir, "patch", "node_modules/bundled-1/node_modules/no-deps");
-      expect(byPath.stderr).toEndWith(bundledError("no-deps", "bundled-1"));
-      expect(byPath.exitCode).toBe(1);
+      for (const path of [
+        "node_modules/bundled-1/node_modules/no-deps",
+        "node_modules/bundled-1/./node_modules/no-deps",
+      ]) {
+        const byPath = await runBun(packageDir, "patch", path);
+        expect(byPath.stderr).toEndWith(bundledError("no-deps", "bundled-1"));
+        expect(byPath.exitCode).toBe(1);
+      }
 
       const byName = await runBun(packageDir, "patch", "no-deps");
       expect(byName.stderr).not.toContain("error:");
@@ -1375,23 +1380,45 @@ describe("a bundled dependency as the target", () => {
     // The lockfile tree places debug-1@4.4.0 twice: under the alias `z`, which bun installs,
     // and inside npm-1, where the tarball ships it. npm-1 comes first in the tree. The root
     // alias `debug-1` keeps both below the root.
-    test.concurrent("bun patch skips the placement inside the package that bundles", async () => {
-      const { packageDir } = await installedProject(linker, {
-        "npm-1": "10.9.2",
-        "z": "npm:depend-on-debug-1@1.0.0",
-        "debug-1": "npm:no-deps@2.0.0",
-      });
-      const marker = Bun.file(
-        join(packageDir, "node_modules", "npm-1", "node_modules", "debug-1", "only-in-the-bundled-copy.txt"),
-      );
-      await Bun.write(marker, "bundled");
+    test.concurrent.each(["npm-1", "my-alias"])(
+      "bun patch skips the placement inside the package that bundles, installed as %s",
+      async bundler => {
+        const { packageDir } = await installedProject(linker, {
+          [bundler]: "npm:npm-1@10.9.2",
+          "z": "npm:depend-on-debug-1@1.0.0",
+          "debug-1": "npm:no-deps@2.0.0",
+        });
+        const marker = Bun.file(
+          join(packageDir, "node_modules", bundler, "node_modules", "debug-1", "only-in-the-bundled-copy.txt"),
+        );
+        await Bun.write(marker, "bundled");
 
-      const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "debug-1@4.4.0");
+        const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "debug-1@4.4.0");
+        expect(stderr).not.toContain("error:");
+        expect(stdout).toContain(
+          "To patch debug-1, edit the following folder:\n\n  node_modules/z/node_modules/debug-1\n",
+        );
+        expect(await marker.exists()).toBe(true);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // bundled-transitive@1.0.0 bundles no-deps and has a regular dependency on one-dep. The
+    // root alias takes the name `one-dep`, so the tree nests one-dep@1.0.0 next to the bundled
+    // copy. Only the hoisted linker creates that folder on its own.
+    test.concurrent.each(
+      ["one-dep@1.0.0", "node_modules/bundled-transitive/node_modules/one-dep"].slice(0, linker === "hoisted" ? 2 : 1),
+    )("bun patch %s still patches a dependency that bun nests in the package that bundles", async arg => {
+      const { packageDir } = await installedProject(linker, {
+        "bundled-transitive": "1.0.0",
+        "one-dep": "npm:no-deps@2.0.0",
+      });
+
+      const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", arg);
       expect(stderr).not.toContain("error:");
       expect(stdout).toContain(
-        "To patch debug-1, edit the following folder:\n\n  node_modules/z/node_modules/debug-1\n",
+        "To patch one-dep, edit the following folder:\n\n  node_modules/bundled-transitive/node_modules/one-dep\n",
       );
-      expect(await marker.exists()).toBe(true);
       expect(exitCode).toBe(0);
     });
 

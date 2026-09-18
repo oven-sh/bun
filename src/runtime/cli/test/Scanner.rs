@@ -33,6 +33,8 @@ pub struct Scanner<'a> {
     pub(crate) open_dir_buf: PathBuffer,
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) search_count: usize,
+    /// Set by `next`. False after `read_dir_with_name` means the listing came from the cache.
+    iterator_invoked: bool,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
     current_dir: Option<Rc<Dir>>,
 }
@@ -89,6 +91,7 @@ impl<'a> Scanner<'a> {
             seen_test_files: HashMap::new(),
             open_dir_buf: PathBuffer::ZEROED,
             search_count: 0,
+            iterator_invoked: false,
             current_dir: None,
         })
     }
@@ -175,22 +178,6 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        // Cached listing: the iterator was not invoked. Sorted so the run order is stable.
-        if let EntriesOption::Entries(entries) = root {
-            let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
-            index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
-                // SAFETY: `EntryMap` stores `*mut Entry` into the
-                // process-static `EntryStore`; valid for `'static`.
-                let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
-                an.cmp(bn)
-            });
-            for entry_ptr in entry_ptrs {
-                // SAFETY: `EntryMap` stores `*mut Entry` into the
-                // process-static `EntryStore`; valid for `'static`.
-                self.next(unsafe { &mut *entry_ptr });
-            }
-        }
-
         while let Some(entry) = self.dirs_to_scan.pop_front() {
             let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
             let Some(path2) = self.fs().abs_buf_checked(&parts2, &mut scan_dir_buf) else {
@@ -224,6 +211,25 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
+    /// A cached listing is returned without invoking the iterator. Sorted so the run order is stable.
+    fn walk_cached_entries(&mut self, listing: &EntriesOption) {
+        let EntriesOption::Entries(entries) = listing else {
+            return;
+        };
+        let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
+        index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
+            // SAFETY: `EntryMap` stores `*mut Entry` into the
+            // process-static `EntryStore`; valid for `'static`.
+            let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
+            an.cmp(bn)
+        });
+        for entry_ptr in entry_ptrs {
+            // SAFETY: `EntryMap` stores `*mut Entry` into the
+            // process-static `EntryStore`; valid for `'static`.
+            self.next(unsafe { &mut *entry_ptr });
+        }
+    }
+
     /// `handle` stays owned by the caller; the resolver caches the listing but not the fd.
     fn read_dir_with_name(
         &mut self,
@@ -231,11 +237,15 @@ impl<'a> Scanner<'a> {
         handle: Option<Fd>,
     ) -> crate::Result<&'static mut EntriesOption> {
         let fs_ptr = self.fs;
+        self.iterator_invoked = false;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
-        unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, handle, 0, false, iter)
-            .map_err(Into::into)
+        let listing = unsafe { &mut (*fs_ptr).fs }
+            .read_directory_with_iterator(name, handle, 0, false, iter)?;
+        if !self.iterator_invoked {
+            self.walk_cached_entries(listing);
+        }
+        Ok(listing)
     }
 
     pub(crate) fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
@@ -332,6 +342,7 @@ impl<'a> Scanner<'a> {
 
     pub(crate) fn next(&mut self, entry: &mut fs::Entry) {
         let name = entry.base_lowercase();
+        self.iterator_invoked = true;
         // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
         // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.

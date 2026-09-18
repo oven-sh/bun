@@ -108,7 +108,7 @@ test("default headers preserved when user headers overflow the buffer", async ()
 
 describe("response header field count", () => {
   // MAX_RESPONSE_HEADERS in src/http/lib.rs
-  const maxResponseHeaders = 2000;
+  const maxResponseHeaders = 1000;
 
   // `total` header fields: Set-Cookie lines, then the two fields that frame the
   // body. A parser that stops early cannot read the body.
@@ -149,7 +149,7 @@ describe("response header field count", () => {
     );
 
   // A response with 257 fields used to reject with Malformed_HTTP_Response.
-  test.concurrent.each([256, 257, 1000, maxResponseHeaders])("%i fields resolve with every field", async total => {
+  test.concurrent.each([256, 257, maxResponseHeaders])("%i fields resolve with every field", async total => {
     const cookies = makeCookies(total);
     await using server = await serveRaw(toWire(cookies));
     expect(await outcomeOf(server)).toEqual({ status: 200, cookies, contentLength: "2", body: "ok" });

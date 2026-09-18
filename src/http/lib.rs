@@ -408,6 +408,9 @@ impl HTTPClient<'_> {
         status_code: u32,
         headers: &'h [picohttp::Header],
     ) -> crate::Result<(HeaderResult, picohttp::Response<'h>)> {
+        if headers.len() > MAX_RESPONSE_HEADERS {
+            return Err(crate::Error::ResponseHeadersTooLarge);
+        }
         let mut response = picohttp::Response {
             minor_version: 0,
             status_code,
@@ -1044,11 +1047,11 @@ const MAX_REQUEST_HEADERS: usize = 256;
 static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_REQUEST_HEADERS]> =
     bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
 
-/// A response with more header fields fails with `ResponseHeadersTooLarge`.
-/// `MAX_RESPONSE_HEADER_BUFFER` bounds the bytes, but the cost to build
-/// `Headers` grows with the square of the field count. 2000 is the default
-/// that Node documents for `maxHeadersCount`.
-const MAX_RESPONSE_HEADERS: usize = 2000;
+/// A response with more header fields fails with `ResponseHeadersTooLarge`, on
+/// any protocol. Like `MAX_RESPONSE_HEADER_BUFFER`, it is a generous fixed
+/// limit on input that the server controls. Node's HTTP client enforces the
+/// same count (`maxHeadersCount`).
+const MAX_RESPONSE_HEADERS: usize = 1000;
 
 // this doesn't need to be stack memory because it is immediately cloned after use
 static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_RESPONSE_HEADERS]> =

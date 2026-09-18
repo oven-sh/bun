@@ -1360,8 +1360,7 @@ impl Diff {
 
         let mut missing_workspaces: Vec<PackageID> = Vec::new();
         let mut survivors: Vec<(String, DependencySlice)> = Vec::new();
-        // Two `from` rows can pair with one `to` row (a lockfile that lists a dependency twice),
-        // so the added rows are the `to` rows left unpaired, not a difference of the two lengths.
+        // Two `from` rows can pair with one `to` row, so the lengths do not give the added count.
         let mut paired = AutoBitSet::init_empty(to_deps!().len())?;
         for (i, from_dep) in from_deps.iter().enumerate() {
             let found = 'found: {

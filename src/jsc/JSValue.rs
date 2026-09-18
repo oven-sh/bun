@@ -243,6 +243,9 @@ impl JSValue {
     pub fn is_double(self) -> bool {
         self.is_number() && !self.is_int32()
     }
+    /// JSC's Int52 test: true for an int32 or an integral double with
+    /// |v| < 2^51, false for `-0`. Not `Number.isInteger`; for every exact
+    /// integer up to 2^53 - 1 use [`is_safe_integer`](Self::is_safe_integer).
     #[inline]
     pub fn is_any_int(self) -> bool {
         JSC__JSValue__isAnyInt(self)
@@ -260,6 +263,25 @@ impl JSValue {
             }
         }
         false
+    }
+    /// ECMA-262 20.1.2.5 `Number.isSafeInteger`. Unlike `is_any_int` (JSC's
+    /// Int52 test) this accepts every integer up to 2^53 - 1, and `-0`.
+    #[inline]
+    pub fn is_safe_integer(self) -> bool {
+        if self.is_int32() {
+            return true;
+        }
+        if self.is_double() {
+            let num = self.as_double();
+            return num.is_finite()
+                && num.trunc() == num
+                && num.abs() <= crate::MAX_SAFE_INTEGER as f64;
+        }
+        false
+    }
+    #[inline]
+    pub fn is_negative_zero(self) -> bool {
+        self.is_double() && self.as_double() == 0.0 && self.as_double().is_sign_negative()
     }
     #[inline]
     pub fn is_string(self) -> bool {

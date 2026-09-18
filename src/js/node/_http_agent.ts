@@ -192,6 +192,7 @@ Agent.prototype.createConnection = function createConnection(...args) {
   }
 
   const connectOptions = {
+    noDelay: true,
     ...this[kProxyConfig].proxyConnectionOptions,
   };
   const proxyProtocol = this[kProxyConfig].protocol;

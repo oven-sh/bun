@@ -18,6 +18,7 @@
 #endif
 #if OS(LINUX)
 #include "JavaScriptCore/JSTypedArrays.h"
+#include <errno.h>
 #include <signal.h>
 #include <wtf/Atomics.h>
 #include <wtf/Threading.h>
@@ -270,22 +271,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_suspendThreadAndSignalForTesting, (JSC::JSGl
     // The caller keeps `state` alive until slots[2] is set.
     int32_t* slots = state->typedVector();
     WTF::Thread::create("SuspendForTesting"_s, [thread = Ref { WTF::Thread::currentSingleton() }, handle = pthread_self(), slots, signalNumber, holdMilliseconds, threadDirected] {
-        bool moved = false;
+        // slots[1]: 0 held, 1 the thread ran while suspended, 2 suspend failed, 3 the send failed.
+        int32_t result = 2;
         {
             WTF::ThreadSuspendLocker locker;
             if (thread->suspend(locker)) {
                 // No allocation until the resume: the suspended thread may hold the allocator lock.
-                if (threadDirected)
-                    pthread_kill(handle, signalNumber);
-                else
-                    kill(getpid(), signalNumber);
+                int sendError = threadDirected ? pthread_kill(handle, signalNumber) : (kill(getpid(), signalNumber) ? errno : 0);
                 int32_t before = WTF::atomicLoad(&slots[0]);
                 usleep(static_cast<useconds_t>(holdMilliseconds) * 1000);
-                moved = WTF::atomicLoad(&slots[0]) != before;
+                bool moved = WTF::atomicLoad(&slots[0]) != before;
                 thread->resume(locker);
+                result = sendError ? 3 : moved ? 1 : 0;
             }
         }
-        WTF::atomicStore(&slots[1], moved ? 1 : 0);
+        WTF::atomicStore(&slots[1], result);
         WTF::atomicStore(&slots[2], 1);
     })->detach();
     return JSValue::encode(jsUndefined());

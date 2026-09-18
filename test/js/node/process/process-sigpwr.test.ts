@@ -128,8 +128,9 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
   //
   // suspendThreadAndSignalForTesting(state, signal, holdMilliseconds, threadDirected): `state` is an
   // Int32Array over a SharedArrayBuffer. The caller keeps incrementing state[0]. The hook sets
-  // state[1] to 1 if that counter moved during the suspension, and state[2] to 1 once the thread is
-  // resumed. `threadDirected` sends with pthread_kill() to this thread instead of kill(2) to the process.
+  // state[2] to 1 once the thread is resumed, and state[1] to the result: 0 the thread stayed
+  // suspended, 1 the counter moved during the suspension, 2 suspend() failed, 3 the send failed.
+  // `threadDirected` sends with pthread_kill() to this thread instead of kill(2) to the process.
   describe.each([
     ["kill(2)", false],
     ["pthread_kill()", true],
@@ -137,16 +138,16 @@ describe.skipIf(!isLinux)("SIGPWR", () => {
     test.concurrent("does not resume the thread early", async () => {
       const script = /*js*/ `
         const { suspendThreadAndSignalForTesting } = require("bun:internal-for-testing");
-        const ranWhileSuspended = [];
+        const results = [];
         for (let round = 0; round < 2; round++) {
           const state = new Int32Array(new SharedArrayBuffer(12));
           suspendThreadAndSignalForTesting(state, 30, 30, ${threadDirected});
           while (Atomics.load(state, 2) === 0) Atomics.add(state, 0, 1);
-          ranWhileSuspended.push(Atomics.load(state, 1) === 1);
+          results.push(Atomics.load(state, 1));
         }
-        console.log(JSON.stringify({ ranWhileSuspended }));
+        console.log(JSON.stringify({ results }));
       `;
-      expect(await runScript(script)).toEqual(ok('{"ranWhileSuspended":[false,false]}\n'));
+      expect(await runScript(script)).toEqual(ok('{"results":[0,0]}\n'));
     });
   });
 });

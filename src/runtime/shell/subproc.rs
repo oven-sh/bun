@@ -1737,6 +1737,14 @@ impl PipeReader {
 
         #[allow(unused_mut)]
         let mut reader = IOReader::init::<PipeReader>();
+        // A `> ${buf}` target holds `len` bytes. Read one byte more, then
+        // close the pipe: a child that writes past the end gets a write error
+        // instead of an endless drain that drops its output. The extra byte
+        // is clipped by `append`, and that clip is what tells an overflow
+        // apart from output that fits exactly.
+        if let BufferedOutput::ArrayBuffer { buf, .. } = &buffered_output {
+            reader.set_limit(Some(buf.slice().len() + 1));
+        }
         #[cfg(not(windows))]
         let stdio_result = result;
         #[cfg(windows)]

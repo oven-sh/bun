@@ -997,9 +997,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let mut run_entry = entry;
         vm.set_main(entry);
         if let Some(argv_path) = argv_path {
-            let argv_ptr: *const [u8] = bun_core::heap::into_raw(argv_path);
-            // SAFETY: freshly-allocated heap bytes, process-lifetime (see above).
-            vm.set_main_for_argv(unsafe { &*argv_ptr });
+            vm.set_main_for_argv(Box::leak(argv_path));
         }
 
         if !ctx.runtime_options.eval.script.is_empty() {
@@ -2735,16 +2733,15 @@ impl RunCommand {
     /// Node's `path.resolve(argv[1])`: absolute against cwd, `.`/`..`
     /// collapsed, trailing separator stripped, symlinks left as-is.
     fn absolutize_for_argv(target: &[u8]) -> Option<Box<[u8]>> {
-        let mut cwd_buf = PathBuffer::uninit();
-        let cwd = bun_core::getcwd(&mut cwd_buf).ok()?;
-        let cwd_len = cwd.as_bytes().len();
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let cwd_len = bun_core::getcwd_or_exe_dir(&mut cwd_buf).as_bytes().len();
         cwd_buf[cwd_len] = paths::SEP;
-        let mut out_buf = PathBuffer::uninit();
-        let mut joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+        let mut out_buf = bun_paths::path_buffer_pool::get();
+        let mut joined = paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
             &cwd_buf[..cwd_len + 1],
             &mut out_buf.0,
             &[target],
-        );
+        )?;
         let root_len = if cfg!(windows) {
             paths::resolve_path::windows_filesystem_root(joined).len() + 1
         } else {

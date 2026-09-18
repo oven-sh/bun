@@ -336,3 +336,135 @@ describe("ws package", () => {
     clock.close();
   }, 60_000);
 });
+
+// A socket with no connection is not paused: pause() has nothing to act on,
+// and a pause that took effect, or latched while CONNECTING, ends with the
+// connection.
+describe("WebSocket.isPaused with no connection", () => {
+  // Upgrades every request except /deny, which gets a 403.
+  function upgradeServer() {
+    return Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        if (!req.url.endsWith("/deny") && server.upgrade(req)) return;
+        return new Response("nope", { status: 403 });
+      },
+      websocket: { message() {} },
+    });
+  }
+
+  function closeEvent(ws: WebSocket): Promise<void> {
+    return new Promise(resolve => (ws.onclose = () => resolve()));
+  }
+
+  type Case = {
+    name: string;
+    path: string;
+    // The state the socket is in before `end` runs. The "paused first" tests call pause() in it.
+    startState: number;
+    // Takes the socket from `startState` to `endState`, where it has no connection.
+    end(ws: WebSocket): void | Promise<void>;
+    endState: number;
+  };
+
+  const cases: Case[] = [
+    {
+      name: "closed",
+      path: "/",
+      startState: WebSocket.OPEN,
+      async end(ws) {
+        ws.close();
+        await closeEvent(ws);
+      },
+      endState: WebSocket.CLOSED,
+    },
+    {
+      name: "terminated, before the close event",
+      path: "/",
+      startState: WebSocket.OPEN,
+      end: ws => ws.terminate(),
+      endState: WebSocket.CLOSING,
+    },
+    {
+      name: "terminated, after the close event",
+      path: "/",
+      startState: WebSocket.OPEN,
+      async end(ws) {
+        ws.terminate();
+        await closeEvent(ws);
+      },
+      endState: WebSocket.CLOSED,
+    },
+    {
+      name: "failed to connect",
+      path: "/deny",
+      startState: WebSocket.CONNECTING,
+      end: closeEvent,
+      endState: WebSocket.CLOSED,
+    },
+    {
+      name: "closed before open",
+      path: "/",
+      startState: WebSocket.CONNECTING,
+      end: ws => ws.close(),
+      endState: WebSocket.CLOSING,
+    },
+    {
+      name: "terminated before open",
+      path: "/",
+      startState: WebSocket.CONNECTING,
+      end: ws => ws.terminate(),
+      endState: WebSocket.CLOSING,
+    },
+  ];
+
+  async function start(server: ReturnType<typeof upgradeServer>, { path, startState }: Case): Promise<WebSocket> {
+    const ws = new WebSocket(`ws://localhost:${server.port}${path}`);
+    // The cases that start CONNECTING end with an error event by design.
+    ws.onerror = () => {};
+    if (startState === WebSocket.OPEN) {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      ws.onopen = () => resolve();
+      ws.onclose = ({ code, reason }) => reject(new Error(`closed before open: ${code} ${reason}`));
+      await promise;
+      ws.onclose = null;
+    }
+    expect(ws.readyState).toBe(startState);
+    return ws;
+  }
+
+  function expectNotPaused(ws: WebSocket, endState: number) {
+    expect({
+      readyState: ws.readyState,
+      isPaused: ws.isPaused,
+      pause: ws.pause(),
+      isPausedAfterPause: ws.isPaused,
+      resume: ws.resume(),
+      isPausedAfterResume: ws.isPaused,
+    }).toEqual({
+      readyState: endState,
+      isPaused: false,
+      pause: false,
+      isPausedAfterPause: false,
+      resume: false,
+      isPausedAfterResume: false,
+    });
+  }
+
+  describe.each(cases)("$name", c => {
+    it("never paused", async () => {
+      using server = upgradeServer();
+      const ws = await start(server, c);
+      await c.end(ws);
+      expectNotPaused(ws, c.endState);
+    });
+
+    it("paused first", async () => {
+      using server = upgradeServer();
+      const ws = await start(server, c);
+      expect({ pause: ws.pause(), isPaused: ws.isPaused }).toEqual({ pause: true, isPaused: true });
+      await c.end(ws);
+      expectNotPaused(ws, c.endState);
+    });
+  });
+});

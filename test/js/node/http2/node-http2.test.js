@@ -5796,6 +5796,134 @@ it("delivers the reserved push stream and fails the session when its headers can
   }
 });
 
+// node writes kSentHeaders only in request(), respond(), respondWithFD/File and pushStream(), so a
+// block the peer sent never shows up in sentHeaders. Expected values verified on node v26.3.0.
+describe("http2 sentHeaders reports only what this side sent", () => {
+  // Sends one request with credentials. Resolves with `observe`'s value once the request closed.
+  async function serveOnce(server, observe) {
+    let client;
+    try {
+      const failed = Promise.withResolvers();
+      server.on("error", failed.reject);
+      const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", failed.reject);
+      const observed = observe(client, `127.0.0.1:${port}`, failed.reject);
+      const req = client.request({ ":path": "/secret?token=abc", authorization: "Bearer xyz" });
+      const closed = new Promise(resolve => req.on("close", resolve));
+      req.on("error", failed.reject);
+      req.resume();
+      req.end();
+      const [value] = await Promise.race([failed.promise, Promise.all([observed, closed])]);
+      return value;
+    } finally {
+      client?.close();
+      server.close();
+    }
+  }
+
+  it("server stream: undefined until respond(), then the response headers", async () => {
+    const observed = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      try {
+        // scheme is a Bun-only getter. It answers from the request headers, before and after respond().
+        const before = { sentHeaders: stream.sentHeaders, scheme: stream.scheme };
+        stream.respond({ ":status": 200, "x-a": "1" }, { sendDate: false });
+        const after = { sentHeaders: stream.sentHeaders, scheme: stream.scheme };
+        stream.end();
+        observed.resolve({ before, after });
+      } catch (err) {
+        observed.reject(err);
+      }
+    });
+    expect(await serveOnce(server, () => observed.promise)).toEqual({
+      before: { sentHeaders: undefined, scheme: "http" },
+      after: { sentHeaders: { ":status": 200, "x-a": "1" }, scheme: "http" },
+    });
+  });
+
+  it("compat response: its stream has no sentHeaders until the head is written", async () => {
+    const observed = Promise.withResolvers();
+    const server = http2.createServer((req, res) => {
+      try {
+        const before = [req.stream.sentHeaders, res.stream.sentHeaders];
+        res.sendDate = false;
+        res.writeHead(200, { "x-a": "1" });
+        const after = res.stream.sentHeaders;
+        res.end();
+        observed.resolve({ before, after });
+      } catch (err) {
+        observed.reject(err);
+      }
+    });
+    expect(await serveOnce(server, () => observed.promise)).toEqual({
+      before: [undefined, undefined],
+      after: { ":status": 200, "x-a": "1" },
+    });
+  });
+
+  it("pushed stream: the PUSH_PROMISE block on the server, undefined on the client", async () => {
+    const serverSide = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      // respond() first: the :scheme/:authority defaults of the PUSH_PROMISE come from the request,
+      // not from the response headers that sentHeaders holds by now.
+      stream.respond({ ":status": 200 }, { sendDate: false });
+      stream.pushStream({ ":path": "/pushed", "x-push": "1" }, (err, pushed, promised) => {
+        try {
+          if (err) throw err;
+          const before = pushed.sentHeaders;
+          const scheme = [pushed.scheme];
+          pushed.respond({ ":status": 200, "x-pushed": "1" }, { sendDate: false });
+          const after = pushed.sentHeaders;
+          scheme.push(pushed.scheme);
+          pushed.end();
+          stream.end();
+          serverSide.resolve({ before, isCallbackHeaders: before === promised, after, scheme });
+        } catch (e) {
+          serverSide.reject(e);
+        }
+      });
+    });
+    let authority;
+    const result = await serveOnce(server, (client, host, fail) => {
+      authority = host;
+      const clientSide = Promise.withResolvers();
+      client.on("stream", pushed => {
+        // scheme is a Bun-only getter. On a pushed stream it answers from the PUSH_PROMISE.
+        const seen = { scheme: pushed.scheme, sentHeaders: [pushed.sentHeaders] };
+        pushed.on("error", fail);
+        pushed.on("push", () => seen.sentHeaders.push(pushed.sentHeaders));
+        pushed.on("close", () => {
+          seen.sentHeaders.push(pushed.sentHeaders);
+          clientSide.resolve(seen);
+        });
+        pushed.resume();
+      });
+      return Promise.all([serverSide.promise, clientSide.promise]);
+    });
+    const promisedBlock = {
+      ":method": "GET",
+      ":path": "/pushed",
+      ":scheme": "http",
+      ":authority": authority,
+      "x-push": "1",
+    };
+    expect(result).toEqual([
+      {
+        before: promisedBlock,
+        isCallbackHeaders: true,
+        after: { ":status": 200, "x-pushed": "1" },
+        // Before and after respond(), like the ordinary server stream above.
+        scheme: ["http", "http"],
+      },
+      // Read at 'stream', at 'push' and at 'close'.
+      { scheme: "http", sentHeaders: [undefined, undefined, undefined] },
+    ]);
+  });
+});
+
 it("PerformanceObserver receives http2 session and stream entries", async () => {
   const entries = [];
   // Two streams (client+server) + two sessions (client+server): resolve once

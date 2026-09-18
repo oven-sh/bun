@@ -1328,6 +1328,7 @@ describe("a folder whose version is not in the lockfile as the target", () => {
 
     // Two lockfile rows with the name: no-deps@2.0.0 and a tarball with no-deps@1.1.0. The version
     // in package.json is not the label of a tarball package, so the tarball is not taken by name.
+    // The error points at the name form, which takes a label.
     test.concurrent("bun patch <path> is refused when the lockfile has an npm and a tarball package", async () => {
       const packageJson = {
         name: "foo",
@@ -1347,7 +1348,9 @@ describe("a folder whose version is not in the lockfile as the target", () => {
       expect(install.exitCode).toBe(0);
 
       const { stderr, exitCode } = await runBun(packageDir, "patch", shippedCopy);
-      expect(stderr).toEndWith(notInLockfile);
+      expect(stderr).toEndWith(
+        `error: cannot patch ${shippedCopy}: no npm package no-deps@1.0.0 is in the lockfile, and the other packages named no-deps have a git, tarball or folder label. Run bun patch <dependency>@<label> with the dependency name and the label from the lockfile instead.\n`,
+      );
       expect(await shippedVersion(packageDir)).toBe("1.0.0");
       expect(exitCode).toBe(1);
     });
@@ -1383,14 +1386,14 @@ describe("a folder whose version is not in the lockfile as the target", () => {
 
       const prepare = await runBun(packageDir, "patch", "node_modules/bar");
       expect(prepare.stderr).toEndWith(
-        "error: cannot patch node_modules/bar: more than one package named bar has a git, tarball or folder resolution. Run bun patch <dependency>@<label> with the dependency name and the label from the lockfile instead.\n",
+        "error: cannot patch node_modules/bar: no npm package bar@0.0.2 is in the lockfile, and the other packages named bar have a git, tarball or folder label. Run bun patch <dependency>@<label> with the dependency name and the label from the lockfile instead.\n",
       );
       expect(prepare.exitCode).toBe(1);
 
       // The commit hint must not name the prepare command. That would overwrite the folder.
       const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bar");
       expect(commit.stderr).toEndWith(
-        "error: cannot patch node_modules/bar: more than one package named bar has a git, tarball or folder resolution. Run bun patch --commit <dependency>@<label> with the dependency name and the label from the lockfile instead.\n",
+        "error: cannot patch node_modules/bar: no npm package bar@0.0.2 is in the lockfile, and the other packages named bar have a git, tarball or folder label. Run bun patch --commit <dependency>@<label> with the dependency name and the label from the lockfile instead.\n",
       );
       expect(commit.exitCode).toBe(1);
     });

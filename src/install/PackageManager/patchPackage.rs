@@ -11,7 +11,7 @@ use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 
 use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
-use crate::dependency::{Dependency, DependencyExt as _};
+use crate::dependency::{Dependency, DependencyExt as _, without_build_tag};
 use crate::isolated_install::FileCopier;
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::tree;
@@ -49,7 +49,8 @@ fn print_resolution_label<'a>(
 #[derive(Clone, Copy)]
 enum FolderLookupError {
     NotInLockfile,
-    Ambiguous,
+    /// The name has git, tarball or folder packages, whose labels are not versions.
+    NeedsLabel,
 }
 
 /// Only an npm label is a version, so a non-npm package matches only as the single package of that name.
@@ -64,29 +65,24 @@ fn package_for_folder(
     let strbuf = lockfile.buffers.string_bytes.as_slice();
     let mut resolution_label = Vec::new();
     let mut has_npm = false;
+    let mut has_other = false;
     for &id in entry.as_slice() {
         let pkg = *lockfile.packages.get(id as usize);
         if pkg.resolution.tag != ResolutionTag::Npm {
+            has_other = true;
             continue;
         }
         has_npm = true;
         let label = print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf);
-        if without_build(label) == without_build(version) {
+        if without_build_tag(label) == without_build_tag(version) {
             return Ok(pkg);
         }
     }
-    if has_npm {
-        return Err(FolderLookupError::NotInLockfile);
+    match (has_npm, has_other, entry.as_slice()) {
+        (false, true, [id]) => Ok(*lockfile.packages.get(*id as usize)),
+        (_, true, _) => Err(FolderLookupError::NeedsLabel),
+        (_, false, _) => Err(FolderLookupError::NotInLockfile),
     }
-    match entry.as_slice() {
-        [id] => Ok(*lockfile.packages.get(*id as usize)),
-        _ => Err(FolderLookupError::Ambiguous),
-    }
-}
-
-/// The npm registry drops build metadata from a version. The package.json in the tarball keeps it.
-fn without_build(version: &[u8]) -> &[u8] {
-    &version[..strings::last_index_of_char(version, b'+').unwrap_or(version.len())]
 }
 
 fn folder_lookup_error(
@@ -103,9 +99,11 @@ fn folder_lookup_error(
             bstr::BStr::new(name),
             bstr::BStr::new(version),
         ),
-        FolderLookupError::Ambiguous => bun_core::pretty_error!(
-            "<r><red>error<r>: cannot patch <b>{}<r>: more than one package named <b>{}<r> has a git, tarball or folder resolution. Run <b>{} \\<dependency\\>@\\<label\\><r> with the dependency name and the label from the lockfile instead.<r>\n",
+        FolderLookupError::NeedsLabel => bun_core::pretty_error!(
+            "<r><red>error<r>: cannot patch <b>{}<r>: no npm package <b>{}@{}<r> is in the lockfile, and the other packages named <b>{}<r> have a git, tarball or folder label. Run <b>{} \\<dependency\\>@\\<label\\><r> with the dependency name and the label from the lockfile instead.<r>\n",
             bstr::BStr::new(folder),
+            bstr::BStr::new(name),
+            bstr::BStr::new(version),
             bstr::BStr::new(name),
             command,
         ),

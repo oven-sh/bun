@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createTestBuilder } from "./test_builder";
@@ -80,6 +80,27 @@ describe("pipeline stage whose reader exits without reading", () => {
     using dir = tempDir("shell-pipe-ls-recursive-head", tree);
     const { stdout, exitCode } = await run(String(dir), "ls -R . | head -n 1");
     expect({ lines: stdout.split("\n").length - 1, exitCode }).toEqual({ lines: 1, exitCode: 0 });
+  });
+
+  // On Windows `cat` is a builtin. It finishes at its first failed chunk, so
+  // the chunks queued behind that one must not complete into the finished
+  // cat. That is a panic, so the pipeline runs in a child process.
+  test.concurrent.if(isWindows)("cat with several chunks queued", async () => {
+    using dir = tempDir("shell-pipe-cat", { "big.txt": Buffer.alloc(1024 * 1024, "a").toString() });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        "const { exitCode } = await Bun.$`cat big.txt | true`.quiet().nothrow(); console.log(exitCode);",
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: "0\n", exitCode: 0, signalCode: null });
   });
 });
 

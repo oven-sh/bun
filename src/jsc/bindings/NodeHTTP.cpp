@@ -79,11 +79,8 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
     return false;
 }
 
-// Connection list scan the way llhttp sets F_CONNECTION_CLOSE and
-// F_CONNECTION_UPGRADE: `lowerToken` must be a whole comma-separated member
-// (surrounding spaces and tabs aside), so "x-upgrade", "upgrade;foo" and
-// "\"upgrade\"" do not count. The same rule as HttpRequest::hasConnectionToken
-// in the uWS parser, so the dispatch bits and the body verdict agree.
+// Whole comma-separated member of the Connection list, like llhttp's
+// F_CONNECTION_* flags and HttpRequest::hasConnectionToken in the uWS parser.
 static bool svConnectionHasToken(std::string_view value, std::string_view lowerToken)
 {
     size_t pos = 0;

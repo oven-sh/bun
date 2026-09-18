@@ -104,11 +104,10 @@ fn folder_lookup_error(
             bstr::BStr::new(version),
         ),
         FolderLookupError::Ambiguous => bun_core::pretty_error!(
-            "<r><red>error<r>: cannot patch <b>{}<r>: more than one package named <b>{}<r> has a git, tarball or folder resolution. Run <b>{} {}@\\<label\\><r> with the label from the lockfile instead.<r>\n",
+            "<r><red>error<r>: cannot patch <b>{}<r>: more than one package named <b>{}<r> has a git, tarball or folder resolution. Run <b>{} \\<dependency\\>@\\<label\\><r> with the dependency name and the label from the lockfile instead.<r>\n",
             bstr::BStr::new(folder),
             bstr::BStr::new(name),
             command,
-            bstr::BStr::new(name),
         ),
     }
     Global::crash();

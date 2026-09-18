@@ -1236,10 +1236,7 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
 });
 
 // ships-no-deps@1.0.0 declares no dependencies, but its tarball ships a copy of no-deps@1.0.0
-// under node_modules/no-deps. No lockfile row points at that copy. `bun patch <path>` used to
-// look the folder up by name only when the lockfile had one package of that name, so it
-// replaced the shipped copy with the root's no-deps@2.0.0. The folder's version is what the
-// lookup compares, so a shipped copy with the same version as a lockfile row still matches.
+// under node_modules/no-deps. No lockfile row points at that copy (#43353).
 describe("a folder whose version is not in the lockfile as the target", () => {
   const registry = new VerdaccioRegistry();
 
@@ -1386,14 +1383,14 @@ describe("a folder whose version is not in the lockfile as the target", () => {
 
       const prepare = await runBun(packageDir, "patch", "node_modules/bar");
       expect(prepare.stderr).toEndWith(
-        "error: cannot patch node_modules/bar: more than one package named bar has a git, tarball or folder resolution. Run bun patch bar@<label> with the label from the lockfile instead.\n",
+        "error: cannot patch node_modules/bar: more than one package named bar has a git, tarball or folder resolution. Run bun patch <dependency>@<label> with the dependency name and the label from the lockfile instead.\n",
       );
       expect(prepare.exitCode).toBe(1);
 
       // The commit hint must not name the prepare command. That would overwrite the folder.
       const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bar");
       expect(commit.stderr).toEndWith(
-        "error: cannot patch node_modules/bar: more than one package named bar has a git, tarball or folder resolution. Run bun patch --commit bar@<label> with the label from the lockfile instead.\n",
+        "error: cannot patch node_modules/bar: more than one package named bar has a git, tarball or folder resolution. Run bun patch --commit <dependency>@<label> with the dependency name and the label from the lockfile instead.\n",
       );
       expect(commit.exitCode).toBe(1);
     });
@@ -1427,7 +1424,6 @@ describe("a folder whose version is not in the lockfile as the target", () => {
       });
     });
 
-    // Passes without the fix. It fails if the version check is too strict.
     test.concurrent("bun patch <path> still patches the copy that bun installed", async () => {
       const { packageDir } = await installedProject(linker, { "ships-no-deps": "1.0.0", "no-deps": "2.0.0" });
 

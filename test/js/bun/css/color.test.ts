@@ -347,6 +347,64 @@ describe("lab()/oklab() sRGB fallback for boundary colors (#33331)", () => {
   });
 });
 
+describe("color() predefined color spaces", () => {
+  const spaces: [space: string, channels: string, printed?: string][] = [
+    ["srgb", "b g r"],
+    ["srgb-linear", "b g r"],
+    ["display-p3", "b g r"],
+    ["a98-rgb", "b g r"],
+    ["prophoto-rgb", "b g r"],
+    ["rec2020", "b g r"],
+    ["xyz-d50", "z y x"],
+    ["xyz-d65", "z y x", "xyz"],
+    ["xyz", "z y x"],
+  ];
+
+  test.each(spaces)("color(%s ...) parses", (space, channels, printed = space) => {
+    expect(color(`color(${space.toUpperCase()} 0 1 0 / 50%)`, "css")).toBe(`color(${printed} 0 1 0 / .5)`);
+    expect(color(`color(from color(${space} .5 .25 .125) ${space} ${channels})`, "css")).toBe(
+      `color(${printed} .125 .25 .5)`,
+    );
+  });
+
+  test("an unknown color space is not a color", () => {
+    // a99-rgb is the misspelling the parser used to accept in place of a98-rgb.
+    expect(color("color(a99-rgb 1 0 0)", "css")).toBeNull();
+    expect(color("color(a98rgb 1 0 0)", "css")).toBeNull();
+  });
+
+  test("a98-rgb converts to sRGB", () => {
+    expect(color("rgb(from color(a98-rgb .5 .25 .125) r g b)", "hex")).toBe("#923e17");
+    expect(color("color-mix(in srgb, color(a98-rgb .5 .25 .125), white)", "hex")).toBe("#c89e8b");
+  });
+
+  test("a98-rgb is a relative color target", () => {
+    expect(color("color(from #c86432 a98-rgb r g b)", "css")).toBe("color(a98-rgb .695066 .391898 .220089)");
+  });
+
+  test("a98-rgb channels accept percentages", () => {
+    expect(color("color(A98-RGB 100% 50% 0%)", "css")).toBe("color(a98-rgb 1 .5 0)");
+  });
+
+  test("srgb-linear relative colors can reference r", () => {
+    expect(color("color(from red srgb-linear r g b)", "css")).toBe("color(srgb-linear 1 0 0)");
+    expect(color("color(from red srgb-linear g g r)", "css")).toBe("color(srgb-linear 0 0 1)");
+    expect(color("color(from #808080 srgb-linear r g b / r)", "css")).toBe(
+      "color(srgb-linear .215861 .215861 .215861 / .215861)",
+    );
+  });
+
+  test("color-mix(in xyz-d50) stays in xyz-d50", () => {
+    expect(color("color-mix(in xyz-d50, color(xyz-d50 .1 .2 .3), color(xyz-d50 .3 .2 .1))", "css")).toBe(
+      "color(xyz-d50 .2 .2 .2)",
+    );
+    expect(color("color-mix(in xyz-d50, color(xyz-d50 none .2 .3), color(xyz-d50 .3 .2 .1))", "css")).toBe(
+      "color(xyz-d50 .3 .2 .2)",
+    );
+    expect(color("color-mix(in xyz, color(xyz .1 .2 .3), color(xyz .3 .2 .1))", "css")).toBe("color(xyz .2 .2 .2)");
+  });
+});
+
 // 2^24 color() calls take minutes on debug builds (past the per-test timeout) and dominate
 // the ASAN lane, so those sweep the ansi256 equivalence classes (~13k deterministic inputs):
 // each single channel, the grey diagonal, the sub-8 cube, and a coarse 17-step cube.
@@ -756,6 +814,24 @@ describe("conversions between color spaces", () => {
     const g = linear(0.5);
     const b = linear(0.002);
     const out = same("xyz", "color(display-p3 1 0.5 0.002)");
+    expect(out).toStartWith("color(xyz ");
+    expectChannels(
+      out,
+      [0, 1, 2].map(i => red[i] + g * green[i] + b * blue[i]),
+      4,
+    );
+  });
+
+  test("a98-rgb to xyz applies the 563/256 gamma before the matrix", () => {
+    // XYZ of the a98-rgb primaries, i.e. the columns of the matrix in
+    // https://www.w3.org/TR/css-color-4/#color-conversion-code. a98-rgb uses a
+    // pure power curve instead of the sRGB piecewise transfer function.
+    const red = [0.576669, 0.297345, 0.027031];
+    const green = [0.185558, 0.627364, 0.070689];
+    const blue = [0.188229, 0.075291, 0.991338];
+    const g = 0.5 ** (563 / 256);
+    const b = 0.002 ** (563 / 256);
+    const out = same("xyz", "color(a98-rgb 1 0.5 0.002)");
     expect(out).toStartWith("color(xyz ");
     expectChannels(
       out,

@@ -57,8 +57,7 @@ extern "system" fn windows_ctrl_handler(ctrl: bun_sys::windows::DWORD) -> bun_sy
 #[cfg(unix)]
 const SIGNALS: [i32; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
-/// Bit `i` is set when `SIGNALS[i]` was hooked. An inherited `SIG_IGN`
-/// (`nohup`) is left alone, since the children inherit it too.
+/// Bit `i` is set when `SIGNALS[i]` was hooked.
 #[cfg(unix)]
 static HOOKED: AtomicU8 = AtomicU8::new(0);
 
@@ -79,7 +78,10 @@ pub(crate) fn install(loop_: *mut bun_uws::Loop) {
             for (i, sig) in SIGNALS.into_iter().enumerate() {
                 let mut previous: libc::sigaction = bun_core::ffi::zeroed();
                 libc::sigaction(sig, core::ptr::null(), &raw mut previous);
-                if previous.sa_sigaction != libc::SIG_IGN {
+                // An inherited SIG_IGN stays for SIGTERM and SIGHUP (`nohup`).
+                // SIGINT is always hooked: a shell without job control starts
+                // every `&` job with it ignored, and `kill -INT $!` must work.
+                if sig == libc::SIGINT || previous.sa_sigaction != libc::SIG_IGN {
                     libc::sigaction(sig, &raw const action, core::ptr::null_mut());
                     hooked |= 1 << i;
                 }

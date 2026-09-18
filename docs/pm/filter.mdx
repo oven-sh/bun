@@ -175,4 +175,4 @@ When `bun run --filter`, `--parallel`, or `--sequential` receives `SIGINT`, `SIG
 
 Bun waits for the scripts without a time limit. A script that ignores the signal keeps the run alive. A second signal ends Bun at once and leaves that script running.
 
-A signal that Bun inherits as ignored stays ignored. For example, `nohup bun run --parallel build lint` survives a `SIGHUP`.
+When a signal reaches the scripts directly as well, each script receives it twice. A terminal `Ctrl+C` and a supervisor that signals the whole process group both do that.

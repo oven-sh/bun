@@ -1115,6 +1115,7 @@ describe.skipIf(!isWindows).each([
 
 // #42962: the console Ctrl handler runs on its own thread. With a quiet child
 // nothing else wakes the parent's uv_run, so the handler must wake the loop.
+// The leaf ignores Ctrl+C, so only the runner's teardown can end it.
 //
 // The helper allocates a fresh console, spawns the parent on it, and sends a
 // real CTRL_C_EVENT there once the leaf is up. It reports through a file:
@@ -1129,6 +1130,7 @@ describe.skipIf(!isWindows).each([
       using dir = tempDir("filter-win-ctrlc", {
         "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
         "packages/app/server.js": `
+          process.on("SIGINT", () => {});
           require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
           setInterval(() => {}, 1000);
         `,
@@ -1152,6 +1154,9 @@ describe.skipIf(!isWindows).each([
           try {
             k32.FreeConsole();
             if (!k32.AllocConsole()) throw new Error("AllocConsole failed");
+            // A CI harness can start the test with Ctrl+C disabled. Children
+            // inherit that attribute, so clear it before the spawn.
+            k32.SetConsoleCtrlHandler(null, 0);
             parent = Bun.spawn({
               cmd: [process.execPath, ...JSON.parse(process.env.PARENT_ARGV)],
               cwd: process.env.PARENT_CWD,
@@ -1164,7 +1169,7 @@ describe.skipIf(!isWindows).each([
             // ignore attribute is inherited by children.
             process.on("SIGINT", () => {});
             k32.SetConsoleCtrlHandler(null, 1);
-            const deadline = Date.now() + 15000;
+            const deadline = Date.now() + 10000;
             while (leafPid === 0 && Date.now() < deadline) {
               try { leafPid = Number(fs.readFileSync(process.env.PIDFILE, "utf8").trim()) || 0; } catch {}
               if (leafPid === 0) await sleep(25);
@@ -1174,10 +1179,10 @@ describe.skipIf(!isWindows).each([
             let timer;
             result.parentExited = await Promise.race([
               parent.exited.then(() => true),
-              new Promise(resolve => { timer = setTimeout(() => resolve(false), 10000); }),
+              new Promise(resolve => { timer = setTimeout(() => resolve(false), 5000); }),
             ]);
             clearTimeout(timer);
-            const leafDeadline = Date.now() + 10000;
+            const leafDeadline = Date.now() + 5000;
             while (isAlive(leafPid) && Date.now() < leafDeadline) await sleep(25);
             result.leafDead = !isAlive(leafPid);
           } catch (e) {
@@ -1211,7 +1216,9 @@ describe.skipIf(!isWindows).each([
       expect(exitCode).toBe(0);
       expect(await Bun.file(env.RESULTFILE!).json()).toEqual({ parentExited: true, leafDead: true, error: "" });
     },
-    60000,
+    // When the run does not end, the helper needs up to 20 s to report and to
+    // kill the runner and the leaf it started.
+    30000,
   );
 });
 

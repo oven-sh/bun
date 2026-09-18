@@ -318,7 +318,8 @@ impl Cmd {
         }
     }
 
-    /// Reports the overflow like a command whose stdout is a full device.
+    /// The message is the one a command prints for `ENOSPC` on its stdout. The
+    /// command itself is not stopped: it ran to its end before this.
     fn write_redirect_overflow_error(interp: &Interpreter, this: NodeId) -> Option<Yield> {
         let mut message: Vec<u8> = interp
             .as_cmd(this)

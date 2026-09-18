@@ -491,6 +491,8 @@ SQLite supports signed 64-bit integers, but JavaScript only supports signed 53-b
 
 `bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set the `safeIntegers` option to `true` when creating a `Database` instance. The option also validates that `bigint` values passed to `bun:sqlite` do not exceed 64 bits.
 
+`bun:sqlite` binds a `number` parameter as `INTEGER` when the value is a safe integer (`Number.isSafeInteger()`). It binds every other `number`, and `-0`, as a floating-point `REAL`. SQLite stores `NaN` as `NULL`.
+
 ### `safeIntegers: true`
 
 When `safeIntegers` is `true`, `bun:sqlite` returns integers as `bigint` types:

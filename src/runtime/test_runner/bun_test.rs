@@ -966,7 +966,8 @@ impl BunTest {
         Ok(())
     }
 
-    fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
+    /// Arms `self.timer` for `min_timeout` unless a sooner deadline is armed; a fire in `Phase::Done` only wakes the loop.
+    pub(crate) fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
         let _g = group_begin!();
         let _ = global_this;
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
@@ -1745,6 +1746,15 @@ pub struct DescribeScope {
 }
 
 impl DescribeScope {
+    /// True iff no test(), describe() or lifecycle hook was registered here.
+    pub(crate) fn is_bare(&self) -> bool {
+        self.entries.is_empty()
+            && self.before_all.is_empty()
+            && self.before_each.is_empty()
+            && self.after_each.is_empty()
+            && self.after_all.is_empty()
+    }
+
     pub(crate) fn create(base: BaseScope) -> Box<DescribeScope> {
         Box::new(DescribeScope {
             base,

@@ -28,7 +28,7 @@ static Local<ResultType> newTypedArray(Local<ArrayBuffer> array_buffer, size_t b
     auto* view = JSCType::create(globalObject, structure, WTF::move(backing), byte_offset, length);
     RETURN_IF_EXCEPTION(scope, Local<ResultType>());
 
-    HandleScope* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
     return handleScope->createLocal<ResultType>(vm, view);
 }
 

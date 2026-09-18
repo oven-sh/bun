@@ -32,7 +32,7 @@ public:
         return dynamicDowncast<Zig::GlobalObject>(localToCell());
     }
 
-    HandleScope* currentHandleScope() const
+    shim::HandleScopeBuffer* currentHandleScope() const
     {
         return globalObject()->V8GlobalInternals()->currentHandleScope();
     };

@@ -39,15 +39,26 @@ describe("minimum-release-age", () => {
     "odd-time-year-number": 2020,
     "odd-time-array": [daysAgo(30)],
   };
+  // "YYYY-MM-DD HH:mm:ss +00:00". JavaScriptCore's own date parsers reject it. The V8 parser behind `Date.parse` reads it.
+  const spaceAndOffset = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace("T", " ") + " +00:00";
   // Dates that `Date.parse` reads, for a version published just now: too recent.
   const recentLegacyPublishTimes: Record<string, unknown> = {
     "odd-time-rfc2822": new Date(currentTime).toUTCString(),
     "odd-time-date-to-string": new Date(currentTime).toString(),
+    "odd-time-space-and-offset": spaceAndOffset(currentTime),
   };
   // The same forms for a version published 30 days ago: old enough.
   const oldLegacyPublishTimes: Record<string, unknown> = {
     "odd-time-old-rfc2822": new Date(currentTime - 30 * DAY_MS).toUTCString(),
     "odd-time-old-date-to-string": new Date(currentTime - 30 * DAY_MS).toString(),
+    "odd-time-old-space-and-offset": spaceAndOffset(currentTime - 30 * DAY_MS),
+  };
+  // No time zone, for a version published 4 days 23 hours ago. bun reads the value as UTC on every
+  // machine. `Date.parse` reads it in the zone of the host.
+  const almostFiveDaysAgo = new Date(currentTime - 5 * DAY_MS + 60 * 60 * MS_PER_SECOND);
+  const zonelessPublishTimes: Record<string, unknown> = {
+    "odd-time-zoneless-rfc2822": almostFiveDaysAgo.toUTCString().replace(" GMT", ""),
+    "odd-time-zoneless-iso": almostFiveDaysAgo.toISOString().slice(0, 19),
   };
   // Falsy: no publish time on record. Passes like a missing entry.
   const unsetPublishTimes: Record<string, unknown> = {
@@ -60,6 +71,7 @@ describe("minimum-release-age", () => {
     ...unreadablePublishTimes,
     ...recentLegacyPublishTimes,
     ...oldLegacyPublishTimes,
+    ...zonelessPublishTimes,
     ...unsetPublishTimes,
     // Only the expired cached manifest tests ask for these, so they can count and change what the registry serves.
     "odd-time-cached-unreadable": "yesterday",
@@ -2356,6 +2368,24 @@ describe("minimum-release-age", () => {
 
         expect(stderr).not.toContain("error:");
         expect(lockfile).toContain(`${name}@2.0.0`);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // The host is in UTC+14. Read as local time, 2.0.0 would be 5 days 13 hours old and pass the gate.
+    test.concurrent.each(Object.keys(zonelessPublishTimes))(
+      "%s: a publish time with no time zone reads as UTC, not in the zone of the host",
+      async name => {
+        const { stderr, exitCode, lockfile } = await install(
+          { [name]: "*" },
+          fiveDayGate,
+          {},
+          { env: { TZ: "Etc/GMT-14" } },
+        );
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@1.0.0`);
+        expect(lockfile).not.toContain(`${name}@2.0.0`);
         expect(exitCode).toBe(0);
       },
     );

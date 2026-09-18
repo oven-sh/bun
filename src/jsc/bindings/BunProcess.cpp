@@ -3902,8 +3902,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionResourceUsage, (JSC::JSGlobalObject * g
         maxRSS = static_cast<size_t>(rusage.ru_maxrss);
     result->putDirectOffset(vm, 2, jsNumber(maxRSS / 1024));
 #elif OS(LINUX)
-    // getPeakRSS is bytes and does not inherit the parent's peak across exec
-    // like ru_maxrss does. It keeps maxRSS in step with bun:jsc memoryUsage().peak.
+    // getPeakRSS is bytes. ru_maxrss (the fallback) is kilobytes on Linux.
     size_t maxRSS = 0;
     if (getPeakRSS(&maxRSS) != 0)
         maxRSS = static_cast<size_t>(rusage.ru_maxrss) * 1024;
@@ -4260,9 +4259,7 @@ extern "C" int getPeakRSS(size_t* peak)
     return 0;
 #else
 #if defined(__linux__)
-    // Not ru_maxrss: exec carries the old image's peak into the new one
-    // (exec_mmap -> setmax_mm_hiwater_rss), so a child of a large parent
-    // would report the parent's peak. VmHWM starts at zero after exec.
+    // ru_maxrss survives exec (the kernel copies it in exec_mmap). VmHWM does not.
     if (readLinuxVmHWM(peak))
         return 0;
 #endif

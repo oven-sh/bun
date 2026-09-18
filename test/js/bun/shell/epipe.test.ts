@@ -156,7 +156,7 @@ describe.if(isPosix)("command output after the stdout reader went away", () => {
 // The builtin cat queues one chunk per read. It must not finish while one of
 // them is still queued: the node is reused by the next command, which then
 // receives the completions of those chunks.
-describe.if(isPosix)("cat whose input ends while its output is still queued", () => {
+describe("cat whose input ends while its output is still queued", () => {
   const size = 1024 * 1024;
 
   function spawnCat(dir: string) {
@@ -190,7 +190,7 @@ describe.if(isPosix)("cat whose input ends while its output is still queued", ()
     return received;
   }
 
-  test.concurrent("every byte is written before the next command runs", async () => {
+  test.concurrent.if(isPosix)("every byte is written before the next command runs", async () => {
     using dir = tempDir("shell-cat-fifo-read", {});
     expect(await Bun.spawn(["mkfifo", join(String(dir), "fifo")]).exited).toBe(0);
     await using proc = spawnCat(String(dir));
@@ -211,7 +211,7 @@ describe.if(isPosix)("cat whose input ends while its output is still queued", ()
     }).toEqual({ bytes: "first\n".length + size + "tail\n".length, intact: true, stderr: "settled\n", exitCode: 0 });
   });
 
-  test.concurrent("the queued chunks fail when the stdout reader goes away", async () => {
+  test.concurrent.if(isPosix)("the queued chunks fail when the stdout reader goes away", async () => {
     using dir = tempDir("shell-cat-fifo-close", {});
     expect(await Bun.spawn(["mkfifo", join(String(dir), "fifo")]).exited).toBe(0);
     await using proc = spawnCat(String(dir));
@@ -221,6 +221,34 @@ describe.if(isPosix)("cat whose input ends while its output is still queued", ()
     await reader.cancel();
     expect({ stderr: await stderr, exitCode: await proc.exited, signalCode: proc.signalCode }).toEqual({
       stderr: "settled\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // On Windows cat is a builtin, and a file this large is read in several chunks. A completion
+  // for a chunk that cat left behind arrives after its pipeline settled, so the pipeline runs again.
+  test.concurrent.if(isWindows)("every byte of a file reaches the next stage", async () => {
+    using dir = tempDir("shell-cat-file", { "big.txt": Buffer.alloc(size, "a").toString() });
+    const script = `
+      const sizes = [];
+      for (let run = 0; run < 5; run++) {
+        await Bun.$\`cat big.txt | cat > out.txt\`.nothrow();
+        sizes.push(Bun.file("out.txt").size);
+      }
+      console.log(JSON.stringify(sizes));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify(Array(5).fill(size)) + "\n",
       exitCode: 0,
       signalCode: null,
     });

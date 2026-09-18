@@ -235,6 +235,7 @@ complete -c bun -n "__fish_seen_subcommand_from update" -s "P" -l "prod" -d "Onl
 complete -c bun -n "__fish_seen_subcommand_from update" -s "d" -l "dev" -d "Only update devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -s "D" -l "development" -d "Only update devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -l "no-optional" -d "Don't update optionalDependencies" -f
+complete -c bun -n "__fish_seen_subcommand_from update" -l "depth" -d "Only 0 is accepted: update direct dependencies and keep transitive dependencies locked" -x -a "0"
 complete -c bun -n "__fish_seen_subcommand_from update" -s "E" -l "exact" -d "Write exact versions to package.json instead of ^ or ~ ranges" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -s "L" -l "latest" -d "Update packages to their latest versions, ignoring the ranges in package.json" -f
 complete -c bun -n "__fish_seen_subcommand_from update" -s "i" -l "interactive" -d "Show an interactive list of outdated packages to select for update" -f

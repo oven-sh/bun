@@ -697,3 +697,79 @@ test("calls second", () => {
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/43275
+// A Worker has a VM of its own. Code it runs must count toward the report.
+test("coverage counts code that runs in a Worker", async () => {
+  using dir = tempDir("cov-worker", {
+    "lib.ts": `export function covered(n: number): number {
+  if (n > 5) {
+    return n * 2;
+  }
+  return n + 1;
+}
+`,
+    "worker.ts": `import { covered } from "./lib.ts";
+postMessage(covered(10));
+`,
+    "worker-only.ts": `export function onlyInWorker() {
+  return "worker";
+}
+`,
+    "worker2.ts": `import { onlyInWorker } from "./worker-only.ts";
+postMessage(onlyInWorker());
+`,
+    "alive.ts": `export function keptAlive() {
+  return "alive";
+}
+`,
+    "worker3.ts": `import { keptAlive } from "./alive.ts";
+setInterval(keptAlive, 1000);
+postMessage(keptAlive());
+`,
+    "worker.test.ts": `import { test, expect } from "bun:test";
+import { covered } from "./lib.ts";
+
+async function runWorker(file: string, terminate = true) {
+  const worker = new Worker(new URL(file, import.meta.url).href);
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  worker.onmessage = e => resolve(e.data);
+  worker.onerror = reject;
+  const data = await promise;
+  if (terminate) worker.terminate();
+  return data;
+}
+
+test("the host runs one branch, a Worker runs the other", async () => {
+  expect(covered(1)).toBe(2);
+  expect(await runWorker("./worker.ts")).toBe(20);
+});
+
+test("only a Worker imports the module", async () => {
+  expect(await runWorker("./worker2.ts")).toBe("worker");
+});
+
+test("a Worker that is still running when the run ends", async () => {
+  expect(await runWorker("./worker3.ts", false)).toBe("alive");
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "./worker.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("3 pass");
+  for (const file of ["lib", "worker", "worker-only", "worker2", "alive", "worker3"]) {
+    expect(stderr).toMatch(new RegExp(` ${file}\\.ts +\\| +100\\.00 +\\| +100\\.00 +\\| +\n`));
+  }
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:lib.ts"));
+  expect(record).toMatch(/FNF:1\nFNH:1\n/);
+  expect(record).toMatch(/LF:5\nLH:5\n/);
+  expect(exitCode).toBe(0);
+});

@@ -25,7 +25,7 @@ bun_output::declare_scope!(bun_test, hidden);
 
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov, text,
+        ByteRangeMapping, Fraction, MergedReport, Report as CodeCoverageReport, lcov, text,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -1492,25 +1492,87 @@ impl CommandLineReporter {
         }
     }
 
+    /// This process's coverage: the main thread's reports, each folded with
+    /// the reports of every Worker thread that loaded the same file (see
+    /// [`collect_worker_coverage`]). Sorted by path.
+    ///
+    /// A Worker still running is stopped first: the run is over, and its
+    /// coverage exists only once its VM shuts down.
+    pub(crate) fn coverage_reports(
+        vm: &mut VirtualMachine,
+        opts: &CodeCoverageOptions,
+    ) -> Vec<CodeCoverageReport<'static>> {
+        jsc::web_worker::terminate_and_join_child_workers(vm);
+        let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
+        Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
+        let from_workers = core::mem::take(&mut *WORKER_COVERAGE_REPORTS.lock());
+        if from_workers.is_empty() {
+            return reports;
+        }
+
+        let mut by_path: bun_collections::StringArrayHashMap<coverage::MergedReport> =
+            Default::default();
+        for report in reports.iter().chain(&from_workers) {
+            let merged = bun_core::handle_oom(by_path.get_or_put(&report.source_url));
+            bun_core::handle_oom(merged.value_ptr.add(report));
+        }
+        let mut reports: Vec<CodeCoverageReport<'static>> = by_path
+            .values_mut()
+            .iter_mut()
+            .map(|m| bun_core::handle_oom(core::mem::take(m).finish()))
+            .collect();
+        reports.sort_unstable_by(|a, b| a.source_url.cmp(&b.source_url));
+        reports
+    }
+
     pub(crate) fn generate_code_coverage(
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
     ) {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
-        if ByteRangeMapping::map().is_none_or(|m| {
-            // SAFETY: see `for_each_coverage_report`.
-            unsafe { m.as_ref() }.is_empty()
-        }) {
+        let reports = Self::coverage_reports(vm, opts);
+        if reports.is_empty()
+            && ByteRangeMapping::map().is_none_or(|m| {
+                // SAFETY: see `for_each_coverage_report`.
+                unsafe { m.as_ref() }.is_empty()
+            })
+        {
             return;
         }
-        let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
-        Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
         if let Err(err) = print_coverage_reports(opts, &reports) {
             Output::err(err, "Failed to write lcov.info", ());
             Global::exit(1);
         }
     }
+}
+
+/// Coverage of every Worker VM that has shut down, one `Report` per file the
+/// worker loaded. Filled by [`collect_worker_coverage`] on the worker's
+/// thread, drained by [`CommandLineReporter::coverage_reports`].
+static WORKER_COVERAGE_REPORTS: bun_threading::Guarded<Vec<CodeCoverageReport<'static>>> =
+    bun_threading::Guarded::new(Vec::new());
+
+/// `RuntimeHooks::collect_worker_coverage`: a Worker VM is about to be
+/// destroyed. Generate its reports now, while its control flow profiler and
+/// its thread-local `ByteRangeMapping`s still exist.
+///
+/// # Safety
+/// `vm` is the live worker VM on its own thread; its JSC VM is alive.
+pub(crate) unsafe fn collect_worker_coverage(vm: *mut VirtualMachine) {
+    let Some(runner) = jest::Jest::runner() else {
+        return;
+    };
+    let opts = &runner.test_options.coverage;
+    if !opts.enabled {
+        return;
+    }
+    // SAFETY: fn contract.
+    let vm = unsafe { &mut *vm };
+    let mut reports = WORKER_COVERAGE_REPORTS.lock();
+    CommandLineReporter::for_each_coverage_report(vm, opts, |report| {
+        reports.push(report.into_owned());
+    });
 }
 
 /// Write the `--coverage` text table to stderr and/or `lcov.info` for

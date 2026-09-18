@@ -129,6 +129,9 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
+    /// The parent runs under `bun test --coverage`: the worker VM records
+    /// coverage too, and hands it to the test runner when it shuts down.
+    code_coverage: bool,
 }
 
 enum EntryOutcome {
@@ -193,6 +196,19 @@ pub fn join_child_workers(parent: &mut VirtualMachine) {
         // (the proxy's ref); this is that release.
         let messaging_proxy = unsafe { (*child).messaging_proxy };
         WebWorker__parentContextWillDestroy(messaging_proxy);
+    }
+}
+
+/// `bun test --coverage` is about to report: stop every child of the calling
+/// thread and wait for each to finish, so that each child's `shutdown()` has
+/// handed its coverage to the test runner. The child's
+/// `workerGlobalScopeDestroyed` task still runs on this thread's loop later
+/// and finds no thread left to join. `worker.terminate()` asks the same of
+/// a child, so a child a test already stopped is only waited for here.
+pub fn terminate_and_join_child_workers(parent: &VirtualMachine) {
+    for &child in &parent.child_workers {
+        WebWorker::request_termination(child);
+        WebWorker::join(child);
     }
 }
 
@@ -389,6 +405,7 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            code_coverage: parent_ref.transpiler.options.code_coverage,
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -664,6 +681,7 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            code_coverage,
         } = init;
 
         // worker-thread only field; no other thread reads `arena`.
@@ -737,6 +755,20 @@ impl WebWorker {
             if let Some(graph) = crate::virtual_machine::standalone_module_graph() {
                 (hooks.apply_standalone_runtime_flags)(b, graph);
             }
+
+            // Same setup as the main VM in `TestCommand` so the worker's
+            // sources keep their lines and JSC records their basic blocks.
+            if code_coverage {
+                b.options.code_coverage = true;
+                b.options.minify_syntax = false;
+                b.options.minify_identifiers = false;
+                b.options.minify_whitespace = false;
+                b.options.dead_code_elimination = false;
+            }
+        }
+        if code_coverage {
+            // SAFETY: `vm` is the live VM just built on this thread.
+            unsafe { (*vm).global().vm().enable_control_flow_profiler() };
         }
 
         // Second checkpoint: initWorker just spent the bulk of startup time;
@@ -1021,6 +1053,14 @@ impl WebWorker {
                 "[{}] shutdown: exit handlers done",
                 self.execution_context_id
             );
+
+            if vm.transpiler.options.code_coverage
+                && let Some(hooks) = runtime_hooks()
+            {
+                // SAFETY: this thread's live VM, JSC VM alive, API lock held
+                // since `thread_main`.
+                unsafe { (hooks.collect_worker_coverage)(core::ptr::from_mut(vm)) };
+            }
 
             // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy ----------
             // SAFETY: this thread's VM; sole owner.

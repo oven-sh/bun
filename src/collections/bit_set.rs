@@ -482,6 +482,11 @@ impl Drop for DynamicBitSetUnmanaged {
     }
 }
 
+// SAFETY: `masks` is either the shared empty sentinel (never written) or a
+// uniquely-owned heap allocation of plain `usize`s; moving the owning struct
+// between threads is as safe as moving a `Box<[usize]>`.
+unsafe impl Send for DynamicBitSetUnmanaged {}
+
 impl DynamicBitSetUnmanaged {
     // There is no `const` empty value (the empty sentinel pointer is computed at
     // runtime); use `Self::default()`.

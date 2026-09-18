@@ -714,13 +714,13 @@ fn worker_flush_aggregates(
 
     if ctx.test_options.coverage.enabled {
         let mut encoded: Vec<u8> = Vec::new();
-        CommandLineReporter::for_each_coverage_report(vm, &ctx.test_options.coverage, |report| {
+        for report in CommandLineReporter::coverage_reports(vm, &ctx.test_options.coverage) {
             encoded.clear();
             code_coverage::wire::encode(&report, &mut encoded);
             wf.begin(frame::Kind::CoverageFile);
             wf.str(&encoded);
             cmds.send(wf.finish());
-        });
+        }
     }
 }
 

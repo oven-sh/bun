@@ -837,31 +837,162 @@ describe("Bun.Archive", () => {
       });
     });
 
-    // Both extractors create a file with the mode of the entry. A zero mode
-    // field gets 0644. `bun install` keeps adding 0o666 (npm's fmode).
-    describe.each([
-      ["without a glob", undefined],
-      ["with a glob", { glob: "**" }],
-    ])("creates a file with the mode of the entry %s", (_, options) => {
-      test.skipIf(isWindows).each([
-        ["0000600", 0o600],
-        ["0000755", 0o755],
-        ["0000444", 0o444],
-        ["0000000", 0o644],
-      ])("mode field %s", async (field, expected) => {
-        const tarball = Buffer.concat([
-          ustarHeader("f", 1, "0", { mode: Buffer.from(field + "\0") }),
-          Buffer.concat([Buffer.from("x"), Buffer.alloc(511)]),
-          Buffer.alloc(1024),
-        ]);
-        using dir = tempDir("archive-entry-mode", {});
-
-        const count = await new Bun.Archive(tarball).extract(String(dir), options);
-
-        expect(count).toBe(1);
-        expect(fs.statSync(join(String(dir), "f")).mode & 0o777).toBe(expected & ~process.umask());
+    // The fixtures below are child processes, because the umask is process-wide.
+    // Each one runs both extractors: the one without `glob` and the one with it.
+    const modeField = (mode: number) => Buffer.from(mode.toString(8).padStart(7, "0") + "\0");
+    const fileWithMode = (name: string, mode: number, data: string) => [
+      ustarHeader(name, data.length, "0", { mode: modeField(mode) }),
+      Buffer.concat([Buffer.from(data), Buffer.alloc(512 - data.length)]),
+    ];
+    type User = { uid: number; gid: number };
+    async function runFixture(dir: string, args: string[], user?: User | null) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts", ...args],
+        env: bunEnv,
+        cwd: dir,
+        ...(user ?? {}),
+        stdout: "pipe",
+        stderr: "pipe",
       });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // Both extractors create a file with the permission bits of the entry, and
+    // the umask applies. `bun install` keeps adding 0o666 (npm's fmode).
+    test.concurrent.skipIf(isWindows)("creates files with the mode of the entry, with and without a glob", async () => {
+      const members = [
+        // mode in the archive, mode on disk under umask 022, under umask 000
+        [0o600, "0600", "0600"],
+        [0o640, "0640", "0640"],
+        [0o644, "0644", "0644"],
+        [0o700, "0700", "0700"],
+        [0o755, "0755", "0755"],
+        [0o666, "0644", "0666"],
+        // A read-only member stays read-only. See the next test.
+        [0o400, "0400", "0400"],
+        [0o444, "0444", "0444"],
+        // setuid, setgid and sticky are dropped.
+        [0o4755, "0755", "0755"],
+        [0o2755, "0755", "0755"],
+        [0o1755, "0755", "0755"],
+        // No permission bits at all: the mode Bun.Archive itself writes.
+        [0, "0644", "0644"],
+      ] as const;
+      const name = (mode: number) => "f" + mode.toString(8).padStart(4, "0");
+      using dir = tempDir("archive-extract-file-modes", {
+        "input.tar": Buffer.concat([
+          ...members.flatMap(([mode]) => fileWithMode(name(mode), mode, "x")),
+          // No directory entry comes first. The extractor without `glob` opens such
+          // a file a second time, after it creates the parent directory.
+          ...fileWithMode("new/dir/f0600", 0o600, "x"),
+          Buffer.alloc(1024),
+        ]),
+        "extract.ts": `
+          import { readdirSync, readFileSync, statSync } from "node:fs";
+          const tarball = readFileSync("input.tar");
+          const modes = (root: string) =>
+            Object.fromEntries(
+              readdirSync(root, { recursive: true })
+                .map(name => [String(name), statSync(root + "/" + name)] as const)
+                .filter(([, stat]) => stat.isFile())
+                .sort(([a], [b]) => (a < b ? -1 : 1))
+                .map(([name, stat]) => [name, (stat.mode & 0o7777).toString(8).padStart(4, "0")]),
+            );
+          const result: Record<string, unknown> = {};
+          for (const umask of ["022", "000"]) {
+            process.umask(parseInt(umask, 8));
+            await new Bun.Archive(tarball).extract("plain-" + umask);
+            await new Bun.Archive(tarball).extract("glob-" + umask, { glob: "**" });
+            result[umask] = { plain: modes("plain-" + umask), glob: modes("glob-" + umask) };
+          }
+          console.log(JSON.stringify(result));
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await runFixture(String(dir), []);
+
+      const expected = (column: 1 | 2) => {
+        const modes = {
+          ...Object.fromEntries(members.map(member => [name(member[0]), member[column]])),
+          "new/dir/f0600": "0600",
+        };
+        return { plain: modes, glob: modes };
+      };
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ "022": expected(1), "000": expected(2) });
+      expect(exitCode).toBe(0);
     });
+
+    // These two tests extract `file.txt` a second time, over the file that the
+    // first extraction created. Argument 1 of the fixture is the umask, argument
+    // 2 the archive. The fixture creates each destination itself, as `mkdir` does:
+    // the umask decides who can write to it.
+    const overwriteFixture = (mode: number) => ({
+      "v1.tar": Buffer.concat([...fileWithMode("file.txt", mode, "v1"), Buffer.alloc(1024)]),
+      "v2.tar": Buffer.concat([...fileWithMode("file.txt", mode, "v2"), Buffer.alloc(1024)]),
+      "extract.ts": `
+        import { mkdirSync, readFileSync, statSync } from "node:fs";
+        process.umask(parseInt(process.argv[2], 8));
+        const tarball = readFileSync(process.argv[3]);
+        const result: Record<string, unknown> = {};
+        for (const [dest, options] of [["plain", undefined], ["glob", { glob: "**" }]] as const) {
+          mkdirSync(dest, { recursive: true });
+          const count = await new Bun.Archive(tarball).extract(dest, options);
+          const stat = statSync(dest + "/file.txt");
+          result[dest] = {
+            count,
+            content: readFileSync(dest + "/file.txt", "utf8"),
+            mode: (stat.mode & 0o777).toString(8),
+            uid: stat.uid,
+          };
+        }
+        console.log(JSON.stringify(result));
+      `,
+    });
+    const giveTo = (user: User, dir: string) => {
+      for (const entry of ["", ...readdirSync(dir)]) fs.chownSync(join(dir, entry), user.uid, user.gid);
+    };
+    const extracted = (content: string, mode: string, uid: number) => {
+      const one = { count: 1, content, mode, uid };
+      return { stdout: JSON.stringify({ plain: one, glob: one }) + "\n", stderr: "", exitCode: 0 };
+    };
+
+    // Permission bits do not bind root, so as root the fixture runs as `nobody`.
+    // Windows makes a file read-only when its mode has no owner write bit, so
+    // there the extractors do not pass the mode of the entry.
+    test.concurrent.skipIf(isRoot && !nobody)(
+      "a second extract() replaces a file the archive marks read-only",
+      async () => {
+        using dir = tempDir("archive-extract-read-only", overwriteFixture(0o444));
+        if (nobody) giveTo(nobody, String(dir));
+        const mode = isWindows ? "666" : "444";
+        const uid = nobody?.uid ?? process.getuid?.() ?? 0;
+
+        expect(await runFixture(String(dir), ["022", "v1.tar"], nobody)).toEqual(extracted("v1", mode, uid));
+        expect(await runFixture(String(dir), ["022", "v2.tar"], nobody)).toEqual(extracted("v2", mode, uid));
+      },
+    );
+
+    // The second user cannot write to the file of the first user, but can remove
+    // it from a directory that the group can write. GNU tar does the same.
+    test.concurrent.skipIf(!nobody)(
+      "a second user of the group replaces a file in a directory the group can write",
+      async () => {
+        using dir = tempDir("archive-extract-shared-directory", overwriteFixture(0o644));
+        const firstUser = nobody!;
+        const secondUser = { uid: firstUser.uid - 1, gid: firstUser.gid };
+        giveTo(firstUser, String(dir));
+        fs.chmodSync(String(dir), 0o770);
+
+        expect(await runFixture(String(dir), ["002", "v1.tar"], firstUser)).toEqual(
+          extracted("v1", "644", firstUser.uid),
+        );
+        expect(await runFixture(String(dir), ["002", "v2.tar"], secondUser)).toEqual(
+          extracted("v2", "644", secondUser.uid),
+        );
+      },
+    );
   });
 
   describe("corrupted archives", () => {

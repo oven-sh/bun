@@ -272,9 +272,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use_system_shell: bool,
         shell_path: Option<&[u8]>,
     ) -> crate::Result<()> {
-        let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
-        let shell_bin =
-            Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?;
+        // `--shell=bun` must work on an image that has no system shell.
+        let shell_bin = if use_system_shell {
+            let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
+            Some(Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?)
+        } else {
+            None
+        };
         env.map
             .put(b"npm_lifecycle_event", name)
             .expect("unreachable");
@@ -320,7 +324,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Output::flush();
         }
 
-        if !use_system_shell {
+        let Some(shell_bin) = shell_bin else {
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
             let mini = bun_event_loop::MiniEventLoop::init_global(
@@ -364,7 +368,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Global::exit(code as u32);
             }
             return Ok(());
-        }
+        };
 
         use crate::api::bun_process::{Status as SpawnStatus, sync};
 

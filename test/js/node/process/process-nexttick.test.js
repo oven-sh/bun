@@ -2,7 +2,7 @@
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 const isBun = !!process.versions.bun;
@@ -1138,14 +1138,13 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
     expect(result).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
   });
 
-  // The module is keyed by its real path, and the `node` that `bun run --bun` puts in PATH keeps
-  // the symlink as the main path.
-  it.skipIf(isWindows)("a symlink to a .cjs that a `node` symlink to bun runs, after a preload", async () => {
+  // `bun --bun node` runs bun as `node`, which keeps the symlink as the main path. The module is
+  // keyed by its real path.
+  it("a symlink to a .cjs that bun runs as `node`, after a preload", async () => {
     using dir = tempDir("process-nexttick-entry", { ...preload, "real/bin.cjs": order() });
-    symlinkSync(join(String(dir), "real", "bin.cjs"), join(String(dir), "bin.cjs"));
-    symlinkSync(bunExe(), join(String(dir), "node"));
+    symlinkSync(join(String(dir), "real", "bin.cjs"), join(String(dir), "bin.cjs"), "file");
     await using proc = Bun.spawn({
-      cmd: [join(String(dir), "node"), "-r", "./preload.cjs", "./bin.cjs"],
+      cmd: [bunExe(), "--bun", "node", "-r", "./preload.cjs", "./bin.cjs"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",

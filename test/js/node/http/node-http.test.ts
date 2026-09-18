@@ -374,7 +374,7 @@ describe("node:http", () => {
       expect(errors).toEqual([
         "ERR_UNKNOWN_ENCODING: Unknown encoding: bogus",
         "ERR_UNKNOWN_ENCODING: Unknown encoding: 123",
-        "ERR_UNKNOWN_ENCODING: Unknown encoding: [object Object]",
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: {}",
       ]);
     });
   });

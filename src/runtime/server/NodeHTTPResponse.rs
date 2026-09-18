@@ -1930,10 +1930,17 @@ impl NodeHTTPResponse {
                 encoding = match known {
                     Some(e) => e,
                     None => {
-                        let name = encoding_value.to_bun_string(global_object)?;
+                        let name = if encoding_value.is_string() {
+                            encoding_value.to_bun_string(global_object)?
+                        } else {
+                            JSGlobalObject::inspect_for_error_message(
+                                global_object,
+                                encoding_value,
+                            )?
+                        };
                         return Err(global_object
                             .err(
-                                bun_jsc::ErrorCode::UNKNOWN_ENCODING,
+                                ErrorCode::UNKNOWN_ENCODING,
                                 format_args!("Unknown encoding: {}", name),
                             )
                             .throw());

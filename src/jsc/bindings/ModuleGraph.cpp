@@ -272,9 +272,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDisposedModuleGraph, (JSGlobalObject*, Call
 
 // Makes `graph`'s context current; null: the realm's own, out of whatever graph's context is
 // current (a completion of the host's run from an event-loop tick nested under a graph's script,
-// an event the graph's script dispatches to something of the host's). Returns the owner to
-// restore, or the empty value when already there.
-static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
+// an event the graph's script dispatches to something of the host's). Returns what to put back on
+// leaving it (an empty owner: already there, nothing to put back): the owner, and the async
+// context with it, so that what the entered script leaves there with
+// AsyncLocalStorage.enterWith() ends with its context instead of reaching the caller.
+static Bun::PreviousModuleGraphContext makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
 {
     auto* asyncContextData = globalObject->m_asyncContextData.get();
     JSValue previous = asyncContextData->getInternalField(1);
@@ -282,7 +284,14 @@ static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph
     if (previous == owner)
         return {};
     asyncContextData->putInternalField(globalObject->vm(), 1, owner);
-    return previous;
+    return { JSValue::encode(previous), JSValue::encode(asyncContextData->getInternalField(0)) };
+}
+
+static void leaveContext(Zig::GlobalObject* globalObject, Bun::PreviousModuleGraphContext previous)
+{
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    asyncContextData->putInternalField(globalObject->vm(), 0, JSValue::decode(previous.asyncContext));
+    asyncContextData->putInternalField(globalObject->vm(), 1, JSValue::decode(previous.owner));
 }
 
 // VirtualMachine::entered_context: makes `context` the one native code entered (0: none) and
@@ -310,7 +319,7 @@ ModuleGraphContextScope::ModuleGraphContextScope(Zig::GlobalObject* globalObject
 {
     if (graph)
         m_previous = makeContextCurrent(globalObject, graph);
-    if (m_previous)
+    if (m_previous.owner)
         m_globalObject = globalObject;
 }
 
@@ -321,39 +330,39 @@ ModuleGraphContextScope::ModuleGraphContextScope(WebCore::ScriptExecutionContext
         m_previous = makeContextCurrent(globalObject, graph);
     else if (!context.isForModuleGraph() && globalObject)
         m_previous = makeContextCurrent(globalObject, nullptr);
-    if (m_previous)
+    if (m_previous.owner)
         m_globalObject = globalObject;
 }
 
 ModuleGraphContextScope::~ModuleGraphContextScope()
 {
     if (m_globalObject)
-        m_globalObject->m_asyncContextData->putInternalField(m_globalObject->vm(), 1, m_previous);
+        leaveContext(m_globalObject, m_previous);
 }
 
 // VirtualMachine::enter_context: native code about to run a completion of something a graph's script
-// started. Returns the owner to restore.
+// started. Returns what to put back.
 // `gone`: the graph was collected (its context is about to stop). Empty: nothing to do.
 // `entered` is the realm whose owner was changed, which is where it is restored: a graph
 // outlives the realm `bun test --isolate` retired, and the VM's global is the next file's by then.
-extern "C" EncodedJSValue Bun__ModuleGraph__enterContext(WebCore::ScriptExecutionContext* context, bool* gone, JSGlobalObject** entered)
+extern "C" Bun::PreviousModuleGraphContext Bun__ModuleGraph__enterContext(WebCore::ScriptExecutionContext* context, bool* gone, JSGlobalObject** entered)
 {
     auto* graph = dynamicDowncast<JSModuleGraph>(context->moduleGraph());
     *gone = !graph;
     if (!graph)
-        return JSValue::encode(JSValue());
+        return {};
     *entered = context->jsGlobalObject();
-    return JSValue::encode(makeContextCurrent(uncheckedDowncast<Zig::GlobalObject>(*entered), graph));
+    return makeContextCurrent(uncheckedDowncast<Zig::GlobalObject>(*entered), graph);
 }
 
-extern "C" EncodedJSValue Bun__ModuleGraph__enterRootContext(JSGlobalObject* lexicalGlobalObject)
+extern "C" Bun::PreviousModuleGraphContext Bun__ModuleGraph__enterRootContext(JSGlobalObject* lexicalGlobalObject)
 {
-    return JSValue::encode(makeContextCurrent(defaultGlobalObject(lexicalGlobalObject), nullptr));
+    return makeContextCurrent(defaultGlobalObject(lexicalGlobalObject), nullptr);
 }
 
-extern "C" void Bun__ModuleGraph__leaveContext(JSGlobalObject* lexicalGlobalObject, EncodedJSValue previous)
+extern "C" void Bun__ModuleGraph__leaveContext(JSGlobalObject* lexicalGlobalObject, Bun::PreviousModuleGraphContext previous)
 {
-    defaultGlobalObject(lexicalGlobalObject)->m_asyncContextData->putInternalField(lexicalGlobalObject->vm(), 1, JSValue::decode(previous));
+    leaveContext(defaultGlobalObject(lexicalGlobalObject), previous);
 }
 
 bool shouldDropCallbackOfStoppedModuleGraph(JSValue capturedContext)

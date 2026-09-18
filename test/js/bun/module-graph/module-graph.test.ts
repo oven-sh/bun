@@ -2202,6 +2202,29 @@ describe("Bun.ModuleGraph — nested graphs, stack traces, misc host integration
     const i = await ModuleGraph().import(join(dir, "intl.mjs"));
     expect([i.fmt, i.url, i.enc, i.b64, i.perf]).toEqual(["1,234.5", "http://h/x", "ok", "aGk=", "number"]);
   });
+  test("what a graph's script leaves with AsyncLocalStorage.enterWith() ends with run()", async () => {
+    expect(
+      await runBun([
+        "-e",
+        `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const als = new AsyncLocalStorage();
+        const graph = new Bun.ModuleGraph();
+        const seen = {};
+        graph.run(() => { als.enterWith("the graph's"); seen.inside = als.getStore(); });
+        seen.after = String(als.getStore());
+        als.run("the host's", () => {
+          graph.run(() => als.enterWith("the graph's"));
+          seen.afterUnderAHostStore = als.getStore();
+        });
+        console.log(JSON.stringify(seen));
+      `,
+      ]),
+    ).toMatchObject({
+      stdout: `{"inside":"the graph's","after":"undefined","afterUnderAHostStore":"the host's"}`,
+      exitCode: 0,
+    });
+  });
   test("a host Agent's pooled socket does not keep the AsyncLocalStorage store of the graph request that opened it", async () => {
     expect(
       await runBun([

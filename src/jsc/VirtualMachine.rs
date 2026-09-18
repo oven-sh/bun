@@ -427,15 +427,19 @@ unsafe extern "C" {
     /// The identifier of the global's `WebCore::ScriptExecutionContext`.
     safe fn Zig__GlobalObject__contextIdentifier(global: &JSGlobalObject) -> u32;
     /// ModuleGraph.cpp: make the graph of this `WebCore::ScriptExecutionContext` current;
-    /// returns the graph (or undefined) to go back to.
-    /// (Empty: there was nothing to do.)
+    /// returns what to put back on leaving it.
     fn Bun__ModuleGraph__enterContext(
         dom_context: *mut c_void,
         gone: &mut bool,
         entered: &mut *const JSGlobalObject,
-    ) -> JSValue;
-    safe fn Bun__ModuleGraph__enterRootContext(global: &JSGlobalObject) -> JSValue;
-    safe fn Bun__ModuleGraph__leaveContext(global: &JSGlobalObject, previous: JSValue);
+    ) -> PreviousModuleGraphContext;
+    safe fn Bun__ModuleGraph__enterRootContext(
+        global: &JSGlobalObject,
+    ) -> PreviousModuleGraphContext;
+    safe fn Bun__ModuleGraph__leaveContext(
+        global: &JSGlobalObject,
+        previous: PreviousModuleGraphContext,
+    );
     /// ModuleGraph.cpp: deliver an uncaught exception to the `onError` of the `Bun.ModuleGraph` in
     /// whose context it was thrown (the `Exception` carries it; a bare value: the context that is
     /// current), or an unhandled rejection whose owner promiseRejectionTracker decided. true:
@@ -1211,7 +1215,7 @@ impl VirtualMachine {
         let mut scope = ContextScope {
             vm: self,
             context,
-            previous: JSValue::ZERO,
+            previous: PreviousModuleGraphContext::NOTHING,
             entered: self.global.cast_const(),
             previous_entered: self.entered_context.replace(Some(context)),
         };
@@ -7625,14 +7629,31 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
     )))))
 }
 
+/// ModuleGraph.h's `PreviousModuleGraphContext`: what entering a context replaced, to put back on
+/// leaving it. The graph (or undefined) whose context was current, and the async context with
+/// it, so that what the entered script leaves there with `AsyncLocalStorage.enterWith()` ends
+/// with its context. An empty `owner`: entering changed nothing.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PreviousModuleGraphContext {
+    owner: JSValue,
+    async_context: JSValue,
+}
+
+impl PreviousModuleGraphContext {
+    const NOTHING: Self = Self {
+        owner: JSValue::ZERO,
+        async_context: JSValue::ZERO,
+    };
+}
+
 /// See [`VirtualMachine::enter_context`].
 pub struct ContextScope<'a> {
     vm: &'a VirtualMachine,
     /// The context entered: the dead one's, for a context that is gone.
     context: crate::ContextId,
-    /// The graph (or undefined) whose context to go back to; empty when entering changed
-    /// nothing. (On the stack: kept alive by the conservative scan.)
-    previous: JSValue,
+    /// What to put back. (On the stack: kept alive by the conservative scan.)
+    previous: PreviousModuleGraphContext,
     /// The realm `previous` is restored in: the one that was entered. (On the stack, as `previous`.)
     entered: *const JSGlobalObject,
     previous_entered: Option<crate::ContextId>,
@@ -7649,7 +7670,7 @@ impl<'a> ContextScope<'a> {
 impl Drop for ContextScope<'_> {
     fn drop(&mut self) {
         self.vm.entered_context.set(self.previous_entered);
-        if !self.previous.is_empty() {
+        if !self.previous.owner.is_empty() {
             // SAFETY: the realm entered above; it is reachable from this frame until here.
             Bun__ModuleGraph__leaveContext(unsafe { &*self.entered }, self.previous);
         }

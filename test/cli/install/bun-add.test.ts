@@ -2,8 +2,17 @@ import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
-import { join, relative, resolve } from "path";
+import {
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  readdirSorted,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
+import { basename, join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import {
   check_npm_auth_type,
@@ -2517,6 +2526,235 @@ it("should add local tarball dependency", async () => {
   expect(package_json.version).toBe("0.0.3");
   (expect(await file(join(package_dir, "package.json")).text()).toInclude('"baz-0.0.3.tgz"'),
     await access(join(package_dir, "bun.lockb")));
+});
+
+describe("a relative local path typed from a directory below package.json", () => {
+  const posix = (path: string) => path.replaceAll("\\", "/");
+
+  async function run(cwd: string, command: "add" | "install", ...positionals: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), command, ...positionals],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // `add_dir` is the local package; `package_dir/src/nested` is the cwd.
+  async function makeNestedCwd() {
+    await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" }));
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
+    const cwd = join(package_dir, "src", "nested");
+    await mkdir(cwd, { recursive: true });
+    return cwd;
+  }
+
+  // `file:/`, `file://` and `file:///` before a `..` path are spellings of `file:`.
+  it.each([
+    ["add", "", "lib", ""],
+    ["add", "file:", "lib", "file:"],
+    ["add", "file:/", "lib", "file:"],
+    ["add", "file://", "lib", "file:"],
+    ["add", "file:///", "lib", "file:"],
+    ["add", "mylib@", "mylib", ""],
+    ["add", "mylib@file:", "mylib", "file:"],
+    ["install", "", "lib", ""],
+  ] as const)(
+    "bun %s %s<folder> resolves against the cwd and is written relative to package.json",
+    async (command, typedPrefix, key, writtenPrefix) => {
+      const cwd = await makeNestedCwd();
+
+      const { stdout, stderr, exitCode } = await run(cwd, command, typedPrefix + posix(relative(cwd, add_dir)));
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain(`installed ${key}@`);
+      expect(exitCode).toBe(0);
+
+      expect(await file(join(package_dir, "package.json")).json()).toEqual({
+        name: "app",
+        version: "0.0.1",
+        dependencies: { [key]: writtenPrefix + posix(relative(package_dir, add_dir)) },
+      });
+      expect(await file(join(package_dir, "node_modules", key, "package.json")).json()).toEqual({
+        name: "lib",
+        version: "1.0.0",
+      });
+    },
+  );
+
+  it.each([
+    ["../../vendor/baz-0.0.3.tgz", "./vendor/baz-0.0.3.tgz"],
+    ["file:../../vendor/baz-0.0.3.tgz", "file:./vendor/baz-0.0.3.tgz"],
+    ["file://../../vendor/baz-0.0.3.tgz", "file:./vendor/baz-0.0.3.tgz"],
+  ])("the local tarball %s resolves against the cwd and is written as %s", async (typed, written) => {
+    const cwd = await makeNestedCwd();
+    await mkdir(join(package_dir, "vendor"));
+    await copyFile(join(__dirname, "baz-0.0.3.tgz"), join(package_dir, "vendor", "baz-0.0.3.tgz"));
+
+    const { stdout, stderr, exitCode } = await run(cwd, "add", typed);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("installed baz@");
+    expect(exitCode).toBe(0);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "app",
+      version: "0.0.1",
+      dependencies: { baz: written },
+    });
+    expect((await file(join(package_dir, "node_modules", "baz", "package.json")).json()).version).toBe("0.0.3");
+  });
+
+  it.each([
+    ["bar", "lib"],
+    ["lib", "bar"],
+  ] as const)("a registry package and a folder are both added, in the order typed (%s, %s)", async (...order) => {
+    const cwd = await makeNestedCwd();
+    setHandler(dummyRegistry([]));
+    const positionals = { bar: "bar", lib: posix(relative(cwd, add_dir)) };
+    const installed = { bar: "installed bar@0.0.2", lib: `installed lib@${posix(relative(package_dir, add_dir))}` };
+
+    const { stdout, stderr, exitCode } = await run(cwd, "add", ...order.map(name => positionals[name]));
+    expect(stderr).not.toContain("error:");
+    expect(stdout.split(/\r?\n/).filter(line => line.startsWith("installed "))).toEqual(
+      order.map(name => installed[name]),
+    );
+    expect(exitCode).toBe(0);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "app",
+      version: "0.0.1",
+      dependencies: { bar: "^0.0.2", lib: posix(relative(package_dir, add_dir)) },
+    });
+  });
+
+  it("the nearest package.json is a workspace member", async () => {
+    await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" }));
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
+    const member = join(package_dir, "packages", "member");
+    const cwd = join(member, "src");
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(member, "package.json"), JSON.stringify({ name: "member" }));
+
+    const { stderr, exitCode } = await run(cwd, "add", posix(relative(cwd, add_dir)));
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await file(join(member, "package.json")).json()).toEqual({
+      name: "member",
+      dependencies: { lib: posix(relative(member, add_dir)) },
+    });
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "root", workspaces: ["packages/*"] });
+  });
+
+  // From `package_dir/src`, `../<name>` is `package_dir/<name>`. From `package_dir` it is `add_dir`, another package.
+  it("a path that names another package relative to package.json installs the one the cwd names", async () => {
+    const name = basename(add_dir);
+    await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" }));
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
+    await mkdir(join(package_dir, name));
+    await writeFile(join(package_dir, name, "package.json"), JSON.stringify({ name: "lib", version: "2.0.0" }));
+    const cwd = join(package_dir, "src");
+    await mkdir(cwd);
+
+    const { stderr, exitCode } = await run(cwd, "add", `../${name}`);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "app",
+      version: "0.0.1",
+      dependencies: { lib: `./${name}` },
+    });
+    expect(await file(join(package_dir, "node_modules", "lib", "package.json")).json()).toEqual({
+      name: "lib",
+      version: "2.0.0",
+    });
+  });
+
+  it("a path that exists only relative to package.json is not found", async () => {
+    const cwd = await makeNestedCwd();
+    const vendored = join(package_dir, "vendor", "inner");
+    await mkdir(vendored, { recursive: true });
+    await writeFile(join(vendored, "package.json"), JSON.stringify({ name: "inner", version: "1.0.0" }));
+
+    const { stderr, exitCode } = await run(cwd, "add", "./vendor/inner");
+    expect(stderr).toContain('error: Could not find package.json for "file:src/nested/vendor/inner"');
+    expect(exitCode).toBe(1);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
+  });
+
+  it("a directory named like a tarball keeps its trailing slash and is added as a folder", async () => {
+    const cwd = await makeNestedCwd();
+    const vendored = join(package_dir, "vendor", "lib.tgz");
+    await mkdir(vendored, { recursive: true });
+    await writeFile(join(vendored, "package.json"), JSON.stringify({ name: "lib", version: "3.0.0" }));
+
+    const { stderr, exitCode } = await run(cwd, "add", "../../vendor/lib.tgz/");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "app",
+      version: "0.0.1",
+      dependencies: { lib: "./vendor/lib.tgz/" },
+    });
+    expect(await file(join(package_dir, "node_modules", "lib", "package.json")).json()).toEqual({
+      name: "lib",
+      version: "3.0.0",
+    });
+  });
+
+  // `init` enters the global directory before it records the cwd. With no package.json there, it walks up to this one.
+  it("a -g path is not re-spelled against the global directory", async () => {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
+    await mkdir(join(package_dir, "folder"));
+    await writeFile(join(package_dir, "folder", "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" }));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "-g", "./folder"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL: join(package_dir, ".bun") },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("installed lib@");
+    expect(exitCode).toBe(0);
+  });
+
+  // A Windows command line cannot carry a path longer than the path buffer.
+  it.skipIf(isWindows)("a path that does not fit a path buffer once joined with the cwd is an error", async () => {
+    const cwd = await makeNestedCwd();
+    const typed = "./" + Buffer.alloc(6000, "a").toString();
+
+    const { stderr, exitCode } = await run(cwd, "add", typed);
+    expect(stderr).toContain(`ENAMETOOLONG: local path "${typed}" is too long`);
+    expect(exitCode).toBe(1);
+
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
+  });
+
+  // A Windows command line cannot carry a path longer than the path buffer.
+  it.skipIf(isWindows)("a path whose re-spelled form does not fit a path buffer is an error", async () => {
+    const app = join(package_dir, "a", "b", "c", "d", "e", "f");
+    const cwd = join(app, "src");
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(app, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
+    // The absolute form fits a path buffer. It does not fit after the `../` segments that lead out of `app`.
+    const maxPathBytes = process.platform === "linux" ? 4096 : 1024;
+    const name = Buffer.alloc(maxPathBytes - 8 - (add_dir.length + 1), "a").toString();
+    const typed = `${posix(relative(cwd, add_dir))}/${name}`;
+
+    const { stderr, exitCode } = await run(cwd, "add", typed);
+    expect(stderr).toContain(`ENAMETOOLONG: local path "${typed}" is too long`);
+    expect(exitCode).toBe(1);
+
+    expect(await file(join(app, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
+  });
 });
 
 it("should not add duplicate package.json entries when installing the same local folder twice (#30933)", async () => {

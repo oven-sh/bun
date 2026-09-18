@@ -1948,7 +1948,27 @@ describe("bundler", () => {
       "/Users/user/project/src/entry.js": [`Could not resolve: "#". Maybe you need to "bun install"?`],
     },
   });
-  itBundled("packagejson/ImportsErrorStartsWithHashSlash", {
+  // Exactly "#/" is an invalid specifier (PACKAGE_IMPORTS_RESOLVE), even with
+  // an "imports" entry that would otherwise match it. esbuild resolves it.
+  itBundled("packagejson/ImportsErrorEqualsHashSlash", {
+    skipOnEsbuild: true,
+    files: {
+      "/Users/user/project/src/entry.js": `import '#/'`,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "imports": {
+            "#/": "./index.js",
+            "#/*": "./src/*"
+          }
+        }
+      `,
+      "/Users/user/project/src/index.js": `console.log('index.js')`,
+    },
+    bundleErrors: {
+      "/Users/user/project/src/entry.js": [`Could not resolve: "#/". Maybe you need to "bun install"?`],
+    },
+  });
+  itBundled("packagejson/ImportsErrorHashSlashNotDefined", {
     files: {
       "/Users/user/project/src/entry.js": `import '#/foo'`,
       "/Users/user/project/src/package.json": /* json */ `
@@ -1959,6 +1979,90 @@ describe("bundler", () => {
     },
     bundleErrors: {
       "/Users/user/project/src/entry.js": [`Could not resolve: "#/foo". Maybe you need to "bun install"?`],
+    },
+  });
+  // Specifiers that start with "#/" are valid since Node.js 25.4 (nodejs/node#60864).
+  itBundled("packagejson/ImportsHashSlashWithWildcard", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import '#/foo.js'
+        import '#/bar/baz.js'
+      `,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "imports": {
+            "#/*": "./src/*"
+          }
+        }
+      `,
+      "/Users/user/project/src/src/foo.js": `console.log('foo.js')`,
+      "/Users/user/project/src/src/bar/baz.js": `console.log('bar/baz.js')`,
+    },
+    run: {
+      stdout: `foo.js\nbar/baz.js`,
+    },
+  });
+  itBundled("packagejson/ImportsHashSlashExactMatch", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import '#/utils'
+        import '#/config.js'
+      `,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "imports": {
+            "#/utils": "./utils.js",
+            "#/config.js": "./config.js"
+          }
+        }
+      `,
+      "/Users/user/project/src/utils.js": `console.log('utils.js')`,
+      "/Users/user/project/src/config.js": `console.log('config.js')`,
+    },
+    run: {
+      stdout: `utils.js\nconfig.js`,
+    },
+  });
+  itBundled("packagejson/ImportsHashSlashWithConditions", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import '#/lib'
+        require('#/lib')
+      `,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "imports": {
+            "#/*": {
+              "import": "./esm/*.js",
+              "require": "./cjs/*.js"
+            }
+          }
+        }
+      `,
+      "/Users/user/project/src/esm/lib.js": `console.log('esm/lib.js')`,
+      "/Users/user/project/src/cjs/lib.js": `console.log('cjs/lib.js')`,
+    },
+    run: {
+      stdout: `esm/lib.js\ncjs/lib.js`,
+    },
+  });
+  itBundled("packagejson/ImportsHashSlashSymmetricWithExports", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import '#/components/button.js'
+        import '#/utils/format.js'
+      `,
+      "/Users/user/project/src/package.json": /* json */ `
+        {
+          "exports": { "./*": "./src/*" },
+          "imports": { "#/*": "./src/*" }
+        }
+      `,
+      "/Users/user/project/src/src/components/button.js": `console.log('button.js')`,
+      "/Users/user/project/src/src/utils/format.js": `console.log('format.js')`,
+    },
+    run: {
+      stdout: `button.js\nformat.js`,
     },
   });
   itBundled("packagejson/MainFieldsErrorMessageDefault", {

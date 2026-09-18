@@ -143,6 +143,14 @@ fn parse_array(
     }
     let closing_brace: u8 = if is_json_sub_array { b']' } else { b'}' };
     let opening_brace: u8 = if is_json_sub_array { b'[' } else { b'{' };
+    // array_out prints `[lo:hi]...=` before the top-level body when a lower bound is not 1.
+    let bytes = if depth == 0 && !is_json_sub_array && bytes.first() == Some(&b'[') {
+        let eq = bun_core::strings::index_of_char_usize(bytes, b'=')
+            .ok_or(AnyPostgresError::UnsupportedArrayFormat)?;
+        &bytes[eq + 1..]
+    } else {
+        bytes
+    };
     if bytes.len() < 2 || bytes[0] != opening_brace {
         return Err(AnyPostgresError::UnsupportedArrayFormat);
     }

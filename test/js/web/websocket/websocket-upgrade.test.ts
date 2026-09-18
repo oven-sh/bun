@@ -189,7 +189,7 @@ describe("WebSocket upgrade", () => {
 
   // The client parsed the 101 response into 128 header slots and failed the
   // handshake with "Invalid response" when the response had more fields. The
-  // limit is now 2000 fields, the default of Node's maxHeadersCount.
+  // limit is now 2000 fields, which bounds the parse scratch at 64 KB.
   describe("101 response with more than 128 header fields", () => {
     type RawSocket = Socket<{ request: string }>;
 

@@ -100,7 +100,7 @@ enum HeadParse {
 
 use boringssl::c::OwnedSslCtx;
 
-/// Node's default `maxHeadersCount`. picohttpparser fails a head with more fields than slots.
+/// Most header fields a handshake response can have. More fail the parse. Bounds the scratch at 64 KB.
 const MAX_RESPONSE_HEADERS: usize = 2000;
 
 /// picohttpparser fills at most one slot per line of `buf`.

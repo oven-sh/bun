@@ -422,8 +422,7 @@ pub struct List {
 }
 
 impl List {
-    /// A cache copy or a `file:` folder copy. The root, a workspace, and a
-    /// `link:` target run their scripts in the user's own directory.
+    /// The cwd is a copy bun made (cache or `file:` folder), not the user's own directory.
     pub(crate) fn cwd_is_created_by_bun(&self) -> bool {
         self.resolution_tag.can_enqueue_install_task()
             || self.resolution_tag == ResolutionTag::Folder

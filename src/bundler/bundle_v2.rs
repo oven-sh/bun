@@ -2743,7 +2743,6 @@ pub mod bv2_impl {
                 Err(_) => return Ok(()),
             };
             let mut path = result.path_pair.primary;
-            self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
             let loader = self.requested_file_loader(&path, loader);
 
@@ -2780,6 +2779,8 @@ pub mod bv2_impl {
                 .transpiler_for_target(target)
                 .options
                 .forced_jsx_development();
+
+            self.increment_scan_counter();
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -2831,7 +2832,6 @@ pub mod bv2_impl {
             {
                 return Ok(None);
             }
-            self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
             let loader = self.requested_file_loader(&path, loader);
@@ -2892,6 +2892,9 @@ pub mod bv2_impl {
                 .transpiler_for_target(target)
                 .options
                 .forced_jsx_development();
+
+            // After the last `?`: a count with no task behind it hangs `wait_for_parse`.
+            self.increment_scan_counter();
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -4871,14 +4874,13 @@ pub mod bv2_impl {
                                 return;
                             };
                             let mut resolved = resolved;
-                            let Ok(source_index) = this.enqueue_entry_item(
+                            // No error channel here: a return would build without this entry point.
+                            let source_index = bun_core::handle_oom(this.enqueue_entry_item(
                                 &mut resolved,
                                 true,
                                 target,
                                 resolve.import_record.loader,
-                            ) else {
-                                return;
-                            };
+                            ));
 
                             // Store the original entry point name for virtual entries that fall back to file resolution
                             if let Some(idx) = source_index {

@@ -265,6 +265,7 @@ _bun_pm_completion() {
             'hash-string\:"print the string used to hash the lockfile" '
             'hash-print\:"print the hash stored in the current lockfile" '
             'cache\:"print the path to the cache folder" '
+            'fetch\:"fetch all dependencies into the cache without installing" '
             'version\:"bump the version in package.json and create a git tag" '
         )
 

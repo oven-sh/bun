@@ -109,10 +109,6 @@ fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
                     }
                 }
             }
-            b'>' => {
-                // stray closer — dropped
-                i += 1;
-            }
             b'{' => {
                 // copy `{ ... }` verbatim, optionally rewriting legacy specs
                 let start = i;
@@ -139,6 +135,10 @@ fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
                     i += 1;
                 }
                 let name = &fmt[start..i];
+                // Skip the tag's closing `>`. Any other `>` is text.
+                if i < bytes.len() {
+                    i += 1;
+                }
                 let seq: &str = if let Some(c) = color_for(name) {
                     c
                 } else if name == "r" {
@@ -152,7 +152,6 @@ fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
                 if is_enabled {
                     out.push_str(if is_reset { RESET } else { seq });
                 }
-                // trailing `>` consumed by the `'>'` arm next iteration
             }
             _ => {
                 // Preserve full UTF-8: push the char at this byte position.

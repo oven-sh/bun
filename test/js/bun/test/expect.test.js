@@ -3811,6 +3811,88 @@ describe("expect()", () => {
     }
   });
 
+  // jest-extended takes the same one step. Bun also closes an iterator that has more, like `break` in a for-of.
+  // The iterators are finite and count their steps, so a full walk fails the count and does not hang the runner.
+  describe("toBeEmpty() takes one step of an iterable", () => {
+    const counted = (/** @type {number} */ length) => {
+      const seen = { steps: 0, closed: 0 };
+      const iterable = {
+        [Symbol.iterator]: () => ({
+          next: () => ({ done: ++seen.steps > length, value: seen.steps }),
+          return: () => (seen.closed++, {}),
+        }),
+      };
+      return { seen, iterable };
+    };
+
+    test("an iterable with elements", () => {
+      const { seen, iterable } = counted(10);
+      expect(iterable).not.toBeEmpty();
+      expect(seen).toEqual({ steps: 1, closed: isBun ? 1 : 0 });
+    });
+
+    test("an iterable with no elements", () => {
+      const { seen, iterable } = counted(0);
+      expect(iterable).toBeEmpty();
+      expect(seen).toEqual({ steps: 1, closed: 0 });
+    });
+
+    test("a failed assertion", () => {
+      const { seen, iterable } = counted(10);
+      expect(() => expect(iterable).toBeEmpty()).toThrow("Expected value to be empty");
+      expect(seen).toEqual({ steps: 1, closed: isBun ? 1 : 0 });
+    });
+
+    test("a Map iterator keeps the entries after the first", () => {
+      const entries = new Map([
+        ["a", 1],
+        ["b", 2],
+        ["c", 3],
+      ]).entries();
+      expect(entries).not.toBeEmpty();
+      expect([...entries]).toEqual([
+        ["b", 2],
+        ["c", 3],
+      ]);
+    });
+
+    if (isBun) {
+      test("a generator runs its finally block", () => {
+        const seen = { steps: 0, cleanedUp: false };
+        const generator = (function* () {
+          try {
+            while (++seen.steps <= 10) yield seen.steps;
+          } finally {
+            seen.cleanedUp = true;
+          }
+        })();
+        expect(generator).not.toBeEmpty();
+        expect(seen).toEqual({ steps: 1, cleanedUp: true });
+      });
+
+      test("an error from next() or return() reaches the caller", () => {
+        const throwsFromNext = {
+          [Symbol.iterator]: () => ({
+            next() {
+              throw new Error("from next");
+            },
+          }),
+        };
+        let steps = 0;
+        const throwsFromReturn = {
+          [Symbol.iterator]: () => ({
+            next: () => ({ done: ++steps > 10, value: steps }),
+            return() {
+              throw new Error("from return");
+            },
+          }),
+        };
+        expect(() => expect(throwsFromNext).not.toBeEmpty()).toThrow("from next");
+        expect(() => expect(throwsFromReturn).not.toBeEmpty()).toThrow("from return");
+      });
+    }
+  });
+
   test("toBeEmptyObject()", () => {
     // Map and Set are not considered as object in jest-extended
     // https://github.com/jestjs/jest/blob/main/packages/jest-get-type/src/index.ts#L26

@@ -386,7 +386,7 @@ mod _impl {
                 args_list.push(BunString::static_("[worker eval]"));
             } else {
                 args_list.push(BunString::borrow_utf8(
-                    vm.argv1.as_deref().unwrap_or(vm.main()),
+                    vm.argv1.as_deref().unwrap_or_else(|| vm.main()),
                 ));
             }
         }

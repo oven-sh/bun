@@ -798,8 +798,7 @@ fn enqueue_dependency_impl(
     success_fn: SuccessFn,
     fail_fn: Option<FailFn>,
     is_root: bool,
-    // `false` on the second pass, after a same-named `npm:` alias had no package
-    // in the range this dependency declares.
+    // `false` only on the second pass, after the alias had no package in the declared range.
     allow_alias_redirect: bool,
 ) -> crate::Result<()> {
     if dependency.behavior.is_optional_peer() {
@@ -832,10 +831,7 @@ fn enqueue_dependency_impl(
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
                 // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
-                // A peer takes what the tree has under its name and keeps the redirect as it is.
-                // For any other dependency the probes below only pick candidates, because they
-                // also match the version of an exclusive or unset comparator:
-                // `declared_range_admits` decides.
+                // The probes only pick candidates, `declared_range_admits` decides. A peer is not held to its range.
                 let is_peer = dependency.behavior.is_peer();
                 let mut curr_list: Option<&Semver::semver_query::List> = (is_peer
                     || group.is_star()
@@ -3238,10 +3234,7 @@ fn resolution_satisfies_dependency(
     resolution.satisfies_dependency_version(dependency, buf, buf)
 }
 
-/// A plain dependency that is resolved through a same-named `npm:` alias still declares its own
-/// range: `declared_range`, `None` for a peer and for every other dependency. The alias's package
-/// serves the dependency only when its version is in that range. `*` takes any version,
-/// prereleases included, as it does for npm.
+/// Whether the range that a dependency declares admits `version` of the alias package it resolves through. `*` admits any version, like npm. `None` admits all.
 fn declared_range_admits(
     declared_range: Option<&Semver::query::Group>,
     version: Semver::Version,

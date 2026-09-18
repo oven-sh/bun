@@ -141,12 +141,13 @@ describe.concurrent("Buffer.write with detach / resize via encoding toString", (
   });
 });
 
-// Sibling branch: `buf.write(value, encoding)` — the 2-arg "string + primitive
+// Sibling branch: `buf.write(value, encoding)`, the 2-arg "string + primitive
 // encoding" form. Here the second argument is already a primitive string, so
 // parseEncoding can't fire user JS; but the *first* argument skipped
 // validateString, so a detaching toString on an object value would crash the
-// process. Node's internal/buffer.js rejects non-string `value` up front via
-// validateString; Bun now matches. See issue #30417.
+// process. Node resolves the encoding, then its native writer rejects a
+// non-string `value` without calling its toString; Bun now matches. See issue
+// #30417.
 describe.concurrent("Buffer.write(value, encoding) validates string argument", () => {
   test("write(obj-with-detaching-toString, 'utf8') throws ERR_INVALID_ARG_TYPE (crash repro)", async () => {
     const { stdout, stderr, exitCode } = await runPoc(`
@@ -263,6 +264,65 @@ describe.concurrent("Buffer.write length re-check follows Node's per-encoding sp
       hex: "ERR_BUFFER_OUT_OF_BOUNDS",
       base64: "ERR_BUFFER_OUT_OF_BOUNDS",
       ucs2: "ERR_BUFFER_OUT_OF_BOUNDS",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Node resolves the encoding before any writer checks the value, so the
+  // encoding's toString runs even when the value is then rejected. The JS
+  // wrapper of utf8/latin1/ascii checks the bounds before the native binding
+  // checks the value. The raw-binding encodings check the value first.
+  // Expected values are the output of Node v26.3.0.
+  test("non-string value: the JS-wrapper encodings report the bounds first, the raw-binding encodings the value", async () => {
+    const { stdout, stderr, exitCode } = await runPoc(`
+      const scenarios = {
+        "detach, write(123, 5, 10)": [ab => ab.transfer(0), 5, 10],
+        "detach, write(123, 0, 10)": [ab => ab.transfer(0), 0, 10],
+        "detach, write(123, 0, 0)": [ab => ab.transfer(0), 0, 0],
+        "resize(3), write(123, 5, 10)": [ab => ab.resize(3), 5, 10],
+        "resize(8), write(123, 5, 10)": [ab => ab.resize(8), 5, 10],
+      };
+      const out = {};
+      for (const enc of ["utf8", "latin1", "ascii", "hex", "base64", "base64url", "ucs2", "utf16le"]) {
+        out[enc] = {};
+        for (const [name, [change, offset, length]] of Object.entries(scenarios)) {
+          const ab = new ArrayBuffer(16, { maxByteLength: 32 });
+          const buf = Buffer.from(ab);
+          let calls = 0;
+          try {
+            buf.write(123, offset, length, { toString() { calls++; change(ab); return enc; } });
+            out[enc][name] = "no throw";
+          } catch (e) {
+            out[enc][name] = (e.code === "ERR_BUFFER_OUT_OF_BOUNDS" ? e.message : e.code) + ", toString calls: " + calls;
+          }
+        }
+      }
+      console.log(JSON.stringify(out));
+    `);
+    expect(stderr).toBe("");
+    const boundsFirst = {
+      "detach, write(123, 5, 10)": '"offset" is outside of buffer bounds, toString calls: 1',
+      "detach, write(123, 0, 10)": '"length" is outside of buffer bounds, toString calls: 1',
+      "detach, write(123, 0, 0)": "ERR_INVALID_ARG_TYPE, toString calls: 1",
+      "resize(3), write(123, 5, 10)": '"offset" is outside of buffer bounds, toString calls: 1',
+      "resize(8), write(123, 5, 10)": '"length" is outside of buffer bounds, toString calls: 1',
+    };
+    const valueFirst = {
+      "detach, write(123, 5, 10)": "ERR_INVALID_ARG_TYPE, toString calls: 1",
+      "detach, write(123, 0, 10)": "ERR_INVALID_ARG_TYPE, toString calls: 1",
+      "detach, write(123, 0, 0)": "ERR_INVALID_ARG_TYPE, toString calls: 1",
+      "resize(3), write(123, 5, 10)": "ERR_INVALID_ARG_TYPE, toString calls: 1",
+      "resize(8), write(123, 5, 10)": "ERR_INVALID_ARG_TYPE, toString calls: 1",
+    };
+    expect(JSON.parse(stdout)).toEqual({
+      utf8: boundsFirst,
+      latin1: boundsFirst,
+      ascii: boundsFirst,
+      hex: valueFirst,
+      base64: valueFirst,
+      base64url: valueFirst,
+      ucs2: valueFirst,
+      utf16le: valueFirst,
     });
     expect(exitCode).toBe(0);
   });

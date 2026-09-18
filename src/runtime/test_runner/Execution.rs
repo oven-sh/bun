@@ -161,6 +161,12 @@ pub struct ExecutionSequence {
     pub(crate) remaining_retry_count: u32,
     pub(crate) result: Result,
     pub(crate) executing: bool,
+    /// The active entry's callback returned a promise that is still pending,
+    /// so the test body itself is still running. An unhandled rejection while
+    /// this is set records the failure but does not enqueue a completion token;
+    /// the body's own promise settling (or a timeout) is what advances.
+    /// https://github.com/oven-sh/bun/issues/14644
+    pub(crate) has_pending_promise: bool,
     pub(crate) started_at: Timespec,
     /// Number of expect() calls observed in this sequence.
     pub(crate) expect_call_count: u32,
@@ -185,6 +191,7 @@ impl ExecutionSequence {
             // defaults:
             result: Result::Pending,
             executing: false,
+            has_pending_promise: false,
             started_at: Timespec::EPOCH,
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
@@ -517,6 +524,7 @@ impl Execution {
             let entry = unsafe { entry_ptr.as_ref() };
 
             sequence.executing = false;
+            sequence.has_pending_promise = false;
             if sequence.maybe_skip {
                 sequence.maybe_skip = false;
                 sequence.active_entry = match entry.failure_skip_past {

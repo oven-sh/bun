@@ -1252,20 +1252,26 @@ fn stash_nested_node_modules(
         bun_core::fast_random(),
     )?;
     let parent = resolve_path::dirname::<platform::Auto>(node_modules_folder_path);
-    let stash_path = resolve_path::join::<platform::Auto>(&[parent, tmpname.as_bytes()]).to_vec();
-    let nested = resolve_path::join::<platform::Auto>(&[node_modules_folder_path, b"node_modules"]);
-    match sys::renameat_concurrently_a(
-        Fd::cwd(),
-        nested,
-        Fd::cwd(),
-        &stash_path,
-        sys::RenameOptions {
-            move_fallback: true,
-        },
-    ) {
-        Ok(()) => Ok(Some(stash_path)),
+    let mut stash_buf = bun_paths::path_buffer_pool::get();
+    let stash_path = resolve_path::join_z_buf::<platform::Auto>(
+        &mut stash_buf[..],
+        &[parent, tmpname.as_bytes()],
+    );
+    let nested =
+        resolve_path::join_z::<platform::Auto>(&[node_modules_folder_path, b"node_modules"]);
+    match sys::renameat(Fd::cwd(), nested, Fd::cwd(), stash_path) {
+        Ok(()) => Ok(Some(stash_path.as_bytes().to_vec())),
         Err(e) if e.get_errno() == sys::E::ENOENT => Ok(None),
-        Err(e) => Err(e.into()),
+        // A directory cannot move on some file systems (overlayfs). The copy
+        // still runs, without the packages bun installed under `<pkg>`.
+        Err(e) => {
+            bun_core::warn!(
+                "failed to keep {} aside, the dependencies installed under it are removed: {}",
+                bstr::BStr::new(nested.as_bytes()),
+                e
+            );
+            Ok(None)
+        }
     }
 }
 

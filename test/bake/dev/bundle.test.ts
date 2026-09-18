@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import path from "node:path";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -97,6 +98,42 @@ devTest("importing a file before it is created", {
     });
 
     await c.expectMessage("value: 456");
+  },
+});
+// After a failed resolution the dev server drops the resolver's directory cache
+// for the path the specifier names and for its parent. Each specifier here makes
+// one of those two paths end in a slash. The resolver's cache key assertion
+// (debug and ASAN builds) rejected that key and aborted the dev server.
+devTest("unresolved import of a path that ends in a slash", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './second/';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./second/"`],
+    });
+
+    for (const specifier of [
+      dev.join("second") + path.sep,
+      // The parent of this one is `<root>/`.
+      dev.rootDir + path.sep + path.sep + "second",
+    ]) {
+      await dev.write("index.ts", `import ${JSON.stringify(specifier)};`, {
+        errors: [`index.ts:1:8: error: Could not resolve: "${specifier}"`],
+      });
+    }
+
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log('value: ' + 789);`);
+    });
+    await c.expectMessage("value: 789");
   },
 });
 devTest("default export same-scope handling", {

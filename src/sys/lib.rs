@@ -906,6 +906,7 @@ pub mod signal_code;
 pub use signal_code::SignalCode;
 pub mod tmp;
 pub use tmp::Tmpfile;
+pub mod os;
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
 // declares an empty module so `bun_sys::windows::*` paths still resolve under
 // `#[cfg(windows)]` arms in dependents.

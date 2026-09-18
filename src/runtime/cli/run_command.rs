@@ -94,6 +94,17 @@ pub(crate) struct ConfigureEnvOptions {
     pub(crate) store_root_fd: bool,
 }
 
+/// What the `entry_path` of [`RunCommand::boot`] names.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EntryPath {
+    /// The file to run.
+    Resolved,
+    /// A path as `node` takes it: a directory, or a file without its
+    /// extension, also runs. `boot` resolves it to the file to run and keeps
+    /// the given path as `process.argv[1]`.
+    Unresolved,
+}
+
 pub(crate) struct RunCommand;
 
 impl RunCommand {
@@ -934,6 +945,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub(crate) fn boot(
         ctx: &mut ContextData,
         entry_path: Box<[u8]>,
+        entry_kind: EntryPath,
         loader: Option<Loader>,
     ) -> crate::Result<()> {
         if !ctx.debug.loaded_bunfig {
@@ -988,8 +1000,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // so the allocation is process-lifetime by construction.
         let entry: &'static [u8] = Box::leak(entry_path);
         // What `Run::start` passes to `vm.load_entry_point`; `mut` because the
-        // cron-execution branch below may swap in a synthetic `cwd/[eval]` path
-        // while `entry` stays the user's path for the loader check further down.
+        // cron-execution branch below may swap in a synthetic `cwd/[eval]` path,
+        // and `EntryPath::Unresolved` the resolved file, while `entry` stays the
+        // user's path for the loader check further down.
         let mut run_entry = entry;
         vm.set_main(entry);
 
@@ -1067,6 +1080,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::run_main::fail_with_build_error(vm);
         }
 
+        // `vm.main()` must be the key the module loader gives the entry module.
+        if entry_kind == EntryPath::Unresolved
+            && vm.module_loader.eval_source.is_none()
+            && let Some(resolved) = Self::resolve_entry_path(vm, entry)
+            && resolved != entry
+        {
+            vm.set_main_for_argv(entry);
+            vm.set_main(resolved);
+            run_entry = resolved;
+        }
+
         // Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
         // auto-detects the host zone the first time a `Date` is constructed —
         // matching upstream Bun. `.env` files are loaded by
@@ -1113,6 +1137,25 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             entry_path: run_entry,
         }
         .start()
+    }
+
+    /// Resolve `entry` to the file to run, like `bun <entry>` does. On `None`
+    /// the module loader reports the failure when it imports `entry`.
+    fn resolve_entry_path(vm: &mut VirtualMachine, entry: &'static [u8]) -> Option<&'static [u8]> {
+        let top_level_dir = vm.top_level_dir();
+        // Like the module loader, keep the resolver's messages out of `vm.log`.
+        let mut log = bun_ast::Log::default();
+        let resolver = &raw mut vm.transpiler.resolver;
+        // SAFETY: `resolver` is a field of the live VM. `log` is declared
+        // before the guard, so the guard restores the log before `log` drops.
+        let _restore_log = unsafe {
+            bun_resolver::Resolver::scoped_log(resolver, ::core::ptr::NonNull::from(&mut log))
+        };
+        // SAFETY: `vm` is borrowed for this call, so nothing else uses its resolver.
+        let resolved = unsafe { &mut *resolver }
+            .resolve(top_level_dir, entry, bun_ast::ImportKind::EntryPointRun)
+            .ok()?;
+        Some(resolved.path_const()?.text)
     }
 
     /// Entry point for
@@ -1710,7 +1753,7 @@ impl RunCommand {
         // owned copy by value.
         let owned: Box<[u8]> = path.to_vec().into_boxed_slice();
 
-        if let Err(err) = Self::boot(ctx, owned, loader) {
+        if let Err(err) = Self::boot(ctx, owned, EntryPath::Resolved, loader) {
             Self::boot_failed_exit(ctx, paths::basename(path), &err);
         }
         true
@@ -2869,7 +2912,7 @@ impl RunCommand {
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
         // (= "[stdin]"), in the error message.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, owned, None) {
+        if let Err(err) = Self::boot(ctx, owned, EntryPath::Resolved, None) {
             Self::boot_failed_exit(ctx, b"-", &err);
         }
         Ok(true)
@@ -2919,7 +2962,7 @@ impl RunCommand {
         let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
             .to_vec()
             .into_boxed_slice();
-        Self::boot(ctx, entry, None)
+        Self::boot(ctx, entry, EntryPath::Resolved, None)
     }
 
     /// `node` argv0 emulation. Port of `execAsIfNode`.
@@ -2954,7 +2997,7 @@ impl RunCommand {
             let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
                 .to_vec()
                 .into_boxed_slice();
-            return Self::boot(ctx, entry, None);
+            return Self::boot(ctx, entry, EntryPath::Resolved, None);
         }
 
         if ctx.positionals.is_empty() {
@@ -2997,7 +3040,7 @@ impl RunCommand {
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
         let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, normalized, None) {
+        if let Err(err) = Self::boot(ctx, normalized, EntryPath::Unresolved, None) {
             Self::exec_as_if_node_boot_failed(ctx, &basename, err);
         }
         Ok(())
@@ -4036,7 +4079,12 @@ impl BunXFastPath {
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
-        if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
+        if let Err(err) = RunCommand::boot(
+            ctx,
+            utf8.to_vec().into_boxed_slice(),
+            EntryPath::Resolved,
+            None,
+        ) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));
             Output::err(

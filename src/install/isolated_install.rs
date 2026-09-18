@@ -2569,7 +2569,9 @@ pub(crate) fn install_isolated_packages(
                                         "failed to enqueue tarball for download: {}@{}",
                                         (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            bun_fmt::redacted(
+                                                pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            ),
                                         ),
                                     );
                                     Output::flush();

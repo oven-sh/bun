@@ -249,8 +249,8 @@ pub mod wire {
     }
 }
 
-/// Folds several processes' `Report`s for one source file into one, for
-/// `bun test --parallel` where each worker that loaded the file reports it.
+/// Folds several VMs' `Report`s for one source file into one (the workers of
+/// `bun test --parallel`, or the main thread and the `Worker` threads).
 ///
 /// Hits and executed lines/functions/blocks union across reports. Executable
 /// lines do not: a process that never ran a function marks the function's

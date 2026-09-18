@@ -43,6 +43,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use bun_core::{EncodedSlice, String as BunString, WTFStringImpl};
 use bun_io::KeepAlive;
@@ -95,6 +96,8 @@ pub struct WebWorker {
     /// ancestor) asks it to terminate. `None` before `start_vm()` publishes it
     /// and after `shutdown()` unpublishes it.
     vm_handle: bun_threading::Guarded<Option<crate::VmHandle>>,
+    /// Set by `shutdown()` once its coverage is with the test runner.
+    coverage_handed_over: bun_threading::ResetEvent,
 
     // ---- Parent-thread only ---------------------------------------------------
     /// Keep-alive on the parent's event loop: taken in `create()`, toggled by
@@ -129,6 +132,10 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
+    /// The parent's `transpiler.options.code_coverage`.
+    code_coverage: bool,
+    /// The parent's `transpiler.options.rewrite_jest_for_tests`.
+    rewrite_jest_for_tests: bool,
 }
 
 enum EntryOutcome {
@@ -193,6 +200,39 @@ pub fn join_child_workers(parent: &mut VirtualMachine) {
         // (the proxy's ref); this is that release.
         let messaging_proxy = unsafe { (*child).messaging_proxy };
         WebWorker__parentContextWillDestroy(messaging_proxy);
+    }
+}
+
+/// `bun test --coverage` is about to report: wait until every stopping child
+/// has handed its coverage to the test runner. With `stop_running`, a child
+/// still running is asked to stop first. The wait is bounded: termination
+/// does not interrupt a native call a child is blocked in. Parent thread.
+pub fn wait_for_child_workers_coverage(parent: &VirtualMachine, stop_running: bool) {
+    const COVERAGE_HANDOVER_TIMEOUT_NS: u64 = 10_000_000_000;
+    debug_assert!(core::ptr::eq(parent, VirtualMachine::get()));
+    let deadline = Instant::now() + Duration::from_nanos(COVERAGE_HANDOVER_TIMEOUT_NS);
+    if stop_running {
+        for &child in &parent.child_workers {
+            WebWorker::request_termination(child);
+        }
+    }
+    for &child in &parent.child_workers {
+        // SAFETY: a registered child is live until this thread releases it.
+        let child = unsafe { &*child };
+        if !child.has_requested_terminate() {
+            continue;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if child
+            .coverage_handed_over
+            .timed_wait(u64::try_from(remaining.as_nanos()).unwrap_or(u64::MAX))
+            .is_err()
+        {
+            log!(
+                "[{}] coverage: timed out waiting for the worker to stop",
+                child.execution_context_id
+            );
+        }
     }
 }
 
@@ -389,6 +429,8 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            code_coverage: parent_ref.transpiler.options.code_coverage,
+            rewrite_jest_for_tests: parent_ref.transpiler.options.rewrite_jest_for_tests,
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -419,6 +461,7 @@ impl WebWorker {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             requested_terminate: AtomicBool::new(false),
             vm_handle: bun_threading::Guarded::new(None),
+            coverage_handed_over: bun_threading::ResetEvent::new(),
             vm: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
@@ -664,6 +707,8 @@ impl WebWorker {
             transform_options,
             env_loader,
             proxy_env_slots,
+            code_coverage,
+            rewrite_jest_for_tests,
         } = init;
 
         // worker-thread only field; no other thread reads `arena`.
@@ -737,6 +782,22 @@ impl WebWorker {
             if let Some(graph) = crate::virtual_machine::standalone_module_graph() {
                 (hooks.apply_standalone_runtime_flags)(b, graph);
             }
+
+            // As `TestCommand` sets up the main VM. The report merges a
+            // module's reports by byte offset, so it has to print the same
+            // way on every thread.
+            if code_coverage {
+                b.options.rewrite_jest_for_tests = rewrite_jest_for_tests;
+                b.options.code_coverage = true;
+                b.options.minify_syntax = false;
+                b.options.minify_identifiers = false;
+                b.options.minify_whitespace = false;
+                b.options.dead_code_elimination = false;
+            }
+        }
+        if code_coverage {
+            // SAFETY: `vm` is the live VM just built on this thread.
+            unsafe { (*vm).global().vm().enable_control_flow_profiler() };
         }
 
         // Second checkpoint: initWorker just spent the bulk of startup time;
@@ -1022,6 +1083,16 @@ impl WebWorker {
                 self.execution_context_id
             );
 
+            if vm.transpiler.options.code_coverage
+                && let Some(hooks) = runtime_hooks()
+            {
+                // SAFETY: this thread's live VM; the API lock is held.
+                unsafe { (hooks.collect_worker_coverage)(core::ptr::from_mut(vm)) };
+                // This worker's own children too, before the parent is told.
+                wait_for_child_workers_coverage(vm, true);
+            }
+            self.coverage_handed_over.set();
+
             // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy ----------
             // SAFETY: this thread's VM; sole owner.
             unsafe { VirtualMachine::teardown(vm_ptr, crate::virtual_machine::Teardown::Worker) };
@@ -1047,6 +1118,8 @@ impl WebWorker {
                     core::alloc::Layout::new::<VirtualMachine>(),
                 );
             }
+        } else {
+            self.coverage_handed_over.set();
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",

@@ -1483,6 +1483,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     stop_active_handles_for_vm_teardown: stop_active_handles_for_vm_teardown_hook,
     disarm_all_timers_for_vm_teardown,
     close_timer_loop_handles_after_vm_destroyed,
+    collect_worker_coverage,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1637,6 +1638,13 @@ unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) 
         // SAFETY: live boxed per-thread RuntimeState (fn contract).
         unsafe { (*state).timer.close_loop_handles_for_vm_teardown() };
     }
+}
+
+/// # Safety
+/// `vm` is the live worker VM on its own thread; its JSC VM is alive.
+unsafe fn collect_worker_coverage(vm: *mut VirtualMachine) {
+    // SAFETY: fn contract.
+    unsafe { crate::cli::test_command::collect_worker_coverage(vm) }
 }
 
 /// `RuntimeHooks::stop_active_handles_for_vm_teardown` — see [`stop_active_handles_for_vm_teardown`].

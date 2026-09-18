@@ -11,6 +11,68 @@ it("crypto.subtle setter should not throw", () => {
   expect(globalThis.crypto.subtle).toBe(subtle);
 });
 
+// https://github.com/oven-sh/bun/issues/40612
+describe("Crypto.prototype property descriptors", () => {
+  // Web IDL: a regular operation is writable, enumerable, and configurable.
+  it.each(["getRandomValues", "randomUUID", "timingSafeEqual"])("%s is configurable", method => {
+    const proto = Object.getPrototypeOf(globalThis.crypto);
+    const d = Object.getOwnPropertyDescriptor(proto, method);
+    expect(d).toMatchObject({ writable: true, enumerable: true, configurable: true });
+  });
+
+  it("subtle is configurable", () => {
+    const proto = Object.getPrototypeOf(globalThis.crypto);
+    const d = Object.getOwnPropertyDescriptor(proto, "subtle")!;
+    expect(d).toMatchObject({ enumerable: true, configurable: true });
+  });
+
+  it("subtle can be deleted", async () => {
+    // Mutate the prototype in a subprocess so this process keeps its crypto intact.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const proto = Object.getPrototypeOf(globalThis.crypto);
+         console.log(Reflect.deleteProperty(proto, "subtle"));
+         console.log(typeof globalThis.crypto.subtle);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true\nundefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("randomUUID can be deleted and redefined", async () => {
+    // Mutate the prototype in a subprocess so this process keeps its crypto intact.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const proto = Object.getPrototypeOf(globalThis.crypto);
+         const original = proto.randomUUID;
+         console.log(Reflect.deleteProperty(proto, "randomUUID"));
+         console.log(typeof globalThis.crypto.randomUUID);
+         Object.defineProperty(proto, "randomUUID", {
+           value: original,
+           writable: true,
+           enumerable: true,
+           configurable: true,
+         });
+         console.log(typeof globalThis.crypto.randomUUID);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true\nundefined\nfunction\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("Web Crypto", () => {
   // https://github.com/oven-sh/bun/issues/3795
   it("keeps event loop alive", () => {

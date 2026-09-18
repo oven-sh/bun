@@ -2957,8 +2957,7 @@ mod spawn_process_body {
         };
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
-        /// construction, unregisters and restores the crash-handler signal
-        /// disposition on drop.
+        /// construction, unregisters on drop.
         #[cfg(unix)]
         struct SignalForwarding;
         #[cfg(unix)]
@@ -2973,7 +2972,6 @@ mod spawn_process_body {
         impl Drop for SignalForwarding {
             fn drop(&mut self) {
                 Bun__unregisterSignalsForForwarding();
-                bun_crash_handler::reset_on_posix();
             }
         }
 

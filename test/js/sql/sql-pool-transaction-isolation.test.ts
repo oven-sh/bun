@@ -5,8 +5,9 @@
 // Wire bytes come from ./wire-frames.ts.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import type net from "node:net";
+import { join } from "node:path";
 import {
   listeningServer,
   mysqlAckSessionSetup,
@@ -114,6 +115,12 @@ const adapters: Array<{ adapter: "postgres" | "mysql"; mockServer: MockServer; b
   { adapter: "mysql", mockServer: mysqlMockServer, beginCommand: "START TRANSACTION" },
 ];
 
+const rejectionCode = (promise: Promise<unknown>) =>
+  promise.then(
+    () => "resolved",
+    err => err.code ?? err.message,
+  );
+
 // reserved.begin() / beginDistributed() calls that reject before anything is sent.
 const rejectedBeforeBegin = [
   {
@@ -129,6 +136,7 @@ const rejectedBeforeBegin = [
 ];
 
 describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
+  const closedCode = `ERR_${adapter.toUpperCase()}_CONNECTION_CLOSED`;
   const options = (port: number): Bun.SQL.Options => ({
     adapter,
     hostname: "127.0.0.1",
@@ -436,6 +444,185 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
         { conn: 0, sql: "SELECT 'still reserved'" },
       ]);
     } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // With max: 1 the next transaction holds the same connection, so a statement from the
+  // stale handle would land inside it.
+  test("unsafe() and file() on a transaction handle kept after begin() settles reject and send nothing", async () => {
+    using dir = tempDir("sql-stale-transaction", { "stale.sql": "SELECT 'stale file'" });
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      let stale!: Bun.TransactionSQL;
+      await sql.begin(async tx => {
+        stale = tx;
+        await tx.unsafe("SELECT 'T1a'");
+      });
+
+      const outcomes = await sql.begin(async tx => {
+        await tx.unsafe("SELECT 'T2a'");
+        return {
+          tagged: await rejectionCode(stale`SELECT 'stale tagged'`),
+          unsafe: await rejectionCode(stale.unsafe("SELECT 'stale unsafe'")),
+          unsafeValues: await rejectionCode(stale.unsafe("SELECT 'stale values'").values()),
+          file: await rejectionCode(stale.file(join(String(dir), "stale.sql"))),
+        };
+      });
+      expect(outcomes).toEqual({ tagged: closedCode, unsafe: closedCode, unsafeValues: closedCode, file: closedCode });
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: "COMMIT" },
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T2a'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("unsafe() and file() on a reserved handle reject and send nothing after release()", async () => {
+    using dir = tempDir("sql-stale-reserved", { "stale.sql": "SELECT 'stale file'" });
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      await reserved.unsafe("SELECT 'R1'");
+      await reserved.release();
+
+      const outcomes = await sql.begin(async tx => {
+        await tx.unsafe("SELECT 'T1a'");
+        return {
+          tagged: await rejectionCode(reserved`SELECT 'stale tagged'`),
+          unsafe: await rejectionCode(reserved.unsafe("SELECT 'stale unsafe'")),
+          file: await rejectionCode(reserved.file(join(String(dir), "stale.sql"))),
+          // Both send their statement through reserved.unsafe().
+          commitDistributed: await rejectionCode(reserved.commitDistributed("stale")),
+          rollbackDistributed: await rejectionCode(reserved.rollbackDistributed("stale")),
+        };
+      });
+      expect(outcomes).toEqual({
+        tagged: closedCode,
+        unsafe: closedCode,
+        file: closedCode,
+        commitDistributed: closedCode,
+        rollbackDistributed: closedCode,
+      });
+      expect(received).toEqual([
+        { conn: 0, sql: "SELECT 'R1'" },
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("reserved.file() does not run when release() lands while the file is read", async () => {
+    using dir = tempDir("sql-late-reserved-file", { "late.sql": "SELECT 'late file'" });
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      // release() changes the handle's state synchronously, and the read needs an event loop turn.
+      const late = rejectionCode(reserved.file(join(String(dir), "late.sql")));
+      reserved.release();
+      expect(await late).toBe(closedCode);
+      // The pool has one connection, so a late statement would arrive before this one.
+      await sql.unsafe("SELECT 'barrier'");
+      expect(received).toEqual([{ conn: 0, sql: "SELECT 'barrier'" }]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // close({ timeout }) stops accepting queries at once and keeps the connection until the
+  // pending query settles. The timeout is in seconds.
+  test("unsafe() and file() reject while reserved.close({ timeout }) waits for a pending query", async () => {
+    using dir = tempDir("sql-closing-reserved", { "late.sql": "SELECT 'late file'" });
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const pending = reserved.unsafe("SELECT 'R1'").execute();
+      const closed = reserved.close({ timeout: 60 });
+      const tagged = rejectionCode(reserved`SELECT 'late tagged'`);
+      const unsafe = rejectionCode(reserved.unsafe("SELECT 'late unsafe'"));
+      const file = rejectionCode(reserved.file(join(String(dir), "late.sql")));
+      await pending;
+      await closed;
+      const outcomes = { tagged: await tagged, unsafe: await unsafe, file: await file };
+      reserved.release();
+      await sql.unsafe("SELECT 'barrier'");
+      expect(outcomes).toEqual({ tagged: closedCode, unsafe: closedCode, file: closedCode });
+      // Which connection carries the barrier depends on what close() does with the reserved one after the wait.
+      expect(received.map(statement => statement.sql)).toEqual(["SELECT 'R1'", "SELECT 'barrier'"]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("unsafe() and file() reject with CONNECTION_CLOSED after the connection drops mid-transaction", async () => {
+    using dir = tempDir("sql-dropped-transaction", { "after.sql": "SELECT 'after file'" });
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      // begin() rejects as soon as the connection drops, before the callback is done.
+      let callback!: Promise<Record<string, string>>;
+      const begin = rejectionCode(
+        sql.begin(tx => {
+          callback = (async () => {
+            await tx.unsafe("SELECT 'KILL'").catch(() => {});
+            return {
+              tagged: await rejectionCode(tx`SELECT 'after tagged'`),
+              unsafe: await rejectionCode(tx.unsafe("SELECT 'after unsafe'")),
+              file: await rejectionCode(tx.file(join(String(dir), "after.sql"))),
+            };
+          })();
+          return callback;
+        }),
+      );
+      expect(await begin).toBe(closedCode);
+      expect(await callback).toEqual({ tagged: closedCode, unsafe: closedCode, file: closedCode });
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'KILL'" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("unsafe() and file() reject with CONNECTION_CLOSED after a reserved connection drops", async () => {
+    using dir = tempDir("sql-dropped-reserved", { "after.sql": "SELECT 'after file'" });
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      await reserved.unsafe("SELECT 'KILL'").catch(() => {});
+      expect({
+        tagged: await rejectionCode(reserved`SELECT 'after tagged'`),
+        unsafe: await rejectionCode(reserved.unsafe("SELECT 'after unsafe'")),
+        file: await rejectionCode(reserved.file(join(String(dir), "after.sql"))),
+      }).toEqual({ tagged: closedCode, unsafe: closedCode, file: closedCode });
+      expect(received).toEqual([{ conn: 0, sql: "SELECT 'KILL'" }]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));
     }
   });

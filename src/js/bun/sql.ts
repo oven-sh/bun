@@ -31,6 +31,13 @@ interface TransactionState {
   queries: Set<Query<any, any>>;
 }
 
+function acceptsQueries(state: TransactionState) {
+  return (
+    (state.connectionState & ReservedConnectionState.closed) === 0 &&
+    (state.connectionState & ReservedConnectionState.acceptQueries) !== 0
+  );
+}
+
 /// Bound as `this` to both callbacks of a reserve({ signal }) call, so each can
 /// reach the other without a per-call closure.
 interface ReserveAbortState {
@@ -220,6 +227,17 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
+  function unsafeTransactionQueryFlags(values: any[]) {
+    let flags = connectionInfo.bigint
+      ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
+      : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe;
+
+    if ((values?.length ?? 0) === 0) {
+      flags |= SQLQueryFlags.simple;
+    }
+    return flags;
+  }
+
   function unsafeQueryFromTransaction(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
@@ -227,17 +245,10 @@ const SQL: typeof Bun.SQL = function SQL(
     transactionQueries: Set<Query<any, any>>,
   ) {
     try {
-      let flags = connectionInfo.bigint
-        ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe | SQLQueryFlags.bigint
-        : SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.unsafe;
-
-      if ((values?.length ?? 0) === 0) {
-        flags |= SQLQueryFlags.simple;
-      }
       const query = new Query(
         strings,
         values,
-        flags,
+        unsafeTransactionQueryFlags(values),
         queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
         pool,
       );
@@ -246,6 +257,35 @@ const SQL: typeof Bun.SQL = function SQL(
     } catch (err) {
       return Promise.$reject(err);
     }
+  }
+
+  function rejectConnectionClosed(query: Query<any, any>) {
+    query.reject(pool.connectionClosedError());
+  }
+
+  // Not for COMMIT and ROLLBACK: close() stops accepting queries and then still has to send ROLLBACK.
+  function unsafeQueryFromHandle(
+    state: TransactionState,
+    pooledConnection: PooledPostgresConnection,
+    strings: string,
+    values: any[],
+  ) {
+    if (acceptsQueries(state)) {
+      return unsafeQueryFromTransaction(strings, values, pooledConnection, state.queries);
+    }
+    // Still a lazy Query, so .values() and use as a fragment work. It rejects when it runs.
+    return new Query(strings, values, unsafeTransactionQueryFlags(values), rejectConnectionClosed, pool);
+  }
+
+  async function fileQueryFromHandle(
+    state: TransactionState,
+    pooledConnection: PooledPostgresConnection,
+    path: string,
+    values: any[],
+  ) {
+    const text = await Bun.file(path).text();
+    // The handle can close while the file is read, so its state is read here and not before.
+    return unsafeQueryFromHandle(state, pooledConnection, text, values);
   }
 
   function onTransactionDisconnected(this: TransactionState, err: Error) {
@@ -355,10 +395,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     function reserved_sql(strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, any>, ...values: any[]) {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
+      if (!acceptsQueries(state)) {
         return Promise.$reject(pool.connectionClosedError());
       }
       if ($isArray(strings)) {
@@ -373,17 +410,8 @@ const SQL: typeof Bun.SQL = function SQL(
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
 
-    reserved_sql.unsafe = (string, args = []) => {
-      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
-    };
-
-    reserved_sql.file = async (path: string, args = []) => {
-      return await Bun.file(path)
-        .text()
-        .then(text => {
-          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
-        });
-    };
+    reserved_sql.unsafe = (string, args = []) => unsafeQueryFromHandle(state, pooledConnection, string, args);
+    reserved_sql.file = (path: string, args = []) => fileQueryFromHandle(state, pooledConnection, path, args);
 
     reserved_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -433,10 +461,7 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     reserved_sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
+      if (!acceptsQueries(state)) {
         return Promise.$reject(pool.connectionClosedError());
       }
       let callback = fn;
@@ -465,10 +490,7 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     reserved_sql.close = async (options?: { timeout?: number }) => {
       const reserveQueries = state.queries;
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
+      if (!acceptsQueries(state)) {
         return Promise.$resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
@@ -662,10 +684,7 @@ const SQL: typeof Bun.SQL = function SQL(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
       ...values: any[]
     ) {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
+      if (!acceptsQueries(state)) {
         return Promise.$reject(pool.connectionClosedError());
       }
       if ($isArray(strings)) {
@@ -679,16 +698,8 @@ const SQL: typeof Bun.SQL = function SQL(
 
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
     }
-    transaction_sql.unsafe = (string, args = []) => {
-      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
-    };
-    transaction_sql.file = async (path: string, args = []) => {
-      return await Bun.file(path)
-        .text()
-        .then(text => {
-          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
-        });
-    };
+    transaction_sql.unsafe = (string, args = []) => unsafeQueryFromHandle(state, pooledConnection, string, args);
+    transaction_sql.file = (path: string, args = []) => fileQueryFromHandle(state, pooledConnection, path, args);
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
     // this matchs the behavior of the postgres package
     transaction_sql.reserve = (options?: { signal?: AbortSignal }) => sql.reserve(options);
@@ -748,10 +759,7 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     transaction_sql.close = async function (options?: { timeout?: number }) {
       // we dont actually close the connection here, we just set the state to closed and rollback the transaction
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
+      if (!acceptsQueries(state)) {
         return Promise.$resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
@@ -833,10 +841,7 @@ const SQL: typeof Bun.SQL = function SQL(
       transaction_sql.savepoint = async (fn: TransactionCallback, name?: string): Promise<any> => {
         let savepoint_callback = fn;
 
-        if (
-          state.connectionState & ReservedConnectionState.closed ||
-          !(state.connectionState & ReservedConnectionState.acceptQueries)
-        ) {
+        if (!acceptsQueries(state)) {
           throw pool.connectionClosedError();
         }
 

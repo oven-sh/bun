@@ -75,7 +75,13 @@ public:
     void set(const String& name, RefPtr<Blob>, const String& filename = {});
 
     size_t count() const { return m_items.size(); }
-    size_t memoryCost() const;
+    size_t memoryCost() const; // every entry, for heap snapshots
+    size_t reportableMemoryCost() const; // excludes Blob stores, which their JSBlob wrapper reports
+    static size_t stringMemoryCost(const String& string)
+    {
+        auto* impl = string.impl();
+        return impl ? impl->sizeInBytes() : 0;
+    }
 
     String toURLEncodedString();
 

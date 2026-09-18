@@ -5888,6 +5888,54 @@ describe("css tests", () => {
       },
     );
 
+    // The same position for the two pseudo-element arms that pick a legacy name.
+    prefix_test(
+      ".p::placeholder { & .k::placeholder { color: red } & .j { color: blue } }",
+      `
+      .p::-webkit-input-placeholder .j {
+        color: #00f;
+      }
+
+      .p::-webkit-input-placeholder .k::-webkit-input-placeholder {
+        color: red;
+      }
+
+      .p::placeholder .k::placeholder {
+        color: red;
+      }
+
+      .p::placeholder .j {
+        color: #00f;
+      }
+      `,
+      {
+        safari: 10 << 16,
+      },
+    );
+    prefix_test(
+      ".p::file-selector-button { & .k::file-selector-button { color: red } & .j { color: blue } }",
+      `
+      .p::-webkit-file-upload-button .j {
+        color: #00f;
+      }
+
+      .p::-webkit-file-upload-button .k::-webkit-file-upload-button {
+        color: red;
+      }
+
+      .p::file-selector-button .k::file-selector-button {
+        color: red;
+      }
+
+      .p::file-selector-button .j {
+        color: #00f;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
     // The rule after `.k` has no pass of its own, and its hand-written prefix stays.
     test("a sibling after a prefixed nested rule keeps its hand-written prefix", () => {
       const output = cssInternals.prefixTest(

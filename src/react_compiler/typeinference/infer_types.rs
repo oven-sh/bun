@@ -116,6 +116,9 @@ fn pre_resolve_globals_recursive(
     env: &mut Environment,
     global_types: &mut HashMap<(u32, InstructionId), Type>,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     // Collect LoadGlobal bindings and child function IDs in one pass to avoid
     // borrow conflicts (we need &env.functions to read, then &mut env for
     // get_global_declaration).
@@ -469,6 +472,7 @@ fn generate_for_function_id(
     shapes: &ShapeRegistry,
     unifier: &mut Unifier,
 ) -> Result<(), CompilerDiagnostic> {
+    crate::stack_guard::check()?;
     // Take the function out temporarily to avoid borrow conflicts
     let inner = std::mem::replace(&mut functions[func_id.0 as usize], placeholder_function());
 
@@ -989,6 +993,9 @@ fn apply_function(
     types: &mut HirVec<Type>,
     unifier: &Unifier,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for (_block_id, block) in &func.body.blocks {
         // Phi places
         for phi in &block.phis {
@@ -1090,6 +1097,7 @@ impl Unifier {
         t_b: Type,
         shapes: &ShapeRegistry,
     ) -> Result<(), CompilerDiagnostic> {
+        crate::stack_guard::check()?;
         // Handle Property in the RHS position
         if let Type::Property {
             ref object_type,
@@ -1253,6 +1261,9 @@ impl Unifier {
     }
 
     fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return None;
+        }
         match ty {
             Type::Phi { operands } => {
                 let mut new_operands = AstAlloc::vec();
@@ -1314,6 +1325,9 @@ impl Unifier {
     }
 
     fn occurs_check(&self, v: &Type, ty: &Type) -> bool {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return false;
+        }
         if type_equals(v, ty) {
             return true;
         }
@@ -1336,6 +1350,9 @@ impl Unifier {
     }
 
     fn get(&self, ty: &Type) -> Type {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return ty.clone();
+        }
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.substitutions.get(id) {
                 return self.get(sub);

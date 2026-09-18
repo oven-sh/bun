@@ -32,15 +32,21 @@ pub fn get_reverse_postordered_blocks(
     let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
     let mut postorder: Vec<BlockId> = Vec::new();
 
-    fn visit(
+    struct Frame {
+        block_id: BlockId,
+        was_visited: bool,
+        children: std::vec::IntoIter<(BlockId, bool)>,
+    }
+
+    // Upstream's recursive `visit` up to its recursive calls. The walk keeps its own stack: its depth follows the length of the CFG.
+    fn enter(
         hir: &HIR,
         block_id: BlockId,
         is_used: bool,
         visited: &mut IndexSet<BlockId>,
         used: &mut IndexSet<BlockId>,
         used_fallthroughs: &mut IndexSet<BlockId>,
-        postorder: &mut Vec<BlockId>,
-    ) {
+    ) -> Option<Frame> {
         let was_used = used.contains(&block_id);
         let was_visited = visited.contains(&block_id);
         visited.insert(block_id);
@@ -48,7 +54,7 @@ pub fn get_reverse_postordered_blocks(
             used.insert(block_id);
         }
         if was_visited && (was_used || !is_used) {
-            return;
+            return None;
         }
 
         let block = hir
@@ -65,38 +71,48 @@ pub fn get_reverse_postordered_blocks(
 
         // Visit fallthrough first (marking as not-yet-used) to ensure its
         // block ID is emitted in the correct position.
+        let mut children: Vec<(BlockId, bool)> = Vec::with_capacity(successors.len() + 1);
         if let Some(ft) = fallthrough {
             if is_used {
                 used_fallthroughs.insert(ft);
             }
-            visit(hir, ft, false, visited, used, used_fallthroughs, postorder);
+            children.push((ft, false));
         }
-        for successor in successors {
-            visit(
-                hir,
-                successor,
-                is_used,
-                visited,
-                used,
-                used_fallthroughs,
-                postorder,
-            );
-        }
+        children.extend(successors.into_iter().map(|successor| (successor, is_used)));
 
-        if !was_visited {
-            postorder.push(block_id);
-        }
+        Some(Frame {
+            block_id,
+            was_visited,
+            children: children.into_iter(),
+        })
     }
 
-    visit(
+    let mut stack: Vec<Frame> = Vec::new();
+    stack.extend(enter(
         hir,
         hir.entry,
         true,
         &mut visited,
         &mut used,
         &mut used_fallthroughs,
-        &mut postorder,
-    );
+    ));
+    while let Some(frame) = stack.last_mut() {
+        if let Some((child, is_used)) = frame.children.next() {
+            stack.extend(enter(
+                hir,
+                child,
+                is_used,
+                &mut visited,
+                &mut used,
+                &mut used_fallthroughs,
+            ));
+        } else {
+            if !frame.was_visited {
+                postorder.push(frame.block_id);
+            }
+            stack.pop();
+        }
+    }
 
     let mut blocks = IndexMap::new();
     for block_id in postorder.into_iter().rev() {
@@ -254,39 +270,39 @@ pub fn mark_predecessors(hir: &mut HIR) {
 
     let mut visited: IndexSet<BlockId> = IndexSet::new();
 
-    fn visit(
+    // Upstream's recursive `visit` up to its recursive calls. The walk keeps its own stack, as in `get_reverse_postordered_blocks`.
+    fn enter(
         hir: &mut HIR,
         block_id: BlockId,
         prev_block_id: Option<BlockId>,
         visited: &mut IndexSet<BlockId>,
-    ) {
+    ) -> Option<(BlockId, std::vec::IntoIter<BlockId>)> {
         // Add predecessor
         if let Some(prev_id) = prev_block_id {
-            if let Some(block) = hir.blocks.get_mut(&block_id) {
-                block.preds.insert(prev_id);
-            } else {
-                return;
-            }
+            hir.blocks.get_mut(&block_id)?.preds.insert(prev_id);
         }
 
         if visited.contains(&block_id) {
-            return;
+            return None;
         }
         visited.insert(block_id);
 
         // Get successors before mutating
-        let successors = if let Some(block) = hir.blocks.get(&block_id) {
-            each_terminal_successor(&block.terminal)
-        } else {
-            return;
-        };
+        let successors = each_terminal_successor(&hir.blocks.get(&block_id)?.terminal);
 
-        for successor in successors {
-            visit(hir, successor, Some(block_id), visited);
-        }
+        Some((block_id, successors.into_iter()))
     }
 
-    visit(hir, hir.entry, None, &mut visited);
+    let mut stack: Vec<(BlockId, std::vec::IntoIter<BlockId>)> = Vec::new();
+    stack.extend(enter(hir, hir.entry, None, &mut visited));
+    while let Some((block_id, successors)) = stack.last_mut() {
+        if let Some(successor) = successors.next() {
+            let block_id = *block_id;
+            stack.extend(enter(hir, successor, Some(block_id), &mut visited));
+        } else {
+            stack.pop();
+        }
+    }
 }
 
 /// Create a temporary Place with a fresh identifier allocated in the arena.

@@ -332,6 +332,7 @@ impl<'a, 'b> Driver<'a, 'b> {
         mut block_id: BlockId,
         block_value: &mut ReactiveBlock,
     ) -> Result<(), CompilerDiagnostic> {
+        crate::stack_guard::check()?;
         // Use a loop to avoid deep recursion for fallthrough chains.
         // Each terminal that would tail-call visit_block(fallthrough, block_value)
         // instead sets next_block and continues the loop.
@@ -1111,6 +1112,7 @@ impl<'a, 'b> Driver<'a, 'b> {
         loc: Option<SourceLocation>,
         fallthrough: Option<BlockId>,
     ) -> Result<ValueBlockResult, CompilerDiagnostic> {
+        crate::stack_guard::check()?;
         let block = &self.hir.body.blocks[&block_id];
         let block_id_val = block.id;
         let terminal = block.terminal.clone();

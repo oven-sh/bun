@@ -27,6 +27,9 @@ pub(crate) fn outline_functions(
     env: &mut Environment,
     fbt_operands: &HashSet<IdentifierId>,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     // Collect per-instruction actions to maintain depth-first name allocation order.
     // Each entry: (instr index, function_id to recurse into, should_outline)
     enum Action {

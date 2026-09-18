@@ -27,6 +27,9 @@ use crate::ssa::enter_ssa::placeholder_function;
 
 /// Merge consecutive blocks in the function's CFG, including inner functions.
 pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [HirFunction]) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     // Collect inner function IDs for recursive processing
     let inner_func_ids: Vec<usize> = func
         .body

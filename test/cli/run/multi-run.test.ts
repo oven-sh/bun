@@ -2262,9 +2262,10 @@ describe.concurrent("--shell and [run] shell pick the interpreter", () => {
   test.each([["--shell=bun"], ["--shell=system"]])("%s does not load the package .env", async shell => {
     using dir = tempDir("mr-shell-dotenv", {
       ".env": "FROM_PACKAGE_DOTENV=leaked\n",
+      "env.js": `console.log("[" + (process.env.FROM_PACKAGE_DOTENV ?? "") + "]");`,
       "package.json": JSON.stringify({
         scripts: {
-          env: `${bunExe()} --no-env-file -e "console.log('[' + (process.env.FROM_PACKAGE_DOTENV ?? '') + ']')"`,
+          env: `${bunExe()} --no-env-file env.js`,
         },
       }),
     });

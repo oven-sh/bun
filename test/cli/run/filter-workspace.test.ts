@@ -1392,10 +1392,11 @@ describe("--shell and [run] shell pick the interpreter for --filter", () => {
       packages: {
         dep0: {
           ".env": "FROM_PACKAGE_DOTENV=leaked\n",
+          "env.js": `console.log("[" + (process.env.FROM_PACKAGE_DOTENV ?? "") + "]");`,
           "package.json": JSON.stringify({
             name: "dep0",
             scripts: {
-              env: `${bunExe()} --no-env-file -e "console.log('[' + (process.env.FROM_PACKAGE_DOTENV ?? '') + ']')"`,
+              env: `${bunExe()} --no-env-file env.js`,
             },
           }),
         },

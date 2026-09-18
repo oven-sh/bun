@@ -1026,13 +1026,13 @@ console.log("survived", require("./late.js"));`,
       stdout: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
     const { moduleEdges, children } = JSON.parse(stdout);
     expect(children).toBe(1);
     // The parent points at the child once. A few more Module-to-Module edges
     // can exist (the entry point and the parent pointers), but not one per call.
     expect(moduleEdges).toBeLessThan(10);
-    if (exitCode !== 0) expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
   });
 
   test("new Module().exports survives object spread", async () => {

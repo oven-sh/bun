@@ -90,16 +90,4 @@ template<typename T> struct JSConverter<IDLInterface<T>> {
     }
 };
 
-template<typename T> struct VariadicConverter<IDLInterface<T>> {
-    using Item = std::reference_wrapper<T>;
-
-    static std::optional<Item> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        auto* result = Converter<IDLInterface<T>>::convert(lexicalGlobalObject, value);
-        if (!result)
-            return std::nullopt;
-        return std::optional<Item> { *result };
-    }
-};
-
 } // namespace WebCore

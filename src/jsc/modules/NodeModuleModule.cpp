@@ -21,6 +21,7 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
+#include "VectorSizeLimit.h"
 #include "BunString.h"
 
 #include "GeneratedNodeModuleModule.h"
@@ -366,7 +367,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 if (scope.exception())
                     return;
 
-                paths.append(Bun::toStringRef(pathStr));
+                BunString pathRef = Bun::toStringRef(pathStr);
+                if (!Bun::tryAppendWithinLimit(paths, pathRef)) [[unlikely]] {
+                    pathRef.deref();
+                    throwOutOfMemoryError(lexicalGlobalObject, scope);
+                }
             });
 
             if (scope.exception()) {

@@ -416,6 +416,22 @@ impl FileResponseStream {
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // sendfile() bypasses the userspace socket buffer, so an unsent
+            // header tail parked there must flush first or file bytes overtake
+            // it on the wire. The writable path re-enters here once it has.
+            let buffered = self.resp.get().get_buffered_amount();
+            if buffered > 0 {
+                bun_output::scoped_log!(
+                    FileResponseStream,
+                    "deferring sendfile behind {} buffered bytes",
+                    buffered
+                );
+                return self.arm_sendfile_writable();
+            }
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         loop {
             let (errno, sent, remain) = self.sendfile.with_mut(|sf| {
                 let adjusted = sf.remain.min(i32::MAX as u64);

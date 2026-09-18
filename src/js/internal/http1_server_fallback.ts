@@ -235,7 +235,17 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
-  const { kHandle: kHttp1ResponseHandle } = require("internal/http");
+  const { ConnResetException } = require("internal/shared");
+  const { kHandle: kHttp1ResponseHandle, http1ServerPipeline } = require("internal/http");
+  // Populated by node:_http_server, which the require("node:http") above loads.
+  const {
+    queuePipelinedResponse,
+    advanceResponsePipeline,
+    abortQueuedPipelinedResponses,
+    maybePauseFallbackReads,
+    resumeFallbackReadsOnDrain,
+    kMustCloseConnection,
+  } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};
@@ -307,9 +317,11 @@ function connectionListenerHTTP1(server, socket, options) {
         return 2;
       }
     }
-    // The body is fed by the parser callbacks below; reading just resumes the socket.
+    // The body is fed by the parser callbacks below; reading just resumes the
+    // socket - unless the pipelining read gate paused it (the gate's release
+    // resumes it instead).
     req._read = function (_size) {
-      if (socket.readable) socket.resume();
+      if (!socket._paused && socket.readable) socket.resume();
     };
 
     const res = new ServerResponseClass(req);
@@ -326,13 +338,36 @@ function connectionListenerHTTP1(server, socket, options) {
       }
     };
     res[kHttp1ResponseHandle] = handle;
-    res.assignSocket(socket);
-    // node's resOnFinish: release the socket once the response completes so the next
-    // keep-alive request's response can attach (assignSocket throws
-    // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned).
+    // Node's parserOnIncoming outgoing queue: pipelined requests parse while
+    // the previous response is still assigned (its 'finish' detach is a tick
+    // away), so queue this response instead of letting assignSocket throw
+    // ERR_HTTP_SOCKET_ASSIGNED.
+    if (socket._httpMessage) {
+      queuePipelinedResponse(socket, res, versionMajor < 1 || versionMinor < 1);
+    } else {
+      res.assignSocket(socket);
+    }
+    // node's resOnFinish: release the socket once the response completes,
+    // then either end the connection (a response that advertised Connection:
+    // close must not be followed by another one - the close path aborts the
+    // queued responses) or hand the socket to the next queued pipelined
+    // response, replaying whatever it buffered.
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
+      if (this[kMustCloseConnection]) {
+        if (typeof socket.destroySoon === "function") {
+          socket.destroySoon();
+        } else if (!socket.writableEnded) {
+          socket.end();
+        }
+        return;
+      }
+      advanceResponsePipeline(server, socket);
     });
+
+    // Node's parserOnIncoming read gate: stop reading once the connection's
+    // outgoing side is backed up, so pipelined requests cannot flood it.
+    maybePauseFallbackReads(socket);
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
     // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).
@@ -401,6 +436,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.removeListener("data", onHttp1SocketData);
       socket.removeListener("error", onHttp1SocketErrorListener);
       socket.removeListener("end", onHttp1SocketEnd);
+      socket.removeListener("drain", onHttp1SocketDrain);
       connections.delete(socket);
       try {
         parser.close();
@@ -439,11 +475,31 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.end();
     }
   }
+  // Node's socketOnDrain: a transport-backpressure pause lifts when the
+  // socket drains (a queued-bytes pause lifts from the pipeline advance).
+  function onHttp1SocketDrain() {
+    resumeFallbackReadsOnDrain(socket);
+  }
   socket.on("data", onHttp1SocketData);
   socket.on("error", onHttp1SocketErrorListener);
   socket.once("end", onHttp1SocketEnd);
+  socket.on("drain", onHttp1SocketDrain);
   socket.once("close", () => {
     connections.delete(socket);
+    // Like the native socket's close path (Node's socketOnClose ->
+    // abortIncoming): abort the in-flight request, then the responses (and
+    // requests) still queued behind it, so they all emit 'close'. The
+    // in-flight response's own 'close' comes from onServerResponseClose,
+    // installed by assignSocket.
+    const inflightReq = socket._httpMessage?.req;
+    if (inflightReq && !inflightReq.destroyed) {
+      if (inflightReq.listenerCount("error") > 0) {
+        inflightReq.destroy(new ConnResetException("aborted"));
+      } else {
+        inflightReq.destroy();
+      }
+    }
+    abortQueuedPipelinedResponses(socket);
     try {
       parser.close();
     } catch {}

@@ -54,9 +54,7 @@ pub struct ThreadPool {
     /// parse can complete (`graph.pending_items` reaching zero) before it has
     /// returned from that, so teardown joins this before it frees `worker_pool`.
     io_tasks_in_flight: WaitGroup,
-    // Conditionally owned via `worker_pool_is_owned`; kept raw so callers
-    // (bundle_v2.rs) can dereference for `wake_for_idle_events()` without a
-    // borrow on `ThreadPool`.
+    // Conditionally owned via `worker_pool_is_owned`.
     pub worker_pool: *mut ThreadPoolLib::ThreadPool,
     pub(crate) worker_pool_is_owned: bool,
     // Per PORTING.md §Concurrency ("Mutex<T> owns T"), the lock is folded into
@@ -277,6 +275,14 @@ impl ThreadPool {
         self.io_pool.as_deref()
     }
 
+    /// Sends every thread that may hold a [`Worker`] through its idle queue.
+    pub(crate) fn wake_for_idle_events(&self) {
+        self.worker_pool().wake_for_idle_events();
+        if let Some(io) = self.io_pool_ref() {
+            io.wake_for_idle_events();
+        }
+    }
+
     pub(crate) fn start(&self) {
         self.worker_pool().warm(8);
         if let Some(io) = self.io_pool_ref() {
@@ -436,24 +442,27 @@ impl ThreadPool {
             MapEntry::Occupied(o) => *o.into_mut(),
             // Complete before it is inserted: `deinit_without_freeing_arena`
             // takes this lock and tears down every Worker the map holds.
-            MapEntry::Vacant(v) => *v.insert(bun_core::heap::into_raw(Box::new(Worker {
-                // SAFETY: `v2` is the bundle that owns this pool; it outlives every Worker.
-                ctx: unsafe { bun_ptr::BackRef::from_raw(self.v2.cast_mut()) },
-                heap: None,
-                // Points into `heap` once `create()` runs.
-                arena: bun_ptr::BackRef::dangling(),
-                thread: NonNull::new(ThreadPoolLib::Thread::current())
-                    .map(bun_ptr::ParentRef::from),
-                data: None,
-                ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
-                has_created: false,
-                deinit_task: ThreadPoolLib::Task {
-                    node: ThreadPoolLib::Node::default(),
-                    callback: Worker::deinit_callback,
-                },
-                temporary_arena: None,
-                stmt_list: None,
-            }))),
+            MapEntry::Vacant(v) => {
+                WORKER_LIVE_COUNT.fetch_add(1, Ordering::SeqCst);
+                *v.insert(bun_core::heap::into_raw(Box::new(Worker {
+                    // SAFETY: `v2` is the bundle that owns this pool; it outlives every Worker.
+                    ctx: unsafe { bun_ptr::BackRef::from_raw(self.v2.cast_mut()) },
+                    heap: None,
+                    // Points into `heap` once `create()` runs.
+                    arena: bun_ptr::BackRef::dangling(),
+                    thread: NonNull::new(ThreadPoolLib::Thread::current())
+                        .map(bun_ptr::ParentRef::from),
+                    data: None,
+                    ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
+                    has_created: false,
+                    deinit_task: ThreadPoolLib::Task {
+                        node: ThreadPoolLib::Node::default(),
+                        callback: Worker::deinit_callback,
+                    },
+                    temporary_arena: None,
+                    stmt_list: None,
+                })))
+            }
         };
         drop(map);
         TLS_WORKER.set((self.generation, worker));
@@ -471,6 +480,10 @@ static TLS_WORKER: core::cell::Cell<(u64, *mut Worker)> =
     core::cell::Cell::new((0, core::ptr::null_mut()));
 
 static POOL_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+
+/// `Worker`s created and not yet torn down by their thread, across every pool in the process.
+/// Read by `bun:internal-for-testing`.
+pub static WORKER_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 // ───────────────────────────────────────────────────────────────────────────
 // Worker
@@ -646,6 +659,7 @@ impl Worker {
         if worker.has_created {
             worker.heap = None;
         }
+        WORKER_LIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
 
     // returns `&'static mut` (detached) — the `Worker` is

@@ -1,5 +1,5 @@
-ARG LLVM_VERSION="21"
-ARG REPORTED_LLVM_VERSION="21.1.8"
+ARG LLVM_VERSION="23"
+ARG REPORTED_LLVM_VERSION="23.1.1"
 ARG OLD_BUN_VERSION="1.3.13"
 ARG BUILDKITE_AGENT_TAGS="queue=linux,os=linux,arch=${TARGETARCH}"
 
@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    wget curl git python3 python3-pip ninja-build \
    software-properties-common apt-transport-https \
    ca-certificates gnupg lsb-release unzip xz-utils \
-   libxml2-dev ruby ruby-dev bison flex gawk perl zstd make golang ccache qemu-user-static \
+   libxml2-dev ruby ruby-dev bison gawk perl make golang ccache qemu-user-static \
    nasm \
    && add-apt-repository ppa:ubuntu-toolchain-r/test \
    && apt-get update \

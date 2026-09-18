@@ -24,6 +24,7 @@ static const HashTableValue JSNodePerformanceHooksHistogramPrototypeTableValues[
     { "reset"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncReset, 0 } },
     { "percentile"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncPercentile, 1 } },
     { "percentileBigInt"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncPercentileBigInt, 1 } },
+    { "toJSON"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsNodePerformanceHooksHistogramProtoFuncToJSON, 0 } },
 
     { "count"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_count, 0 } },
     { "countBigInt"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsNodePerformanceHooksHistogramGetter_countBigInt, 0 } },
@@ -200,6 +201,34 @@ JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigIn
     RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, thisObject->getPercentile(percentile))));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncToJSON, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSNodePerformanceHooksHistogram* thisObject = dynamicDowncast<JSNodePerformanceHooksHistogram>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        WebCore::throwThisTypeError(*globalObject, scope, "Histogram"_s, "toJSON"_s);
+        return {};
+    }
+
+    JSObject* result = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 7);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    result->putDirect(vm, Identifier::fromString(vm, "count"_s), jsNumber(static_cast<double>(thisObject->getCount())));
+    result->putDirect(vm, Identifier::fromString(vm, "min"_s), jsNumber(thisObject->getMinAsDouble()));
+    result->putDirect(vm, Identifier::fromString(vm, "max"_s), jsNumber(static_cast<double>(thisObject->getMax())));
+    result->putDirect(vm, Identifier::fromString(vm, "mean"_s), jsNumber(thisObject->getMean()));
+    result->putDirect(vm, Identifier::fromString(vm, "exceeds"_s), jsNumber(static_cast<double>(thisObject->getExceeds())));
+    result->putDirect(vm, Identifier::fromString(vm, "stddev"_s), jsNumber(thisObject->getStddev()));
+
+    JSObject* percentiles = thisObject->getPercentilesObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    result->putDirect(vm, Identifier::fromString(vm, "percentiles"_s), percentiles);
+
+    return JSValue::encode(result);
+}
+
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_count, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = globalObject->vm();
@@ -237,11 +266,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_min, (JSGlobalObj
         return {};
     }
 
-    int64_t minValue = thisObject->getMin();
-
-    // Node.js returns the value as if it were unsigned when converting to double
-    // This handles the special case where the initial value is INT64_MIN
-    return JSValue::encode(jsNumber(static_cast<double>(static_cast<uint64_t>(minValue))));
+    return JSValue::encode(jsNumber(thisObject->getMinAsDouble()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_minBigInt, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

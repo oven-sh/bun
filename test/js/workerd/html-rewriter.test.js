@@ -1815,6 +1815,226 @@ describe("HTMLRewriter", () => {
     );
   });
 
+  describe(":not()", () => {
+    const matchedIds = selector => {
+      const ids = [];
+      new HTMLRewriter()
+        .on(selector, {
+          element(element) {
+            ids.push(element.getAttribute("id"));
+          },
+        })
+        .transform(
+          '<main id="main"><div id="div" class="a">1</div><span id="span" class="a">2</span><span id="plain">3</span></main>',
+        );
+      return ids;
+    };
+    const matchesOf = selectors => Object.fromEntries(selectors.map(selector => [selector, matchedIds(selector)]));
+
+    it("nested", () => {
+      expect(
+        matchesOf([
+          ":not(div)",
+          ":not(:not(div))",
+          ":not(:not(:not(div)))",
+          "div:not(:not(span))",
+          "span:not(:not(.a))",
+          ":not(:not(span.a))",
+          ":not(:not(div), :not(.a))",
+        ]),
+      ).toEqual({
+        ":not(div)": ["main", "span", "plain"],
+        ":not(:not(div))": ["div"],
+        ":not(:not(:not(div)))": ["main", "span", "plain"],
+        "div:not(:not(span))": [],
+        "span:not(:not(.a))": ["span"],
+        ":not(:not(span.a))": ["span"],
+        ":not(:not(div), :not(.a))": ["div"],
+      });
+    });
+
+    // Each of these is an OR of simple selectors once the negations are applied:
+    // `:not(span.a)` is "not a span, or not .a". `#main` is both, and its handler runs once.
+    it("of a compound selector, and nested around a selector list", () => {
+      expect(
+        matchesOf([
+          ":not(span.a)",
+          "main > :not(span.a)",
+          ":not(:not(div, span))",
+          ":not(:not(div):not(span))",
+          ":not(span:not(.a))",
+          "span:not(.a:not(div))",
+        ]),
+      ).toEqual({
+        ":not(span.a)": ["main", "div", "plain"],
+        "main > :not(span.a)": ["div", "plain"],
+        ":not(:not(div, span))": ["div", "span", "plain"],
+        ":not(:not(div):not(span))": ["div", "span", "plain"],
+        ":not(span:not(.a))": ["main", "div", "span"],
+        "span:not(.a:not(div))": ["plain"],
+      });
+    });
+
+    it("that expands past the size limit is rejected", () => {
+      // `:not(a.b)` is "not a, or not b". One more doubles the combinations, and each
+      // combination repeats the rest of the selector: the limit is 4096 simple selectors.
+      const selector = count => Buffer.alloc(count * 9, ":not(a.b)").toString();
+      expect(matchedIds(selector(8))).toEqual(["main", "div", "span", "plain"]);
+      expect(() => new HTMLRewriter().on(selector(9), {})).toThrow("Unsupported syntax in selector.");
+
+      const descendants = Buffer.alloc(1100 * 2, " x").toString();
+      expect(() => new HTMLRewriter().on(":not(a.b)" + descendants, {})).toThrow("Unsupported syntax in selector.");
+      // The same length with a single combination has no limit.
+      expect(() => new HTMLRewriter().on(":not(a, b)" + descendants, {})).not.toThrow();
+    });
+
+    it("with a combinator inside is rejected", () => {
+      for (const selector of [":not(div span)", ":not(div > span)", ":not(:not(div span))"]) {
+        expect(() => new HTMLRewriter().on(selector, {})).toThrow(
+          "Unsupported pseudo-class or pseudo-element in selector.",
+        );
+      }
+    });
+  });
+
+  it("attribute selectors match the attribute name case-insensitively", () => {
+    const countMatches = selector => {
+      let count = 0;
+      new HTMLRewriter()
+        .on(selector, {
+          element() {
+            count++;
+          },
+        })
+        .transform(`<div ID="X" data-x="1"><a HREF="#">l</a><input type="text"></div>`);
+      return count;
+    };
+    const selectors = [
+      "[id]",
+      "[ID]",
+      "a[HREF]",
+      "[DATA-X]",
+      "[ID=X]",
+      'input[TYPE="text"]',
+      '[DATA-X^="1"]',
+      // The value stays case-sensitive unless the selector says `i`.
+      "[ID=x]",
+      '[ID="x" i]',
+      "div:not([ID])",
+      "a:not([ID])",
+    ];
+    expect(Object.fromEntries(selectors.map(selector => [selector, countMatches(selector)]))).toEqual({
+      "[id]": 1,
+      "[ID]": 1,
+      "a[HREF]": 1,
+      "[DATA-X]": 1,
+      "[ID=X]": 1,
+      'input[TYPE="text"]': 1,
+      '[DATA-X^="1"]': 1,
+      "[ID=x]": 0,
+      '[ID="x" i]': 1,
+      "div:not([ID])": 0,
+      "a:not([ID])": 1,
+    });
+    expect(() => new HTMLRewriter().on("[*|foo]", {})).toThrow("Selectors with explicit namespaces are not supported.");
+  });
+
+  it("runs handlers for consecutive SVG and MathML integration-point siblings", () => {
+    const tagNames = doc => {
+      const seen = [];
+      new HTMLRewriter()
+        .on("*", {
+          element(element) {
+            seen.push(element.tagName);
+          },
+        })
+        .transform(doc);
+      return seen;
+    };
+    expect(tagNames("<svg><desc>d</desc> <title>t</title><foreignObject>f</foreignObject></svg>")).toEqual([
+      "svg",
+      "desc",
+      "title",
+      "foreignobject",
+    ]);
+    expect(tagNames("<math><mi>x</mi><mo>+</mo><mn>1</mn></math>")).toEqual(["math", "mi", "mo", "mn"]);
+
+    const stripped = new HTMLRewriter()
+      .on("foreignobject", {
+        element(element) {
+          element.remove();
+        },
+      })
+      .transform("<svg><title>x</title><foreignObject><script>evil()</script></foreignObject></svg>");
+    expect(stripped).toBe("<svg><title>x</title></svg>");
+  });
+
+  describe("comment.text and the sequences that end a comment", () => {
+    // The tokenizer ends a comment at `-->` and at `--!>` anywhere in its text,
+    // and at a leading `>` or `->` (`<!-->` and `<!--->` are empty comments).
+    // Anything after one of these is outside the comment, so it is markup.
+    const markup = "<img src=x onerror=alert(1)>";
+    const setText = text =>
+      new HTMLRewriter()
+        .on("p", {
+          comments(comment) {
+            comment.text = text;
+          },
+        })
+        .transform("<p><!--c--></p>");
+
+    it.each(["x-->", "x--!>", ">", "->"].flatMap(end => [end, end + markup]))("%j is rejected", text => {
+      expect(() => setText(text)).toThrow("Comment text shouldn't contain a comment-closing sequence.");
+    });
+
+    // Text that only resembles one of them stays valid: a second parse reads it
+    // back as the one comment inside `<p>`, and finds no other element.
+    const accepted = ["", "-", "--", "--!", "x--!", "x--", "a>b", "a->b", "a--!b", "x<!--", "x" + markup];
+    it.each(accepted)("%j is accepted", text => {
+      const out = setText(text);
+      const comments = [];
+      const elements = [];
+      new HTMLRewriter()
+        .onDocument({ comments: comment => void comments.push(comment.text) })
+        .on("*", { element: el => void elements.push(el.tagName) })
+        .transform(out);
+      expect({ out, comments, elements }).toEqual({ out: `<p><!--${text}--></p>`, comments: [text], elements: ["p"] });
+    });
+  });
+
+  // The selector VM used to re-run every ancestor's descendant-combinator jumps
+  // for every start tag, so "div div div div" over N nested <div>s was O(N^4):
+  // depth 600 (6.6 KB) took about two minutes. A stray end tag scanned the whole
+  // open stack, so "<a></b>" x 40k was O(N^2). The test timeout is the assertion:
+  // the runner kills the child when it fires.
+  it("descendant combinators and stray end tags stay linear in nesting depth", async () => {
+    const depth = 600;
+    const fixture = /* js */ `
+      const depth = ${depth};
+      const deep = Buffer.alloc(depth * 5, "<div>").toString() + "x" + Buffer.alloc(depth * 6, "</div>").toString();
+      let matched = 0;
+      const deepOut = new HTMLRewriter().on("div div div div", { element() { matched++; } }).transform(deep);
+
+      const stray = Buffer.alloc(40_000 * 7, "<a></b>").toString();
+      let strayMatched = 0;
+      const strayOut = new HTMLRewriter().on("nomatch", { element() { strayMatched++; } }).transform(stray);
+
+      console.log(JSON.stringify({ matched, deepSame: deepOut === deep, strayMatched, straySame: strayOut === stray }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ matched: depth - 3, deepSame: true, strayMatched: 0, straySame: true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("supports deleting innerContent", async () => {
     expect(
       await new HTMLRewriter()

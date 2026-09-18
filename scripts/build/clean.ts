@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { allDeps } from "./deps/index.ts";
 
 const cwd = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-// Machine-shared cache (ccache/cargo/tarballs/webkit). Matches resolveConfig()'s
+// Machine-shared cache (ccache/tarballs/webkit). Matches resolveConfig()'s
 // non-CI default. `clean` is a dev-machine tool so we don't branch on CI here.
 const sharedCacheDir = resolve(process.env.BUN_INSTALL || resolve(homedir(), ".bun"), "build-cache");
 
@@ -31,9 +31,9 @@ presets:
   release          build/release/
   debug-local      build/debug-local/
   release-local    build/release-local/
-  rust             cargo target dirs across all profiles + ~/.bun/build-cache/cargo
+  rust             cargo target dirs across all profiles
   cpp              C++ obj/ + pch/ across all profiles
-  cache            machine-shared build cache (~/.bun/build-cache: ccache, cargo,
+  cache            machine-shared build cache (~/.bun/build-cache: ccache,
                    tarballs, prebuilt webkit) — affects ALL checkouts
   deep             build/, target/, vendor/* (except manually managed deps
                    like WebKit)
@@ -68,7 +68,6 @@ const presets: Record<string, () => string[]> = {
 
   rust: () => [
     ...buildProfiles().map(p => resolve(p, "rust-target")),
-    resolve(sharedCacheDir, "cargo"),
     // `cargo check`/`cargo clippy` run from the repo root with no
     // --target-dir, so they write to the workspace-default `target/`.
     resolve(cwd, "target"),

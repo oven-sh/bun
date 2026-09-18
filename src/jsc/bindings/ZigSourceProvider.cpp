@@ -22,7 +22,6 @@ namespace Zig {
 
 using SourceOrigin = JSC::SourceOrigin;
 using String = WTF::String;
-using SourceProviderSourceType = JSC::SourceProviderSourceType;
 
 SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 {

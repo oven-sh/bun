@@ -160,7 +160,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       const i = contents.indexOf("\n") + 1;
       internal ||= contents.slice(0, i).includes("@internal");
       contents = contents.slice(i);
-    } else if (match[1] === "type" || match[1] === "export type") {
+    } else if (match[1] === "type") {
       const i = contents.search(consumeEndOfType);
       contents = contents.slice(i + 1);
     } else if (match[1] === "interface") {
@@ -281,10 +281,6 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
   for (const fn of functions) {
     const tmpFile = path.join(TMP_DIR, `${basename}.${fn.name}.ts`);
 
-    // not sure if this optimization works properly in jsc builtins
-    // const useThis = fn.usesThis;
-    const useThis = true;
-
     // TODO: we should use format=IIFE so we could bundle imports and extra functions.
     writeFileSync(
       tmpFile,
@@ -295,11 +291,7 @@ ${fn.enums.join("\n")}
 // do not allow the bundler to rename a symbol to $
 ($);
 
-$$capture_start$$(${fn.async ? "async " : ""}${
-        useThis
-          ? `function(${fn.params.join(",")})`
-          : `${fn.params.length === 1 ? fn.params[0] : `(${fn.params.join(",")})`}=>`
-      } {${fn.source}}).$$capture_end$$;
+$$capture_start$$(${fn.async ? "async " : ""}function(${fn.params.join(",")}) {${fn.source}}).$$capture_end$$;
 `,
     );
     await Bun.sleep(1);

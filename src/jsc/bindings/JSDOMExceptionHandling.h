@@ -97,16 +97,4 @@ template<typename Functor> void invokeFunctorPropagatingExceptionIfNecessary(JSC
         functor();
 }
 
-template<typename Functor> void invokeFunctorPropagatingExceptionIfNecessary(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& throwScope, Functor&& functor)
-{
-    using ReturnType = std::invoke_result_t<Functor>;
-
-    if constexpr (IsExceptionOr<ReturnType>) {
-        auto result = functor();
-        if (result.hasException()) [[unlikely]]
-            propagateException(lexicalGlobalObject, throwScope, result.releaseException());
-    } else
-        functor();
-}
-
 } // namespace WebCore

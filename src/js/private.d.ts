@@ -42,26 +42,6 @@ declare module "bun" {
   var fetch: typeof globalThis.fetch;
 }
 
-interface LoaderEntry {
-  key: string;
-  state: number;
-  fetch: Promise<JSCSourceCodeObject>;
-  instantiate: Promise<any>;
-  satisfy: Promise<any>;
-  dependencies: string[];
-  module: LoaderModule;
-  linkError?: any;
-  linkSucceeded: boolean;
-  evaluated: boolean;
-  then?: any;
-  isAsync: boolean;
-  isSatisfied: boolean;
-}
-
-interface LoaderModule {
-  dependenciesMap: Map<string, LoaderEntry>;
-}
-
 declare interface Error {
   code?: string;
 }

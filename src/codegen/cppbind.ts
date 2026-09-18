@@ -43,13 +43,12 @@ To run manually:
 
 ### Parameters
 
-- **[[ZIG_NONNULL]]** - Mark pointer parameters as non-nullable:
+- **[[ZIG_NONNULL]]** - Accepted on pointer parameters. It does not change the generated binding:
   ```cpp
   [[ZIG_EXPORT(nothrow)]] void process([[ZIG_NONNULL]] JSGlobalObject* globalThis,
                                         [[ZIG_NONNULL]] JSValue* values,
                                         size_t count) { ... }
   ```
-  Generates: `pub extern fn process(globalThis: *jsc.JSGlobalObject, values: [*]const jsc.JSValue) void;`
 
 */
 
@@ -88,8 +87,6 @@ type CppType =
       child: CppType;
       position: Srcloc;
       isConst: boolean;
-      isMany: boolean;
-      isNonNull: boolean;
     }
   | {
       type: "named";
@@ -292,16 +289,12 @@ function processDeclarator(
   if (declarator?.name === "PointerDeclarator") {
     if (!rootmostType) throwError(nodePosition(declarator, ctx), "no rootmost type provided to PointerDeclarator");
     const isConst = !!declarator.parent?.getChild("const") || rootmostType.type === "fn";
-    const parentAttributes = declarator.parent?.getChildren("Attribute") ?? [];
-    const isNonNull = parentAttributes.some(attr => text(attr.getChild("AttributeName")!, ctx) === "ZIG_NONNULL");
 
     return processDeclarator(ctx, declarator, {
       type: "pointer",
       child: rootmostType,
       position: nodePosition(declarator, ctx),
       isConst,
-      isNonNull,
-      isMany: false,
     });
   } else if (declarator?.name === "ReferenceDeclarator") {
     throwError(nodePosition(declarator, ctx), "references are not allowed");
@@ -355,15 +348,6 @@ function processFunction(ctx: ParseContext, node: SyntaxNode, tag: ExportTag): C
     }
 
     parameters.push({ type: paramDeclarator.type, name: text(name, ctx) });
-  }
-
-  for (let i = 0; i < parameters.length; i++) {
-    const param = parameters[i];
-    const next = parameters[i + 1];
-    if (param.type.type === "pointer" && next?.type.type === "named" && next.type.name === "size_t") {
-      param.type.isMany = true;
-      i++;
-    }
   }
 
   return {

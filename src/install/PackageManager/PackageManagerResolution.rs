@@ -493,15 +493,18 @@ fn workspace_containment<'b>(
     workspace_path: &[u8],
     real_dir_buf: &'b mut bun_paths::PathBuffer,
 ) -> Containment<'b> {
+    // `C:..` is drive-relative on Windows: the OS resolves it against that drive's own cwd.
+    #[cfg(windows)]
+    if matches!(workspace_path, [letter, b':', rest @ ..]
+        if bun_paths::is_drive_letter(*letter)
+            && !matches!(rest.first(), Some(c) if bun_paths::is_sep_any(*c)))
+    {
+        return Containment::Refused("names a drive");
+    }
+    // The installer creates these itself. Caseless: macOS and Windows open either name.
     for component in strings::split_any(workspace_path, b"/\\") {
-        // The installer creates these itself. Caseless: macOS and Windows open either name.
         if component.eq_ignore_ascii_case(b"node_modules") {
             return Containment::Refused("is inside node_modules");
-        }
-        // `C:..` is drive-relative on Windows, so the OS resolves it against that drive.
-        #[cfg(windows)]
-        if matches!(component, [letter, b':', ..] if bun_paths::is_drive_letter(*letter)) {
-            return Containment::Refused("names a drive");
         }
     }
 
@@ -546,18 +549,16 @@ fn workspace_containment<'b>(
 
 /// `<root>/<path>` and a NUL, not normalized: only the OS resolves a `..` after a symlink.
 fn write_absolute_path(buf: &mut [u8], root: &[u8], mut path: &[u8]) -> Option<usize> {
+    let absolute = bun_paths::is_absolute(path);
     // A trailing separator makes `lstat` follow the last component, which the walk reads.
+    // `/` and `C:\` are the exception: the separator is part of the root's own name.
     while let [rest @ .., last] = path {
-        if !bun_paths::is_sep_any(*last) {
+        if !bun_paths::is_sep_any(*last) || rest.is_empty() || rest.last() == Some(&b':') {
             break;
         }
         path = rest;
     }
-    let root: &[u8] = if bun_paths::is_absolute(path) {
-        b""
-    } else {
-        root
-    };
+    let root: &[u8] = if absolute { b"" } else { root };
     let sep = (!root.is_empty() && !path.is_empty()) as usize;
     let len = root.len() + sep + path.len();
     if len + 1 > buf.len() {

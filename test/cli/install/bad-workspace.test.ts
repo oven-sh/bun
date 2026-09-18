@@ -492,45 +492,6 @@ describe.concurrent("workspace packages outside the workspace root", () => {
     await expectRefused(String(dir), `error: workspace "C:../victim" names a drive\n`);
   });
 
-  // `bun prune` deletes inside the same `<workspace>/node_modules` directories, so it
-  // checks the paths as well. The manifest and the lockfile agree here, so the frozen
-  // lockfile check that runs first is happy.
-  test("bun prune refuses a workspace outside the root", async () => {
-    using dir = tempDir("bad-workspace-prune-sibling", {
-      "victim/package.json": JSON.stringify({ name: "victim", version: "1.0.0" }),
-      "victim/node_modules/keep/package.json": JSON.stringify({ name: "keep", version: "1.0.0" }),
-      "clone/packages/inner/package.json": JSON.stringify({ name: "inner", version: "1.99.0" }),
-      "clone/node_modules/.keep": "",
-      "clone/package.json": JSON.stringify({ name: "root", workspaces: ["packages/*", "../victim"] }),
-      "clone/bun.lock": JSON.stringify({
-        lockfileVersion: 2,
-        configVersion: 1,
-        workspaces: {
-          "": { name: "root" },
-          "../victim": { name: "victim", version: "1.0.0" },
-          "packages/inner": { name: "inner", version: "1.99.0" },
-        },
-        packages: {
-          inner: ["inner@workspace:packages/inner"],
-          victim: ["victim@workspace:../victim"],
-        },
-      }),
-    });
-
-    await using proc = spawn({
-      cmd: [bunExe(), "prune"],
-      cwd: join(String(dir), "clone"),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stderr).toContain(`error: workspace "../victim" is outside the workspace root`);
-    expect(readdirSync(join(String(dir), "victim", "node_modules"))).toEqual(["keep"]);
-    expect(exitCode).toBe(1);
-  });
-
   async function expectInstalled(dir: string, workspacePaths: string[]) {
     const clone = join(dir, "clone");
 

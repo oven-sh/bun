@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { bunExe, tempDir } from "harness";
 import { once } from "node:events";
 import net from "node:net";
+import { join } from "node:path";
 
 describe("body-mixin-errors", () => {
   it.concurrent.each([
@@ -121,7 +123,7 @@ describe("body-mixin-errors", () => {
     const server = net.createServer(socket => {
       socket.resume();
       socket.end(
-        "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 16\r\nConnection: close\r\n\r\nthis is not gzip",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/wasm\r\nContent-Encoding: gzip\r\nContent-Length: 16\r\nConnection: close\r\n\r\nthis is not gzip",
       );
     });
     server.listen(0, "127.0.0.1");
@@ -133,6 +135,96 @@ describe("body-mixin-errors", () => {
       await new Promise<void>(r => server.close(() => r()));
     }
   }
+
+  // Every reader of a body takes its failure the same way: the first one gets the error and
+  // uses the body up. These read the body without the body mixin.
+  it.concurrent.each([
+    ["HTMLRewriter.transform()", (res: Response) => new HTMLRewriter().transform(res)],
+    ["WebAssembly.compileStreaming()", (res: Response) => WebAssembly.compileStreaming(res)],
+    ["Bun.spawn() stdin", (res: Response) => Bun.spawn({ cmd: [bunExe(), "--version"], stdin: res })],
+    ["Bun.write()", (res: Response, dir: string) => Bun.write(join(dir, "out"), res)],
+  ] as const)("fetch: %s of a body that failed before it was read uses the body up", async (_, read) => {
+    using dir = tempDir("body-mixin-errors", {});
+    await withUndecodableBodyServer(async url => {
+      const res = await fetch(url);
+      expect(res.bodyUsed).toBe(false);
+
+      let firstErr: unknown;
+      try {
+        await read(res, String(dir));
+      } catch (e) {
+        firstErr = e;
+      }
+      expect(firstErr).toBeInstanceOf(TypeError);
+      expect((firstErr as any).code).toBe("ZlibError");
+      expect(res.bodyUsed).toBe(true);
+
+      let secondErr: unknown;
+      await res.text().catch(e => (secondErr = e));
+      expectBodyAlreadyUsed(secondErr);
+    });
+  });
+
+  // Bun.serve() reads the body of the Response that its handler returns.
+  it.concurrent("fetch: Bun.serve() of a body that failed before it was read uses the body up", async () => {
+    await withUndecodableBodyServer(async url => {
+      const res = await fetch(url);
+      const { promise: firstErr, resolve } = Promise.withResolvers<unknown>();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () => res,
+        error(e) {
+          resolve(e);
+          return new Response("failed", { status: 500 });
+        },
+      });
+      expect((await fetch(server.url)).status).toBe(500);
+      expect(await firstErr).toBeInstanceOf(TypeError);
+      expect(res.bodyUsed).toBe(true);
+
+      let secondErr: unknown;
+      await res.text().catch(e => (secondErr = e));
+      expectBodyAlreadyUsed(secondErr);
+    });
+  });
+
+  // The abort rejects the pending read, which uses the body up. fetch reports the same abort to
+  // the body once more when it tears the request down, and that must not make it unused again.
+  it.concurrent("fetch: a pending read that an abort rejected leaves the body used", async () => {
+    const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        req.signal.addEventListener("abort", () => onDisconnect());
+        // The headers and a first chunk arrive. The body never ends.
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("x"));
+            },
+          }),
+        );
+      },
+    });
+    const controller = new AbortController();
+    const res = await fetch(server.url, { signal: controller.signal });
+    const read = res.text();
+    controller.abort();
+
+    let firstErr: unknown;
+    await read.catch(e => (firstErr = e));
+    expect((firstErr as Error).name).toBe("AbortError");
+    expect(res.bodyUsed).toBe(true);
+
+    // The request is torn down by the time the server sees the connection close.
+    await disconnected;
+    for (let turn = 0; turn < 50 && res.bodyUsed; turn++) await new Promise(resolve => setImmediate(resolve));
+    expect(res.bodyUsed).toBe(true);
+
+    let secondErr: unknown;
+    await res.text().catch(e => (secondErr = e));
+    expectBodyAlreadyUsed(secondErr);
+  });
 
   it.concurrent("fetch: .body of a body that failed before it was read is still the body", async () => {
     await withUndecodableBodyServer(async url => {

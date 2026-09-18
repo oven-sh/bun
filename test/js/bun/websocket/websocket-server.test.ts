@@ -2298,6 +2298,159 @@ describe("server.upgrade() validates the opening handshake", () => {
   });
 });
 
+// RFC 6455 §4.2.2 fixes the Upgrade, Connection and Sec-WebSocket-Accept lines
+// of the server's 101, and a 1xx carries no Content-Length or Transfer-Encoding
+// (RFC 9110 §8.6). upgrade() writes its own lines. The same names passed in
+// options.headers used to be written as well, so a client saw two
+// Sec-WebSocket-Accept values (or `Upgrade: h2c` next to `Upgrade: websocket`)
+// and failed the handshake after the server had already run open().
+describe.concurrent("server.upgrade() options.headers cannot duplicate the handshake's own fields", () => {
+  const K = "dGhlIHNhbXBsZSBub25jZQ==";
+  // RFC 6455 §1.3: the accept value for the sample nonce above.
+  const ACCEPT = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+
+  const rawHandshake = (port: number, extra: string[] = []) =>
+    new Promise<string[]>(resolve => {
+      let buf = "";
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        sock.destroy();
+        const head = buf.split("\r\n\r\n", 1)[0] ?? "";
+        resolve(head.split("\r\n"));
+      };
+      const sock = net.connect({ port, host: "127.0.0.1" }, () => {
+        sock.write(
+          [
+            "GET /ws HTTP/1.1",
+            "Host: x",
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            `Sec-WebSocket-Key: ${K}`,
+            "Sec-WebSocket-Version: 13",
+            ...extra,
+            "",
+            "",
+          ].join("\r\n"),
+        );
+      });
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        if (buf.includes("\r\n\r\n")) done();
+      });
+      sock.on("error", done);
+      sock.on("close", done);
+    });
+
+  // Lower-cases the field name only, drops the Date line, and sorts, so the
+  // comparison does not depend on write order.
+  const fields = (lines: string[]) =>
+    lines
+      .slice(1)
+      .map(line => {
+        const i = line.indexOf(":");
+        return line.slice(0, i).toLowerCase() + ":" + line.slice(i + 1);
+      })
+      .filter(line => !line.startsWith("date:"))
+      .sort();
+
+  const clientOpens = (url: string, protocols?: string[]) =>
+    new Promise<string>(resolve => {
+      const ws = new WebSocket(url, protocols);
+      ws.onopen = () => {
+        resolve(`open protocol=${ws.protocol}`);
+        ws.close();
+      };
+      ws.onerror = e => resolve(`error: ${(e as ErrorEvent).message}`);
+    });
+
+  it("from a plain object", async () => {
+    const opened: string[] = [];
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, srv) {
+        if (
+          srv.upgrade(req, {
+            data: new URL(req.url).pathname,
+            headers: {
+              "Upgrade": "h2c",
+              "Connection": "close",
+              "Sec-WebSocket-Accept": "AAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+              "Sec-WebSocket-Key": "not-for-a-response",
+              "Sec-WebSocket-Version": "8",
+              "Content-Length": "5",
+              "Transfer-Encoding": "chunked",
+              "X-Custom": "yes",
+              "Set-Cookie": "a=b",
+            },
+          })
+        )
+          return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          opened.push(ws.data as string);
+        },
+        message() {},
+      },
+    });
+
+    const lines = await rawHandshake(server.port);
+    expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
+    expect(fields(lines)).toEqual(
+      [
+        "connection: Upgrade",
+        `sec-websocket-accept: ${ACCEPT}`,
+        "set-cookie: a=b",
+        "upgrade: websocket",
+        "x-custom: yes",
+      ].sort(),
+    );
+    expect(await clientOpens(`ws://127.0.0.1:${server.port}/client`)).toBe("open protocol=");
+    expect(opened).toEqual(["/ws", "/client"]);
+  });
+
+  it("from a Headers object, which is left unmodified", async () => {
+    const headers = new Headers({
+      "Sec-WebSocket-Protocol": "chat",
+      "Connection": "keep-alive",
+      "X-H": "1",
+    });
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, srv) {
+        if (srv.upgrade(req, { headers })) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: { message() {} },
+    });
+
+    const lines = await rawHandshake(server.port, ["Sec-WebSocket-Protocol: superchat, chat"]);
+    expect(lines[0]).toBe("HTTP/1.1 101 Switching Protocols");
+    // The Sec-WebSocket-Protocol in options.headers selects the subprotocol
+    // that upgrade() announces; it is written once, by upgrade().
+    expect(fields(lines)).toEqual(
+      [
+        "connection: Upgrade",
+        `sec-websocket-accept: ${ACCEPT}`,
+        "sec-websocket-protocol: chat",
+        "upgrade: websocket",
+        "x-h: 1",
+      ].sort(),
+    );
+    expect(await clientOpens(`ws://127.0.0.1:${server.port}/`, ["superchat", "chat"])).toBe("open protocol=chat");
+    expect([...headers]).toEqual([
+      ["connection", "keep-alive"],
+      ["sec-websocket-protocol", "chat"],
+      ["x-h", "1"],
+    ]);
+  });
+});
+
 // The 101 switches protocols: the connection stops being HTTP, so the HTTP
 // layer's "close after this response" (the request said Connection: close or
 // was HTTP/1.0, or a graceful server.stop() marked the connection to close

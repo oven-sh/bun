@@ -28,6 +28,8 @@ pub mod shared {
 
     pub mod datetime_text;
 
+    pub(crate) mod number;
+
     #[path = "ObjectIterator.rs"]
     pub mod object_iterator;
 

@@ -3,6 +3,7 @@
 //! conversion paths live here.
 
 use crate::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
+use crate::shared::number::safe_integer;
 use bun_sql::postgres::types::tag::Tag;
 
 // `Tag` is a runtime arg rather than a const generic: it is a
@@ -84,8 +85,7 @@ pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> 
         return Ok(Tag::int4);
     }
 
-    if value.is_any_int() {
-        let int = value.to_int64();
+    if let Some(int) = safe_integer(value) {
         if int >= i64::from(i32::MIN) && int <= i64::from(i32::MAX) {
             return Ok(Tag::int4);
         }

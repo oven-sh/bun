@@ -14,6 +14,7 @@ use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 use bun_sql::shared::Data;
 
 use crate::jsc::webcore::Blob;
+use crate::shared::number::safe_integer;
 
 pub(crate) fn field_type_from_js(
     global_object: &JSGlobalObject,
@@ -81,9 +82,7 @@ pub(crate) fn field_type_from_js(
         }
     }
 
-    if value.is_any_int() {
-        let int = value.to_int64();
-
+    if let Some(int) = safe_integer(value) {
         if int >= 0 {
             if int <= i32::MAX as i64 {
                 return Ok(FieldType::MYSQL_TYPE_LONG);

@@ -3612,7 +3612,8 @@ it("a chunked framing error in the body of an accepted Upgrade request does not 
   // JS only when parser.upgrade is not set. The 'upgrade' listener keeps its
   // socket, no 'clientError' fires, and the bytes after the error go nowhere.
   const events: string[] = [];
-  let serverSocket: import("node:net").Socket;
+  let serverSocket: import("node:net").Socket | undefined;
+  let client: import("node:net").Socket | undefined;
   const server = createServer(() => events.push("request"));
   server.on("upgrade", (req, socket, head) => {
     serverSocket = socket;
@@ -3630,7 +3631,7 @@ it("a chunked framing error in the body of an accepted Upgrade request does not 
     await once(server, "listening");
     const { port } = server.address() as AddressInfo;
 
-    const client = connect(port, "127.0.0.1");
+    client = connect(port, "127.0.0.1");
     client.on("error", () => {});
     await once(client, "connect");
     const received = new Promise<string>((resolve, reject) => {
@@ -3639,11 +3640,11 @@ it("a chunked framing error in the body of an accepted Upgrade request does not 
         buf += d;
         if (buf.includes("\r\n\r\n") && !buf.endsWith("alive")) {
           // The 101 arrived. The server side must still be writable.
-          serverSocket.write("alive");
+          serverSocket!.write("alive");
         }
         if (buf.endsWith("alive")) resolve(buf);
       });
-      client.on("close", () => reject(new Error("the server closed the socket: " + buf)));
+      client!.on("close", () => reject(new Error("the server closed the socket: " + buf)));
     });
     // "zz" is not a valid hex chunk size.
     client.write(
@@ -3653,9 +3654,9 @@ it("a chunked framing error in the body of an accepted Upgrade request does not 
     expect(out).toStartWith("HTTP/1.1 101 Switching Protocols");
     expect(events).toEqual(["upgrade head="]);
     expect(serverSocket!.destroyed).toBe(false);
-    client.destroy();
-    serverSocket!.destroy();
   } finally {
+    client?.destroy();
+    serverSocket?.destroy();
     server.close();
   }
 });

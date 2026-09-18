@@ -311,6 +311,40 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
   }, 30_000);
 
+  // A package.json that exists but cannot be loaded is an error, like it is
+  // for `bun add` / `bun pm pkg`. It used to be treated as "no package.json"
+  // and silently overwritten with the blank scaffold.
+  test.each([
+    {
+      name: "syntax error",
+      contents: '{\n  "name": "myapp",\n  "version": "2.0.0",\n  "dependencies": {\n    "foo": "^1.0.0",\n  }\n',
+      error: 'error: Expected "}" but found end of file',
+    },
+    {
+      name: "non-object root",
+      contents: '["name", "myapp"]\n',
+      error: "error: package.json root must be an object",
+    },
+  ])("bun init -y errors on an invalid package.json instead of overwriting it ($name)", async ({ contents, error }) => {
+    await using temp = tempDir("bun-init-invalid-package-json", {
+      "package.json": contents,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain(error);
+    expect(await Bun.file(path.join(temp, "package.json")).text()).toBe(contents);
+    expect(readdirSync(temp).sort()).toEqual(["package.json"]);
+    expect(exitCode).toBe(1);
+  });
+
   test("bun init --react works", async () => {
     await using temp = tempDir("bun-init--react-works", {});
 

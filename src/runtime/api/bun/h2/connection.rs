@@ -291,6 +291,7 @@ pub struct Connection {
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
+    enc_announced: hpack::AnnouncedAt,
     /// Reusable scratch for end-of-batch window replenishment (stream id, increment).
     replenish_buf: Vec<(u32, u32)>,
     /// Reused buffer for evicting closed streams after each receive pass (no per-call allocation).
@@ -327,6 +328,7 @@ impl Connection {
             terminated: false,
             obq_ack_pending: 0,
             enc_buf: Vec::new(),
+            enc_announced: Default::default(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
             preface_received: 0,
@@ -1785,7 +1787,7 @@ impl Connection {
     /// Begin a new outbound header block. Emits any pending §6.3 dynamic-table size update first.
     pub fn begin_header_block(&mut self) {
         self.enc_buf.clear();
-        self.hpack.write_pending_size_update(&mut self.enc_buf);
+        self.enc_announced = self.hpack.write_pending_size_update(&mut self.enc_buf);
     }
 
     /// HPACK-encode one header field into the current block. Returns false on encode failure.
@@ -1811,7 +1813,7 @@ impl Connection {
     /// it exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
     pub fn send_header_block(&mut self, sink: &impl Sink, stream_id: u32, end_stream: bool) {
         let block = std::mem::take(&mut self.enc_buf);
-        self.hpack.size_update_committed();
+        self.hpack.size_update_committed(self.enc_announced);
         let max = (self.remote_settings.max_frame_size as usize).max(1);
         let total = block.len();
 
@@ -1943,7 +1945,7 @@ impl Connection {
     /// promised request headers staged via begin_header_block/encode_header (RFC 9113 §6.6).
     pub fn send_push_promise(&mut self, sink: &impl Sink, parent_id: u32, promised_id: u32) {
         let block = std::mem::take(&mut self.enc_buf);
-        self.hpack.size_update_committed();
+        self.hpack.size_update_committed(self.enc_announced);
         let max = (self.remote_settings.max_frame_size as usize).max(5);
 
         // First frame: PUSH_PROMISE = 4-byte promised id + (head of) the header block.

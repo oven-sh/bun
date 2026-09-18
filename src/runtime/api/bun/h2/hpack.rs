@@ -16,12 +16,18 @@ pub const DEFAULT_HEADER_TABLE_SIZE: u32 = 4096;
 /// `maxDeflateDynamicTableSize`.
 pub const MAX_ENCODER_TABLE_SIZE: u32 = 4096;
 
+/// What a header block announced when it was opened. See [`Coder::size_update_committed`].
+#[derive(Clone, Copy, Default)]
+pub struct AnnouncedAt(u32);
+
 pub struct Coder {
     hpack: HpackHandle,
     enc_capacity: u32,
     /// `Some` while a capacity change is not announced: the smallest capacity since the last
     /// block that was sent. RFC 7541 §4.2 wants that minimum signaled before the final value.
     unannounced_min: Option<u32>,
+    /// Counts the changes of `unannounced_min`.
+    generation: u32,
     /// Our SETTINGS_HEADER_TABLE_SIZE that the peer ACKed last.
     dec_capacity: u32,
 }
@@ -32,6 +38,7 @@ impl Coder {
             hpack: HpackHandle::new(DEFAULT_HEADER_TABLE_SIZE),
             enc_capacity: DEFAULT_HEADER_TABLE_SIZE,
             unannounced_min: None,
+            generation: 0,
             dec_capacity: DEFAULT_HEADER_TABLE_SIZE,
         }
     }
@@ -62,22 +69,27 @@ impl Coder {
             Some(min) => min.min(capacity),
             None => capacity,
         });
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// Call at the start of every outbound header block. The update stays pending until
     /// [`Self::size_update_committed`], so a block that is built but never sent does not lose it.
-    pub fn write_pending_size_update(&self, block: &mut Vec<u8>) {
-        let Some(min) = self.unannounced_min else {
-            return;
-        };
-        if min < self.enc_capacity {
-            write_table_size_update(block, min);
+    pub fn write_pending_size_update(&self, block: &mut Vec<u8>) -> AnnouncedAt {
+        if let Some(min) = self.unannounced_min {
+            if min < self.enc_capacity {
+                write_table_size_update(block, min);
+            }
+            write_table_size_update(block, self.enc_capacity);
         }
-        write_table_size_update(block, self.enc_capacity);
+        AnnouncedAt(self.generation)
     }
 
-    pub fn size_update_committed(&mut self) {
-        self.unannounced_min = None;
+    /// User JS runs while a block is built and can deliver a peer SETTINGS frame. A change that
+    /// arrived after the block was opened is not in the block, so it stays pending.
+    pub fn size_update_committed(&mut self, announced: AnnouncedAt) {
+        if announced.0 == self.generation {
+            self.unannounced_min = None;
+        }
     }
 
     #[inline]

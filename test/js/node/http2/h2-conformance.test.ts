@@ -1278,7 +1278,7 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 7541 §4.2)", () => {
       for (let i = 0; i < 90; i++) oversized[`x-big-${i}`] = Buffer.alloc(200, "v").toString() + i;
 
       /** A raw peer on a Duplex. `onHeaders` runs inside the client's write of that HEADERS frame. */
-      function rawPeer(onHeaders: (frame: Frame, peer: Duplex) => void) {
+      function rawPeer(onHeaders: (frame: Frame, peer: Duplex) => void, settings?: Buffer) {
         let buf = Buffer.alloc(0);
         let prefaceLeft = PREFACE.length;
         const peer = new Duplex({
@@ -1299,7 +1299,7 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 7541 §4.2)", () => {
               };
               buf = buf.subarray(9 + length);
               if (frame.type === FrameType.SETTINGS && (frame.flags & 0x1) === 0) {
-                peer.push(encodeFrame(FrameType.SETTINGS, 0, 0));
+                peer.push(encodeFrame(FrameType.SETTINGS, 0, 0, settings));
                 peer.push(encodeFrame(FrameType.SETTINGS, 0x1, 0));
               } else if (frame.type === FrameType.HEADERS) {
                 onHeaders(frame, peer);
@@ -1375,6 +1375,45 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 7541 §4.2)", () => {
           expect(outer.payload.subarray(0, 4)).toEqual(Buffer.concat([sizeUpdate(0), sizeUpdate(4096)]));
           // A second update to 0 makes the peer evict what the outer block has just inserted.
           expect(headerBlock(nested)).toEqual({ sizeUpdates: [], dynamicIndexes: [] });
+        } finally {
+          client.destroy();
+        }
+      });
+
+      // User code runs between the fields of a header block. This checks one thing: a size that
+      // arrives there is not lost. The block that is open at that moment can still be wrong,
+      // which is why its last field is the one that delivers the SETTINGS frame.
+      test("a table size that arrives while user code builds a block is announced in the next block", async () => {
+        let insideRequest = false;
+        const seen: Frame[] = [];
+        const peer = rawPeer(frame => seen.push(frame), headerTableSizes(0));
+        const client = http2.connect("http://localhost", { createConnection: () => peer });
+        client.on("error", () => {});
+        const arrivedInsideRequest: boolean[] = [];
+        client.on("remoteSettings", settings => {
+          if (settings.headerTableSize === 4096) arrivedInsideRequest.push(insideRequest);
+        });
+        const get = async (headers: http2.OutgoingHttpHeaders = {}) => {
+          insideRequest = true;
+          const req = client.request({ ":path": "/", ...headers });
+          insideRequest = false;
+          req.on("error", () => {});
+          req.resume();
+          await once(req, "response");
+        };
+        try {
+          await get();
+          const deliversSettings = {
+            toString() {
+              peer.push(encodeFrame(FrameType.SETTINGS, 0, 0, headerTableSizes(4096)));
+              return "value";
+            },
+          };
+          await get({ "x-last": deliversSettings as unknown as string });
+          await get();
+          // Without this the test does not reach the case it is for.
+          expect(arrivedInsideRequest).toEqual([true]);
+          expect(seen.map(frame => headerBlock(frame).sizeUpdates)).toEqual([[0], [], [4096]]);
         } finally {
           client.destroy();
         }

@@ -248,9 +248,7 @@ impl Cat {
                 node: cmd,
                 tag: ReaderTag::Cat,
             };
-            // Writing to stdout errored: cancel everything and finish. The
-            // writer fails each queued chunk separately, so the chunks still
-            // queued behind this one must not call back into a finished cat.
+            // Writing to stdout errored: cancel everything and finish.
             Self::cancel_stdout_chunks(interp, cmd);
             // Pull the reader `Arc` out of
             // state before calling `remove_reader`, then drop it.

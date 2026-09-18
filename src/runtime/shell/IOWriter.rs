@@ -514,10 +514,7 @@ impl IOWriter {
 
     // ── queue management ────────────────────────────────────────────────
 
-    /// Cancel the chunks enqueued by the given child by marking them as dead:
-    /// they are skipped without a callback, both when the queue drains and
-    /// when it fails (`fail_pending_writers`), so a child that is about to
-    /// finish with chunks still queued calls this first.
+    /// Cancel the chunks enqueued by the given child by marking them as dead.
     pub(crate) fn cancel_chunks(&self, ptr: ChildPtr) {
         let s = self.state();
         if s.writers.is_empty() {
@@ -765,8 +762,7 @@ impl IOWriter {
                 if !not_fully_written {
                     return;
                 }
-                // Other end of the socket/pipe closed (e.g. `ls | echo`):
-                // everything still queued fails with EPIPE.
+                // The other end closed (e.g. `ls | echo`): every queued chunk fails with EPIPE.
                 self.fail_pending_writers(&sys::Error::from_code(E::EPIPE, sys::Tag::write), None);
                 return;
             }
@@ -795,23 +791,7 @@ impl IOWriter {
         }
     }
 
-    /// Shared failure path: record the error, then give every chunk that is
-    /// still queued its own error completion, oldest first.
-    ///
-    /// One completion per *chunk*, not per child: `rm` and the `OutputTask`
-    /// builtins (`ls`, `mkdir`, `touch`, `cp`) queue one chunk per task under
-    /// one `ChildPtr` and finish only after a completion for each. A child
-    /// that stops at its first error (`cat`, the subprocess `CapturedWriter`)
-    /// calls `cancel_chunks` from that callback, so the queue is walked in
-    /// place and each entry is re-checked right before its callback. Nothing
-    /// is appended meanwhile: `err` is set before the first callback, so a
-    /// child that enqueues from its callback (the next statement, the RHS of
-    /// `&&`, ...) is answered by `handle_dead_writer`, not queued onto a writer
-    /// whose handle the error path is tearing down.
-    ///
-    /// `withhold` is the child whose `enqueue` is still on the stack (see
-    /// `on_sync_error`). Its first live chunk is not dispatched here. It is
-    /// returned, if it is still live after everything else has run.
+    /// Fails every chunk still queued, oldest first, each with its own error completion.
     fn fail_pending_writers(&self, err: &sys::Error, withhold: Option<ChildPtr>) -> Option<Yield> {
         // A completion may drop the last external `Arc` to this writer.
         let _keepalive = self.keepalive();
@@ -820,6 +800,10 @@ impl IOWriter {
         if err.get_errno() == E::EPIPE {
             s.flags.broken_pipe = true;
         }
+        // Mark the writer dead before any completion below runs: a child that
+        // enqueues from its callback (the next statement, the RHS of `&&`, ...)
+        // must be rejected by `handle_dead_writer`, not queued onto a writer
+        // whose handle the error path is tearing down.
         s.err = Some(err.clone());
         crate::shell_log!(
             "IOWriter(fd={}) failing {} queued chunk(s): {:?}",
@@ -828,22 +812,22 @@ impl IOWriter {
             err.get_errno()
         );
         // Writers before writer_idx have already had their callback fired and
-        // may have been freed; only the still-pending ones are notified.
+        // may have been freed; only notify the still-pending ones.
         let mut idx = s.writer_idx;
         let mut withheld: Option<usize> = None;
-        // Re-derived every iteration: a callback may `cancel_chunks`.
+        // Re-derived every iteration: a callback may `cancel_chunks` the entries behind it.
         while let Some(w) = self.state().writers.get(idx) {
             let (dead, child, this_idx) = (w.is_dead(), w.ptr, idx);
             idx += 1;
             if dead {
                 continue;
             }
+            // `withhold`'s `enqueue` is on the stack: its first live chunk is returned, not run.
             if withheld.is_none() && withhold == Some(child) {
                 withheld = Some(this_idx);
                 continue;
             }
-            // `SystemError` owns its strings by value, so derive a fresh one
-            // per callee instead of cloning the stored error.
+            // `SystemError` is not `Clone`: each completion derives its own.
             self.run_yield(Yield::OnIoWriterChunk {
                 child,
                 written: 0,
@@ -882,13 +866,12 @@ impl IOWriter {
     /// *returned* so that trampoline delivers it after `enqueue` unwinds;
     /// calling `on_error` here instead would re-enter `Yield::run` once per
     /// failing command and fire `child`'s callback from inside its own
-    /// `enqueue`. Usually the chunk `enqueue` just pushed is the only pending
-    /// one (a synchronous failure is the first write attempt of a batch); if a
-    /// poll re-registration fails while other chunks are still queued, those
-    /// are dispatched the way the async path dispatches them. `Yield::done()`
-    /// comes back only if one of those completions made `child` cancel its
-    /// remaining chunks, i.e. it has already finished.
+    /// `enqueue`. Usually `child`'s chunk is the only pending one (a
+    /// synchronous failure is the first write attempt of a batch); if a poll
+    /// re-registration fails while other children are still queued, those are
+    /// dispatched the way the async path dispatches them.
     fn on_sync_error(&self, child: ChildPtr, err: &sys::Error) -> Yield {
+        // `None`: an inline completion made `child` cancel its chunks, so it has finished.
         self.fail_pending_writers(err, Some(child))
             .unwrap_or_else(Yield::done)
     }

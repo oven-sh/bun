@@ -1604,10 +1604,7 @@ impl CapturedWriter {
         self.parent().run_yield(y);
     }
 
-    /// How this writer's chunks are identified on the IOWriter queue. The
-    /// CapturedWriter lives outside the NodeId arena (embedded in a
-    /// heap-allocated PipeReader), so dispatch is by raw pointer — see
-    /// `io_writer::ChildPtr::subproc_capture` / `WriterTag::Subproc`.
+    /// This writer's identity on the IOWriter queue, see `ChildPtr::subproc_capture`.
     fn child_ptr(&mut self) -> io_writer::ChildPtr {
         io_writer::ChildPtr::subproc_capture(std::ptr::from_mut(self).cast::<c_void>())
     }
@@ -1639,9 +1636,7 @@ impl CapturedWriter {
                 e.syscall
             );
             self.err = Some(e);
-            // The writer fails each queued chunk separately; the rest of ours
-            // must not call back in here once the Cmd below has released this
-            // PipeReader (`do_write` stops enqueueing now that `err` is set).
+            // The chunks still queued must not call back: the Cmd below can free this PipeReader.
             let child = self.child_ptr();
             if let Some(writer) = &self.writer {
                 writer.cancel_chunks(child);

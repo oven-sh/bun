@@ -948,7 +948,7 @@ test("b", () => {
 
   const fullyCovered: Row = { functions: "100.00", lines: "100.00", uncovered: "" };
 
-  test.each([
+  describe.each([
     ["by the host and by a Bun.ModuleGraph", "host-and-graph.ts"],
     ["by two Bun.ModuleGraphs", "two-graphs.ts"],
     ["CommonJS, by the host and by a Bun.ModuleGraph", "cjs-host-and-graph.cjs"],
@@ -956,7 +956,9 @@ test("b", () => {
     ["by two overlapping import()s", "overlapping-imports.ts"],
     ["again after a require.cache delete", "require-cache.cjs"],
   ])("%s", (_, file) => {
-    expect(loaded.rows[file]).toEqual(fullyCovered);
+    test("is fully covered", () => {
+      expect(loaded.rows[file]).toEqual(fullyCovered);
+    });
   });
 
   test("from a plugin's onLoad, by two test files under --isolate", () => {

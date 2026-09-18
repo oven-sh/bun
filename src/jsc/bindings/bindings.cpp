@@ -5722,8 +5722,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     properties.releaseData();
 }
 
-// True when forEachProperty and forEachPropertyOrdered report no property of this object.
-// Reads structures only and runs no JS, so false also means "cannot tell".
+// True only when forEachProperty and forEachPropertyOrdered report nothing. Runs no JS, so false can mean "unknown".
 extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isDefinitelyEmptyForEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
@@ -5731,8 +5730,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isDefinitelyEmptyForEachPr
         return false;
 
     auto& vm = JSC::getVM(globalObject);
-    // forEachProperty reads the object and four prototypes. It reads a fifth prototype only when each
-    // level before it holds a private name, so a private name on a prototype returns false below.
+    // forEachProperty reads the object and four prototypes.
     constexpr unsigned maxLevels = 5;
     for (unsigned level = 0; level < maxLevels; level++) {
         JSC::Structure* structure = object->structure();
@@ -5746,6 +5744,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isDefinitelyEmptyForEachPr
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             // forEachProperty hides every `constructor`. An own enumerable one is real content, so that object is not empty.
             bool isHiddenConstructor = entry.key() == vm.propertyNames->constructor && (level > 0 || (entry.attributes() & PropertyAttribute::DontEnum));
+            // A private name on every level makes forEachProperty read a fifth prototype, so only the object may hold one.
             bool isHiddenPrivateName = level == 0 && PropertyName(entry.key()).isPrivateName() && !JSC::Options::showPrivateScriptsInStackTraces();
             skipsEveryProperty = isHiddenConstructor || isHiddenPrivateName;
             return skipsEveryProperty;

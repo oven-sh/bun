@@ -2577,9 +2577,7 @@ impl JSValue {
         unsafe { crate::TopExceptionScope::destroy(scope) };
         result
     }
-    /// Whether [`for_each_property`](Self::for_each_property) and
-    /// [`for_each_property_ordered`](Self::for_each_property_ordered) report no
-    /// property of this object. Runs no JS, so `false` also means "cannot tell".
+    /// `true` only if `for_each_property` reports nothing. Runs no JS, so `false` can mean unknown.
     pub(crate) fn is_definitely_empty_for_each_property(self, global: &JSGlobalObject) -> bool {
         crate::cpp::JSC__JSValue__isDefinitelyEmptyForEachProperty(self, global)
     }

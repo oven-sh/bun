@@ -148,6 +148,7 @@ public:
         Call,
         ReturnValue,
         ReturnThis,
+        ResolvedValue,
         RejectedValue,
     };
 
@@ -920,12 +921,19 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         }
 
         switch (impl->kind) {
-        case JSMockImplementation::Kind::Call: {
-            JSValue result = impl->underlyingValue.get();
-            JSC::CallData callData = JSC::getCallData(result);
-            if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
-                throwTypeError(globalObject, scope, "Expected mock implementation to be callable"_s);
-                return {};
+        case JSMockImplementation::Kind::Call:
+        case JSMockImplementation::Kind::ResolvedValue: {
+            // mockResolvedValue(value) is mockImplementation(() => Promise.resolve(value)). Promise.resolve reads
+            // "constructor" from a promise and "then" from an object, so it runs user code and can throw.
+            const bool isCall = impl->kind == JSMockImplementation::Kind::Call;
+            JSValue underlyingValue = impl->underlyingValue.get();
+            JSC::CallData callData;
+            if (isCall) {
+                callData = JSC::getCallData(underlyingValue);
+                if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+                    throwTypeError(globalObject, scope, "Expected mock implementation to be callable"_s);
+                    return {};
+                }
             }
 
             setReturnValue(createMockResult(vm, globalObject, MockResultType::Incomplete, jsUndefined()));
@@ -933,7 +941,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
             auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-            JSValue returnValue = Bun::call(globalObject, result, callData, thisValue, args);
+            JSValue returnValue = isCall
+                ? Bun::call(globalObject, underlyingValue, callData, thisValue, args)
+                : JSValue(JSC::JSPromise::resolvedPromise(globalObject, underlyingValue));
 
             if (auto* exc = topExceptionScope.exception()) {
                 if (auto* returnValuesArray = fn->returnValues.get()) {
@@ -1228,11 +1238,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValue, (JSC::JSGlobalObject *
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    auto* promise = JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0));
-    RETURN_IF_EXCEPTION(scope, {});
-    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, promise);
+    pushImpl(thisObject, globalObject, JSMockImplementation::Kind::ResolvedValue, callframe->argument(0));
 
-    return JSValue::encode(thisObject);
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValueOnce, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
@@ -1243,11 +1251,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockResolvedValueOnce, (JSC::JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
-    auto* promise = JSC::JSPromise::resolvedPromise(globalObject, callframe->argument(0));
-    RETURN_IF_EXCEPTION(scope, {});
-    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ReturnValue, promise);
+    pushImplOnce(thisObject, globalObject, JSMockImplementation::Kind::ResolvedValue, callframe->argument(0));
 
-    return JSValue::encode(thisObject);
+    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRejectedValue, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {

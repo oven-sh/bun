@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
 import net, { isIP } from "node:net";
 import path from "node:path";
+import { constants, inflateRawSync } from "node:zlib";
 
 const strings = [
   {
@@ -2146,6 +2147,193 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
         sendProbe: 0,
       });
     });
+  });
+});
+
+// The `compress` argument is a per-call hint that only takes effect for
+// subscribers that negotiated permessage-deflate. ws.send() and ws.publish()
+// leave it off unless asked; server.publish() is the one method that compresses
+// unless told not to. Both defaults are documented, so pin them on the wire.
+describe.concurrent("compress argument defaults", () => {
+  type Frame = { text: string; compressed: boolean };
+
+  // Raw RFC 6455 client that records every text frame the server writes to it.
+  // The server negotiates server_no_context_takeover, so each RSV1 payload
+  // inflates on its own.
+  function connectRaw(port: number, pathname: string, offerDeflate: boolean) {
+    type Raw = { negotiated: string; frames(count: number): Promise<Frame[]>; [Symbol.dispose](): void };
+    const upgrade = Promise.withResolvers<Raw>();
+    const frames: Frame[] = [];
+    const waiters: { count: number; settle: PromiseWithResolvers<Frame[]> }[] = [];
+    const settleWaiters = () => {
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        const { count, settle } = waiters[i];
+        if (frames.length < count) continue;
+        waiters.splice(i, 1);
+        settle.resolve(frames.slice(0, count));
+      }
+    };
+    let failure: Error | undefined;
+    let buffer = Buffer.alloc(0);
+    let upgraded = false;
+
+    const socket = net.connect({ port, host: "127.0.0.1" }, () => {
+      socket.write(
+        `GET ${pathname} HTTP/1.1\r\n` +
+          "Host: x\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+          "Sec-WebSocket-Version: 13\r\n" +
+          (offerDeflate ? "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n" : "") +
+          "\r\n",
+      );
+    });
+    const fail = (error: Error) => {
+      failure ??= error;
+      upgrade.reject(failure);
+      for (const { settle } of waiters.splice(0)) settle.reject(failure);
+      socket.destroy();
+    };
+    socket.on("error", fail);
+    socket.on("close", () => fail(new Error(`${pathname}: socket closed after ${frames.length} frame(s)`)));
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      if (!upgraded) {
+        const end = buffer.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const head = buffer.subarray(0, end).toString();
+        buffer = buffer.subarray(end + 4);
+        upgraded = true;
+        if (!head.startsWith("HTTP/1.1 101 ")) return fail(new Error(`${pathname}: upgrade failed: ${head}`));
+        upgrade.resolve({
+          negotiated: head.split("\r\n").find(line => /^sec-websocket-extensions:/i.test(line)) ?? "none",
+          frames(count) {
+            if (failure) return Promise.reject(failure);
+            const settle = Promise.withResolvers<Frame[]>();
+            waiters.push({ count, settle });
+            settleWaiters();
+            return settle.promise;
+          },
+          [Symbol.dispose]() {
+            socket.removeAllListeners("close");
+            socket.destroy();
+          },
+        });
+      }
+      // Every message below fits in one unfragmented frame with a 7-bit length.
+      while (buffer.length >= 2) {
+        const length = buffer[1] & 0x7f;
+        if (length >= 126) return fail(new Error(`${pathname}: unexpected extended-length frame`));
+        if (buffer.length < 2 + length) break;
+        const opcode = buffer[0] & 0x0f;
+        const compressed = (buffer[0] & 0x40) !== 0;
+        const payload = buffer.subarray(2, 2 + length);
+        buffer = buffer.subarray(2 + length);
+        if (opcode !== 0x1) continue;
+        frames.push({
+          text: (compressed ? inflateRawSync(payload, { finishFlush: constants.Z_SYNC_FLUSH }) : payload).toString(),
+          compressed,
+        });
+      }
+      settleWaiters();
+    });
+
+    return upgrade.promise;
+  }
+
+  it("server.publish() compresses unless told not to; ws.send() and ws.publish() only when asked", async () => {
+    const sockets: Record<string, ServerWebSocket<string>> = {};
+    const opened = { deflate: Promise.withResolvers<void>(), plain: Promise.withResolvers<void>() };
+    await using server = serve<string, {}>({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (server.upgrade(req, { data: new URL(req.url).pathname.slice(1) })) return;
+        return new Response("no upgrade", { status: 400 });
+      },
+      websocket: {
+        perMessageDeflate: true,
+        open(ws) {
+          sockets[ws.data] = ws;
+          ws.subscribe("t");
+          opened[ws.data as keyof typeof opened].resolve();
+        },
+        message() {},
+      },
+    });
+
+    using deflate = await connectRaw(server.port, "/deflate", true);
+    using plain = await connectRaw(server.port, "/plain", false);
+    expect({ deflate: deflate.negotiated, plain: plain.negotiated }).toEqual({
+      deflate: expect.stringMatching(/^Sec-WebSocket-Extensions: permessage-deflate/i),
+      plain: "none",
+    });
+    await Promise.all([opened.deflate.promise, opened.plain.promise]);
+
+    server.publish("t", "server.publish()");
+    server.publish("t", "server.publish(false)", false);
+    server.publish("t", "server.publish(true)", true);
+    // ws.publish() skips the socket it is called on, so publish from the plain
+    // socket and observe the result on the deflating one.
+    sockets.plain.publish("t", "ws.publish()");
+    sockets.plain.publish("t", "ws.publish(true)", true);
+    sockets.deflate.send("ws.send()");
+    sockets.deflate.send("ws.send(true)", true);
+    // Sent last, so once it arrives the plain socket has received everything
+    // that was ever going to reach it.
+    sockets.plain.send("end");
+
+    expect(await deflate.frames(7)).toEqual([
+      { text: "server.publish()", compressed: true },
+      { text: "server.publish(false)", compressed: false },
+      { text: "server.publish(true)", compressed: true },
+      { text: "ws.publish()", compressed: false },
+      { text: "ws.publish(true)", compressed: true },
+      { text: "ws.send()", compressed: false },
+      { text: "ws.send(true)", compressed: true },
+    ]);
+    // A subscriber that did not negotiate the extension gets plain frames
+    // whether the hint is defaulted or explicit.
+    expect(await plain.frames(4)).toEqual([
+      { text: "server.publish()", compressed: false },
+      { text: "server.publish(false)", compressed: false },
+      { text: "server.publish(true)", compressed: false },
+      { text: "end", compressed: false },
+    ]);
+  });
+
+  it("server.publish() sends plain frames when perMessageDeflate is off, even with compress: true", async () => {
+    const opened = Promise.withResolvers<ServerWebSocket<undefined>>();
+    await using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("no upgrade", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.subscribe("t");
+          opened.resolve(ws);
+        },
+        message() {},
+      },
+    });
+
+    using raw = await connectRaw(server.port, "/", true);
+    expect(raw.negotiated).toBe("none");
+    const ws = await opened.promise;
+
+    server.publish("t", "server.publish()");
+    server.publish("t", "server.publish(true)", true);
+    ws.send("ws.send(true)", true);
+
+    expect(await raw.frames(3)).toEqual([
+      { text: "server.publish()", compressed: false },
+      { text: "server.publish(true)", compressed: false },
+      { text: "ws.send(true)", compressed: false },
+    ]);
   });
 });
 

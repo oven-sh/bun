@@ -125,69 +125,155 @@ test("active TCP socket wrapper survives GC until closed", async () => {
   expect(count).toBeLessThanOrEqual(3);
 });
 
-// Windows has a pre-existing TLSSocket lingerer in the upgradeTLS path
-// (see the `isWindows ? 3 : 2` slack in socket.test.ts "should not leak
-// memory"); on Windows 11 aarch64 the residual count is higher and varies,
-// making a tight GC bound unreliable there. The Strong-release path this
-// guards is platform-independent, so Linux/macOS coverage suffices.
-test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after close", async () => {
+test("upgradeTLS raw + tls wrappers are both collectable after close", async () => {
   // upgradeTLS produces two TLSSocket wrappers (the raw passthrough and the
   // TLS socket) sharing one underlying connection. When the connection closes,
   // the raw socket is cleaned up via WrappedHandler.onClose which must release
   // its strong ref so both wrappers can be GC'd. A missed transition here pins
   // one of them forever.
-  await using tlsServer = Bun.serve({
-    port: 0,
-    tls: tlsCert,
-    fetch() {
-      return new Response("ok");
-    },
+  //
+  // heapStats().objectTypeCounts cannot show this. JSC scans the machine stack
+  // conservatively, so a stale word in a native frame that is still on the
+  // stack keeps a wrapper alive until something writes over that word. The
+  // script asks two questions that do not depend on the stack:
+  // - protectedObjectTypeCounts: the wrappers a native Strong holds right now.
+  //   A Strong is taken and released synchronously, so the counts are exact.
+  // - JSC's debugging heap snapshot: a full GC that records every root and
+  //   every edge it marks through, except the conservative scan. A wrapper
+  //   that only a stack word keeps alive is in the snapshot, but no recorded
+  //   root reaches it.
+  // It runs in a subprocess because a snapshot of the test runner's own heap
+  // takes seconds in a debug build.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { generateHeapSnapshotForDebugging, heapStats } = require("bun:jsc");
+        const tlsCert = ${JSON.stringify(tlsCert)};
+
+        function protectedCounts() {
+          const { TLSSocket = 0, TCPSocket = 0 } = heapStats().protectedObjectTypeCounts;
+          return { TLSSocket, TCPSocket };
+        }
+
+        // Live cells of className that a recorded root reaches: native
+        // wrappers, and the rest (the prototype has the same class name and
+        // wraps nothing).
+        function rootedCells(className) {
+          const { nodes, nodeClassNames, edges, roots } = generateHeapSnapshotForDebugging();
+          // nodes: <id, size, classNameIndex, flags, labelIndex, cellAddress, wrappedAddress>
+          // edges: <fromId, toId, typeIndex, data>
+          // roots: <id, reasonIndex, reachabilityReasonIndex>
+          const edgesFrom = new Map();
+          for (let i = 0; i < edges.length; i += 4) {
+            const to = edgesFrom.get(edges[i]);
+            if (to) to.push(edges[i + 1]);
+            else edgesFrom.set(edges[i], [edges[i + 1]]);
+          }
+          const reached = new Set();
+          const pending = [];
+          for (let i = 0; i < roots.length; i += 3) pending.push(roots[i]);
+          while (pending.length > 0) {
+            const id = pending.pop();
+            if (reached.has(id)) continue;
+            reached.add(id);
+            for (const to of edgesFrom.get(id) ?? []) pending.push(to);
+          }
+          const classIndex = nodeClassNames.indexOf(className);
+          const counts = { wrappers: 0, others: 0 };
+          for (let i = 0; i < nodes.length; i += 7) {
+            if (nodes[i + 2] !== classIndex || !reached.has(nodes[i])) continue;
+            if (nodes[i + 6] === "0x0") counts.others++;
+            else counts.wrappers++;
+          }
+          return counts;
+        }
+
+        const tlsServer = Bun.serve({
+          port: 0,
+          tls: tlsCert,
+          fetch() {
+            return new Response("ok");
+          },
+        });
+
+        const upgrades = [];
+        for (let i = 0; i < 5; i++) {
+          const { promise: done, resolve } = Promise.withResolvers();
+          await (async () => {
+            let body = "";
+            const socket = await Bun.connect({
+              hostname: "127.0.0.1",
+              port: tlsServer.port,
+              socket: {
+                data() {},
+                close() {},
+                error() {},
+              },
+            });
+            const before = protectedCounts();
+            const [raw, tls] = socket.upgradeTLS({
+              tls: { ...tlsCert, ca: tlsCert.cert },
+              socket: {
+                drain(s) {
+                  s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+                },
+                data(s, chunk) {
+                  body += chunk.toString();
+                  if (body.includes("\\r\\n\\r\\n")) s.end();
+                },
+                close() {
+                  resolve();
+                },
+                error() {
+                  resolve();
+                },
+              },
+            });
+            const after = protectedCounts();
+            upgrades.push({
+              TLSSocket: after.TLSSocket - before.TLSSocket,
+              TCPSocket: after.TCPSocket - before.TCPSocket,
+            });
+            void raw;
+            void tls;
+          })();
+          await done;
+        }
+
+        // The last close handler resolved done from inside the close dispatch,
+        // and that dispatch releases the tls wrapper on its way out. Let it
+        // return.
+        await new Promise(resolve => setImmediate(resolve));
+
+        console.log(
+          JSON.stringify({
+            upgrades,
+            protectedAfterClose: protectedCounts().TLSSocket,
+            rootedAfterClose: rootedCells("TLSSocket"),
+          }),
+        );
+        tlsServer.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
   });
-
-  const baseline = heapStats().objectTypeCounts.TLSSocket || 0;
-
-  for (let i = 0; i < 5; i++) {
-    const { promise: done, resolve } = Promise.withResolvers<void>();
-    await (async () => {
-      let body = "";
-      const socket = await Bun.connect({
-        hostname: "127.0.0.1",
-        port: tlsServer.port,
-        socket: {
-          data() {},
-          close() {},
-          error() {},
-        },
-      });
-      const [raw, tls] = socket.upgradeTLS({
-        tls: { ...tlsCert, ca: tlsCert.cert },
-        socket: {
-          drain(s) {
-            s.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-          },
-          data(s, chunk) {
-            body += chunk.toString();
-            if (body.includes("\r\n\r\n")) s.end();
-          },
-          close() {
-            resolve();
-          },
-          error() {
-            resolve();
-          },
-        },
-      });
-      void raw;
-      void tls;
-    })();
-    await done;
-  }
-
-  // All upgradeTLS-created wrappers should be collectable now. We created
-  // 5 × 2 = 10 TLSSocket wrappers; if the Strong release on close is missed,
-  // they all pin and the count stays ≥ baseline + 10.
-  const count = await gcUntilCountAtMost("TLSSocket", baseline + 2);
-  expect(count).toBeLessThanOrEqual(baseline + 2);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim() ? JSON.parse(stdout) : { stderr }).toEqual({
+    // The upgrade moves the Strong from the open TCP wrapper to the two TLS
+    // wrappers that replace it.
+    upgrades: Array(5).fill({ TLSSocket: 2, TCPSocket: -1 }),
+    // We created 5 × 2 = 10 TLSSocket wrappers. If the Strong release on close
+    // is missed, they stay protected.
+    protectedAfterClose: 0,
+    // No other root reaches one either, so all of them are collectable.
+    // others is the prototype: the walk does find rooted cells of this class.
+    rootedAfterClose: { wrappers: 0, others: 1 },
+  });
+  expect(exitCode).toBe(0);
 });
 
 test("tls.connect over a Duplex roots the origin and listener thunks through the wrapper, not as Strong handles", async () => {

@@ -134,6 +134,8 @@ struct WorkerVmInit {
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
     /// The parent's `transpiler.options.code_coverage`.
     code_coverage: bool,
+    /// The parent's `transpiler.options.rewrite_jest_for_tests`.
+    rewrite_jest_for_tests: bool,
 }
 
 enum EntryOutcome {
@@ -209,10 +211,12 @@ pub fn wait_for_child_workers_coverage(parent: &VirtualMachine, stop_running: bo
     const COVERAGE_HANDOVER_TIMEOUT_NS: u64 = 10_000_000_000;
     debug_assert!(core::ptr::eq(parent, VirtualMachine::get()));
     let deadline = Instant::now() + Duration::from_nanos(COVERAGE_HANDOVER_TIMEOUT_NS);
-    for &child in &parent.child_workers {
-        if stop_running {
+    if stop_running {
+        for &child in &parent.child_workers {
             WebWorker::request_termination(child);
         }
+    }
+    for &child in &parent.child_workers {
         // SAFETY: a registered child is live until this thread releases it.
         let child = unsafe { &*child };
         if !child.has_requested_terminate() {
@@ -426,6 +430,7 @@ impl WebWorker {
             env_loader,
             proxy_env_slots,
             code_coverage: parent_ref.transpiler.options.code_coverage,
+            rewrite_jest_for_tests: parent_ref.transpiler.options.rewrite_jest_for_tests,
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -703,6 +708,7 @@ impl WebWorker {
             env_loader,
             proxy_env_slots,
             code_coverage,
+            rewrite_jest_for_tests,
         } = init;
 
         // worker-thread only field; no other thread reads `arena`.
@@ -777,7 +783,9 @@ impl WebWorker {
                 (hooks.apply_standalone_runtime_flags)(b, graph);
             }
 
-            // As `TestCommand` sets up the main VM.
+            // As `TestCommand` sets up the main VM, so that a module loads the
+            // same way on every thread of `bun test`.
+            b.options.rewrite_jest_for_tests = rewrite_jest_for_tests;
             if code_coverage {
                 b.options.code_coverage = true;
                 b.options.minify_syntax = false;
@@ -1077,11 +1085,10 @@ impl WebWorker {
             if vm.transpiler.options.code_coverage
                 && let Some(hooks) = runtime_hooks()
             {
-                // This worker's own children first, so that theirs is in by
-                // the time the parent sees this worker's signal.
-                wait_for_child_workers_coverage(vm, true);
                 // SAFETY: this thread's live VM; the API lock is held.
                 unsafe { (hooks.collect_worker_coverage)(core::ptr::from_mut(vm)) };
+                // This worker's own children too, before the parent is told.
+                wait_for_child_workers_coverage(vm, true);
             }
             self.coverage_handed_over.set();
 

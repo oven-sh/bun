@@ -726,9 +726,8 @@ postMessage(onlyInWorker());
 setInterval(keptAlive, 1000);
 postMessage(keptAlive());
 `,
-  // `expect` is a jest global here, so the main thread loads this module with a
-  // `bun:test` import injected in front of it and the worker does not. The
-  // functions are the same.
+  // `expect` is a jest global here: every thread of `bun test` loads this
+  // module with a `bun:test` import injected in front of it.
   "helpers.ts": `export function assertPositive(n: number) {
   expect(n).toBeGreaterThan(0);
 }
@@ -750,7 +749,6 @@ inner.onmessage = e => postMessage(e.data);
 postMessage(inNestedWorker());
 `,
   "worker.test.ts": `import { test, expect } from "bun:test";
-import { Worker as NodeWorker } from "node:worker_threads";
 import { covered } from "./lib.ts";
 import { assertPositive, double } from "./helpers.ts";
 
@@ -783,8 +781,18 @@ test("a module the main thread loads with injected jest globals", async () => {
   expect(await runWorker("./worker4.ts")).toBe(42);
 });
 
+`,
+  // A second test file, so that --parallel=2 forks.
+  "worker-b.test.ts": `import { test, expect } from "bun:test";
+import { Worker as NodeWorker } from "node:worker_threads";
+
 test("a Worker started by a Worker", async () => {
-  expect(await runWorker("./worker5.ts")).toBe("nested");
+  const worker = new Worker(new URL("./worker5.ts", import.meta.url).href);
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  worker.onmessage = e => resolve(e.data);
+  worker.onerror = reject;
+  expect(await promise).toBe("nested");
+  worker.terminate();
 });
 
 test("an eval Worker has no file to report", async () => {
@@ -814,6 +822,7 @@ const coveredFiles = [
 
 function expectWorkerCoverage(stderr: string, lcov: string) {
   expect(stderr).toContain("6 pass");
+  expect(stderr).toContain("across 2 files");
   for (const file of coveredFiles) {
     expect(stderr).toMatch(new RegExp(` ${file}\\.ts +\\| +100\\.00 +\\| +100\\.00 +\\| +\n`));
   }
@@ -830,7 +839,7 @@ function expectWorkerCoverage(stderr: string, lcov: string) {
 test("coverage counts code that runs in a Worker", async () => {
   using dir = tempDir("cov-worker", workerCoverageFixture);
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "./worker.test.ts"],
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -844,15 +853,7 @@ test("coverage counts code that runs in a Worker", async () => {
 test("--parallel: coverage counts code that runs in a Worker", async () => {
   using dir = tempDir("cov-worker-parallel", workerCoverageFixture);
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "test",
-      "--coverage",
-      "--coverage-reporter=text",
-      "--coverage-reporter=lcov",
-      "--parallel=2",
-      "./worker.test.ts",
-    ],
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--parallel=2"],
     env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
     cwd: String(dir),
     stdout: "pipe",

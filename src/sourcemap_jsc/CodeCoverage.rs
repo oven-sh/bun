@@ -269,36 +269,18 @@ pub struct MergedReport {
     /// Every report's ranges with their executed bit; deduplicated in `finish`.
     functions: Vec<(ByteRange, bool)>,
     stmts: Vec<(ByteRange, bool)>,
-    /// The start of the first report's first function, for `shift_of`.
-    first_function_start: Option<u32>,
 }
 
 impl MergedReport {
-    /// The constant by which `report`'s ranges are moved from the first
-    /// report's, or zero. `bun test` prints a module that uses a jest global
-    /// unbound with a `bun:test` import in front on the main thread only.
-    /// The first function of a module is top-level, so every report has it.
-    fn shift_of(&self, report: &Report<'_>) -> i64 {
-        let start = report.functions.iter().map(|r| r.start).min();
-        match (self.first_function_start, start) {
-            (Some(first), Some(start)) => i64::from(first) - i64::from(start),
-            _ => 0,
-        }
-    }
-
     pub fn add(&mut self, report: &Report<'_>) -> Result<(), bun_alloc::AllocError> {
         let n = report.line_hits.len();
         self.reports += 1;
-        let shift: i64;
         if self.reports == 1 {
             self.source_url = report.source_url.to_vec();
             self.executable_in_all = report.executable_lines.clone()?;
             self.executed_in_any = report.lines_which_have_executed.clone()?;
             self.line_hits.clone_from(&report.line_hits);
-            self.first_function_start = report.functions.iter().map(|r| r.start).min();
-            shift = 0;
         } else {
-            shift = self.shift_of(report);
             if n != self.line_hits.len() {
                 // Same path, different contents between workers. Keep the
                 // longer view; lines past the shorter one's end count only
@@ -319,14 +301,12 @@ impl MergedReport {
             }
         }
         for (i, &r) in report.functions.iter().enumerate() {
-            self.functions.push((
-                r.shifted(shift),
-                report.functions_which_have_executed.is_set(i),
-            ));
+            self.functions
+                .push((r, report.functions_which_have_executed.is_set(i)));
         }
         for (i, &r) in report.stmts.iter().enumerate() {
             self.stmts
-                .push((r.shifted(shift), report.stmts_which_have_executed.is_set(i)));
+                .push((r, report.stmts_which_have_executed.is_set(i)));
         }
         Ok(())
     }
@@ -1150,16 +1130,6 @@ impl ByteRange {
         ByteRange {
             start: u32::try_from(min).expect("int cast"),
             end: u32::try_from(max).expect("int cast"),
-        }
-    }
-
-    /// This range moved by `delta` bytes, or unchanged if that underflows.
-    fn shifted(self, delta: i64) -> ByteRange {
-        let start = i64::from(self.start) + delta;
-        let end = i64::from(self.end) + delta;
-        match (u32::try_from(start), u32::try_from(end)) {
-            (Ok(start), Ok(end)) => ByteRange { start, end },
-            _ => self,
         }
     }
 }

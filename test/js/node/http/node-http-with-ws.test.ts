@@ -61,6 +61,93 @@ test.concurrent("WebSocket upgrade should unref poll_ref from response", async (
   expect(exitCode).toBe(0);
 });
 
+// A request that declares a body holds body_read_ref until uWS delivers the
+// last chunk of the body. Once the socket is a WebSocket, uWS parses no more
+// HTTP on it, so a last chunk that it has not delivered by then never comes.
+describe.concurrent("WebSocket upgrade should unref body_read_ref from response", () => {
+  test.each([
+    { when: "inside the 'upgrade' event", later: false, body: "complete", missingBytes: 0 },
+    { when: "inside the 'upgrade' event", later: false, body: "incomplete", missingBytes: 5 },
+    { when: "from a later task", later: true, body: "complete", missingBytes: 0 },
+    { when: "from a later task", later: true, body: "incomplete", missingBytes: 5 },
+  ])("handleUpgrade() $when, request body $body", async ({ later, missingBytes }) => {
+    const script = /* js */ `
+      const http = require("http");
+      const net = require("net");
+      const { WebSocketServer } = require("ws");
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+
+      const body = "hello";
+      const server = http.createServer();
+      const wsServer = new WebSocketServer({ noServer: true });
+      let initialStats;
+      process.exitCode = 1;
+
+      server.on("upgrade", (req, socket, head) => {
+        const upgrade = () => wsServer.handleUpgrade(req, socket, head, ws => wsServer.emit("connection", ws, req));
+        if (${later}) setImmediate(upgrade);
+        else upgrade();
+      });
+
+      wsServer.on("connection", ws => {
+        // With the bug: body_read_ref stays active (activeTasks = 1). After an
+        // upgrade inside the 'upgrade' event nothing releases it until the GC
+        // collects the response, so do not wait for the process to exit.
+        const activeTasks = getEventLoopStats().activeTasks - initialStats.activeTasks;
+        console.log(JSON.stringify({ activeTasks }));
+        if (activeTasks !== 0) process.exit(1);
+
+        ws.on("close", () => {
+          wsServer.close();
+          server.close();
+          process.exitCode = 0;
+        });
+      });
+
+      initialStats = getEventLoopStats();
+      server.listen(0, "127.0.0.1", () => {
+        const client = net.connect(server.address().port, "127.0.0.1");
+        client.on("error", err => {
+          console.error(err);
+          process.exit(1);
+        });
+        client.write(
+          [
+            "GET / HTTP/1.1",
+            "Host: localhost",
+            "Connection: Upgrade",
+            "Upgrade: websocket",
+            "Sec-WebSocket-Version: 13",
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+            "Content-Length: " + (body.length + ${missingBytes}),
+            "",
+            body,
+          ].join("\\r\\n"),
+        );
+        // The 101 is all the client waits for.
+        client.once("data", () => client.destroy());
+      });
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The process exits on its own: no ref of the response is left.
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({ activeTasks: 0 }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 test.concurrent("should not crash when closing sockets after upgrade", async () => {
   const { promise, resolve } = Promise.withResolvers();
   let http_sockets: tls.TLSSocket[] = [];

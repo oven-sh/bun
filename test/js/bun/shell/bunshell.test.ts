@@ -3169,10 +3169,11 @@ function sentinelByte(buf: Uint8Array): number {
 
 describe.concurrent("`> ${buf}` redirect of an external command that writes more than the buffer holds", () => {
   // The shell reads the child's output into the buffer and stops at its end.
-  // The child then gets a write error (EPIPE or ECONNRESET) on its next write,
-  // the same as a writer whose reader closed the pipe. Here it exits 7 on that
-  // error. Without the limit the shell drains and drops the rest of the output
-  // forever, and a child that never stops writing never settles the promise.
+  // The child then gets a write error (EPIPE or ECONNRESET) or SIGPIPE on its
+  // next write, the same as a writer whose reader closed the pipe. Bun ignores
+  // SIGPIPE, so this child sees the error and exits 7. Without the limit the
+  // shell drains and drops the rest of the output forever, and a child that
+  // never stops writing never settles the promise.
   const endlessWriter = (fd: number) =>
     `const chunk = Buffer.alloc(4096, "y"); const fs = require("fs"); try { for (;;) fs.writeSync(${fd}, chunk); } catch { process.exit(7); }`;
 
@@ -3198,10 +3199,9 @@ describe.concurrent("`> ${buf}` redirect of an external command that writes more
     expect(result.exitCode).toBe(0);
   });
 
-  test("a zero-length buffer settles and stays empty", async () => {
+  test("a zero-length buffer settles", async () => {
     const buffer = Buffer.alloc(0);
     const result = await $`${BUN} -e ${endlessWriter(1)} > ${buffer}`.env(bunEnv).nothrow();
-    expect(buffer.byteLength).toBe(0);
     expect(result.exitCode).toBe(7);
   });
 });

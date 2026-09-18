@@ -121,16 +121,14 @@ describe("stdin", () => {
         "autoKilled": false,
         "exitCode": 0,
         "stderr": "",
-        "stdout": 
-      "%READY%
+        "stdout": "%READY%
       got stdin "abc"
       %READY%
       got stdin "pause"
       %READY%
       beforeExit with code 0
       exit with code 0
-      "
-      ,
+      ",
       }
     `);
   });
@@ -146,8 +144,7 @@ describe("stdin", () => {
         "autoKilled": false,
         "exitCode": 123,
         "stderr": "",
-        "stdout": 
-      "%READY%
+        "stdout": "%READY%
       got stdin "attachReadable"
       %READY%
       got stdin "abc"
@@ -161,8 +158,7 @@ describe("stdin", () => {
       got readable "def\\n"
       got stdin "exit"
       exit with code 123
-      "
-      ,
+      ",
       }
     `);
   });
@@ -182,14 +178,12 @@ describe("stdin", () => {
         "autoKilled": false,
         "exitCode": 0,
         "stderr": "",
-        "stdout": 
-      "%READY%
+        "stdout": "%READY%
       got data "abc\\n"
       %READY%
       got data "def\\n"
       %READY%
-      "
-      ,
+      ",
       }
     `);
   });
@@ -199,14 +193,12 @@ describe("stdin", () => {
         "autoKilled": false,
         "exitCode": 0,
         "stderr": "",
-        "stdout": 
-      "%READY%
+        "stdout": "%READY%
       got readable "abc\\n"
       %READY%
       got readable "def\\n"
       %READY%
-      "
-      ,
+      ",
       }
     `);
   });

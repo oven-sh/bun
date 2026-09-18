@@ -4,8 +4,7 @@ exports[`When bun-plugin-svelte is enabled via Bun.plugin() can be render()-ed 1
 {
   "body": Any<String>,
   "head": Any<String>,
-  "html": 
-"<!--[--><!-- source: https://svelte.dev/playground/7eb8c1dd6cac414792b0edb53521ab49?version=5.20.4 -->
+  "html": "<!--[--><!-- source: https://svelte.dev/playground/7eb8c1dd6cac414792b0edb53521ab49?version=5.20.4 -->
 
 
 <main>
@@ -32,7 +31,6 @@ exports[`When bun-plugin-svelte is enabled via Bun.plugin() can be render()-ed 1
   <!--]-->
 </main>
 
-<!--]-->"
-,
+<!--]-->",
 }
 `;

@@ -1292,12 +1292,10 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
             "formattingOnly": false,
             "linesAdded": 1,
             "linesRemoved": 1,
-            "patch": 
-      "@@ -1,1 +1,1 @@
+            "patch": "@@ -1,1 +1,1 @@
       -module.exports = 1;
       +module.exports = 2;
-      "
-      ,
+      ",
             "path": "index.js",
             "sourceMap": false,
             "status": "modified",
@@ -1309,11 +1307,9 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
             "formattingOnly": false,
             "linesAdded": 1,
             "linesRemoved": 0,
-            "patch": 
-      "@@ -0,0 +1,1 @@
+            "patch": "@@ -0,0 +1,1 @@
       +hi
-      "
-      ,
+      ",
             "path": "new.txt",
             "sourceMap": false,
             "status": "added",
@@ -1325,16 +1321,14 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
             "formattingOnly": true,
             "linesAdded": 4,
             "linesRemoved": 1,
-            "patch": 
-      "@@ -1,1 +1,4 @@
+            "patch": "@@ -1,1 +1,4 @@
       -{"name":"p","version":"1.0.0"}
       \\ No newline at end of file
       +{
       +  "name": "p",
       +  "version": "1.0.0"
       +}
-      "
-      ,
+      ",
             "path": "package.json",
             "sourceMap": false,
             "status": "modified",

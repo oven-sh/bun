@@ -3952,8 +3952,7 @@ function initOriginSet(session: Http2Session) {
 }
 function removeOriginFromSet(session: ClientHttp2Session, stream: ClientHttp2Stream) {
   if (!session.encrypted) return;
-  // Like node's stream[kOrigin]: the :scheme and the authority the request was sent with. The
-  // set is created here if nothing read it yet, so the removal holds for a later originSet read.
+  // node: stream[kOrigin] = `${headers[":scheme"]}://${getAuthority(headers)}`
   const origin = `${stream.sentHeaders?.[":scheme"]}://${stream.authority}`;
   initOriginSet(session).delete(origin);
 }
@@ -5926,8 +5925,6 @@ class ClientHttp2Session extends Http2Session {
       // given order. The derived object form (original-case keys, array values
       // for duplicates) backs sentHeaders.
       let rawHeadersList: any[] | null = null;
-      // The host value of a raw-form request, found with a case-insensitive name match. It is
-      // the origin of the request when the array carries no :authority.
       let rawHost;
       if (headers == undefined) {
         headers = {};
@@ -6074,8 +6071,7 @@ class ClientHttp2Session extends Http2Session {
         method = "GET";
         headers[":method"] = method;
       }
-      // `authority` is the authority of the request, like node's getAuthority(): :authority, else
-      // host, else the session authority. A 421 removes `${:scheme}://${authority}` from originSet.
+      // node's getAuthority(): :authority, else host. removeOriginFromSet() uses it on a 421.
       let authority = headers[":authority"];
       if (!authority) {
         const host = headers["host"] || rawHost;

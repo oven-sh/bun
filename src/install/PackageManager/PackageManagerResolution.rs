@@ -437,17 +437,14 @@ impl PackageManager {
 
         for path in paths {
             let mut real_dir_buf = bun_paths::path_buffer_pool::get();
-            let refusal = match workspace_containment(
-                &mut real_root,
-                top_level_dir,
-                path,
-                &mut real_dir_buf,
-            ) {
-                Containment::Inside => continue,
-                Containment::Outside(real_dir) => Refusal::Outside(real_dir),
-                Containment::Refused(reason) => Refusal::Refused(reason),
-                Containment::Failed(err) => Refusal::Failed(err),
-            };
+            let refusal =
+                match workspace_containment(&mut real_root, top_level_dir, path, &mut real_dir_buf)
+                {
+                    Containment::Inside => continue,
+                    Containment::Outside(real_dir) => Refusal::Outside(real_dir),
+                    Containment::Refused(reason) => Refusal::Refused(reason),
+                    Containment::Failed(err) => Refusal::Failed(err),
+                };
 
             if log_level != LogLevel::Silent {
                 if !any_outside {
@@ -459,10 +456,9 @@ impl PackageManager {
                         "workspace <b>\"{}\"<r> is outside the workspace root: it resolves to \"{}\"",
                         (path, bstr::BStr::new(real_dir)),
                     ),
-                    Refusal::Refused(reason) => Output::err_generic(
-                        "workspace <b>\"{}\"<r> {}",
-                        (path, reason),
-                    ),
+                    Refusal::Refused(reason) => {
+                        Output::err_generic("workspace <b>\"{}\"<r> {}", (path, reason))
+                    }
                     Refusal::Failed(err) => Output::err(
                         err,
                         "failed to resolve the directory of workspace <b>\"{}\"<r>",
@@ -514,14 +510,11 @@ fn workspace_containment<'b>(
         return Containment::Refused("is too long");
     };
 
-    let real_dir = match real_path_of_nearest_existing_dir(
-        &mut abs_dir_buf.0,
-        abs_dir_len,
-        real_dir_buf,
-    ) {
-        Ok(real_dir) => real_dir,
-        Err(err) => return Containment::Failed(err),
-    };
+    let real_dir =
+        match real_path_of_nearest_existing_dir(&mut abs_dir_buf.0, abs_dir_len, real_dir_buf) {
+            Ok(real_dir) => real_dir,
+            Err(err) => return Containment::Failed(err),
+        };
     let real_root = match real_root {
         Some(real_root) => &**real_root,
         None => {

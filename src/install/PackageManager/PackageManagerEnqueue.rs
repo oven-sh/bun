@@ -1198,7 +1198,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 // A cached "not a date" cannot become a date: fetch an expired manifest again.
                                                 .filter(|found| {
                                                     !(expired
-                                                        && needs_extended_manifest
+                                                        && this
+                                                            .options
+                                                            .minimum_release_age_ms
+                                                            .is_some_and(|age| age > 0.0)
                                                         && found
                                                             .package
                                                             .has_unreadable_publish_time())

@@ -65,6 +65,7 @@ describe("minimum-release-age", () => {
     "odd-time-cached-unreadable": "yesterday",
     "odd-time-cached-recent": new Date(currentTime).toISOString(),
     "odd-time-cached-then-fixed": "yesterday",
+    "odd-time-cached-gate-off": "yesterday",
   };
   const oddTimeManifestRequests = new Map<string, number>();
 
@@ -2472,6 +2473,30 @@ describe("minimum-release-age", () => {
 
         expect(stderr).not.toContain("error:");
         expect(lockfile).toContain(`${name}@2.0.0`);
+        expect(exitCode).toBe(0);
+      });
+
+    test
+      .skipIf(!isDebug)
+      .concurrent("--minimum-release-age 0 resolves the exact version from the expired cached manifest", async () => {
+        const name = "odd-time-cached-gate-off";
+        using cache = tempDir("odd-publish-time-cache", {});
+        await cacheManifest(name, String(cache));
+        const requests = oddTimeManifestRequests.get(name);
+
+        const { stderr, exitCode, lockfile } = await install(
+          { [name]: "2.0.0" },
+          ["--minimum-release-age", "0"],
+          {},
+          {
+            cacheDir: String(cache),
+            env: expiredCache,
+          },
+        );
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@2.0.0`);
+        expect(oddTimeManifestRequests.get(name)).toBe(requests);
         expect(exitCode).toBe(0);
       });
 

@@ -915,10 +915,10 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
         }
     }
 
+    JSArrayBufferView* passphraseView = nullptr;
     if (!passphraseValue.isUndefined()) {
-        JSArrayBufferView* passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
+        passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
         RETURN_IF_EXCEPTION(scope, );
-        config.passphrase = DataPointer::FromSpan(passphraseView->span());
     }
 
     if (config.output_key_object) {
@@ -940,6 +940,17 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
                 config.cipher = nullptr;
             }
         }
+    }
+
+    if (passphraseView) {
+        auto passphrase = passphraseView->span();
+        // BoringSSL takes the length as an `int`. Node checks it at this point, after the cipher lookup:
+        // https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/src/crypto/crypto_keys.cc#L517-L539
+        if (passphrase.size() > INT_MAX) {
+            ERR::OUT_OF_RANGE(scope, globalObject, "passphrase is too big"_s);
+            return;
+        }
+        config.passphrase = DataPointer::FromSpan(passphrase);
     }
 }
 

@@ -4733,17 +4733,7 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Runs between `open(dest)` and the copy. It gives the destination the source's
-    /// mode before any data is written, as libuv's `uv__fs_copyfile` does. The kernel
-    /// then decides about set-uid and set-gid: a write by a caller that may not keep
-    /// them clears them. An `fchmod` after the data puts them back.
-    /// https://github.com/libuv/libuv/blob/v1.52.1/src/unix/fs.c#L1277-L1340
-    ///
-    /// libuv also empties the destination first. Here the copy overwrites it in place,
-    /// which is much cheaper for an existing file, and `truncate_old_tail` cuts the rest.
-    ///
-    /// Returns `None` when `dest_fd` is the source file, else the number of old bytes
-    /// that are still in the destination.
+    /// Returns `None` when `dest_fd` is the source file, else how many bytes of old content are left in it.
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     fn prepare_copy_file_dest(
         src_stat: &sys::Stat,
@@ -4762,13 +4752,13 @@ impl NodeFS {
                 return Ok(None);
             }
             old_size = dest_stat.st_size.max(0) as u64;
-            // The new mode must not let the group or others read old bytes that the old
-            // mode kept from them.
+            // The new mode must not let the group or others read old bytes that the old mode hid.
             if old_size > 0 && (src_stat.st_mode & !dest_stat.st_mode & 0o044) != 0 {
                 Syscall::ftruncate(dest_fd, 0)?;
                 old_size = 0;
             }
         }
+        // Before the data, so the write clears set-uid/set-gid for a caller that may not keep them: https://github.com/libuv/libuv/blob/v1.52.1/src/unix/fs.c#L1340
         let _ = Syscall::fchmod(dest_fd, src_stat.st_mode as Mode);
         Ok(Some(old_size))
     }
@@ -4829,9 +4819,7 @@ impl NodeFS {
                     });
                 }
 
-                // clonefile() turns set-uid and set-gid off and the chmod() after it turns
-                // them back on for any caller. A file that has them takes the write path,
-                // where the kernel decides.
+                // clonefile() drops set-uid/set-gid and the chmod() after it restores them for any caller, so such a file takes the write path.
                 let has_set_id = stat_.st_mode & (libc::S_ISUID | libc::S_ISGID) != 0;
 
                 // 64 KB is about the break-even point for clonefile() to be worth it
@@ -4964,8 +4952,7 @@ impl NodeFS {
                 }
             }
             let _ = Syscall::ftruncate(dest_fd, 0);
-            // Before the data, so the write clears set-uid and set-gid for a caller that
-            // may not keep them. Same order as libuv's `uv__fs_copyfile`.
+            // Before the data, as libuv does, so the write clears set-uid/set-gid for a caller that may not keep them.
             let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
 
             // FreeBSD 13+ has copy_file_range(2). Try the kernel-side copy

@@ -1,6 +1,17 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isPosix,
+  isWindows,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -368,6 +379,43 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
   });
 });
 
+// WTF::fastMalloc must crash at the allocation when mimalloc returns null.
+// clang-cl used to compile that check out (bmalloc's BCRASH() was a call
+// through a null function pointer, which is undefined behavior), so the caller
+// wrote through the null result and the report blamed whatever touched it
+// first. Debug and ASAN builds of JSC do not use mimalloc (USE_MIMALLOC is 0 in
+// those WebKit prebuilts), so the limits below do not reach them.
+test.if(isWindows && !isDebug && !isASAN)(
+  "Windows: a failed must-succeed JSC allocation crashes at the allocator",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        // repeat() uses the fallible allocator. toUpperCase() allocates with
+        // StringImpl::createUninitialized, which must succeed, and a second
+        // 300 MiB block does not fit in the 512 MiB arena.
+        `const s = "x".repeat(300 * 1024 * 1024);
+       s.toUpperCase();
+       console.log("SHOULD NOT REACH");`,
+      ],
+      env: {
+        ...noReportEnv,
+        MIMALLOC_RESERVE_OS_MEMORY: "512MiB",
+        MIMALLOC_DISALLOW_OS_ALLOC: "1",
+        MIMALLOC_RETRY_ON_OOM: "0",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Segmentation fault at address 0xBBADBEEF");
+    expect(stdout).not.toContain("SHOULD NOT REACH");
+    expect(exitCode).not.toBe(0);
+  },
+);
+
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {
   // If this fails, then https://bun.report will be incorrect and the stack
   // trace remappings will stop working.
@@ -464,6 +512,27 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
 
     await resolve_handler.promise;
     expect(sent).toBe(true);
+  });
+
+  // JavaScriptCore, WTF and bun's own C++ crash through WTF's RELEASE_ASSERT /
+  // CRASH(): a trap instruction on macOS, abort() elsewhere. On arm64 that trap
+  // was `brk #0xbb08`, which macOS 26 answers with SIGKILL before any SIGTRAP
+  // handler runs, so the child died with an empty stderr. Bun's WebKit emits
+  // `brk #0` there (oven-sh/WebKit#485). This drives a real JSC assertion, not
+  // the `trap` hook with its own instruction: structureHeapSizeInKB must be a
+  // power of two, and 3072 fails the RELEASE_ASSERT in StructureMemoryManager's
+  // constructor during JSC::initialize(). ASAN builds install no signal handlers.
+  test.skipIf(isASAN).concurrent("a JavaScriptCore release assertion produces a crash report", async () => {
+    await using proc = Bun.spawn({
+      cmd: noCoreCmd([bunExe(), "-e", "1", "--debug-crash-handler-use-trace-string"]),
+      env: { ...noReportEnv, BUN_JSC_structureHeapSizeInKB: "3072" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(isMacOS ? "Trap instruction" : "abort() called");
+    expect(stderr).toContain("oh no: Bun has crashed");
+    expect(proc.signalCode).toBe(isMacOS ? "SIGTRAP" : "SIGABRT");
   });
 
   // process.abort() is a deliberate user action, not a Bun crash. It must still

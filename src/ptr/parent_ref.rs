@@ -145,14 +145,6 @@ impl<T: ?Sized> ParentRef<T, crate::Mut> {
         // SAFETY: caller contract (a)+(b); `Mut` records write provenance.
         unsafe { &mut *self.ptr.as_ptr() }
     }
-
-    #[inline]
-    pub const fn shared(self) -> ParentRef<T, crate::Shared> {
-        ParentRef {
-            ptr: self.ptr,
-            _provenance: core::marker::PhantomData,
-        }
-    }
 }
 
 impl<T: ?Sized, P> ParentRef<T, P> {

@@ -2,6 +2,7 @@
 #include "ZigGlobalObject.h"
 
 #include "helpers.h"
+#include "JSEnvironmentVariableMap.h"
 
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -9,8 +10,15 @@
 #include <JavaScriptCore/JSArrayInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
+#include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/HeapIterationScope.h>
+#include <JavaScriptCore/MarkedSpaceInlines.h>
+#include <JavaScriptCore/SubspaceInlines.h>
 
 #include "BunClientData.h"
+#include "BunProcess.h"
+#include "ErrorCode.h"
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
 #include <JavaScriptCore/JSCInlines.h>
@@ -29,13 +37,225 @@ using namespace JSC;
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 
-extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
-extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
+extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
+extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
 namespace Bun {
 
 using namespace WebCore;
+
+void invalidateLiveDateInstanceCaches(JSC::VM& vm)
+{
+    JSC::HeapIterationScope iterationScope(vm.heap);
+    vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
+        static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell))->invalidateCachedLocalGregorianDateTime();
+        return IterationStatus::Continue;
+    });
+}
+
+void resetDateCachesAfterTimeZoneChange(JSC::VM& vm)
+{
+    // The shared DateCache reset and the per-instance gregorian-cache
+    // invalidation must always travel together; callers use this pair.
+    WTF::timeZoneDidChange();
+    vm.dateCache.clearForTimeZoneChange();
+    invalidateLiveDateInstanceCaches(vm);
+}
+
+const JSC::ClassInfo JSEnvironmentVariableMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEnvironmentVariableMap) };
+
+// Node's EnvSetter DEP0104 (https://github.com/nodejs/node/blob/main/src/node_env_var.cc): once per
+// Environment under --pending-deprecation. Every process.env write path goes through here.
+static void maybeEmitEnvNonstringDeprecation(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue value)
+{
+    if (!Bun__Node__ProcessPendingDeprecation || value.isString() || value.isNumber() || value.isBoolean())
+        return;
+
+    auto* process = defaultGlobalObject(globalObject)->processObject();
+    if (!process->m_emitEnvNonstringWarning)
+        return;
+    process->m_emitEnvNonstringWarning = false;
+
+    VM& vm = globalObject->vm();
+    Bun::Process::emitWarning(globalObject,
+        jsString(vm, String("Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it."_s)),
+        jsString(vm, String("DeprecationWarning"_s)),
+        jsString(vm, String("DEP0104"_s)),
+        jsUndefined());
+    RETURN_IF_EXCEPTION(scope, );
+}
+
+// Node's EnvSetter value handling, shared by put / putByIndex /
+// defineOwnProperty: DEP0104, then ToString coercion.
+static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue value)
+{
+    maybeEmitEnvNonstringDeprecation(globalObject, scope, value);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSC::JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return string;
+}
+
+// The proxy env vars are written back to the native env map, which is what
+// fetch()'s proxy resolution reads.
+// `name` is an atom (a property key's uid), and so is what a common string
+// holds: matching one is a pointer comparison.
+static bool isProxyEnvVarName(VM& vm, const StringImpl* name)
+{
+    // "NO_PROXY" .. "HTTPS_PROXY"
+    if (!name || name->length() < 8 || name->length() > 11)
+        return false;
+    auto& strings = Bun::commonStrings(vm);
+    auto is = [name](JSC::JSString* candidate) { return candidate->tryGetValueImpl() == name; };
+    return is(strings.envALL_PROXYString()) || is(strings.envAllProxyString()) || is(strings.envHTTPS_PROXYString()) || is(strings.envHttpsProxyString()) || is(strings.envHTTP_PROXYString()) || is(strings.envHttpProxyString()) || is(strings.envNO_PROXYString()) || is(strings.envNoProxyString());
+}
+
+// For a name that is not a property key in hand: Windows upper-cases the key on the way here.
+static bool isProxyEnvVarName(VM& vm, const String& name)
+{
+    if (name.length() < 8 || name.length() > 11)
+        return false;
+    return isProxyEnvVarName(vm, JSC::Identifier::fromString(vm, name).impl());
+}
+
+// Drop `name` from the native env map.
+static void removeNativeEnvValue(JSGlobalObject* globalObject, const String& name)
+{
+    BunString key = Bun::toString(name);
+    BunString dead = { .tag = BunStringTag::Dead };
+    Bun__setEnvValue(globalObject, &key, &dead);
+}
+
+static void setNativeEnvValue(JSGlobalObject* globalObject, const String& name, JSC::JSString* value)
+{
+    auto view = value->view(globalObject);
+    if (view->isNull())
+        return;
+    BunString key = Bun::toString(name);
+    BunString val = Bun::toStringView(view);
+    Bun__setEnvValue(globalObject, &key, &val);
+}
+
+static void applyTZFromString(JSGlobalObject*, const String&);
+static void applyTLSRejectFromString(JSGlobalObject*, const String&);
+static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
+static bool shouldApplyTZSideEffect(JSGlobalObject*);
+
+// TZ side effect for put() and jsProcessEnvCoerceForWrite, so delete-then-set
+// (which drops the CustomAccessor) still updates the process timezone like
+// Node's RealEnvStore::Set does on every write.
+static void applyTimeZoneEnvValue(JSGlobalObject* globalObject, JSC::JSString* string)
+{
+    auto view = string->view(globalObject);
+    if (view->isNull())
+        return;
+    applyTZFromString(globalObject, view->toString());
+}
+
+static void applyTLSRejectEnvValue(JSGlobalObject* globalObject, JSC::JSString* string)
+{
+    auto view = string->view(globalObject);
+    if (view->isNull())
+        return;
+    applyTLSRejectFromString(globalObject, view->toString());
+}
+
+bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // A write to an object that merely inherits from process.env is that
+    // object's: an ordinary set, with the value as given, that changes nothing
+    // about the process. The accessors process.env keeps for TZ and
+    // NODE_TLS_REJECT_UNAUTHORIZED act on the process, so past those the value
+    // is defined on the receiver directly.
+    if (slot.thisValue() != cell) [[unlikely]] {
+        unsigned attributes = 0;
+        bool isProcessAccessor = !parseIndex(propertyName)
+            && isValidOffset(cell->structure()->get(vm, propertyName, attributes))
+            && (attributes & PropertyAttribute::CustomAccessor);
+        if (isProcessAccessor)
+            RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    }
+
+    auto* uid = propertyName.uid();
+    if (uid && uid->isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
+        return false;
+    }
+
+    // Node silently ignores assignments to an empty variable name
+    // (https://github.com/nodejs/node/issues/32920).
+    if (propertyName.publicName() && propertyName.publicName()->isEmpty())
+        return true;
+
+    JSString* string = coerceEnvValue(globalObject, scope, value);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    // Node's RealEnvStore::Set name-matches TZ on every write, so delete-then-set still
+    // updates Date caches. putDirect bypasses the accessor so the side effect fires once.
+    if (uid && WTF::equal(uid, "TZ"_s)) [[unlikely]] {
+        applyTimeZoneEnvValue(globalObject, string);
+        RETURN_IF_EXCEPTION(scope, false);
+        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        return true;
+    }
+    if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) [[unlikely]] {
+        applyTLSRejectEnvValue(globalObject, string);
+        RETURN_IF_EXCEPTION(scope, false);
+        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        return true;
+    }
+    // fetch() reads the proxy variables from the native env map.
+    if (isProxyEnvVarName(vm, uid)) [[unlikely]] {
+        setNativeEnvValue(globalObject, String(uid), string);
+        RETURN_IF_EXCEPTION(scope, false);
+        static_cast<JSEnvironmentVariableMap*>(cell)->putDirect(vm, propertyName, string, 0);
+        return true;
+    }
+    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
+}
+
+bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Numeric keys route through EnvSetter in Node too, so the same DEP0104
+    // and coercion rules apply.
+    JSString* string = coerceEnvValue(globalObject, scope, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
+}
+
+bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (descriptor.isAccessorDescriptor()) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' does not accept an accessor(getter/setter) descriptor"_s);
+        return false;
+    }
+
+    // Node's EnvDefiner requires a [[Value]] alongside the three attributes,
+    // so a value-less data descriptor is rejected rather than defining the
+    // property as undefined.
+    if (!(descriptor.value() && descriptor.configurablePresent() && descriptor.configurable()
+            && descriptor.writablePresent() && descriptor.writable()
+            && descriptor.enumerablePresent() && descriptor.enumerable())) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s);
+        return false;
+    }
+
+    // Node's EnvDefiner delegates to EnvSetter (plain assignment). put() keeps TZ/proxy
+    // CustomAccessors intact; Base::defineOwnProperty would replace them.
+    PutPropertySlot slot(object, shouldThrow);
+    RELEASE_AND_RETURN(scope, put(object, globalObject, propertyName, descriptor.value(), slot));
+}
 
 JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
@@ -46,8 +266,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (name.len == 0) [[unlikely]]
         return JSValue::encode(jsUndefined());
@@ -61,62 +281,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     return JSValue::encode(result);
 }
 
-// Proxy-related env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase
-// variants) are read by fetch()'s native proxy resolution via
-// env_loader.getHttpProxyFor(). Writes from JS must sync back to the native env
-// map so runtime changes take effect. Unlike the generic getter, this does
-// NOT cache on the JS object — the native env map is the single source of truth
-// so set-then-get stays consistent and the CustomAccessor isn't clobbered.
-JSC_DEFINE_CUSTOM_GETTER(jsGetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]]
-        return JSValue::encode(jsUndefined());
-
-    BunString name = Bun::toStringView(propertyName.publicName());
-    BunString value = { BunStringTag::Dead };
-    if (!Bun__getEnvValueBunString(globalObject, &name, &value)) {
-        return JSValue::encode(jsUndefined());
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, value.toWTFString())));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(jsSetterProxyEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSObject* object = JSValue::decode(thisValue).getObject();
-    if (!object)
-        return false;
-
-    auto* string = JSValue::decode(value).toString(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!string) [[unlikely]]
-        return false;
-
-    auto view = string->view(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    BunString name = Bun::toStringView(propertyName.publicName());
-    BunString val = Bun::toStringView(view);
-    Bun__setEnvValue(globalObject, &name, &val);
-
-    // Proxy-var accessors are installed DontEnum when absent from the OS env
-    // at startup; clear it on write so `{...process.env}` picks the var up.
-    unsigned attributes;
-    JSValue existing = object->getDirect(vm, propertyName, attributes);
-    if (existing && (attributes & JSC::PropertyAttribute::DontEnum)) {
-        // putDirectCustomAccessor asserts NewProperty, so delete first.
-        object->deleteProperty(globalObject, propertyName);
-        RETURN_IF_EXCEPTION(scope, false);
-        object->putDirectCustomAccessor(vm, propertyName, existing,
-            attributes & ~JSC::PropertyAttribute::DontEnum);
-    }
-    return true;
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
@@ -128,8 +292,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
 
     auto* clientData = WebCore::clientData(vm);
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     auto hasExistingValue = thisObject->getIfPropertyExists(globalObject, clientData->builtinNames().dataPrivateName());
     RETURN_IF_EXCEPTION(scope, {});
@@ -147,43 +311,49 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
     return JSValue::encode(out);
 }
 
-// Shared parse-and-apply for TZ / NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH,
-// used by both the CustomSetters below and applySharedEnvSideEffects.
-static void applyTZFromString(JSGlobalObject*, const String&);
-static void applyTLSRejectFromString(JSGlobalObject*, const String&);
-static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
-
-// In Node.js, the "TZ" environment variable is special.
-// Setting it automatically updates the timezone.
-// We also expose an explicit setTimeZone function in bun:jsc
+// Store-only: the TZ side effect fires from put() / jsProcessEnvCoerceForWrite on every
+// write. Firing here too would double-apply on Windows (writeEnvVar already ran it).
 JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSValue::decode(thisValue).getObject();
     if (!object)
         return false;
-
-    JSValue decodedValue = JSValue::decode(value);
-    if (decodedValue.isString()) {
-        auto timeZoneName = decodedValue.toWTFString(globalObject);
-        applyTZFromString(globalObject, timeZoneName);
-    }
-
     auto* clientData = WebCore::clientData(vm);
-    auto* builtinNames = &clientData->builtinNames();
-    auto privateName = builtinNames->dataPrivateName();
-    object->putDirect(vm, privateName, JSValue::decode(value), 0);
-
-    // TODO: this is an assertion failure
-    // Recreate this because the property visibility needs to be set correctly
-    // object->putDirectWithoutTransition(vm, propertyName, JSC::CustomGetterSetter::create(vm, jsTimeZoneEnvironmentVariableGetter, jsTimeZoneEnvironmentVariableSetter), JSC::PropertyAttribute::CustomAccessor | 0);
+    object->putDirect(vm, clientData->builtinNames().dataPrivateName(), JSValue::decode(value), 0);
     return true;
 }
 
+bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Node's RealEnvStore::Delete resets Date caches for TZ; without this, delete drops
+    // the CustomAccessor and existing Dates keep the old offset. put() handles re-set.
+    auto* uid = propertyName.publicName();
+    if (uid && WTF::equal(uid, "TZ"_s)) {
+        if (shouldApplyTZSideEffect(globalObject)) {
+            WTF::setTimeZoneOverride(String());
+            resetDateCachesAfterTimeZoneChange(vm);
+        }
+        auto* clientData = WebCore::clientData(vm);
+        DeletePropertySlot dataSlot;
+        Base::deleteProperty(cell, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+    } else if (uid && WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+        applyTLSRejectFromString(globalObject, String());
+    } else if (isProxyEnvVarName(vm, uid)) {
+        removeNativeEnvValue(globalObject, String(uid));
+    }
+
+    RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+}
+
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
-extern "C" int Bun__setTLSRejectUnauthorizedValue(int value);
+extern "C" void Bun__setTLSRejectUnauthorizedValue(int value);
 extern "C" int Bun__getVerboseFetchValue();
-extern "C" int Bun__setVerboseFetchValue(int value);
+extern "C" void Bun__setVerboseFetchValue(int value);
 
 ALWAYS_INLINE static Identifier NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(VM& vm)
 {
@@ -218,8 +388,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
@@ -266,8 +436,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
         return JSValue::encode(result);
     }
 
-    ZigString name = toZigString(propertyName.publicName());
-    ZigString value = { nullptr, 0 };
+    EncodedSlice name = toEncodedSlice(propertyName.publicName());
+    EncodedSlice value = { nullptr, 0 };
 
     if (!Bun__getEnvValue(globalObject, &name, &value) || value.len == 0) {
         return JSValue::encode(jsUndefined());
@@ -300,7 +470,53 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
 }
 
 #if OS(WINDOWS)
-extern "C" void Bun__Process__editWindowsEnvVar(BunString, BunString);
+extern "C" void Bun__Process__editWindowsEnvVar(const BunString*, const BunString*);
+
+// Windows Proxy set/defineProperty write path: DEP0104 + ToString via coerceEnvValue,
+// plus the TZ side effect so it survives `delete process.env.TZ`. Returns the string.
+JSC_DEFINE_HOST_FUNCTION(jsProcessEnvCoerceForWrite, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue key = callFrame->argument(0);
+    JSValue value = callFrame->argument(1);
+    JSC::JSString* string = coerceEnvValue(globalObject, scope, value);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (key.isString()) {
+        auto keyView = asString(key)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (WTF::equal(keyView, "TZ"_s)) {
+            applyTimeZoneEnvValue(globalObject, string);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+            applyTLSRejectEnvValue(globalObject, string);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    return JSValue::encode(string);
+}
+
+// `delete process.env.X` on Windows: undo X's native side effect (POSIX handles this in
+// JSEnvironmentVariableMap::deleteProperty; the Windows internalEnv is a plain object).
+JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetForDelete, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue key = callFrame->argument(0);
+    if (!key.isString())
+        return JSValue::encode(jsUndefined());
+    auto keyView = asString(key)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (WTF::equal(keyView, "TZ"_s)) {
+        if (shouldApplyTZSideEffect(globalObject)) {
+            WTF::setTimeZoneOverride(String());
+            resetDateCachesAfterTimeZoneChange(vm);
+        }
+    } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
+        applyTLSRejectFromString(globalObject, String());
+    }
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::CallFrame* callFrame))
 {
@@ -314,9 +530,18 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     if (arg2.isCell()) {
         WTF::String string2 = arg2.toWTFString(global);
         RETURN_IF_EXCEPTION(scope, {});
-        Bun__Process__editWindowsEnvVar(Bun::toString(string1), Bun::toString(string2));
+        BunString k = Bun::toString(string1);
+        BunString v = Bun::toString(string2);
+        Bun__Process__editWindowsEnvVar(&k, &v);
+        // fetch() reads the proxy variables from the native env map.
+        if (isProxyEnvVarName(global->vm(), string1))
+            Bun__setEnvValue(global, &k, &v);
     } else {
-        Bun__Process__editWindowsEnvVar(Bun::toString(string1), { .tag = BunStringTag::Dead });
+        BunString k = Bun::toString(string1);
+        BunString v = { .tag = BunStringTag::Dead };
+        Bun__Process__editWindowsEnvVar(&k, &v);
+        if (isProxyEnvVarName(global->vm(), string1))
+            Bun__setEnvValue(global, &k, &v);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
@@ -332,10 +557,9 @@ static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& ke
 #if OS(WINDOWS)
     if (!store || !store->isMainRooted())
         return;
-    if (value)
-        Bun__Process__editWindowsEnvVar(Bun::toString(key), Bun::toString(*value));
-    else
-        Bun__Process__editWindowsEnvVar(Bun::toString(key), { .tag = BunStringTag::Dead });
+    BunString k = Bun::toString(key);
+    BunString v = value ? Bun::toString(*value) : BunString { .tag = BunStringTag::Dead };
+    Bun__Process__editWindowsEnvVar(&k, &v);
 #else
     UNUSED_PARAM(store);
     UNUSED_PARAM(key);
@@ -396,12 +620,12 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSSharedEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
     {
-        JSSharedEnvMap* ptr = new (NotNull, JSC::allocateCell<JSSharedEnvMap>(vm)) JSSharedEnvMap(vm, structure);
+        JSSharedEnvMap* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSSharedEnvMap))) JSSharedEnvMap(vm, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -449,27 +673,25 @@ bool JSSharedEnvMap::getOwnPropertySlot(JSObject* object, JSGlobalObject* global
     return true;
 }
 
-// Proxy env vars written back to the Zig env map so fetch()'s getHttpProxyFor()
-// sees runtime changes; shared by applySharedEnvSideEffects and
-// createEnvironmentVariablesMap.
-static constexpr ASCIILiteral kProxyEnvVarNames[] = {
-    "HTTP_PROXY"_s,
-    "http_proxy"_s,
-    "HTTPS_PROXY"_s,
-    "https_proxy"_s,
-    "NO_PROXY"_s,
-    "no_proxy"_s,
-};
+// Node does not intercept TZ in workers (only RealEnvStore::Set notifies, and worker env
+// is a MapKVStore). WTF::setTimeZoneOverride is process-global, so a worker write would
+// flip the main thread's timezone while only invalidating the worker VM's Date caches.
+static bool shouldApplyTZSideEffect(JSGlobalObject* globalObject)
+{
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    auto* context = zigGlobal ? zigGlobal->scriptExecutionContext() : nullptr;
+    return !context || context->isMainThread();
+}
 
 // The parse-and-apply bodies for the three side-effecting env vars, shared by
-// the regular process.env CustomSetters and applySharedEnvSideEffects so a new
+// process.env's put()/CustomSetters and applySharedEnvSideEffects so a new
 // side-effecting var need only be added in one place.
 static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
-    if (value.length() < 32 && WTF::setTimeZoneOverride(value)) {
-        WTF::timeZoneDidChange();
-        JSC::getVM(globalObject).dateCache.clearForTimeZoneChange();
-    }
+    if (!shouldApplyTZSideEffect(globalObject))
+        return;
+    if (value.length() < 32 && WTF::setTimeZoneOverride(value))
+        resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {
@@ -509,14 +731,10 @@ static void applySharedEnvSideEffects(JSGlobalObject* globalObject, const String
         return;
     }
     // Proxy vars: fetch()'s getHttpProxyFor() reads the Zig env map, so sync.
-    const auto& proxyVarNames = kProxyEnvVarNames;
-    for (auto proxyName : proxyVarNames) {
-        if (key == proxyName) {
-            BunString name = Bun::toString(key);
-            BunString val = Bun::toString(stringValue);
-            Bun__setEnvValue(globalObject, &name, &val);
-            return;
-        }
+    if (isProxyEnvVarName(JSC::getVM(globalObject), key)) {
+        BunString name = Bun::toString(key);
+        BunString val = Bun::toString(stringValue);
+        Bun__setEnvValue(globalObject, &name, &val);
     }
 }
 
@@ -538,7 +756,11 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
-    // Node coerces env values to strings on assignment.
+    // Node coerces env values to strings on assignment, and warns first for
+    // values that aren't a string/number/boolean — the store type doesn't
+    // change EnvSetter's behavior.
+    maybeEmitEnvNonstringDeprecation(globalObject, scope, value);
+    RETURN_IF_EXCEPTION(scope, false);
     String stringValue = value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
@@ -562,8 +784,22 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
-    syncWindowsEnv(store, String(uid), nullptr);
-    store->remove(String(uid));
+    // Mirror JSEnvironmentVariableMap::deleteProperty: put() applies the TZ
+    // side effect via applySharedEnvSideEffects, so delete has to undo it or
+    // existing Date instances keep the deleted zone's offset.
+    String key(uid);
+    String normalizedKey = SharedEnvStore::normalizeKey(key);
+    if (normalizedKey == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
+        WTF::setTimeZoneOverride(String());
+        resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+    } else if (normalizedKey == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
+        applyTLSRejectFromString(globalObject, String());
+    } else if (isProxyEnvVarName(JSC::getVM(globalObject), normalizedKey)) {
+        removeNativeEnvValue(globalObject, normalizedKey);
+    }
+
+    syncWindowsEnv(store, key, nullptr);
+    store->remove(key);
     // Also drop any own property the Base fallback installed (accessor descriptors).
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
@@ -584,12 +820,18 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* uid = propertyName.uid();
+
+    // Node's EnvDefiner rejects accessors on every env store, so SHARE_ENV matches the
+    // regular map; also keeps a getter off Base where the store entry would shadow it.
+    if (descriptor.isAccessorDescriptor()) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' does not accept an accessor(getter/setter) descriptor"_s);
+        return false;
+    }
+
     if (propertyName.isSymbol() || !uid || !descriptor.isDataDescriptor() || !descriptor.value()) {
-        // The descriptor lands on the Base object, but getOwnPropertySlot reads the
-        // store first, so a store entry would shadow it. Move the entry onto Base as
-        // an enumerable data property first: a partial descriptor then keeps that
-        // enumerability, exactly as it does on the regular process.env. (Node rejects
-        // accessors on process.env outright — on both maps — so match bun's own map.)
+        // getOwnPropertySlot reads the store first; move the entry onto Base so a partial
+        // descriptor keeps enumerability. Node's EnvDefiner also rejects partials (the regular
+        // map does); tightening SHARE_ENV is a separate behavior change with its own tests.
         if (!propertyName.isSymbol() && uid) {
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));
@@ -603,6 +845,8 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
     }
 
+    maybeEmitEnvNonstringDeprecation(globalObject, scope, descriptor.value());
+    RETURN_IF_EXCEPTION(scope, false);
     String stringValue = descriptor.value().toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
@@ -653,6 +897,11 @@ JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto* structure = JSSharedEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
     return JSSharedEnvMap::create(vm, structure);
+}
+
+bool isProcessEnvClassInfo(const JSC::ClassInfo* classInfo)
+{
+    return classInfo == JSEnvironmentVariableMap::info() || classInfo == JSSharedEnvMap::info();
 }
 
 RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalObject)
@@ -730,16 +979,22 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
+#if OS(WINDOWS)
+    // On Windows the windowsEnv Proxy intercepts every operation before the exotic
+    // method table, and its internal setup (Bun.inspect.custom symbol, toJSON) would hit
+    // the exotic put's symbol-key TypeError. Keep a plain object; semantics live in traps.
     JSC::JSObject* object = nullptr;
-    if (count < 63) {
+    if (count > 0 && count < 63) {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
     } else {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype());
     }
 
-#if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
     RETURN_IF_EXCEPTION(scope, {});
+#else
+    auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSC::JSObject* object = JSEnvironmentVariableMap::create(vm, structure);
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");
@@ -749,32 +1004,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     bool hasNodeTLSRejectUnauthorized = false;
     bool hasBunConfigVerboseFetch = false;
 
-    // Proxy-related env vars need write-back to the native env map so that
-    // fetch()'s getHttpProxyFor() observes runtime changes.
-    const auto& proxyVarNames = kProxyEnvVarNames;
-    constexpr size_t proxyVarCount = std::size(proxyVarNames);
-    bool hasProxyVar[proxyVarCount] = {};
-
-    auto isProxyVar = [&](const String& name) -> std::optional<size_t> {
-        for (size_t j = 0; j < proxyVarCount; j++) {
-            if (name == proxyVarNames[j]) return j;
-        }
-#if OS(WINDOWS)
-        // Windows env var names are case-insensitive, so the OS env block can
-        // carry any casing (`Http_Proxy`, `HTTP_proxy`, ...). Without this
-        // fallback the per-key loop falls through, the bottom loop then adds
-        // the canonical accessor with `DontEnum` (because hasProxyVar[*] stayed
-        // false), and `{...process.env}` (which most spawn env merges do) drops
-        // the var even though `process.env.HTTP_PROXY` reads it fine.
-        for (size_t j = 0; j < proxyVarCount; j++) {
-            if (equalIgnoringASCIICase(name, proxyVarNames[j])) return j;
-        }
-#endif
-        return std::nullopt;
-    };
-
     auto* cached_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, nullptr);
-    auto* proxy_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterProxyEnvironmentVariable, jsSetterProxyEnvironmentVariable);
 
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
@@ -796,10 +1026,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             hasBunConfigVerboseFetch = true;
             continue;
         }
-        if (auto idx = isProxyVar(name)) {
-            hasProxyVar[*idx] = true;
-            continue;
-        }
         ASSERT(len > 0);
 #if OS(WINDOWS)
         String idName = name.convertToASCIIUppercase();
@@ -812,8 +1038,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // This causes strange issues when the environment variable name is an integer.
         if (chars[0] >= '0' && chars[0] <= '9') [[unlikely]] {
             if (auto index = parseIndex(identifier)) {
-                ZigString valueString = { nullptr, 0 };
-                ZigString nameStr = toZigString(name);
+                EncodedSlice valueString = { nullptr, 0 };
+                EncodedSlice nameStr = toEncodedSlice(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
                     RETURN_IF_EXCEPTION(scope, {});
@@ -855,22 +1081,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         vm,
         Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
-    for (size_t j = 0; j < proxyVarCount; j++) {
-        // Known limitation: `delete process.env.NO_PROXY` removes the accessor
-        // without calling the setter, leaving the native env map stale (same as TZ).
-        // Use `process.env.NO_PROXY = ""` to unset. DontDelete would throw in
-        // strict mode, so we leave it deletable and document the gap.
-        unsigned attrs = JSC::PropertyAttribute::CustomAccessor | 0;
-        if (!hasProxyVar[j]) {
-            attrs |= JSC::PropertyAttribute::DontEnum;
-        }
-        object->putDirectCustomAccessor(
-            vm,
-            Identifier::fromString(vm, proxyVarNames[j]),
-            proxy_getter_setter,
-            attrs);
-    }
-
 #if OS(WINDOWS)
     auto editWindowsEnvVar = JSC::JSFunction::create(vm, globalObject, 0, String("editWindowsEnvVar"_s), jsEditWindowsEnvVar, ImplementationVisibility::Public);
 
@@ -880,6 +1090,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(object);
     args.append(keyArray);
     args.append(editWindowsEnvVar);
+    args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
+    args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     NakedPtr<JSC::Exception> returnedException = nullptr;

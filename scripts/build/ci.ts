@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateOrderFile } from "../orderfile/generate.ts";
+import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
@@ -29,7 +29,7 @@ import type { Config } from "./config.ts";
 import { webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
-import { orderFilePath, usesOrderFile } from "./flags.ts";
+import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;
@@ -214,7 +214,7 @@ export async function spawnWithAnnotations(
 //
 // CI splits builds per-platform into three parallel steps:
 //   build-cpp  → libbun.a + all dep libs (this node uploads)
-//   build-rust → libbun_rust.a (this node uploads)
+//   build-rust → libbun_runtime.a (this node uploads)
 //   build-bun  → downloads both, links (this node downloads first)
 //
 // Paths are uploaded RELATIVE TO buildDir. buildkite-agent recreates the
@@ -342,7 +342,10 @@ function upload(paths: string[], cwd: string): void {
 //           ├── bun-profile[.exe]
 //           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
 //           ├── features.json
-//           ├── bun-profile.linker-map   (linux/mac non-asan)
+//           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
+//           ├── bun-profile.map          (windows; with the above, what the
+//           │                             trace-order step resolves addresses with)
+//           ├── linker.order             (the order file this binary was linked with, if any)
 //           ├── bun-profile.pdb          (windows)
 //           └── bun-profile.dSYM         (mac)
 //
@@ -377,14 +380,14 @@ export function computeBunTriplet(cfg: Config): string {
 }
 
 /**
- * Post-link packaging and upload for link-only / rust-and-link mode. Runs
+ * Post-link packaging and upload for the modes that link in CI. Runs
  * AFTER ninja succeeds — at that point bun-profile (and stripped bun) exist.
  *
  * Generates features.json, packages into zips,
  * uploads. Contract with test steps: see block comment above.
  */
 export function packageAndUpload(cfg: Config, output: BunOutput): void {
-  if (!isBuildkite || (cfg.mode !== "link-only" && cfg.mode !== "rust-and-link")) return;
+  if (!isBuildkite) return;
 
   const exe = output.exe;
   if (exe === undefined) {
@@ -434,10 +437,10 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   } else if (cfg.darwin) {
     files.push(`${exeName}.dSYM`);
   }
-  // Linker map: posix non-asan (cmake gate: (APPLE OR LINUX) AND NOT ENABLE_ASAN).
-  if (cfg.unix && !cfg.asan) {
-    files.push(`${exeName}.linker-map`);
-  }
+  // Linker map(s). On windows they are also what the trace-order step
+  // (.buildkite/ci.mjs) resolves traced addresses against, the PE itself
+  // having no symbol table, so without them that step has nothing to work from.
+  files.push(...linkerMapOutputs(cfg).map(map => basename(map)));
   // The symbol ordering file this binary was linked with, next to the linker
   // map. Skip the seeded placeholder — it has no functions in it.
   const hasOrderFile = usesOrderFile(cfg) && orderFileFunctionCount(cfg) > 0;
@@ -683,10 +686,10 @@ async function waitForStepOutcome(stepKey: string): Promise<void> {
 // inherit, PRs do neither; one that inherits nothing generates, seeding the chain.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Cap on builds we ask for an order file before giving up and generating one. */
+/** Cap on probed builds we ask for an order file. The newest passed build is asked on top of these. */
 const PREVIOUS_BUILDS_TO_TRY = 50;
 
-/** Bound on the number-probe fallback: a branch is sparse among build numbers. */
+/** Bound on the number probe: a branch is sparse among build numbers. */
 const NUMBER_PROBE_BUDGET = 200;
 
 /** Per-attempt cap, so a hung agent cannot blow the step's budget. */
@@ -722,7 +725,7 @@ export function orderFileContext(): OrderFileContext {
 /** Only builds that link, on targets that use an order file, outside PRs. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
   if (!usesOrderFile(cfg) || !ctx.buildkite || ctx.pullRequest) return false;
-  return cfg.mode === "full" || cfg.mode === "link-only" || cfg.mode === "rust-and-link";
+  return cfg.mode !== "cpp-only" && cfg.mode !== "rust-only";
 }
 
 /** Tracing runs the binary we just linked, so the host must be able to execute it. */
@@ -799,11 +802,38 @@ export function mustGenerateOrderFile(cfg: Config, ctx: OrderFileContext, inheri
 }
 
 /**
- * Builds on this branch that might have published an order file, newest first.
- * Lazy: the first candidate is nearly always the answer and the caller stops
- * there, so the happy path is one lookup.
+ * The unauthenticated Buildkite lookups candidateBuilds() makes. Passed in, like
+ * OrderFileContext, so the walk runs offline in a test.
  */
-async function* candidateBuilds(ctx: OrderFileContext): AsyncGenerator<{ id: string; number?: number }> {
+export interface BuildLookups {
+  /** A build's public JSON (`<pipeline>/builds/<n>.json`), or undefined when it cannot be read. */
+  build(url: string): Promise<{ id?: string; number?: number; branch_name?: string } | undefined>;
+  /** Where `url` redirects to, without following it. */
+  redirect(url: string): Promise<string | null>;
+}
+
+const buildkiteLookups: BuildLookups = {
+  async build(url) {
+    const response: { error?: unknown; body?: any } = await utils.curl(url, { json: true, cache: true });
+    return response.error ? undefined : response.body;
+  },
+  async redirect(url) {
+    try {
+      return (await fetch(url, { redirect: "manual" })).headers.get("location");
+    } catch {
+      return null;
+    }
+  },
+};
+
+/**
+ * Builds on this branch that might have published an order file, nearest first.
+ * Lazy: the first candidate is nearly always the answer and the caller stops there.
+ */
+export async function* candidateBuilds(
+  ctx: OrderFileContext,
+  lookups: BuildLookups = buildkiteLookups,
+): AsyncGenerator<{ id: string; number: number | undefined }> {
   const { branch, buildUrl } = ctx;
   if (!branch || !buildUrl) return;
 
@@ -811,43 +841,35 @@ async function* candidateBuilds(ctx: OrderFileContext): AsyncGenerator<{ id: str
   const url = new URL(buildUrl);
   const pipeline = new URL(url.pathname.replace(/\/builds\/.*$/, ""), url.origin).toString();
 
-  const fetchBuild = async (target: string): Promise<any | undefined> => {
-    const response: { error?: unknown; body?: any } = await utils.curl(target, { json: true, cache: true });
-    return response.error ? undefined : response.body;
-  };
-
   const seen = new Set<string>();
 
-  // Buildkite dropped `prev_branch_build` from the public build JSON, so
-  // `utils.getLastSuccessfulBuild()` always returns undefined. This redirect is
-  // what works unauthenticated; it drops the `.json`, so read it rather than follow it.
-  const newest = await (async () => {
-    try {
-      const latest = `${pipeline}/builds/latest?branch=${encodeURIComponent(branch)}&state=passed`;
-      const location = (await fetch(latest, { redirect: "manual" })).headers.get("location");
-      return location ? await fetchBuild(`${location}.json`) : undefined;
-    } catch {
-      return undefined;
-    }
-  })();
-  if (newest?.id) {
-    seen.add(newest.id);
-    yield { id: newest.id, number: newest.number };
-  }
-
-  // Probe downwards from this build, not from the newest passed one: a build can
-  // fail its tests and still have linked and published.
+  // Probe downwards from this build: the nearest file matches this link best.
+  // Rust symbol names embed a per-crate hash that changes with the crate's
+  // dependencies or the toolchain, so an older file can lose half its names to
+  // one commit. A build can fail its tests, or be cancelled, and still have
+  // linked and published.
   let number = ctx.buildNumber;
-  if (number === undefined) return;
-
-  for (let probes = 0; probes < NUMBER_PROBE_BUDGET; probes++) {
+  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET; probes++) {
+    if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
     number -= 1;
-    if (number < 1) return;
-    const body = await fetchBuild(`${pipeline}/builds/${number}.json`);
-    if (!body?.id || body.branch_name !== branch || seen.has(body.id)) continue;
+    const body = await lookups.build(`${pipeline}/builds/${number}.json`);
+    if (!body?.id || body.branch_name !== branch) continue;
     seen.add(body.id);
     yield { id: body.id, number: body.number };
   }
+
+  // The branch was quiet for longer than the probe reaches: fall back to its
+  // newest passed build. Buildkite dropped `prev_branch_build` from the public
+  // build JSON, so `utils.getLastSuccessfulBuild()` always returns undefined.
+  // This redirect is what works unauthenticated. Its Location repeats the query
+  // (`<pipeline>/builds/116199?branch=main&state=passed`), so `.json` goes on
+  // the path: after the query, Buildkite answers with the HTML page.
+  const latest = `${pipeline}/builds/latest?branch=${encodeURIComponent(branch)}&state=passed`;
+  const location = await lookups.redirect(latest);
+  if (!location) return;
+  const target = new URL(location, latest);
+  const newest = await lookups.build(`${target.origin}${target.pathname}.json`);
+  if (newest?.id && !seen.has(newest.id)) yield { id: newest.id, number: newest.number };
 }
 
 /**
@@ -865,7 +887,7 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
   let tried = 0;
 
   for await (const build of candidateBuilds(ctx)) {
-    if (++tried > PREVIOUS_BUILDS_TO_TRY) break;
+    tried++;
     // No --step: exactly one step per build publishes the target-unique name —
     // packageAndUpload() for a lane that traced its own binary, the sibling
     // trace-order step (.buildkite/ci.mjs) for a cross-compiled one.
@@ -993,24 +1015,21 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
     return;
   }
 
-  // Same resolution as generate.ts: honor NM, else llvm-nm, else nm.
-  let nm = { status: null, stdout: "" } as { status: number | null; stdout: string };
-  for (const tool of [process.env.NM, "llvm-nm", "nm"].filter(Boolean) as string[]) {
-    nm = spawnSync(tool, ["--defined-only", exe], { encoding: "utf8", maxBuffer: 1 << 29 });
-    if (nm.status === 0) break;
-  }
-  if (nm.status !== 0) {
-    console.log("~ symbol order: no working nm — skipping verification");
+  // The same names the generator traces against: nm's, or on windows the link's maps'.
+  let symbols: Map<number, string[]>;
+  try {
+    symbols = readTextSymbols(exe);
+  } catch (error) {
+    console.log(
+      `~ symbol order: cannot read the binary's symbols — skipping verification (${(error as Error).message})`,
+    );
     return;
   }
 
   const addresses = new Map<string, number>();
   let textBase = Number.MAX_SAFE_INTEGER;
-  for (const line of nm.stdout.split("\n")) {
-    const m = /^([0-9a-f]+) ([tT]) (\S+)$/.exec(line);
-    if (!m) continue;
-    const address = parseInt(m[1]!, 16);
-    addresses.set(m[3]!, address);
+  for (const [address, names] of symbols) {
+    for (const name of names) addresses.set(name, address);
     if (address < textBase) textBase = address;
   }
 
@@ -1055,7 +1074,9 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
       `the order file had no effect: hot functions sit at ${mb(hot)}, a typical one at ${mb(control)}`,
       cfg.darwin
         ? "Apple ld ignored it — check -order_file and that the names match nm's"
-        : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
+        : cfg.windows
+          ? "lld-link ignored it — check /order and that /Gy survived"
+          : "lld ignored it — check --symbol-ordering-file and that -ffunction-sections survived",
     );
     return;
   }

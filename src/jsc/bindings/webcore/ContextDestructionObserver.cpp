@@ -43,11 +43,6 @@ ContextDestructionObserver::~ContextDestructionObserver()
     observeContext(nullptr);
 }
 
-RefPtr<ScriptExecutionContext> ContextDestructionObserver::protectedScriptExecutionContext() const
-{
-    return m_context.get();
-}
-
 void ContextDestructionObserver::observeContext(ScriptExecutionContext* scriptExecutionContext)
 {
     if (m_context) {

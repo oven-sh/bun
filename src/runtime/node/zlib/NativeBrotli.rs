@@ -69,27 +69,26 @@ mod _impl {
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
 
-    // Intrusive refcount: the handle type is `bun_ptr::IntrusiveRc<NativeBrotli>`; the
-    // `ref_count` field below is read/written by that wrapper, and `deinit` is the
-    // drop body invoked when the count reaches zero.
-
     // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
     // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
     // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
     // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
-    #[ref_count(destroy = Self::destroy_on_zero)]
     pub struct NativeBrotli {
         pub(crate) ref_count: Cell<u32>,
         // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
+        /// How the pool thread delivers a finished write to the VM.
+        pub ticket: Cell<Option<bun_jsc::Ticket>>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         // TODO: Strong self-ref on the wrapper → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
         pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
         pub write_in_progress: Cell<bool>,
+        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
+        pub pinned_buffers: Cell<u8>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -146,12 +145,13 @@ mod _impl {
             };
             Ok(Box::new(Self {
                 ref_count: Cell::new(1),
-                // JSC_BORROW backref — the global outlives this m_ctx payload.
                 global_this: bun_ptr::BackRef::new(global_this),
+                ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
+                pinned_buffers: Cell::new(0),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // .callback = undefined — overwritten before WorkPool::schedule()
@@ -313,32 +313,15 @@ mod _impl {
             // intentionally left empty
             Ok(JSValue::UNDEFINED)
         }
+    }
 
-        /// `CellRefCounted::destroy` target (refcount hit zero). Runs `deinit`
-        /// then frees the Box-allocated payload.
-        ///
-        /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
-        /// whose generated trait `destroy` upholds the sole-owner contract.
-        fn destroy_on_zero(this: *mut Self) {
-            // SAFETY: refcount hit zero ⇒ no other borrow remains.
-            unsafe { (*this).deinit() };
-            // SAFETY: allocated via `Box::new` in `constructor`.
-            drop(unsafe { bun_core::heap::take(this) });
-        }
-
-        /// RefCount destructor body (called when ref_count → 0).
-        fn deinit(&mut self) {
-            // this_value / poll_ref have Drop impls; explicit calls kept for
-            // ordering. The `stream` close below is load-bearing:
-            // `Context` has no Drop, so the brotli encoder/decoder state would
-            // leak without it.
-            self.this_value.set(StrongOptional::empty());
-            drop(self.poll_ref.replace(CountedKeepAlive::default()));
+    // `poll_ref` and `this_value` (Strong) clean up via their own Drop impls.
+    impl Drop for NativeBrotli {
+        fn drop(&mut self) {
             self.stream.with_mut(|s| match s.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE | bun_zlib::NodeMode::BROTLI_DECODE => s.close(),
                 _ => {}
             });
-            // Freeing self is handled by IntrusiveRc / heap::take.
         }
     }
 

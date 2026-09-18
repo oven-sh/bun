@@ -77,7 +77,7 @@ JSCallbackArgs HkdfJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_result) {
-        JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "hkdf operation failed"_s);
+        JSObject* err = createError(lexicalGlobalObject, "HKDF derivation failed"_s);
         RETURN_IF_EXCEPTION(scope, {});
         return { err };
     }
@@ -108,19 +108,6 @@ void HkdfJobCtx::deinit()
     delete this;
 }
 
-extern "C" HkdfJob* Bun__HkdfJob__create(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);
-HkdfJob* HkdfJob::create(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, JSValue callback)
-{
-    HkdfJobCtx* ctxCopy = new HkdfJobCtx(WTF::move(ctx));
-    return Bun__HkdfJob__create(globalObject, ctxCopy, JSValue::encode(callback));
-}
-
-extern "C" void Bun__HkdfJob__schedule(HkdfJob* job);
-void HkdfJob::schedule()
-{
-    Bun__HkdfJob__schedule(this);
-}
-
 extern "C" void Bun__HkdfJob__createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx* ctx, EncodedJSValue callback);
 void HkdfJob::createAndSchedule(JSGlobalObject* globalObject, HkdfJobCtx&& ctx, JSValue callback)
 {
@@ -149,6 +136,7 @@ KeyObject prepareKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue ke
 
         BufferEncodingType encoding = BufferEncodingType::utf8;
         JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, encoding));
+        RETURN_IF_EXCEPTION(scope, {});
         auto* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
 
         Vector<uint8_t> copy;
@@ -181,8 +169,9 @@ void copyBufferOrString(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, 
         RETURN_IF_EXCEPTION(scope, );
         GCOwnedDataScope<WTF::StringView> view = str->view(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, );
-        UTF8View utf8(view);
-        buffer.append(utf8.span());
+        auto utf8 = UTF8View::tryCreate(lexicalGlobalObject, scope, view);
+        RETURN_IF_EXCEPTION(scope, );
+        buffer.append(utf8->span());
     } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         buffer.append(view->span());
     } else if (auto* buf = dynamicDowncast<JSArrayBuffer>(value)) {
@@ -269,7 +258,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHkdfSync, (JSGlobalObject * lexicalGlobalObject, JSC:
     ctx->runTask(lexicalGlobalObject);
 
     if (!ctx->m_result.has_value()) {
-        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "hkdf operation failed"_s);
+        return throwVMError(lexicalGlobalObject, scope, "HKDF derivation failed"_s);
     }
 
     auto& result = ctx->m_result.value();

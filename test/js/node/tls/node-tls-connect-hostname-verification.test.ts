@@ -1,7 +1,8 @@
+import { tls as ipSanCert } from "harness";
 import assert from "node:assert";
 import { once } from "node:events";
 import fs from "node:fs";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import path from "node:path";
 import { describe, test } from "node:test";
 import tls from "node:tls";
@@ -101,6 +102,105 @@ describe("tls.connect hostname verification without explicit servername", () => 
         reject(err);
       });
       assert.strictEqual(await promise, "localhost");
+    });
+  });
+});
+
+const localhostOnlyKey = fs.readFileSync(path.join(fixturesDir, "rsa_private.pem"));
+const localhostOnlyCert = fs.readFileSync(path.join(fixturesDir, "rsa_cert.crt"));
+
+async function withRawSocketTo(
+  serverOptions: tls.TlsOptions,
+  fn: (raw: net.Socket, port: number) => Promise<void>,
+): Promise<void> {
+  const server = tls.createServer(serverOptions, c => {
+    c.on("error", () => {});
+    c.end();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const raw = net.connect(port, "127.0.0.1");
+    raw.on("error", () => {});
+    await once(raw, "connect");
+    try {
+      await fn(raw, port);
+    } finally {
+      raw.destroy();
+    }
+  } finally {
+    server.close();
+  }
+}
+
+describe("tls.connect over an existing socket verifies the certificate against options.host", () => {
+  test("passes the IP from options.host to checkServerIdentity", async () => {
+    await withRawSocketTo({ key: ipSanCert.key, cert: ipSanCert.cert }, async raw => {
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        calledWith: string | undefined;
+        authorized: boolean;
+      }>();
+      let calledWith: string | undefined;
+      const socket = tls.connect({
+        socket: raw,
+        host: "127.0.0.1",
+        ca: ipSanCert.cert,
+        checkServerIdentity(hostname, cert) {
+          calledWith = hostname;
+          return tls.checkServerIdentity(hostname, cert);
+        },
+      });
+      socket.on("secureConnect", () => {
+        resolve({ calledWith, authorized: socket.authorized });
+        socket.destroy();
+      });
+      socket.on("error", err => {
+        socket.destroy();
+        reject(err);
+      });
+      const result = await promise;
+      assert.deepStrictEqual(result, { calledWith: "127.0.0.1", authorized: true });
+    });
+  });
+
+  test("rejects a certificate that is only valid for localhost when options.host is an IP", async () => {
+    await withRawSocketTo({ key: localhostOnlyKey, cert: localhostOnlyCert }, async raw => {
+      const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+      const socket = tls.connect({ socket: raw, host: "127.0.0.1", ca: localhostOnlyCert }, () => {
+        const detail = { authorized: socket.authorized, authorizationError: socket.authorizationError };
+        socket.destroy();
+        reject(Object.assign(new Error("secureConnect fired for a certificate that does not cover the IP"), detail));
+      });
+      socket.on("error", err => {
+        socket.destroy();
+        resolve(err as NodeJS.ErrnoException);
+      });
+      const err = await promise;
+      assert.strictEqual(err.code, "ERR_TLS_CERT_ALTNAME_INVALID");
+      assert.strictEqual(
+        err.message,
+        "Hostname/IP does not match certificate's altnames: IP: 127.0.0.1 is not in the cert's list: ",
+      );
+    });
+  });
+
+  test("reports authorized=false for a localhost-only certificate when options.host is an IP and rejectUnauthorized=false", async () => {
+    await withRawSocketTo({ key: localhostOnlyKey, cert: localhostOnlyCert }, async raw => {
+      const { promise, resolve, reject } = Promise.withResolvers<{
+        authorized: boolean;
+        authorizationError: unknown;
+      }>();
+      const socket = tls.connect({ socket: raw, host: "127.0.0.1", ca: localhostOnlyCert, rejectUnauthorized: false });
+      socket.on("secureConnect", () => {
+        resolve({ authorized: socket.authorized, authorizationError: socket.authorizationError });
+        socket.destroy();
+      });
+      socket.on("error", err => {
+        socket.destroy();
+        reject(err);
+      });
+      assert.deepStrictEqual(await promise, { authorized: false, authorizationError: "ERR_TLS_CERT_ALTNAME_INVALID" });
     });
   });
 });

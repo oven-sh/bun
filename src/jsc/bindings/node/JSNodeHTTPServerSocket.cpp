@@ -1,11 +1,13 @@
 #include "JSNodeHTTPServerSocket.h"
 #include "JSNodeHTTPServerSocketPrototype.h"
+#include "AsyncContextFrame.h"
 #include "ZigGlobalObject.h"
 #include "ZigGeneratedClasses.h"
 #include "DOMIsoSubspaces.h"
 #include "ScriptExecutionContext.h"
 #include "helpers.h"
 #include "JSSocketAddressDTO.h"
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -26,6 +28,18 @@ namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
+
+// Calls ondata / ondrain / onclose in the context of the Bun.ModuleGraph whose script set it, if one
+// did, and reports what it throws.
+static void callStoredCallback(Zig::GlobalObject* globalObject, JSObject* callback, JSValue thisValue, const ArgList& args)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    AsyncContextFrame::call(globalObject, callback, thisValue, args);
+    if (auto* exception = scope.exception()) {
+        (void)scope.tryClearException();
+        globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    }
+}
 
 const JSC::ClassInfo JSNodeHTTPServerSocket::s_info = { "NodeHTTPServerSocket"_s, &Base::s_info, nullptr, nullptr,
     CREATE_METHOD_TABLE(JSNodeHTTPServerSocket) };
@@ -85,7 +99,8 @@ void JSNodeHTTPServerSocket::close()
                 flushPartialResponseBeforeClose<false>(socket);
             }
         }
-        us_socket_close(socket, 0, nullptr);
+        // Forceful: code 0 defers the fd close until a close_notify reply that a half-open peer never sends.
+        us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
 }
 
@@ -275,6 +290,10 @@ static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs
         // like Node freeing the parser for upgraded connections.
         return false;
     }
+    if (httpResponseData->requestTimeoutReported) {
+        // Report once per message, like Node's ConnectionsList::Expired().
+        return false;
+    }
     uint64_t start = httpResponseData->lastMessageStartMs;
     if (start == 0) {
         // Idle: no request message is currently being received.
@@ -282,13 +301,15 @@ static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs
     }
     uint64_t now = uWS::nodeCompatMonotonicMs();
     uint64_t elapsed = now > start ? now - start : 0;
-    if (headersTimeoutMs > 0 && !httpResponseData->headersCompleted && elapsed > headersTimeoutMs) {
-        return true;
+    bool expired = (headersTimeoutMs > 0 && !httpResponseData->headersCompleted && elapsed > headersTimeoutMs)
+        || (requestTimeoutMs > 0 && elapsed > requestTimeoutMs);
+    if (expired) {
+        httpResponseData->requestTimeoutReported = true;
     }
-    return requestTimeoutMs > 0 && elapsed > requestTimeoutMs;
+    return expired;
 }
 
-bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs) const
+bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs)
 {
     if (!socket || upgraded || us_socket_is_closed(socket)) {
         return false;
@@ -658,7 +679,6 @@ void JSNodeHTTPServerSocket::onClose()
     }
 
     scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
-        WTF::NakedPtr<JSC::Exception> exception;
         auto* globalObject = defaultGlobalObject(context.globalObject());
         auto* thisObject = self;
         auto* callbackObject = thisObject->functionToCallOnClose.get();
@@ -667,18 +687,23 @@ void JSNodeHTTPServerSocket::onClose()
             thisObject->detach();
             return;
         }
-        auto callData = JSC::getCallData(callbackObject);
         MarkedArgumentBuffer args;
         EnsureStillAliveScope ensureStillAlive(self);
 
         if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+            // Notifying the responses runs script; it may leave an exception (a
+            // termination arriving meanwhile), and nothing is entered on top of one.
+            auto& vm = JSC::getVM(globalObject);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             notifyResponsesOnClose(thisObject);
-
-            profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
-
-            if (auto* ptr = exception.get()) {
-                exception.clear();
+            if (!scope.exception()) {
+                callStoredCallback(globalObject, callbackObject, thisObject, args);
+                RETURN_IF_EXCEPTION(scope, );
+            } else if (!vm.hasPendingTerminationException()) {
+                auto* ptr = scope.exception();
+                scope.clearException();
                 globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+                RETURN_IF_EXCEPTION(scope, );
             }
         }
         thisObject->detach();
@@ -701,6 +726,7 @@ void JSNodeHTTPServerSocket::onDrain()
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
         bufferedSize = this->streamBuffer.bufferedSize();
@@ -714,25 +740,17 @@ void JSNodeHTTPServerSocket::onDrain()
 
     if (scriptExecutionContext) {
         scriptExecutionContext->postTask([self = this](ScriptExecutionContext& context) {
-            WTF::NakedPtr<JSC::Exception> exception;
             auto* globalObject = defaultGlobalObject(context.globalObject());
             auto* thisObject = self;
             auto* callbackObject = thisObject->functionToCallOnDrain.get();
             if (!callbackObject) {
                 return;
             }
-            auto callData = JSC::getCallData(callbackObject);
             MarkedArgumentBuffer args;
             EnsureStillAliveScope ensureStillAlive(self);
 
-            if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
-                profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
-
-                if (auto* ptr = exception.get()) {
-                    exception.clear();
-                    globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
-                }
-            }
+            if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running)
+                callStoredCallback(globalObject, callbackObject, thisObject, args);
         });
     }
 }
@@ -754,11 +772,11 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            RETURN_IF_EXCEPTION(scope, );
             return;
         }
         gcProtect(chunk);
         scriptExecutionContext->postTask([self = this, chunk = chunk, last = last](ScriptExecutionContext& context) {
-            WTF::NakedPtr<JSC::Exception> exception;
             auto* globalObject = defaultGlobalObject(context.globalObject());
             auto* thisObject = self;
             auto* callbackObject = thisObject->functionToCallOnData.get();
@@ -768,20 +786,13 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
                 return;
             }
 
-            auto callData = JSC::getCallData(callbackObject);
             MarkedArgumentBuffer args;
             args.append(chunk);
             args.append(JSC::jsBoolean(last));
             EnsureStillAliveScope ensureStillAlive(self);
 
-            if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
-                profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
-
-                if (auto* ptr = exception.get()) {
-                    exception.clear();
-                    globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
-                }
-            }
+            if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running)
+                callStoredCallback(globalObject, callbackObject, thisObject, args);
         });
     }
 }
@@ -790,7 +801,7 @@ JSC::Structure* JSNodeHTTPServerSocket::createStructure(JSC::VM& vm, JSC::JSGlob
 {
     auto* structure = JSC::Structure::create(vm, globalObject, globalObject->objectPrototype(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), JSNodeHTTPServerSocketPrototype::info());
     auto* prototype = JSNodeHTTPServerSocketPrototype::create(vm, structure);
-    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
 }
 
 void JSNodeHTTPServerSocket::finishCreation(JSC::VM& vm)
@@ -861,9 +872,6 @@ extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl
 extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, us_socket_t* us_socket, Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    RETURN_IF_EXCEPTION(scope, {});
 
     if (isSSL) {
         uWS::HttpResponse<true>* response = reinterpret_cast<uWS::HttpResponse<true>*>(us_socket);
@@ -891,7 +899,6 @@ extern "C" JSC::EncodedJSValue Bun__getOrCreateNodeHTTPServerSocket(bool isSSL, 
         uWS::HttpResponse<false>* response = reinterpret_cast<uWS::HttpResponse<false>*>(us_socket);
         response->getHttpResponseData()->socketData = socket;
     }
-    RETURN_IF_EXCEPTION(scope, {});
     if (socket) {
         socket->strongThis.set(vm, socket);
         return JSValue::encode(socket);

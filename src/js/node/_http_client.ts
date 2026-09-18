@@ -3,7 +3,6 @@
 // node:tls sockets and the llhttp HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
-const net = require("node:net");
 const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kClientRequestStatistics = Symbol("ClientRequestStatistics");
 const {
@@ -18,7 +17,13 @@ const {
 const { kUniqueHeaders, parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
 const Agent = require("node:_http_agent");
 const { urlToHttpOptions } = require("internal/url");
-const { kOutHeaders, kNeedDrain, kProxyConfig, checkShouldUseProxy } = require("internal/http");
+const {
+  kOutHeaders,
+  kNeedDrain,
+  kProxyConfig,
+  checkShouldUseProxy,
+  kPerRequestCheckServerIdentity,
+} = require("internal/http");
 const { validateInteger, validateBoolean, validateString, validateOneOf } = require("internal/validators");
 const { getTimerDuration } = require("internal/timers");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
@@ -58,6 +63,7 @@ function onCreateConnection(this: any, err, socket) {
 }
 
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
+let perRequestCheckServerIdentityIndex = 0;
 const kError = Symbol("kError");
 const kPath = Symbol("kPath");
 // Chunks queued while parser.execute() is already running on this socket
@@ -223,6 +229,17 @@ function ClientRequest(input, options, cb) {
 
   if (protocol !== expectedProtocol) {
     throw $ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
+  }
+
+  // Port of nodejs/node 52a8ace880 (CVE-2026-58040), here and not in https.request() so that no route to an Agent skips it.
+  const checkServerIdentity = options.checkServerIdentity;
+  if (
+    checkServerIdentity !== undefined &&
+    protocol === "https:" &&
+    checkServerIdentity !== require("node:tls").checkServerIdentity &&
+    this.agent?.options?.checkServerIdentity === undefined
+  ) {
+    options[kPerRequestCheckServerIdentity] = ++perRequestCheckServerIdentityIndex;
   }
 
   const defaultPort = options.defaultPort || this.agent?.defaultPort;
@@ -430,7 +447,7 @@ function ClientRequest(input, options, cb) {
       }
     } else {
       $debug("CLIENT use net.createConnection", opts);
-      this.onSocket(net.createConnection(opts));
+      this.onSocket(require("node:net").createConnection(opts));
     }
   }
   if (onClientRequestCreatedChannel.hasSubscribers) {

@@ -16,4 +16,9 @@ The workflow runs on a bare checkout (no `bun install`), so tests here may
 only import built-ins, relative paths, and `harness` (resolved via
 `test/tsconfig.json` paths).
 
+The workflow only triggers for the `paths:` listed in it. A lint that reads
+files outside those paths (for example `packages/bun-types/bun.d.ts` or the
+docs) needs them added there, or a change to those files is only checked by
+whichever later PR happens to trigger the workflow.
+
 To run locally: `bun test test/internal/source-lints/`.

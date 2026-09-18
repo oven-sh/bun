@@ -1,6 +1,5 @@
 //! `Bun.JSONC` — `parse()` host function.
 
-use bun_ast::ToJSError;
 use bun_js_parser_jsc::ExprJsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_parsers::json;
@@ -15,8 +14,8 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         global,
         frame,
         b"input.jsonc",
-        false,
-        true,
+        super::BlobOrBufferInput::ToString,
+        super::NullishInput::Throw,
         |_arena, log, source| {
             // parse_jsonc maps empty input to {}; the public API rejects it like JSON.parse.
             if source.contents.is_empty() {
@@ -55,14 +54,10 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 }
             };
 
-            match parsed.root.to_js(global) {
-                Ok(v) => Ok(v),
-                Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
-                Err(ToJSError::JSError) => Err(JsError::Thrown),
-                Err(ToJSError::JSTerminated) => Err(JsError::Terminated),
-                // JSONC parsing does not produce macros or identifiers
-                Err(_) => unreachable!(),
-            }
+            parsed
+                .root
+                .to_js(global)
+                .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))
         },
     )
 }

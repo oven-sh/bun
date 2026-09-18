@@ -1,7 +1,7 @@
 import { Socket } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { createReadStream, readFileSync } from "fs";
-import { gcTick, isWindows, tempDirWithFilesAnon } from "harness";
+import { bunEnv, bunExe, gcTick, isWindows, tempDirWithFilesAnon } from "harness";
 import http from "http";
 import type { AddressInfo } from "net";
 import path, { join } from "path";
@@ -1421,4 +1421,184 @@ describe.concurrent("fetch() with streaming", () => {
     expect(new TextDecoder().decode(result.value!)).toBe("hello\n");
     server.kill("SIGTERM");
   });
+});
+
+// ByteStream::on_data used to call signal_drained() before taking the pending
+// buffer action out of its cell; the drain signal can re-enter and consume the
+// action, so the unwrap() that followed panicked and killed the process
+// (seen as a crash when aborting fetches with parked reads on streaming
+// bodies). The race is timing-dependent, so this stress fixture exercises the
+// abort paths and asserts every parked consumer settles with exit code 0.
+test.concurrent("aborting streaming fetches with parked body consumers settles them without crashing", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "fetch-abort-parked-reads-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("done 12\n");
+  expect(exitCode).toBe(0);
+});
+
+// Deterministic version of the regression above: the re-entrant consumption is
+// not reachable from plain JS (the in-tree producers defer their drain
+// signals), so the fixture installs a bun:internal-for-testing producer whose
+// drain signal re-enters on_cancel, consuming the parked body.text() buffer
+// action from inside on_data(Err) exactly where the wild crash did.
+test.concurrent(
+  "buffer action consumed re-entrantly during on_data(Err) settles text() instead of crashing",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "bytestream-cancel-on-drain-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("rejected:TypeError\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
+// https://github.com/oven-sh/bun/issues/41439
+// A flushed zstd chunk that decodes to more than 4096 bytes must reach the
+// reader in full. The decoder used to hand over 4096 bytes and keep the rest
+// until the next compressed chunk arrived.
+test("fetch zstd streaming body delivers the whole flushed chunk at once", async () => {
+  const firstLine = Buffer.alloc(20000, "x").toString() + "\n";
+  const secondLine = "done\n";
+
+  // Compress the two lines as one zstd stream, with a flush after the first
+  // line, so the server can send each compressed part on its own.
+  const compressor = zlib.createZstdCompress();
+  const compressed: Buffer[] = [];
+  compressor.on("data", chunk => compressed.push(chunk));
+  await new Promise<void>(resolve => {
+    compressor.write(firstLine);
+    compressor.flush(resolve);
+  });
+  const firstPart = Buffer.concat(compressed.splice(0));
+  const ended = new Promise<void>(resolve => compressor.once("end", resolve));
+  compressor.end(secondLine);
+  await ended;
+  const restPart = Buffer.concat(compressed.splice(0));
+  expect(firstPart.byteLength).toBeGreaterThan(0);
+  expect(restPart.byteLength).toBeGreaterThan(0);
+
+  const { promise: sendRest, resolve: releaseRest } = Promise.withResolvers<void>();
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          async start(controller) {
+            controller.enqueue(firstPart);
+            await sendRest;
+            controller.enqueue(restPart);
+            controller.close();
+          },
+        }),
+        { headers: { "Content-Encoding": "zstd", "Content-Type": "application/x-ndjson" } },
+      );
+    },
+  });
+
+  const response = await fetch(server.url, { headers: { "Accept-Encoding": "zstd" } });
+  const reader = response.body!.getReader();
+
+  const first = await reader.read();
+  expect(first.done).toBe(false);
+  expect(first.value!.byteLength).toBe(firstLine.length);
+  expect(Buffer.from(first.value!).toString()).toBe(firstLine);
+
+  releaseRest();
+  let rest = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    rest += Buffer.from(value).toString();
+  }
+  expect(rest).toBe(secondLine);
+});
+
+// A download cut short by its signal must never read as complete: every way of
+// consuming the body rejects with the abort, whenever the abort lands after
+// the head.
+test("an abort after the response head errors every kind of body consumer", async () => {
+  // Announces 1 MB, sends 1 KB, and stalls.
+  const sockets = new Set<Socket>();
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        sockets.add(socket);
+      },
+      close(socket) {
+        sockets.delete(socket);
+      },
+      data(socket) {
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n" + Buffer.alloc(1000, "x").toString());
+      },
+    },
+  });
+  const url = `http://127.0.0.1:${server.port}/`;
+  async function drain(stream: ReadableStream) {
+    let received = 0;
+    const reader = stream.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return received;
+      received += value.length;
+    }
+  }
+  const consumers: Record<string, (response: Response) => Promise<unknown>> = {
+    reader: response => drain(response.body!),
+    forAwait: async response => {
+      for await (const _ of response.body!);
+    },
+    text: response => response.text(),
+    bytesAfterBodyAccess: response => (response.body, response.bytes()),
+    originalAfterClone: response => (response.clone().body, drain(response.body!)),
+    clone: response => drain(response.clone().body!),
+    tee: response => {
+      const [kept, dropped] = response.body!.tee();
+      dropped.cancel();
+      return drain(kept);
+    },
+    pipeThrough: response => drain(response.body!.pipeThrough(new TransformStream())),
+    rewrapped: response => drain(new Response(response.body).body!),
+  };
+  const aborts: Record<string, (controller: AbortController) => void> = {
+    sync: controller => controller.abort(),
+    microtask: controller => queueMicrotask(() => controller.abort()),
+    macrotask: controller => setImmediate(() => controller.abort()),
+  };
+  try {
+    const outcomes: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    for (const [consumerName, consume] of Object.entries(consumers)) {
+      for (const [abortName, abort] of Object.entries(aborts)) {
+        const controller = new AbortController();
+        const response = await fetch(url, { signal: controller.signal });
+        const consumed = consume(response);
+        abort(controller);
+        expected[`${consumerName}/${abortName}`] = "AbortError";
+        outcomes[`${consumerName}/${abortName}`] = await consumed.then(
+          value => `ended cleanly (${value})`,
+          e => e.name,
+        );
+      }
+    }
+    expect(outcomes).toEqual(expected);
+  } finally {
+    for (const socket of sockets) socket.terminate();
+  }
 });

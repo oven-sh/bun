@@ -612,12 +612,10 @@ fn parent_pid_of(pid: libc::pid_t) -> libc::pid_t {
         // Format: "pid (comm) state ppid …". `comm` may contain spaces and
         // parens; the *last* ')' terminates it. Field 1 after that is state,
         // field 2 is ppid.
-        let Some(rparen) = stat.iter().rposition(|&b| b == b')') else {
+        let Some(rparen) = bun_core::strings::last_index_of_char(stat, b')') else {
             return 0;
         };
-        let mut it = stat[rparen + 1..]
-            .split(|&b| b == b' ')
-            .filter(|s| !s.is_empty());
+        let mut it = bun_core::strings::tokenize(&stat[rparen + 1..], b" ");
         let _ = it.next(); // state
         let Some(ppid_str) = it.next() else {
             return 0;
@@ -717,9 +715,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         let Some(data) = read_file_once(children_path, &mut read_buf) else {
             continue;
         };
-        let tok = data
-            .split(|&b| b == b' ' || b == b'\n')
-            .filter(|s| !s.is_empty());
+        let tok = bun_core::strings::tokenize_any(data, b" \n");
         for pid_str in tok {
             if written >= out.len() {
                 break;

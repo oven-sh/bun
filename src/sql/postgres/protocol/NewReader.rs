@@ -128,7 +128,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     ) -> Result<(Data, usize), AnyPostgresError> {
         let view = self.wrapped.peek();
         let bound = view.len().min(limit);
-        let Some(zero) = view[..bound].iter().position(|&b| b == 0) else {
+        let Some(zero) = bun_core::strings::index_of_char_usize(&view[..bound], 0) else {
             return Err(AnyPostgresError::InvalidMessage);
         };
         let data = self.wrapped.read(zero)?;

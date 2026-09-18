@@ -1,9 +1,10 @@
 "use strict";
 
+const { SafeSet } = require("internal/primordials");
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
 const { validateObject } = require("internal/validators");
-const { myersDiff, printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
+const { printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
 
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 const ObjectAssign = Object.assign;
@@ -18,21 +19,12 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeSplit = String.prototype.split;
 
 declare namespace Internal {
-  const enum Operation {
-    Insert = 0,
-    Delete = 1,
-    Equal = 2,
-  }
-  interface Diff {
-    kind: Operation;
-    value: string;
-  }
-
-  function myersDiff(actual: string, expected: string, checkCommaDisparity?: boolean, lines?: boolean): string;
-  // todo
-
-  function printMyersDiff(...args: any[]): any;
-  function printSimpleMyersDiff(...args: any[]): any;
+  function printSimpleMyersDiff(actual: string, expected: string): string;
+  function printMyersDiff(
+    actual: string,
+    expected: string,
+    checkCommaDisparity: boolean,
+  ): { message: string; skipped: boolean };
 }
 
 const kReadableOperator = {
@@ -46,10 +38,13 @@ const kReadableOperator = {
   notDeepEqual: 'Expected "actual" not to be loosely deep-equal to:',
   notIdentical: "Values have same structure but are not reference-equal:",
   notDeepEqualUnequal: "Expected values not to be loosely deep-equal:",
+  partialDeepStrictEqual: "Expected values to be partially and strictly deep-equal:",
 };
 
 const kMaxShortStringLength = 12;
 const kMaxLongStringLength = 512;
+
+const kMethodsWithCustomMessageDiff = new SafeSet(["deepStrictEqual", "strictEqual", "partialDeepStrictEqual"]);
 
 function copyError(source) {
   const target = ObjectAssign({ __proto__: ObjectGetPrototypeOf(source) }, source);
@@ -109,9 +104,7 @@ function getColoredMyersDiff(actual, expected) {
   const header = `${colors.green}actual${colors.white} ${colors.red}expected${colors.white}`;
   const skipped = false;
 
-  // const diff = myersDiff(StringPrototypeSplit.$call(actual, ""), StringPrototypeSplit.$call(expected, ""));
-  const diff = myersDiff(actual, expected, false, false);
-  let message = printSimpleMyersDiff(diff);
+  let message = printSimpleMyersDiff(actual, expected);
 
   if (skipped) {
     message += "...";
@@ -184,7 +177,7 @@ function isSimpleDiff(actual, inspectedActual, expected, inspectedExpected) {
   return typeof actual !== "object" || actual === null || typeof expected !== "object" || expected === null;
 }
 
-function createErrDiff(actual, expected, operator, customMessage) {
+function createErrDiff(actual, expected, operator, customMessage, diffType = "simple") {
   operator = checkOperator(actual, expected, operator);
 
   let skipped = false;
@@ -209,7 +202,7 @@ function createErrDiff(actual, expected, operator, customMessage) {
   } else if (inspectedActual === inspectedExpected) {
     // Handles the case where the objects are structurally the same but different references
     operator = "notIdentical";
-    if (inspectedSplitActual.length > 50) {
+    if (inspectedSplitActual.length > 50 && diffType !== "full") {
       message = `${ArrayPrototypeJoin.$call(ArrayPrototypeSlice.$call(inspectedSplitActual, 0, 50), "\n")}\n...}`;
       skipped = true;
     } else {
@@ -220,8 +213,7 @@ function createErrDiff(actual, expected, operator, customMessage) {
     const checkCommaDisparity = actual != null && typeof actual === "object";
     let myersDiffMessage;
     try {
-      const diff = myersDiff(inspectedActual, inspectedExpected, checkCommaDisparity, true);
-      myersDiffMessage = printMyersDiff(diff);
+      myersDiffMessage = printMyersDiff(inspectedActual, inspectedExpected, checkCommaDisparity);
     } catch {
       myersDiffMessage = undefined;
     }
@@ -271,6 +263,7 @@ class AssertionError extends Error {
       details,
       // Compatibility with older versions.
       stackStartFunction,
+      diff = "simple",
     } = options;
     let { actual, expected } = options;
 
@@ -279,8 +272,8 @@ class AssertionError extends Error {
     Error.stackTraceLimit = 0;
 
     if (message != null) {
-      if (operator === "deepStrictEqual" || operator === "strictEqual") {
-        super(createErrDiff(actual, expected, operator, message));
+      if (kMethodsWithCustomMessageDiff.has(operator)) {
+        super(createErrDiff(actual, expected, operator, message, diff));
       } else {
         super(String(message));
       }
@@ -305,8 +298,8 @@ class AssertionError extends Error {
         expected = copyError(expected);
       }
 
-      if (operator === "deepStrictEqual" || operator === "strictEqual") {
-        super(createErrDiff(actual, expected, operator, message));
+      if (kMethodsWithCustomMessageDiff.has(operator)) {
+        super(createErrDiff(actual, expected, operator, message, diff));
       } else if (operator === "notDeepStrictEqual" || operator === "notStrictEqual") {
         // In case the objects are equal but the operator requires unequal, show
         // the first object and say A equals B
@@ -323,9 +316,8 @@ class AssertionError extends Error {
         }
 
         // Only remove lines in case it makes sense to collapse those.
-        // TODO: Accept env to always show the full error.
         const resLength = res.length;
-        if (resLength > 50) {
+        if (resLength > 50 && diff !== "full") {
           res[46] = `${colors.blue}...${colors.white}`;
           while (res.length > 47) {
             ArrayPrototypePop.$call(res);
@@ -344,15 +336,15 @@ class AssertionError extends Error {
         const knownOperator = kReadableOperator[operator];
         if (operator === "notDeepEqual" && res === other) {
           res = `${knownOperator}\n\n${res}`;
-          if (res.length > 1024) {
+          if (res.length > 1024 && diff !== "full") {
             res = `${StringPrototypeSlice.$call(res, 0, 1021)}...`;
           }
           super(res);
         } else {
-          if (res.length > kMaxLongStringLength) {
+          if (res.length > kMaxLongStringLength && diff !== "full") {
             res = `${StringPrototypeSlice.$call(res, 0, 509)}...`;
           }
-          if (other.length > kMaxLongStringLength) {
+          if (other.length > kMaxLongStringLength && diff !== "full") {
             other = `${StringPrototypeSlice.$call(other, 0, 509)}...`;
           }
           if (operator === "deepEqual") {
@@ -409,6 +401,7 @@ class AssertionError extends Error {
     this.stack; // eslint-disable-line no-unused-expressions
     // Reset the name.
     this.name = "AssertionError";
+    this.diff = diff;
   }
 
   toString() {

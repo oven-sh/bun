@@ -7,7 +7,7 @@ use bstr::BStr;
 
 use crate::cli::command::ContextData;
 use crate::cli::{self, Command};
-use crate::run_command::RunCommand as Run;
+use crate::run_command::{ConfigureEnvOptions, RunCommand as Run};
 
 use bun_alloc::AllocError;
 use bun_ast::ExprData;
@@ -18,7 +18,7 @@ use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
-use bun_paths::{self, DELIMITER, PathBuffer};
+use bun_paths::{self, DELIMITER};
 use bun_resolver::fs::RealFS;
 #[cfg(windows)]
 use bun_sys::FdExt as _;
@@ -372,7 +372,7 @@ impl BunxCommand {
         dir_fd: Fd,
         package_name: &[u8],
     ) -> crate::Result<Box<[u8]>> {
-        let mut subpath = PathBuffer::uninit();
+        let mut subpath = bun_paths::path_buffer_pool::get();
         let len = {
             let total = subpath.len();
             let mut cursor: &mut [u8] = &mut subpath[..];
@@ -400,7 +400,7 @@ impl BunxCommand {
         package_name: &[u8],
         with_stale_check: bool,
     ) -> crate::Result<Box<[u8]>> {
-        let mut subpath = PathBuffer::uninit();
+        let mut subpath = bun_paths::path_buffer_pool::get();
         if with_stale_check {
             let len = {
                 let total = subpath.len();
@@ -568,7 +568,7 @@ impl BunxCommand {
 
     #[cfg(unix)]
     fn is_trusted_cache_root(cache_root: &[u8], temp_dir_len: usize, uid: libc::uid_t) -> bool {
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         if cache_root.len() >= buf.len() || temp_dir_len >= cache_root.len() {
             return false;
         }
@@ -580,11 +580,8 @@ impl BunxCommand {
         };
         let mut start = temp_dir_len + 1;
         loop {
-            let end = match cache_root[start..]
-                .iter()
-                .position(|b| *b == bun_paths::SEP)
-            {
-                Some(i) => start + i,
+            let end = match strings::index_of_char_pos(cache_root, bun_paths::SEP, start) {
+                Some(i) => i,
                 None => cache_root.len(),
             };
             if end == start {
@@ -630,7 +627,7 @@ impl BunxCommand {
             Ok(st) if dir_ok(&st) => st,
             _ => return false,
         };
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         if cache_dir.len() >= buf.len() {
             return false;
         }
@@ -648,7 +645,7 @@ impl BunxCommand {
                 _ => return false,
             }
             is_leaf = false;
-            match cache_dir[..end].iter().rposition(|b| *b == bun_paths::SEP) {
+            match strings::last_index_of_char(&cache_dir[..end], bun_paths::SEP) {
                 Some(idx) if idx > temp_dir_len => end = idx,
                 _ => return true,
             }
@@ -748,8 +745,15 @@ impl BunxCommand {
         let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
         let mut original_path: Vec<u8> = Vec::new();
 
-        let root_dir_info =
-            Run::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, true)?;
+        let root_dir_info = Run::configure_env_for_run(
+            ctx,
+            &mut this_transpiler_slot,
+            None,
+            ConfigureEnvOptions {
+                log_errors: true,
+                store_root_fd: true,
+            },
+        )?;
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
         // initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
@@ -901,9 +905,7 @@ impl BunxCommand {
 
             // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            let mut path_iter = path
-                .split(|b| *b == DELIMITER)
-                .filter(|s: &&[u8]| !s.is_empty());
+            let mut path_iter = strings::tokenize(&path, &[DELIMITER]);
             if let Some(segment) = path_iter.next() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
@@ -978,10 +980,10 @@ impl BunxCommand {
 
         // `path_buf` is a stack local so
         // `bun_which::which`'s returned slice can borrow it for the rest of exec().
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let top_level_dir: &[u8] = fs.top_level_dir;
 
-        let mut absolute_in_cache_dir_buf = PathBuffer::uninit();
+        let mut absolute_in_cache_dir_buf = bun_paths::path_buffer_pool::get();
         let buf_total = absolute_in_cache_dir_buf.len();
         let mut absolute_in_cache_dir: &[u8] = {
             let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];

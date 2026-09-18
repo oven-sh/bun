@@ -4282,6 +4282,40 @@ describe("empty-string encoding", () => {
     expect(() => Buffer.from("abc").indexOf("a", "")).toThrow(unknownEncoding);
     expect(Buffer.isEncoding("")).toBe(false);
   });
+
+  // Node's write(value, encoding) resolves the encoding, then its native writer rejects a
+  // non-string value. So the utf8 default for "" must not coerce the value, and an unknown
+  // encoding wins over a non-string value.
+  it("buf.write(value, encoding) rejects a non-string value and does not coerce it", () => {
+    let toStringCalls = 0;
+    const object = {
+      toString() {
+        toStringCalls++;
+        return "x";
+      },
+    };
+    const outcomes = new Set();
+    for (const value of [123, null, undefined, object, new String("ab")]) {
+      for (const encoding of ["", "utf8", "latin1", "ascii", "ucs2", "hex", "base64", "base64url"]) {
+        const buf = Buffer.alloc(4, 0xaa);
+        let code = "no throw";
+        try {
+          buf.write(value, encoding);
+        } catch (e) {
+          code = e.code;
+        }
+        outcomes.add(`${code} ${buf.toString("hex")}`);
+      }
+    }
+    expect([...outcomes]).toEqual(["ERR_INVALID_ARG_TYPE aaaaaaaa"]);
+    expect(() => Buffer.alloc(4).write(123, "bogus")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+    expect(() => Buffer.alloc(4).write(object, "bogus")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+    expect(toStringCalls).toBe(0);
+  });
 });
 
 describe("*Write methods with NaN/invalid offset and length", () => {

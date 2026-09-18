@@ -2557,14 +2557,17 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     if (lengthValue.isUndefined() && offsetValue.isString()) {
         encodingValue = offsetValue;
 
-        auto* str = stringValue.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
         // Node's write() uses utf8 for a falsy encoding, and a string is falsy only when empty.
         auto encoding = WebCore::BufferEncodingType::utf8;
         if (asString(encodingValue)->length()) {
             encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
             RETURN_IF_EXCEPTION(scope, {});
         }
+        // Node resolves the encoding first, so an unknown encoding wins over a non-string value.
+        Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* str = stringValue.toString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         if (castedThis->isDetached()) [[unlikely]] {
             throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
             return {};

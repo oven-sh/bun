@@ -1050,6 +1050,138 @@ test("Error.prepareStackTrace propagates exceptions", () => {
   ).toThrow("hi");
 });
 
+// The header of the default formatter is Error.prototype.toString() of the error, as in V8: code that
+// wraps the default (source-map-support, depd) calls it by hand, and error.stack inside a
+// prepareStackTrace callback is what it returns.
+test("the default Error.prepareStackTrace heads the stack with the error's name and message", () => {
+  class Custom extends Error {}
+  class Named extends Error {}
+  Named.prototype.name = "Named";
+  const shapes = {
+    "TypeError: boom": () => new TypeError("boom"),
+    "RangeError": () => new RangeError(),
+    "Renamed: boom": () => Object.assign(new Error("boom"), { name: "Renamed" }),
+    "boom": () => Object.assign(new Error("boom"), { name: "" }),
+    "": () => Object.assign(new Error(""), { name: "" }),
+    "Error: boom": () => new Custom("boom"),
+    "Named: boom": () => new Named("boom"),
+    "FromGetter: boom": () => Object.defineProperty(new Error("boom"), "name", { get: () => "FromGetter" }),
+    "Error: undefined name": () => Object.assign(new Error("undefined name"), { name: undefined }),
+    "7: boom": () => Object.assign(new Error("boom"), { name: 7 }),
+    "Error: 42.5": () => Object.assign(new Error(), { message: 42.5 }),
+    "Error": () => Object.assign(new Error("x"), { message: undefined }),
+  };
+  const byHand = {};
+  const insideACallback = {};
+  for (const [header, make] of Object.entries(shapes)) {
+    Error.prepareStackTrace = (error, callSites) => origPrepareStackTrace(error, callSites);
+    byHand[header] = make().stack.split("\n")[0];
+    let seen;
+    Error.prepareStackTrace = error => ((seen = error.stack), "");
+    void make().stack;
+    insideACallback[header] = seen.split("\n")[0];
+  }
+  const expected = Object.fromEntries(Object.keys(shapes).map(header => [header, header]));
+  expect({ byHand, insideACallback }).toEqual({ byHand: expected, insideACallback: expected });
+});
+
+// As V8: a caller of the default formatter gets the throw, and the error.stack a prepareStackTrace
+// callback sees describes it, so reading .stack does not throw because a callback is installed.
+// A message that throws is read lazily here (V8 captured it at construction) and still throws.
+test("a name that throws: the default Error.prepareStackTrace throws, error.stack inside a callback says so", () => {
+  const shapes = {
+    "name getter throws": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw new RangeError("from name");
+        },
+      }),
+    "name is a Symbol": () => Object.assign(new Error("boom"), { name: Symbol("s") }),
+    "name.toString throws": () =>
+      Object.assign(new Error("boom"), {
+        name: {
+          toString() {
+            throw new RangeError("from toString");
+          },
+        },
+      }),
+    "message getter throws": () =>
+      Object.defineProperty(new Error("boom"), "message", {
+        get() {
+          throw new RangeError("from message");
+        },
+      }),
+    // What was thrown is described with Error.prototype.toString(), which does not call its toString().
+    "name getter throws an object": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw {
+            message: "thrown object",
+            toString() {
+              throw 1;
+            },
+          };
+        },
+      }),
+    "name getter throws a string": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw "thrown string";
+        },
+      }),
+    "describing the throw throws": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw {
+            get name() {
+              throw 1;
+            },
+          };
+        },
+      }),
+  };
+  const byHand = {};
+  const insideACallback = {};
+  for (const [shape, make] of Object.entries(shapes)) {
+    Error.prepareStackTrace = (error, callSites) => origPrepareStackTrace(error, callSites);
+    try {
+      void make().stack;
+      byHand[shape] = "did not throw";
+    } catch (thrown) {
+      byHand[shape] = String(thrown?.message ?? typeof thrown);
+    }
+    let seen;
+    Error.prepareStackTrace = error => ((seen = error.stack), "");
+    try {
+      void make().stack;
+      insideACallback[shape] = seen.split("\n")[0];
+      expect(seen.split("\n")[1]).toStartWith("    at ");
+    } catch (thrown) {
+      insideACallback[shape] = "threw " + thrown.message;
+    }
+  }
+  expect({ byHand, insideACallback }).toEqual({
+    byHand: {
+      "name getter throws": "from name",
+      "name is a Symbol": "Cannot convert a symbol to a string",
+      "name.toString throws": "from toString",
+      "message getter throws": "from message",
+      "name getter throws an object": "thrown object",
+      "name getter throws a string": "string",
+      "describing the throw throws": "object",
+    },
+    insideACallback: {
+      "name getter throws": "<error: RangeError: from name>",
+      "name is a Symbol": "<error: TypeError: Cannot convert a symbol to a string>",
+      "name.toString throws": "<error: RangeError: from toString>",
+      "message getter throws": "threw from message",
+      "name getter throws an object": "<error: Error: thrown object>",
+      "name getter throws a string": "<error>",
+      "describing the throw throws": "<error>",
+    },
+  });
+});
+
 test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
   const prepare = mock((e, s) => {

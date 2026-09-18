@@ -2882,8 +2882,7 @@ impl TestCommand {
             let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
-            // Without --isolate the preload-level hooks wrap the whole run, so only run 1 of
-            // the loop can be first and only run N can be last. With --isolate they wrap every run.
+            // Without --isolate the preload-level hooks wrap the whole loop, not every run.
             let isolate = vm.test_isolation_enabled;
             let run_first_last = bun_test::FirstLast {
                 first: first_last.first && (isolate || repeat_index == 0),
@@ -2937,9 +2936,7 @@ impl TestCommand {
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match jsc::JSInternalPromise::opaque_mut(promise).status() {
                 jsc::js_promise::Status::Rejected => {
-                    // A file that fails to load runs none of its tests and is not run again, so
-                    // this run is the last of the loop. An empty file takes its place and runs
-                    // the preload-level hooks that are still owed.
+                    // This run ends the loop: a file that fails to load is not run again.
                     let mut owed = bun_test::FirstLast {
                         first: run_first_last.first,
                         last: first_last.last,
@@ -2952,6 +2949,7 @@ impl TestCommand {
                             owed.last = owed.last && !run_first_last.last;
                         }
                     }
+                    // An empty file runs the owed hooks and none of the failed file's tests.
                     bun_test_root.exit_file();
                     bun_test_root.enter_file(file_id, reporter, should_run_concurrent, owed);
 
@@ -2961,8 +2959,7 @@ impl TestCommand {
                     let p = jsc::JSInternalPromise::opaque_mut(promise);
                     let (result, promise_js) = (p.result(global.vm()), p.to_js());
                     vm.unhandled_rejection(global, result, promise_js);
-                    // A hook that fails counts a failure and compares it with --bail itself, so
-                    // the hooks finish before this failure is counted and compared.
+                    // Hooks end first: a hook that fails counts itself and checks --bail.
                     if let Some(hooks_only) = bun_test_root.clone_active_file() {
                         Self::run_until_done(vm, &hooks_only)?;
                     }
@@ -3051,20 +3048,16 @@ impl TestCommand {
         Ok(())
     }
 
-    /// Empties the auto-killer's set at the end of a run, so a later test that times out does not
-    /// kill what this run spawned.
+    /// Empties the auto-killer's set so a later test timeout does not kill what this run spawned.
     fn forget_spawned_processes(vm: &mut VirtualMachine) {
+        // --isolate: the global swap kills and clears the set, and tracking stays on until then.
         if !vm.test_isolation_enabled {
-            // Ensure these never linger across files. Under --isolate this
-            // is done by swapGlobalForTestIsolation() (kill+clear) and we
-            // need tracking to remain enabled and populated until then.
             vm.auto_killer.clear();
             vm.auto_killer.disable();
         }
     }
 
-    /// Starts `buntest_strong` unless something already has, then runs the event loop until it
-    /// has finished everything it scheduled.
+    /// Starts the file unless something already has, then runs the event loop until it is done.
     fn run_until_done(
         vm: &mut VirtualMachine,
         buntest_strong: &bun_test::BunTestPtr,

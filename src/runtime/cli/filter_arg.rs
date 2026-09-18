@@ -224,8 +224,7 @@ pub(crate) fn select_packages(
                 Ok(real) => real,
                 Err(_) => dir,
             };
-        // A link under a glob that points back at the root is not a package. Under --workspaces
-        // the root itself is not one either.
+        // Neither a link back at the root, nor the root itself under --workspaces, is a package.
         if (ctx.workspaces && dir == &*root_dir) || (dir != &*root_dir && real_dir == root_real_dir)
         {
             continue;

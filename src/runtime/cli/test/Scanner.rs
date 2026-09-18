@@ -161,34 +161,6 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        // you typed "." and we already scanned it
-        if !self.has_iterated {
-            if let EntriesOption::Entries(entries) = root {
-                // Collect first so `self.next(…)` doesn't overlap the
-                // `entries.data` borrow.
-                // this branch is taken when the resolver already has
-                // `path` cached (e.g. `run_env_loader`/`read_dir_info` read the
-                // cwd before the scanner runs), so `read_directory_with_iterator`
-                // returned the cached `EntryMap` without invoking `iterator.next`.
-                // Hash-map iteration order is not stable. Sort by (lowercased)
-                // base name so test-file discovery order is deterministic —
-                // regression/issue/26851 relies on `a_*.test` running before
-                // `b_*.test` under `--bail`.
-                let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
-                index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
-                    an.cmp(bn)
-                });
-                for entry_ptr in entry_ptrs {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr });
-                }
-            }
-        }
-
         while let Some(entry) = self.dirs_to_scan.pop_front() {
             let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
             let Some(path2) = self.fs().abs_buf_checked(&parts2, &mut scan_dir_buf) else {
@@ -222,18 +194,40 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
+    /// Passes every entry of `name` to `next`.
     /// `handle` stays owned by the caller; the resolver caches the listing but not the fd.
     fn read_dir_with_name(
         &mut self,
         name: &[u8],
         handle: Option<Fd>,
     ) -> crate::Result<&'static mut EntriesOption> {
+        self.has_iterated = false;
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
-        unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, handle, 0, false, iter)
-            .map_err(Into::into)
+        let listing = unsafe { &mut (*fs_ptr).fs }
+            .read_directory_with_iterator(name, handle, 0, false, iter)?;
+
+        // On a cache hit the resolver returns the listing without calling the iterator.
+        if !self.has_iterated {
+            if let EntriesOption::Entries(entries) = &*listing {
+                // Sorted: hash-map order is not stable, and #26851 needs a deterministic order.
+                let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
+                index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
+                    // SAFETY: `EntryMap` stores `*mut Entry` into the
+                    // process-static `EntryStore`; valid for `'static`.
+                    let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
+                    an.cmp(bn)
+                });
+                for entry_ptr in entry_ptrs {
+                    // SAFETY: `EntryMap` stores `*mut Entry` into the
+                    // process-static `EntryStore`; valid for `'static`.
+                    self.next(unsafe { &mut *entry_ptr });
+                }
+            }
+        }
+
+        Ok(listing)
     }
 
     pub(crate) fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {

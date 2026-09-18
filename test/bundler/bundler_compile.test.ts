@@ -779,6 +779,23 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "1 1\n1 1\n1 1", setCwd: true },
   });
+  // A structured clone of an embedded file is bytes-backed with no File bit.
+  // Its name lives on the store, so the clone and a clone of a slice keep it.
+  itBundled("compile/EmbeddedFileNameSurvivesStructuredClone", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import "./asset.file";
+        const f = [...Bun.embeddedFiles][0];
+        const names = [f.name, structuredClone(f).name, structuredClone(f.slice(0, 2)).name];
+        console.log(names.map(name => typeof name === "string" && name.endsWith("asset.file")).join(" "));
+      `,
+      "/asset.file": "abcd",
+    },
+    outfile: "dist/out",
+    run: { stdout: "true true true", setCwd: true },
+  });
   itBundled("compile/Bun.isStandaloneExecutable", {
     compile: true,
     assetNaming: "[name].[ext]",

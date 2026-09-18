@@ -2013,10 +2013,8 @@ pub(crate) mod strings_impl {
         }
         i
     }
-    /// `text` starts right after an opening `"""` or `'''`. Returns the length
-    /// of the value up to the closing triple on the same line. As in the TOML
-    /// parser, backslash escapes only apply inside `"""`, and a run of four or
-    /// five quotes closes the string with the extra quotes as part of the value.
+    /// Length of a TOML `"""` or `'''` value that `text` starts inside of, up to
+    /// its closing run of quotes on the same line (`toml.rs` `quote_run_close`).
     pub(crate) fn find_closing_triple_quote(text: &[u8], q: u8) -> Option<usize> {
         let mut i = 0usize;
         while i + 2 < text.len() {

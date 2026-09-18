@@ -561,7 +561,7 @@ describe("backpressure", () => {
         handled.resolve();
       });
       await once(server.listen(0, "127.0.0.1"), "listening");
-      const client = pausedClient((server.address() as AddressInfo).port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      using client = pausedClient((server.address() as AddressInfo).port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
       await Promise.race([handled.promise, client.done]);
       client.destroy();
       await closed.promise;

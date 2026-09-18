@@ -496,9 +496,9 @@ impl Tag {
             return Tag::get(value.get_proxy_target(), global_this);
         }
 
-        // Is this a react element?
+        // Is this a react element? Own data property only: a user getter never runs here.
         if js_type.is_object() && js_type != JSType::ProxyObject {
-            if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
+            if let Some(typeof_symbol) = value.get_own_non_observable(global_this, "$$typeof") {
                 if typeof_symbol
                     .is_same_value(JSValue::symbol_for(global_this, b"react.element"), global_this)?
                     || typeof_symbol.is_same_value(
@@ -1975,7 +1975,7 @@ impl<'a> Formatter<'a> {
                     let tag_name_slice: Utf8Bytes;
                     let mut is_tag_kind_primitive = false;
 
-                    if let Some(type_value) = value.get(self.global_this, "type")? {
+                    if let Some(type_value) = value.get_own_non_observable(self.global_this, "type") {
                         let _tag = Tag::get(type_value, self.global_this)?;
 
                         if _tag.cell == JSType::Symbol {
@@ -2019,7 +2019,7 @@ impl<'a> Formatter<'a> {
                         );
                     }
 
-                    if let Some(key_value) = value.get(self.global_this, "key")? {
+                    if let Some(key_value) = value.get_own_non_observable(self.global_this, "key") {
                         if !key_value.is_undefined_or_null() {
                             if needs_space {
                                 writer.write_all(b" key=");
@@ -2044,9 +2044,15 @@ impl<'a> Formatter<'a> {
                         }
                     }
 
-                    if let Some(props) = value.get(self.global_this, "props")? {
+                    if let Some(props) = value.get_own_non_observable(self.global_this, "props") {
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
+
+                        // A Proxy is read through its innermost target, so no trap runs.
+                        let mut props = props;
+                        while props.is_cell() && props.js_type() == JSType::ProxyObject {
+                            props = props.get_proxy_target();
+                        }
 
                         // `quote_strings` (and nested `indent` scopes) must be restored on
                         // every exit, including thrown exceptions. Wrap the fallible body in a
@@ -2057,13 +2063,16 @@ impl<'a> Formatter<'a> {
                         let props_iter = JSPropertyIterator::init(
                             self.global_this,
                             props_obj,
-                            jsc::PropertyIteratorOptions {
+                            jsc::JSPropertyIteratorOptions {
                                 skip_empty_name: true,
                                 include_value: true,
+                                own_properties_only: true,
+                                observable: false,
+                                only_non_index_properties: false,
                             },
                         )?;
 
-                        let children_prop = props.get(self.global_this, "children")?;
+                        let children_prop = props.get_own_non_observable(self.global_this, "children");
                         if props_iter.len > 0 {
                             {
                                 self.indent += 1;

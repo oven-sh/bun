@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -5830,8 +5831,8 @@ describe("css tests", () => {
       },
     );
     // With nesting compiled away, `.k` prints in its own prefix passes inside
-    // the last pass of `.p`. The sibling after it must print in that pass of
-    // `.p` again, like a sibling before it.
+    // the last pass of `.p`. The sibling after it prints outside any pass, and
+    // the widened `:fullscreen` of `.p` must print as the unprefixed name.
     prefix_test(
       ".p:fullscreen { & .k:fullscreen { color: red } & .j { color: blue } }",
       `
@@ -5886,6 +5887,16 @@ describe("css tests", () => {
         safari: 14 << 16,
       },
     );
+
+    // The rule after `.k` has no pass of its own, and its hand-written prefix stays.
+    test("a sibling after a prefixed nested rule keeps its hand-written prefix", () => {
+      const output = cssInternals.prefixTest(
+        ".p:fullscreen { & .k:fullscreen { color: red } & .j:is(.x, .y)::-moz-selection { color: blue } }",
+        "",
+        { safari: 14 << 16 },
+      );
+      expect(output).toEndWith(".p:fullscreen .j:is(.x, .y)::-moz-selection {\n  color: #00f;\n}\n");
+    });
 
     prefix_test(
       "a:dir(rtl)::after {color:red}",

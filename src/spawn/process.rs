@@ -3836,22 +3836,15 @@ mod spawn_process_body {
                 // Non-TTY callers never see stops, matching plain `bun run`.
                 let wopts: u32 =
                     (libc::WNOHANG | if jc.is_active() { libc::WUNTRACED } else { 0 }) as u32;
-                // `r` is about `child`: a stop is bridged, an exit status or a wait
-                // error ends the loop.
                 let mut on_child = |r: &Maybe<WaitPidResult>| match r {
                     Ok(w) if libc::WIFSTOPPED(w.status as i32) => jc.on_child_stopped(),
                     _ => child_status = Status::from(child, r),
                 };
-                // `child` by pid, before the `-1` drain. While SIGCHLD is ignored (the
-                // disposition survives exec) the kernel reaps `child` itself and its
-                // status is lost: by pid that is ECHILD, reported the way `reap_child`
-                // reports it. `wait4(-1)` cannot tell, it answers 0 for as long as an
-                // adopted orphan lives, and the pidfd of the exited `child` stays
-                // readable, so `poll()` below would never block again.
+                // By pid: `wait4(-1)` answers 0, not ECHILD, while an adopted orphan lives.
                 let r = posix_spawn::wait4(child, wopts, None);
                 match &r {
                     Ok(w) if w.pid != child => {} // still running
-                    _ => on_child(&r),
+                    _ => on_child(&r), // a stop, the status, or ECHILD when SIGCHLD is ignored
                 }
                 if drain_orphans {
                     loop {

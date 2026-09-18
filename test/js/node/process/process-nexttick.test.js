@@ -1114,6 +1114,18 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
     expect(result).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
   });
 
+  // Bun reports what the entry point throws after its ticks and microtasks (Node reports it first).
+  it(".cjs that throws, after a preload that uses process.nextTick", async () => {
+    const result = await run(
+      {
+        ...preload,
+        "entry.cjs": `process.on("uncaughtException", () => {});` + order() + `throw new Error("thrown");`,
+      },
+      [bunExe(), "--preload", "./preload.cjs", "entry.cjs"],
+    );
+    expect(result).toEqual({ stdout: nextTickFirst + "\n", stderr: "", exitCode: 0 });
+  });
+
   // Node loads the entry point through the ES module loader when there is an --import, and prints
   // the microtasks first. Bun's --import is --preload, and the entry point stays CommonJS.
   it(".cjs, after an --import that uses process.nextTick", async () => {

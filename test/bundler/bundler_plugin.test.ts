@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync } from "node:fs";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -2116,21 +2117,56 @@ describe("bundler", () => {
     }).toEqual({ notOnDisk: true, inFiles: true, doubledSlash: true });
   });
 
-  // The bundler asks the resolver about a path that onResolve named. What the resolver logs on the way (here a
-  // tsconfig.json that does not parse) reaches the build only if the module takes the resolver's result.
-  test.concurrent(
-    "plugin/onResolve path that the resolver would print differently adds nothing to the logs",
+  // The resolver parses a tsconfig.json once per process. When the bundler asks it about a path that onResolve
+  // named and that read is the first one, the parse error is reported then: a later read would not repeat it.
+  test.concurrent("plugin/onResolve path reports a tsconfig.json that does not parse", async () => {
+    using dir = tempDir("plugin-resolved-file-logs", {
+      "entry.js": `import "alias/leaf";`,
+      "same-bytes/tsconfig.json": `{ "compilerOptions": `,
+      "same-bytes/leaf.js": `console.log("leaf ran");`,
+      "doubled-separator/tsconfig.json": `{ "compilerOptions": `,
+      "doubled-separator/leaf.js": `console.log("leaf ran");`,
+    });
+    const root = String(dir);
+
+    async function build(leaf: string) {
+      const result = await Bun.build({
+        entrypoints: [join(root, "entry.js")],
+        throw: false,
+        plugins: [
+          {
+            name: "alias",
+            setup(build) {
+              build.onResolve({ filter: /^alias\/leaf$/ }, () => ({ path: leaf }));
+            },
+          },
+        ],
+      });
+      return { success: result.success, logs: result.logs.map(log => log.message) };
+    }
+
+    expect({
+      sameBytes: await build(join(root, "same-bytes", "leaf.js")),
+      doubledSeparator: await build(join(root, "doubled-separator") + path.sep + path.sep + "leaf.js"),
+    }).toEqual({
+      sameBytes: { success: false, logs: ["Unexpected end of file"] },
+      doubledSeparator: { success: false, logs: ["Unexpected end of file"] },
+    });
+  });
+
+  // A directory that the user may traverse but not list: the file in it can be read, and that is all a module
+  // needs. The resolver cannot list the directory and logs an error. Without the plugin path nothing asks the
+  // resolver about this directory, so that error must not reach the build.
+  test.skipIf(isWindows || process.getuid?.() === 0)(
+    "plugin/onResolve path in a directory that cannot be listed still builds",
     async () => {
-      using dir = tempDir("plugin-resolved-file-logs", {
+      using dir = tempDir("plugin-resolved-file-unlistable", {
         "entry.js": `import "alias/leaf";`,
-        "not-adopted/tsconfig.json": `{ "compilerOptions": `,
-        "not-adopted/leaf.js": `console.log("leaf ran");`,
-        "adopted/tsconfig.json": `{ "compilerOptions": `,
-        "adopted/leaf.js": `console.log("leaf ran");`,
+        "unlistable/leaf.js": `console.log("leaf ran");`,
       });
       const root = String(dir);
-
-      async function build(leaf: string) {
+      chmodSync(join(root, "unlistable"), 0o311);
+      try {
         const result = await Bun.build({
           entrypoints: [join(root, "entry.js")],
           throw: false,
@@ -2138,23 +2174,18 @@ describe("bundler", () => {
             {
               name: "alias",
               setup(build) {
-                build.onResolve({ filter: /^alias\/leaf$/ }, () => ({ path: leaf }));
+                build.onResolve({ filter: /^alias\/leaf$/ }, () => ({ path: join(root, "unlistable", "leaf.js") }));
               },
             },
           ],
         });
-        return { success: result.success, logs: result.logs.map(log => log.message) };
+        expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+          success: true,
+          logs: [],
+        });
+      } finally {
+        chmodSync(join(root, "unlistable"), 0o755);
       }
-
-      expect({
-        // A doubled separator is not what the resolver prints, so this module stays a plugin module.
-        notAdopted: await build(join(root, "not-adopted") + path.sep + path.sep + "leaf.js"),
-        // The same bytes as the resolver's path: the build reports what it reports when the resolver finds the file.
-        adopted: await build(join(root, "adopted", "leaf.js")),
-      }).toEqual({
-        notAdopted: { success: true, logs: [] },
-        adopted: { success: false, logs: ["Unexpected end of file"] },
-      });
     },
   );
 

@@ -4624,7 +4624,7 @@ pub mod bv2_impl {
                 return;
             }
             let transpiler = self.transpiler_for_target(task.known_target);
-            // What the resolver logs reaches the build log only if the path is adopted.
+            // A call that fails logs only about itself (a directory that it may not list), and only this probe makes it.
             let mut probe_log = bun_ast::Log {
                 level: transpiler.resolver.log_mut().level,
                 ..Default::default()
@@ -4645,6 +4645,8 @@ pub mod bv2_impl {
             let Ok(result) = result else {
                 return;
             };
+            // The resolver parses a package.json or tsconfig.json once per process, so its errors are reported now or never.
+            probe_log.append_to_with_recycled(transpiler.resolver.log_mut(), true);
             // Only then can another import make this module through the resolver, and the first one to land wins.
             if result.flags.is_external()
                 || result
@@ -4653,7 +4655,6 @@ pub mod bv2_impl {
             {
                 return;
             }
-            probe_log.append_to_with_recycled(transpiler.resolver.log_mut(), true);
             let jsx_development = transpiler.options.forced_jsx_development();
             task.set_resolver_result(&result);
             task.jsx.development = jsx_development;

@@ -172,6 +172,8 @@ class Lifetimes {
   /** Of `names`, those a root still reaches, each with its path. A finalized one is gone; one
    *  that is not is looked up by its cell, which is its own for as long as it is not collected. */
   async #kept(names: string[]): Promise<string[]> {
+    const untracked = names.filter(name => !this.#address.has(name));
+    if (untracked.length) throw new Error("never tracked: " + untracked.join(", "));
     if (names.every(name => this.#finalized.has(name))) return [];
     const heap = await heapFromTimer();
     return names.flatMap(name => {

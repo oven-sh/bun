@@ -247,6 +247,7 @@ impl<'a> Installer<'a> {
         resolution: &Resolution,
         err: crate::Error,
         url: &[u8],
+        is_required: bool,
     ) {
         if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
             let callbacks = removed;
@@ -259,6 +260,10 @@ impl<'a> Installer<'a> {
                     continue;
                 };
                 entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
+                if !is_required {
+                    self.on_optional_download_fail(entry_id);
+                    continue;
+                }
                 self.on_task_fail(
                     entry_id,
                     &TaskError::Download(DownloadError {
@@ -268,7 +273,7 @@ impl<'a> Installer<'a> {
                 );
             }
             // callbacks dropped here
-        } else {
+        } else if is_required {
             // No waiting entry — still surface the error so it isn't lost.
             let string_buf = self.lockfile().buffers.string_bytes.as_slice();
             Output::err_generic(
@@ -442,6 +447,16 @@ impl<'a> Installer<'a> {
 
         self.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
+    }
+
+    /// Called from main thread. The entry is `Step::Done` and left out, neither installed nor failed.
+    fn on_optional_download_fail(&mut self, entry_id: StoreEntryId) {
+        self.decrement_pending_tasks();
+        self.resume_unblocked_tasks(entry_id);
+
+        if let Some(node) = self.install_node.as_mut() {
+            node.complete_one();
+        }
     }
 
     pub(crate) fn decrement_pending_tasks(&mut self) {

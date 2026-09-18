@@ -1928,3 +1928,199 @@ describe("stream release after a queued END_STREAM", () => {
     }
   });
 });
+
+// Stream resets are rate-limited per connection like nghttp2's stream_reset_ratelim (burst 1000,
+// refill 33/s): past the bucket the session dies with GOAWAY, surfaced as ERR_HTTP2_ERROR.
+describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYouReset)", () => {
+  const CANCEL = Buffer.alloc(4);
+  CANCEL.writeUInt32BE(ErrorCode.CANCEL, 0);
+  const rstStream = (sid: number) => encodeFrame(FrameType.RST_STREAM, 0, sid, CANCEL);
+  const request = (sid: number) => encodeFrame(FrameType.HEADERS, 0x5, sid, requestHeaderBlock("GET"));
+  const requestAndKill = (sid: number, kill: (sid: number) => Buffer) => Buffer.concat([request(sid), kill(sid)]);
+
+  function respondingServer(options: Record<string, unknown> = {}) {
+    const state = { handlers: 0, sessionErrorCode: undefined as string | undefined };
+    const server = http2.createServer(options);
+    server.on("sessionError", (e: any) => (state.sessionErrorCode = e.code));
+    server.on("session", s => s.on("error", () => {}));
+    server.on("stream", (stream: any) => {
+      state.handlers++;
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.end("x");
+    });
+    return { server, state };
+  }
+
+  async function flood(opts: { options?: Record<string, unknown>; count: number; kill?: (sid: number) => Buffer }) {
+    const { server, state } = respondingServer(opts.options);
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const frames: Buffer[] = [];
+      for (let i = 0; i < opts.count; i++) frames.push(requestAndKill(1 + 2 * i, opts.kill ?? rstStream));
+      c.send(Buffer.concat(frames));
+      const goaway = await c.waitForGoaway(10_000);
+      return { c, goaway, ...state };
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  }
+
+  test("a RST_STREAM flood is answered with GOAWAY(ENHANCE_YOUR_CALM) and a session error", async () => {
+    const { goaway, handlers, sessionErrorCode } = await flood({ count: 1200 });
+    expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+    expect(goaway.payload.subarray(8).toString()).toBe("too many stream resets");
+    // Like node, every request up to the bucket's edge still reaches the handler.
+    expect(handlers).toBeGreaterThan(900);
+    expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+  });
+
+  test("streamResetBurst sets where the flood is detected", async () => {
+    const { goaway } = await flood({ options: { streamResetBurst: 50, streamResetRate: 1 }, count: 200 });
+    expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+    // Burst 50 empties on the 51st reset (stream 101); the default burst would need stream 2001.
+    expect(goaway.payload.readUInt32BE(0)).toBeGreaterThanOrEqual(101);
+    expect(goaway.payload.readUInt32BE(0)).toBeLessThan(200);
+  });
+
+  test("a flood under the burst keeps the session serving requests", async () => {
+    const { server, state } = respondingServer();
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const frames: Buffer[] = [];
+      for (let i = 0; i < 500; i++) frames.push(requestAndKill(1 + 2 * i, rstStream));
+      frames.push(request(1001));
+      c.send(Buffer.concat(frames));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1001, 10_000);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      expect(state.handlers).toBe(501);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("the bucket refills at streamResetRate per second", async () => {
+    // Burst 0 is floored to 1 like node, so the bucket holds exactly one token.
+    const { server } = respondingServer({ streamResetBurst: 0, streamResetRate: 1 });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.send(requestAndKill(1, rstStream)); // drains the only token
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      await Bun.sleep(1500); // the refill under test is per whole second of wall clock
+      // The refilled token covers stream 3, stream 5 is served, and the later resets find the
+      // bucket empty again because the refill clock advanced.
+      c.send(
+        Buffer.concat([
+          requestAndKill(3, rstStream),
+          request(5),
+          ...[7, 9, 11].map(sid => requestAndKill(sid, rstStream)),
+        ]),
+      );
+      const goaway = await c.waitForGoaway(10_000);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      expect(c.frames.some(f => f.type === FrameType.HEADERS && f.streamId === 5)).toBe(true);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("resets are not charged once the server has sent its own GOAWAY", async () => {
+    // nghttp2 stops charging as soon as a local GOAWAY is submitted. The requests and their
+    // cancellations arrive in one read and close() is called from the last request's handler, so
+    // the cancellations behind it in the same read must already go uncharged: one GOAWAY
+    // (NO_ERROR) and 'close', not a second GOAWAY and a session error.
+    const open = 20;
+    let sessionError: Error | undefined;
+    const closed = Promise.withResolvers<void>();
+    const server = http2.createServer({ streamResetBurst: 2, streamResetRate: 1 });
+    server.on("sessionError", e => (sessionError = e));
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (stream.id !== 2 * open - 1) return;
+      stream.session!.once("close", () => closed.resolve());
+      stream.session!.close();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const ids = Array.from({ length: open }, (_, i) => 1 + 2 * i);
+      c.send(Buffer.concat([...ids.map(request), ...ids.map(rstStream)]));
+      await closed.promise;
+      await c.waitClosed(10_000); // everything the server wrote before closing has been parsed
+      expect(c.frames.filter(f => f.type === FrameType.GOAWAY).map(goawayErrorCode)).toEqual([ErrorCode.NO_ERROR]);
+      expect(sessionError).toBeUndefined();
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // MadeYouReset: the client never sends RST_STREAM; each stream is killed by a frame this engine
+  // answers with its own RST_STREAM (nghttp2 escalates both shapes to connection errors instead).
+  // Those resets drain a separate fixed bucket, so streamResetBurst does not apply to them.
+  const madeYouReset = {
+    "WINDOW_UPDATE with a 0 increment": (sid: number) => encodeFrame(FrameType.WINDOW_UPDATE, 0, sid, Buffer.alloc(4)),
+    "DATA after END_STREAM": (sid: number) => encodeFrame(FrameType.DATA, 0, sid, Buffer.from("x")),
+  };
+
+  test("server-sent resets stay charged after the server has sent its GOAWAY", async () => {
+    // The GOAWAY exemption is only for the peer's own resets. Here the client holds stream 1 open
+    // (so the session survives its GOAWAY-triggered close()) and then provokes server resets.
+    const { server, state } = respondingServer();
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS only: stream 1 stays open */, 1, requestHeaderBlock("POST"));
+      c.sendFrame(FrameType.GOAWAY, 0, 0, Buffer.alloc(8));
+      const ours = await c.waitForGoaway();
+      expect(goawayErrorCode(ours)).toBe(ErrorCode.NO_ERROR);
+      const kill = madeYouReset["WINDOW_UPDATE with a 0 increment"];
+      c.send(Buffer.concat(Array.from({ length: 1200 }, () => kill(3))));
+      const calm = await c.waitFor(
+        f => f.type === FrameType.GOAWAY && goawayErrorCode(f) === ErrorCode.ENHANCE_YOUR_CALM,
+        10_000,
+      );
+      expect(calm.payload.subarray(8).toString()).toBe("too many stream resets");
+      expect(c.frames.filter(f => f.type === FrameType.RST_STREAM).length).toBeGreaterThanOrEqual(1000);
+      expect(state.sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  for (const [name, kill] of Object.entries(madeYouReset)) {
+    test(`a flood of server-sent resets via ${name} is answered with GOAWAY(ENHANCE_YOUR_CALM)`, async () => {
+      const { c, goaway, handlers, sessionErrorCode } = await flood({
+        options: { streamResetBurst: 5, streamResetRate: 1 },
+        count: 1200,
+        kill,
+      });
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      expect(c.frames.filter(f => f.type === FrameType.RST_STREAM).length).toBeGreaterThanOrEqual(1000);
+      expect(handlers).toBeGreaterThanOrEqual(1000);
+      expect(sessionErrorCode).toBe("ERR_HTTP2_ERROR");
+    });
+  }
+});

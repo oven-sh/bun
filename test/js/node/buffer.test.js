@@ -4231,6 +4231,93 @@ describe("Buffer.fill offset/end argument handling", () => {
   });
 });
 
+// Node reads an empty-string encoding as an absent one in Buffer.from (fromString) and in
+// buf.write (`if (!encoding)`), and rejects it in buf.toString, indexOf and Buffer.isEncoding.
+// "é" is c3 a9 in utf8 and a single e9 byte in latin1, so the bytes show which encoding ran.
+describe("empty-string encoding", () => {
+  it("Buffer.from(string, '') encodes utf8", () => {
+    expect({
+      from: Buffer.from("h\u00e9", "").toString("hex"),
+      construct: new Buffer("h\u00e9", "").toString("hex"),
+      call: Buffer("h\u00e9", "").toString("hex"),
+      stringObject: Buffer.from(new String("h\u00e9"), "").toString("hex"),
+      valueOf: Buffer.from({ valueOf: () => "h\u00e9" }, "").toString("hex"),
+      emptyString: Buffer.from("", "").length,
+    }).toEqual({
+      from: "68c3a9",
+      construct: "68c3a9",
+      call: "68c3a9",
+      stringObject: "68c3a9",
+      valueOf: "68c3a9",
+      emptyString: 0,
+    });
+  });
+
+  it("buf.write(string, '') writes utf8", () => {
+    const write = (...args) => {
+      const buf = Buffer.alloc(5, 0xaa);
+      return [buf.write("h\u00e9", ...args), buf.toString("hex")];
+    };
+    expect({
+      encodingOnly: write(""),
+      offset: write(1, ""),
+      offsetAndLength: write(1, 1, ""),
+      uint8Array: Buffer.prototype.write.call(new Uint8Array(3), "h\u00e9", ""),
+    }).toEqual({
+      encodingOnly: [3, "68c3a9aaaa"],
+      offset: [3, "aa68c3a9aa"],
+      offsetAndLength: [1, "aa68aaaaaa"],
+      uint8Array: 3,
+    });
+  });
+
+  it("every other unknown name still throws ERR_UNKNOWN_ENCODING", () => {
+    const unknownEncoding = expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" });
+    for (const encoding of [" ", "x", "xx", "utf"]) {
+      expect(() => Buffer.from("abc", encoding)).toThrow(unknownEncoding);
+      expect(() => Buffer.from("", encoding)).toThrow(unknownEncoding);
+      expect(() => Buffer.alloc(4).write("abc", encoding)).toThrow(unknownEncoding);
+    }
+    expect(() => Buffer.from("abc").toString("")).toThrow(unknownEncoding);
+    expect(() => Buffer.from("abc").indexOf("a", "")).toThrow(unknownEncoding);
+    expect(Buffer.isEncoding("")).toBe(false);
+  });
+
+  // Node's write(value, encoding) resolves the encoding, then its native writer rejects a
+  // non-string value. So the utf8 default for "" must not coerce the value, and an unknown
+  // encoding wins over a non-string value.
+  it("buf.write(value, encoding) rejects a non-string value and does not coerce it", () => {
+    let toStringCalls = 0;
+    const object = {
+      toString() {
+        toStringCalls++;
+        return "x";
+      },
+    };
+    const outcomes = new Set();
+    for (const value of [123, null, undefined, object, new String("ab")]) {
+      for (const encoding of ["", "utf8", "latin1", "ascii", "ucs2", "hex", "base64", "base64url"]) {
+        const buf = Buffer.alloc(4, 0xaa);
+        let code = "no throw";
+        try {
+          buf.write(value, encoding);
+        } catch (e) {
+          code = e.code;
+        }
+        outcomes.add(`${code} ${buf.toString("hex")}`);
+      }
+    }
+    expect([...outcomes]).toEqual(["ERR_INVALID_ARG_TYPE aaaaaaaa"]);
+    expect(() => Buffer.alloc(4).write(123, "bogus")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+    expect(() => Buffer.alloc(4).write(object, "bogus")).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+    expect(toStringCalls).toBe(0);
+  });
+});
+
 describe("*Write methods with NaN/invalid offset and length", () => {
   // Regression test: NaN offset/length values must be handled safely.
   // NaN offset should be treated as 0, and length should be clamped to buffer size.

@@ -64,6 +64,8 @@ impl ExecCommand {
         // loader is a thread-/process-lifetime singleton, so `&'static mut` is
         // sound for the single CLI dispatch thread.
         let env = unsafe { &mut *bundle.env };
+        // A shell sets PWD to its working directory at startup.
+        env.map.put(b"PWD", cwd)?;
         #[cfg(unix)]
         Self::exec_in_place(&script, env, cwd);
         let mini = bun_event_loop::MiniEventLoop::init_global(Some(env), Some(cwd));
@@ -157,17 +159,18 @@ impl ExecCommand {
         if crate::shell::builtin::Kind::from_argv0(name).is_some() {
             return;
         }
+        // Before the lookup: a `PATH=` prefix applies to it.
+        for (label, value) in &assigns {
+            if env.map.put(label, value).is_err() {
+                return;
+            }
+        }
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let Some(resolved) =
             bun_which::which(&mut path_buf, env.get(b"PATH").unwrap_or(b""), cwd, name)
         else {
             return;
         };
-        for (label, value) in &assigns {
-            if env.map.put(label, value).is_err() {
-                return;
-            }
-        }
         let Ok(envp) = env.map.create_null_delimited_env_map() else {
             return;
         };

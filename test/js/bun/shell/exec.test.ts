@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { chmodSync, realpathSync } from "node:fs";
 import { join } from "path";
 import { createTestBuilder } from "./test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -101,6 +102,34 @@ describe("bun exec", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe(`set ${process.pid}`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a PATH= prefix applies to the lookup of the command", async () => {
+    // `cat` exists on the inherited PATH too: the prefixed one must win.
+    using dir = tempDir("exec-path-prefix", { "bin/cat": "#!/bin/sh\necho from-prefix-path\n" });
+    chmodSync(join(String(dir), "bin", "cat"), 0o755);
+    const script = `PATH=${join(String(dir), "bin")} cat`;
+    await using proc = Bun.spawn({ cmd: [BUN, "exec", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("from-prefix-path\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("PWD is the working directory of bun exec", async () => {
+    using dir = tempDir("exec-pwd", {});
+    const script = `${BUN} -e "console.log(process.env.PWD)"`;
+    await using proc = Bun.spawn({
+      cmd: [BUN, "exec", script],
+      cwd: String(dir),
+      env: { ...bunEnv, PWD: "/elsewhere" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(realpathSync(stdout.trim())).toBe(realpathSync(String(dir)));
     expect(exitCode).toBe(0);
   });
 

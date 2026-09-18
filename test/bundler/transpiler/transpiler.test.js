@@ -2437,6 +2437,15 @@ export default <>hi</>
     expect(() => bun.transformSync("bad??!?!?!")).toThrow("Unexpected ?");
   });
 
+  it('logLevel: "error" drops warnings in scan and scanImports', () => {
+    const bun = new Bun.Transpiler({ loader: "js", logLevel: "error" });
+    const src = 'import "./a";\nx = 1\n--> legacy html comment\ny = 2\n';
+
+    expect(bun.transformSync(src)).toContain("x = 1");
+    expect(bun.scan(src)).toEqual({ exports: [], imports: [{ kind: "import-statement", path: "./a" }] });
+    expect(bun.scanImports(src)).toEqual([{ kind: "import-statement", path: "./a" }]);
+  });
+
   it("invalid logLevel throws", () => {
     expect(
       () =>

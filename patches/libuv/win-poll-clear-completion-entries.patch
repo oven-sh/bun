@@ -1,0 +1,17 @@
+--- a/src/win/core.c
++++ b/src/win/core.c
+@@ -476,6 +476,14 @@
+   lfields = uv__get_internal_fields(loop);
+   timeout_time = loop->time + timeout;
+ 
++  /* A wait writes only the entries it returns, so the rest of this 4 KB array
++   * keeps whatever the stack held there before, for as long as uv_run() is on
++   * the stack. An embedder whose garbage collector scans the stack
++   * conservatively (JavaScriptCore) reads those words as references: frames of
++   * a callback that ran from outside uv_run() stay "live" while the loop only
++   * runs timers, which fire deeper than this array and never overwrite it. */
++  memset(overlappeds, 0, sizeof(overlappeds));
++
+   if (lfields->flags & UV_METRICS_IDLE_TIME) {
+     reset_timeout = 1;
+     user_timeout = timeout;

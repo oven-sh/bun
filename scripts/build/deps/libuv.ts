@@ -60,7 +60,16 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
+  //
+  // win-poll-clear-completion-entries: uv__poll's 4 KB OVERLAPPED_ENTRY array is
+  // uninitialized stack in a frame that lives for the whole uv_run(). JSC scans
+  // the stack conservatively, so JS frames left there by a callback that ran
+  // outside uv_run() kept their objects alive while the loop only ran timers.
+  patches: [
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    "patches/libuv/win-poll-abort-with-disconnect.patch",
+    "patches/libuv/win-poll-clear-completion-entries.patch",
+  ],
 
   build: () => ({
     kind: "direct",

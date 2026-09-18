@@ -1087,7 +1087,8 @@ test("the default Error.prepareStackTrace heads the stack with the error's name 
 
 // As V8: a caller of the default formatter gets the throw, and the error.stack a prepareStackTrace
 // callback sees describes it, so reading .stack does not throw because a callback is installed.
-test("a name or message that throws: the default Error.prepareStackTrace throws, error.stack inside a callback says so", () => {
+// A message that throws is read lazily here (V8 captured it at construction) and still throws.
+test("a name that throws: the default Error.prepareStackTrace throws, error.stack inside a callback says so", () => {
   const shapes = {
     "name getter throws": () =>
       Object.defineProperty(new Error("boom"), "name", {
@@ -1133,9 +1134,13 @@ test("a name or message that throws: the default Error.prepareStackTrace throws,
     }
     let seen;
     Error.prepareStackTrace = error => ((seen = error.stack), "");
-    void make().stack;
-    insideACallback[shape] = seen.split("\n")[0];
-    expect(seen.split("\n")[1]).toStartWith("    at ");
+    try {
+      void make().stack;
+      insideACallback[shape] = seen.split("\n")[0];
+      expect(seen.split("\n")[1]).toStartWith("    at ");
+    } catch (thrown) {
+      insideACallback[shape] = "threw " + thrown.message;
+    }
   }
   expect({ byHand, insideACallback }).toEqual({
     byHand: {
@@ -1149,7 +1154,7 @@ test("a name or message that throws: the default Error.prepareStackTrace throws,
       "name getter throws": "<error: RangeError: from name>",
       "name is a Symbol": expect.stringMatching(/^<error: TypeError: Cannot convert a symbol to a string>$/i),
       "name.toString throws": "<error: RangeError: from toString>",
-      "message getter throws": "<error: RangeError: from message>",
+      "message getter throws": "threw from message",
       "describing the throw throws": "<error>",
     },
   });

@@ -47,23 +47,31 @@ static WTF::String stackTraceHeaderOnly(const WTF::String& name, const WTF::Stri
     return header;
 }
 
-// What the header does with a throw from the error's `name` or `message` (a getter, a Symbol, a
-// toString): V8 propagates it to a caller of the default Error.prepareStackTrace, and describes it in
-// the header of the error.stack a prepareStackTrace callback sees.
+// What the header does with a throw from the error's `name` (a getter, a Symbol, a toString): V8
+// propagates it to a caller of the default Error.prepareStackTrace, and describes it in the header of
+// the error.stack a prepareStackTrace callback sees.
 enum class HeaderThrow : bool { Propagate,
     Describe };
 
-// Error.prototype.toString() of the error, as V8's default formatter heads the stack.
-static void stackTraceHeader(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, WTF::String& name, WTF::String& message)
+// The two halves of Error.prototype.toString(), which is how V8's default formatter heads the stack.
+static WTF::String stackTraceHeaderName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue nameValue = errorObject->get(lexicalGlobalObject, vm.propertyNames->name);
-    RETURN_IF_EXCEPTION(scope, );
-    name = nameValue.isUndefined() ? WTF::String("Error"_s) : nameValue.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, );
+    RETURN_IF_EXCEPTION(scope, {});
+    if (nameValue.isUndefined())
+        return "Error"_s;
+    RELEASE_AND_RETURN(scope, nameValue.toWTFString(lexicalGlobalObject));
+}
+
+static WTF::String stackTraceHeaderMessage(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue messageValue = errorObject->get(lexicalGlobalObject, vm.propertyNames->message);
-    RETURN_IF_EXCEPTION(scope, );
-    message = messageValue.isUndefined() ? emptyString() : messageValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (messageValue.isUndefined())
+        return emptyString();
+    RELEASE_AND_RETURN(scope, messageValue.toWTFString(lexicalGlobalObject));
 }
 
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, HeaderThrow headerThrow)
@@ -76,9 +84,8 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     // The message and the frames come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
     WTF::StringBuilder sb { WTF::OverflowPolicy::RecordOverflow };
 
-    WTF::String name;
+    WTF::String name = stackTraceHeaderName(vm, lexicalGlobalObject, errorObject);
     WTF::String message;
-    stackTraceHeader(vm, lexicalGlobalObject, errorObject, name, message);
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (headerThrow == HeaderThrow::Propagate)
             return {};
@@ -92,7 +99,9 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
             description = WTF::String();
         }
         name = description.isNull() ? WTF::String("<error>"_s) : makeString("<error: "_s, description, '>');
-        message = emptyString();
+    } else {
+        message = stackTraceHeaderMessage(vm, lexicalGlobalObject, errorObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     if (!name.isEmpty()) {
         sb.append(name);

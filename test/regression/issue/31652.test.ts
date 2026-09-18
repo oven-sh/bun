@@ -85,8 +85,8 @@ test("install does not abort on an unresolved optional dependency with an empty 
       if (url.pathname === "/top/-/top-1.0.0.tgz") {
         return new Response(top.tgz, { headers: { "content-length": String(top.tgz.length) } });
       }
-      // The empty-name dependency resolves to a request for a package named "",
-      // i.e. the registry root. Make it 404 so the optional dep fails to resolve.
+      // The manifest URL of a package named "" is the registry root, which is
+      // not a packument. bun does not request it, so the optional dep stays unresolved.
       if (url.pathname === "/") {
         emptyNameManifestRequested = true;
       }
@@ -117,8 +117,9 @@ test("install does not abort on an unresolved optional dependency with an empty 
   expect(stderr).not.toContain('Invalid dependency name ""');
   // The requested package must still be installed.
   expect(await Bun.file(join(String(dir), "node_modules", "top", "package.json")).exists()).toBe(true);
-  // Sanity check that we actually exercised the empty-name resolution path.
-  expect(emptyNameManifestRequested).toBe(true);
+  // The empty-name dependency stays in the lockfile, unresolved, and nothing requests the registry root for it.
+  expect(await Bun.file(join(String(dir), "bun.lock")).text()).toContain('"optionalDependencies": { "": "1.0.0" }');
+  expect(emptyNameManifestRequested).toBe(false);
   // Assert the exit code last for a more useful message if a behavioral check fails.
   expect(exitCode).toBe(0);
 });

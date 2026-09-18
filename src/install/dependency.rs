@@ -1219,9 +1219,6 @@ pub(crate) fn parse_with_tag(
                 alias
             };
 
-            // name should never be empty
-            debug_assert!(!actual.is_empty());
-
             Some(Version {
                 literal: sliced.value(),
                 value: Value {

@@ -5876,11 +5876,13 @@ describe("http2 sentHeaders reports only what this side sent", () => {
         try {
           if (err) throw err;
           const before = pushed.sentHeaders;
+          const scheme = [pushed.scheme];
           pushed.respond({ ":status": 200, "x-pushed": "1" }, { sendDate: false });
           const after = pushed.sentHeaders;
+          scheme.push(pushed.scheme);
           pushed.end();
           stream.end();
-          serverSide.resolve({ before, isCallbackHeaders: before === promised, after });
+          serverSide.resolve({ before, isCallbackHeaders: before === promised, after, scheme });
         } catch (e) {
           serverSide.reject(e);
         }
@@ -5911,7 +5913,13 @@ describe("http2 sentHeaders reports only what this side sent", () => {
       "x-push": "1",
     };
     expect(result).toEqual([
-      { before: promisedBlock, isCallbackHeaders: true, after: { ":status": 200, "x-pushed": "1" } },
+      {
+        before: promisedBlock,
+        isCallbackHeaders: true,
+        after: { ":status": 200, "x-pushed": "1" },
+        // Before and after respond(), like the ordinary server stream above.
+        scheme: ["http", "http"],
+      },
       // Read at 'stream', at 'push' and at 'close'.
       { scheme: "http", sentHeaders: [undefined, undefined, undefined] },
     ]);

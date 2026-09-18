@@ -2282,7 +2282,7 @@ class Http2Stream extends Duplex {
   rstCode: number | undefined = undefined;
   // What this side sent: backs sentHeaders, undefined until a request/PUSH_PROMISE/response goes out.
   [bunHTTP2Headers]: any;
-  // What the peer sent to open the stream: the request (server) or the PUSH_PROMISE (client).
+  // The request this stream answers: the received request, or the PUSH_PROMISE block of a pushed stream.
   [kRequestHeaders]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
@@ -3257,7 +3257,9 @@ class ServerHttp2Stream extends Http2Stream {
     // getNextStream() created the pushed ServerHttp2Stream via the streamStart handler.
     const pushedStream = parser.getStreamContext(pushId);
     if (pushedStream && pushedStream[bunHTTP2Headers] == null) {
+      // The PUSH_PROMISE block is sent here and is also this stream's request (scheme reads it).
       pushedStream[bunHTTP2Headers] = headers;
+      pushedStream[kRequestHeaders] = headers;
     }
     if (pushedStream) endInboundHalf(pushedStream);
     if (onServerStreamCreatedChannel.hasSubscribers) {

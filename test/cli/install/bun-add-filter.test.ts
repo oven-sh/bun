@@ -1809,6 +1809,41 @@ test.concurrent("a file: path keeps its prefix and resolves from a nested cwd", 
   expect(await pkg(dir, "web")).toStrictEqual(WEB);
 });
 
+test.concurrent.each(["file:/", "file://", "file:///"])(
+  "%s before a .. path is a spelling of file: and the path is re-spelled",
+  async prefix => {
+    const dir = await makeMonorepo();
+    await addVendorFoo(dir);
+    const before = await allPackageJsonTexts(dir);
+
+    const { stderr, exitCode } = await run(["add", `${prefix}../../vendor/foo`, "--filter", "root"], dir, {
+      cwd: join(dir, "packages", "web"),
+      linker: "hoisted",
+    });
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    await expectAddedOnlyTo(dir, before, ["root"], "foo", "file:./vendor/foo");
+    expect(await file(join(dir, "node_modules", "foo", "package.json")).json()).toStrictEqual(VENDOR_FOO);
+  },
+);
+
+// A Windows command line cannot carry a path longer than the path buffer.
+test.concurrent.skipIf(isWindows)(
+  "a local path that does not fit a path buffer once joined with the cwd is an error",
+  async () => {
+    const dir = await makeMonorepo();
+    const before = await allPackageJsonTexts(dir);
+    const typed = "./" + Buffer.alloc(6000, "a").toString();
+
+    const { stderr, exitCode } = await run(["add", typed, "--filter", "api"], dir);
+    expect(stderr).toContain(`ENAMETOOLONG: local path "${typed}" is too long`);
+    expect(exitCode).toBe(1);
+
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  },
+);
+
 test.concurrent("a local path that does not exist relative to the cwd fails and writes nothing", async () => {
   const dir = await makeMonorepo();
   await addVendorFoo(dir);

@@ -283,6 +283,12 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     add_catalog::prepare(manager, &updates);
 
+    // Not `bun update <path>`: it is always rejected, with a `bun add <path>` hint the user runs from the cwd.
+    if subcommand == Subcommand::Add {
+        updates =
+            super::add_remove_with_filter::respell_local_paths(manager, original_cwd, updates);
+    }
+
     // reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
     // borrowed from `manager.workspace_package_json_cache`, but we then need
     // `&mut *manager` for `PackageJSONEditor::edit` / `do_patch_commit` while still

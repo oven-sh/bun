@@ -145,6 +145,7 @@ test.concurrent("bunfig token value is masked when the error is on a long line",
   // The key is more than 40 bytes before the error and more than 80 bytes
   // of comment follow it, so the excerpt window would cut `token = ` away.
   const secret = Buffer.alloc(72, "SECRET").toString();
+  const masked = Buffer.alloc(secret.length, "*").toString();
   const padding = Buffer.alloc(120, "x").toString();
   using dir = tempDir("redacted-bunfig-long-line", {
     "bunfig.toml": `[install]\ntoken = "${secret}" ] # ${padding}\n`,
@@ -167,7 +168,7 @@ test.concurrent("bunfig token value is masked when the error is on a long line",
 
     expect(out).not.toContain("SECRET");
     expect(err).not.toContain("SECRET");
-    expect(err).toContain(`"${"*".repeat(secret.length)}"`);
+    expect(err).toContain(`"${masked}"`);
     expect(err).toContain("Expected a newline or end of file after a key/value pair");
     expect(exitCode).toBe(1);
   }

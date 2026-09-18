@@ -125,8 +125,7 @@ enum HoistDependencyResult {
     DependencyLoop,
     /// Deduplicated onto a placed dependency on this package.
     Hoisted(PackageID),
-    /// Deduplicated onto a placed dependency of the same parent with the same name. That
-    /// dependency's group decides, for example an `optionalDependencies` entry over a peer.
+    /// Deduplicated onto the same parent's entry of the same name, whose group decides.
     HoistedOntoSibling,
     Resolve(PackageID),
     ResolveReplace(ResolveReplace),
@@ -447,8 +446,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
-    /// The packages that a dependency without `Behavior::OPTIONAL` is placed as or deduplicated
-    /// onto. A peer can be bound to another package than the one it resolves to. Only `Filter`.
+    /// The packages that a dependency without `Behavior::OPTIONAL` is bound to. Only `Filter`.
     pub(crate) required_packages: DynamicBitSet,
 }
 
@@ -644,8 +642,7 @@ pub(crate) struct RequiredPackages<'a> {
     workspace_filters: &'a [WorkspaceFilter],
     install_root_dependencies: bool,
     packages_to_install: Option<&'a [PackageID]>,
-    /// `Builder::required_packages` of the hoisted install tree. It knows the package each
-    /// peer is bound to. A package appended after the hoist is past its end.
+    /// `Builder::required_packages` of the hoisted install tree. Peers are bound there.
     tree: DynamicBitSet,
     /// Walked on the first question that the asking dependency cannot answer.
     packages: Option<DynamicBitSet>,

@@ -329,6 +329,54 @@ describe("node:http", () => {
         "test": "test",
       });
     });
+
+    // Node's Writable.prototype.write uses the default encoding for a falsy
+    // encoding argument, so res.write(chunk, "") and res.end(chunk, "") write utf8.
+    test.each(["write", "end"])("res.%s accepts an empty-string encoding (#43370)", async method => {
+      const body = "héllo wörld ✓";
+      await using server = http.createServer((req, res) => {
+        try {
+          if (method === "write") {
+            res.write(body, "");
+            res.end();
+          } else {
+            res.end(body, "");
+          }
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.end(`${e.code}: ${e.message}`);
+        }
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe(body);
+      expect(response.status).toBe(200);
+    });
+
+    test.each(["write", "end"])("res.%s throws ERR_UNKNOWN_ENCODING for an unknown encoding", async method => {
+      const errors: string[] = [];
+      await using server = http.createServer((req, res) => {
+        for (const encoding of ["bogus", 123, {}]) {
+          try {
+            res[method]("x", encoding);
+          } catch (e: any) {
+            errors.push(`${e.code}: ${e.message}`);
+          }
+        }
+        res.end();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      await fetch(`http://127.0.0.1:${port}/`);
+      expect(errors).toEqual([
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: bogus",
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: 123",
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: {}",
+      ]);
+    });
   });
 
   describe("request", () => {

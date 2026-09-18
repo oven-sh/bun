@@ -193,6 +193,7 @@ import {
   isPosix,
   gcTick, // Trigger garbage collection
   withoutAggressiveGC, // Disable aggressive GC for performance tests
+  runCommandMaxRSS, // Peak RSS of a command, measured outside the test runner
 } from "harness";
 ```
 

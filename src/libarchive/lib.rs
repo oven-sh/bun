@@ -204,21 +204,15 @@ pub mod lib {
                 archive_read_next_header(self.as_mut_ptr(), std::ptr::from_mut::<*mut Entry>(entry))
             }
         }
-        /// The next entry, or `None` at the end of the archive. On `Err`,
-        /// `error_string()` has libarchive's message.
-        ///
-        /// Only for an archive opened with `read_open_memory`. There `Retry`
-        /// means that libarchive dropped a header block with a bad checksum,
-        /// so the next call makes progress. A non-blocking reader also gets
-        /// `Retry` when it has no bytes yet: it must call `read_next_header`.
+        /// Next entry of a `read_open_memory` archive; `None` at its end.
         pub fn read_next_memory_entry(&self) -> crate::Result<Option<&Entry>> {
             let mut entry: *mut Entry = core::ptr::null_mut();
             loop {
                 return match self.read_next_header(&mut entry) {
-                    // `Warn` still yields a fully populated entry, e.g. one that
-                    // fell back to the raw pathname bytes.
+                    // `Warn` still yields a fully populated entry.
                     Result::Ok | Result::Warn => Ok(Some(Entry::opaque_ref(entry))),
                     Result::Eof => Ok(None),
+                    // A dropped bad-checksum block. A non-blocking source also means "no bytes yet": never loop there.
                     Result::Retry => continue,
                     Result::Failed | Result::Fatal => Err(crate::Error::Fail),
                 };

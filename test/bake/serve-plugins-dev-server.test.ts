@@ -53,8 +53,17 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
       } catch (e) {
         result = (e as Error).name;
       }
+      // The route waited for the plugins. It must not stay queued for a bundle that
+      // never starts: a second request gets the plugin error too.
+      let second: string;
+      try {
+        const res = await fetch(server.url, { signal: AbortSignal.timeout(10_000) });
+        second = await res.text();
+      } catch (e) {
+        second = (e as Error).name;
+      }
       await server.stop(true);
-      console.log(JSON.stringify({ result }));
+      console.log(JSON.stringify({ result, second }));
     `,
   });
 
@@ -73,10 +82,11 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
 
   const line = stdout.split("\n").find(l => l.startsWith("{"));
   expect(line).toBeDefined();
-  const { result } = JSON.parse(line!);
+  const { result, second } = JSON.parse(line!);
   // With the DevServer notified, the deferred request is released promptly. If it
   // isn't, the fetch sits until the 10s abort fires and we see "TimeoutError" here.
   expect(result).not.toBe("TimeoutError");
+  expect(second).toBe("Plugin Error");
   expect(exitCode).toBe(0);
 });
 

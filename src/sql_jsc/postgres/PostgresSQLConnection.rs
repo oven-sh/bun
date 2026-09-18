@@ -462,14 +462,7 @@ impl PostgresSQLConnection {
                 .expect("secure SSL_CTX must be set before setupTLS")
                 .as_ptr()
         };
-        let server_name = self.tls_config.server_name();
-        let sni = if server_name.is_null() {
-            None
-        } else {
-            // SAFETY: `server_name` is a NUL-terminated C string owned by
-            // `tls_config` for the connection lifetime.
-            Some(unsafe { bun_core::ffi::cstr(server_name) })
-        };
+        let sni = self.tls_config.sni();
         // The ext slot is an 8-byte null-niche
         // optional pointer, `Option<NonNull<T>>`; using
         // `Option<*mut T>` here would request 16 bytes (separate discriminant)

@@ -9,7 +9,8 @@ use crate::{EntryPoint, Index, LinkerContext, WrapKind};
 
 bun_core::define_scoped_log!(debug_merge, MergeChunks, hidden);
 
-/// `Part::can_be_removed_if_unused` (`Parser::stmts_can_be_removed_if_unused`)
+/// `Part::can_be_removed_if_unused` (`Parser::stmts_can_be_removed_if_unused`,
+/// or `claim_member_assignments` for a `X.y = v` part owned by `X`)
 /// is the parser's tree-shaking verdict, which also says "keep" for statements
 /// that do nothing at the top level but must survive for other reasons:
 /// `export * from` / `export {} from` (the re-exports are tracked separately),

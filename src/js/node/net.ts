@@ -2816,6 +2816,9 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     this._pendingData = chunk;
     this._pendingEncoding = encoding;
     function onClose() {
+      // A wrapped socket opens without 'connect', so this listener outlives the wait and the teardown may have settled the write.
+      if (this[kwriteCallback] !== callback) return;
+      this[kwriteCallback] = null;
       callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION());
     }
     this.once("connect", function connect() {

@@ -17,7 +17,7 @@ interface PropertyAttribute {
  */
 export const InvalidThisBehavior = {
   /**
-   * Default. Throws a `TypeError`.
+   * Default for methods without `async: true`. Throws a `TypeError`.
    */
   Throw: 0,
   /**
@@ -25,6 +25,10 @@ export const InvalidThisBehavior = {
    * work like this.
    */
   NoOp: 1,
+  /**
+   * Default for `async: true` methods. Returns a promise rejected with the `TypeError` (WebIDL).
+   */
+  RejectPromise: 2,
 } as const;
 export type InvalidThisBehavior = (typeof InvalidThisBehavior)[keyof typeof InvalidThisBehavior];
 
@@ -44,9 +48,8 @@ export type Field =
       fn: string;
 
       /**
-       * Mark it as an async function in the TypeScript definition.
-       *
-       * Does not do anything at runtime.
+       * The method returns a `Promise`: typed `Promise<unknown>` in the `.d.ts`, and
+       * `invalidThisBehavior` defaults to {@link InvalidThisBehavior.RejectPromise}.
        */
       async?: boolean;
       /**

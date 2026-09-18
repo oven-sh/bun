@@ -1856,8 +1856,6 @@ pub mod dir_entry_accessor {
     }
 
     pub struct DirEntryIterResult {
-        /// The entry in the EntryStore singleton. Its `base()` is the on-disk
-        /// spelling of the name; the `DirEntry.data` key is lowercased.
         pub(crate) entry: bun_ptr::BackRef<Entry>,
         pub(crate) kind: bun_sys::FileKind,
         /// Resolver-cached real path of a symlink entry's target

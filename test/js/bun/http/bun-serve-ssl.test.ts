@@ -225,6 +225,33 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     });
   });
 
+  test("a serverName of more than 10 labels is selected at the handshake", async () => {
+    // The native SNI tree used to stop matching at 10 labels, so the entry
+    // was registered but the default certificate was served for it.
+    const longName = "a.b.c.d.e.f.g.h.i.j.k.example";
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { key: serverKey, cert: serverCert },
+        {
+          serverName: longName,
+          key: serverKey,
+          cert: serverCert,
+          ca: clientCa,
+          requestCert: true,
+          rejectUnauthorized: true,
+        },
+      ],
+      fetch: req => new Response(`served ${req.headers.get("host")}`),
+    });
+    const { status: noCert } = await request(server.port, longName);
+    const { status: trustedCert } = await request(server.port, longName, trustedClient);
+    expect({ noCert, trustedCert }).toEqual({
+      noCert: "connection closed without a response",
+      trustedCert: "HTTP/1.1 200 OK",
+    });
+  });
+
   test("a session established on the open default name cannot be resumed to bypass a gated name", async () => {
     using server = Bun.serve({
       port: 0,

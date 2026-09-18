@@ -346,7 +346,11 @@ pub mod dir_iterator {
                         )
                     };
                     if rc < 0 {
-                        return Err(Error::from_code_int(super::last_errno(), Tag::getdents64));
+                        let e = super::last_errno();
+                        if e == libc::EINTR {
+                            continue;
+                        }
+                        return Err(Error::from_code_int(e, Tag::getdents64));
                     }
                     if rc == 0 {
                         return Ok(None);
@@ -510,6 +514,9 @@ pub mod dir_iterator {
                     let rc = unsafe { getdents(dir.native(), self.buf.as_mut_ptr(), BUF_SIZE) };
                     if rc < 0 {
                         let e = super::last_errno();
+                        if e == libc::EINTR {
+                            continue;
+                        }
                         // FreeBSD reports ENOENT when iterating an unlinked
                         // but still-open directory.
                         if e == libc::ENOENT {

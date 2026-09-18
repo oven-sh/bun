@@ -1053,8 +1053,8 @@ const graphFrames = stack =>
   String(stack)
     .split("\n")
     .map(line => line.trim().replace(/^at /, ""))
-    .filter((line, index) => index === 0 || /\/(origin|other)\.mjs:/.test(line))
-    .map(line => line.replace(/\(?(?:file:\/\/)?\/.*\/((?:origin|other)\.mjs:\d+:\d+)\)?/, "$1"));
+    .filter((line, index) => index === 0 || /[\\/](origin|other)\.mjs:/.test(line))
+    .map(line => line.replace(/\(?[^()]*[\\/]((?:origin|other)\.mjs:\d+:\d+)\)?/, "$1"));
 
 // A cell up to the point where collections may pass over it. A cell with no collection is done here.
 function begin({ gc, firstRead, reader }, { keep, weak }, [error, twin]) {

@@ -1,6 +1,6 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, forceUTF16, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import os from "node:os";
@@ -1124,8 +1124,6 @@ for (let withOverridenBufferWrite of [false, true]) {
           }
           return s;
         };
-        // keeps only ASCII hex characters but forces two-byte string storage
-        const toUTF16 = s => (s + "\u0100").slice(0, -1);
 
         it("decodes valid input at every length around the vector widths", () => {
           for (const pairs of [15, 16, 17, 31, 32, 33, 48, 63, 64, 65, 127, 128, 129, 255, 256, 1024]) {
@@ -1138,7 +1136,7 @@ for (let withOverridenBufferWrite of [false, true]) {
               const fromLatin1 = Buffer.from(hex, "hex");
               expect(fromLatin1).toEqual(expected);
 
-              const fromUTF16 = Buffer.from(toUTF16(hex), "hex");
+              const fromUTF16 = Buffer.from(forceUTF16(hex), "hex");
               expect(fromUTF16).toEqual(expected);
             }
           }
@@ -1154,7 +1152,7 @@ for (let withOverridenBufferWrite of [false, true]) {
               const expected = referenceHexDecode(hex);
               expect(expected.length).toBe(Math.floor(pos / 2));
               expect(Buffer.from(hex, "hex")).toEqual(expected);
-              expect(Buffer.from(toUTF16(hex), "hex")).toEqual(expected);
+              expect(Buffer.from(forceUTF16(hex), "hex")).toEqual(expected);
             }
           }
         });
@@ -1234,7 +1232,7 @@ for (let withOverridenBufferWrite of [false, true]) {
 
           // 16-bit string path
           const utf16Target = Buffer.alloc(pairs);
-          expect(utf16Target.write(toUTF16(hex), "hex")).toBe(pairs);
+          expect(utf16Target.write(forceUTF16(hex), "hex")).toBe(pairs);
           expect(utf16Target).toEqual(expected);
         });
       });

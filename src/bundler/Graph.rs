@@ -219,11 +219,7 @@ impl<'a> Graph<'a> {
         &mut self.build_graphs[target]
     }
 
-    /// The output file that `process_files_to_copy` made for the asset at
-    /// `source_index`. It is the last entry of the asset's `additional_files`,
-    /// not always the only one: an asset that is an entry point, or that an
-    /// `onLoad` plugin gave a copied loader, has a `SourceIndex` entry first.
-    /// Panics if the asset has no output file.
+    /// The last entry of the asset's `additional_files`. A `SourceIndex` entry can come before it.
     pub(crate) fn asset_output_file(&self, source_index: usize) -> &options::OutputFile {
         match self.input_files.items_additional_files()[source_index].last() {
             Some(&AdditionalFile::OutputFile(id)) => &self.additional_output_files[id as usize],

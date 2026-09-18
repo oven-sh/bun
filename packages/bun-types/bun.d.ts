@@ -674,7 +674,9 @@ declare module "bun" {
     ref?: boolean;
 
     /**
-     * In Bun, this does nothing.
+     * `"classic"` or `"module"`. Any other value throws a `TypeError`, as in browsers.
+     *
+     * Otherwise this has no effect in Bun: every worker runs as an ES module.
      */
     type?: Bun.WorkerType | undefined;
 
@@ -696,7 +698,9 @@ declare module "bun" {
     env?: Record<string, string> | (typeof import("node:worker_threads"))["SHARE_ENV"] | undefined;
 
     /**
-     * In Bun, this does nothing.
+     * `"omit"`, `"same-origin"` or `"include"`. Any other value throws a `TypeError`, as in browsers.
+     *
+     * Otherwise this has no effect in Bun: worker scripts are not fetched with credentials.
      */
     credentials?: import("undici-types").RequestCredentials | undefined;
 

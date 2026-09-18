@@ -387,19 +387,21 @@ test("ticks drained while a graph's context is current run in the context they w
     storage.run(tag, () =>
       process.nextTick(() => seen.push(`${tag}: ran in ${whose(ModuleGraph.current)}, store ${storage.getStore()}`)),
     );
-  tick("host");
+  // The host's tick is the last one: a tick that does not put a's context back when it is done
+  // shows in "after the wait", and one that does not leave a's context first shows in its own line.
+  a.run(() => tick("a"));
   b.run(() => tick("b"));
+  tick("host");
   a.run(() => {
-    tick("a");
     // .resolves runs the event loop right here: the three ticks are drained with a's context
     // current between them, not the host's.
     expect(new Promise<void>(resolve => setImmediate(resolve))).resolves.toBeUndefined();
     seen.push(`after the wait: ${whose(ModuleGraph.current)}, store ${storage.getStore()}`);
   });
   expect(seen).toEqual([
-    "host: ran in host, store host",
-    "b: ran in b, store b",
     "a: ran in a, store a",
+    "b: ran in b, store b",
+    "host: ran in host, store host",
     "after the wait: a, store undefined",
   ]);
 });

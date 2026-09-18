@@ -23,7 +23,7 @@ pub struct Meta {
     pub(crate) id: PackageID,
 
     pub(crate) man_dir: String,
-    pub(crate) integrity: Integrity,
+    pub integrity: Integrity,
 
     /// Shouldn't be used directly. Use `Meta.has_install_script()` and
     /// `Meta.set_has_install_script()` instead.

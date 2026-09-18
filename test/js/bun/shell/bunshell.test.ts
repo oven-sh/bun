@@ -3167,6 +3167,45 @@ function sentinelByte(buf: Uint8Array): number {
   throw new Error("No sentinel byte");
 }
 
+describe.concurrent("`> ${buf}` redirect of an external command that writes more than the buffer holds", () => {
+  // The shell reads the child's output into the buffer and stops at its end.
+  // The child then gets a write error (EPIPE or ECONNRESET) or SIGPIPE on its
+  // next write, the same as a writer whose reader closed the pipe. Bun ignores
+  // SIGPIPE, so this child sees the error and exits 7. Without the limit the
+  // shell drains and drops the rest of the output forever, and a child that
+  // never stops writing never settles the promise.
+  const endlessWriter = (fd: number) =>
+    `const chunk = Buffer.alloc(4096, "y"); const fs = require("fs"); try { for (;;) fs.writeSync(${fd}, chunk); } catch { process.exit(7); }`;
+
+  test("stdout: the child stops with a write error and the buffer is full", async () => {
+    const buffer = Buffer.alloc(16);
+    const result = await $`${BUN} -e ${endlessWriter(1)} > ${buffer}`.env(bunEnv).nothrow();
+    expect(buffer.toString()).toBe(Buffer.alloc(16, "y").toString());
+    expect(result.exitCode).toBe(7);
+  });
+
+  test("stderr: the child stops with a write error and the buffer is full", async () => {
+    const buffer = Buffer.alloc(16);
+    const result = await $`${BUN} -e ${endlessWriter(2)} 2> ${buffer}`.env(bunEnv).nothrow();
+    expect(buffer.toString()).toBe(Buffer.alloc(16, "y").toString());
+    expect(result.exitCode).toBe(7);
+  });
+
+  test("output that fits exactly is kept and the command exits 0", async () => {
+    const buffer = Buffer.alloc(16);
+    const code = `process.stdout.write(Buffer.alloc(16, "a"));`;
+    const result = await $`${BUN} -e ${code} > ${buffer}`.env(bunEnv).nothrow();
+    expect(buffer.toString()).toBe(Buffer.alloc(16, "a").toString());
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a zero-length buffer settles", async () => {
+    const buffer = Buffer.alloc(0);
+    const result = await $`${BUN} -e ${endlessWriter(1)} > ${buffer}`.env(bunEnv).nothrow();
+    expect(result.exitCode).toBe(7);
+  });
+});
+
 describe("interpolated values in assignment position", () => {
   // An `=` that arrives via an interpolated template value is data, not shell
   // syntax. The value must remain a single inert command word instead of being

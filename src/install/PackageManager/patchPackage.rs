@@ -288,11 +288,12 @@ pub fn do_patch_commit(
     )
     .expect("formatting into a Vec is infallible");
 
+    let source_is_cache_entry = is_cache_entry(pkg.resolution.tag);
     let patchfile_contents: Vec<u8> = 'brk: {
         let new_folder = changes_dir;
         let mut buf2 = bun_paths::path_buffer_pool::get();
         let mut buf3 = bun_paths::path_buffer_pool::get();
-        let old_folder: &[u8] = 'old_folder: {
+        let old_folder: Vec<u8> = 'old_folder: {
             let cache_dir_path = match sys::get_fd_path(cache_dir, &mut buf2) {
                 Ok(s) => s,
                 Err(e) => {
@@ -303,8 +304,10 @@ pub fn do_patch_commit(
             break 'old_folder resolve_path::join::<platform::Posix>(&[
                 cache_dir_path,
                 cache_dir_subpath.as_bytes(),
-            ]);
+            ])
+            .to_vec();
         };
+        let old_folder: &[u8] = &old_folder;
 
         let random_tempdir = match bun_paths::fs::FileSystem::tmpname(
             b"node_modules_tmp",
@@ -336,17 +339,17 @@ pub fn do_patch_commit(
             let Ok(nested) = new_folder_handle.open_dir(b"node_modules", ITERATE) else {
                 break 'has_nested_node_modules false;
             };
-            // `old_folder` borrows the thread-local `join` buffer, so join into another one.
-            let mut cache_nested_buf = bun_paths::path_buffer_pool::get();
-            let cache_nested = Dir::cwd()
-                .open_dir(
-                    resolve_path::join_string_buf::<platform::Auto>(
-                        &mut cache_nested_buf[..],
-                        &[old_folder, b"node_modules"],
-                    ),
-                    sys::OpenDirOptions::default(),
-                )
-                .ok();
+            // A folder or workspace source has its own installs in `node_modules`, not bundled ones.
+            let cache_nested = if source_is_cache_entry {
+                Dir::cwd()
+                    .open_dir(
+                        resolve_path::join::<platform::Auto>(&[old_folder, b"node_modules"]),
+                        sys::OpenDirOptions::default(),
+                    )
+                    .ok()
+            } else {
+                None
+            };
             let tempdir = match root_node_modules
                 .make_open_path(random_tempdir.as_bytes(), sys::OpenDirOptions::default())
             {
@@ -976,19 +979,11 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // recreate the path below it so the copy lands in a project-local tree.
     detach_module_folder_from_shared_store(module_folder);
 
-    let source_is_cache_entry = matches!(
-        resolution_tag,
-        ResolutionTag::Npm
-            | ResolutionTag::Git
-            | ResolutionTag::Github
-            | ResolutionTag::LocalTarball
-            | ResolutionTag::RemoteTarball
-    );
     if let Err(e) = overwrite_package_in_node_modules_folder(
         cache_dir,
         cache_dir_subpath,
         module_folder,
-        source_is_cache_entry,
+        is_cache_entry(resolution_tag),
     ) {
         bun_core::pretty_error!(
             "<r><red>error<r>: error overwriting folder in node_modules: {}\n<r>",
@@ -1168,6 +1163,18 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
         p.undo(1);
         depth += 1;
     }
+}
+
+/// The source folder is an extracted archive, not a project folder.
+fn is_cache_entry(tag: ResolutionTag) -> bool {
+    matches!(
+        tag,
+        ResolutionTag::Npm
+            | ResolutionTag::Git
+            | ResolutionTag::Github
+            | ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+    )
 }
 
 const ITERATE: sys::OpenDirOptions = sys::OpenDirOptions {

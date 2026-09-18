@@ -100,15 +100,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   #run() {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (
-      status &
-      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
-    ) {
+    if (status & (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
       return;
     }
 
     if (this[_flags] & SQLQueryFlags.notTagged) {
       this.reject(this[_adapter].notTaggedCallError());
+      return;
+    }
+
+    if (status & SQLQueryStatus.cancelled) {
+      this.reject(this[_adapter].queryCancelledError());
       return;
     }
 
@@ -130,15 +132,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   async #runAsync() {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
-    if (
-      status &
-      (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.cancelled | SQLQueryStatus.invalidHandle)
-    ) {
+    if (status & (SQLQueryStatus.executed | SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
       return;
     }
 
     if (this[_flags] & SQLQueryFlags.notTagged) {
       this.reject(this[_adapter].notTaggedCallError());
+      return;
+    }
+
+    if (status & SQLQueryStatus.cancelled) {
+      this.reject(this[_adapter].queryCancelledError());
       return;
     }
 

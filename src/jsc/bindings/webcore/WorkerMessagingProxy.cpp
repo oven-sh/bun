@@ -318,8 +318,7 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
             remaining -= batch.size();
 
         while (!batch.isEmpty()) {
-            // The receiving VM is being stopped: nothing more is delivered. The rest of the
-            // worker's inbox is dropped once the worker is gone, the parent's with the proxy.
+            // The receiving VM is being stopped: nothing more is delivered, and what is left is dropped unread.
             if (context.isJSExecutionForbidden())
                 return false;
             auto message = batch.takeFirst();
@@ -542,8 +541,7 @@ void WorkerMessagingProxy::releaseWorkerThread()
 
 void WorkerMessagingProxy::dropUndeliveredWorkerMessages()
 {
-    // Entry resolution can fail before workerData ports are entangled. Closing
-    // those endpoints also closes ports queued on the public parentPort.
+    // Ports a worker that never started did not take. Closing its parentPort end also closes the ports queued on it.
     auto droppedDataPorts = std::exchange(m_options.dataMessagePorts, {});
     Deque<MessageWithMessagePorts> droppedMessages;
     {
@@ -551,8 +549,7 @@ void WorkerMessagingProxy::dropUndeliveredWorkerMessages()
         droppedMessages = std::exchange(m_toWorker.queue, {});
         m_toWorker.drainScheduled = false;
     }
-    // Destroy transferred ports outside the inbox lock. Their destructors close
-    // orphaned endpoints and notify each entangled peer.
+    // Destroyed here, outside the lock: ~TransferredMessagePort closes its pipe side and notifies the peer.
 }
 
 void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, bool stoppedByParent)
@@ -608,8 +605,7 @@ void WorkerMessagingProxy::parentContextWillDestroy()
         m_pendingCrossVMRequests.clear();
     }
     releaseWorkerThread();
-    // After the join: until then the worker thread can still be taking its workerData ports,
-    // which it does when it first loads node:worker_threads (createNodeWorkerThreadsBinding).
+    // After the join: a live worker thread can still be taking its ports (createNodeWorkerThreadsBinding).
     dropUndeliveredWorkerMessages();
     m_scriptExecutionContext = nullptr;
 }

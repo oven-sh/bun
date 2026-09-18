@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, symlinkSync } from "fs";
 import { join } from "path";
-import { bunEnv, bunExe, fakeNodeRun, isWindows, tempDir } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -182,8 +182,7 @@ describe("fake node cli", () => {
       });
     });
 
-    // Windows needs administrator rights to create a symlink.
-    test.concurrent.skipIf(isWindows)("CommonJS, a symlink", async () => {
+    test.concurrent("CommonJS, a symlink", async () => {
       using temp = tempDir("fake-node-main", { "pkg/package.json": "{}", "pkg/cli.js": cjs });
       mkdirSync(join(temp, "bin"));
       symlinkSync(join("..", "pkg", "cli.js"), join(temp, "bin", "link"));
@@ -252,8 +251,7 @@ describe("fake node cli", () => {
       expect({ ...result, stdout: parse(result.stdout) }).toEqual(loaded(temp));
     });
 
-    // Windows needs administrator rights to create a symlink.
-    test.concurrent.skipIf(isWindows)("when the entry point is a symlink", async () => {
+    test.concurrent("when the entry point is a symlink", async () => {
       using temp = tempDir("fake-node-asset", files);
       mkdirSync(join(temp, "bin"));
       symlinkSync(join("..", "pkg", "index.js"), join(temp, "bin", "link"));

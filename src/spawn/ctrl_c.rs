@@ -5,8 +5,7 @@
 //! and we only note that it happened; with none alive it kills us as usual.
 //! Whether that Ctrl+C then ends *us* is decided by the caller from how the
 //! job exited (`child_died_of_it` / `exit_like_child`). A SIGINT our parent
-//! sends by kill(2) is forwarded to the children, as `sh -c <cmd>` gets by
-//! exec'ing the command. A terminal Ctrl+C is not: it reached them already.
+//! sends by kill(2) is forwarded to the children; a terminal Ctrl+C is not.
 
 #[cfg(unix)]
 use core::sync::atomic::AtomicI32;

@@ -217,11 +217,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         })
     }
 
-    /// argv[0] and the arguments before the script for the `--filter`,
-    /// `--parallel` and `--sequential` runners: `<sh> -c`, or
-    /// `<bun> exec --no-env-file` (the runner's envp is the whole script
-    /// environment). Windows always takes the Bun shell: `cmd.exe /c <script>`
-    /// loses the quotes in the script.
+    /// The runners' interpreter before the script: `<sh> -c`, or
+    /// `<bun> exec --no-env-file` (always on Windows: cmd.exe loses quotes).
     pub(crate) fn script_shell_argv(
         use_system_shell: bool,
         path: &[u8],

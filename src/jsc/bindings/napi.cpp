@@ -74,7 +74,6 @@
 #include "wtf/NakedPtr.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
-#include "JSCommonJSModule.h"
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -743,78 +742,55 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
 }
 
 extern "C" size_t Bun__napi_module_register_count;
-void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
+void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* object)
 {
     JSC::VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(globalObject->m_pendingNapiModule);
+    if (!mod.nm_register_func) {
+        JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
+        JSC::throwException(globalObject, scope, errorInstance);
+        return;
+    }
 
-    auto& mod = *globalObject->m_pendingNapiModule;
     Ref<NapiEnv> env = globalObject->makeNapiEnv(mod);
     auto keyStr = WTF::String::fromUTF8(mod.nm_modname);
-    JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
-    JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
-                                                                           : nullptr;
 
-    JSC::Strong<JSC::JSObject> strongExportsObject;
+    JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
+    RETURN_IF_EXCEPTION(scope, void());
 
-    if (!object) {
-        auto* exportsObject = JSC::constructEmptyObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
+    // Like Node, convert exports to an object: null and undefined throw, a primitive gets a wrapper object.
+    JSObject* exports = exportsObject.toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
 
-        object = Bun::JSCommonJSModule::create(globalObject, keyStr, exportsObject, false, jsUndefined());
-        RETURN_IF_EXCEPTION(scope, void());
-        strongExportsObject = { vm, exportsObject };
-    } else {
-        JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());
-        RETURN_IF_EXCEPTION(scope, void());
-
-        // Convert exports to object, matching Node.js behavior.
-        // This throws for null/undefined and creates wrapper objects for primitives.
-        JSObject* exports = exportsObject.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-
-        ASSERT(exports);
-        strongExportsObject = { vm, exports };
-    }
+    ASSERT(exports);
+    JSC::Strong<JSC::JSObject> strongExportsObject = { vm, exports };
 
     JSC::Strong<JSC::JSObject> strongObject = { vm, object };
 
     Bun::NapiHandleScope handleScope(globalObject);
-    JSValue resultValue;
-
-    if (mod.nm_register_func) {
-        resultValue = toJS(mod.nm_register_func(env.ptr(), toNapi(object, globalObject)));
-    } else {
-        JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
-        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
-        return;
-    }
-
+    JSValue resultValue = toJS(mod.nm_register_func(env.ptr(), toNapi(object, globalObject)));
     RETURN_IF_EXCEPTION(scope, void());
 
     if (resultValue.isEmpty()) {
         JSValue errorInstance = createError(globalObject, makeString("Node-API module \""_s, keyStr, "\" returned an error"_s));
-        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
+        JSC::throwException(globalObject, scope, errorInstance);
         return;
     }
 
     if (!resultValue.isObject()) {
         JSValue errorInstance = createError(globalObject, makeString("Expected Node-API module \""_s, keyStr, "\" to return an exports object"_s));
-        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
+        JSC::throwException(globalObject, scope, errorInstance);
         return;
     }
 
-    auto* meta = new Bun::NapiModuleMeta(globalObject->m_pendingNapiModuleDlopenHandle);
+    auto* meta = new Bun::NapiModuleMeta(dlopenHandle);
 
     // TODO: think about the finalizer here
     Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
 
     bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     ASSERT(success);
-
-    globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
 
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_api.cc#L734-L742
     // https://github.com/oven-sh/bun/issues/1288
@@ -823,26 +799,21 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject)
         strongObject->put(strongObject.get(), globalObject, WebCore::builtinNames(vm).exportsPublicName(), resultValue, slot);
         RETURN_IF_EXCEPTION(scope, void());
     }
-
-    globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
 extern "C" void napi_module_register(napi_module* mod)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject();
-    JSC::VM& vm = JSC::getVM(globalObject);
     // Increment this one even if the module is invalid so that functionDlopen
     // knows that napi_module_register was attempted
     globalObject->napiModuleRegisterCallCount++;
 
     // Append to vector to accumulate ALL module registrations during dlopen
+    // This runs inside dlopen() and cannot throw. A module with no entry point is queued too, and executePendingNapiModule throws.
+    globalObject->m_pendingNapiModules.append(mod ? *mod : napi_module {});
     if (mod && mod->nm_register_func) {
-        globalObject->m_pendingNapiModules.append(*mod);
         // Increment the counter to signal that a module registered itself
         Bun__napi_module_register_count++;
-    } else {
-        JSValue errorInstance = createError(globalObject, makeString("Module has no declared entry point."_s));
-        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
     }
 }
 

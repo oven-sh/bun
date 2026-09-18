@@ -449,7 +449,6 @@ public:
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
 
     using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize + 1>;
-    using NapiModuleAndExports = std::array<WriteBarrier<Unknown>, 2>;
     // Native module default-export cache so require(id) === (await import(id)).default.
     // Visited via FOR_EACH_GLOBALOBJECT_GC_MEMBER's std::array<WriteBarrier> overload.
     using NativeModuleDefaultsArray = std::array<WriteBarrier<JSObject>, NativeModuleDefaultSlotCount>;
@@ -519,9 +518,6 @@ public:
                                                                                                              \
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
-                                                                                                             \
-    /* When a napi module initializes on dlopen, we need to know what the value is */                        \
-    V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \
                                                                                                              \
     /* The handle scope where all new NAPI values will be created. You must not pass any napi_values */      \
     /* back to a NAPI function without putting them in the handle scope, as the NAPI function may */         \
@@ -710,17 +706,9 @@ public:
     WTF::String m_moduleWrapperStart;
     WTF::String m_moduleWrapperEnd;
 
-    // This is the result of dlopen()ing a napi module.
-    // We will add it to the resulting napi value.
-    void* m_pendingNapiModuleDlopenHandle = nullptr;
-
     // Store ALL napi module structs to defer calling nm_register_func until after dlopen completes
     // A single .node file can register multiple modules during static constructors
     WTF::Vector<napi_module> m_pendingNapiModules;
-
-    // Temporary storage for current NAPI module being executed
-    // Used by executePendingNapiModule to execute one module at a time
-    std::optional<napi_module> m_pendingNapiModule = {};
 
     // Store ALL V8 C++ module pointers to defer execution until after dlopen completes
     // A single .node file can register multiple V8 modules during static constructors

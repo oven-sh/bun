@@ -1529,7 +1529,8 @@ test("a stack that a collection materializes reads the same as one materialized 
     const part = String(process.pid % 7);
     const shapes = {
       "TypeError with a message": () => new TypeError("boom"),
-      "message that is a rope": () => new RangeError("part " + part + " of " + part.repeat(40)),
+      // Assigned, so it stays a rope: the constructor would flatten it.
+      "message that is a rope": () => Object.assign(new RangeError(), { message: "part " + part + " of " + part.repeat(40) }),
       "no message": () => new Error(),
       "own name": () => Object.assign(new Error("boom"), { name: "Renamed" }),
       "empty own name": () => Object.assign(new Error("boom"), { name: "" }),
@@ -1538,6 +1539,7 @@ test("a stack that a collection materializes reads the same as one materialized 
       "name is an accessor": () => Object.defineProperty(new Error("boom"), "name", { get: () => "FromGetter" }),
       "message is a number": () => Object.assign(new Error(), { message: 42.5 }),
       "message is null": () => Object.assign(new Error(), { message: null }),
+      "message is a BigInt": () => Object.assign(new Error(), { message: 10n ** 30n }),
       // Frames whose text says more than a function name and a position.
       "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
       "created in an anonymous function in eval": () => (0, eval)("(function () { const error = new Error('boom'); return error; })")(),
@@ -1592,6 +1594,7 @@ test("a stack that a collection materializes reads the same as one materialized 
     "name is an accessor": row("Error: boom"),
     "message is a number": row("Error: 42.5"),
     "message is null": row("Error: null"),
+    "message is a BigInt": row("Error: 1000000000000000000000000000000"),
     "created in a constructor": row("Error: boom"),
     "created in an anonymous function in eval": row("Error: boom"),
     "created under a builtin": row("Error: boom"),

@@ -14,6 +14,7 @@
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSArray.h"
+#include "JavaScriptCore/JSBigInt.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSObject.h"
@@ -607,7 +608,7 @@ static JSValue dataPropertyWithoutGC(JSC::JSObject* object, const JSC::Identifie
 }
 
 // JSValue::toWTFString() for the primitives that need neither the heap nor a throw.
-static String primitiveToStringWithoutGC(JSValue value)
+static String primitiveToStringWithoutGC(JSC::VM& vm, JSValue value)
 {
     if (value.isString())
         return asString(value)->tryGetValueWithoutGC();
@@ -621,6 +622,12 @@ static String primitiveToStringWithoutGC(JSValue value)
         return "null"_s;
     if (value.isUndefined())
         return "undefined"_s;
+    if (value.isHeapBigInt())
+        return JSC::JSBigInt::tryGetString(vm, value.asHeapBigInt(), 10);
+#if USE(BIGINT32)
+    if (value.isBigInt32())
+        return String::number(value.bigInt32AsInt32());
+#endif
     return {};
 }
 
@@ -634,12 +641,12 @@ static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTra
     WTF::String message;
     if (errorInstance) {
         if (JSValue value = dataPropertyWithoutGC(errorInstance, vm.propertyNames->message))
-            message = primitiveToStringWithoutGC(value);
+            message = primitiveToStringWithoutGC(vm, value);
         JSC::JSObject* object = errorInstance;
         for (unsigned depth = 0; object && depth < 2; depth++) {
             if (JSValue value = dataPropertyWithoutGC(object, vm.propertyNames->name)) {
                 if (!value.isUndefined()) {
-                    WTF::String found = primitiveToStringWithoutGC(value);
+                    WTF::String found = primitiveToStringWithoutGC(vm, value);
                     if (!found.isNull())
                         name = found;
                 }

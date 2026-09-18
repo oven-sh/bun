@@ -1439,8 +1439,7 @@ mod border_handler_body {
                 }};
             }
 
-            // Only width and color can need a fallback, and only on a physical side: a logical
-            // side's fallback would go into the ltr/rtl rules, which override the rule itself.
+            // A logical side's fallback would go into the ltr/rtl rules and override the rule.
             macro_rules! set_border_helper {
                 ($key:ident, $val:expr, Physical) => {{
                     flush_helper!($key, width, &$val.width, Physical);

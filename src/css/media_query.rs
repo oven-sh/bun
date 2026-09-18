@@ -19,9 +19,6 @@ type CSSInteger = i32;
 
 // ───────────────────────── QueryCondition trait ─────────────────────────
 // Implementors: MediaCondition, StyleQuery, ContainerCondition.
-// NOT SupportsCondition — its variant set {Not, And(Vec), Or(Vec), Declaration,
-// Selector, Unknown} and its `needs_parens(&Self)` / `b" not "` contract are
-// structurally different and must stay hand-rolled.
 //
 // `deep_clone` is intentionally NOT on this trait. The single mechanism is
 // `#[derive(DeepClone)]` (generics.rs). The hand-expansions in callers exist

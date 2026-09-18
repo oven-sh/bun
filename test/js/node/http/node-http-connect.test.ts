@@ -486,7 +486,9 @@ describe("HTTP server CONNECT", () => {
     const { promise: clientReceived, resolve: resolveClient, reject: rejectClient } = Promise.withResolvers<string>();
     const received: string[] = [];
     const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      client.write("CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nTransfer-Encoding: identity\r\n\r\nhead");
+      client.write(
+        "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nTransfer-Encoding: identity\r\n\r\nhead",
+      );
     });
     client.on("data", data => {
       received.push(data.toString());

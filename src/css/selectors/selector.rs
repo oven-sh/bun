@@ -245,6 +245,16 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
                 _ => VendorPrefix::empty(),
             };
 
+            // `downlevel_selectors` widens an unprefixed component in place to the
+            // prefixes the targets need (`NONE | WEBKIT`). Rules cloned from a
+            // downleveled rule, and rules that are minified again, arrive here with
+            // such sets. The component is still unprefixed.
+            let p = if p.contains(VendorPrefix::NONE) {
+                VendorPrefix::NONE
+            } else {
+                p
+            };
+
             if !p.is_empty() {
                 // Allow none to be mixed with a prefix.
                 let mut prefix_without_none = prefix;

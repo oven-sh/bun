@@ -5697,6 +5697,139 @@ describe("css tests", () => {
       },
     );
 
+    // Safari 14 needs `:-webkit-full-screen`, so downleveling widens the prefix
+    // set of `:fullscreen` in place. A rule that is cloned from the downleveled
+    // rule (the `:dir()` rules for logical properties), or minified a second
+    // time (adjacent `@media` blocks that merge), must print the same way as a
+    // rule that is downleveled for the first time.
+    const rtl_langs = "ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi";
+    prefix_test(
+      ".f:fullscreen:dir(ltr) {left:1px}",
+      `
+      .f:-webkit-full-screen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .f:fullscreen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      ".f:fullscreen { inset-inline-start: 1px; border-start-start-radius: 2px; color: red }",
+      `
+      .f:-webkit-full-screen {
+        color: red;
+      }
+
+      .f:fullscreen {
+        color: red;
+      }
+
+      .f:-webkit-full-screen:not(:lang(${rtl_langs})) {
+        border-top-left-radius: 2px;
+        left: 1px;
+      }
+
+      .f:fullscreen:not(:lang(${rtl_langs})) {
+        border-top-left-radius: 2px;
+        left: 1px;
+      }
+
+      .f:-webkit-full-screen:lang(${rtl_langs}) {
+        border-top-right-radius: 2px;
+        right: 1px;
+      }
+
+      .f:fullscreen:lang(${rtl_langs}) {
+        border-top-right-radius: 2px;
+        right: 1px;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      ".g:fullscreen .f:fullscreen { inset-inline-start: 1px }",
+      `
+      .g:-webkit-full-screen .f:-webkit-full-screen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .g:fullscreen .f:fullscreen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .g:-webkit-full-screen .f:-webkit-full-screen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+
+      .g:fullscreen .f:fullscreen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    // `.f:fullscreen` is not compatible with Safari 14 and moves to a rule of its own.
+    prefix_test(
+      ".f:fullscreen, .g { inset-inline-start: 1px }",
+      `
+      .g:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .g:lang(${rtl_langs}) {
+        right: 1px;
+      }
+
+      .f:-webkit-full-screen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .f:fullscreen:not(:lang(${rtl_langs})) {
+        left: 1px;
+      }
+
+      .f:-webkit-full-screen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+
+      .f:fullscreen:lang(${rtl_langs}) {
+        right: 1px;
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+    prefix_test(
+      "@media (min-width: 1px) { .a:fullscreen .b:fullscreen { color: red } } @media (min-width: 1px) { .c { color: blue } }",
+      `
+      @media (min-width: 1px) {
+        .a:-webkit-full-screen .b:-webkit-full-screen {
+          color: red;
+        }
+
+        .a:fullscreen .b:fullscreen {
+          color: red;
+        }
+
+        .c {
+          color: #00f;
+        }
+      }
+      `,
+      {
+        safari: 14 << 16,
+      },
+    );
+
     prefix_test(
       "a:dir(rtl)::after {color:red}",
       `

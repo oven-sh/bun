@@ -368,7 +368,6 @@ impl AbortHandle {
         handle.signal.set(Some(signal));
         // `AbortSignal` is an `opaque_ffi!` handle; the ref just stored keeps it live.
         let signal = AbortSignal::opaque_ref(raw);
-        signal.pending_activity_ref();
         signal.add_listener(this.cast(), Self::signal_fired);
     }
 
@@ -385,7 +384,6 @@ impl AbortHandle {
             return;
         };
         signal.clean_native_bindings(ptr::from_ref(self).cast_mut().cast());
-        signal.pending_activity_unref();
     }
 
     /// Leave the context without being told to stop (the owner finished or

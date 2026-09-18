@@ -1128,42 +1128,7 @@ impl PathLikeExt for PathLike<'_> {
             }
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {
-                    use jsc::dom_url::ToFileSystemPathError;
-                    let str = match domurl.file_system_path() {
-                        Ok(s) => s,
-                        Err(ToFileSystemPathError::NotFileUrl) => {
-                            return Err(ctx
-                                .err(
-                                    jsc::ErrorCode::INVALID_URL_SCHEME,
-                                    format_args!("URL must be a non-empty \"file:\" path"),
-                                )
-                                .throw());
-                        }
-                        Err(ToFileSystemPathError::InvalidPath) => {
-                            return Err(ctx
-                                .err(
-                                    jsc::ErrorCode::INVALID_FILE_URL_PATH,
-                                    format_args!("URL must be a non-empty \"file:\" path"),
-                                )
-                                .throw());
-                        }
-                        Err(ToFileSystemPathError::InvalidHost) => {
-                            return Err(ctx
-                                .err(
-                                    jsc::ErrorCode::INVALID_FILE_URL_HOST,
-                                    format_args!("URL must be a non-empty \"file:\" path"),
-                                )
-                                .throw());
-                        }
-                    };
-                    if str.is_empty() {
-                        return Err(ctx
-                            .err(
-                                jsc::ErrorCode::INVALID_ARG_VALUE,
-                                format_args!("URL must be a non-empty \"file:\" path"),
-                            )
-                            .throw());
-                    }
+                    let str = domurl.file_system_path_for_js(ctx)?;
                     arguments.eat();
                     path_like_from_string(ctx, str, arguments.will_be_async)?
                 } else {

@@ -263,6 +263,18 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
+  function releaseSlot(state: TransactionState, pooledConnection: PooledPostgresConnection) {
+    if (state.connectionState & ReservedConnectionState.released) return;
+    state.connectionState |= ReservedConnectionState.released;
+    pool.release(pooledConnection);
+  }
+
+  // The holder of a slot can outlive its connection, so the slot goes back when the connection closes.
+  function onSlotHolderDisconnected(this: TransactionState, pooledConnection: PooledPostgresConnection, err: Error) {
+    onTransactionDisconnected.$call(this, err);
+    releaseSlot(this, pooledConnection);
+  }
+
   const listenable = "listen" in pool ? pool : null;
   function validateChannel(channel: unknown): asserts channel is string {
     if (typeof channel !== "string" || channel.length === 0) {
@@ -341,17 +353,7 @@ const SQL: typeof Bun.SQL = function SQL(
       queries: new Set(),
     };
 
-    function releaseReservation() {
-      if (state.connectionState & ReservedConnectionState.released) return;
-      state.connectionState |= ReservedConnectionState.released;
-      pool.release(pooledConnection);
-    }
-
-    const onDisconnected = onTransactionDisconnected.bind(state);
-    function onClose(err: Error) {
-      onDisconnected(err);
-      releaseReservation();
-    }
+    const onClose = onSlotHolderDisconnected.bind(state, pooledConnection);
     if (pooledConnection.onClose) {
       pooledConnection.onClose(onClose);
     }
@@ -523,7 +525,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (pool.detachConnectionCloseHandler) {
         pool.detachConnectionCloseHandler(pooledConnection, onClose);
       }
-      releaseReservation();
+      releaseSlot(state, pooledConnection);
       return Promise.$resolve(undefined);
     };
     // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions
@@ -648,18 +650,10 @@ const SQL: typeof Bun.SQL = function SQL(
       }
     }
 
-    function releaseTransaction() {
-      if (dontRelease || state.connectionState & ReservedConnectionState.released) return;
-      state.connectionState |= ReservedConnectionState.released;
-      pool.release(pooledConnection);
-    }
-
-    const onDisconnected = onTransactionDisconnected.bind(state);
-    // The callback can outlive its connection, so the slot goes back now, not when the callback returns.
-    function onClose(err: Error) {
-      onDisconnected(err);
-      releaseTransaction();
-    }
+    // a transaction on a reserved connection (dontRelease) leaves the slot to its reservation
+    const onClose = dontRelease
+      ? onTransactionDisconnected.bind(state)
+      : onSlotHolderDisconnected.bind(state, pooledConnection);
     // Use adapter method to attach connection close handler
     if (pool.attachConnectionCloseHandler) {
       pool.attachConnectionCloseHandler(pooledConnection, onClose);
@@ -902,7 +896,9 @@ const SQL: typeof Bun.SQL = function SQL(
       if (pool.detachConnectionCloseHandler) {
         pool.detachConnectionCloseHandler(pooledConnection, onClose);
       }
-      releaseTransaction();
+      if (!dontRelease) {
+        releaseSlot(state, pooledConnection);
+      }
     }
   }
   function sql(

@@ -1031,7 +1031,14 @@ bool X509View::isCA() const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return false;
-    return X509_check_ca(const_cast<X509*>(cert_)) == 1;
+
+    // Not X509_check_ca() == 1 as in Node: BoringSSL returns 1 for v1 certs
+    // where OpenSSL returns 2. Match Node by checking the flags directly.
+    X509* cert = const_cast<X509*>(cert_);
+    const uint32_t flags = X509_get_extension_flags(cert);
+    if ((flags & (EXFLAG_BCONS | EXFLAG_CA)) != (EXFLAG_BCONS | EXFLAG_CA))
+        return false;
+    return (X509_get_key_usage(cert) & X509v3_KU_KEY_CERT_SIGN) != 0;
 }
 
 bool X509View::isIssuedBy(const X509View& issuer) const

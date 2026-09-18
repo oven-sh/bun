@@ -560,8 +560,7 @@ fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize
     Some(len)
 }
 
-/// What the walk below had to drop to reach an existing directory. A `..` and a symlink both
-/// resolve against a component the install has yet to create.
+/// A `..` and a symlink both resolve against a component the install has yet to create.
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Dropped {
     Plain,
@@ -569,8 +568,7 @@ enum Dropped {
     DotDot,
 }
 
-/// The nearest existing directory of the NUL-terminated `buf[..len]`, which `bun.lock` can
-/// name even when it is missing, and what the walk to it dropped.
+/// The nearest existing directory of the NUL-terminated `buf[..len]`, and what it dropped.
 fn real_path_of_nearest_existing_dir<'b>(
     buf: &mut [u8],
     len: usize,
@@ -614,8 +612,7 @@ fn is_symlink(path: &bun_core::ZStr) -> bool {
     }
 }
 
-/// Both paths come from the same `realpath`, so the compare is exact: a case-sensitive
-/// volume has `MyApp` and `myapp` as two directories.
+/// Exact: both come from the same `realpath`, and a volume can be case-sensitive.
 fn is_inside(root: &[u8], dir: &[u8]) -> bool {
     let root = match root.len() {
         // The filesystem root keeps its separator, and every path starts with one.

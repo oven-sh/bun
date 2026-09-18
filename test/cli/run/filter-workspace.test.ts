@@ -902,24 +902,27 @@ describe.concurrent("a directory symlink to a workspace package", () => {
     });
   });
 
-  test("--workspaces does not run the root through a link back to it", async () => {
-    using dir = tempDir("filter-symlink-root", {
-      packages: {
-        real: {
-          "package.json": JSON.stringify({ name: "real", scripts: { build: "echo ran-real" } }),
+  test.each([[["--workspaces"]], [["--filter", "*"]]])(
+    "%j does not run the root through a link back to it",
+    async args => {
+      using dir = tempDir("filter-symlink-root", {
+        packages: {
+          real: {
+            "package.json": JSON.stringify({ name: "real", scripts: { build: "echo ran-real" } }),
+          },
         },
-      },
-      "package.json": JSON.stringify({
-        name: "root",
-        private: true,
-        workspaces: ["packages/*"],
-        scripts: { build: "echo ran-root" },
-      }),
-    });
-    symlinkSync(String(dir), join(dir, "packages", "up"), "junction");
-    const result = await runBuild(String(dir), ["--workspaces"]);
-    expect({ ran: result.ran, exitCode: result.exitCode }).toEqual({ ran: ["ran-real"], exitCode: 0 });
-  });
+        "package.json": JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: ["packages/*"],
+          scripts: { build: "echo ran-root" },
+        }),
+      });
+      symlinkSync(String(dir), join(dir, "packages", "up"), "junction");
+      const result = await runBuild(String(dir), args);
+      expect({ ran: result.ran, exitCode: result.exitCode }).toEqual({ ran: ["ran-real"], exitCode: 0 });
+    },
+  );
 });
 
 describe("selectors", () => {

@@ -1,5 +1,7 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import { isWindows } from "harness";
+import { symlinkSync } from "node:fs";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -97,6 +99,83 @@ devTest("importing a file before it is created", {
     });
 
     await c.expectMessage("value: 456");
+  },
+});
+// A symlink created while the server runs is missing from the resolver's cached
+// listing of its parent directory. It must still resolve to its real path.
+// https://github.com/oven-sh/bun/issues/42776
+devTest("directory symlink created while the server runs does not duplicate the modules behind it", {
+  // The harness root on Windows is spelled like %TEMP%, which can differ from the
+  // path on disk in case or 8.3 form. A junction resolves to the path on disk, so
+  // the two imports differ there even when the link predates the server.
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { id } from "./real/m.ts";
+      console.log(typeof id);
+    `,
+    "real/m.ts": `
+      console.log("evaluated m.ts");
+      export const id = Symbol();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("evaluated m.ts", "symbol");
+
+    await c.expectReload(async () => {
+      await using _wait = await dev.batchChanges();
+      symlinkSync(dev.join("real"), dev.join("ldir"), "dir");
+      await dev.write(
+        "index.ts",
+        `
+          import { id as a } from "./real/m.ts";
+          import { id as b } from "./ldir/m.ts";
+          console.log("one instance: " + (a === b));
+        `,
+      );
+    });
+    await c.expectMessage("evaluated m.ts", "one instance: true");
+  },
+});
+devTest("package symlinked into node_modules while the server runs resolves its own dependencies", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import warm from "warm";
+      console.log(warm);
+    `,
+    "node_modules/warm/index.js": `export default "warm";`,
+    // dep-a is reachable only from the real location of pkg, as in an isolated install.
+    "store/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+    "store/node_modules/pkg/index.js": `
+      import dep from "dep-a";
+      export default "pkg loaded " + dep;
+    `,
+    "store/node_modules/dep-a/package.json": JSON.stringify({ name: "dep-a", version: "1.0.0", main: "index.js" }),
+    "store/node_modules/dep-a/index.js": `export default "dep-a";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("warm");
+
+    await c.expectReload(async () => {
+      await using _wait = await dev.batchChanges();
+      symlinkSync(dev.join("store/node_modules/pkg"), dev.join("node_modules/pkg"), isWindows ? "junction" : "dir");
+      await dev.write(
+        "index.ts",
+        `
+          import pkg from "pkg";
+          console.log(pkg);
+        `,
+      );
+    });
+    await c.expectMessage("pkg loaded dep-a");
   },
 });
 devTest("default export same-scope handling", {

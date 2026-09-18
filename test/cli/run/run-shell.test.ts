@@ -82,25 +82,27 @@ test.skipIf(isWindows)(
   },
 );
 
-// hide-paths.c makes chosen paths look absent (seccomp user notification). The binary, or null when
-// this host cannot use it: no cc, no kernel headers, or a kernel or sandbox that refuses the filter.
-const hidePaths = (() => {
-  if (!isLinux) return null;
+// hide-paths.c makes chosen paths look absent (seccomp user notification). `bin` is the helper,
+// `skip` means this host cannot use it (no cc, missing headers, a kernel or sandbox that refuses
+// the filter), `error` is a compile failure of the helper itself.
+const hidePaths: { bin: string } | { skip: true } | { error: string } = (() => {
+  if (!isLinux) return { skip: true };
   const bin = join(tempDirWithFiles("hide-paths", {}), "hide-paths");
   const compile = spawnSync("cc", ["-O0", "-o", bin, join(import.meta.dir, "hide-paths.c")], { stdio: "pipe" });
-  if ((compile.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return null;
+  if ((compile.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return { skip: true };
   if (compile.status !== 0) {
     const stderr = compile.stderr?.toString() ?? "";
-    if (/linux\/(seccomp|filter|audit)\.h|sys\/prctl\.h/.test(stderr)) return null;
-    throw new Error("failed to compile hide-paths.c:\n" + stderr);
+    // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
+    return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
   }
   // Probe: the helper runs itself with no arguments, which prints the usage and exits 2. 77 means skip.
-  return spawnSync(bin, ["/hide-paths-probe", "--", bin], { stdio: "pipe" }).status === 2 ? bin : null;
+  return spawnSync(bin, ["/hide-paths-probe", "--", bin], { stdio: "pipe" }).status === 2 ? { bin } : { skip: true };
 })();
 
 // A FROM-scratch or distroless image has no /bin/sh. `--shell=bun` must not need one. Every path
 // that the shell lookup probes looks absent, and PATH points at an empty directory.
-describe.skipIf(hidePaths == null)("bun run on a system with no shell", () => {
+describe.skipIf("skip" in hidePaths)("bun run on a system with no shell", () => {
+  // Keep in sync with HARDCODED_POPULAR_ONES in src/runtime/cli/run_command.rs.
   const shellPaths = [
     "/bin/bash",
     "/usr/bin/bash",
@@ -122,8 +124,9 @@ describe.skipIf(hidePaths == null)("bun run on a system with no shell", () => {
       "empty-path/.keep": "",
       ...files,
     });
+    if ("error" in hidePaths) throw new Error("failed to compile hide-paths.c:\n" + hidePaths.error);
     await using proc = Bun.spawn({
-      cmd: [hidePaths!, ...shellPaths, "--", bunExe(), "run", ...args],
+      cmd: [(hidePaths as { bin: string }).bin, ...shellPaths, "--", bunExe(), "run", ...args],
       env: { ...bunEnv, PATH: join(String(dir), "empty-path") },
       cwd: String(dir),
       stdout: "pipe",
@@ -147,8 +150,10 @@ describe.skipIf(hidePaths == null)("bun run on a system with no shell", () => {
 
   test.concurrent("the system shell reports what is missing and how to continue", async () => {
     const { stdout, stderr, exitCode } = await runWithoutShells({}, ["start"]);
-    expect(stderr).toContain("error: Bun could not find a system shell (bash, sh, or zsh) to run this script");
-    expect(stderr).toContain("--shell=bun");
+    expect(stderr).toBe(
+      "error: Bun could not find a system shell (bash, sh, or zsh) to run this script\n" +
+        'note: To use Bun\'s built-in shell, pass --shell=bun to "bun run" or set shell = "bun" under [run] in bunfig.toml\n',
+    );
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });

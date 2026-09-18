@@ -176,6 +176,8 @@ static int us_ssl_listener_ex_idx = -1;
 /* Per-SSL socket-level SNI resolver (us_socket_sni_resolver_t), used when the
  * SSL has no listen socket behind it. */
 static int us_ssl_socket_sni_ex_idx = -1;
+/* Per-SSL resolver for the client's ALPN offer (us_ssl_alpn_offer_resolver_t). */
+static int us_ssl_alpn_offer_ex_idx = -1;
 /* Set (to a non-NULL marker) only on SSLs attached to a real us_socket_t via
  * us_internal_ssl_attach. The new-session callback uses it to ignore SSLs
  * owned by other engines (the JS-stream SSL wrapper used for TLS-over-duplex)
@@ -249,6 +251,23 @@ static void us_socket_sni_resolver_free(void *parent, void *ptr, CRYPTO_EX_DATA 
                                         int index, long argl, void *argp) {
   (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
   if (ptr) us_free(ptr);
+}
+
+struct us_ssl_alpn_offer_resolver_t {
+  us_ssl_alpn_offer_cb cb;
+  /* The ClientHello's ALPN protocol list, copied by us_select_cert_cb and
+   * owned here until the certificate callback dispatches it. */
+  uint8_t *offer;
+  size_t offer_len;
+};
+
+static void us_ssl_alpn_offer_resolver_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                            int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  struct us_ssl_alpn_offer_resolver_t *resolver = ptr;
+  if (!resolver) return;
+  us_free(resolver->offer);
+  us_free(resolver);
 }
 
 struct us_ssl_reneg_state_t {
@@ -456,6 +475,8 @@ static void us_ex_idx_init(void) {
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_socket_sni_ex_idx =
       SSL_get_ex_new_index(0, NULL, NULL, NULL, us_socket_sni_resolver_free);
+  us_ssl_alpn_offer_ex_idx =
+      SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_alpn_offer_resolver_free);
   us_ssl_is_socket_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_inline_reject_enabled_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_inline_reject_err_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
@@ -3055,6 +3076,35 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
   SSL_CTX_set_session_id_context(ctx, (const uint8_t *)&sid, sizeof(sid));
 }
 
+static struct us_ssl_alpn_offer_resolver_t *us_ssl_alpn_offer_resolver(SSL *ssl) {
+  return us_ssl_alpn_offer_ex_idx >= 0 ? SSL_get_ex_data(ssl, us_ssl_alpn_offer_ex_idx) : NULL;
+}
+
+/* BoringSSL's certificate callback: it runs once the version is negotiated
+ * and every SNI stage is done, and before BoringSSL picks the certificate and
+ * the session. BoringSSL's own ALPN selection callback runs after the first,
+ * and on TLS 1.2 after both, which is too late to replace the SSL_CTX. */
+static int us_ssl_alpn_offer_cert_cb(SSL *ssl, void *arg) {
+  (void)arg;
+  struct us_ssl_alpn_offer_resolver_t *resolver = us_ssl_alpn_offer_resolver(ssl);
+  if (!resolver || !resolver->offer) return 1;
+  /* Taken first: the resolver runs JS, which can close the connection. */
+  uint8_t *offer = resolver->offer;
+  size_t offer_len = resolver->offer_len;
+  resolver->offer = NULL;
+  resolver->offer_len = 0;
+  resolver->cb(ssl, offer, (unsigned int)offer_len);
+  us_free(offer);
+  return 1;
+}
+
+/* The certificate callback lives in the SSL's CERT, which SSL_set_SSL_CTX
+ * replaces: arm it again after every switch that precedes it. */
+static void us_ssl_alpn_offer_arm(SSL *ssl) {
+  struct us_ssl_alpn_offer_resolver_t *resolver = us_ssl_alpn_offer_resolver(ssl);
+  if (resolver && resolver->offer) SSL_set_cert_cb(ssl, us_ssl_alpn_offer_cert_cb, NULL);
+}
+
 /* Every SNI context switch goes through here: SSL_set_SSL_CTX alone leaves
  * verify_mode as inherited from the default context at accept, so a
  * per-serverName entry's requestCert/rejectUnauthorized are added on top of
@@ -3063,6 +3113,7 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
  * leaves the connection's verify mode untouched. */
 static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
   SSL_set_SSL_CTX(ssl, ctx);
+  us_ssl_alpn_offer_arm(ssl);
   if (us_ctx_sni_policy_ex_idx < 0) return;
   uintptr_t policy = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);
   if (!(policy & US_SNI_POLICY_REQUEST_CERT)) return;
@@ -3120,12 +3171,13 @@ static size_t us_client_hello_servername(const SSL_CLIENT_HELLO *hello, char *ou
   return 0;
 }
 
-/* The async-capable certificate selector. Registered (instead of relying on
- * sni_cb alone) on listener contexts that have a dynamic JS resolver, so an
- * SNICallback that cannot answer synchronously suspends the handshake
- * (ssl_select_cert_retry -> SSL_ERROR_PENDING_CERTIFICATE) instead of falling
- * through to the default context. us_socket_sni_resolve() resumes it. */
-static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello) {
+/* The SNI stage of us_select_cert_cb: the async-capable certificate selector.
+ * Registered (instead of relying on sni_cb alone) on listener contexts that
+ * have a dynamic JS resolver, so an SNICallback that cannot answer
+ * synchronously suspends the handshake (ssl_select_cert_retry ->
+ * SSL_ERROR_PENDING_CERTIFICATE) instead of falling through to the default
+ * context. us_socket_sni_resolve() resumes it. */
+static enum ssl_select_cert_result_t us_select_cert_sni(const SSL_CLIENT_HELLO *hello) {
   SSL *ssl = hello->ssl;
   if (!ssl || us_ssl_listener_ex_idx < 0) return ssl_select_cert_success;
 
@@ -3246,6 +3298,47 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     }
   }
   return ssl_select_cert_success;
+}
+
+/* The ALPN stage of us_select_cert_cb: only here is the ClientHello at hand,
+ * so keep the protocols it offers for the certificate callback. Returns 0
+ * when they could not be kept. */
+static int us_select_cert_alpn(const SSL_CLIENT_HELLO *hello) {
+  struct us_ssl_alpn_offer_resolver_t *resolver = us_ssl_alpn_offer_resolver(hello->ssl);
+  if (!resolver) return 1;
+  const uint8_t *ext;
+  size_t ext_len;
+  if (!SSL_early_callback_ctx_extension_get(
+          hello, TLSEXT_TYPE_application_layer_protocol_negotiation, &ext, &ext_len)) {
+    return 1;
+  }
+  /* ProtocolNameList: u16 length, then entries of (u8 length, bytes). A list
+   * BoringSSL is going to reject (ssl_is_valid_alpn_list) is not dispatched. */
+  if (ext_len < 2 || (((size_t)ext[0] << 8) | ext[1]) != ext_len - 2) return 1;
+  const uint8_t *protocols = ext + 2;
+  const size_t protocols_len = ext_len - 2;
+  if (protocols_len == 0) return 1;
+  for (size_t i = 0; i < protocols_len; i += (size_t)protocols[i] + 1) {
+    if (protocols[i] == 0 || (size_t)protocols[i] + 1 > protocols_len - i) return 1;
+  }
+  uint8_t *offer = us_malloc(protocols_len);
+  if (!offer) return 0;
+  memcpy(offer, protocols, protocols_len);
+  us_free(resolver->offer);
+  resolver->offer = offer;
+  resolver->offer_len = protocols_len;
+  us_ssl_alpn_offer_arm(hello->ssl);
+  return 1;
+}
+
+static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *hello) {
+  enum ssl_select_cert_result_t result = us_select_cert_sni(hello);
+  /* An offer the resolver never sees would be served by whatever context is
+   * current, so fail the handshake instead. */
+  if (result == ssl_select_cert_success && hello->ssl && !us_select_cert_alpn(hello)) {
+    return ssl_select_cert_error;
+  }
+  return result;
 }
 
 static int sni_cb(SSL *ssl, int *al, void *arg) {
@@ -3370,6 +3463,29 @@ void us_socket_on_server_name(struct us_socket_t *s, us_socket_server_name_cb cb
    * stay a no-op on any SSL carrying neither resolver. */
   SSL_CTX *ctx = SSL_get_SSL_CTX(ssl);
   if (ctx) SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+}
+
+/* Register the resolver for the ALPN protocols a client offers on a
+ * server-side SSL, before its handshake is driven, and again after its
+ * SSL_CTX was replaced. Takes the SSL, not the socket: an SSL the
+ * TLS-over-duplex engine owns has no us_socket_t. Returns 0 on failure. */
+int us_ssl_on_alpn_offer(SSL *ssl, us_ssl_alpn_offer_cb cb) {
+  if (!ssl || !cb) return 0;
+  us_ex_idx_ensure();
+  if (us_ssl_alpn_offer_ex_idx < 0) return 0;
+  struct us_ssl_alpn_offer_resolver_t *resolver = us_ssl_alpn_offer_resolver(ssl);
+  if (!resolver) {
+    resolver = us_calloc(1, sizeof(*resolver));
+    if (!resolver) return 0;
+    if (!SSL_set_ex_data(ssl, us_ssl_alpn_offer_ex_idx, resolver)) {
+      us_free(resolver);
+      return 0;
+    }
+  }
+  resolver->cb = cb;
+  /* Permanent on a possibly shared SSL_CTX, like us_socket_on_server_name. */
+  SSL_CTX_set_select_certificate_cb(SSL_get_SSL_CTX(ssl), us_select_cert_cb);
+  return 1;
 }
 
 void *us_socket_server_name_userdata(struct us_socket_t *s) {

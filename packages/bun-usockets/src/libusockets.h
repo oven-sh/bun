@@ -437,6 +437,14 @@ int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 typedef struct ssl_ctx_st *(*us_socket_server_name_cb)(struct us_socket_t *socket,
     const char *hostname, int *abort_handshake);
 void us_socket_on_server_name(us_socket_r s, us_socket_server_name_cb cb);
+/* Per-SSL resolver for the ALPN protocols a ClientHello offers (the wire list:
+ * u8 length, bytes). It runs once the version is negotiated and SNI is
+ * resolved, while the SSL_CTX can still be replaced: BoringSSL has picked
+ * neither the certificate nor the session yet. Register it again after the
+ * SSL_CTX was replaced. Returns 0 on failure. */
+typedef void (*us_ssl_alpn_offer_cb)(struct ssl_st *ssl, const unsigned char *protocols,
+    unsigned int protocols_len);
+int us_ssl_on_alpn_offer(struct ssl_st *ssl, us_ssl_alpn_offer_cb cb);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or

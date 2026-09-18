@@ -37,18 +37,21 @@ class WeakReference<T extends WeakKey> extends WeakRef<T> {
 // Only GC can be used as a valid time to clean up the channels map.
 class WeakRefMap extends SafeMap {
   // A newer channel may own the key by the time the finalizer runs.
-  #finalizers = new SafeFinalizationRegistry(({ key, ref }) => {
-    if (super.get(key) === ref) this.delete(key);
+  #finalizers = new SafeFinalizationRegistry(key => {
+    if (!this.has(key)) this.delete(key);
   });
 
   set(key, value) {
-    const ref = new WeakReference(value);
-    this.#finalizers.register(value, { key, ref });
-    return super.set(key, ref);
+    this.#finalizers.register(value, key);
+    return super.set(key, new WeakReference(value));
   }
 
   get(key) {
     return super.get(key)?.get();
+  }
+
+  has(key) {
+    return !!this.get(key);
   }
 
   incRef(key) {

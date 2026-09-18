@@ -130,6 +130,18 @@ export function bunExe() {
   return process.execPath;
 }
 
+/**
+ * Wraps a command so the child (and anything it spawns) runs with a core file
+ * size limit of 0. For children that die via SIG_DFL on purpose, rather than
+ * through a test hook that calls `suppress_core_dumps_if_necessary()`: the CI
+ * runner (`--coredump-upload`) treats a new core file as a failed job even when
+ * every test passed. POSIX only; on Windows the command is returned unchanged.
+ */
+export function noCoreDump(argv: string[]): string[] {
+  if (isWindows) return argv;
+  return ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...argv];
+}
+
 export function nodeExe(): string | null {
   return which("node") || null;
 }

@@ -380,33 +380,34 @@ pub fn do_patch_commit(
             .map(|cache_entry| node_modules_entries(cache_entry.fd))
             .unwrap_or_default();
         // Bundled dependencies stay in the diff. Only what bun installed next to them is hidden.
-        let hidden_dependencies: Vec<(Vec<u8>, Vec<u8>)> =
-            node_modules_entries(new_folder_handle.fd)
-                .into_iter()
-                .filter(|entry| {
-                    !shipped_dependencies.is_empty() && !shipped_dependencies.contains(entry)
-                })
-                .map(|entry| {
-                    (
-                        entry_path(b"node_modules", &entry),
-                        entry_path(random_tempdir.as_bytes(), &entry),
-                    )
-                })
-                .filter(|(installed_at, hidden_at)| {
-                    let _ = root_node_modules
-                        .make_path(resolve_path::dirname::<platform::Auto>(hidden_at));
-                    sys::renameat_concurrently_a(
-                        new_folder_handle.fd,
-                        installed_at,
-                        root_node_modules.fd,
-                        hidden_at,
-                        sys::RenameOptions {
-                            move_fallback: true,
-                        },
-                    )
-                    .is_ok()
-                })
-                .collect();
+        let mut hidden_dependencies: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        if !shipped_dependencies.is_empty() {
+            for entry in node_modules_entries(new_folder_handle.fd) {
+                if shipped_dependencies.contains(&entry) {
+                    continue;
+                }
+                let installed_at = entry_path(b"node_modules", &entry);
+                let hidden_at = entry_path(random_tempdir.as_bytes(), &entry);
+                let _ = root_node_modules
+                    .make_path(resolve_path::dirname::<platform::Auto>(&hidden_at));
+                match sys::renameat_concurrently_a(
+                    new_folder_handle.fd,
+                    &installed_at,
+                    root_node_modules.fd,
+                    &hidden_at,
+                    sys::RenameOptions {
+                        move_fallback: true,
+                    },
+                ) {
+                    Ok(()) => hidden_dependencies.push((installed_at, hidden_at)),
+                    Err(e) => bun_core::warn!(
+                        "failed to hide <b>{}<r> from the diff, the patch may include it: {}",
+                        bstr::BStr::new(&installed_at),
+                        e
+                    ),
+                }
+            }
+        }
 
         // If the package has nested a node_modules folder, we don't want this to
         // appear in the patch file when we run git diff.
@@ -467,6 +468,7 @@ pub fn do_patch_commit(
         // deferred restore — one-off rename-back logic on every exit
         // path of `'brk`. Captures borrow into stack buffers.
         scopeguard::defer! {
+            let mut all_restored = !hidden_dependencies.is_empty();
             for (installed_at, hidden_at) in &hidden_dependencies {
                 if let Err(e) = sys::renameat_concurrently_a(
                     root_node_modules.fd,
@@ -475,10 +477,11 @@ pub fn do_patch_commit(
                     installed_at,
                     sys::RenameOptions { move_fallback: true },
                 ) {
+                    all_restored = false;
                     bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
                 }
             }
-            if !hidden_dependencies.is_empty() {
+            if all_restored {
                 let _ = root_node_modules.delete_tree(random_tempdir.as_bytes());
             }
             if has_nested_node_modules || bun_patch_tag.is_some() {

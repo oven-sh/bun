@@ -1037,6 +1037,159 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   expect(message).toEqual({ sameInstance: true, text: "hello" });
 });
 
+// The fd of a transferred FileHandle has no owner until the worker unpacks its workerData. The
+// parent closes the fd of a handle that the worker never received, as node does (~TransferData),
+// and leaves alone the fd of a handle that the worker did receive.
+// These tests watch descriptor numbers, so they stay serial.
+describe("the fd of a FileHandle transferred through workerData", () => {
+  // False once the descriptor is closed, or once its number belongs to another file.
+  function refersTo(fd: number, file: fs.Stats) {
+    try {
+      const now = fs.fstatSync(fd);
+      return now.ino === file.ino && now.dev === file.dev;
+    } catch (e: any) {
+      if (e.code !== "EBADF") throw e;
+      return false;
+    }
+  }
+
+  // A FileHandle to transfer. Disposal closes what a failed expectation leaves open: the handle
+  // if it still owns the fd, or the bare fd.
+  async function openToTransfer(path: string) {
+    const fh = await fs.promises.open(path, "r");
+    const fd = fh.fd;
+    const file = fs.fstatSync(fd);
+    return {
+      fh,
+      fd,
+      isOpen: () => refersTo(fd, file),
+      async [Symbol.asyncDispose]() {
+        if (fh.fd !== -1) await fh.close();
+        else if (refersTo(fd, file)) fs.closeSync(fd);
+      },
+    };
+  }
+
+  // open() returns the lowest free descriptor, so these take the number `fd` again once it is
+  // closed. A second close of that number then closes one of them.
+  function reopenUpTo(fd: number, path: string) {
+    const held = [fs.openSync(path, "r")];
+    const file = fs.fstatSync(held[0]);
+    while (held.at(-1)! < fd) held.push(fs.openSync(path, "r"));
+    return {
+      closedByOthers: () => held.filter(descriptor => !refersTo(descriptor, file)),
+      [Symbol.dispose]() {
+        for (const descriptor of held) if (refersTo(descriptor, file)) fs.closeSync(descriptor);
+      },
+    };
+  }
+
+  test("is closed when the worker entry does not resolve", async () => {
+    using dir = tempDir("worker-fh-undelivered", { "x.txt": "hello" });
+    await using transferred = await openToTransfer(join(String(dir), "x.txt"));
+    const { fh } = transferred;
+    const worker = new Worker(join(String(dir), "missing.js"), { workerData: { fh }, transferList: [fh as any] });
+    const errors: string[] = [];
+    worker.on("error", error => errors.push(error.code));
+    const code = await new Promise<number>(resolve => worker.on("exit", resolve));
+    expect({ errors, code, parentFd: fh.fd, open: transferred.isOpen() }).toEqual({
+      errors: ["MODULE_NOT_FOUND"],
+      code: 1,
+      parentFd: -1,
+      open: false,
+    });
+  });
+
+  // terminate() in the same tick as the constructor stops the thread before it unpacks its
+  // workerData. A thread that wins that race receives the handle and owns the fd, so that
+  // attempt proves nothing and the next one runs.
+  test("is closed when terminate() stops the worker before it starts", async () => {
+    using dir = tempDir("worker-fh-undelivered", { "x.txt": "hello" });
+    let closed = false;
+    for (let attempt = 0; attempt < 10 && !closed; attempt++) {
+      // The worker is gone at disposal, so nothing else can close the fd of an attempt it won.
+      await using transferred = await openToTransfer(join(String(dir), "x.txt"));
+      const { fh } = transferred;
+      const worker = new Worker("setInterval(() => {}, 1000)", {
+        eval: true,
+        workerData: { fh },
+        transferList: [fh as any],
+      });
+      await worker.terminate();
+      expect(fh.fd).toBe(-1);
+      closed = !transferred.isOpen();
+    }
+    expect(closed).toBe(true);
+  });
+
+  // A handle that workerData does not reference is closed by the constructor. The exit of a
+  // worker that never started must not close that number a second time.
+  test("is closed only once when workerData does not reference the handle", async () => {
+    using dir = tempDir("worker-fh-unreferenced", { "x.txt": "hello", "y.txt": "world" });
+    const other = join(String(dir), "y.txt");
+    // A starting worker thread opens descriptors of its own. It takes these lower numbers, which
+    // leaves the number of the handle for reopenUpTo().
+    const parked = Array.from({ length: 16 }, () => fs.openSync(other, "r"));
+    await using transferred = await openToTransfer(join(String(dir), "x.txt"));
+    for (const descriptor of parked) fs.closeSync(descriptor);
+    const { fh } = transferred;
+    const worker = new Worker(join(String(dir), "missing.js"), { workerData: {}, transferList: [fh as any] });
+    const closedByConstructor = !transferred.isOpen();
+    using reopened = reopenUpTo(transferred.fd, other);
+    const errors: string[] = [];
+    worker.on("error", error => errors.push(error.code));
+    const code = await new Promise<number>(resolve => worker.on("exit", resolve));
+    expect({ errors, code, closedByConstructor, closedAgain: reopened.closedByOthers() }).toEqual({
+      errors: ["MODULE_NOT_FOUND"],
+      code: 1,
+      closedByConstructor: true,
+      closedAgain: [],
+    });
+  });
+
+  // Fails when the claim of the worker does not reach the parent: the parent then closes the
+  // number of a handle that the worker received and closed, which by then is another file's.
+  test("is not closed by the parent when the worker received the handle", async () => {
+    using dir = tempDir("worker-fh-delivered", { "x.txt": "hello", "y.txt": "world" });
+    await using transferred = await openToTransfer(join(String(dir), "x.txt"));
+    const { fh } = transferred;
+    await using worker = new Worker(
+      `const { workerData, parentPort } = require("node:worker_threads");
+       parentPort.once("message", () => {});
+       workerData.fh.close().then(() => parentPort.postMessage("closed"));`,
+      { eval: true, workerData: { fh }, transferList: [fh as any] },
+    );
+    const [message] = await once(worker, "message");
+    using reopened = reopenUpTo(transferred.fd, join(String(dir), "y.txt"));
+    worker.postMessage("exit");
+    const [code] = await once(worker, "exit");
+    expect({ message, code, closedByParent: reopened.closedByOthers() }).toEqual({
+      message: "closed",
+      code: 0,
+      closedByParent: [],
+    });
+  });
+
+  test.each([
+    ["no claim flag", undefined],
+    ["a claim flag of the wrong type", new Float64Array(1)],
+    ["an empty claim flag", new Int32Array(0)],
+  ])("workerData that imitates a marker with %s stays plain data", async (_, claim) => {
+    const imitation = {
+      __bunNodeWorkerJSTransferable: "internal/fs/promises:FileHandle",
+      data: { fd: 1 << 20 },
+      claim,
+    };
+    await using worker = new Worker(
+      `const { workerData, parentPort } = require("node:worker_threads");
+       parentPort.postMessage(workerData);`,
+      { eval: true, workerData: { imitation } },
+    );
+    const [message] = await once(worker, "message");
+    expect(message).toEqual({ imitation });
+  });
+});
+
 test("MessagePort.hasRef() reports actual loop-ref state", () => {
   const { port1 } = new MessageChannel();
   expect(port1.hasRef()).toBe(false);

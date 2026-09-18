@@ -2,6 +2,7 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
+const { isInt32Array } = require("node:util/types");
 const { SafeMap } = require("internal/primordials");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const {
@@ -356,16 +357,53 @@ function setupWorkerStdio(stdio) {
 // A plain string key on purpose: Symbols don't survive structured clone, and
 // Bun has no native HostObject hook, so the marker must ride along inside the
 // cloned graph (including Map/Set entries). This is in-band signaling: a user
-// object that fabricates the key in workerData will deserialize on the worker
-// side where node would deliver it unchanged. That's accepted - it is not a
-// privilege boundary (worker threads share the parent's fd table anyway).
+// object that fabricates the key and the claim flag in workerData will
+// deserialize on the worker side where node would deliver it unchanged. That's
+// accepted - it is not a privilege boundary (worker threads share the parent's
+// fd table anyway).
 const kJSTransferableMarker = "__bunNodeWorkerJSTransferable";
 
 function isJSTransferableMarker(value: object): boolean {
-  return (
-    typeof (value as Record<string, unknown>)[kJSTransferableMarker] === "string" &&
-    Object.prototype.hasOwnProperty.$call(value, kJSTransferableMarker)
-  );
+  if (
+    typeof (value as Record<string, unknown>)[kJSTransferableMarker] !== "string" ||
+    !Object.prototype.hasOwnProperty.$call(value, kJSTransferableMarker)
+  ) {
+    return false;
+  }
+  // Exactly what claimJSTransferable() accepts, so user data that looks like a
+  // marker stays plain data and never throws in the worker bootstrap.
+  const claim = (value as Record<string, any>).claim;
+  return isInt32Array(claim) && claim.length > 0;
+}
+
+// Between kTransfer() on the parent and kDeserialize() on the worker the
+// resource (a bare fd) has no owner. Each marker carries a one-slot
+// SharedArrayBuffer, and the resource belongs to the thread that flips the slot
+// first: the worker when it deserializes the marker, or the parent when it
+// rolls the transfer back or finds the marker undelivered after the worker
+// exited. Node closes the fd of a message that is destroyed undelivered:
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L318-L327
+function claimJSTransferable(claim: Int32Array): boolean {
+  return Atomics.compareExchange(claim, 0, 0, 1) === 0;
+}
+
+function closeIfUnclaimed(data: unknown, claim: Int32Array) {
+  const fd = (data as any)?.fd;
+  if (typeof fd !== "number" || fd < 0 || !claimJSTransferable(claim)) return;
+  try {
+    require("node:fs").closeSync(fd);
+  } catch {
+    // already closed
+  }
+}
+
+// Module scope on purpose. The Worker keeps this closure until it exits, and a
+// closure made inside packJSTransferables() would keep that call's whole scope
+// alive with it, the user's workerData graph included.
+function makeReclaimJSTransferables(pending: Array<[data: unknown, claim: Int32Array]>) {
+  return function reclaimJSTransferables() {
+    for (const { 0: data, 1: claim } of pending) closeIfUnclaimed(data, claim);
+  };
 }
 
 function deserializeJSTransferable(marker: Record<string, any>): unknown {
@@ -374,7 +412,7 @@ function deserializeJSTransferable(marker: Record<string, any>): unknown {
     case "internal/fs/promises:FileHandle": {
       const { FileHandle, kDeserialize } = require("node:fs").promises.$data;
       const handle = new FileHandle(-1);
-      handle[kDeserialize](marker.data);
+      if (claimJSTransferable(marker.claim)) handle[kDeserialize](marker.data);
       return handle;
     }
     default:
@@ -434,6 +472,7 @@ function unpackJSTransferables(value: unknown, memo?: Map<object, unknown>): unk
 
 const kRestoreJSTransferables = Symbol("kRestoreJSTransferables");
 const kFinalizeJSTransferables = Symbol("kFinalizeJSTransferables");
+const kReclaimJSTransferables = Symbol("kReclaimJSTransferables");
 
 function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   const transferList = options?.transferList;
@@ -460,9 +499,10 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   // kTransfer() neuters the handle (extracts the bare fd); if anything later
   // in the pack/construct sequence throws, restore the already-neutered
   // handles so their fds aren't orphaned.
-  const neutered: Array<[item: any, data: unknown]> = [];
+  const neutered: Array<[item: any, data: unknown, claim: Int32Array]> = [];
   function restoreNeutered() {
-    for (const { 0: item, 1: data } of neutered) {
+    for (const { 0: item, 1: data, 2: claim } of neutered) {
+      if (!claimJSTransferable(claim)) continue;
       try {
         item[kDeserialize](data);
       } catch {
@@ -483,12 +523,15 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
           );
         }
         const extraTransfers = item[kTransferList]?.();
+        // Allocated before kTransfer() so nothing can throw between neutering and the push.
+        const claim = new Int32Array(new SharedArrayBuffer(4));
         // May throw DataCloneError (e.g. FileHandle in use); propagate synchronously like Node.
         const { data, deserializeInfo } = item[kTransfer]();
-        neutered.push([item, data]);
+        neutered.push([item, data, claim]);
         (replacements ??= new Map()).set(item, {
           [kJSTransferableMarker]: deserializeInfo,
           data,
+          claim,
         });
         if ($isArray(extraTransfers)) nativeTransferList.push(...extraTransfers);
       } else {
@@ -570,16 +613,16 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   // rollback above must still find the fd open to restore the handle (node
   // leaves the handle fully usable in that case).
   packed[kFinalizeJSTransferables] = function finalizeJSTransferables() {
-    for (const { 0: item, 1: data } of neutered) {
-      if (!usedMarkers.has(item) && typeof (data as any)?.fd === "number" && (data as any).fd >= 0) {
-        try {
-          require("node:fs").closeSync((data as any).fd);
-        } catch {
-          // already closed
-        }
-      }
+    for (const { 0: item, 1: data, 2: claim } of neutered) {
+      if (!usedMarkers.has(item)) closeIfUnclaimed(data, claim);
     }
   };
+  // A worker that exits before it unpacks its workerData (the entry did not
+  // resolve, or terminate() got there first) leaves every marker undelivered.
+  // Runs on 'close', which the worker thread posts after its VM is destroyed.
+  const pending: Array<[data: unknown, claim: Int32Array]> = [];
+  for (const { 1: data, 2: claim } of neutered) pending.push([data, claim]);
+  packed[kReclaimJSTransferables] = makeReclaimJSTransferables(pending);
   return packed;
 }
 
@@ -820,6 +863,7 @@ class Worker extends EventEmitter {
   #urlToRevoke = "";
   // threadId captured for cleaning up the messaging control port on close.
   #messagingThreadId: number | undefined = undefined;
+  #reclaimJSTransferables: (() => void) | undefined = undefined;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -952,6 +996,7 @@ class Worker extends EventEmitter {
     // The transfer is committed - release fds that were transferred but are
     // not referenced from workerData (nothing will deserialize them).
     options[kFinalizeJSTransferables]?.();
+    this.#reclaimJSTransferables = options[kReclaimJSTransferables];
     // Tracing active (CLI flag or dynamic enable): record the Node-style
     // `[worker N] <name>` thread-name metadata event. No-op when tracing is
     // off — the agent module is a tiny one-time load.
@@ -1170,6 +1215,9 @@ class Worker extends EventEmitter {
       messaging.destroyMainThreadPort(this.#messagingThreadId);
       this.#messagingThreadId = undefined;
     }
+    // Close the transferred FileHandles that the worker never received.
+    this.#reclaimJSTransferables?.();
+    this.#reclaimJSTransferables = undefined;
     // End captured stdio readables when the worker exits, even if it was
     // terminated before its own streams finished.
     if (this.#stdout) {

@@ -13,7 +13,7 @@ use bun_jsc::{
     JsThread, Protected, Strong,
 };
 
-use crate::node::{Flavor, StringObjects, StringOrBuffer};
+use crate::node::{Flavor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params
 // are by-value `JSValue`, so no caller-side preconditions remain.
@@ -150,6 +150,7 @@ macro_rules! extern_crypto_job {
                     drop(this);
                     produced?;
                     global.bun_vm().event_loop_mut().run_callback(
+                        bun_event_loop::ContextId::NONE,
                         callback.get(),
                         global,
                         JSValue::UNDEFINED,
@@ -165,7 +166,7 @@ macro_rules! extern_crypto_job {
                 ctx: *mut Ctx,
                 callback: JSValue,
             ) {
-                let cx = global.js_thread();
+                let cx = global.js_thread_of_caller_no_frame();
                 let callback = callback.with_async_context_if_needed(global);
                 Job::<ExternJob>::schedule(
                     &cx,
@@ -286,6 +287,7 @@ pub mod random {
                 }
             }
             global.bun_vm().event_loop_mut().run_callback(
+                bun_event_loop::ContextId::NONE,
                 js.callback.get(),
                 global,
                 JSValue::UNDEFINED,
@@ -295,8 +297,14 @@ pub mod random {
         }
     }
 
-    fn schedule(global: &JSGlobalObject, callback: JSValue, job: RandomFillJob, value: JSValue) {
-        let cx = global.js_thread();
+    fn schedule(
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+        callback: JSValue,
+        job: RandomFillJob,
+        value: JSValue,
+    ) {
+        let cx = global.js_thread_of_caller(call_frame);
         Job::<RandomFillJob>::schedule(
             &cx,
             job,
@@ -403,14 +411,14 @@ pub mod random {
             }
 
             // Uniform random in [min, max) via Lemire's nearly-divisionless
-            // rejection sampling, backed by BoringSSL `RAND_bytes` (thread-local
-            // AES-CTR DRBG, no syscall per call).
+            // rejection sampling on the VM's entropy cache (`RAND_bytes` costs ~0.5 µs per call).
             let res: i64 = {
                 let range = (max - min) as u64;
                 debug_assert!(range > 0);
+                let rare_data = global.bun_vm().as_mut().rare_data();
                 let mut buf = [0u8; 8];
                 let x = loop {
-                    boringssl::rand_bytes(&mut buf);
+                    buf.copy_from_slice(rare_data.entropy_slice(8));
                     let x = u64::from_ne_bytes(buf);
                     let m = (x as u128).wrapping_mul(range as u128);
                     let l = m as u64;
@@ -617,6 +625,7 @@ pub mod random {
 
             schedule(
                 global,
+                call_frame,
                 callback,
                 RandomFillJob::InPlace {
                     // SAFETY: `bytes` is `result`'s backing store, kept alive by the job's
@@ -735,6 +744,7 @@ pub mod random {
 
             schedule(
                 global,
+                call_frame,
                 callback,
                 RandomFillJob::Scratch {
                     scratch,
@@ -755,10 +765,6 @@ pub mod random {
 // Scrypt
 // ───────────────────────────────────────────────────────────────────────────
 pub(crate) struct Scrypt {
-    // Plain `StringOrBuffer` — NOT `ThreadIsolated<_>`. The struct serves both
-    // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
-    // `from_js_maybe_async(.., Flavor::Async, ..)`, adopted into a `ThreadIsolated`
-    // by the job).
     password: StringOrBuffer<'static>,
     salt: StringOrBuffer<'static>,
     n: u32,
@@ -767,6 +773,8 @@ pub(crate) struct Scrypt {
     maxmem: u64,
     keylen: u32,
 }
+// SAFETY: `password` and `salt` are `StringOrBuffer`s (see its impl); the rest is plain data.
+unsafe impl ThreadIsolatedArg for Scrypt {}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Argon2 (crypto.argon2 / crypto.argon2Sync)
@@ -840,15 +848,6 @@ mod _impl {
                 ));
             };
 
-            // On error: `Drop for StringOrBuffer` releases the data; only the async branch took a
-            // `protect()` (inside `from_js_maybe_async`), so only that branch may unprotect —
-            // an unconditional unprotect would steal a refcount on the sync path.
-            let password = scopeguard::guard(password, |mut p| {
-                if IS_ASYNC {
-                    bun_jsc::Unprotect::unprotect(&mut p);
-                }
-            });
-
             let Some(salt) = StringOrBuffer::from_js_maybe_async(
                 global,
                 salt_value,
@@ -862,12 +861,6 @@ mod _impl {
                     salt_value,
                 ));
             };
-
-            let salt = scopeguard::guard(salt, |mut s| {
-                if IS_ASYNC {
-                    bun_jsc::Unprotect::unprotect(&mut s);
-                }
-            });
 
             let keylen = validators::validate_int32(
                 global,
@@ -984,30 +977,20 @@ mod _impl {
                 maxmem = Some(MAXMEM_DEFAULT);
             }
 
-            let ctx = Scrypt {
-                password: scopeguard::ScopeGuard::into_inner(password),
-                salt: scopeguard::ScopeGuard::into_inner(salt),
+            let mut ctx = Scrypt {
+                password,
+                salt,
                 n: n.unwrap(),
                 r: r.unwrap(),
                 p: p.unwrap(),
                 maxmem: u64::try_from(maxmem.unwrap()).expect("int cast"),
                 keylen: u32::try_from(keylen).expect("int cast"),
             };
-            // Re-arm the error guard now that ownership moved into `ctx` — it
-            // covers the `validateFunction`/`checkScryptParams` calls below.
-            let ctx = scopeguard::guard(ctx, |mut c| {
-                if IS_ASYNC {
-                    bun_jsc::Unprotect::unprotect(&mut c);
-                }
-            });
-
             if IS_ASYNC {
                 let _ = validators::validate_function(global, "callback", callback)?;
             }
 
             ctx.check_scrypt_params(global)?;
-
-            let mut ctx = scopeguard::ScopeGuard::into_inner(ctx);
 
             if IS_ASYNC {
                 return Ok((ctx, callback));
@@ -1020,6 +1003,16 @@ mod _impl {
             }
 
             Ok((ctx, JSValue::UNDEFINED))
+        }
+
+        /// `from_js::<true>` for the work-pool job, with its callback.
+        fn from_js_async(
+            global: &JSGlobalObject,
+            call_frame: &CallFrame,
+        ) -> JsResult<(ThreadIsolated<Self>, JSValue)> {
+            let (ctx, callback) = Self::from_js::<true>(global, call_frame)?;
+            // SAFETY: parsed with the async flavor (`from_js::<true>`).
+            Ok((unsafe { ThreadIsolated::new(ctx) }, callback))
         }
 
         fn check_scrypt_params(&self, global: &JSGlobalObject) -> JsResult<()> {
@@ -1085,20 +1078,10 @@ mod _impl {
         }
     }
 
-    impl bun_jsc::Unprotect for Scrypt {
-        /// Release the `protect()` taken by `from_js_maybe_async(.., Flavor::Async, ..)`
-        /// on the async path (via the job's `ThreadIsolated`). The sync path never calls this.
-        #[inline]
-        fn unprotect(&mut self) {
-            bun_jsc::Unprotect::unprotect(&mut self.password);
-            bun_jsc::Unprotect::unprotect(&mut self.salt);
-        }
-    }
-
     /// `crypto.scrypt` off the JS thread: derives straight into the result
     /// ArrayBuffer's bytes under the job's ticket, which keeps their VM alive.
     pub(crate) struct ScryptJob {
-        params: bun_jsc::ThreadIsolated<Scrypt>,
+        params: ThreadIsolated<Scrypt>,
         result: JsPtr<[u8]>,
         err: Option<u32>,
     }
@@ -1151,11 +1134,18 @@ mod _impl {
                         )
                         .to_js()
                 };
-                event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
+                event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
+                    callback,
+                    global,
+                    JSValue::UNDEFINED,
+                    &[exception],
+                );
                 return Ok(());
             }
 
             event_loop.run_callback(
+                bun_event_loop::ContextId::NONE,
                 callback,
                 global,
                 JSValue::UNDEFINED,
@@ -1167,8 +1157,8 @@ mod _impl {
 
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (data, callback) = PBKDF2::from_js(global_this, call_frame, Flavor::Async)?;
-        pbkdf2::create_job(global_this, data, callback);
+        let (data, callback) = PBKDF2::from_js_async(global_this, call_frame)?;
+        pbkdf2::create_job(&global_this.js_thread_of_caller(call_frame), data, callback);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1305,14 +1295,12 @@ mod _impl {
 
     #[bun_jsc::host_fn]
     fn scrypt(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (ctx, callback) = Scrypt::from_js::<true>(global, call_frame)?;
-        // Protected by `from_js::<true>`; released with the job wherever it ends.
-        let params = bun_jsc::ThreadIsolated::adopt(ctx);
+        let (params, callback) = Scrypt::from_js_async(global, call_frame)?;
         if params.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
             return Err(global.throw_out_of_memory());
         }
         let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, params.keylen)?;
-        let cx = global.js_thread();
+        let cx = global.js_thread_of_caller(call_frame);
         Job::<ScryptJob>::schedule(
             &cx,
             ScryptJob {
@@ -1505,13 +1493,20 @@ mod _impl {
             if this.failed {
                 let exception =
                     global.create_error_instance(format_args!("Argon2 derivation failed"));
-                event_loop.run_callback(callback, global, JSValue::UNDEFINED, &[exception]);
+                event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
+                    callback,
+                    global,
+                    JSValue::UNDEFINED,
+                    &[exception],
+                );
                 return Ok(());
             }
             let output = core::mem::take(&mut this.output);
             // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator).
             match JSValue::create_buffer(global, output.leak()) {
                 Ok(buf) => event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     JSValue::UNDEFINED,
@@ -1520,6 +1515,7 @@ mod _impl {
                 // The result could not be built (allocation failure): that is
                 // this derivation's error.
                 Err(err) => event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global,
                     JSValue::UNDEFINED,
@@ -1534,7 +1530,7 @@ mod _impl {
     fn argon2(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let (ctx, callback) = Argon2::from_js(global, call_frame)?;
         let _ = validators::validate_function(global, "callback", callback)?;
-        let cx = global.js_thread();
+        let cx = global.js_thread_of_caller(call_frame);
         Job::<Argon2>::schedule(
             &cx,
             ctx,

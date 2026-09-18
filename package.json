@@ -1,29 +1,25 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.4.1",
+  "version": "1.4.3",
   "workspaces": [
-    "./packages/bun-types",
-    "./packages/@types/bun"
+    "./packages/bun-types"
   ],
   "devDependencies": {
-    "@lezer/common": "^1.2.3",
-    "@lezer/cpp": "^1.1.3",
-    "@types/bun": "workspace:*",
-    "esbuild": "^0.21.5",
-    "mitata": "^0.1.14",
+    "@lezer/common": "1.5.2",
+    "@lezer/cpp": "1.1.6",
+    "esbuild": "0.21.5",
     "oxlint": "1.70.0",
-    "prettier": "^3.6.2",
-    "prettier-plugin-organize-imports": "^4.3.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "source-map-js": "^1.2.1",
+    "prettier": "3.6.2",
+    "prettier-plugin-organize-imports": "4.3.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "source-map-js": "1.2.1",
     "typescript": "6.0.2"
   },
   "resolutions": {
     "bun-types": "workspace:packages/bun-types",
-    "@types/bun": "workspace:packages/@types/bun",
-    "@types/node": "25.0.0"
+    "@types/node": "26.2.0"
   },
   "scripts": {
     "build": "bun --silent run build:debug",
@@ -43,9 +39,7 @@
     "build:debug:fuzzilli": "bun scripts/build.ts --profile=debug --fuzzilli=on --build-dir=build/debug-fuzz",
     "build:debug:noasan": "bun scripts/build.ts --profile=debug-no-asan",
     "build:release": "bun scripts/build.ts --profile=release",
-    "build:release:lto": "bun scripts/build.ts --profile=release --lto=on --build-dir=build/release-lto",
-    "build:btg": "bun scripts/build.ts --profile=btg",
-    "build:ci": "bun scripts/build.ts --profile=ci-release --build-dir=build/release-ci",
+    "build:ci": "bun scripts/build.ts --profile=release --ci=on --buildkite=on --build-dir=build/release-ci",
     "build:assert": "bun scripts/build.ts --profile=release-assertions --build-dir=build/release-assert",
     "build:asan": "bun scripts/build.ts --profile=release-asan --build-dir=build/release-asan",
     "build:logs": "bun scripts/build.ts --profile=release --logs=on --build-dir=build/release-logs",
@@ -85,7 +79,7 @@
     "clean": "bun scripts/build/clean.ts",
     "machine:linux:ubuntu": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=ubuntu --release=25.04",
     "machine:linux:debian": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=debian --release=13",
-    "machine:linux:alpine": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=alpine --release=3.22",
+    "machine:linux:alpine": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=alpine --release=3.23",
     "machine:linux:amazonlinux": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=linux --distro=amazonlinux --release=2023",
     "machine:windows:2019": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=windows --release=2019",
     "machine:freebsd": "./scripts/machine.mjs ssh --cloud=aws --arch=x64 --instance-type c7i.2xlarge --os=freebsd --release=14.3",

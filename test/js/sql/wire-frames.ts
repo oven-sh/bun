@@ -272,6 +272,37 @@ export async function pgMinimalReadyServer(): Promise<{ port: number; server: ne
   });
 }
 
+/**
+ * Postgres mock that answers the StartupMessage with AuthenticationOk +
+ * ReadyForQuery and then hands every complete frontend message (type as a
+ * one-char string, e.g. "P", "B", "E", "S", "Q", "X") to `respond`; whatever it
+ * returns is written back in order after the whole chunk has been parsed.
+ */
+export async function pgMockServer(
+  respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | Buffer[] | void,
+): Promise<{ port: number; server: net.Server }> {
+  return listeningServer(socket => {
+    let buffered = Buffer.alloc(0);
+    let startup = true;
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      const out: Buffer[] = [];
+      if (startup) {
+        if (buffered.length < 4 || buffered.length < buffered.readInt32BE(0)) return;
+        buffered = buffered.subarray(buffered.readInt32BE(0));
+        startup = false;
+        out.push(pgAuthenticationOk(), pgReadyForQuery());
+      }
+      buffered = pgReadFrontendMessages(buffered, (type, body) => {
+        const reply = respond(String.fromCharCode(type), body, socket);
+        if (reply) out.push(...(Array.isArray(reply) ? reply : [reply]));
+      });
+      if (out.length) socket.write(Buffer.concat(out));
+    });
+    socket.on("error", () => {});
+  });
+}
+
 // ---------------------------------------------------------------------------
 // MySQL client/server protocol — https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_packets.html
 // ---------------------------------------------------------------------------

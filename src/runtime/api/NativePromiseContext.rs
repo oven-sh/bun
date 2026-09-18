@@ -30,7 +30,7 @@ use crate::api::html_rewriter;
 use crate::api::server;
 
 // Request contexts are a single generic
-// `NewRequestContext<ThisServer, SSL, DEBUG, HTTP3>`; alias the six
+// `NewRequestContext<ThisServer, SSL, DEBUG, MUX>`; alias the eight
 // concrete monomorphizations here so the tag↔type mapping stays readable.
 type HTTPServerRequestContext = server::NewRequestContext<server::HTTPServer, false, false, false>;
 type HTTPSServerRequestContext = server::NewRequestContext<server::HTTPSServer, true, false, false>;
@@ -38,9 +38,13 @@ type DebugHTTPServerRequestContext =
     server::NewRequestContext<server::DebugHTTPServer, false, true, false>;
 type DebugHTTPSServerRequestContext =
     server::NewRequestContext<server::DebugHTTPSServer, true, true, false>;
-type HTTPSServerH3RequestContext =
+type HTTPServerMuxRequestContext =
+    server::NewRequestContext<server::HTTPServer, false, false, true>;
+type HTTPSServerMuxRequestContext =
     server::NewRequestContext<server::HTTPSServer, true, false, true>;
-type DebugHTTPSServerH3RequestContext =
+type DebugHTTPServerMuxRequestContext =
+    server::NewRequestContext<server::DebugHTTPServer, false, true, true>;
+type DebugHTTPSServerMuxRequestContext =
     server::NewRequestContext<server::DebugHTTPSServer, true, true, true>;
 
 /// Must match Bun::NativePromiseContext::Tag in NativePromiseContext.h.
@@ -54,16 +58,22 @@ pub enum Tag {
     HTTPSServerRequestContext,
     DebugHTTPServerRequestContext,
     DebugHTTPSServerRequestContext,
-    HTTPSServerH3RequestContext,
-    DebugHTTPSServerH3RequestContext,
+    HTTPServerMuxRequestContext,
+    HTTPSServerMuxRequestContext,
+    DebugHTTPServerMuxRequestContext,
+    DebugHTTPSServerMuxRequestContext,
     HTMLRewriterSuspension,
     /// Task-only tag (never a context cell): drops the last ref of a
     /// `RewriterPipe` on behalf of `RewriterPipe::deref_outside_caller`.
     HTMLRewriterPipeFree,
+    /// The pump of an S3 stream upload (`S3UploadStreamWrapper`).
+    S3UploadStream,
+    /// A `Bun.cron()` job whose tick returned a promise.
+    CronJob,
 }
 
 impl Tag {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 12;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -72,10 +82,14 @@ impl Tag {
             1 => Tag::HTTPSServerRequestContext,
             2 => Tag::DebugHTTPServerRequestContext,
             3 => Tag::DebugHTTPSServerRequestContext,
-            4 => Tag::HTTPSServerH3RequestContext,
-            5 => Tag::DebugHTTPSServerH3RequestContext,
-            6 => Tag::HTMLRewriterSuspension,
-            7 => Tag::HTMLRewriterPipeFree,
+            4 => Tag::HTTPServerMuxRequestContext,
+            5 => Tag::HTTPSServerMuxRequestContext,
+            6 => Tag::DebugHTTPServerMuxRequestContext,
+            7 => Tag::DebugHTTPSServerMuxRequestContext,
+            8 => Tag::HTMLRewriterSuspension,
+            9 => Tag::HTMLRewriterPipeFree,
+            10 => Tag::S3UploadStream,
+            11 => Tag::CronJob,
             _ => unreachable!(),
         }
     }
@@ -89,27 +103,32 @@ pub(crate) trait NativePromiseContextType {
 
 // Layering note: blanket-impl over `ThisServer` so that ANY server
 // type (mod.rs::NewServer or server_body::NewServer) yields the same Tag —
-// the tag depends only on (SSL, DBG, H3), never on the server type.
-const fn npc_tag_for(ssl: bool, dbg: bool, h3: bool) -> Tag {
-    match (ssl, dbg, h3) {
+// the tag depends only on (SSL, DBG, MUX), never on the server type.
+const fn npc_tag_for(ssl: bool, dbg: bool, mux: bool) -> Tag {
+    match (ssl, dbg, mux) {
         (false, false, false) => Tag::HTTPServerRequestContext,
         (true, false, false) => Tag::HTTPSServerRequestContext,
         (false, true, false) => Tag::DebugHTTPServerRequestContext,
         (true, true, false) => Tag::DebugHTTPSServerRequestContext,
-        (true, false, true) => Tag::HTTPSServerH3RequestContext,
-        (true, true, true) => Tag::DebugHTTPSServerH3RequestContext,
-        // H3 requires TLS; (false, _, true) is never instantiated. Map to a
-        // valid tag so const-eval succeeds; runtime never observes this.
-        (false, _, true) => Tag::HTTPServerRequestContext,
+        (false, false, true) => Tag::HTTPServerMuxRequestContext,
+        (true, false, true) => Tag::HTTPSServerMuxRequestContext,
+        (false, true, true) => Tag::DebugHTTPServerMuxRequestContext,
+        (true, true, true) => Tag::DebugHTTPSServerMuxRequestContext,
     }
 }
-impl<ThisServer, const SSL: bool, const DBG: bool, const H3: bool> NativePromiseContextType
-    for server::NewRequestContext<ThisServer, SSL, DBG, H3>
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> NativePromiseContextType
+    for server::NewRequestContext<ThisServer, SSL, DBG, MUX>
 {
-    const TAG: Tag = npc_tag_for(SSL, DBG, H3);
+    const TAG: Tag = npc_tag_for(SSL, DBG, MUX);
 }
 impl NativePromiseContextType for html_rewriter::RewriterPipe {
     const TAG: Tag = Tag::HTMLRewriterSuspension;
+}
+impl NativePromiseContextType for crate::webcore::s3::client::S3UploadStreamWrapper {
+    const TAG: Tag = Tag::S3UploadStream;
+}
+impl NativePromiseContextType for crate::api::cron::CronJob {
+    const TAG: Tag = Tag::CronJob;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -183,13 +202,20 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
             Tag::DebugHTTPSServerRequestContext => {
                 (*ctx.cast::<DebugHTTPSServerRequestContext>()).promise_cell_collected()
             }
-            Tag::HTTPSServerH3RequestContext => {
-                (*ctx.cast::<HTTPSServerH3RequestContext>()).promise_cell_collected()
+            Tag::HTTPServerMuxRequestContext => {
+                (*ctx.cast::<HTTPServerMuxRequestContext>()).promise_cell_collected()
             }
-            Tag::DebugHTTPSServerH3RequestContext => {
-                (*ctx.cast::<DebugHTTPSServerH3RequestContext>()).promise_cell_collected()
+            Tag::HTTPSServerMuxRequestContext => {
+                (*ctx.cast::<HTTPSServerMuxRequestContext>()).promise_cell_collected()
             }
-            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree => {}
+            Tag::DebugHTTPServerMuxRequestContext => {
+                (*ctx.cast::<DebugHTTPServerMuxRequestContext>()).promise_cell_collected()
+            }
+            Tag::DebugHTTPSServerMuxRequestContext => {
+                (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
+            }
+            Tag::CronJob => (*ctx.cast::<crate::api::cron::CronJob>()).tick_cell_collected(),
+            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree | Tag::S3UploadStream => {}
         }
     }
 }
@@ -198,14 +224,14 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
 /// outside the sweep phase.
 ///
 /// Zero-allocation: the ctx pointer and our Tag are packed into the task's
-/// `ptr` slot (pointer in high bits, tag in low 3 bits — the target types
-/// are all >= 8-byte aligned). See PosixSignalTask for the same trick with
+/// `ptr` slot (pointer in high bits, tag in low 4 bits — the target types
+/// are all 16-byte aligned, see their `#[repr(align(16))]`). See PosixSignalTask for the same trick with
 /// signal numbers.
 ///
 /// Layout of `Task.ptr` (read back as `usize` in dispatch):
 ///
 /// ```text
-/// bits 63..3           bits 2..0
+/// bits 63..4           bits 3..0
 /// ┌────────────────────┬─────────┐
 /// │ ctx ptr (aligned)  │ our Tag │
 /// └────────────────────┴─────────┘
@@ -222,10 +248,14 @@ impl Taskable for DeferredDerefTask {
     unsafe fn release_unrun(this: *mut Self) {
         Self::run_from_js_thread(this as usize);
     }
+    /// A deferred deref; calls no script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl DeferredDerefTask {
-    const TAG_MASK: usize = 0b111;
+    const TAG_MASK: usize = 0b1111;
 
     pub(crate) fn schedule(ctx: *mut c_void, tag: Tag) {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
@@ -260,10 +290,7 @@ impl DeferredDerefTask {
 
         // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so
         // build it directly — dispatch unpacks via `task.ptr as usize`.
-        let task = Task::new(
-            <DeferredDerefTask as Taskable>::TAG,
-            (addr | (tag as usize)) as *mut (),
-        );
+        let task = Task::init((addr | (tag as usize)) as *mut DeferredDerefTask);
         // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
         // sole mutator on the JS thread here.
         vm.event_loop_ref().enqueue_task(task);
@@ -289,11 +316,17 @@ impl DeferredDerefTask {
                 Tag::DebugHTTPSServerRequestContext => {
                     (*ctx.cast::<DebugHTTPSServerRequestContext>()).deref()
                 }
-                Tag::HTTPSServerH3RequestContext => {
-                    (*ctx.cast::<HTTPSServerH3RequestContext>()).deref()
+                Tag::HTTPServerMuxRequestContext => {
+                    (*ctx.cast::<HTTPServerMuxRequestContext>()).deref()
                 }
-                Tag::DebugHTTPSServerH3RequestContext => {
-                    (*ctx.cast::<DebugHTTPSServerH3RequestContext>()).deref()
+                Tag::HTTPSServerMuxRequestContext => {
+                    (*ctx.cast::<HTTPSServerMuxRequestContext>()).deref()
+                }
+                Tag::DebugHTTPServerMuxRequestContext => {
+                    (*ctx.cast::<DebugHTTPServerMuxRequestContext>()).deref()
+                }
+                Tag::DebugHTTPSServerMuxRequestContext => {
+                    (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).deref()
                 }
                 Tag::HTMLRewriterSuspension => {
                     let back = bun_ptr::BackRef::from(NonNull::new_unchecked(
@@ -306,12 +339,24 @@ impl DeferredDerefTask {
                         NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
                     );
                 }
+                Tag::S3UploadStream => {
+                    // The pump's promise was collected unsettled (the script running it is gone):
+                    // as a rejection with no reason.
+                    (*ctx.cast::<crate::webcore::s3::client::S3UploadStreamWrapper>())
+                        .handle_reject_stream(JSValue::ZERO);
+                }
+                Tag::CronJob => {
+                    // The tick's promise was collected unsettled.
+                    crate::api::cron::CronJob::tick_promise_collected(NonNull::new_unchecked(
+                        ctx.cast::<crate::api::cron::CronJob>(),
+                    ));
+                }
             }
         }
     }
 }
 
-// Low 3 bits hold the tag; verify both capacity and alignment slack so adding
+// Low 4 bits hold the tag; verify both capacity and alignment slack so adding
 // a tag or a packed field can't silently break the packing.
 const _: () = assert!(Tag::COUNT <= DeferredDerefTask::TAG_MASK + 1);
 const _: () =
@@ -323,4 +368,20 @@ const _: () =
 const _: () =
     assert!(core::mem::align_of::<DebugHTTPSServerRequestContext>() > DeferredDerefTask::TAG_MASK);
 const _: () =
+    assert!(core::mem::align_of::<HTTPServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<DebugHTTPSServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK
+);
+const _: () =
+    assert!(core::mem::align_of::<HTTPSServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<DebugHTTPServerMuxRequestContext>() > DeferredDerefTask::TAG_MASK
+);
+const _: () =
     assert!(core::mem::align_of::<html_rewriter::RewriterPipe>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<crate::webcore::s3::client::S3UploadStreamWrapper>()
+        > DeferredDerefTask::TAG_MASK
+);
+const _: () =
+    assert!(core::mem::align_of::<crate::api::cron::CronJob>() > DeferredDerefTask::TAG_MASK);

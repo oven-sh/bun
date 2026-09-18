@@ -49,7 +49,6 @@ pub(crate) const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 pub enum ShellErr {
     Sys(SystemError),
     Custom(Box<[u8]>),
-    Todo(Box<[u8]>),
 }
 
 impl ShellErr {
@@ -73,7 +72,6 @@ impl ShellErr {
             ShellErr::Custom(custom) => {
                 global.throw_value(EncodedSlice::utf8(&custom).to_error_instance(global))
             }
-            ShellErr::Todo(todo) => global.throw_todo(&todo),
         }
     }
 
@@ -93,12 +91,6 @@ impl ShellErr {
                     bstr::BStr::new(&*custom)
                 );
             }
-            ShellErr::Todo(todo) => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: Failed due to error: <b>TODO: {}<r>",
-                    bstr::BStr::new(&*todo)
-                );
-            }
         }
         bun_core::Global::exit(1)
     }
@@ -109,7 +101,6 @@ impl fmt::Display for ShellErr {
         match self {
             ShellErr::Sys(e) => write!(f, "bun: {}: {}", e.message, e.path),
             ShellErr::Custom(msg) => write!(f, "bun: {}", bstr::BStr::new(msg)),
-            ShellErr::Todo(msg) => write!(f, "bun: TODO: {}", bstr::BStr::new(msg)),
         }
     }
 }
@@ -125,10 +116,8 @@ pub mod test {
         Ampersand,
         DoubleAmpersand,
         Redirect(ast::RedirectFlags),
-        Dollar,
         Asterisk,
         DoubleAsterisk,
-        Eq,
         Semicolon,
         Newline,
         BraceBegin,
@@ -169,10 +158,8 @@ pub mod test {
                 Token::Ampersand => TestToken::Ampersand,
                 Token::DoubleAmpersand => TestToken::DoubleAmpersand,
                 Token::Redirect(r) => TestToken::Redirect(r),
-                Token::Dollar => TestToken::Dollar,
                 Token::Asterisk => TestToken::Asterisk,
                 Token::DoubleAsterisk => TestToken::DoubleAsterisk,
-                Token::Eq => TestToken::Eq,
                 Token::Semicolon => TestToken::Semicolon,
                 Token::Newline => TestToken::Newline,
                 Token::BraceBegin => TestToken::BraceBegin,
@@ -212,10 +199,8 @@ pub mod test {
                     write_redirect_flags(w, *r)?;
                     w.write_char('}')
                 }
-                T::Dollar => unit!("Dollar"),
                 T::Asterisk => unit!("Asterisk"),
                 T::DoubleAsterisk => unit!("DoubleAsterisk"),
-                T::Eq => unit!("Eq"),
                 T::Semicolon => unit!("Semicolon"),
                 T::Newline => unit!("Newline"),
                 T::BraceBegin => unit!("BraceBegin"),

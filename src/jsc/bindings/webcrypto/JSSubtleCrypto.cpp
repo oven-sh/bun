@@ -94,7 +94,9 @@ static std::optional<SubtleCrypto::KeyFormat> parseKeyFormatFromString(const Str
 // stringified value, not the WebIDL enum-listing TypeError.
 static void throwInvalidKeyFormatError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const String& valueString, ASCIILiteral functionName)
 {
-    Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, makeString("Failed to execute '"_s, functionName, "' on 'SubtleCrypto': 1st argument '"_s, valueString, "' is not a valid enum value of type KeyFormat."_s));
+    Bun::MessageBuilder message;
+    message.append("Failed to execute '"_s, functionName, "' on 'SubtleCrypto': 1st argument '"_s, valueString, "' is not a valid enum value of type KeyFormat."_s);
+    Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, message);
 }
 
 static JSC_DECLARE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_encrypt);

@@ -1,4 +1,3 @@
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_jsc::call_frame::ArgumentsSlice;
@@ -6,6 +5,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
 
+use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
     NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
@@ -36,11 +36,6 @@ where
     // for the duration of argument parsing on the JS thread.
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
-    // `defer slice.deinit()` → `Drop for ArgumentsSlice`.
-
-    // `defer if (@hasDecl(Arguments, "deinit")) args.deinit()` → `Drop for A`
-    // (every `args::*` field type — `PathLike`, `StringOrBuffer`, `Vec`, … —
-    // releases its own resources; the wrapper structs need no manual hook).
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
@@ -66,41 +61,34 @@ fn run_async<A: FsArgument>(
     this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
+    create_task: fn(
+        &bun_jsc::JsThread<'_>,
+        &Binding,
+        ThreadIsolated<A>,
+        &mut VirtualMachine,
+    ) -> JSValue,
 ) -> JsResult<JSValue> {
     let args = match parse_async_args::<A>(global, frame) {
         Ok(args) => args,
         Err(result) => return result,
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(global, this, args, vm))
+    Ok(create_task(
+        &global.js_thread_of_caller(frame),
+        this,
+        args,
+        vm,
+    ))
 }
 
 /// Parses a promise-returning binding's arguments; `Err` is what the binding returns instead.
 fn parse_async_args<A: FsArgument>(
     global: &JSGlobalObject,
     frame: &CallFrame,
-) -> Result<A, JsResult<JSValue>> {
-    // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
+) -> Result<ThreadIsolated<A>, JsResult<JSValue>> {
     let vm: &VirtualMachine = global.bun_vm();
-    let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
-    slice.will_be_async = true;
-
-    // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
-    // to the Task: dropped only on the early-return
-    // error/abort branches; on the success path the Task owns `args` (whose
-    // protected JSValues are released by `Drop for ThreadIsolated<A>` when the
-    // Task completes), and `slice` is intentionally not dropped — its
-    // `Drop`-unprotect would race that.
-
-    let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
-        Ok(a) => a,
-        Err(err) => {
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Err(Err(err));
-        }
-    };
+    let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    let args = A::from_js_async(global, &mut slice).map_err(Err)?;
 
     let rejection = 'rejection: {
         if A::HAVE_ABORT_SIGNAL {
@@ -117,10 +105,6 @@ fn parse_async_args<A: FsArgument>(
         return Ok(args);
     };
 
-    args.unprotect();
-    drop(args);
-    // SAFETY: not yet dropped; only drop site for this path.
-    unsafe { ManuallyDrop::drop(&mut slice) };
     Err(Ok(JSPromise::rejected_promise(global, rejection).to_js()))
 }
 
@@ -188,7 +172,12 @@ impl Binding {
             Err(result) => return result,
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(AsyncCpTask::create(global, this, cp_args, vm))
+        Ok(AsyncCpTask::create(
+            &global.js_thread_of_caller(frame),
+            this,
+            cp_args,
+            vm,
+        ))
     }
 
     /// `callSync(.cp)`.
@@ -227,9 +216,18 @@ impl Binding {
         let is_bunfs = bun_standalone_graph::Graph::get_ref().is_some()
             && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
         if rd_args.recursive && !is_bunfs {
-            return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
+            return Ok(AsyncReaddirRecursiveTask::create(
+                &global.js_thread_of_caller(frame),
+                rd_args,
+                vm,
+            ));
         }
-        Ok(async_::Readdir::create(global, this, rd_args, vm))
+        Ok(async_::Readdir::create(
+            &global.js_thread_of_caller(frame),
+            this,
+            rd_args,
+            vm,
+        ))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
@@ -243,7 +241,10 @@ impl Binding {
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
-        let watch_args = fs::Watcher::Arguments::from_js(global, &mut slice)?;
+        let watch_args = fs::Watcher::Arguments::from_js(
+            &global.js_thread(vm.context_of_caller(frame)),
+            &mut slice,
+        )?;
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
@@ -266,7 +267,10 @@ impl Binding {
         let vm: &VirtualMachine = global.bun_vm();
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
-        let wf_args = fs::StatWatcher::Arguments::from_js(global, &mut slice)?;
+        let wf_args = fs::StatWatcher::Arguments::from_js(
+            &global.js_thread(vm.context_of_caller(frame)),
+            &mut slice,
+        )?;
 
         match this
             .node_fs

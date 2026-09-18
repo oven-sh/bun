@@ -478,6 +478,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     let mut dev_uninit: Box<MaybeUninit<DevServer>> = Box::new(MaybeUninit::uninit());
     let p: *mut DevServer = dev_uninit.as_mut_ptr();
 
+    let root = paths::string_paths::without_trailing_slash_windows_path(options.root.as_bytes());
+
     /// `addr_of_mut!((*p).$field).write($value)` — writes a single field of the
     /// partially-initialized `DevServer` without materializing `&mut DevServer`.
     macro_rules! w {
@@ -492,7 +494,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // exactly once before `assume_init()` below.
     unsafe {
         w!(magic, Magic::Valid);
-        w!(root, Box::from(options.root.as_bytes()));
+        w!(root, Box::from(root));
         w!(vm, bun_ptr::BackRef::new(options.vm));
         w!(vm_handle, options.vm.handle());
         w!(server, None);
@@ -574,7 +576,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         w!(
             router,
             FrameworkRouter {
-                root: Box::from(options.root.as_bytes()),
+                root: Box::from(root),
                 types: Box::new([]),
                 routes: Vec::new(),
                 static_routes: Default::default(),
@@ -590,7 +592,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // FileSystem is a process-lifetime singleton; `init` interns the path into
     // the `DirnameStore` (process-lifetime arena) so no caller-side leak is
     // needed for the `'static` it stores.
-    let _fs = match bun_resolver::fs::FileSystem::init(Some(options.root.as_bytes())) {
+    let _fs = match bun_resolver::fs::FileSystem::init(Some(root)) {
         Ok(fs) => fs,
         Err(err) => return Err(global.throw_error(err, generic_action)),
     };
@@ -1378,12 +1380,7 @@ pub(crate) fn is_allowed_host_header(
     {
         return true;
     }
-    let ip = if host.first() == Some(&b'[') && host.last() == Some(&b']') {
-        &host[1..host.len() - 1]
-    } else {
-        host
-    };
-    if bun_core::ip_address::is_ip_address(ip) {
+    if bun_core::ip_address::is_ip_address(bun_core::ip_address::strip_ipv6_brackets(host)) {
         return true;
     }
     if let Some(crate::server::server_config::Address::Tcp {
@@ -1539,7 +1536,7 @@ fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResp
         AnyResponse::TCP(r) => {
             ErrorReportRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
         }
-        AnyResponse::H3(_) => not_found(resp),
+        AnyResponse::H3(_) | AnyResponse::H2(_) => not_found(resp),
     }
 }
 
@@ -1552,7 +1549,7 @@ fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: Any
         AnyResponse::TCP(r) => {
             UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
         }
-        AnyResponse::H3(_) => not_found(resp),
+        AnyResponse::H3(_) | AnyResponse::H2(_) => not_found(resp),
     }
 }
 
@@ -6002,8 +5999,6 @@ impl DevServer {
         relative_path_buf: &'a mut PathBuffer,
         path: &'a [u8],
     ) -> &'a [u8] {
-        debug_assert!(self.root[self.root.len() - 1] != b'/');
-
         if !paths::is_absolute(path) {
             return path;
         }

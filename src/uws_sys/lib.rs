@@ -384,6 +384,8 @@ pub mod app;
 pub mod body_reader_mixin;
 #[path = "ConnectingSocket.rs"]
 pub mod connecting_socket;
+#[path = "h2.rs"]
+pub mod h2;
 #[path = "h3.rs"]
 pub mod h3;
 #[path = "InternalLoopData.rs"]
@@ -490,7 +492,7 @@ pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
-pub use us_socket::{CloseCode, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
+pub use us_socket::{CloseCode, QueuedInput, UsIoVec, us_socket_stream_buffer_t, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 
 /// Legacy aliases for `App<SSL>` / `Response<SSL>`.

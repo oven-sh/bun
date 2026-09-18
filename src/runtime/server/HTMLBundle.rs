@@ -111,11 +111,6 @@ impl HTMLBundle {
         })
     }
 
-    /// `.classes.ts` finalize: true — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
-    }
-
     pub(crate) fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::create_utf8_for_js(global, &this.path)
     }
@@ -355,6 +350,13 @@ impl Route {
     /// took on the server. The release comes last because it runs the server's
     /// idle pass (`deinit_if_we_can`), which schedules the server's deinit when
     /// this build was the only thing still keeping a stopped server alive.
+    /// The build task will not deliver (the context that started it stopped, or the VM is going):
+    /// what waits for the page is answered as for a failed build, and the server is released.
+    pub(crate) fn on_build_abandoned(&self) {
+        self.state.set(State::Err(Log::init()));
+        self.finish_building();
+    }
+
     fn finish_building(&self) {
         debug_assert!(matches!(self.state.get(), State::Err(_) | State::Html(_)));
         self.resume_pending_responses();
@@ -479,7 +481,9 @@ impl Route {
             bundler_options::SourceMapOption::None
         };
 
-        let mut completion_task = JSBundleCompletionTask::new(config, plugins, global);
+        // The build is the server's: it continues the script that made the server.
+        let mut completion_task =
+            JSBundleCompletionTask::new(config, plugins, global, server.context_id());
         completion_task.started_at_ns = bun_core::util::Timespec::now_allow_mocked_time().ns();
         // While we're building, ensure this doesn't get freed.
         completion_task.html_build_task = Some(RefPtr::from_this(this));
@@ -579,7 +583,7 @@ impl Route {
                     let is_html = output_files[i].loader == Loader::Html;
                     // Source maps don't carry a precomputed chunk hash; hash
                     // their bytes so every served file gets a unique ETag.
-                    let hash = match output_files[i].hash {
+                    let hash = match output_files[i].hash.value {
                         0 => bun_core::hash::xxhash64(0, blob.slice()),
                         h => h,
                     };

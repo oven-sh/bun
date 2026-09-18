@@ -1,5 +1,5 @@
 use bun_core::strings::EncodingNonAscii;
-use bun_core::{self as bstr, EncodedSlice, String as BunString, strings};
+use bun_core::{self as bstr, String as BunString, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sys::UV_E;
 
@@ -235,11 +235,12 @@ pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
 
     let obj = JSValue::create_empty_object(global, p.map.map.count());
     for (k, v) in p.map.map.iter() {
-        obj.put(
+        // A key like `0=` or `2023=` is an array index. `put` asserts on those.
+        obj.put_may_be_index(
             global,
-            EncodedSlice::from_bytes(k),
+            &BunString::from_bytes(k),
             bun_string_jsc::create_utf8_for_js(global, &v.value)?,
-        );
+        )?;
     }
     Ok(obj)
 }

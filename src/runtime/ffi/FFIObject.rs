@@ -84,14 +84,10 @@ fn new_cstring(
     byte_offset: Option<JSValue>,
     length_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    match get_ptr_slice(global_this, value, byte_offset, length_value) {
-        ValueOrError::Err(err) => Ok(err),
-        ValueOrError::Slice(ptr, len) => {
-            // SAFETY: ptr/len point to FFI-owned memory whose lifetime the caller guarantees.
-            let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
-            bun_string_jsc::create_utf8_for_js(global_this, bytes)
-        }
-    }
+    let (ptr, len) = get_ptr_slice(global_this, value, byte_offset, length_value)?;
+    // SAFETY: ptr/len point to FFI-owned memory whose lifetime the caller guarantees.
+    let bytes = unsafe { core::slice::from_raw_parts(ptr, len) };
+    bun_string_jsc::create_utf8_for_js(global_this, bytes)
 }
 
 #[unsafe(no_mangle)]
@@ -495,36 +491,27 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     JSValue::from_ptr_address(addr)
 }
 
-/// `Slice` carries a raw (ptr, len) pointing at caller-owned FFI memory; consumers
-/// borrow it (or delegate disposal to a supplied finalizer), never free it from Rust.
-enum ValueOrError {
-    Err(JSValue),
-    Slice(*mut u8, usize),
-}
-
+/// Resolves `(ptr, byteOffset, byteLength)` to a raw (ptr, len) over caller-owned FFI
+/// memory. Consumers borrow it or hand it to a supplied finalizer, never free it from Rust.
 fn get_ptr_slice(
     global_this: &JSGlobalObject,
     value: JSValue,
     byte_offset: Option<JSValue>,
     byte_length: Option<JSValue>,
-) -> ValueOrError {
+) -> JsResult<(*mut u8, usize)> {
     let num = if value.is_big_int() {
         if !value.is_big_int_in_uint64_range(0, usize::MAX as u64) {
-            return ValueOrError::Err(
-                global_this.to_invalid_arguments(format_args!("ptr is out of range.")),
-            );
+            return Err(global_this.throw_invalid_arguments(format_args!("ptr is out of range.")));
         }
         value.to_uint64_no_truncate() as usize
     } else {
         if !value.is_number() || value.as_number() < 0.0 || value.as_number() > usize::MAX as f64 {
-            return ValueOrError::Err(
-                global_this.to_invalid_arguments(format_args!("ptr must be a number.")),
-            );
+            return Err(global_this.throw_invalid_arguments(format_args!("ptr must be a number.")));
         }
         value.as_ptr_address()
     };
     if num == 0 {
-        return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
+        return Err(global_this.throw_invalid_arguments(format_args!(
             "ptr cannot be zero, that would segfault Bun :("
         )));
     }
@@ -542,27 +529,24 @@ fn get_ptr_slice(
             }
 
             if addr == 0 {
-                return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
+                return Err(global_this.throw_invalid_arguments(format_args!(
                     "ptr cannot be zero, that would segfault Bun :("
                 )));
             }
 
             if !byte_off.as_number().is_finite() {
-                return ValueOrError::Err(
-                    global_this.to_invalid_arguments(format_args!("ptr must be a finite number.")),
-                );
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("ptr must be a finite number.")));
             }
         } else if !byte_off.is_empty_or_undefined_or_null() {
-            // do nothing
-        } else {
-            return ValueOrError::Err(
-                global_this.to_invalid_arguments(format_args!("Expected number for byteOffset")),
+            return Err(
+                global_this.throw_invalid_arguments(format_args!("Expected number for byteOffset"))
             );
         }
     }
 
     if addr == 0xDEADBEEF || addr == 0xaaaaaaaa || addr == 0xAAAAAAAA {
-        return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
+        return Err(global_this.throw_invalid_arguments(format_args!(
             "ptr to invalid memory, that would segfault Bun :("
         )));
     }
@@ -570,32 +554,27 @@ fn get_ptr_slice(
     if let Some(value_length) = byte_length {
         if !value_length.is_empty_or_undefined_or_null() {
             if !value_length.is_number() {
-                return ValueOrError::Err(
-                    global_this.to_invalid_arguments(format_args!("length must be a number.")),
+                return Err(
+                    global_this.throw_invalid_arguments(format_args!("length must be a number."))
                 );
             }
 
-            if value_length.as_number() == 0.0 {
-                return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
-                    "length must be > 0. This usually means a bug in your code."
-                )));
-            }
-
+            // NaN and every value in (-1, 1) truncate to 0 and fail this check too.
             let length_i = value_length.to_int64();
-            if length_i < 0 {
-                return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
+            if length_i <= 0 {
+                return Err(global_this.throw_invalid_arguments(format_args!(
                     "length must be > 0. This usually means a bug in your code."
                 )));
             }
 
             if length_i > i64::try_from(MAX_ADDRESSABLE_MEMORY).expect("int cast") {
-                return ValueOrError::Err(global_this.to_invalid_arguments(format_args!(
+                return Err(global_this.throw_invalid_arguments(format_args!(
                     "length exceeds max addressable memory. This usually means a bug in your code."
                 )));
             }
 
             let length = usize::try_from(length_i).expect("int cast");
-            return ValueOrError::Slice(addr as *mut u8, length);
+            return Ok((addr as *mut u8, length));
         }
     }
 
@@ -604,7 +583,7 @@ fn get_ptr_slice(
     let len = unsafe { bun_core::ffi::cstr(addr as *const core::ffi::c_char) }
         .to_bytes()
         .len();
-    ValueOrError::Slice(addr as *mut u8, len)
+    Ok((addr as *mut u8, len))
 }
 
 fn get_cptr(value: JSValue) -> Option<usize> {
@@ -631,55 +610,51 @@ fn to_array_buffer(
     finalization_ctx_or_ptr: Option<JSValue>,
     finalization_callback: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    match get_ptr_slice(global_this, value, byte_offset, value_length) {
-        ValueOrError::Err(erro) => Ok(erro),
-        ValueOrError::Slice(ptr, len) => {
-            let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
-            let mut ctx: Option<*mut c_void> = None;
-            if let Some(callback_value) = finalization_callback {
-                if let Some(callback_ptr) = get_cptr(callback_value) {
-                    // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { deallocator_from_addr(callback_ptr) };
+    let (ptr, len) = get_ptr_slice(global_this, value, byte_offset, value_length)?;
+    let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
+    let mut ctx: Option<*mut c_void> = None;
+    if let Some(callback_value) = finalization_callback {
+        if let Some(callback_ptr) = get_cptr(callback_value) {
+            // SAFETY: user-supplied raw fn pointer address.
+            callback = unsafe { deallocator_from_addr(callback_ptr) };
 
-                    if let Some(ctx_value) = finalization_ctx_or_ptr {
-                        if let Some(ctx_ptr) = get_cptr(ctx_value) {
-                            ctx = Some(ctx_ptr as *mut c_void);
-                        } else if !ctx_value.is_undefined_or_null() {
-                            return Ok(global_this.to_invalid_arguments(format_args!(
-                                "Expected user data to be a C pointer (number or BigInt)"
-                            )));
-                        }
-                    }
-                } else if !callback_value.is_empty_or_undefined_or_null() {
-                    return Ok(global_this.to_invalid_arguments(format_args!(
-                        "Expected callback to be a C pointer (number or BigInt)"
-                    )));
-                }
-            } else if let Some(callback_value) = finalization_ctx_or_ptr {
-                if let Some(callback_ptr) = get_cptr(callback_value) {
-                    // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { deallocator_from_addr(callback_ptr) };
-                } else if !callback_value.is_empty_or_undefined_or_null() {
-                    return Ok(global_this.to_invalid_arguments(format_args!(
-                        "Expected callback to be a C pointer (number or BigInt)"
+            if let Some(ctx_value) = finalization_ctx_or_ptr {
+                if let Some(ctx_ptr) = get_cptr(ctx_value) {
+                    ctx = Some(ctx_ptr as *mut c_void);
+                } else if !ctx_value.is_undefined_or_null() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected user data to be a C pointer (number or BigInt)"
                     )));
                 }
             }
-
-            // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory. The
-            // `bun:ffi` user asserts the pointer stays valid for the object's
-            // lifetime and that their finalization callback/ctx pair, if
-            // provided, is sound to invoke once at GC — `toArrayBuffer(ptr,
-            // ...)` is an inherently trusting FFI API.
-            unsafe {
-                let slice = core::slice::from_raw_parts_mut(ptr, len);
-                ArrayBuffer::from_bytes(slice, jsc::JSType::ArrayBuffer).to_js_with_context(
-                    global_this,
-                    ctx.unwrap_or(core::ptr::null_mut()),
-                    callback,
-                )
-            }
+        } else if !callback_value.is_empty_or_undefined_or_null() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected callback to be a C pointer (number or BigInt)"
+            )));
         }
+    } else if let Some(callback_value) = finalization_ctx_or_ptr {
+        if let Some(callback_ptr) = get_cptr(callback_value) {
+            // SAFETY: user-supplied raw fn pointer address.
+            callback = unsafe { deallocator_from_addr(callback_ptr) };
+        } else if !callback_value.is_empty_or_undefined_or_null() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected callback to be a C pointer (number or BigInt)"
+            )));
+        }
+    }
+
+    // SAFETY: ptr/len came from get_ptr_slice; FFI-owned memory. The
+    // `bun:ffi` user asserts the pointer stays valid for the object's
+    // lifetime and that their finalization callback/ctx pair, if
+    // provided, is sound to invoke once at GC — `toArrayBuffer(ptr,
+    // ...)` is an inherently trusting FFI API.
+    unsafe {
+        let slice = core::slice::from_raw_parts_mut(ptr, len);
+        ArrayBuffer::from_bytes(slice, jsc::JSType::ArrayBuffer).to_js_with_context(
+            global_this,
+            ctx.unwrap_or(core::ptr::null_mut()),
+            callback,
+        )
     }
 }
 
@@ -691,53 +666,49 @@ fn to_buffer(
     finalization_ctx_or_ptr: Option<JSValue>,
     finalization_callback: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    match get_ptr_slice(global_this, value, byte_offset, value_length) {
-        ValueOrError::Err(err) => Ok(err),
-        ValueOrError::Slice(ptr, len) => {
-            let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
-            let mut ctx: Option<*mut c_void> = None;
-            if let Some(callback_value) = finalization_callback {
-                if let Some(callback_ptr) = get_cptr(callback_value) {
-                    // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { deallocator_from_addr(callback_ptr) };
+    let (ptr, len) = get_ptr_slice(global_this, value, byte_offset, value_length)?;
+    let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
+    let mut ctx: Option<*mut c_void> = None;
+    if let Some(callback_value) = finalization_callback {
+        if let Some(callback_ptr) = get_cptr(callback_value) {
+            // SAFETY: user-supplied raw fn pointer address.
+            callback = unsafe { deallocator_from_addr(callback_ptr) };
 
-                    if let Some(ctx_value) = finalization_ctx_or_ptr {
-                        if let Some(ctx_ptr) = get_cptr(ctx_value) {
-                            ctx = Some(ctx_ptr as *mut c_void);
-                        } else if !ctx_value.is_empty_or_undefined_or_null() {
-                            return Ok(global_this.to_invalid_arguments(format_args!(
-                                "Expected user data to be a C pointer (number or BigInt)"
-                            )));
-                        }
-                    }
-                } else if !callback_value.is_empty_or_undefined_or_null() {
-                    return Ok(global_this.to_invalid_arguments(format_args!(
-                        "Expected callback to be a C pointer (number or BigInt)"
-                    )));
-                }
-            } else if let Some(callback_value) = finalization_ctx_or_ptr {
-                if let Some(callback_ptr) = get_cptr(callback_value) {
-                    // SAFETY: user-supplied raw fn pointer address.
-                    callback = unsafe { deallocator_from_addr(callback_ptr) };
-                } else if !callback_value.is_empty_or_undefined_or_null() {
-                    return Ok(global_this.to_invalid_arguments(format_args!(
-                        "Expected callback to be a C pointer (number or BigInt)"
+            if let Some(ctx_value) = finalization_ctx_or_ptr {
+                if let Some(ctx_ptr) = get_cptr(ctx_value) {
+                    ctx = Some(ctx_ptr as *mut c_void);
+                } else if !ctx_value.is_empty_or_undefined_or_null() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected user data to be a C pointer (number or BigInt)"
                     )));
                 }
             }
-
-            // SAFETY: ptr/len came from get_ptr_slice; caller-owned FFI memory.
-            let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
-            // No finalizer means borrow: the noop deallocator keeps GC from freeing
-            // caller-owned storage (oven-sh/bun#35405).
-            create_buffer_with_ctx(
-                global_this,
-                slice,
-                ctx.unwrap_or(core::ptr::null_mut()),
-                callback.or(Some(noop_bytes_deallocator)),
-            )
+        } else if !callback_value.is_empty_or_undefined_or_null() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected callback to be a C pointer (number or BigInt)"
+            )));
+        }
+    } else if let Some(callback_value) = finalization_ctx_or_ptr {
+        if let Some(callback_ptr) = get_cptr(callback_value) {
+            // SAFETY: user-supplied raw fn pointer address.
+            callback = unsafe { deallocator_from_addr(callback_ptr) };
+        } else if !callback_value.is_empty_or_undefined_or_null() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected callback to be a C pointer (number or BigInt)"
+            )));
         }
     }
+
+    // SAFETY: ptr/len came from get_ptr_slice; caller-owned FFI memory.
+    let slice = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+    // No finalizer means borrow: the noop deallocator keeps GC from freeing
+    // caller-owned storage (oven-sh/bun#35405).
+    create_buffer_with_ctx(
+        global_this,
+        slice,
+        ctx.unwrap_or(core::ptr::null_mut()),
+        callback.or(Some(noop_bytes_deallocator)),
+    )
 }
 
 pub(crate) fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {

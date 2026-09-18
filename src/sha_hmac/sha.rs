@@ -207,18 +207,6 @@ pub mod evp {
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
     #[non_exhaustive]
     pub enum Algorithm {
-        // DsaSha,
-        // DsaSha1,
-        // Md5Sha1,
-        // RsaMd5,
-        // RsaRipemd160,
-        // RsaSha1,
-        // RsaSha1_2,
-        // RsaSha224,
-        // RsaSha256,
-        // RsaSha384,
-        // RsaSha512,
-        // EcdsaWithSha1,
         Blake2b256,
         Blake2b512,
         Blake2s256,

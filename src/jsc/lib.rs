@@ -188,7 +188,7 @@ pub use self::js_value::{
 // and is wired into `event_loop::tick` directly at link time. No fn-pointer
 // hook is re-exported from the crate root.
 pub use self::array_buffer::{
-    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, TypedArrayType,
+    ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, PinnedArrayBuffer, TypedArrayType,
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;
@@ -369,7 +369,7 @@ pub use self::top_exception_scope::{
 /// is reachable as `bun_jsc::cpp::Name(...)` with a properly-scoped exception
 /// check (no `global.has_exception()` after-the-fact).
 pub mod cpp;
-pub use self::common_strings::CommonStrings;
+pub use self::common_strings::{CommonStrings, CommonStringsForRust as CommonString};
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
@@ -479,6 +479,8 @@ pub mod ffi;
 pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
+#[path = "ScriptExecutionContext.rs"]
+pub mod script_execution_context;
 
 /// Flags for `JSCInitialize` in ZigGlobalObject.cpp. JSC is set up once per process: the first call's flags win.
 #[derive(Clone, Copy, Default)]
@@ -766,6 +768,10 @@ pub use self::url::{URL, URLJsc};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
+pub use script_execution_context::{
+    AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
+    StopReason,
+};
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined
 // once in their dedicated port files (`VM.rs` / `JSGlobalObject.rs`) and
@@ -818,8 +824,6 @@ pub mod resolved_source_tag {
 
     #[allow(non_upper_case_globals)]
     impl ResolvedSourceTag {
-        /// `InternalModuleRegistryFlag` in SyntheticModuleType.h: builtin-module tags are `(1 << 9) | InternalModuleRegistry id`.
-        pub const INTERNAL_MODULE_REGISTRY_FLAG: u32 = 1 << 9;
         // Structural variants — keep in lock-step with the generated
         // `build/*/codegen/SyntheticModuleType.h` and
         // `src/jsc/bindings/headers-handwritten.h` (`ResolvedSourceTagPackageJSONTypeModule = 1`).
@@ -875,6 +879,17 @@ pub mod resolved_source_tag {
         env!("BUN_CODEGEN_DIR"),
         "/generated_resolved_source_tag.rs"
     ));
+}
+
+/// Index into the codegen'd `BuiltinModuleKeys.h` table for a canonical builtin key (`node:fs`, `bun:sqlite`, `bun`...).
+pub mod builtin_module_key_index {
+    include!(concat!(
+        env!("BUN_CODEGEN_DIR"),
+        "/generated_builtin_module_key_index.rs"
+    ));
+    pub fn get(name: &[u8]) -> Option<u16> {
+        BUILTIN_MODULE_KEY_INDEX.get(name).copied()
+    }
 }
 pub use self::resolved_source_tag::ResolvedSourceTag;
 
@@ -1251,9 +1266,6 @@ pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 pub mod node_path;
 #[path = "webcore_types.rs"]
 pub mod webcore_types;
-// RAII pair for `make_thread_isolated()`/`unprotect()` — re-exported at crate root
-// so `bun_runtime` callers don't reach through `node_path`.
-pub use self::node_path::{ThreadIsolated, Unprotect};
 
 /// `jsc.WebCore` (deprecated alias) — only the data-shape subset
 /// that was hoisted to this tier. Reach for `bun_runtime::webcore` for the
@@ -1471,18 +1483,19 @@ pub trait JsClass: Sized {
     }
 }
 
-/// GC-finalize hook resolved by the generated `${T}Class__finalize` thunk
-/// (generate-classes.ts:2893-2902). The thunk body is
+/// GC-finalize hook resolved by the generated `${T}Class__finalize` thunk for
+/// `finalize: true` classes. The thunk body is
 /// `host_fn::host_fn_finalize(this, |b| ${T}::finalize(b))` — Rust path
 /// resolution on `${T}::finalize` picks an *inherent* `fn finalize(self:
-/// Box<Self>)` first when one exists (refcounted / leak-on-pending types),
-/// otherwise falls through to this trait's default: drop the `Box`, running
-/// `T`'s `Drop` glue and freeing the allocation.
+/// Box<Self>)` first when one exists (leak-on-pending types), otherwise falls
+/// through to this trait's default: drop the `Box`, running `T`'s `Drop` glue
+/// and freeing the allocation. Refcounted payloads are `refCounted: true` classes
+/// ([`JsFinalizeRefCounted`]) instead.
 ///
 /// **Override by defining an inherent `pub fn finalize(self: Box<Self>)` on
 /// the concrete type** — do *not* `impl JsFinalize for MyType`; the blanket
 /// impl below already covers every `Sized` type and a second impl would
-/// conflict. The generated thunk file imports `JsFinalize as _` so the trait
+/// conflict. The generated thunk imports `JsFinalize as _` so the trait
 /// is in scope for path resolution without polluting any per-type module.
 pub trait JsFinalize: Sized {
     #[inline]
@@ -1491,6 +1504,14 @@ pub trait JsFinalize: Sized {
     }
 }
 impl<T: Sized> JsFinalize for T {}
+
+/// [`JsFinalize`] for `refCounted: true` classes: the hook that runs before the
+/// wrapper's ref is dropped. Override with an inherent `pub fn finalize(&self)`.
+pub trait JsFinalizeRefCounted {
+    #[inline]
+    fn finalize(&self) {}
+}
+impl<T: bun_ptr::AnyRefCounted> JsFinalizeRefCounted for T {}
 
 /// Track whether an object should keep the event loop alive
 #[derive(Default)]

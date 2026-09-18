@@ -1,7 +1,7 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::node::types::FdJsc as _;
@@ -33,6 +33,8 @@ pub enum Readable {
     /// the owning `Readable` will be converted into this variant and the pipe's
     /// buffer will be taken as an owned `CowString`.
     Buffer(CowString),
+    /// A buffered `pipe` whose read failed: the bytes read before the error, then the error.
+    Errored(CowString, bun_sys::Error),
 }
 
 impl Readable {
@@ -52,7 +54,7 @@ impl Readable {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
-            Readable::Buffer(buffer) => buffer.length(),
+            Readable::Buffer(buffer) | Readable::Errored(buffer, _) => buffer.length(),
             _ => 0,
         }
     }
@@ -141,9 +143,7 @@ impl Readable {
             Stdio::Pipe => {
                 Readable::Pipe(PipeReader::create(event_loop, process, result, max_size))
             }
-            Stdio::ArrayBuffer(..) | Stdio::Blob(..) => {
-                panic!("TODO: implement ArrayBuffer & Blob support in Stdio readable")
-            }
+            Stdio::Blob(..) => panic!("TODO: implement Blob support in Stdio readable"),
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
             // ReadableStream is handled separately
             Stdio::ReadableStream(..) => Readable::Ignore,
@@ -204,7 +204,7 @@ impl Readable {
                 }
                 Self::pipe_reader_mut(&pipe).process = None;
             }
-            Readable::Buffer(_) => {
+            Readable::Buffer(_) | Readable::Errored(..) => {
                 // Dropping the CowString (via the overwrite) frees the buffer;
                 // finalize is terminal.
                 *self = Readable::Closed;
@@ -213,17 +213,17 @@ impl Readable {
         }
     }
 
-    pub fn to_js(&mut self, global: &JSGlobalObject, _exited: bool) -> JsResult<JSValue> {
+    pub fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>, _exited: bool) -> JsResult<JSValue> {
         match self {
             // should only be reachable when the entire output is buffered.
-            Readable::Memfd(_) => self.to_buffered_value(global),
+            Readable::Memfd(_) => self.to_buffered_value(cx.global()),
 
-            Readable::Fd(fd) => Ok(fd.to_js(global)),
+            Readable::Fd(fd) => Ok(fd.to_js(cx.global())),
             Readable::Pipe(_) => {
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
-                let result = Self::pipe_reader_mut(&pipe).to_js(global);
+                let result = Self::pipe_reader_mut(&pipe).to_js(cx);
                 Self::pipe_reader_mut(&pipe).process = None;
                 result
             }
@@ -233,11 +233,19 @@ impl Readable {
                 };
 
                 if buffer.length() == 0 {
-                    return ReadableStream::empty(global);
+                    return ReadableStream::empty(cx.global());
                 }
 
                 let own = buffer.take_slice()?;
-                ReadableStream::from_owned_slice(global, own.into_vec(), 0)
+                ReadableStream::from_owned_slice(cx, own.into_vec(), 0)
+            }
+            Readable::Errored(..) => {
+                let Readable::Errored(mut buffer, err) = mem::replace(self, Readable::Closed)
+                else {
+                    unreachable!()
+                };
+                let own = buffer.take_slice()?;
+                ReadableStream::from_bytes_then_error(cx, own.into_vec(), err)
             }
             _ => Ok(JSValue::UNDEFINED),
         }
@@ -277,6 +285,12 @@ impl Readable {
                 };
 
                 JSValue::create_buffer_from_box(global, own)
+            }
+            Readable::Errored(..) => {
+                let Readable::Errored(_, err) = mem::replace(self, Readable::Closed) else {
+                    unreachable!()
+                };
+                Err(err.throw(global))
             }
             _ => Ok(JSValue::UNDEFINED),
         }

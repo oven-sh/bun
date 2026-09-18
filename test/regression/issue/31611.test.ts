@@ -120,16 +120,19 @@ test.skipIf(!perl)("generate-root-certs.pl keeps roots with an inline trust-obje
     "certdata.txt": certdata,
   });
 
-  execFileSync(perl!, ["generate-root-certs.pl", "root_certs.h"], {
+  execFileSync(perl!, ["generate-root-certs.pl", "root_certs"], {
     cwd: String(dir),
     env: bunEnv,
     encoding: "utf8",
   });
 
-  const generated = readFileSync(join(String(dir), "root_certs.h"), "utf8");
-
-  // Control root + inline-comment root must both survive.
-  expect(generated).toContain("DirectTrustRoot");
-  expect(generated).toContain("DistrustAfterRoot");
-  expect(generated.match(/-----BEGIN CERTIFICATE-----/g) ?? []).toHaveLength(2);
+  // Control root + inline-comment root must both survive, in the list and the DER blob.
+  const listed = readFileSync(join(String(dir), "root_certs.txt"), "utf8")
+    .split("\n")
+    .filter(l => l && !l.startsWith("#"));
+  expect(listed).toEqual(["DirectTrustRoot", "DistrustAfterRoot"]);
+  const blob = readFileSync(join(String(dir), "root_certs.der"));
+  expect(blob.readUInt32LE(0)).toBe(2);
+  const end = blob.readUInt32LE(4 + 4 * 2);
+  expect(blob.length).toBe(4 + 4 * 3 + end);
 });

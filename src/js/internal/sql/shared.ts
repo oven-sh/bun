@@ -7,6 +7,7 @@ const {
   symbols: { _strings, _values },
 } = require("internal/sql/query");
 const AsyncContextFrame = require("internal/async_context_frame");
+const { isStoppedModuleGraphRunning } = require("internal/shared");
 
 declare global {
   interface NumberConstructor {
@@ -641,13 +642,18 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
    */
   protected abstract isConnectFailureError(err: Error | null): boolean;
 
+  /// `method` bound to this slot for the native connection to call.
+  protected nativeCallback(method: (...args: any[]) => void): (...args: any[]) => void {
+    return this.adapter.ownerCallback(method.bind(this));
+  }
+
   async #beginConnecting() {
     // a fresh connect cycle (not a backoff retry) starts the retry budget
     if (this.connectStartedAt === 0) {
       this.connectStartedAt = Date.now();
       this.connectAttempts = 0;
     }
-    await this.startConnection();
+    await this.adapter.runAsOwner(this.startConnection, this);
     if (this.onFinish !== null) {
       // the pool was force-closed while the native handle was being created;
       // close it now so onClose fires and onFinish settles
@@ -877,6 +883,10 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     allowPublicKeyRetrieval = false,
   } = options;
 
+  // What script of a disposed Bun.ModuleGraph starts does not start: nothing is dialed, and what
+  // waits for this connection waits.
+  if (isStoppedModuleGraphRunning()) return null;
+
   let password: Bun.MaybePromise<string> | string | undefined | (() => Bun.MaybePromise<string>) = options.password;
 
   try {
@@ -937,9 +947,34 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   /// inside it rather than in whatever context the native callback happens to fire in
   /// (none for a socket event, the close() caller's when the socket closes synchronously).
   public readonly callbackAsyncContext: unknown;
+  /// The Bun.ModuleGraph context frame the SQL instance was created inside of, if any:
+  /// every connection of the pool is opened in it, so it belongs to that graph.
+  public readonly ownerGraphFrame: unknown;
+
+  /// Calls `dial` as the SQL instance's owner, whoever is calling: a connection is its owner's,
+  /// the Bun.ModuleGraph the instance was made in (a redial starts from a close event, which has
+  /// no async context), or no graph's when the host made it, even if a graph's query or listen()
+  /// is what makes it dial. That graph's dispose() would otherwise close the host's connection
+  /// under the host, and its leftover script could leave the host waiting for one never opened.
+  public runAsOwner<This, Result>(dial: (this: This) => Result, thisValue: This): Result {
+    const graphFrame = this.ownerGraphFrame;
+    return graphFrame === undefined && AsyncContextFrame.currentGraph() === undefined
+      ? dial.$call(thisValue)
+      : AsyncContextFrame.run(graphFrame, dial, thisValue);
+  }
+
+  /// `callback` for a native connection to call (from a socket event, which has no async
+  /// context): as the SQL instance's owner, so a retry timer it arms is the owner's too, and is
+  /// cancelled with the Bun.ModuleGraph that owns the instance.
+  public ownerCallback<Args extends unknown[]>(callback: (...args: Args) => void): (...args: Args) => void {
+    const graphFrame = this.ownerGraphFrame;
+    if (graphFrame === undefined) return callback;
+    return (...args) => AsyncContextFrame.run(graphFrame, callback, undefined, ...args);
+  }
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
+    this.ownerGraphFrame = AsyncContextFrame.currentGraphFrame();
     this.callbackAsyncContext =
       connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
     // Slots are filled one at a time in connect()'s pool-start loop, and

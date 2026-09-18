@@ -9,9 +9,9 @@
 
 use core::ffi::c_void;
 
+use bun_core::EncodedSlice;
 use bun_core::Environment;
 use bun_core::Output;
-use bun_core::EncodedSlice;
 
 use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 
@@ -620,10 +620,8 @@ pub fn host_fn_setter_this_shared<T, R: IntoHostSetterReturn>(
 /// body contains zero `unsafe` tokens and user impls need no
 /// soundness-laundering `unsafe { heap::take(this) }`.
 ///
-/// For intrusively-refcounted `T` the JS wrapper holds one of N refs; the
-/// impl MUST `Box::leak`/`Box::into_raw` as its FIRST step (before any
-/// fallible work) so the allocation is not freed by Box drop on panic while
-/// other ref holders still alias it.
+/// Intrusively-refcounted payloads use `refCounted: true` / [`host_fn_finalize_ref_counted`]
+/// instead.
 ///
 /// # Safety
 /// `this` must be the unique GC-owned `m_ctx` pointer originally produced by
@@ -634,11 +632,25 @@ pub unsafe fn host_fn_finalize<T>(this: *mut T, f: impl FnOnce(alloc::boxed::Box
     // SAFETY: `this` is the GC-owned `m_ctx` pointer, valid and not
     // concurrently accessed (mutator-thread sweep). It was produced by
     // `Box::into_raw` in the construct path (`IntoHostConstructReturn`).
-    // For intrusively-refcounted `T` other native code may hold raw
-    // pointers to the same allocation — see doc comment above re: the
-    // impl's obligation to `Box::leak` before doing fallible work.
     let boxed = unsafe { alloc::boxed::Box::from_raw(this) };
     f(boxed)
+}
+
+/// Finalizer for a `refCounted: true` class: the wrapper held one ref on an
+/// intrusively refcounted payload. Runs the type's `&self` hook (clear a
+/// `this_value`, mark finalized, …) and drops that ref.
+///
+/// # Safety
+/// `this` is the live `m_ctx` pointer the wrapper holds a ref on.
+#[inline]
+pub unsafe fn host_fn_finalize_ref_counted<T: bun_ptr::AnyRefCounted>(
+    this: *mut T,
+    f: impl FnOnce(&T),
+) {
+    // SAFETY: fn contract; other refs may exist, so only `&T` is formed.
+    f(unsafe { &*this });
+    // SAFETY: fn contract — releases the wrapper's ref.
+    unsafe { T::rc_deref(this) };
 }
 
 /// Codegen thunk entry for prototype setters.

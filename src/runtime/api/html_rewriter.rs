@@ -249,11 +249,11 @@ impl HandlerList {
         value.map(|value| self.append(global, value)).transpose()
     }
 
-    /// `None` while an exception (a termination) is pending.
-    fn get(self, global: &JSGlobalObject, slot: HandlerSlot) -> Option<JSValue> {
-        let value = self.0.get_direct_index(global, slot.0).ok()?;
+    /// `Err` while an exception (a termination) is pending.
+    fn get(self, global: &JSGlobalObject, slot: HandlerSlot) -> JsResult<JSValue> {
+        let value = self.0.get_direct_index(global, slot.0)?;
         debug_assert!(value.is_cell(), "HTMLRewriter handler list has a hole");
-        value.is_cell().then_some(value)
+        Ok(value)
     }
 }
 
@@ -2303,9 +2303,11 @@ where
                 debug_assert!(false, "HTMLRewriter handler ran without its handler list");
                 return HandlerOutcome::Stop;
             };
-            let (Some(cb), Some(this_object)) =
-                (list.get(global, callback), list.get(global, this_object))
-            else {
+            // A pending termination stays pending, as when it stops the callback itself.
+            let Ok(cb) = list.get(global, callback) else {
+                return HandlerOutcome::Stop;
+            };
+            let Ok(this_object) = list.get(global, this_object) else {
                 return HandlerOutcome::Stop;
             };
             (cb, this_object)

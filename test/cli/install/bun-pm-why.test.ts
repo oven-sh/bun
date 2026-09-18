@@ -192,7 +192,8 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
   it("should handle workspace dependencies", async () => {
     const { stdout, exitCode } = await why(workspace, "pkg-a");
-    expect(stdout).toMatchInlineSnapshot(`
+    // The workspace path in the resolution uses the OS path separator.
+    expect(stdout.replaceAll("\\", "/")).toMatchInlineSnapshot(`
       "pkg-a@workspace:packages/pkg-a
         ├─ pkg-b@workspace (requires workspace:*)
         │  ├─ app-a@workspace (requires workspace:*)

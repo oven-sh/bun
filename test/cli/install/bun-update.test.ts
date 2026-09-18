@@ -1,5 +1,5 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { access, appendFile, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
 import { VerdaccioRegistry, bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
 import { basename, dirname, join } from "path";
@@ -15,6 +15,7 @@ import {
   setHandler,
 } from "./dummy.registry.js";
 
+setDefaultTimeout(1000 * 60 * 5);
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
 beforeEach(async () => {
@@ -542,7 +543,7 @@ it("--filter updates only matching workspaces, leaving siblings and root untouch
   expect(root.dependencies.baz).toBe("~0.0.3");
 });
 
-// The exact pin is installed first, then widened to a range its locked resolution satisfies, so the nested copy stays.
+// The exact pin is installed first, then widened to a range the hoisted copy satisfies, collapsing the nested row.
 async function nestedBazRepo(rootRange: string, pkgARange: string, rewrite: { root?: string; pkgA?: string }) {
   setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
   const rootJson = (range: string) =>
@@ -565,7 +566,13 @@ const pkgABazVersion = async () => (await file(join(pkgABazDir(), "package.json"
 it("--filter pkg-a removes the nested copy whose row it collapsed", async () => {
   await nestedBazRepo("0.0.5", "0.0.3", { pkgA: "~0.0.3" });
   expect(await rootBazVersion()).toBe("0.0.5");
-  expect(await pkgABazVersion()).toBe("0.0.3");
+  // The unfiltered install that applied the widened range collapsed pkg-a's
+  // nested row and pruned the on-disk copy with it (#29793).
+  expect(await exists(pkgABazDir())).toBeFalse();
+
+  // Re-plant the stale nested copy; the filtered update must remove it too.
+  await mkdir(pkgABazDir(), { recursive: true });
+  await writeFile(join(pkgABazDir(), "package.json"), JSON.stringify({ name: "baz", version: "0.0.3" }));
 
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "update", "--filter", "pkg-a", "--linker=hoisted"],
@@ -2893,4 +2900,325 @@ describe("bun update <name> semantics", () => {
       await expectProjectUntouched(project, projectBefore);
     });
   });
+});
+
+// https://github.com/oven-sh/bun/issues/29793
+it("hoisted install removes stale workspace-local node_modules that shadow the hoisted version", async () => {
+  const registry = {
+    "0.0.3": {},
+    "0.0.5": {},
+    latest: "0.0.5",
+  };
+  setHandler(dummyRegistry([], registry));
+
+  // Root workspace — declares the workspace, no deps.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/backend"],
+    }),
+  );
+
+  // Backend workspace depends on baz.
+  await mkdir(join(package_dir, "packages", "backend"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "backend", "package.json"),
+    JSON.stringify({
+      name: "@repro/backend",
+      dependencies: { baz: "^0.0.3" },
+    }),
+  );
+
+  // Pre-existing stale workspace-local package, simulating what an earlier
+  // package-local install (or manual edit) can leave behind.
+  await mkdir(join(package_dir, "packages", "backend", "node_modules", "baz"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "backend", "node_modules", "baz", "package.json"),
+    JSON.stringify({ name: "baz", version: "0.0.0-stale" }),
+  );
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--latest", "baz", "--linker=hoisted"],
+    cwd: join(package_dir, "packages", "backend"),
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await new Response(stderr).text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  // baz should be hoisted to root node_modules at the updated version …
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    name: "baz",
+    version: "0.0.5",
+  });
+
+  // … and the stale workspace-local copy must be gone so module resolution
+  // from the backend workspace finds the hoisted one instead of the shadow.
+  expect(await exists(join(package_dir, "packages", "backend", "node_modules", "baz"))).toBe(false);
+});
+
+// Guard against over-eager pruning: a workspace-local copy that the lockfile
+// legitimately places there (because it couldn't hoist due to a root conflict)
+// must survive a subsequent install.
+it("hoisted install preserves non-hoistable workspace-local packages", async () => {
+  const registry = {
+    "0.0.3": {},
+    "0.0.5": {},
+    latest: "0.0.5",
+  };
+  setHandler(dummyRegistry([], registry));
+
+  // Root pins baz@0.0.3; workspace pins baz@0.0.5 → the workspace copy can't
+  // hoist and must live at `packages/backend/node_modules/baz`.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/backend"],
+      dependencies: { baz: "0.0.3" },
+    }),
+  );
+
+  await mkdir(join(package_dir, "packages", "backend"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "backend", "package.json"),
+    JSON.stringify({
+      name: "@repro/backend",
+      dependencies: { baz: "0.0.5" },
+    }),
+  );
+
+  // Initial install lays everything out.
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    name: "baz",
+    version: "0.0.3",
+  });
+  expect(
+    await file(join(package_dir, "packages", "backend", "node_modules", "baz", "package.json")).json(),
+  ).toMatchObject({
+    name: "baz",
+    version: "0.0.5",
+  });
+
+  // Second install must not wipe the legitimate workspace-local copy.
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  expect(
+    await file(join(package_dir, "packages", "backend", "node_modules", "baz", "package.json")).json(),
+  ).toMatchObject({
+    name: "baz",
+    version: "0.0.5",
+  });
+});
+
+// `bun install --filter <subset>` leaves an excluded workspace's node_modules
+// alone entirely (stale entries included); a later unfiltered install prunes
+// the stale copy of a declared dep while keeping the legit non-hoistable copy.
+it("hoisted install with --filter preserves excluded workspace's non-hoistable packages", async () => {
+  const registry = {
+    "0.0.3": {},
+    "0.0.5": {},
+    "0.1.0": {},
+    latest: "0.0.5",
+  };
+  setHandler(dummyRegistry([], registry));
+
+  // Root pins baz@0.0.3 and declares one workspace that pins baz@0.0.5. The
+  // workspace's copy can't hoist (root already claims baz) so it lands at
+  // `packages/excluded/node_modules/baz`. The workspace's moo has no root
+  // conflict and hoists.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      dependencies: { baz: "0.0.3" },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "excluded"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "excluded", "package.json"),
+    JSON.stringify({ name: "excluded", dependencies: { baz: "0.0.5", moo: "^0.1.0" } }),
+  );
+  await mkdir(join(package_dir, "packages", "target"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "target", "package.json"),
+    JSON.stringify({ name: "target", dependencies: { baz: "0.0.3" } }),
+  );
+
+  // First, a full install lays out both workspaces' node_modules.
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  // Confirm the expected layout before the filtered install runs: root gets
+  // baz 0.0.3 and the hoisted moo, the excluded workspace has its own 0.0.5.
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    name: "baz",
+    version: "0.0.3",
+  });
+  expect(await exists(join(package_dir, "node_modules", "moo"))).toBe(true);
+  expect(
+    await file(join(package_dir, "packages", "excluded", "node_modules", "baz", "package.json")).json(),
+  ).toMatchObject({
+    name: "baz",
+    version: "0.0.5",
+  });
+
+  // Leave a stale copy of the hoisted moo in the workspace we'll exclude.
+  await mkdir(join(package_dir, "packages", "excluded", "node_modules", "moo"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "excluded", "node_modules", "moo", "package.json"),
+    JSON.stringify({ name: "moo", version: "0.0.0-stale" }),
+  );
+
+  // Now run an install filtered to `target` only.
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--filter", "target", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+
+  // The filtered install leaves the excluded workspace untouched: both the
+  // legit non-hoistable copy and the stale entry survive.
+  expect(
+    await file(join(package_dir, "packages", "excluded", "node_modules", "baz", "package.json")).json(),
+  ).toMatchObject({
+    name: "baz",
+    version: "0.0.5",
+  });
+  expect(await exists(join(package_dir, "packages", "excluded", "node_modules", "moo"))).toBe(true);
+
+  // A later unfiltered install prunes the stale copy of the hoisted dep but
+  // keeps the legit non-hoistable copy.
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    expect(await new Response(stderr).text()).not.toContain("error:");
+    expect(await exited).toBe(0);
+  }
+  expect(
+    await file(join(package_dir, "packages", "excluded", "node_modules", "baz", "package.json")).json(),
+  ).toMatchObject({
+    name: "baz",
+    version: "0.0.5",
+  });
+  expect(await exists(join(package_dir, "packages", "excluded", "node_modules", "moo"))).toBe(false);
+});
+
+// Stale workspace-local copies of declared deps are pruned during a plain
+// `bun install` (not just update): the scoped one's empty `@scope` parent is
+// cleaned up too, and entries whose name the workspace does not declare (a
+// manual link, a hand-dropped folder) are left alone.
+it("hoisted install prunes stale scoped workspace-local entries", async () => {
+  const registry = {
+    "0.0.3": {},
+    "0.0.5": {},
+    "0.1.0": {},
+    latest: "0.0.5",
+  };
+  setHandler(dummyRegistry([], registry));
+
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/backend"],
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "backend"), { recursive: true });
+  // Both deps hoist to the root (no conflicts); the scoped one is an alias so
+  // its folder name is `@scope/dep`.
+  await writeFile(
+    join(package_dir, "packages", "backend", "package.json"),
+    JSON.stringify({
+      name: "@repro/backend",
+      dependencies: { baz: "^0.0.3", "@scope/dep": "npm:moo@^0.1.0" },
+    }),
+  );
+
+  // Pre-existing stale local copies of the declared deps, plus a foreign
+  // directory the lockfile knows nothing about.
+  const backendModules = join(package_dir, "packages", "backend", "node_modules");
+  await mkdir(join(backendModules, "baz"), { recursive: true });
+  await writeFile(join(backendModules, "baz", "package.json"), JSON.stringify({ name: "baz", version: "0.0.0" }));
+  await mkdir(join(backendModules, "@scope", "dep"), { recursive: true });
+  await writeFile(
+    join(backendModules, "@scope", "dep", "package.json"),
+    JSON.stringify({ name: "moo", version: "0.0.0" }),
+  );
+  await mkdir(join(backendModules, "hand-linked"), { recursive: true });
+  await writeFile(
+    join(backendModules, "hand-linked", "package.json"),
+    JSON.stringify({ name: "hand-linked", version: "0.0.0" }),
+  );
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  expect(await new Response(stderr).text()).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  // Hoisted copies land at the root.
+  expect(await exists(join(package_dir, "node_modules", "baz"))).toBe(true);
+  expect(await exists(join(package_dir, "node_modules", "@scope", "dep"))).toBe(true);
+  // The stale local copies are gone, along with the empty `@scope` parent;
+  // the foreign directory survives.
+  expect(await exists(join(backendModules, "baz"))).toBe(false);
+  expect(await exists(join(backendModules, "@scope", "dep"))).toBe(false);
+  expect(await exists(join(backendModules, "@scope"))).toBe(false);
+  expect(await exists(join(backendModules, "hand-linked"))).toBe(true);
 });

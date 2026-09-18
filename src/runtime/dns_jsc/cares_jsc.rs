@@ -204,7 +204,8 @@ pub(crate) fn addr_info_to_js_array(
                 result_to_js(
                     &bun_dns::GetAddrInfoResult {
                         address,
-                        ttl: this_node.ttl,
+                        // RFC 2181 §8: high-bit wire TTLs arrive negative via c-ares's signed int.
+                        ttl: this_node.ttl.max(0),
                     },
                     global_this,
                 )?,

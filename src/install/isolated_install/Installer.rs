@@ -75,13 +75,9 @@ pub struct Installer<'a> {
 
     pub(crate) summary: InstallSummary,
     pub(crate) installed: Bitset,
-    /// Set for an entry whose download failed and that only optional
-    /// dependencies need. Its store directory does not exist, so the entries
-    /// that depend on it do not link it. Set on the main thread before the
-    /// entry reaches `Step::Done`, read by the dependents' tasks.
+    /// Entries left out because their download failed and only optional dependencies need them.
     pub(crate) missing: Box<[AtomicBool]>,
-    /// Main thread only. Set for an entry that a dependency without
-    /// `Behavior::OPTIONAL` resolves to. Built on the first failed download.
+    /// Main thread only. Entries that a dependency without `Behavior::OPTIONAL` resolves to.
     pub(crate) required_entries: Option<Bitset>,
     pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
@@ -248,10 +244,6 @@ impl<'a> Installer<'a> {
     /// Without this, the upfront pending-task slot for each waiting entry is
     /// never released and the install loop blocks forever on
     /// `pendingTaskCount() == 0`.
-    ///
-    /// `run_tasks` has already reported a download that only optional
-    /// dependencies need (`is_required == false`) as a warning. The waiting
-    /// entries are left out and the install does not fail.
     pub(crate) fn on_package_download_error(
         &mut self,
         task_id: crate::package_manager_task::Id,
@@ -461,9 +453,7 @@ impl<'a> Installer<'a> {
         self.resume_unblocked_tasks(entry_id);
     }
 
-    /// Called from main thread when the download for `entry_id` was not
-    /// queued: it already failed, or `--offline` has no cached copy. Both
-    /// were reported when they happened.
+    /// Called from main thread when the download for `entry_id` already failed or `--offline` has no cached copy.
     pub(crate) fn on_download_not_queued(&mut self, entry_id: StoreEntryId) {
         if self.entry_is_required(entry_id) {
             // .monotonic is okay because the task isn't running on another thread.
@@ -475,13 +465,10 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Called from main thread when the download for an entry that only
-    /// optional dependencies need fails. The entry is left out. It counts
-    /// neither as installed nor as failed, as in the hoisted linker.
+    /// Called from main thread. The entry is left out, neither installed nor failed.
     fn on_optional_download_fail(&mut self, entry_id: StoreEntryId) {
         self.missing[entry_id.get() as usize].store(true, Ordering::Relaxed);
-        // Release orders the `missing` store before the dependents' tasks, which
-        // load the step with Acquire in `is_task_blocked`.
+        // Release pairs with the Acquire load in `is_task_blocked`.
         self.store.entries.items_step()[entry_id.get() as usize]
             .store(Step::Done as u32, Ordering::Release);
         self.decrement_pending_tasks();
@@ -492,10 +479,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread only. Whether a dependency without `Behavior::OPTIONAL`
-    /// resolves to `entry_id`. The network task's `is_required` only knows the
-    /// one dependency that asked for the download. Several dependencies can
-    /// share one store entry, and the first one to reach it can be optional.
+    /// Main thread only. Whether a dependency without `Behavior::OPTIONAL` resolves to `entry_id`.
     fn entry_is_required(&mut self, entry_id: StoreEntryId) -> bool {
         if self.required_entries.is_none() {
             let dependencies = self.lockfile().buffers.dependencies.as_slice();
@@ -699,9 +683,7 @@ pub enum Relink {
     Changed,
 }
 
-/// Appends the `node_modules` entry name of a dependency link. A dependency
-/// with the same name as the entry itself nests one `node_modules` deeper to
-/// avoid the collision.
+/// A dependency with the same name as the entry itself nests one `node_modules` deeper.
 fn append_dependency_link_name(
     dest: &mut AutoPath,
     dep_name: &[u8],
@@ -2382,11 +2364,7 @@ impl<'a> Installer<'a> {
         Ok(changed)
     }
 
-    /// Main thread, after every task finished. Removes the links to the
-    /// entries in `missing`. `symlink_dependencies` runs before the entry's
-    /// download can fail, so the dependents created them. A dependent in the
-    /// global store keeps its link: that directory is shared, and the link
-    /// resolves once another install downloads the entry.
+    /// Main thread, after every task finished: `symlink_dependencies` runs before a download can fail.
     pub(crate) fn unlink_missing_dependencies(&self) {
         if !self
             .missing
@@ -2407,6 +2385,7 @@ impl<'a> Installer<'a> {
 
         for (parent, deps) in self.store.entries.items_dependencies().iter().enumerate() {
             let parent_id = StoreEntryId::from(parent as u32);
+            // A global store entry is shared: the link resolves once another install downloads the entry.
             if self.entry_uses_global_store(parent_id) {
                 continue;
             }

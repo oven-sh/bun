@@ -80,9 +80,7 @@ pub trait RunTasksCallbacks {
     // `package_id: PackageID` otherwise. Static dispatch via two trait
     // methods lets impls receive the correctly-typed id without a
     // `Task::Id` round-trip pun.
-    //
-    // `is_required` is false when only optional dependencies need the
-    // download. `run_tasks` has then already logged the failure as a warning.
+    // `is_required == false`: only optional dependencies need the download.
     fn on_package_download_error_store(
         _ctx: &mut Self::Ctx,
         _task_id: Task::Id,
@@ -801,9 +799,6 @@ fn run_tasks_erased(
                     let is_required = manager.is_network_task_required(task.task_id);
                     manager.mark_network_task_failed(task.task_id);
 
-                    // A download that only optional dependencies need is a
-                    // warning for both linkers. The callback reports an error
-                    // itself, so only the warning is logged before it.
                     if !is_required {
                         bun_ast::add_warning_pretty!(
                             manager.log_mut(),

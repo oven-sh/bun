@@ -134,13 +134,11 @@ impl Symlinker {
     }
 }
 
-/// Removes the link at `dest`. Errors are ignored: the caller writes a new link
-/// or does not need the old one.
+/// Removes the link at `dest`. Errors are ignored.
 pub(crate) fn remove_link(dest: &bun_core::ZStr) {
     #[cfg(windows)]
     {
-        // on windows rmdir must be used for symlinks created to point
-        // at directories, even if the target no longer exists
+        // a directory symlink needs rmdir, even if the target no longer exists
         if let Err(err) = bun_sys::rmdir(dest) {
             if matches!(err.get_errno(), Errno::EPERM) {
                 let _ = bun_sys::unlink(dest);

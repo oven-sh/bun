@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -699,6 +700,108 @@ describe("bundler", async () => {
         expect(api.readFile(join("/out", jsFile))).toContain('"entry.ts"');
         const cssFile = readdirSync(api.outdir).find(x => x.endsWith(".css"))!;
         expect(api.readFile(join("/out", cssFile))).toContain("color: red");
+      },
+    });
+  });
+
+  // The `json` loader parses numbers like `JSON.parse`, as `bun run` does.
+  describe("json loader number grammar matches the runtime", () => {
+    // Plain `.json` accepts exactly the number forms `JSON.parse` accepts.
+    itBundled("bun/loader-json-rejects-javascript-number-syntax", {
+      target: "bun",
+      files: {
+        "/entry.js": /* js */ `
+          import hex from "./hex.json";
+          import octal from "./octal.json";
+          import binary from "./binary.json";
+          import leadingZero from "./leading-zero.json";
+          import leadingZeroDecimal from "./leading-zero-decimal.json";
+          import separator from "./separator.json";
+          import leadingDot from "./leading-dot.json";
+          import trailingDot from "./trailing-dot.json";
+          import minusGap from "./minus-gap.json";
+          console.log(hex, octal, binary, leadingZero, leadingZeroDecimal, separator, leadingDot, trailingDot, minusGap);
+        `,
+        "/hex.json": `{"a": 0x10}`,
+        "/octal.json": `{"a": 0o17}`,
+        "/binary.json": `{"a": 0b101}`,
+        "/leading-zero.json": `{"a": 0123}`,
+        "/leading-zero-decimal.json": `[018]`,
+        "/separator.json": `{"a": 1_000}`,
+        "/leading-dot.json": `{"a": .5}`,
+        "/trailing-dot.json": `{"a": 1.}`,
+        "/minus-gap.json": `{"a": - 1}`,
+      },
+      bundleErrors: {
+        "/hex.json": ["JSON does not support hexadecimal numbers"],
+        "/octal.json": ["JSON does not support octal numbers"],
+        "/binary.json": ["JSON does not support binary numbers"],
+        "/leading-zero.json": ["JSON does not support numbers with leading zeros"],
+        "/leading-zero-decimal.json": ["JSON does not support numbers with leading zeros"],
+        "/separator.json": ["JSON does not support numeric separators"],
+        "/leading-dot.json": ['JSON numbers must have a digit before "."'],
+        "/trailing-dot.json": ['JSON numbers must have a digit after "."'],
+        "/minus-gap.json": ['JSON numbers must have a digit after "-"'],
+      },
+    });
+
+    itBundled("bun/loader-json-accepts-json-numbers", {
+      target: "bun",
+      files: {
+        "/entry.js": /* js */ `
+          import data from "./numbers.json";
+          console.log(JSON.stringify(data));
+        `,
+        "/numbers.json": `[0, -0, 10, -10, 0.5, -0.5, 0e1, 0E+1, 1e5, 1E-5, 12.5e-1, 1.5E+2, 123456789012]`,
+      },
+      run: { stdout: "[0,0,10,-10,0.5,-0.5,0,0,100000,0.00001,1.25,150,123456789012]" },
+    });
+
+    // A file that `JSON.parse` rejects fails under `bun run` and under `bun build`.
+    test("bun run and bun build both reject a hexadecimal number in .json", async () => {
+      using dir = tempDir("json-loader-runtime", {
+        "hex.json": `{"a": 0x10}`,
+        "hex.js": `import hex from "./hex.json"; console.log(hex);`,
+      });
+      const run = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+
+      const runtimeHex = await run("hex.js");
+      expect(runtimeHex.stderr).toContain("JSON Parse error");
+      expect(runtimeHex.exitCode).toBe(1);
+      const buildHex = await run("build", "hex.js", "--outfile=out-hex.js");
+      expect(buildHex.stderr).toContain("JSON does not support hexadecimal numbers");
+      expect(buildHex.exitCode).toBe(1);
+    });
+
+    // JSONC and the config files keep the JavaScript number syntax.
+    itBundled("bun/loader-jsonc-accepts-javascript-number-syntax", {
+      target: "bun",
+      files: {
+        "/entry.js": /* js */ `
+          import jsonc from "./data.jsonc";
+          import pkg from "./package.json";
+          import tsconfig from "./tsconfig.json";
+          import viaLoader from "./data.notjson" with { type: "jsonc" };
+          console.log(JSON.stringify([jsonc, pkg, tsconfig, viaLoader]));
+        `,
+        "/data.jsonc": `{"a": 0x10, "b": 0o17, "c": 0b101, "d": 0123, "e": 1_000, "f": .5, "g": 1., "h": - 1, /* c */}`,
+        "/package.json": `{"name": "x", "a": 0x10, "b": .5,}`,
+        "/tsconfig.json": `{"compilerOptions": {"a": 1_000}, // c\n}`,
+        "/data.notjson": `{"a": 0x10}`,
+      },
+      run: {
+        stdout:
+          '[{"a":16,"b":15,"c":5,"d":83,"e":1000,"f":0.5,"g":1,"h":-1},{"name":"x","a":16,"b":0.5},{"compilerOptions":{"a":1000}},{"a":16}]',
       },
     });
   });

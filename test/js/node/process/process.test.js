@@ -1834,9 +1834,9 @@ describe.concurrent(() => {
 
   // Pins which events fire, and in what order, for every way the queue of
   // unreported rejections finds and drops a handled promise: a hole left in the
-  // middle, compaction, a pop from the back, a short queue, and the batch that
-  // is being reported. The "handling N rejected promises is O(N)" tests below
-  // cover the cost of that lookup.
+  // middle, compaction, a pop from the back, a short queue, a long queue that
+  // shrinks and grows again, and the batch that is being reported. The
+  // "handling N rejected promises is O(N)" tests below cover the cost.
   it("reports exactly the rejections that stay unhandled, in order, whatever order the others are handled in", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1881,6 +1881,19 @@ describe.concurrent(() => {
           await drain();
           result.few = { seen, rejectionHandled };
 
+          // A long queue is searched, loses its newest entry, then grows again.
+          seen = [];
+          const regrown = [];
+          for (let i = 0; i < 20; i++) regrown.push(Promise.reject("r" + i));
+          regrown[5].catch(noop);
+          regrown[19].catch(noop);
+          const older = Promise.reject("older");
+          const newer = Promise.reject("newer");
+          older.catch(noop);
+          newer.catch(noop);
+          await drain();
+          result.regrown = { seen, rejectionHandled };
+
           // The listener for the first rejection handles every odd one after it.
           // Their 'unhandledRejection' has not fired, so they get neither event.
           // b2 is handled after this batch reported it: one 'rejectionHandled'.
@@ -1916,6 +1929,7 @@ describe.concurrent(() => {
       oneStepLate: { seen: Array.from({ length: Math.ceil(1000 / 7) }, (_, i) => i * 7), rejectionHandled: 0 },
       newestFirst: { seen: ["n0", "n50"], rejectionHandled: 0 },
       few: { seen: ["f1", "f2", "f5"], rejectionHandled: 0 },
+      regrown: { seen: Array.from({ length: 19 }, (_, i) => "r" + i).filter(r => r !== "r5"), rejectionHandled: 0 },
       handledByListener: { seen: Array.from({ length: 50 }, (_, i) => "b" + i * 2), rejectionHandled: 1 },
       handledAfterReport: { seen: Array.from({ length: 20 }, (_, i) => "q" + i), rejectionHandled: 50 },
     });

@@ -501,8 +501,7 @@ fn workspace_containment<'b>(
     {
         return Containment::Refused("names a drive");
     }
-    // A `\` is a name byte here and a separator in `AutoPath`, so the linkers would open
-    // components this check never saw.
+    // A `\` is a name byte here and a separator to the path code the linkers use.
     #[cfg(not(windows))]
     if strings::contains_char(workspace_path, b'\\') {
         return Containment::Refused("has a backslash");

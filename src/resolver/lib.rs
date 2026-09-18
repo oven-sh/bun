@@ -1864,23 +1864,15 @@ pub mod dir_entry_accessor {
     }
 
     pub(crate) struct DirEntryNameWrapper {
-        // BACKREF: borrowed slice into the `Entry`'s original-case basename
-        // (`Entry::base()`). The bytes live inline in the `Entry` (short names)
-        // or in the `FilenameStore` (long names). The `Entry` is owned by the
-        // EntryStore BSSList singleton, so both outlive the parent `DirEntry`.
-        // Stored as [`bun_ptr::RawSlice`] (not `&'static [u8]`) per PORTING.md
-        // §Forbidden: `RawSlice` encapsulates the outlives-holder invariant so
-        // `slice()` is safe.
+        // BACKREF: `Entry::base()` bytes. The `Entry` lives in the EntryStore
+        // singleton, which outlives every `DirEntry` and this wrapper.
         pub value: bun_ptr::RawSlice<u8>,
     }
 
     impl DirEntryNameWrapper {
         #[inline]
         fn slice(&self) -> &[u8] {
-            // BACKREF — see field comment. The GlobWalker consumes
-            // `name_slice()` before advancing the iterator or reopening the
-            // directory, so the pointee `Entry`/`FilenameStore` bytes are still
-            // alive here.
+            // BACKREF: see the field comment.
             self.value.slice()
         }
     }
@@ -1905,10 +1897,8 @@ pub mod dir_entry_accessor {
         #[inline]
         fn next(&mut self) -> Maybe<Option<DirEntryIterResult>> {
             if let Some(value) = &mut self.value {
-                // The key is the lowercased name (`add_entry_with_store`). The
-                // walker joins the name it gets into the paths it opens, so it
-                // needs the on-disk spelling from `Entry::base()`.
-                let Some((_key, val)) = value.next() else {
+                // The key is lowercased; the walker needs `Entry::base()` to open paths.
+                let Some((_, val)) = value.next() else {
                     return Ok(None);
                 };
                 // BACKREF: ARENA — `*mut Entry` points into the EntryStore
@@ -1931,8 +1921,6 @@ pub mod dir_entry_accessor {
                 // `Entry::kind` resolved through symlinks above; a non-empty
                 // cached realpath is what records the entry as a symlink.
                 let symlink_target = entry.cache().symlink;
-                // BACKREF: see `DirEntryNameWrapper::value`. `name_slice()`
-                // re-narrows the lifetime so it never escapes the iter result.
                 Ok(Some(DirEntryIterResult {
                     name: DirEntryNameWrapper {
                         value: bun_ptr::RawSlice::new(entry.base()),

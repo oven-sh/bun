@@ -134,6 +134,29 @@ export function nodeExe(): string | null {
   return which("node") || null;
 }
 
+let systemNodeMajor: number | undefined;
+
+/** Major version of the system Node.js, or 0 when there is none. Spawns it one time. */
+export function nodeMajorVersion(): number {
+  if (systemNodeMajor === undefined) {
+    const node = nodeExe();
+    const version = node ? Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv }).stdout : "";
+    systemNodeMajor = parseInt(version.toString(), 10) || 0;
+  }
+  return systemNodeMajor;
+}
+
+/**
+ * A `describe.each` table of `[name, executable]` for a fixture that must give the same output
+ * under Bun and under Node.js. The system Node.js is in it when its major version is at least
+ * `minNodeMajor`.
+ */
+export function runtimesWithNode(minNodeMajor: number): [name: string, exe: string][] {
+  const runtimes: [string, string][] = [["bun", bunExe()]];
+  if (nodeMajorVersion() >= minNodeMajor) runtimes.push(["node", nodeExe()!]);
+  return runtimes;
+}
+
 let abiMatchingNode: Promise<string> | undefined;
 
 /**

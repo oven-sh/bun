@@ -11,7 +11,7 @@ import {
   isDebug,
   isLinux,
   isWindows,
-  nodeExe,
+  runtimesWithNode,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -2044,14 +2044,8 @@ describe("socket torn down with a write still in flight", () => {
     }
   `;
 
-  // Node 22.0 still called a canceled write's callback without an error, so only a current Node is a reference.
-  const node = nodeExe();
-  const nodeMajor = node
-    ? parseInt(Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv }).stdout.toString(), 10)
-    : 0;
-  const runtimes = [["bun", bunExe()], ...(nodeMajor >= 24 ? [["node", node!]] : [])];
-
-  describe.each(runtimes)("%s", (_, exe) => {
+  // Node 22.0 still called a canceled write's callback without an error, so only Node 24 or later is a reference.
+  describe.each(runtimesWithNode(24))("%s", (_, exe) => {
     async function run(env: Record<string, string>) {
       await using proc = Bun.spawn({
         cmd: [exe, "-e", fixture],

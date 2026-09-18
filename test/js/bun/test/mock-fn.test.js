@@ -480,6 +480,58 @@ describe("mock()", () => {
     expect(fn).toHaveBeenLastCalledWith(43);
     expect(fn).toHaveBeenCalledWith(43);
   });
+  // The "incomplete" entry is settled in place after the implementation
+  // returns, so a mockClear() during the call does not leave it stale.
+  test("the results entry settles when the implementation calls mockClear()", () => {
+    const fn = jest.fn();
+    fn.mockReturnValueOnce(1)
+      .mockReturnValueOnce(2)
+      .mockImplementation(() => {
+        fn.mockClear();
+        return 3;
+      });
+    fn();
+    fn();
+    const captured = fn.mock.results;
+    expect(fn()).toBe(3);
+    expect(captured).toEqual([
+      { type: "return", value: 1 },
+      { type: "return", value: 2 },
+      { type: "return", value: 3 },
+    ]);
+    expect(fn.mock.results).toEqual([]);
+  });
+  test("the results entry settles when the implementation calls mockClear() and throws", () => {
+    const instance = new Error("foo");
+    const fn = jest.fn(() => {
+      fn.mockClear();
+      throw instance;
+    });
+    const captured = fn.mock.results;
+    expect(() => fn()).toThrow("foo");
+    expect(captured).toEqual([{ type: "throw", value: instance }]);
+    expect(fn.mock.results).toEqual([]);
+  });
+  test("mock.results is empty after the implementation calls mockClear() and reads it", () => {
+    let armed = false;
+    const fn = jest.fn(() => {
+      if (armed) {
+        fn.mockClear();
+        void fn.mock.results;
+      }
+      return 1;
+    });
+    fn();
+    fn();
+    armed = true;
+    fn();
+    expect(fn.mock.results).toEqual([]);
+    expect(() => expect(fn).toHaveReturned()).toThrow();
+    armed = false;
+    fn();
+    expect(fn.mock.results).toEqual([{ type: "return", value: 1 }]);
+    expect(fn).toHaveReturned();
+  });
   test("multiple calls work", () => {
     const fn = jest.fn(f => f);
     expect(fn(43)).toBe(43);

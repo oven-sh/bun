@@ -801,10 +801,11 @@ enum class MockResultType : uint8_t {
     Incomplete,
 };
 
-static JSValue createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, MockResultType type, JSC::JSValue value)
+// Writes `type` and `value` into an existing `mock.results[i]` entry. The "incomplete" entry
+// of a running call is settled in place, like jest-mock does, because the implementation can
+// call mockClear() and replace the array the entry was pushed into.
+static void setMockResult(JSC::VM& vm, JSC::JSObject* result, MockResultType type, JSC::JSValue value)
 {
-    JSC::Structure* structure = globalObject->mockModule.mockResultStructure.getInitializedOnMainThread(globalObject);
-
     auto& commonStrings = Bun::commonStrings(vm);
     JSC::JSString* typeString = nullptr;
     switch (type) {
@@ -819,9 +820,15 @@ static JSValue createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, Mo
         break;
     }
 
-    JSC::JSObject* result = JSC::constructEmptyObject(vm, structure);
     result->putDirectOffset(vm, 0, typeString);
     result->putDirectOffset(vm, 1, value);
+}
+
+static JSC::JSObject* createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, MockResultType type, JSC::JSValue value)
+{
+    JSC::Structure* structure = globalObject->mockModule.mockResultStructure.getInitializedOnMainThread(globalObject);
+    JSC::JSObject* result = JSC::constructEmptyObject(vm, structure);
+    setMockResult(vm, result, type, value);
     return result;
 }
 
@@ -893,12 +900,10 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         fn->invocationCallOrder.set(vm, fn, invocationCallOrder);
     }
 
-    unsigned int returnValueIndex = 0;
     auto setReturnValue = [&](JSC::JSValue value) -> void {
         if (auto* returnValuesArray = fn->returnValues.get()) {
             returnValuesArray->push(globalObject, value);
             RETURN_IF_EXCEPTION(scope, void());
-            returnValueIndex = returnValuesArray->length() - 1;
         } else {
             JSC::ObjectInitializationScope object(vm);
             returnValuesArray = JSC::JSArray::tryCreateUninitializedRestricted(
@@ -928,7 +933,8 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
                 return {};
             }
 
-            setReturnValue(createMockResult(vm, globalObject, MockResultType::Incomplete, jsUndefined()));
+            JSC::JSObject* mockResult = createMockResult(vm, globalObject, MockResultType::Incomplete, jsUndefined());
+            setReturnValue(mockResult);
             RETURN_IF_EXCEPTION(scope, {});
 
             auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -936,24 +942,17 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
             JSValue returnValue = Bun::call(globalObject, result, callData, thisValue, args);
 
             if (auto* exc = topExceptionScope.exception()) {
-                if (auto* returnValuesArray = fn->returnValues.get()) {
-                    returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, MockResultType::Throw, exc->value()));
-                    fn->returnValues.set(vm, fn, returnValuesArray);
-                    (void)topExceptionScope.tryClearException();
-                    JSC::throwException(globalObject, scope, exc);
-                    return {};
-                }
+                setMockResult(vm, mockResult, MockResultType::Throw, exc->value());
+                (void)topExceptionScope.tryClearException();
+                JSC::throwException(globalObject, scope, exc);
+                return {};
             }
 
             if (!returnValue) [[unlikely]] {
                 returnValue = jsUndefined();
             }
 
-            if (auto* returnValuesArray = fn->returnValues.get()) {
-                returnValuesArray->putDirectIndex(globalObject, returnValueIndex, createMockResult(vm, globalObject, MockResultType::Return, returnValue));
-                fn->returnValues.set(vm, fn, returnValuesArray);
-            }
-
+            setMockResult(vm, mockResult, MockResultType::Return, returnValue);
             return JSValue::encode(returnValue);
         }
         case JSMockImplementation::Kind::ReturnValue: {

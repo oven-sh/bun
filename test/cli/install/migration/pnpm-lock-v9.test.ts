@@ -1250,7 +1250,7 @@ snapshots:
   });
 
   // pnpm resolves nothing for a dependency a tarball bundles: the `packages:` entry names it and no snapshot has an edge for it.
-  describe("bundledDependencies", () => {
+  describe.concurrent("bundledDependencies", () => {
     test("a bundled dependency stays bundled, so bun prune keeps the copy the tarball ships", async () => {
       // real pnpm output: bundled-transitive ships no-deps@1.0.0 in its own node_modules; one-dep resolves no-deps to 1.0.1
       const registry = verdaccio.registryUrl();
@@ -1308,7 +1308,7 @@ snapshots:
 
       const bunLock = await bunLockOf(packageDir);
       expect(bunLock).toContain(
-        `"bundled-transitive": ["bundled-transitive@1.0.0", "${registry}bundled-transitive/-/bundled-transitive-1.0.0.tgz", { "dependencies": { "no-deps": "*", "one-dep": "1.0.0" }, "bundledDependencies": ["no-deps"] }, "${BUNDLED_TRANSITIVE_1_0_0_INTEGRITY}"]`,
+        `"bundled-transitive": ["bundled-transitive@1.0.0", "${registry}bundled-transitive/-/bundled-transitive-1.0.0.tgz", { "dependencies": { "one-dep": "1.0.0" }, "bundledDependencies": ["no-deps"] }, "${BUNDLED_TRANSITIVE_1_0_0_INTEGRITY}"]`,
       );
       expect(bunLock).toContain(`"no-deps": ["no-deps@1.0.1"`);
       expect(bunLock).not.toContain(`"bundled-transitive/no-deps"`);
@@ -1331,15 +1331,21 @@ snapshots:
       expect(await bunLockOf(packageDir)).toBe(bunLock);
     });
 
-    test("`true` and entries that are not a node_modules folder name add no edge", async () => {
-      // pnpm copies the manifest's value as written: `true` names nothing, and nothing validates a list item
+    test("`true`, a declared peer, and entries that are not a node_modules folder name add no edge", async () => {
+      // pnpm copies the manifest's value as written: `true` names nothing, and nothing validates a list item.
+      // A peer that pnpm resolved is in the snapshot, and it stays a peer, as in a fresh install.
       const registry = verdaccio.registryUrl();
       const { packageDir } = await verdaccio.createTestDir({
         bunfigOpts: { linker: "hoisted" },
         files: {
           "package.json": JSON.stringify({
             name: "bundled-unnamed",
-            dependencies: { "bundled-1": "1.0.0", "bundled-true": "1.0.0" },
+            dependencies: {
+              "bundled-1": "1.0.0",
+              "bundled-true": "1.0.0",
+              "no-deps": "1.0.1",
+              "peer-deps-fixed": "1.0.0",
+            },
           }),
           "pnpm-lock.yaml": `lockfileVersion: '9.0'
 
@@ -1353,6 +1359,12 @@ importers:
       bundled-true:
         specifier: 1.0.0
         version: 1.0.0
+      no-deps:
+        specifier: 1.0.1
+        version: 1.0.1
+      peer-deps-fixed:
+        specifier: 1.0.0
+        version: 1.0.0(no-deps@1.0.1)
 
 packages:
 
@@ -1367,61 +1379,6 @@ packages:
     resolution: {integrity: ${BUNDLED_TRUE_1_0_0_INTEGRITY}}
     bundledDependencies: true
 
-snapshots:
-
-  bundled-1@1.0.0: {}
-
-  bundled-true@1.0.0: {}
-`,
-        },
-      });
-
-      const { stderr, exitCode } = await migrate(packageDir);
-
-      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
-      expect(exitCode).toBe(0);
-
-      const bunLock = await bunLockOf(packageDir);
-      expect(bunLock).toContain(
-        `"bundled-1": ["bundled-1@1.0.0", "${registry}bundled-1/-/bundled-1-1.0.0.tgz", { "dependencies": { "no-deps": "*" }, "bundledDependencies": ["no-deps"] }, "${BUNDLED_1_1_0_0_INTEGRITY}"]`,
-      );
-      expect(bunLock).toContain(
-        `"bundled-true": ["bundled-true@1.0.0", "${registry}bundled-true/-/bundled-true-1.0.0.tgz", {}, "${BUNDLED_TRUE_1_0_0_INTEGRITY}"]`,
-      );
-
-      const install = await run(packageDir, "install");
-
-      expect(install.stderr).not.toContain("Saved lockfile");
-      expect(install.stderr).not.toContain("error:");
-      expect(install.exitCode).toBe(0);
-      expect(await bunLockOf(packageDir)).toBe(bunLock);
-    });
-
-    test("a bundled name the snapshot resolves as a peer keeps its one edge", async () => {
-      // pnpm lists an auto-installed peer under the snapshot's dependencies, so this bundled name already has an edge
-      const registry = verdaccio.registryUrl();
-      const { packageDir } = await verdaccio.createTestDir({
-        bunfigOpts: { linker: "hoisted" },
-        files: {
-          "package.json": JSON.stringify({
-            name: "bundled-peer",
-            dependencies: { "no-deps": "1.0.1", "peer-deps-fixed": "1.0.0" },
-          }),
-          "pnpm-lock.yaml": `lockfileVersion: '9.0'
-
-importers:
-
-  .:
-    dependencies:
-      no-deps:
-        specifier: 1.0.1
-        version: 1.0.1
-      peer-deps-fixed:
-        specifier: 1.0.0
-        version: 1.0.0(no-deps@1.0.1)
-
-packages:
-
   no-deps@1.0.1:
     resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
 
@@ -1433,6 +1390,10 @@ packages:
       - no-deps
 
 snapshots:
+
+  bundled-1@1.0.0: {}
+
+  bundled-true@1.0.0: {}
 
   no-deps@1.0.1: {}
 
@@ -1450,11 +1411,15 @@ snapshots:
 
       const bunLock = await bunLockOf(packageDir);
       expect(bunLock).toContain(
-        `"peer-deps-fixed": ["peer-deps-fixed@1.0.0", "${registry}peer-deps-fixed/-/peer-deps-fixed-1.0.0.tgz", { "peerDependencies": { "no-deps": "^1.0.0" } }, "${PEER_DEPS_FIXED_1_0_0_INTEGRITY}"]`,
+        `"bundled-1": ["bundled-1@1.0.0", "${registry}bundled-1/-/bundled-1-1.0.0.tgz", { "bundledDependencies": ["no-deps"] }, "${BUNDLED_1_1_0_0_INTEGRITY}"]`,
       );
       expect(bunLock).toContain(
-        `"peer-deps-fixed/no-deps": ["no-deps@1.0.1", "${registry}no-deps/-/no-deps-1.0.1.tgz", { "bundled": true }, "${NO_DEPS_1_0_1_INTEGRITY}"]`,
+        `"bundled-true": ["bundled-true@1.0.0", "${registry}bundled-true/-/bundled-true-1.0.0.tgz", {}, "${BUNDLED_TRUE_1_0_0_INTEGRITY}"]`,
       );
+      expect(bunLock).toContain(
+        `"peer-deps-fixed": ["peer-deps-fixed@1.0.0", "${registry}peer-deps-fixed/-/peer-deps-fixed-1.0.0.tgz", { "peerDependencies": { "no-deps": "^1.0.0" } }, "${PEER_DEPS_FIXED_1_0_0_INTEGRITY}"]`,
+      );
+      expect(bunLock).not.toContain(`"peer-deps-fixed/no-deps"`);
 
       const install = await run(packageDir, "install");
 

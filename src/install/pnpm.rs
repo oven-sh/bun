@@ -1563,6 +1563,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         for _dep_id in deps.begin()..deps.end() {
             let dep_id: DependencyID = _dep_id;
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
+            // `append_bundled_dependencies`: pnpm has no package entry for a bundled dependency.
+            if dep.behavior.is_bundled() {
+                continue;
+            }
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
             if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
@@ -1600,10 +1604,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             }
 
             let Some(res_pkg_id) = pkg_map.get(&res_buf) else {
-                // `append_bundled_dependencies`: pnpm has no package entry for a bundled dependency.
-                if dep.behavior.is_bundled() {
-                    continue;
-                }
                 let pkg_name = lockfile.packages.items_name()[pkg_id as usize].slice(string_buf);
                 return Err(missing_package_entry(
                     log,
@@ -1782,7 +1782,7 @@ fn declared_package_peers(
 }
 
 /// pnpm resolves nothing for a dependency the tarball bundles: the `packages:` entry names it and no
-/// snapshot has an edge for it. The edge stays unresolved, with `*` for the range pnpm does not record.
+/// snapshot has an edge for it. The edge stays unresolved and has no range, because pnpm records none.
 fn append_bundled_dependencies(
     lockfile: &mut Lockfile,
     package_obj: &Expr,
@@ -1804,37 +1804,20 @@ fn append_bundled_dependencies(
         };
         let name_hash = semver::string::Builder::string_hash(name_str);
 
-        // A declared peer already has an edge under this name.
-        let mut has_edge = false;
-        for dep in lockfile.buffers.dependencies[off..]
-            .iter_mut()
-            .filter(|dep| dep.name_hash == name_hash)
+        // An edge under this name is a declared peer. It stays a peer, as in a fresh install.
+        if lockfile.buffers.dependencies[off..]
+            .iter()
+            .any(|dep| dep.name_hash == name_hash)
         {
-            dep.behavior.insert(dependency::Behavior::BUNDLED);
-            has_edge = true;
-        }
-        if has_edge {
             continue;
         }
 
         let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
-        let range = sbuf!(lockfile).append(b"*")?;
-        let range_sliced = range.sliced(string_bytes!(lockfile));
-        let Some(version) = Dependency::parse(
-            name.value,
-            name.hash,
-            range_sliced.slice,
-            &range_sliced,
-            None,
-            None,
-        ) else {
-            continue;
-        };
         lockfile.buffers.dependencies.push(Dependency {
             name: name.value,
             name_hash: name.hash,
             behavior: dependency::Behavior::PROD | dependency::Behavior::BUNDLED,
-            version,
+            version: Default::default(),
         });
     }
 

@@ -1088,6 +1088,13 @@ impl Stringifier {
                     continue;
                 }
 
+                // Listed in `bundledDependencies` only, so a bun that does not know the key still loads the file.
+                if resolution_buf[dep_id as usize] == invalid_package_id
+                    && is_bundled_without_range(dep)
+                {
+                    continue;
+                }
+
                 if dep.behavior.is_optional_peer() {
                     // only write to "peerDependencies"
                     if group_behavior.is_optional() {
@@ -1175,8 +1182,12 @@ impl Stringifier {
                 continue;
             }
             if last_listed.is_none() {
-                debug_assert!(any);
-                writer.write_all(b", \"bundledDependencies\": [")?;
+                if any {
+                    writer.write_byte(b',')?;
+                } else {
+                    any = true;
+                }
+                writer.write_all(b" \"bundledDependencies\": [")?;
             } else {
                 writer.write_all(b", ")?;
             }
@@ -3456,6 +3467,13 @@ fn child_pkg_path<'a>(
     Some(&path_buf[..len])
 }
 
+/// A bundled dependency that a migrated lockfile names without a range.
+fn is_bundled_without_range(dep: &Dependency) -> bool {
+    dep.behavior.is_bundled()
+        && dep.version.tag == DependencyVersionTag::Uninitialized
+        && dep.version.literal.is_empty()
+}
+
 /// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
 fn may_stay_unresolved(dep: &Dependency) -> bool {
     dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
@@ -3558,30 +3576,33 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     };
 
     // Bundled dependencies without an entry of their own (the fresh install left them unresolved).
-    let mut bundled_without_entry: Vec<u64> = Vec::new();
-    if CHECK_FOR_BUNDLED {
-        if let Some(bundled_deps) = obj.get(b"bundledDependencies") {
-            if !bundled_deps.is_array() {
+    let bundled_deps = if CHECK_FOR_BUNDLED {
+        obj.get(b"bundledDependencies")
+    } else {
+        None
+    };
+    let mut bundled_without_entry: Vec<(u64, &[u8])> = Vec::new();
+    if let Some(bundled_deps) = &bundled_deps {
+        if !bundled_deps.is_array() {
+            log.add_error(
+                Some(source),
+                value_loc_of(source, bundled_deps.loc),
+                b"Expected an array",
+            );
+            return Err(ParseError::InvalidPackageInfo);
+        }
+
+        for (i, item) in array_items(bundled_deps).iter().enumerate() {
+            let Some(name_str) = item.as_str() else {
                 log.add_error(
                     Some(source),
-                    value_loc_of(source, bundled_deps.loc),
-                    b"Expected an array",
+                    item_loc(source, bundled_deps.loc, i),
+                    b"Expected a string",
                 );
                 return Err(ParseError::InvalidPackageInfo);
-            }
+            };
 
-            for (i, item) in array_items(&bundled_deps).iter().enumerate() {
-                let Some(name_str) = item.as_str() else {
-                    log.add_error(
-                        Some(source),
-                        item_loc(source, bundled_deps.loc, i),
-                        b"Expected a string",
-                    );
-                    return Err(ParseError::InvalidPackageInfo);
-                };
-
-                bundled_without_entry.push(StringBuilder::string_hash(name_str));
-            }
+            bundled_without_entry.push((StringBuilder::string_hash(name_str), name_str));
         }
     }
 
@@ -3664,7 +3685,9 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                         return Err(ParseError::InvalidPackageKey);
                     };
                     if bundled_pkgs.contains(bundled_location)
-                        || bundled_without_entry.contains(&name.hash)
+                        || bundled_without_entry
+                            .iter()
+                            .any(|(hash, _)| *hash == name.hash)
                     {
                         dep.behavior.insert(Behavior::BUNDLED);
                     }
@@ -3673,6 +3696,23 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
                 lockfile.buffers.dependencies.push(dep);
             }
         }
+    }
+
+    // A listed name that is in no dependency group has no range: the lockfile it was migrated from records none.
+    for &(name_hash, name_str) in &bundled_without_entry {
+        if lockfile.buffers.dependencies[off..]
+            .iter()
+            .any(|dep| dep.name_hash == name_hash)
+        {
+            continue;
+        }
+        let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
+        lockfile.buffers.dependencies.push(Dependency {
+            name: name.value,
+            name_hash: name.hash,
+            behavior: Behavior::PROD | Behavior::BUNDLED,
+            ..Default::default()
+        });
     }
 
     if IS_ROOT {

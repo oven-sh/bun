@@ -79,8 +79,7 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
     return false;
 }
 
-// Whole comma-separated member of the Connection list, like llhttp's
-// F_CONNECTION_* flags and HttpRequest::hasConnectionToken in the uWS parser.
+// Whole comma-separated Connection member, like llhttp's F_CONNECTION_* flags.
 static bool svConnectionHasToken(std::string_view value, std::string_view lowerToken)
 {
     size_t pos = 0;

@@ -366,9 +366,7 @@ export function initializeNextTickQueue(process: typeof globalThis.process, next
           var restoreGraph = $getInternalField($asyncContext, 1);
           var graph = tock.graph;
           $putInternalField($asyncContext, 0, tock.frame);
-          // Nearly every tick has no graph on either side. A compare with undefined is a compare
-          // with a constant; `graph !== restoreGraph` alone is a compare of two values the JIT has
-          // to type-check first, before and again after the callback.
+          // Comparing with undefined first spares the JIT two type checks on every tick that has no graph.
           var swapGraph = false;
           if (graph !== undefined || restoreGraph !== undefined) {
             if (graph !== restoreGraph) {

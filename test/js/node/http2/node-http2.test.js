@@ -4569,9 +4569,13 @@ it("http2 pushStream failure reports only via callback, never via stream 'error'
 // Serves a single request with `onStream` (which must push synchronously and then respond) and
 // resolves with the PUSH_PROMISE header blocks the client received, in wire order: `fields` is the
 // flat [name, value, ...] list as decoded from the wire, `headers` the object form, both without
-// pseudo-headers. Every PUSH_PROMISE precedes the parent's response on the wire, so once the parent
-// response has ended every push has been observed.
-async function pushedHeaderBlocks(onStream, serverOptions) {
+// pseudo-headers unless `pseudoHeaders` is set. Every PUSH_PROMISE precedes the parent's response
+// on the wire, so once the parent response has ended every push has been observed.
+async function pushedHeaderBlocks(
+  onStream,
+  serverOptions,
+  { requestHeaders = { ":path": "/" }, pseudoHeaders = false } = {},
+) {
   // Every failure on either side, from listen() onwards, rejects this one promise.
   const { promise, resolve, reject } = Promise.withResolvers();
   const server = http2.createServer(serverOptions);
@@ -4587,19 +4591,20 @@ async function pushedHeaderBlocks(onStream, serverOptions) {
     client.on("stream", (pushed, headers, _flags, rawHeaders) => {
       pushed.on("error", reject);
       pushed.resume();
+      const listed = name => pseudoHeaders || !name.startsWith(":");
       const fields = [];
       for (let i = 0; i < rawHeaders.length; i += 2) {
-        if (!rawHeaders[i].startsWith(":")) fields.push(rawHeaders[i], rawHeaders[i + 1]);
+        if (listed(rawHeaders[i])) fields.push(rawHeaders[i], rawHeaders[i + 1]);
       }
       blocks.push({
         id: pushed.id,
         path: headers[":path"],
         sensitive: headers[http2.sensitiveHeaders],
-        headers: Object.fromEntries(Object.entries(headers).filter(([name]) => !name.startsWith(":"))),
+        headers: Object.fromEntries(Object.entries(headers).filter(([name]) => listed(name))),
         fields,
       });
     });
-    const req = client.request({ ":path": "/" });
+    const req = client.request(requestHeaders);
     req.on("error", reject);
     req.on("end", resolve);
     req.resume();
@@ -4773,6 +4778,50 @@ it("http2 pushStream reports an unsendable array element through the callback", 
   };
   expect(results).toEqual([invalidValue, invalidValue]);
   expect(blocks).toEqual([]);
+});
+
+// Pushes `pushHeaders` in answer to a request opened with `requestHeaders`. Resolves with the
+// pushed stream's sentHeaders on the server and the PUSH_PROMISE headers the client received.
+async function pushedAuthority(requestHeaders, pushHeaders) {
+  const { promise: pushed, resolve, reject } = Promise.withResolvers();
+  const onStream = stream => {
+    stream.pushStream(pushHeaders, (err, push) => {
+      if (err) {
+        reject(err);
+        stream.destroy(err);
+        return;
+      }
+      resolve(push.sentHeaders);
+      push.respond({ ":status": 200 });
+      push.end();
+    });
+    stream.respond({ ":status": 200 });
+    stream.end();
+  };
+  const [blocks, sentHeaders] = await Promise.all([
+    pushedHeaderBlocks(onStream, undefined, { requestHeaders, pseudoHeaders: true }),
+    pushed,
+  ]);
+  return { sentHeaders, received: blocks.map(block => block.headers) };
+}
+
+// A request can name its target with `host` and no :authority: an RFC 7540 8.1.2.3 gateway forwards
+// an HTTP/1.1 request that way, and node's client does when the user passes `host`. node treats
+// `host` as the authority on both sides of the default. Expected values verified on node v26.3.0.
+it("http2 pushStream defaults :authority to the host of a request that has no :authority", async () => {
+  const promised = { ":path": "/pushed", ":method": "GET", ":scheme": "http", ":authority": "example.test" };
+  expect(await pushedAuthority({ ":path": "/", host: "example.test" }, { ":path": "/pushed" })).toEqual({
+    sentHeaders: promised,
+    received: [promised],
+  });
+});
+
+it("http2 pushStream adds no :authority to a push that carries host", async () => {
+  const promised = { ":path": "/pushed", ":method": "GET", ":scheme": "http", host: "push.test" };
+  expect(await pushedAuthority({ ":path": "/" }, { ":path": "/pushed", host: "push.test" })).toEqual({
+    sentHeaders: promised,
+    received: [promised],
+  });
 });
 
 // Every kind of field name the native header-block materializer distinguishes, in one request and

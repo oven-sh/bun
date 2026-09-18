@@ -47,7 +47,26 @@ static WTF::String stackTraceHeaderOnly(const WTF::String& name, const WTF::Stri
     return header;
 }
 
-static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites)
+// What the header does with a throw from the error's `name` or `message` (a getter, a Symbol, a
+// toString): V8 propagates it to a caller of the default Error.prepareStackTrace, and describes it in
+// the header of the error.stack a prepareStackTrace callback sees.
+enum class HeaderThrow : bool { Propagate,
+    Describe };
+
+// Error.prototype.toString() of the error, as V8's default formatter heads the stack.
+static void stackTraceHeader(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, WTF::String& name, WTF::String& message)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue nameValue = errorObject->get(lexicalGlobalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, );
+    name = nameValue.isUndefined() ? WTF::String("Error"_s) : nameValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    JSValue messageValue = errorObject->get(lexicalGlobalObject, vm.propertyNames->message);
+    RETURN_IF_EXCEPTION(scope, );
+    message = messageValue.isUndefined() ? emptyString() : messageValue.toWTFString(lexicalGlobalObject);
+}
+
+static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, HeaderThrow headerThrow)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -57,15 +76,24 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     // The message and the frames come from JS. Past `String::MaxLength` a default `StringBuilder` calls `CRASH()`.
     WTF::StringBuilder sb { WTF::OverflowPolicy::RecordOverflow };
 
-    // The header is Error.prototype.toString() of the error, as in V8's default formatter.
-    JSValue nameValue = errorObject->get(lexicalGlobalObject, vm.propertyNames->name);
-    RETURN_IF_EXCEPTION(scope, {});
-    WTF::String name = nameValue.isUndefined() ? WTF::String("Error"_s) : nameValue.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSValue messageValue = errorObject->get(lexicalGlobalObject, vm.propertyNames->message);
-    RETURN_IF_EXCEPTION(scope, {});
-    WTF::String message = messageValue.isUndefined() ? emptyString() : messageValue.toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    WTF::String name;
+    WTF::String message;
+    stackTraceHeader(vm, lexicalGlobalObject, errorObject, name, message);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        if (headerThrow == HeaderThrow::Propagate)
+            return {};
+        JSValue thrown = exception->value();
+        if (!scope.tryClearException())
+            return {};
+        WTF::String description = thrown.toWTFString(lexicalGlobalObject);
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException())
+                return {};
+            description = WTF::String();
+        }
+        name = description.isNull() ? WTF::String("<error>"_s) : makeString("<error: "_s, description, '>');
+        message = emptyString();
+    }
     if (!name.isEmpty()) {
         sb.append(name);
         if (!message.isEmpty()) {
@@ -105,37 +133,38 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
 static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* errorObject, JSC::JSArray* callSites, JSValue prepareStackTrace)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto stackStringValue = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites);
+    JSC::CallData prepareStackTraceCallData;
+    if (prepareStackTrace && prepareStackTrace.isObject())
+        prepareStackTraceCallData = JSC::getCallData(prepareStackTrace);
+    bool callsPrepareStackTrace = prepareStackTraceCallData.type != JSC::CallData::Type::None;
+
+    auto stackStringValue = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites, callsPrepareStackTrace ? HeaderThrow::Describe : HeaderThrow::Propagate);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (prepareStackTrace && prepareStackTrace.isObject()) {
-        JSC::CallData prepareStackTraceCallData = JSC::getCallData(prepareStackTrace);
+    if (callsPrepareStackTrace) {
+        // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
+        // it will display the stack as a formatted string, so we have to do the same.
+        errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
 
-        if (prepareStackTraceCallData.type != JSC::CallData::Type::None) {
-            // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
-            // it will display the stack as a formatted string, so we have to do the same.
-            errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(errorObject);
+        arguments.append(callSites);
 
-            JSC::MarkedArgumentBuffer arguments;
-            arguments.append(errorObject);
-            arguments.append(callSites);
+        JSC::JSValue result = profiledCall(
+            lexicalGlobalObject,
+            JSC::ProfilingReason::Other,
+            prepareStackTrace,
+            prepareStackTraceCallData,
+            lexicalGlobalObject->m_errorStructure.constructor(globalObject),
+            arguments);
 
-            JSC::JSValue result = profiledCall(
-                lexicalGlobalObject,
-                JSC::ProfilingReason::Other,
-                prepareStackTrace,
-                prepareStackTraceCallData,
-                lexicalGlobalObject->m_errorStructure.constructor(globalObject),
-                arguments);
+        RETURN_IF_EXCEPTION(scope, stackStringValue);
 
-            RETURN_IF_EXCEPTION(scope, stackStringValue);
-
-            if (result.isUndefinedOrNull()) {
-                result = jsUndefined();
-            }
-
-            return result;
+        if (result.isUndefinedOrNull()) {
+            result = jsUndefined();
         }
+
+        return result;
     }
 
     return stackStringValue;

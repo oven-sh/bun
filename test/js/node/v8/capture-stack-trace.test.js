@@ -1085,6 +1085,76 @@ test("the default Error.prepareStackTrace heads the stack with the error's name 
   expect({ byHand, insideACallback }).toEqual({ byHand: expected, insideACallback: expected });
 });
 
+// As V8: a caller of the default formatter gets the throw, and the error.stack a prepareStackTrace
+// callback sees describes it, so reading .stack does not throw because a callback is installed.
+test("a name or message that throws: the default Error.prepareStackTrace throws, error.stack inside a callback says so", () => {
+  const shapes = {
+    "name getter throws": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw new RangeError("from name");
+        },
+      }),
+    "name is a Symbol": () => Object.assign(new Error("boom"), { name: Symbol("s") }),
+    "name.toString throws": () =>
+      Object.assign(new Error("boom"), {
+        name: {
+          toString() {
+            throw new RangeError("from toString");
+          },
+        },
+      }),
+    "message getter throws": () =>
+      Object.defineProperty(new Error("boom"), "message", {
+        get() {
+          throw new RangeError("from message");
+        },
+      }),
+    "describing the throw throws": () =>
+      Object.defineProperty(new Error("boom"), "name", {
+        get() {
+          throw {
+            toString() {
+              throw 1;
+            },
+          };
+        },
+      }),
+  };
+  const byHand = {};
+  const insideACallback = {};
+  for (const [shape, make] of Object.entries(shapes)) {
+    Error.prepareStackTrace = (error, callSites) => origPrepareStackTrace(error, callSites);
+    try {
+      void make().stack;
+      byHand[shape] = "did not throw";
+    } catch (thrown) {
+      byHand[shape] = String(thrown?.message ?? typeof thrown);
+    }
+    let seen;
+    Error.prepareStackTrace = error => ((seen = error.stack), "");
+    void make().stack;
+    insideACallback[shape] = seen.split("\n")[0];
+    expect(seen.split("\n")[1]).toStartWith("    at ");
+  }
+  expect({ byHand, insideACallback }).toEqual({
+    byHand: {
+      "name getter throws": "from name",
+      "name is a Symbol": expect.stringContaining("ymbol"),
+      "name.toString throws": "from toString",
+      "message getter throws": "from message",
+      "describing the throw throws": "object",
+    },
+    insideACallback: {
+      "name getter throws": "<error: RangeError: from name>",
+      "name is a Symbol": expect.stringMatching(/^<error: TypeError: Cannot convert a symbol to a string>$/i),
+      "name.toString throws": "<error: RangeError: from toString>",
+      "message getter throws": "<error: RangeError: from message>",
+      "describing the throw throws": "<error>",
+    },
+  });
+});
+
 test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
   const prepare = mock((e, s) => {

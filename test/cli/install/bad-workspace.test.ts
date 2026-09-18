@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -375,6 +375,48 @@ describe.concurrent("workspaces entries outside the workspace root", () => {
     await expectRejected(String(dir), `Workspace "packages/../../victim" is outside the workspace root`);
   });
 
+  // A backslash is a separator on every platform here, so this is `../victim`.
+  test("a sibling directory spelled with a backslash is rejected", async () => {
+    using dir = tempDir("bad-workspace-sibling-backslash", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": rootPackageJson(["packages/*", "..\\victim"]),
+    });
+
+    await expectRejected(String(dir), `Workspace "..\\victim" is outside the workspace root`);
+  });
+
+  // The pnpm migration moves `packages` from pnpm-workspace.yaml into `workspaces` in
+  // package.json, and the same install then reads that manifest.
+  test("a sibling directory named in pnpm-workspace.yaml is rejected", async () => {
+    using dir = tempDir("bad-workspace-sibling-pnpm", {
+      ...SIBLING_PROJECTS,
+      "clone/package.json": JSON.stringify({ name: "root" }),
+      "clone/pnpm-workspace.yaml": `packages:\n  - 'packages/*'\n  - '../victim'\n`,
+      "clone/pnpm-lock.yaml": [
+        `lockfileVersion: '9.0'`,
+        ``,
+        `settings:`,
+        `  autoInstallPeers: true`,
+        `  excludeLinksFromLockfile: false`,
+        ``,
+        `importers:`,
+        ``,
+        `  .:`,
+        `    dependencies: {}`,
+        ``,
+        `  packages/inner:`,
+        `    dependencies: {}`,
+        ``,
+      ].join("\n"),
+    });
+
+    await expectRejected(String(dir), `Workspace "../victim" is outside the workspace root`);
+    expect(JSON.parse(readFileSync(join(String(dir), "clone", "package.json"), "utf8")).workspaces).toEqual([
+      "packages/*",
+      "../victim",
+    ]);
+  });
+
   // git stores symlinks, so the clone can ship one. The entry is inside the root by its
   // path, and the directory that receives `node_modules` is not. A junction on Windows.
   test("a listed symlink to a sibling directory is rejected", async () => {
@@ -459,8 +501,10 @@ describe.concurrent("workspaces entries outside the workspace root", () => {
   // directory in each sibling project and `packages/inner` in the clone itself.
   test("a glob reports one error and keeps its other matches", async () => {
     using dir = tempDir("bad-workspace-glob-keeps-matches", {
-      "victimA/packages/a/package.json": JSON.stringify({ name: "victim-a-pkg" }),
-      "victimB/packages/b/package.json": JSON.stringify({ name: "victim-b-pkg" }),
+      // Each sibling member depends on `inner`, so an install that adopted it would write
+      // its `node_modules`.
+      "victimA/packages/a/package.json": JSON.stringify({ name: "victim-a-pkg", dependencies: { inner: "^1.0.0" } }),
+      "victimB/packages/b/package.json": JSON.stringify({ name: "victim-b-pkg", dependencies: { inner: "^1.0.0" } }),
       "clone/package.json": rootPackageJson(["../*/packages/*"]),
       "clone/packages/inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
     });
@@ -475,8 +519,8 @@ describe.concurrent("workspaces entries outside the workspace root", () => {
     expect(exitCode).toBe(1);
     expect(existsSync(join(String(dir), "clone", "packages", "inner", "bun.lock"))).toBe(false);
     expect(existsSync(join(String(dir), "clone", "bun.lock"))).toBe(false);
-    expect(existsSync(join(String(dir), "victimA", "node_modules"))).toBe(false);
-    expect(existsSync(join(String(dir), "victimB", "node_modules"))).toBe(false);
+    expect(existsSync(join(String(dir), "victimA", "packages", "a", "node_modules"))).toBe(false);
+    expect(existsSync(join(String(dir), "victimB", "packages", "b", "node_modules"))).toBe(false);
   });
 
   test("a symlink to a directory inside the root is still a workspace", async () => {

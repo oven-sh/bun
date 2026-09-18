@@ -397,6 +397,53 @@ test.concurrent(".env escaped dollar sign", async () => {
   expect(stdout).toBe("foo $FOO");
 });
 
+test.concurrent(".env leaves $ literal when not followed by an identifier (issue #4994)", async () => {
+  // https://github.com/oven-sh/bun/issues/4994
+  // Expansion only fires on `$IDENT` (letter or underscore start) or `${...}`.
+  // A `$` followed by a digit, another `$`, `(`, `-`, or the end of the value
+  // stays literal, inside and outside quotes and inside a `:-` default.
+  const expected = {
+    ISSUE: "123$567",
+    P1: "price$5.00",
+    P2: "a$(b)c",
+    P3: "cost$-1",
+    P4: "$1abc",
+    P5: "end$",
+    P6: "pa$$",
+    P7: "$5.00",
+    P8: "hit$5",
+    P9: "hit$5",
+    P10: "$5",
+    P11: "123$567",
+    P12: "123$567",
+  };
+  using dir = tempDir("dotenv-literal-dollar", {
+    ".env": [
+      "ISSUE=123$567",
+      "P1=price$5.00",
+      "P2=a$(b)c",
+      "P3=cost$-1",
+      "P4=$1abc",
+      "P5=end$",
+      "P6=pa$$",
+      "P7=\\$5.00",
+      "SET=hit",
+      "P8=$SET$5",
+      "P9=${SET}$5",
+      "P10=${UNSET:-$5}",
+      'P11="123$567"',
+      "P12='123$567'",
+    ].join("\n"),
+    "index.ts":
+      `const keys = ${JSON.stringify(Object.keys(expected))};` +
+      "const out = {};" +
+      "for (const k of keys) out[k] = process.env[k];" +
+      "console.log(JSON.stringify(out));",
+  });
+  const { stdout } = await bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual(expected);
+});
+
 test.concurrent(".env doesnt crash with 159 bytes", async () => {
   using dir = tempDir("dotenv-159", {
     ".env":

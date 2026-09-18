@@ -2477,6 +2477,7 @@ pub(crate) fn install_isolated_packages(
                                 &pkg_res,
                                 ctx,
                                 patch_info.name_and_version_hash(),
+                                is_required,
                             ) == crate::package_manager::GitEnqueueResult::OfflineMiss
                             {
                                 // --offline and not cached: nothing was queued

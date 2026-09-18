@@ -258,6 +258,7 @@ pub enum GitEnqueueResult {
     OfflineMiss,
 }
 
+/// `is_required`: see `enqueue_tarball_for_download`.
 pub fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -265,6 +266,7 @@ pub fn enqueue_git_for_checkout(
     resolution: &Resolution,
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
+    is_required: bool,
 ) -> GitEnqueueResult {
     // SAFETY: caller passes `resolution.tag == Git`; the `git` arm is the
     // active union field. Copy out so the value no longer borrows
@@ -282,13 +284,10 @@ pub fn enqueue_git_for_checkout(
     let checkout_id = Task::Id::for_git_checkout(url, resolved);
     // --offline: decide before any queue registration, so an optional miss leaves
     // nothing behind and a later required edge still reaches the report
-    if this.git_repositories.get(&clone_id).is_none() {
-        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-            .behavior
-            .is_required();
-        if offline_git_miss(this, clone_id, alias, is_required) {
-            return GitEnqueueResult::OfflineMiss;
-        }
+    if this.git_repositories.get(&clone_id).is_none()
+        && offline_git_miss(this, clone_id, alias, is_required)
+    {
+        return GitEnqueueResult::OfflineMiss;
     }
     let checkout_queue = this
         .task_queue
@@ -3258,6 +3257,7 @@ impl PackageManager {
         resolution: &Resolution,
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
+        is_required: bool,
     ) -> GitEnqueueResult {
         enqueue_git_for_checkout(
             self,
@@ -3266,6 +3266,7 @@ impl PackageManager {
             resolution,
             task_context,
             patch_name_and_version_hash,
+            is_required,
         )
     }
 

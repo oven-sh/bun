@@ -618,7 +618,8 @@ pub(crate) fn is_filtered_dependency_or_workspace(
 /// Which packages an install requires: the ones that a dependency without
 /// `Behavior::OPTIONAL` resolves to, among the dependencies the install links. A tree slot
 /// or a store entry stands for every dependency on its package, and the dependency that
-/// owns it can be optional while another one is not.
+/// owns it can be optional while another one is not. A peer dependency counts only as the
+/// owner: the linkers can bind it to another package than the one it resolves to.
 pub(crate) struct RequiredPackages<'a> {
     workspace_filters: &'a [WorkspaceFilter],
     install_root_dependencies: bool,
@@ -655,17 +656,19 @@ impl<'a> RequiredPackages<'a> {
         {
             return true;
         }
-        let packages = self.packages.get_or_insert_with(|| {
-            bun_core::handle_oom(required_packages(
+        // A walk is stale once the install appended a package
+        // (see `PackageInstaller::fix_cached_lockfile_package_slices`).
+        let packages = match &mut self.packages {
+            Some(packages) if packages.bit_length() == lockfile.packages.len() => packages,
+            stale => stale.insert(bun_core::handle_oom(required_packages(
                 lockfile,
                 manager,
                 self.workspace_filters,
                 self.install_root_dependencies,
                 self.packages_to_install,
-            ))
-        });
-        // The install can append packages after the walk.
-        packages.is_set_allow_out_of_bound(package_id as usize, true)
+            ))),
+        };
+        packages.is_set(package_id as usize)
     }
 }
 
@@ -691,7 +694,9 @@ fn required_packages(
         let slice = pkg_dependencies[parent_pkg_id as usize];
         for dep_id in slice.begin()..slice.end() {
             let pkg_id = resolutions[dep_id as usize];
+            let behavior = dependencies[dep_id as usize].behavior;
             if pkg_id as usize >= pkg_dependencies.len()
+                || behavior.is_peer()
                 // Checked here because `is_filtered_dependency_or_workspace` prints each
                 // disabled package under `--verbose`.
                 || pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os)
@@ -709,10 +714,7 @@ fn required_packages(
             {
                 continue;
             }
-            if !dependencies[dep_id as usize]
-                .behavior
-                .contains(crate::dependency::Behavior::OPTIONAL)
-            {
+            if !behavior.contains(crate::dependency::Behavior::OPTIONAL) {
                 required.set(pkg_id as usize);
             }
             if !seen.is_set(pkg_id as usize) {

@@ -1620,6 +1620,7 @@ impl<'a> PackageInstaller<'a> {
                             resolution,
                             context,
                             download_patch_hash,
+                            is_required,
                         ) == package_manager::GitEnqueueResult::OfflineMiss
                         {
                             self.increment_tree_install_count(

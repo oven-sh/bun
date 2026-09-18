@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { rm, writeFile } from "fs/promises";
+import { readdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -298,25 +298,37 @@ const gitEnv = {
   GIT_COMMITTER_EMAIL: "test@example.com",
 };
 
+// a local bare repository with one package, `gitpkg`
+async function bareGitRepo(): Promise<string> {
+  const work = mkdtemp();
+  const bare = join(mkdtemp(), "repo.git");
+  await writeFile(join(work, "package.json"), JSON.stringify({ name: "gitpkg", version: "1.0.0" }));
+  await writeFile(join(work, "index.js"), "module.exports = 1;");
+  for (const cmd of [
+    ["init", "-q"],
+    ["add", "-A"],
+    ["commit", "-q", "-m", "init", "--no-gpg-sign"],
+    ["clone", "-q", "--bare", ".", bare],
+  ]) {
+    await using p = spawn({ cmd: ["git", ...cmd], cwd: work, env: gitEnv, stdout: "ignore", stderr: "pipe" });
+    const [gitErr, gitCode] = await Promise.all([p.stderr.text(), p.exited]);
+    expect(gitErr).not.toContain("fatal:");
+    expect(gitCode).toBe(0);
+  }
+  return bare;
+}
+
+async function emptyGitCache() {
+  for (const entry of await readdirSorted(cache_dir)) {
+    if (entry.endsWith(".git") || entry.startsWith("@G@"))
+      await rm(join(cache_dir, entry), { recursive: true, force: true });
+  }
+}
+
 it.skipIf(!Bun.which("git"))(
   "--offline installs a git dependency from the cached clone without touching the repository",
   async () => {
-    // a local bare repository with one package
-    const work = mkdtemp();
-    const bare = join(mkdtemp(), "repo.git");
-    await writeFile(join(work, "package.json"), JSON.stringify({ name: "gitpkg", version: "1.0.0" }));
-    await writeFile(join(work, "index.js"), "module.exports = 1;");
-    for (const cmd of [
-      ["init", "-q"],
-      ["add", "-A"],
-      ["commit", "-q", "-m", "init", "--no-gpg-sign"],
-      ["clone", "-q", "--bare", ".", bare],
-    ]) {
-      await using p = spawn({ cmd: ["git", ...cmd], cwd: work, env: gitEnv, stdout: "ignore", stderr: "pipe" });
-      const [gitErr, gitCode] = await Promise.all([p.stderr.text(), p.exited]);
-      expect(gitErr).not.toContain("fatal:");
-      expect(gitCode).toBe(0);
-    }
+    const bare = await bareGitRepo();
     const url = `git+${pathToFileURL(bare)}`;
     // online install populates the git cache
     const warm = await newProject({ gitpkg: url });
@@ -333,10 +345,7 @@ it.skipIf(!Bun.which("git"))(
 
     // and from an existing lockfile with the git cache gone: a required one errors, an
     // optional one is skipped — either way the install finishes (no queued-forever task)
-    for (const entry of await readdirSorted(cache_dir)) {
-      if (entry.endsWith(".git") || entry.startsWith("@G@"))
-        await rm(join(cache_dir, entry), { recursive: true, force: true });
-    }
+    await emptyGitCache();
     await rm(join(dir, "node_modules"), { recursive: true, force: true });
     const again = await install(dir, ["--offline"]);
     expect(again.err).toContain("--offline");
@@ -351,5 +360,56 @@ it.skipIf(!Bun.which("git"))(
     const optr = await install(opt, ["--offline"]);
     expect(optr.err).not.toContain("error:");
     expect(optr.code).toBe(0);
+  },
+);
+
+// node_modules has one gitpkg for both dependencies on it, and the linker asks for it
+// through the root's optional one. `bar` requires it, so the miss is an error.
+it.skipIf(!Bun.which("git")).each(["hoisted", "isolated"] as const)(
+  "--offline reports an uncached git dependency that an optional and a required dependency share (%s linker)",
+  async linker => {
+    const url = `git+${pathToFileURL(await bareGitRepo())}`;
+    const bar = { name: "bar", version: "1.0.0", dependencies: { gitpkg: url } };
+    const tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify(bar) },
+      { compress: "gzip" },
+    ).bytes();
+    setHandler(request => {
+      const { pathname } = new URL(request.url);
+      if (pathname === "/bar-1.0.0.tgz") return new Response(tarball);
+      if (pathname !== "/bar") return new Response("unexpected", { status: 404 });
+      return Response.json({
+        name: "bar",
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { ...bar, dist: { tarball: `${root_url}/bar-1.0.0.tgz` } } },
+      });
+    });
+    const dir = await newProject({ bar: "1.0.0" }, cache_dir, linker);
+    await writeFile(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { bar: "1.0.0" },
+        optionalDependencies: { gitpkg: url },
+      }),
+    );
+    const warm = await install(dir, []);
+    expect(warm.err).not.toContain("error:");
+    expect(warm.code).toBe(0);
+
+    // bar stays installed and cached. gitpkg leaves node_modules and the cache.
+    await emptyGitCache();
+    for (const store of [".", ".bun"]) {
+      for (const entry of await readdir(join(dir, "node_modules", store)).catch(() => [])) {
+        if (entry.startsWith("gitpkg"))
+          await rm(join(dir, "node_modules", store, entry), { recursive: true, force: true });
+      }
+    }
+    const r = await install(dir, ["--offline"]);
+    expect({ error: r.err.split(/\r?\n/).filter(l => l.startsWith("error:")), code: r.code }).toEqual({
+      error: ['error: --offline: git repository for "gitpkg" is not in the cache'],
+      code: 1,
+    });
   },
 );

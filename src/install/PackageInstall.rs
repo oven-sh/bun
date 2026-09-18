@@ -249,17 +249,17 @@ impl Step {
     }
 }
 
-/// Where a package is linked before the rename onto its real path, whose existence later
-/// installs take as proof of a complete install: `@scope/name` becomes `@scope/.bun-tmp-<hash>`.
-/// Hashed as a name can be NAME_MAX long, seeded per process as two installs can run at once.
+/// The sibling `.bun-tmp-<hash>` a package is linked in before it is renamed onto its real path.
 pub(crate) struct StagingPath<'a>(pub(crate) &'a [u8]);
 
 impl core::fmt::Display for StagingPath<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Two installs at once must not share a staging directory.
         static SEED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
         let seed = *SEED.get_or_init(bun_core::fast_random);
         let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
         let scope = &self.0[..name_start];
+        // A hash, because the name can be NAME_MAX long already.
         write!(
             f,
             "{}.bun-tmp-{:016x}",

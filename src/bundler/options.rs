@@ -10,7 +10,7 @@ use bun_js_parser::parser::Runtime;
 use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
-use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
+use bun_resolver::package_json::MacroMap as MacroRemap;
 use enum_map::EnumMap;
 use std::borrow::Cow;
 
@@ -468,9 +468,6 @@ pub struct LoaderResult<'a> {
     pub path: Fs::Path<'a>,
     pub is_main: bool,
     pub specifier: &'a [u8],
-    /// NOTE: This is always `null` for non-js-like loaders since it's not
-    /// needed for them.
-    pub package_json: Option<&'a PackageJSON>,
 }
 
 pub fn get_loader_and_virtual_source<'a>(
@@ -557,27 +554,12 @@ pub fn get_loader_and_virtual_source<'a>(
 
     let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
 
-    let dir = path.name().dir;
-    // NOTE: we cannot trust `path.isFile()` since it's not always correct
-    // NOTE: assume we may need a package.json when no loader is specified
-    let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
-    let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
-        jsc_vm
-            .read_dir_info_package_json(dir)
-            // SAFETY: the vtable returns a pointer into the resolver's DirInfo
-            // cache owned by `jsc_vm.owner`, which outlives `'a`.
-            .map(|p| unsafe { &*p })
-    } else {
-        None
-    };
-
     Ok(LoaderResult {
         loader,
         virtual_source,
         path,
         is_main,
         specifier,
-        package_json,
     })
 }
 

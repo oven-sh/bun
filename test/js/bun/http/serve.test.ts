@@ -5503,5 +5503,50 @@ describe("requests pipelined in one read", () => {
         end,
       });
     });
+
+    // The POST behind /held is not dispatched, but the parser has read its Content-Length. A later
+    // read must not be parsed against it: it would not be HTTP, and the 400 would cut /held short.
+    it("ignores a later write while the closing response is in flight", async () => {
+      const ran: string[] = [];
+      const release = Promise.withResolvers<void>();
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          const { pathname } = new URL(req.url);
+          ran.push(pathname);
+          if (pathname === "/release") release.resolve();
+          if (pathname !== "/held") return new Response(pathname);
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue("first");
+                await release.promise;
+                controller.enqueue("second");
+                controller.close();
+              },
+            }),
+            close,
+          );
+        },
+      });
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let reply = "";
+      let wroteLater = false;
+      const socket = net.connect(server.port, "127.0.0.1", () => socket.write(get("/a") + get("/held") + post("/b")));
+      socket.on("data", chunk => {
+        reply += chunk.toString("latin1");
+        if (wroteLater || !reply.includes("first")) return;
+        wroteLater = true;
+        // The release goes through another connection, after this write has left.
+        socket.write(get("/c"), () => {
+          fetch(`http://127.0.0.1:${server.port}/release`).then(response => response.text(), reject);
+        });
+      });
+      socket.on("error", reject);
+      socket.on("close", () => resolve(reply));
+      const end = "second\r\n" + lastChunk;
+      expect({ end: (await promise).slice(-end.length), ran }).toEqual({ end, ran: ["/a", "/held", "/release"] });
+    });
   });
 });

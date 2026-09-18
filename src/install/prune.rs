@@ -1018,14 +1018,6 @@ impl<'a> HoistedTree<'a> {
         pkg_id: PackageID,
     ) -> Installed {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
-        let Some(res) = self
-            .lockfile
-            .packages
-            .items_resolution()
-            .get(pkg_id as usize)
-        else {
-            return Installed::Mismatch;
-        };
         let Some(folder) = open_tree_folder(self.lockfile, tree_id) else {
             return Installed::Missing;
         };
@@ -1036,6 +1028,14 @@ impl<'a> HoistedTree<'a> {
         if self.shipped.is_set(idx) {
             return Installed::Matches;
         }
+        let Some(res) = self
+            .lockfile
+            .packages
+            .items_resolution()
+            .get(pkg_id as usize)
+        else {
+            return Installed::Mismatch;
+        };
         match res.tag {
             ResolutionTag::Symlink => {
                 return if kind == EntryKind::SymLink {

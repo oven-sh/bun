@@ -3,6 +3,65 @@ import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
 
 const node = nodeExe();
 
+// After the handoff, the parent and the child both poll one listening socket. On Windows, libuv
+// submitted each AFD poll as exclusive. An exclusive poll completes the exclusive polls of every
+// process that shares the socket, so the two processes completed each other's polls in a loop.
+// There is no event to wait for, so the test measures the CPU time of both processes while idle.
+test.concurrent("a parent and a child that share a listening socket do not spin while idle", async () => {
+  using dir = tempDir("ipc-handle-shared-idle", {
+    "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', () => child.send('server', server));
+child.once('message', () => {
+  const start = process.cpuUsage();
+  setTimeout(() => {
+    const usage = process.cpuUsage(start);
+    child.once('message', childMs => {
+      console.log(JSON.stringify({ parentMs: Math.round((usage.user + usage.system) / 1000), childMs }));
+      server.close();
+      child.disconnect();
+    });
+    child.send('report');
+  }, 2000);
+});
+`,
+    "child.js": `
+let server, start;
+process.on('message', (m, handle) => {
+  if (m === 'server') {
+    server = handle;
+    start = process.cpuUsage();
+    process.send('listening');
+  } else if (m === 'report') {
+    const usage = process.cpuUsage(start);
+    process.send(Math.round((usage.user + usage.system) / 1000));
+  }
+});
+process.on('disconnect', () => server.close());
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "parent.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: expect.stringMatching(/^\{.*\}\n$/),
+    stderr: "",
+    exitCode: 0,
+  });
+  const { parentMs, childMs } = JSON.parse(stdout);
+  // In the 2 s window, the spin costs the two processes 1000 ms or more of CPU time. Without the
+  // spin, the two processes use less than 250 ms, also on a debug build.
+  expect(parentMs + childMs).toBeLessThan(600);
+});
+
 describe.skipIf(isWindows)("process.send(message, handle)", () => {
   test.concurrent("bun parent -> bun child: net.Server handle and message both arrive", async () => {
     using dir = tempDir("ipc-handle-bun-bun", {

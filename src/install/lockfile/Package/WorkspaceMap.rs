@@ -12,6 +12,7 @@ use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
+use crate::package_manager::workspace_selection::strip_negations;
 
 bun_output::declare_scope!(Lockfile, hidden);
 
@@ -507,9 +508,7 @@ impl WorkspaceMap {
 
                         // check if it's negated by any remaining patterns
                         for next_pattern in &workspace_globs[i + 1..] {
-                            let result =
-                                glob::r#match(next_pattern, matched_path_without_package_json);
-                            if result.is_negated() && !result.matches() {
+                            if negates(next_pattern, matched_path_without_package_json) {
                                 bun_output::scoped_log!(
                                     Lockfile,
                                     "skipping negated path: {}, {}\n",
@@ -622,6 +621,20 @@ impl WorkspaceMap {
 
         Ok(workspace_names.count() as u32)
     }
+}
+
+/// Whether the `workspaces` entry `pattern` is a `!` entry that matches `workspace_dir`.
+fn negates(pattern: &[u8], workspace_dir: &[u8]) -> bool {
+    let (dir_glob, negated) = strip_negations(pattern);
+    if !negated {
+        return false;
+    }
+    // Joined like an entry that is walked, so `!./packages/a/` matches what `!packages/a` matches.
+    let mut spill: Vec<u8> = Vec::new();
+    let joined = resolve_path::join_spill::<path::platform::Posix>(&mut spill, &[dir_glob]);
+    let dir_glob = joined.strip_suffix(b"/").unwrap_or(joined);
+    // `glob::match` reads a leading `!` as a negation, and the join can move one to the front.
+    !dir_glob.starts_with(b"!") && glob::r#match(dir_glob, workspace_dir).matches()
 }
 
 const IGNORED_PATHS: &[&[u8]] = &[b"node_modules", b".git", b"CMakeFiles"];

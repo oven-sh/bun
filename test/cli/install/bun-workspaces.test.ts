@@ -195,6 +195,35 @@ test("dependency on workspace without version in package.json", async () => {
   }
 });
 
+// A walked entry is joined before it is walked, so "./packages/*/" finds `packages/pkg1`. A "!"
+// entry has to accept the same spellings of the directory it excludes.
+test.concurrent.each([
+  { entry: "!./packages/pkg2", members: ["packages/pkg1"] },
+  { entry: "!packages/pkg2/", members: ["packages/pkg1"] },
+  { entry: "!./packages/pkg2/", members: ["packages/pkg1"] },
+  { entry: "!./packages/*2", members: ["packages/pkg1"] },
+  { entry: "!packages//pkg2", members: ["packages/pkg1"] },
+  { entry: "!packages/./pkg2", members: ["packages/pkg1"] },
+  { entry: "!packages/pkg1/../pkg2", members: ["packages/pkg1"] },
+  { entry: "!!!./packages/pkg2", members: ["packages/pkg1"] },
+  // An even number of "!" is not a negation.
+  { entry: "!!./packages/pkg2", members: ["packages/pkg1", "packages/pkg2"] },
+  // The "!" that starts a directory name is not a negation either.
+  { entry: "!./!packages/pkg2", members: ["packages/pkg1", "packages/pkg2"] },
+])("negative workspace pattern $entry", async ({ entry, members }) => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["./packages/*/", entry] })),
+    write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1" })),
+    write(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify({ name: "pkg2" })),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  expect(Object.values(parseLockfile(packageDir).workspace_paths).sort()).toEqual(members);
+});
+
 test.concurrent("allowing negative workspace patterns", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

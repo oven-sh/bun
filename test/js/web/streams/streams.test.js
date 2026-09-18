@@ -4204,6 +4204,134 @@ describe("direct stream edge cases", () => {
       });
     });
 
+    // The buffer consumers ran the source's close() hook before they settled their result, so a hook that threw left
+    // them pending forever unless the throw also left pull(). They settle first now, like the reader path, and the
+    // throw goes to the caller of close()/end().
+    describe.each(["readableStreamToText", "readableStreamToBytes", "readableStreamToArrayBuffer"])(
+      "a throwing close() hook under %s",
+      method => {
+        const observe = async (finish, pull) => {
+          const t = tally();
+          const events = [];
+          const attempt = c => {
+            try {
+              c[finish]();
+              events.push(`${finish}() returned`);
+            } catch (e) {
+              events.push(`${finish}() threw ${e.message}`);
+            }
+          };
+          const rs = direct(t, c => pull(c, attempt), {
+            close() {
+              events.push("hook");
+              throw new Error("close hook");
+            },
+          });
+          // Awaited directly, not through expect().rejects: a consumer that never settles is then a plain test timeout.
+          const result = await settle(Bun[method](rs).then(txt));
+          return { finish, pulls: t.pulls, events, result };
+        };
+
+        test("close()/end() after the pull() call returned: the consumer resolves and the caller gets the throw", async () => {
+          for (const finish of ["close", "end"]) {
+            const caught = await observe(finish, async (c, attempt) => {
+              c.write("a");
+              await later();
+              attempt(c);
+            });
+            expect(caught).toEqual({
+              finish,
+              pulls: 1,
+              events: ["hook", `${finish}() threw close hook`],
+              result: { ok: "a" },
+            });
+            // Not caught: pull() rejects after a clean close, which keeps the body.
+            const uncaught = await observe(finish, async c => {
+              c.write("a");
+              await later();
+              c[finish]();
+            });
+            expect(uncaught).toEqual({ finish, pulls: 1, events: ["hook"], result: { ok: "a" } });
+          }
+        });
+
+        // The reader path defers a close() made inside the pull() call until pull() returns: the throw goes to the
+        // consumer and pull() never sees it. The buffer consumers close inline: pull() catches the throw and the body stands.
+        test("close()/end() inside the pull() call, caught by pull(): the consumer settles", async () => {
+          const deferred = method === "readableStreamToText";
+          for (const finish of ["close", "end"]) {
+            const got = await observe(finish, (c, attempt) => {
+              c.write("a");
+              attempt(c);
+            });
+            expect(got).toEqual({
+              finish,
+              pulls: 1,
+              events: deferred ? [`${finish}() returned`, "hook"] : ["hook", `${finish}() threw close hook`],
+              result: deferred ? { err: "close hook" } : { ok: "a" },
+            });
+          }
+        });
+      },
+    );
+
+    // pull() resolves without close(): the runtime closes, so the hook's throw has no caller to go to. Every consumer
+    // keeps the body and the error is reported as uncaught. The buffer consumers used to reject with it.
+    test("a close() hook that throws from the implicit close is reported as uncaught and keeps the body", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const later = () => new Promise(r => setImmediate(r));
+          const uncaught = [];
+          process.on("uncaughtException", e => uncaught.push(e?.message));
+          const make = () => new ReadableStream({
+            type: "direct",
+            async pull(c) {
+              c.write("a");
+              await later();
+            },
+            close() {
+              throw new Error("close hook");
+            },
+          });
+          const consumers = {
+            "new Response(s).text()": s => new Response(s).text(),
+            "new Response(s).bytes()": async s => new TextDecoder().decode(await new Response(s).bytes()),
+            "new Response(s).arrayBuffer()": async s => new TextDecoder().decode(await new Response(s).arrayBuffer()),
+            "Bun.readableStreamToBytes": async s => new TextDecoder().decode(await Bun.readableStreamToBytes(s)),
+            "Bun.readableStreamToArrayBuffer": async s => new TextDecoder().decode(await Bun.readableStreamToArrayBuffer(s)),
+          };
+          const out = {};
+          for (const [name, consume] of Object.entries(consumers)) {
+            let result;
+            try {
+              result = "resolved: " + (await consume(make()));
+            } catch (e) {
+              result = "rejected: " + e?.message;
+            }
+            await later();
+            out[name] = { result, uncaught: uncaught.splice(0) };
+          }
+          console.log(JSON.stringify(out));
+          `,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const each = { result: "resolved: a", uncaught: ["close hook"] };
+      expect(JSON.parse(stdout)).toEqual({
+        "new Response(s).text()": each,
+        "new Response(s).bytes()": each,
+        "new Response(s).arrayBuffer()": each,
+        "Bun.readableStreamToBytes": each,
+        "Bun.readableStreamToArrayBuffer": each,
+      });
+      expect(exitCode).toBe(0);
+    });
+
     test("the source's close() hook calling controller.close() again does not recurse", async () => {
       let controller;
       const t = tally();

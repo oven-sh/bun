@@ -1657,52 +1657,54 @@ static void oneShotDirectClose(JSC::VM& vm, JSGlobalObject* globalObject, JSOneS
     if (sink->m_closed)
         return;
     sink->m_closed = true;
-    if (auto* source = sink->source()) {
-        sink->clearSource();
-        source->close(globalObject, reason);
-        RETURN_IF_EXCEPTION(scope, );
-    }
+    auto* source = sink->source();
+    sink->clearSource();
     MarkedArgumentBuffer noArguments;
     JSValue endResult = Bun::WebStreams::invokeMethod(vm, globalObject, sink->arrayBufferSink(), builtinNames(vm).endPublicName(), noArguments);
     RETURN_IF_EXCEPTION(scope, );
-    auto* capability = sink->capabilityPromise();
-    if (!capability || capability->status() != JSPromise::Status::Pending)
-        return;
-    if (reason.toBoolean(globalObject)) {
-        if (auto* stream = sink->stream()) {
-            stream->m_lockedWithoutReader = false;
-            if (stream->m_state == ReadableStreamState::Readable) {
-                Bun::WebStreams::readableStreamError(globalObject, stream, reason);
+    if (auto* capability = sink->capabilityPromise(); capability && capability->status() == JSPromise::Status::Pending) {
+        auto* stream = sink->stream();
+        if (reason.toBoolean(globalObject)) {
+            if (stream) {
+                stream->m_lockedWithoutReader = false;
+                if (stream->m_state == ReadableStreamState::Readable) {
+                    Bun::WebStreams::readableStreamError(globalObject, stream, reason);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
+            }
+            capability->reject(vm, reason);
+        } else {
+            // The stream is over here, not when pull() settles.
+            if (stream && !sink->m_insidePullCall) {
+                stream->m_lockedWithoutReader = false;
+                Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
                 RETURN_IF_EXCEPTION(scope, );
             }
+            capability->fulfill(vm, endResult);
         }
-        capability->reject(vm, reason);
-        return;
-    }
-    // The stream is over here, not when pull() settles.
-    if (auto* stream = sink->stream(); stream && !sink->m_insidePullCall) {
-        stream->m_lockedWithoutReader = false;
-        Bun::WebStreams::readableStreamCloseIfPossible(globalObject, stream);
         RETURN_IF_EXCEPTION(scope, );
     }
-    capability->fulfill(vm, endResult);
+    // The source's close() hook runs once the result is settled, like JSDirectStreamController::onClose: a throw from it reaches whoever closed with nothing left pending.
+    if (source)
+        RELEASE_AND_RETURN(scope, source->close(globalObject, reason));
 }
 
-// pull() failed: the stream errors and the consumer rejects, unless close()/end() already settled the result.
-static void oneShotDirectFail(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink, JSValue error)
+// pull() failed: the stream errors and the consumer rejects. False when close()/end() already settled the result.
+static bool oneShotDirectFail(JSC::VM& vm, JSGlobalObject* globalObject, JSOneShotDirectSink* sink, JSValue error)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* capability = sink->capabilityPromise();
     if (!capability || capability->status() != JSPromise::Status::Pending)
-        return;
+        return false;
     if (auto* stream = sink->stream()) {
         stream->m_lockedWithoutReader = false;
         if (stream->m_state == ReadableStreamState::Readable) {
             Bun::WebStreams::readableStreamError(globalObject, stream, error);
-            RETURN_IF_EXCEPTION(scope, );
+            RETURN_IF_EXCEPTION(scope, true);
         }
     }
     capability->reject(vm, error);
+    return true;
 }
 
 // pull() runs once here: its promise resolving without close()/end() is the end of the body.
@@ -1717,7 +1719,13 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onConsumeDirectToArrayBufferPullFul
         if (auto* stream = sink->stream()) {
             stream->m_lockedWithoutReader = false;
             RELEASE_AND_RETURN(scope, readableStreamCloseIfPossible(globalObject, stream));
-        } }, [&](JSValue error) { oneShotDirectFail(vm, globalObject, sink, error); });
+        } }, [&](JSValue error) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        bool delivered = oneShotDirectFail(vm, globalObject, sink, error);
+        RETURN_IF_EXCEPTION(scope, );
+        // The implicit close settled the result before the source's close() hook threw: thrown on for the runner to report, like deliverDirectError.
+        if (!delivered)
+            throwException(globalObject, scope, error); });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onConsumeDirectToArrayBufferPullRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))

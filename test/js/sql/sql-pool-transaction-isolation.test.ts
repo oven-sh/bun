@@ -434,8 +434,9 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, closed
         received: [{ conn: 1, sql: "SELECT 'reconnect'" }],
       });
 
-      // Each holder gave the slot back exactly once, so a new reservation gets it at once.
-      // The plain query is answered either way. A reservation that is still queued by then fails.
+      // Each holder gave the slot back exactly once, so the slot is idle and reserve() takes
+      // it synchronously. With any other count the reservation is queued, and the abort
+      // cancels it before it can wait.
       const controller = new AbortController();
       const reservedAgain = sql.reserve({ signal: controller.signal }).then(
         reserved => {
@@ -444,7 +445,6 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, closed
         },
         () => false,
       );
-      await sql.unsafe("SELECT 'probe'");
       controller.abort();
       expect(await reservedAgain).toBe(true);
     } finally {

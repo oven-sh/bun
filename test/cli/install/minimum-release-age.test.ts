@@ -1,7 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { readdirSync } from "fs";
+import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
 // These tests drive real `bun install` runs against a mock registry, which is

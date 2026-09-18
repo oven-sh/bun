@@ -256,7 +256,7 @@ describe.concurrent("--frozen-lockfile fails on a package.json edit that bun ins
     expect(after.exitCode).toBe(0);
   });
 
-  test("prints which section changed, also as bun ci", async () => {
+  test("prints which section changed, also as bun ci and bun install --production", async () => {
     const unpatched = without(root, "patchedDependencies");
     const { packageDir, lock } = await installed(unpatched);
     await writeRoot(packageDir, { ...unpatched, dependencies: { ...unpatched.dependencies, "no-deps": ">=1.0.0" } });
@@ -271,11 +271,15 @@ describe.concurrent("--frozen-lockfile fails on a package.json edit that bun ins
     expect(normalizeBunSnapshot(stdout, packageDir)).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
     expect(exitCode).toBe(1);
 
-    const ci = await bun(packageDir, "ci");
+    // Both imply --frozen-lockfile.
+    for (const args of [["ci"], ["install", "--production"]]) {
+      const implied = await bun(packageDir, ...args);
 
-    expect(ci.stderr).toContain(frozenError);
-    expect(await lockText(packageDir)).toBe(lock);
-    expect(ci.exitCode).toBe(1);
+      expect(implied.stderr).toContain(frozenError);
+      expect(implied.stderr).toContain(sectionNote("dependencies"));
+      expect(await lockText(packageDir)).toBe(lock);
+      expect(implied.exitCode).toBe(1);
+    }
   });
 });
 

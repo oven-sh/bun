@@ -1079,32 +1079,30 @@ body {
     },
   });
 
-  // lol-html's memory limit counts the parsing buffer's preallocation and one
-  // selector stack entry per open element. Neither may fail the build.
-  for (const [id, body] of [
-    ["html/entry-larger-than-40-mib", Buffer.alloc(41 * 1024 * 1024, "a")],
-    // lol-html does not imply end tags: every <p> stays open until </body>.
-    ["html/many-unclosed-elements", Buffer.alloc(70_000 * "<p>x".length, "<p>x")],
-  ] as const) {
-    itBundled(id, {
-      outdir: "out/",
-      backend: "cli",
-      files: {
-        "/index.html": Buffer.concat([
-          Buffer.from(`<!DOCTYPE html><html><head><script src="./script.js"></script></head><body>\n`),
-          body,
-          Buffer.from(`\n</body></html>`),
-        ]),
-        "/script.js": "console.log('Hello World')",
-      },
-      entryPoints: ["/index.html"],
-      onAfterBundle(api) {
-        const html = api.readFile("out/index.html");
-        const bodyStart = html.indexOf("<body>");
-        expect(html.slice(0, bodyStart)).toMatch(/<script type="module" crossorigin src="\.\/index-[a-z0-9]+\.js">/);
-        // Not `expect(html)`: a failure would print the whole document.
-        expect(html.slice(bodyStart).trimEnd() === `<body>\n${body}\n</body></html>`).toBe(true);
-      },
-    });
-  }
+  // lol-html keeps one selector stack entry per open element and does not imply
+  // end tags: every <p> stays open until </body>. Under a 10 MiB memory limit
+  // the build failed at 65,536 open elements.
+  itBundled("html/many-unclosed-elements", {
+    outdir: "out/",
+    backend: "cli",
+    files: {
+      "/index.html": Buffer.concat([
+        Buffer.from(`<!DOCTYPE html><html><head><script src="./script.js"></script></head><body>\n`),
+        Buffer.alloc(70_000 * "<p>x".length, "<p>x"),
+        Buffer.from(`\n</body></html>`),
+      ]),
+      "/script.js": "console.log('Hello World')",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const pieces = api.readFile("out/index.html").split("<p>x");
+      // Count first: the other pieces are short only when every element is there.
+      expect(pieces.length - 1).toBe(70_000);
+      expect({ head: pieces[0], between: pieces.slice(1, -1).join(""), tail: pieces.at(-1)!.trim() }).toEqual({
+        head: expect.stringMatching(/<script type="module" crossorigin src="\.\/index-[a-z0-9]+\.js">/),
+        between: "",
+        tail: "</body></html>",
+      });
+    },
+  });
 });

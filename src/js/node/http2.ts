@@ -368,6 +368,10 @@ const kSetStreamId = Symbol("setStreamId");
 const kRequest = Symbol("request");
 const kHeadRequest = Symbol("headRequest");
 const kSessionDestroyError = Symbol("sessionDestroyError");
+// Session: the streams the native side closed and freed whose destroy() waits for 'end'. The parser
+// no longer enumerates them, so session teardown finds them here. node keeps every stream in
+// session[kState].streams until the stream's own _destroy.
+const kUnreadClosedStreams = Symbol("unreadClosedStreams");
 // Set on a ServerHttp2Stream by respondWithFile(): the stream opened the descriptor itself and is
 // responsible for closing it exactly once. respondWithFD() descriptors belong to the caller.
 const kOwnsFd = Symbol("ownsFd");
@@ -1875,6 +1879,7 @@ class Http2Session extends EventEmitter {
   // run inside it so 'close' doesn't inherit the last stream's frame.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
   [kDeferWriteCallback] = setImmediate;
+  [kUnreadClosedStreams]: Set<Http2Stream> | null = null;
   // The GOAWAY this side received (not one it sent), like node's Http2Session getters.
   get goawayCode() {
     return this[kGoawayCode] || NGHTTP2_NO_ERROR;
@@ -2622,6 +2627,7 @@ class Http2Stream extends Duplex {
       err = null;
     }
 
+    session?.[kUnreadClosedStreams]?.delete(this);
     this[bunHTTP2Session] = null;
     // This notifies the session that this stream has been destroyed and
     // gives the session the opportunity to clean itself up. The session
@@ -4065,23 +4071,7 @@ class ServerHttp2Session extends Http2Session {
         markStreamClosed(stream);
         self.#connections--;
         if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
-        if (stream.readable && !stream.rstCode) {
-          // Clean close while data is still buffered on the readable side (e.g. the response
-          // ended before the request body was consumed): node defers the destroy until the
-          // consumer drains it ('end'), so the buffered request body is not lost.
-          stream.once("end", destroySelfOnEnd);
-        } else if (
-          (stream.writableEnded || stream[kEndingWithChunk]) &&
-          !stream.writableFinished &&
-          !stream.destroyed
-        ) {
-          // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled
-          // native synchronously, re-entering before Writable.end() set kEnding): destroying now
-          // swallows 'finish'. Node's kMaybeDestroy waits for writable to finish first.
-          stream.once("finish", destroySelfOnEnd);
-        } else {
-          stream.destroy();
-        }
+        destroyClosedStream(self, stream);
         if (self.#connections === 0 && self.#closed) {
           if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
             scheduleSettingsAckGraceNT(self);
@@ -4299,6 +4289,9 @@ class ServerHttp2Session extends Http2Session {
     this.#parser?.read(data);
   }
   #onClose() {
+    // Read first: the abort sweep and close() below leave every session closed and idle, which
+    // destroy() takes for a graceful close (see settleUnreadClosedStreams).
+    const closedAndIdle = this.#closed && this.#connections === 0;
     const parser = this.#parser;
     if (parser) {
       parser.emitAbortToAllStreams();
@@ -4306,6 +4299,7 @@ class ServerHttp2Session extends Http2Session {
       parser.detach();
       this.#parser = null;
     }
+    settleUnreadClosedStreams(this, undefined, closedAndIdle);
     // Like Node's socketOnClose, a dead socket always tears the session down
     // (close() followed by closeSession() upstream). close() alone is not
     // enough: it early-returns once a received GOAWAY has already marked the
@@ -4726,6 +4720,7 @@ class ServerHttp2Session extends Http2Session {
 
       const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
+      const closedAndIdle = this.#closed && this.#connections === 0;
       this.#closed = true;
       this.#connected = false;
       if (socket) {
@@ -4769,6 +4764,7 @@ class ServerHttp2Session extends Http2Session {
         parser.detach();
         this.#parser = null;
       }
+      settleUnreadClosedStreams(this, error, closedAndIdle);
     } catch (e) {
       // A throwing destroy did not destroy: argument validation (goaway's
       // validateInteger, the native session rejecting a non-numeric error
@@ -4886,6 +4882,40 @@ function sessionTimerExpired(session: Http2Session) {
 }
 function destroySelfOnEnd(this: Http2Stream) {
   this.destroy();
+}
+// streamEnd(7): the native side fully closed the stream and freed it.
+function destroyClosedStream(session: Http2Session, stream: Http2Stream) {
+  if (stream.readable && !stream.rstCode) {
+    // Clean close while data is still buffered on the readable side (e.g. the response ended
+    // before the request body was consumed): node defers the destroy until the consumer drains
+    // it ('end'), so a late-attaching reader does not lose data.
+    stream.once("end", destroySelfOnEnd);
+    (session[kUnreadClosedStreams] ??= new SafeSet()).add(stream);
+  } else if ((stream.writableEnded || stream[kEndingWithChunk]) && !stream.writableFinished && !stream.destroyed) {
+    // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled
+    // native synchronously, re-entering before Writable.end() set kEnding): destroying now
+    // swallows 'finish'. Node's kMaybeDestroy waits for writable to finish first.
+    stream.once("finish", destroySelfOnEnd);
+  } else {
+    stream.destroy();
+  }
+}
+// Session teardown for the streams in kUnreadClosedStreams. node's closeSession() destroys every
+// stream the session still holds, with the session error:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1234-L1239
+// `closedAndIdle`: the session closed gracefully and nothing was left on the wire. Bun completes
+// that session without waiting for unread streams; node keeps it open until they are read
+// (kMaybeDestroy, #L1662-L1676). Without an error those streams are let go instead: they stay
+// readable and destroy themselves on 'end'.
+function settleUnreadClosedStreams(session: Http2Session, error: Error | null | undefined, closedAndIdle: boolean) {
+  const streams = session[kUnreadClosedStreams];
+  if (streams === null) return;
+  session[kUnreadClosedStreams] = null;
+  if (closedAndIdle && error == null) return;
+  for (const stream of streams) {
+    // Same guard as destroyStreamForSessionDestroy: a stream nobody listens to gets no 'error'.
+    stream.destroy(error != null && stream.listenerCount("error") > 0 ? error : undefined);
+  }
 }
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
@@ -5059,23 +5089,7 @@ class ClientHttp2Session extends Http2Session {
         stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
-        if (stream.readable && !stream.rstCode) {
-          // Clean close while data is still buffered on the readable side: node defers the
-          // destroy until the consumer drains it ('end'), so a late-attaching reader does not
-          // lose data.
-          stream.once("end", destroySelfOnEnd);
-        } else if (
-          (stream.writableEnded || stream[kEndingWithChunk]) &&
-          !stream.writableFinished &&
-          !stream.destroyed
-        ) {
-          // Writable side is mid-finish (an in-flight _final/_write carrying END_STREAM settled
-          // native synchronously, re-entering before Writable.end() set kEnding): destroying now
-          // swallows 'finish'. Node's kMaybeDestroy waits for writable to finish first.
-          stream.once("finish", destroySelfOnEnd);
-        } else {
-          stream.destroy();
-        }
+        destroyClosedStream(self, stream);
         if (self.#connections === 0 && self.#closed) {
           // Deferred like close()'s own destroy: runs inside a native dispatch batch and
           // not-yet-dispatched frames must still reach JS. An outstanding settings() ACK or
@@ -5391,12 +5405,16 @@ class ClientHttp2Session extends Http2Session {
   #onClose() {
     const parser = this.#parser;
     const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
+    // Read first: streamCancel can close the last open stream, and destroy() would then take this
+    // for a graceful close (see settleUnreadClosedStreams).
+    const closedAndIdle = this.#closed && this.#connections === 0;
     if (parser) {
       parser.forEachStream(streamCancel);
       parser.forEachStream(streamSocketClosed);
       parser.detach();
       this.#parser = null;
     }
+    settleUnreadClosedStreams(this, err, closedAndIdle);
     this.destroy(err, NGHTTP2_NO_ERROR);
     this[bunHTTP2Socket] = null;
   }
@@ -5805,6 +5823,7 @@ class ClientHttp2Session extends Http2Session {
         // Streams torn down by this destroy surface the same session error (node semantics).
         this[kSessionDestroyError] = error;
       }
+      const closedAndIdle = this.#closed && this.#connections === 0;
       this.#closed = true;
       this.#connected = false;
       {
@@ -5862,6 +5881,7 @@ class ClientHttp2Session extends Http2Session {
         }
         parser.detach();
       }
+      settleUnreadClosedStreams(this, error, closedAndIdle);
     } catch (e) {
       // A throwing destroy did not destroy: argument validation (goaway's
       // validateInteger, the native session rejecting a non-numeric error

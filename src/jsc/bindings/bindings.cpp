@@ -5722,16 +5722,16 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     properties.releaseData();
 }
 
-// True only when forEachProperty and forEachPropertyOrdered report nothing. Runs no JS, so false can mean "unknown".
-extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isDefinitelyEmptyForEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject)
+// True only when forEachProperty (forEachPropertyOrdered if `ordered`) reports nothing. Runs no JS, so false can mean "unknown".
+extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isDefinitelyEmptyForEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, bool ordered)
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
     if (!object)
         return false;
 
     auto& vm = JSC::getVM(globalObject);
-    // forEachProperty reads the object and four prototypes.
-    constexpr unsigned maxLevels = 5;
+    // forEachProperty reads the object and four prototypes. forEachPropertyOrdered reads the object only.
+    const unsigned maxLevels = ordered ? 1 : 5;
     for (unsigned level = 0; level < maxLevels; level++) {
         JSC::Structure* structure = object->structure();
         const JSC::TypeInfo& typeInfo = structure->typeInfo();

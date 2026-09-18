@@ -1181,6 +1181,20 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
       );
     });
 
+    it("sorted mode reads own properties only, inside the cap and past it", () => {
+      class WithMethod {
+        m() {}
+      }
+      for (const [value, text] of [
+        [new WithMethod(), "WithMethod {}"],
+        [Object.create({ x: 1 }), "{}"],
+      ]) {
+        expect(Bun.inspect(value, { sorted: true })).toBe(text);
+        expect(Bun.inspect({ v: value }, { depth: 0, sorted: true })).toBe(`{\n  v: ${text},\n}`);
+      }
+      expect(Bun.inspect({ v: { x: 1 } }, { depth: 0, sorted: true })).toBe("{\n  v: [Object ...],\n}");
+    });
+
     it("an own enumerable constructor property is content", () => {
       expect(Bun.inspect({ v: { constructor: Empty } }, { depth: 0 })).toBe("{\n  v: [Object ...],\n}");
       expect(Bun.inspect({ v: JSON.parse('{"constructor":1}') }, { depth: 0 })).toBe("{\n  v: [Object ...],\n}");

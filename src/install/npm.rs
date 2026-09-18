@@ -739,7 +739,7 @@ pub struct PackageVersion {
     pub(crate) has_install_script: bool,
     pub(crate) _padding_tail: [u8; 2],
 
-    /// Unix timestamp when this version was published (0 if unknown)
+    /// Unix timestamp when this version was published, or `NO_PUBLISH_TIME` / `UNREADABLE_PUBLISH_TIME`
     pub(crate) publish_timestamp_ms: f64,
 }
 
@@ -766,7 +766,7 @@ impl Default for PackageVersion {
             libc: Libc::NONE,
             has_install_script: false,
             _padding_tail: [0; 2],
-            publish_timestamp_ms: 0.0,
+            publish_timestamp_ms: Self::NO_PUBLISH_TIME,
         }
     }
 }
@@ -774,6 +774,15 @@ impl Default for PackageVersion {
 impl PackageVersion {
     pub(crate) fn all_dependencies_bundled(&self) -> bool {
         self.bundled_dependencies.is_invalid()
+    }
+
+    /// The registry gives no publish time. The version passes minimum-release-age.
+    pub(crate) const NO_PUBLISH_TIME: f64 = 0.0;
+    /// The registry gives a publish time that is not a date. The version never passes minimum-release-age.
+    pub(crate) const UNREADABLE_PUBLISH_TIME: f64 = f64::INFINITY;
+
+    pub(crate) fn has_unreadable_publish_time(&self) -> bool {
+        self.publish_timestamp_ms == Self::UNREADABLE_PUBLISH_TIME
     }
 
     /// Used by `Package.fromNPM` to walk dependency groups by name.
@@ -933,8 +942,9 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
+        // - v0.0.8: publish times are read like `Date.parse`; one that is not a date is infinity, not 0
         const HEADER_BYTES: &'static str =
-            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
+            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.8\n");
 
         // Field order is hardcoded (descending alignment). Re-verify if the
         // layout changes.
@@ -1573,9 +1583,24 @@ impl PackageManifest {
         package_version: &PackageVersion,
         minimum_release_age_ms: f64,
     ) -> bool {
+        // `--minimum-release-age=0` turns the gate off, also for a version whose age is unknown.
+        if minimum_release_age_ms <= 0.0 {
+            return false;
+        }
         let current_timestamp_ms: f64 =
             (bun_core::start_time() / bun_core::time::NS_PER_MS as i128) as f64;
         package_version.publish_timestamp_ms > current_timestamp_ms - minimum_release_age_ms
+    }
+
+    /// The stability check measures the next candidate against this. An unreadable time replaces no readable one.
+    fn newer_blocked<'a>(
+        prev: Option<&'a PackageVersion>,
+        blocked: &'a PackageVersion,
+    ) -> Option<&'a PackageVersion> {
+        match prev {
+            Some(prev) if blocked.has_unreadable_publish_time() => Some(prev),
+            _ => Some(blocked),
+        }
     }
 
     fn search_version_list<'a>(
@@ -1605,7 +1630,8 @@ impl PackageManifest {
                     if newest_filtered.is_none() {
                         *newest_filtered = Some(version);
                     }
-                    prev_package_blocked_from_age = Some(package);
+                    prev_package_blocked_from_age =
+                        Self::newer_blocked(prev_package_blocked_from_age, package);
                 }
                 // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
                 else if let Some(prev_package) = prev_package_blocked_from_age {
@@ -1655,8 +1681,13 @@ impl PackageManifest {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FindVersionError {
     NotFound,
-    TooRecent,
-    AllVersionsTooRecent,
+    /// `unreadable_publish_time`: the newest blocked candidate has `UNREADABLE_PUBLISH_TIME`, it is not new.
+    TooRecent {
+        unreadable_publish_time: bool,
+    },
+    AllVersionsTooRecent {
+        unreadable_publish_time: bool,
+    },
 }
 
 pub enum FindVersionResult<'a> {
@@ -1682,7 +1713,9 @@ impl<'a> FindVersionResult<'a> {
             FindVersionResult::FoundWithFilter {
                 newest_filtered, ..
             } => newest_filtered.is_some(),
-            FindVersionResult::Err(err) => *err == FindVersionError::AllVersionsTooRecent,
+            FindVersionResult::Err(err) => {
+                matches!(err, FindVersionError::AllVersionsTooRecent { .. })
+            }
             // .err.too_recent is only for direct version checks which doesn't prove there was a later version that could have been chosen
             _ => false,
         }
@@ -1770,7 +1803,8 @@ impl PackageManifest {
             }
 
             if Self::is_package_version_too_recent(package, min_age_ms) {
-                prev_package_blocked_from_age = Some(package);
+                prev_package_blocked_from_age =
+                    Self::newer_blocked(prev_package_blocked_from_age, package);
                 continue;
             }
 
@@ -1813,7 +1847,9 @@ impl PackageManifest {
             };
         }
 
-        FindVersionResult::Err(FindVersionError::AllVersionsTooRecent)
+        FindVersionResult::Err(FindVersionError::AllVersionsTooRecent {
+            unreadable_publish_time: dist_result.package.has_unreadable_publish_time(),
+        })
     }
 
     pub fn find_best_version_with_filter(
@@ -1845,7 +1881,9 @@ impl PackageManifest {
             let result = self.find_by_version(left.version);
             if let Some(r) = result {
                 if Self::is_package_version_too_recent(r.package, min_age_ms) {
-                    return FindVersionResult::Err(FindVersionError::TooRecent);
+                    return FindVersionResult::Err(FindVersionError::TooRecent {
+                        unreadable_publish_time: r.package.has_unreadable_publish_time(),
+                    });
                 }
                 return FindVersionResult::Found(r);
             }
@@ -1897,8 +1935,12 @@ impl PackageManifest {
             }
         }
 
-        if newest_filtered.is_some() {
-            return FindVersionResult::Err(FindVersionError::AllVersionsTooRecent);
+        if let Some(newest) = newest_filtered {
+            return FindVersionResult::Err(FindVersionError::AllVersionsTooRecent {
+                unreadable_publish_time: self
+                    .find_by_version(newest)
+                    .is_some_and(|r| r.package.has_unreadable_publish_time()),
+            });
         }
 
         FindVersionResult::Err(FindVersionError::NotFound)
@@ -1969,6 +2011,20 @@ impl PackageManifest {
         }
 
         None
+    }
+}
+
+/// npm's `!time[v] || Date.parse(time[v]) <= before`, except that only a string is read as a date.
+fn publish_timestamp_ms_from_json(time_entry: &JSON::E::JsonValue) -> f64 {
+    use JSON::E::JsonValue;
+    match time_entry {
+        JsonValue::Null | JsonValue::Boolean(false) => PackageVersion::NO_PUBLISH_TIME,
+        JsonValue::Number(n) if n.value() == 0.0 => PackageVersion::NO_PUBLISH_TIME,
+        JsonValue::String(s) if s.slice().is_empty() => PackageVersion::NO_PUBLISH_TIME,
+        JsonValue::String(s) => {
+            bun_core::wtf::parse_date(s.slice()).unwrap_or(PackageVersion::UNREADABLE_PUBLISH_TIME)
+        }
+        _ => PackageVersion::UNREADABLE_PUBLISH_TIME,
     }
 }
 
@@ -2951,10 +3007,9 @@ impl PackageManifest {
                         // result matches the previous `ObjectJSON::get` exactly.
                         time_props.iter().find(|p| p.key.slice() == version_name)
                     };
-                    if let Some(publish_time_str) = entry.and_then(|p| p.value.as_str()) {
-                        if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
-                            package_version.publish_timestamp_ms = ms;
-                        }
+                    if let Some(entry) = entry {
+                        package_version.publish_timestamp_ms =
+                            publish_timestamp_ms_from_json(&entry.value);
                     }
                 }
 

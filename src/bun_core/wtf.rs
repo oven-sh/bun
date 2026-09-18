@@ -4,28 +4,10 @@
 //! library code in Rust. WTF is statically linked into the binary, so
 //! tier-0 callers declare the C symbol directly — no `bun_jsc` crate
 //! dependency is required to reference it.
-//!
-//! Source of truth: `src/jsc/bindings/wtf-bindings.cpp` (`WTF__parseES5Date`),
-//! which forwards to `WTF::parseES5Date` in
-//! vendor/WebKit `Source/WTF/wtf/DateMath.{h,cpp}`.
-//!
-//! Note: WTF's `parseES5Date` sets an `isLocalTime` out-param so the JS
-//! `Date` constructor can later apply the VM's tz offset. The C shim discards
-//! it, so local-time inputs return their naive
-//! UTC value here too.
 
 unsafe extern "C" {
-    // src/jsc/bindings/wtf-bindings.cpp:
-    //   extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
-    fn WTF__parseES5Date(bytes: *const u8, length: usize) -> f64;
-}
-
-/// Direct call to `WTF::parseES5Date`. Returns NaN for any input the WTF
-/// parser rejects. `s` is treated as Latin-1.
-#[inline]
-pub(crate) fn parse_es5_date_raw(s: &[u8]) -> f64 {
-    // SAFETY: s.as_ptr() is valid for s.len() bytes.
-    unsafe { WTF__parseES5Date(s.as_ptr(), s.len()) }
+    // src/jsc/bindings/wtf-bindings.cpp
+    fn Bun__parseDateTimeString(bytes: *const u8, length: usize) -> f64;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,13 +20,13 @@ impl core::fmt::Display for InvalidDate {
 }
 impl core::error::Error for InvalidDate {}
 
-/// `bun.jsc.wtf.parseES5Date` shape — `Err` on empty input or non-finite result.
-/// `2000-01-01T00:00:00.000Z` → `Ok(946684800000.0)`.
-pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {
+/// JS `Date.parse(buf)` with no VM, except that a date-time with no time zone reads as UTC.
+pub fn parse_date(buf: &[u8]) -> Result<f64, InvalidDate> {
     if buf.is_empty() {
         return Err(InvalidDate);
     }
-    let ms = parse_es5_date_raw(buf);
+    // SAFETY: `buf.as_ptr()` is valid for `buf.len()` bytes.
+    let ms = unsafe { Bun__parseDateTimeString(buf.as_ptr(), buf.len()) };
     if ms.is_finite() {
         Ok(ms)
     } else {

@@ -1,6 +1,8 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { readdirSync } from "fs";
+import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
+import { join } from "path";
 
 // These tests drive real `bun install` runs against a mock registry, which is
 // slow under the debug/ASAN build — give them the same generous timeout the
@@ -22,6 +24,62 @@ describe("minimum-release-age", () => {
 
   // Helper to create ISO timestamp for a given number of days ago
   const daysAgo = (days: number) => new Date(currentTime - days * DAY_MS).toISOString();
+
+  // `time` entries that are not an ISO 8601 string, keyed by the name of the mock package that
+  // serves them for its newest version. bun follows npm's `!time[v] || Date.parse(time[v]) <= before`,
+  // but reads only a string as a date.
+  //
+  // Not a date: the age is unknown, so the version never passes the gate.
+  const unreadablePublishTimes: Record<string, unknown> = {
+    "odd-time-text": "yesterday",
+    "odd-time-epoch-ms": currentTime,
+    "odd-time-boolean": true,
+    "odd-time-object": {},
+    // npm passes these two, because `Date.parse` stringifies them into dates. bun does not.
+    "odd-time-year-number": 2020,
+    "odd-time-array": [daysAgo(30)],
+  };
+  // "YYYY-MM-DD HH:mm:ss +00:00". JavaScriptCore's own date parsers reject it. The V8 parser behind `Date.parse` reads it.
+  const spaceAndOffset = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace("T", " ") + " +00:00";
+  // Dates that `Date.parse` reads, for a version published just now: too recent.
+  const recentLegacyPublishTimes: Record<string, unknown> = {
+    "odd-time-rfc2822": new Date(currentTime).toUTCString(),
+    "odd-time-date-to-string": new Date(currentTime).toString(),
+    "odd-time-space-and-offset": spaceAndOffset(currentTime),
+  };
+  // The same forms for a version published 30 days ago: old enough.
+  const oldLegacyPublishTimes: Record<string, unknown> = {
+    "odd-time-old-rfc2822": new Date(currentTime - 30 * DAY_MS).toUTCString(),
+    "odd-time-old-date-to-string": new Date(currentTime - 30 * DAY_MS).toString(),
+    "odd-time-old-space-and-offset": spaceAndOffset(currentTime - 30 * DAY_MS),
+  };
+  // No time zone, for a version published 4 days 23 hours ago. bun reads the value as UTC on every
+  // machine. `Date.parse` reads it in the zone of the host.
+  const almostFiveDaysAgo = new Date(currentTime - 5 * DAY_MS + 60 * 60 * MS_PER_SECOND);
+  const zonelessPublishTimes: Record<string, unknown> = {
+    "odd-time-zoneless-rfc2822": almostFiveDaysAgo.toUTCString().replace(" GMT", ""),
+    "odd-time-zoneless-iso": almostFiveDaysAgo.toISOString().slice(0, 19),
+  };
+  // Falsy: no publish time on record. Passes like a missing entry.
+  const unsetPublishTimes: Record<string, unknown> = {
+    "odd-time-null": null,
+    "odd-time-empty-string": "",
+    "odd-time-zero": 0,
+    "odd-time-false": false,
+  };
+  const oddPublishTimes: Record<string, unknown> = {
+    ...unreadablePublishTimes,
+    ...recentLegacyPublishTimes,
+    ...oldLegacyPublishTimes,
+    ...zonelessPublishTimes,
+    ...unsetPublishTimes,
+    // Only the expired cached manifest tests ask for these, so they can count and change what the registry serves.
+    "odd-time-cached-unreadable": "yesterday",
+    "odd-time-cached-recent": new Date(currentTime).toISOString(),
+    "odd-time-cached-then-fixed": "yesterday",
+    "odd-time-cached-gate-off": "yesterday",
+  };
+  const oddTimeManifestRequests = new Map<string, number>();
 
   // Helper to create a minimal valid tarball
   const createTarball = (name: string, version: string) => {
@@ -704,6 +762,58 @@ describe("minimum-release-age", () => {
           };
 
           return Response.json(packageData);
+        }
+
+        // TEST PACKAGES: odd-time-* (1.0.0 is 30 days old, the `time` entry of the newest
+        // version is not an ISO 8601 date string)
+        const oddTimeName = url.pathname.slice(1);
+        if (oddTimeName in oddPublishTimes) {
+          oddTimeManifestRequests.set(oddTimeName, (oddTimeManifestRequests.get(oddTimeName) ?? 0) + 1);
+          return Response.json({
+            name: oddTimeName,
+            "dist-tags": { latest: "2.0.0" },
+            versions: Object.fromEntries(
+              ["1.0.0", "2.0.0"].map(version => [
+                version,
+                {
+                  name: oddTimeName,
+                  version,
+                  dist: {
+                    tarball: `${mockRegistryUrl}/${oddTimeName}/-/${oddTimeName}-${version}.tgz`,
+                    integrity: "sha512-fake==",
+                  },
+                },
+              ]),
+            ),
+            time: { "1.0.0": daysAgo(30), "2.0.0": oddPublishTimes[oddTimeName] },
+          });
+        }
+
+        // TEST PACKAGE: unreadable-between-rapid-releases. 1.3.0 is too recent, 1.2.0 has no readable time,
+        // and 1.1.0 came out 4 days before 1.3.0, inside the 5 day stability window.
+        if (url.pathname === "/unreadable-between-rapid-releases") {
+          const name = "unreadable-between-rapid-releases";
+          const time: Record<string, string> = {
+            "1.0.0": daysAgo(11.5),
+            "1.1.0": daysAgo(6),
+            "1.2.0": "yesterday",
+            "1.3.0": daysAgo(2),
+          };
+          return Response.json({
+            name,
+            "dist-tags": { latest: "1.3.0" },
+            versions: Object.fromEntries(
+              Object.keys(time).map(version => [
+                version,
+                {
+                  name,
+                  version,
+                  dist: { tarball: `${mockRegistryUrl}/${name}/-/${name}-${version}.tgz`, integrity: "sha512-fake==" },
+                },
+              ]),
+            ),
+            time,
+          });
         }
 
         // TEST PACKAGE 11: exact-threshold-package (exactly at age boundary)
@@ -2211,29 +2321,259 @@ describe("minimum-release-age", () => {
       expect(lockfile).toContain("no-time-package@1.0.0");
     });
 
-    test("handles invalid timestamp formats", async () => {
-      using dir = tempDir("bad-timestamp", {
-        "package.json": JSON.stringify({
-          dependencies: { "bad-timestamp-package": "*" },
-        }),
-        ".npmrc": `registry=${mockRegistryUrl}`,
+    // Installs `dependencies` from the mock registry and returns what the tests below assert on.
+    // These tests run concurrently, so every install has its own cache unless `cacheDir` is set.
+    async function install(
+      dependencies: Record<string, string>,
+      args: string[],
+      bunfig: object = {},
+      { cacheDir, env = {} }: { cacheDir?: string; env?: Record<string, string> } = {},
+    ) {
+      using dir = tempDir("odd-publish-time", {
+        "package.json": JSON.stringify({ dependencies }),
+        "bunfig.toml": Bun.TOML.stringify({ install: { registry: mockRegistryUrl, ...bunfig } }),
       });
 
-      const proc = Bun.spawn({
-        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--no-verify", ...args],
         cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir ?? join(String(dir), ".bun-cache"), ...env },
+        stdout: "ignore",
         stderr: "pipe",
       });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      const exitCode = await proc.exited;
+      const lockfile = Bun.file(`${dir}/bun.lock`);
+      return { stderr, exitCode, lockfile: (await lockfile.exists()) ? await lockfile.text() : "" };
+    }
+    const fiveDayGate = ["--minimum-release-age", `${5 * SECONDS_PER_DAY}`];
 
-      // Should succeed - invalid timestamps should be skipped gracefully
+    // The version could be minutes old: it must not pass the gate. npm never picks it either.
+    test.concurrent.each(Object.keys({ ...unreadablePublishTimes, ...recentLegacyPublishTimes }))(
+      "%s: a range skips a version whose publish time is unreadable or recent",
+      async name => {
+        const { stderr, exitCode, lockfile } = await install({ [name]: "*" }, fiveDayGate);
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@1.0.0`);
+        expect(lockfile).not.toContain(`${name}@2.0.0`);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent.each(Object.keys(oldLegacyPublishTimes))(
+      "%s: an old publish time in a legacy date format passes",
+      async name => {
+        const { stderr, exitCode, lockfile } = await install({ [name]: "2.0.0" }, fiveDayGate);
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@2.0.0`);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // The host is in UTC+14. Read as local time, 2.0.0 would be 5 days 13 hours old and pass the gate.
+    test.concurrent.each(Object.keys(zonelessPublishTimes))(
+      "%s: a publish time with no time zone reads as UTC, not in the zone of the host",
+      async name => {
+        const { stderr, exitCode, lockfile } = await install(
+          { [name]: "*" },
+          fiveDayGate,
+          {},
+          { env: { TZ: "Etc/GMT-14" } },
+        );
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@1.0.0`);
+        expect(lockfile).not.toContain(`${name}@2.0.0`);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent.each(Object.keys(unsetPublishTimes))(
+      "%s: a falsy publish time passes like a missing entry",
+      async name => {
+        const { stderr, exitCode, lockfile } = await install({ [name]: "*" }, fiveDayGate);
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@2.0.0`);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent("the latest dist-tag skips a version with an unreadable publish time", async () => {
+      const { stderr, exitCode, lockfile } = await install({ "odd-time-text": "latest" }, fiveDayGate);
+
+      expect(stderr).not.toContain("error:");
+      expect(lockfile).toContain("odd-time-text@1.0.0");
       expect(exitCode).toBe(0);
+    });
 
-      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      expect(lockfile).toContain("bad-timestamp-package@1.0.0");
+    // The errors say why a version from years ago is blocked.
+    test.concurrent("an exact version with an unreadable publish time is blocked", async () => {
+      const { stderr, exitCode, lockfile } = await install({ "odd-time-text": "2.0.0" }, fiveDayGate);
+
+      expect(stderr).toContain(
+        'error: No version matching "odd-time-text" found for specifier "2.0.0" (blocked by minimum-release-age: the publish time in the registry is not a valid date)',
+      );
+      expect(lockfile).not.toContain("odd-time-text@2.0.0");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a range with only unreadable publish times is blocked", async () => {
+      const { stderr, exitCode, lockfile } = await install({ "bad-timestamp-package": "*" }, fiveDayGate);
+
+      expect(stderr).toContain(
+        'error: No version matching "bad-timestamp-package" found for specifier "*" (blocked by minimum-release-age: the publish time in the registry is not a valid date)',
+      );
+      expect(lockfile).not.toContain("bad-timestamp-package@1.0.0");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a dist-tag with only unreadable publish times is blocked", async () => {
+      const { stderr, exitCode, lockfile } = await install({ "bad-timestamp-package": "latest" }, fiveDayGate);
+
+      expect(stderr).toContain(
+        'error: Package "bad-timestamp-package" with tag "latest" not found (all versions blocked by minimum-release-age: the publish time in the registry is not a valid date)',
+      );
+      expect(lockfile).not.toContain("bad-timestamp-package@1.0.0");
+      expect(exitCode).toBe(1);
+    });
+
+    // An exact version resolves from a manifest that is on disk but expired. Only a debug build reads
+    // BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP, which makes the cached manifest count as expired.
+    const expiredCache = { BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP: "4294967295" };
+    async function cacheManifest(name: string, cacheDir: string) {
+      // bun saves the manifest from a thread pool task and does not wait for it at exit.
+      let cached = false;
+      for (let attempt = 0; attempt < 5 && !cached; attempt++) {
+        await install({ [name]: "1.0.0" }, fiveDayGate, {}, { cacheDir });
+        cached = readdirSync(cacheDir).some(file => file.endsWith(".npm"));
+      }
+      if (!cached) throw new Error(`5 installs of ${name}@1.0.0 left no .npm manifest in ${cacheDir}`);
+    }
+
+    // A too-recent version ages, so the cached manifest is enough. A time that is not a date cannot
+    // change in the cache, so bun asks the registry again.
+    test.skipIf(!isDebug).concurrent.each([
+      ["odd-time-cached-recent", `${5 * SECONDS_PER_DAY} seconds`, 0],
+      ["odd-time-cached-unreadable", "the publish time in the registry is not a valid date", 1],
+    ])(
+      "%s: an exact version from an expired cached manifest is blocked with the same error",
+      async (name, reason, manifestRequests) => {
+        using cache = tempDir("odd-publish-time-cache", {});
+        await cacheManifest(name, String(cache));
+        const requests = oddTimeManifestRequests.get(name)!;
+
+        const { stderr, exitCode } = await install(
+          { [name]: "2.0.0" },
+          fiveDayGate,
+          {},
+          {
+            cacheDir: String(cache),
+            env: expiredCache,
+          },
+        );
+
+        expect(stderr).toContain(
+          `error: No version matching "${name}" found for specifier "2.0.0" (blocked by minimum-release-age: ${reason})`,
+        );
+        expect(oddTimeManifestRequests.get(name)).toBe(requests + manifestRequests);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    test
+      .skipIf(!isDebug)
+      .concurrent("an exact version installs after the registry corrects its publish time", async () => {
+        const name = "odd-time-cached-then-fixed";
+        using cache = tempDir("odd-publish-time-cache", {});
+        await cacheManifest(name, String(cache));
+        oddPublishTimes[name] = daysAgo(30);
+
+        const { stderr, exitCode, lockfile } = await install(
+          { [name]: "2.0.0" },
+          fiveDayGate,
+          {},
+          {
+            cacheDir: String(cache),
+            env: expiredCache,
+          },
+        );
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@2.0.0`);
+        expect(exitCode).toBe(0);
+      });
+
+    test
+      .skipIf(!isDebug)
+      .concurrent("--minimum-release-age 0 resolves the exact version from the expired cached manifest", async () => {
+        const name = "odd-time-cached-gate-off";
+        using cache = tempDir("odd-publish-time-cache", {});
+        await cacheManifest(name, String(cache));
+        const requests = oddTimeManifestRequests.get(name);
+
+        const { stderr, exitCode, lockfile } = await install(
+          { [name]: "2.0.0" },
+          ["--minimum-release-age", "0"],
+          {},
+          {
+            cacheDir: String(cache),
+            env: expiredCache,
+          },
+        );
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@2.0.0`);
+        expect(oddTimeManifestRequests.get(name)).toBe(requests);
+        expect(exitCode).toBe(0);
+      });
+
+    // The stability check compares 1.1.0 with the blocked 1.3.0, not with the unreadable 1.2.0 between them.
+    test.concurrent.each(["*", "latest"])(
+      "%s: an unreadable publish time between rapid releases does not end the stability check",
+      async specifier => {
+        const name = "unreadable-between-rapid-releases";
+        const { stderr, exitCode, lockfile } = await install({ [name]: specifier }, fiveDayGate);
+
+        expect(stderr).not.toContain("error:");
+        expect(lockfile).toContain(`${name}@1.0.0`);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent("--minimum-release-age 0 installs a version with an unreadable publish time", async () => {
+      const { stderr, exitCode, lockfile } = await install(
+        { "odd-time-text": "2.0.0" },
+        ["--minimum-release-age", "0"],
+        {
+          minimumReleaseAge: 5 * SECONDS_PER_DAY,
+        },
+      );
+
+      expect(stderr).not.toContain("error:");
+      expect(lockfile).toContain("odd-time-text@2.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("minimumReleaseAgeExcludes bypasses an unreadable publish time", async () => {
+      const { stderr, exitCode, lockfile } = await install({ "odd-time-text": "*" }, [], {
+        minimumReleaseAge: 5 * SECONDS_PER_DAY,
+        minimumReleaseAgeExcludes: ["odd-time-text"],
+      });
+
+      expect(stderr).not.toContain("error:");
+      expect(lockfile).toContain("odd-time-text@2.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an unreadable publish time changes nothing without the age gate", async () => {
+      const { stderr, exitCode, lockfile } = await install({ "odd-time-text": "*" }, []);
+
+      expect(stderr).not.toContain("error:");
+      expect(lockfile).toContain("odd-time-text@2.0.0");
+      expect(exitCode).toBe(0);
     });
   });
 

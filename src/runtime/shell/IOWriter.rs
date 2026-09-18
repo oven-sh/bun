@@ -1202,7 +1202,7 @@ pub(crate) fn on_io_writer_chunk(
             // `CapturedWriter::do_write`; the PipeReader (and the embedded
             // CapturedWriter) is kept alive by the `Readable::Pipe` Arc on
             // the owning ShellSubprocess until `on_close_io` runs, which only
-            // happens after the writer has finished draining. Single-threaded.
+            // happens once its chunks are all written or cancelled. Single-threaded.
             let cw = unsafe { &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>() };
             cw.on_iowriter_chunk(written, err)
         }

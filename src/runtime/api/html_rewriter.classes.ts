@@ -10,6 +10,8 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     klass: {},
+    // The `on()` / `onDocument()` callbacks: `HandlerList` in html_rewriter.rs.
+    values: ["handlers"],
     proto: {
       on: {
         fn: "on",
@@ -302,6 +304,14 @@ export default [
     proto: {},
     // WriteBarrier slots: everything the pipe must keep reachable and that
     // would otherwise need a StrongOptional root.
-    values: ["response", "inputStream", "outputStream", "pendingPromise", "handlerError", "suspensionPromise"],
+    values: [
+      "response",
+      "inputStream",
+      "outputStream",
+      "pendingPromise",
+      "handlerError",
+      "suspensionPromise",
+      "handlers",
+    ],
   }),
 ];

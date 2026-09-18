@@ -643,8 +643,8 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// import, export, top-level await or import.meta: the syntax that makes Node
-// run a file as an ES module when its extension and package.json do not say.
+// The syntax that makes Node run a file as an ES module when its extension
+// and package.json do not decide.
 static bool hasESModuleSyntax(JSC::AbstractModuleRecord* record)
 {
     auto* module = dynamicDowncast<JSC::JSModuleRecord>(record);
@@ -653,39 +653,30 @@ static bool hasESModuleSyntax(JSC::AbstractModuleRecord* record)
     return !module->requestedModules().isEmpty() || !module->exportEntries().isEmpty() || module->hasTLA() || (module->features() & JSC::ImportMetaFeature);
 }
 
-// Whether the next require() has to run the module of `entry` again: it threw
-// while it was evaluated, and Node would have run it as CommonJS. That is a
-// file with no ES module syntax (the transpiler defaults it to ESM), or a
-// CommonJS module that import() loaded first (its entry has no JSModuleRecord).
-// An ES module that threw keeps its error for every later load, as in Node. A
-// failed fetch is not handled here: the loader drops that entry itself.
-static bool shouldRequireEvaluateAgain(JSC::ModuleRegistryEntry* entry)
+// The module threw while it was evaluated, and Node runs it as CommonJS (no ES
+// module syntax, or no JSModuleRecord at all). Node re-runs such a module on the
+// next require(). An ES module keeps its error.
+static bool threwAsCommonJS(JSC::ModuleRegistryEntry* entry)
 {
     auto* record = entry->record();
     bool threw = entry->status() == JSC::ModuleRegistryEntry::Status::EvaluationFailed;
-    // A module that threw as a dependency of some other module's graph keeps
-    // Status::Fetched; the error is recorded on its record.
+    // A dependency that threw inside another module's graph keeps Status::Fetched.
     if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
         threw = threw || cyclic->evaluationError();
     return threw && !hasESModuleSyntax(record);
 }
 
-// A require() that throws removes the module from the require map
-// (finishRequireWithError, the catch blocks in CommonJS.ts) so that, as in Node,
-// the next require() runs the file again. If that load went through the module
-// registry, the registry still holds the entry with the error stored on it, and
-// JSModuleLoader::loadModule settles every later load of that key with the
-// stored error without running anything. No other entry is dropped: one that is
-// still loading or loaded fine may belong to an in-flight import(), and dropping
-// it would evaluate that module twice. `loader` is the one the load goes
-// through: the requiring module's Bun.ModuleGraph's, or the global object's.
+// A failed require() drops its module from the require map, but the registry
+// entry keeps the error and JSModuleLoader::loadModule replays it on every later
+// load. Only a failed entry is removed: a pending or loaded one may belong to an
+// in-flight import().
 static void evictFailedModuleRegistryEntry(JSC::VM& vm, JSC::JSModuleLoader* loader, const WTF::String& specifier)
 {
     auto key = JSC::Identifier::fromString(vm, specifier);
     auto* entry = loader->registryEntry(key);
-    if (!entry || !shouldRequireEvaluateAgain(entry))
+    if (!entry || !threwAsCommonJS(entry))
         return;
-    loader->removeEntry(key); // takes the loader's cellLock itself
+    loader->removeEntry(key);
 }
 
 JSValue fetchCommonJSModule(
@@ -877,8 +868,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
 {
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
-    // A direct Module._extensions[ext](module, filename) call does not pass
-    // through fetchCommonJSModule.
+    // A direct Module._extensions[ext]() call skips fetchCommonJSModule.
     if constexpr (isExtension)
         evictFailedModuleRegistryEntry(vm, loader, specifierWtfString);
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);

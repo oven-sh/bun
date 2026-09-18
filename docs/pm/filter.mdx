@@ -159,6 +159,9 @@ bun run --parallel --no-exit-on-error --filter '*' test
 
 # Run multiple scripts across all packages
 bun run --parallel --filter '*' build lint
+
+# Pass the same arguments to every script: each one runs as "<script> --watch"
+bun run --parallel --filter '*' build -- --watch
 ```
 
 Bun prefixes each line of output with the package and script name (`pkg-a:build | ...`). Without `--filter`/`--workspaces`, the prefix is only the script name (`build | ...`). When a package's `package.json` has no `name` field, Bun uses the relative path from the workspace root instead.

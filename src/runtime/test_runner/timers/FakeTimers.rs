@@ -257,8 +257,7 @@ impl FakeTimers {
     /// timer whose callback threw is reported and the drain goes on; only the
     /// VM's termination stops it, thrown to the `jest` host function driving it.
     fn fire(global: &JSGlobalObject, next: *mut EventLoopTimer) -> JsResult<()> {
-        // As under `All::drain_timers`, the timer's own exit from the event loop then runs the
-        // microtask checkpoint, when the runner called this test from outside the loop.
+        // The timer's own exit then runs the microtask checkpoint, as under `All::drain_timers`.
         let _suspended = crate::test_runner::bun_test::RunnerEntry::suspend(global.bun_vm());
 
         // SAFETY: `next` was just popped from our heap; live until callback completes.

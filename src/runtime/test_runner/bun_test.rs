@@ -63,12 +63,7 @@ thread_local! {
     static RUNNER_ENTRY_IS_OUTERMOST: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
 }
 
-/// The runner's event loop entry, held across a callback and the microtask drain after it.
-///
-/// The runner is also called from outside `EventLoop::tick()`: for the first callbacks of a file,
-/// and after a test timeout. With the entry, as under every other dispatcher, a native
-/// `enter()`/`exit()` pair that the callback's JS reaches is a nested pair, and its exit does not
-/// run a microtask checkpoint in the middle of that JS.
+/// Held across a test callback and its microtask drain, so a native `enter()`/`exit()` pair the callback reaches is nested.
 pub(crate) struct RunnerEntry {
     _entered: jsc::event_loop::EventLoopEnterNoCheckpointGuard,
     was_outermost: bool,
@@ -83,19 +78,14 @@ impl RunnerEntry {
         }
     }
 
-    /// For a native call that dispatches callbacks as the event loop does: a jest timer control, a
-    /// matcher that waits for a promise. The exit of such a callback is a microtask checkpoint
-    /// only with nothing else entered, and suites rely on those checkpoints in the callbacks that
-    /// the runner calls from outside the loop. While the guard lives, the runner's entry does not
-    /// count if it is the only one.
+    /// For a call that runs an event loop of its own (timer control, matcher wait): its callbacks exit as under `tick()`.
     pub(crate) fn suspend(vm: &VirtualMachine) -> SuspendedRunnerEntry {
         let event_loop = vm.event_loop();
         // SAFETY: the live VM-owned loop; JS thread; short-lived accesses only.
         if !RUNNER_ENTRY_IS_OUTERMOST.get() || unsafe { (*event_loop).entered_event_loop_count } != 1 {
             return SuspendedRunnerEntry { event_loop: None };
         }
-        // A dispatcher reached from one of the callbacks must not suspend again: the callback's
-        // own entry is the outermost one then.
+        // One of those callbacks holds the outermost entry while it runs.
         RUNNER_ENTRY_IS_OUTERMOST.set(false);
         // SAFETY: as above.
         unsafe { (*event_loop).exit_without_checkpoint() };

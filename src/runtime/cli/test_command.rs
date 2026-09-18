@@ -2865,8 +2865,6 @@ impl TestCommand {
 
         let repeat_count = reporter.repeat_count;
         let mut repeat_index: u32 = 0;
-        // The first run that registered a test, and how many: (index, count).
-        // A later run that registers fewer gets a warning instead of silence.
         let mut first_run_with_tests: Option<(u32, u32)> = None;
         vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;

@@ -337,7 +337,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
             print_elapsed();
             print_apply_hint();
         }
-        return Ok(());
+        Global::exit(manager.options.check as u32);
     }
 
     let failed = execute(&plan, quiet);
@@ -494,7 +494,7 @@ fn print_apply_hint() {
         .skip_while(|arg| **arg != *b"prune")
         .skip(1)
     {
-        if arg.starts_with(b"--dry-run") {
+        if arg.starts_with(b"--dry-run") || arg.starts_with(b"--check") {
             continue;
         }
         bun_core::pretty!(" {}", BStr::new(arg));

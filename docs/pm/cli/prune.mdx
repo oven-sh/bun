@@ -51,6 +51,14 @@ bun prune v1.4.0 (abc12345)
   bun prune --production
 ```
 
+### `--check`
+
+Print the same report as `--dry-run`, but exit `1` if anything would be removed. Use it in CI:
+
+```bash terminal icon="terminal"
+bun prune --production --check
+```
+
 ### `--filter`
 
 Prune only the selected workspaces' `node_modules` folders (same patterns as [`bun install --filter`](/pm/filter)). Bun also cleans shared locations: the root `node_modules`, or `node_modules/.bun` with the isolated linker. In those locations, Bun keeps anything an unselected workspace still needs.

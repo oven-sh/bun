@@ -225,6 +225,7 @@ pub enum InsertFailureKey<'a> {
 pub(crate) struct ReceiveChunkSourceMap {
     pub(crate) chunk: bun_sourcemap::Chunk,
     pub(crate) escaped_source: Option<Box<[u8]>>,
+    pub(crate) inner_sources: Box<[packed_map::InnerSource]>,
 }
 
 pub(crate) enum ReceiveChunkContent {
@@ -648,6 +649,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                 packed_map::Shared::Some(packed_map::PackedMap::new_non_empty(
                                     &mut sm.chunk,
                                     sm.escaped_source.take().expect("escaped_source"),
+                                    core::mem::take(&mut sm.inner_sources),
                                 ))
                             }
                             _ => {
@@ -775,6 +777,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             packed_map::Shared::Some(packed_map::PackedMap::new_non_empty(
                                 &mut sm.chunk,
                                 sm.escaped_source.take().unwrap(),
+                                core::mem::take(&mut sm.inner_sources),
                             ))
                         }
                         _ => packed_map::Shared::LineCount(packed_map::LineCount::init(line_count)),

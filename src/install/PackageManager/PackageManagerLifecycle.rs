@@ -398,6 +398,13 @@ impl PackageManager {
         // this stack frame (freed by the subprocess's `Drop`).
         let envp = script_env.create_null_delimited_env_map()?;
 
+        let install_envp = if list.install_dependencies_for_prepare {
+            self.put_install_config_for_prepare(&mut script_env)?;
+            Some(script_env.create_null_delimited_env_map()?)
+        } else {
+            None
+        };
+
         let shell_bin: Option<&ZStr> = 'shell_bin: {
             #[cfg(windows)]
             {
@@ -426,12 +433,38 @@ impl PackageManager {
             self,
             list,
             envp,
+            install_envp,
             shell_bin,
             optional,
             log_level,
             foreground,
             install_ctx,
         )?;
+        Ok(())
+    }
+
+    /// The nested install's project directory is the checkout, so this project's
+    /// `bunfig.toml`/`.npmrc` settings have to reach it through the environment.
+    fn put_install_config_for_prepare(
+        &mut self,
+        script_env: &mut bun_dotenv::Map,
+    ) -> Result<(), crate::Error> {
+        let scope = &self.options.scope;
+        // The token only travels together with its registry.
+        if self.options.did_override_default_scope || !scope.token.is_empty() {
+            script_env.put(b"BUN_CONFIG_REGISTRY", scope.url.href())?;
+            if !scope.token.is_empty() {
+                script_env.put(b"BUN_CONFIG_TOKEN", &scope.token)?;
+            }
+        }
+
+        // Opening the cache directory is what fills in its path.
+        let _ = self.get_cache_directory();
+        let cache_directory_path = self.cache_directory_path.as_bytes();
+        if !cache_directory_path.is_empty() {
+            script_env.put(b"BUN_INSTALL_CACHE_DIR", cache_directory_path)?;
+        }
+
         Ok(())
     }
 

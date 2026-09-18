@@ -213,6 +213,8 @@ Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com
 }
 ```
 
+Bun installs the repository's files as they are. If the package builds its entry point in a `prepare` script, add it to `trustedDependencies`. Bun then installs the package's `devDependencies` and runs the script. See [`prepare` scripts of git dependencies](/pm/lifecycle#prepare-scripts-of-git-dependencies).
+
 ## Tarball dependencies
 
 A package name can correspond to a publicly hosted `.tgz` file. Bun downloads and installs the package from that tarball URL rather than from the package registry.

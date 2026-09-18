@@ -748,10 +748,9 @@ pub fn exit(code: u32) -> ! {
     }
 }
 
-/// Runs the exit callbacks, then ends the process by `sig`, so the parent sees
-/// a signal death and not an exit code. `sig` must be at `SIG_DFL`. PID 1 does
-/// not die of a default-action signal; `128 + sig` is the exit code then, and
-/// on Windows.
+/// Runs the exit callbacks, then ends the process by `sig` (which must be at
+/// `SIG_DFL`), so the parent sees a signal death. Where the signal does not
+/// kill (PID 1, Windows), the exit code is `128 + sig`.
 pub fn exit_by_signal(sig: c_int) -> ! {
     #[cfg(unix)]
     {

@@ -794,3 +794,222 @@ describe("node:inspector/promises", () => {
     expect(inspectorPromises.waitForDebugger).toBe(inspector.waitForDebugger);
   });
 });
+
+// Runtime.consoleAPICalled mirroring runs in a subprocess so its console
+// hooks do not interfere with the test runner's own console, and so assertion
+// output is not interleaved with the calls being mirrored.
+describe("node:inspector Runtime.consoleAPICalled", () => {
+  type Event = {
+    type: string;
+    args: any[];
+    stackTrace?: { callFrames: { functionName: string; scriptId: string; url: string; lineNumber: number }[] };
+  };
+
+  async function collect(script: string): Promise<Event[]> {
+    // The mirrored console calls also write to the child's stdout, so the JSON
+    // result is tagged with a marker and split off on the parent side.
+    const marker = "\n<<<RESULT>>>\n";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const s = new (require("node:inspector").Session)();
+         s.connect();
+         const events = [];
+         s.on("Runtime.consoleAPICalled", m => events.push(m.params));
+         await new Promise((ok, no) => s.post("Runtime.enable", {}, e => (e ? no(e) : ok())));
+         ${script}
+         await new Promise(r => setImmediate(r));
+         s.disconnect();
+         process.stdout.write(${JSON.stringify(marker)} + JSON.stringify(events));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`subprocess failed (${exitCode}): ${stderr}`);
+    const at = stdout.lastIndexOf(marker);
+    if (at < 0) throw new Error(`no result marker; stdout:\n${stdout}\nstderr:\n${stderr}`);
+    return JSON.parse(stdout.slice(at + marker.length));
+  }
+
+  test.concurrent("object args carry subtype, className, description, objectId and preview", async () => {
+    const events = await collect(`
+      console.log([1, 2, 3]);
+      console.error(new TypeError("boom"));
+      console.log(new Map([["k", 7]]), new Set([1, 2]));
+      console.log(new Uint8Array([9, 8]));
+      console.log(new Date(0));
+      console.log(/abc/g);
+      console.log(Promise.resolve(1));
+      console.log({ a: 1, b: { c: 2 } });
+      console.log(function foo() {});
+    `);
+
+    const arr = events[0].args[0];
+    expect(arr).toMatchObject({
+      type: "object",
+      subtype: "array",
+      className: "Array",
+      description: "Array(3)",
+    });
+    expect(typeof arr.objectId).toBe("string");
+    expect(arr.preview).toMatchObject({
+      type: "object",
+      subtype: "array",
+      description: "Array(3)",
+      overflow: false,
+      properties: [
+        { name: "0", type: "number", value: "1" },
+        { name: "1", type: "number", value: "2" },
+        { name: "2", type: "number", value: "3" },
+      ],
+    });
+
+    const err = events[1].args[0];
+    expect(err).toMatchObject({ type: "object", subtype: "error", className: "TypeError" });
+    expect(err.description).toStartWith("TypeError: boom");
+    expect(err.description).toContain("\n    at "); // carries the stack, not just "[object Error]"
+    const propNames = err.preview.properties.map((p: any) => p.name);
+    expect(propNames).toContain("message");
+    expect(propNames).toContain("stack");
+
+    const [mapArg, setArg] = events[2].args;
+    expect(mapArg).toMatchObject({ type: "object", subtype: "map", className: "Map", description: "Map(1)" });
+    expect(mapArg.preview.entries).toEqual([
+      {
+        key: expect.objectContaining({ type: "string", description: "k" }),
+        value: expect.objectContaining({ type: "number", description: "7" }),
+      },
+    ]);
+    expect(setArg).toMatchObject({ type: "object", subtype: "set", className: "Set", description: "Set(2)" });
+    expect(setArg.preview.entries).toEqual([
+      { value: expect.objectContaining({ type: "number", description: "1" }) },
+      { value: expect.objectContaining({ type: "number", description: "2" }) },
+    ]);
+
+    expect(events[3].args[0]).toMatchObject({
+      type: "object",
+      subtype: "typedarray",
+      className: "Uint8Array",
+      description: "Uint8Array(2)",
+      preview: expect.objectContaining({
+        properties: [
+          { name: "0", type: "number", value: "9" },
+          { name: "1", type: "number", value: "8" },
+        ],
+      }),
+    });
+
+    expect(events[4].args[0]).toMatchObject({ type: "object", subtype: "date", className: "Date" });
+    expect(events[4].args[0].description).toContain("1970");
+    expect(events[5].args[0]).toMatchObject({
+      type: "object",
+      subtype: "regexp",
+      className: "RegExp",
+      description: "/abc/g",
+    });
+    expect(events[6].args[0]).toMatchObject({
+      type: "object",
+      subtype: "promise",
+      className: "Promise",
+      description: "Promise",
+    });
+
+    const obj = events[7].args[0];
+    expect(obj).toMatchObject({ type: "object", className: "Object", description: "Object" });
+    expect(obj.subtype).toBeUndefined();
+    expect(obj.preview.properties).toEqual([
+      { name: "a", type: "number", value: "1" },
+      { name: "b", type: "object", value: "Object" },
+    ]);
+
+    const fn = events[8].args[0];
+    expect(fn).toMatchObject({ type: "function", className: "Function" });
+    expect(fn.description).toContain("function foo");
+    expect(typeof fn.objectId).toBe("string");
+  });
+
+  test.concurrent("every event carries a stackTrace with CDP call frames", async () => {
+    const events = await collect(`
+      function outer() { console.trace("t"); }
+      outer();
+      console.log("plain");
+    `);
+    expect(events.map(e => e.type)).toEqual(["trace", "log"]);
+    for (const e of events) {
+      expect(e.stackTrace).toBeDefined();
+      expect(Array.isArray(e.stackTrace!.callFrames)).toBe(true);
+      expect(e.stackTrace!.callFrames.length).toBeGreaterThan(0);
+      const top = e.stackTrace!.callFrames[0];
+      expect(top).toEqual({
+        functionName: expect.any(String),
+        scriptId: expect.any(String),
+        url: expect.any(String),
+        lineNumber: expect.any(Number),
+        columnNumber: expect.any(Number),
+      });
+    }
+    // The trace call's top frame is the user function, not the inspector hook.
+    expect(events[0].stackTrace!.callFrames[0].functionName).toBe("outer");
+  });
+
+  test.concurrent("count, time/timeLog/timeEnd, assert, dirxml and clear emit events", async () => {
+    const events = await collect(`
+      console.count("cnt");
+      console.count("cnt");
+      console.countReset("cnt");
+      console.count("cnt");
+      console.time("tm");
+      console.timeLog("tm", "extra");
+      console.timeEnd("tm");
+      console.assert(true, "quiet");
+      console.assert(false, "loud");
+      console.assert(false);
+      console.dirxml({ x: 1 });
+      console.clear();
+    `);
+    const byType = (t: string) => events.filter(e => e.type === t);
+
+    const counts = byType("count");
+    expect(counts.map(e => e.args[0].value)).toEqual(["cnt: 1", "cnt: 2", "cnt: 1"]);
+
+    // timeLog emits as "log" per CDP, timeEnd as "timeEnd"; both formatted label: ms.
+    const timeLog = byType("log").find(e => typeof e.args[0]?.value === "string" && e.args[0].value.startsWith("tm: "));
+    expect(timeLog).toBeDefined();
+    expect(timeLog!.args[0].value).toMatch(/^tm: [\d.]+ ms$/);
+    expect(timeLog!.args[1]).toEqual({ type: "string", value: "extra" });
+    const timeEnd = byType("timeEnd");
+    expect(timeEnd).toHaveLength(1);
+    expect(timeEnd[0].args[0].value).toMatch(/^tm: [\d.]+ ms$/);
+
+    // assert: only on falsy; V8 substitutes "console.assert" when no message args were given.
+    const asserts = byType("assert");
+    expect(asserts).toHaveLength(2);
+    expect(asserts[0].args).toEqual([{ type: "string", value: "loud" }]);
+    expect(asserts[1].args).toEqual([{ type: "string", value: "console.assert" }]);
+
+    const dirxml = byType("dirxml");
+    expect(dirxml).toHaveLength(1);
+    expect(dirxml[0].args[0]).toMatchObject({ type: "object", className: "Object" });
+
+    expect(byType("clear")).toHaveLength(1);
+  });
+
+  test.concurrent("hostile arguments do not make console.log throw", async () => {
+    const events = await collect(`
+      const revoked = Proxy.revocable({}, {});
+      revoked.revoke();
+      let cyclic; cyclic = new Proxy({}, { getPrototypeOf: () => cyclic });
+      console.log(revoked.proxy, Object.create(null), new Proxy([1], {}), cyclic);
+      process.stderr.write("reached\\n");
+    `);
+    expect(events).toHaveLength(1);
+    const [revoked, nullProto, arrayProxy, cyclic] = events[0].args;
+    expect(revoked.type).toBe("object");
+    expect(nullProto).toMatchObject({ type: "object", className: "Object", description: "Object" });
+    expect(arrayProxy).toMatchObject({ type: "object", subtype: "proxy" });
+    expect(cyclic).toMatchObject({ type: "object", subtype: "proxy" });
+  });
+});

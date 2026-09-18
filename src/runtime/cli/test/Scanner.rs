@@ -27,8 +27,7 @@ pub struct Scanner<'a> {
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
-    /// Every path in `test_files`. A path that two arguments select (a directory
-    /// and a file inside it) is pushed once, at the position of its first match.
+    /// Every path in `test_files`, so a path two arguments select is listed once.
     seen_test_files: HashMap<&'static [u8], ()>,
     pub(crate) fs: *mut FileSystem,
     pub(crate) open_dir_buf: PathBuffer,
@@ -176,20 +175,11 @@ impl<'a> Scanner<'a> {
             }
         }
 
-        // This branch is taken when the resolver already has `path` cached
-        // (`run_env_loader`/`read_dir_info` read the cwd before the scanner
-        // runs, or an earlier argument walked this directory), so
-        // `read_directory_with_iterator` returned the cached `EntryMap`
-        // without invoking `iterator.next`. A file that an earlier argument
-        // listed is skipped by `next` (its `abs_path` is set) and by
-        // `push_test_file`, so walking the cached entries again is safe.
+        // The resolver had `path` cached (the cwd is read before the scanner
+        // runs), so the iterator was not invoked. Walk the cached entries in
+        // a stable order: regression/issue/26851 relies on `a_*.test` running
+        // before `b_*.test` under `--bail`.
         if let EntriesOption::Entries(entries) = root {
-            // Collect first so `self.next(…)` doesn't overlap the
-            // `entries.data` borrow.
-            // Hash-map iteration order is not stable. Sort by (lowercased)
-            // base name so test-file discovery order is deterministic —
-            // regression/issue/26851 relies on `a_*.test` running before
-            // `b_*.test` under `--bail`.
             let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
             index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
                 // SAFETY: `EntryMap` stores `*mut Entry` into the

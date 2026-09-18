@@ -386,6 +386,15 @@ fn parse_array(
                             }
                             return Err(AnyPostgresError::UnsupportedArrayFormat);
                         }
+                        // array_out quotes a top-level JSON null, so it is only bare inside an unquoted JSON array: {[null]}
+                        b'n' if is_json_sub_array => {
+                            if slice.starts_with(b"null") {
+                                array.push(SQLDataCell::null());
+                                slice = try_slice(slice, 4);
+                                continue;
+                            }
+                            return Err(AnyPostgresError::UnsupportedArrayFormat);
+                        }
                         b'f' => {
                             // false
                             if array_type == types::Tag::json_array || array_type == types::Tag::jsonb_array {
@@ -465,10 +474,8 @@ fn parse_array(
                                         // end of element
                                         break;
                                     }
-                                    b'e' => {
-                                        if !is_float {
-                                            return Err(AnyPostgresError::UnsupportedArrayFormat);
-                                        }
+                                    // float8out prints 1e-07 and 1e+20 with no '.', and json keeps the exponent as typed (1E5)
+                                    b'e' | b'E' => {
                                         if has_exponent {
                                             return Err(AnyPostgresError::UnsupportedArrayFormat);
                                         }
@@ -543,9 +550,20 @@ fn parse_array(
                                 return Err(AnyPostgresError::UnsupportedArrayFormat);
                             }
                             let element = &slice[0..current_idx];
-                            if is_float || array_type == types::Tag::float8_array {
+                            // a float or JSON number is a double with or without a '.': 1e-07, -0, 12345678901
+                            if is_float
+                                || matches!(
+                                    array_type,
+                                    types::Tag::float4_array
+                                        | types::Tag::float8_array
+                                        | types::Tag::json_array
+                                        | types::Tag::jsonb_array
+                                )
+                            {
+                                // full match: the scanner above lets "1e", "1e+-5" and "-" through
                                 array.push(SQLDataCell::float8(
-                                    bun_core::parse_double(element).unwrap_or(f64::NAN),
+                                    bun_core::fmt::parse_f64(element)
+                                        .ok_or(AnyPostgresError::UnsupportedArrayFormat)?,
                                 ));
                                 slice = try_slice(slice, current_idx);
                                 continue;

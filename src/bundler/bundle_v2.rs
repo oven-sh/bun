@@ -4624,11 +4624,25 @@ pub mod bv2_impl {
                 return;
             }
             let transpiler = self.transpiler_for_target(task.known_target);
-            let Ok(result) = transpiler.resolver.resolve(
-                task.path.name().dir_with_trailing_slash(),
-                task.path.text,
-                kind,
-            ) else {
+            // What the resolver logs reaches the build log only if the path is adopted.
+            let mut probe_log = bun_ast::Log {
+                level: transpiler.resolver.log_mut().level,
+                ..Default::default()
+            };
+            let result = {
+                let resolver: *mut _resolver::Resolver<'a> = &raw mut transpiler.resolver;
+                // SAFETY: the resolver outlives the guard, the guard drops before `probe_log`, and both uses go through `resolver`.
+                let _restore_log = unsafe {
+                    _resolver::Resolver::scoped_log(resolver, NonNull::from(&mut probe_log))
+                };
+                // SAFETY: `resolver` points at the live resolver, and no other borrow of it is in use.
+                unsafe { &mut *resolver }.resolve(
+                    task.path.name().dir_with_trailing_slash(),
+                    task.path.text,
+                    kind,
+                )
+            };
+            let Ok(result) = result else {
                 return;
             };
             // Only then can another import make this module through the resolver, and the first one to land wins.
@@ -4639,6 +4653,7 @@ pub mod bv2_impl {
             {
                 return;
             }
+            probe_log.append_to_with_recycled(transpiler.resolver.log_mut(), true);
             let jsx_development = transpiler.options.forced_jsx_development();
             task.set_resolver_result(&result);
             task.jsx.development = jsx_development;

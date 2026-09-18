@@ -2116,6 +2116,48 @@ describe("bundler", () => {
     }).toEqual({ notOnDisk: true, inFiles: true, doubledSlash: true });
   });
 
+  // The bundler asks the resolver about a path that onResolve named. What the resolver logs on the way (here a
+  // tsconfig.json that does not parse) reaches the build only if the module takes the resolver's result.
+  test.concurrent(
+    "plugin/onResolve path that the resolver would print differently adds nothing to the logs",
+    async () => {
+      using dir = tempDir("plugin-resolved-file-logs", {
+        "entry.js": `import "alias/leaf";`,
+        "not-adopted/tsconfig.json": `{ "compilerOptions": `,
+        "not-adopted/leaf.js": `console.log("leaf ran");`,
+        "adopted/tsconfig.json": `{ "compilerOptions": `,
+        "adopted/leaf.js": `console.log("leaf ran");`,
+      });
+      const root = String(dir);
+
+      async function build(leaf: string) {
+        const result = await Bun.build({
+          entrypoints: [join(root, "entry.js")],
+          throw: false,
+          plugins: [
+            {
+              name: "alias",
+              setup(build) {
+                build.onResolve({ filter: /^alias\/leaf$/ }, () => ({ path: leaf }));
+              },
+            },
+          ],
+        });
+        return { success: result.success, logs: result.logs.map(log => log.message) };
+      }
+
+      expect({
+        // A doubled separator is not what the resolver prints, so this module stays a plugin module.
+        notAdopted: await build(join(root, "not-adopted") + path.sep + path.sep + "leaf.js"),
+        // The same bytes as the resolver's path: the build reports what it reports when the resolver finds the file.
+        adopted: await build(join(root, "adopted", "leaf.js")),
+      }).toEqual({
+        notAdopted: { success: true, logs: [] },
+        adopted: { success: false, logs: ["Unexpected end of file"] },
+      });
+    },
+  );
+
   // The resolver remembers a directory that it did not find. A plugin can name a path in a directory that does
   // not exist yet and create the directory later, so the bundler asks the resolver only about a path on disk.
   test.concurrent("plugin/onResolve path in a directory that a plugin creates later", async () => {

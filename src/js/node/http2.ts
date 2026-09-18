@@ -4129,10 +4129,7 @@ class ServerHttp2Session extends Http2Session {
           headers = toHeaderObject(filtered, headersTuple[2] || []);
         }
       }
-      // Remember the request headers on the stream (pushStream derives :scheme/:authority defaults
-      // from them). They stay out of the bunHTTP2Headers slot: that one backs sentHeaders, which
-      // node leaves undefined until respond(). Only the first HEADERS block counts - this handler
-      // also fires for trailers.
+      // Only the first HEADERS block is the request: this handler also fires for trailers.
       if (stream[kRequestHeaders] === undefined) {
         stream[kRequestHeaders] = headers;
       }

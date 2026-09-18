@@ -5796,12 +5796,10 @@ it("delivers the reserved push stream and fails the session when its headers can
   }
 });
 
-// node writes kSentHeaders only where a header block goes out: request(), respond(),
-// respondWithFD/File and pushStream(). A block the peer sent never shows up in sentHeaders.
-// Expected values verified on node v26.3.0.
+// node writes kSentHeaders only in request(), respond(), respondWithFD/File and pushStream(), so a
+// block the peer sent never shows up in sentHeaders. Expected values verified on node v26.3.0.
 describe("http2 sentHeaders reports only what this side sent", () => {
-  // Sends one request that carries credentials. Resolves with what `observe` resolves with, once
-  // the request has closed.
+  // Sends one request with credentials. Resolves with `observe`'s value once the request closed.
   async function serveOnce(server, observe) {
     let client;
     try {

@@ -145,22 +145,43 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
-/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
-/// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
-// HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
-pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
-        return;
+/// Exported as `Bun__VM__specifierIsEntryPoint`: `specifier` is the path of the entry point.
+/// JSCommonJSModule.cpp gives that module the id "." (a preload, or a CommonJS module that an
+/// ES module entry point `import`s, loads before it and is not it).
+// HOST_EXPORT(Bun__VM__specifierIsEntryPoint, c)
+pub fn specifier_is_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
+    if this.main().is_empty() {
+        return false;
     }
     let global = this.global();
-    // A failed conversion just skips the note; must never panic at an FFI
-    // boundary.
+    // A failed conversion is "no"; must never panic at an FFI boundary.
     let Ok(specifier_str) = bun_core::String::from_js(specifier, global) else {
-        return;
+        return false;
     };
-    if specifier_str.eql_utf8(this.main()) {
-        this.entry_point_result.evaluated_as_cjs = true;
+    specifier_str.eql_utf8(this.main())
+}
+
+/// Exported as `Bun__VM__specifierIsEntryPointWithModuleTypeFromSyntax`: `specifier` is the entry
+/// point, and Node decides by its syntax whether it is CommonJS (see
+/// `EntryPointResult::module_type_from_syntax`).
+// HOST_EXPORT(Bun__VM__specifierIsEntryPointWithModuleTypeFromSyntax, c)
+pub fn specifier_is_entry_point_with_module_type_from_syntax(
+    this: &mut VirtualMachine,
+    specifier: JSValue,
+) -> bool {
+    this.entry_point_result.module_type_from_syntax && specifier_is_entry_point(this, specifier)
+}
+
+/// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
+/// origin `uncaughtException`. `main()` compare filters out a `new Module()`, whose id is "." too.
+/// Returns whether `specifier` is the entry point.
+// HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
+pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) -> bool {
+    if !specifier_is_entry_point(this, specifier) {
+        return false;
     }
+    this.entry_point_result.evaluated_as_cjs = true;
+    true
 }
 
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to

@@ -72,6 +72,10 @@ pub struct EntryPointResult {
     /// entry's top-level throw with origin `uncaughtException` but an ESM
     /// entry rejection with `unhandledRejection`; the run command consults this.
     pub evaluated_as_cjs: bool,
+    /// Neither the entry module's extension nor its package.json says whether it
+    /// is CommonJS or an ES module, so Node decides by its syntax. Recorded when
+    /// the entry module is transpiled.
+    pub module_type_from_syntax: bool,
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
@@ -5735,6 +5739,7 @@ impl VirtualMachine {
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
         self.entry_point_result.evaluated_as_cjs = false;
+        self.entry_point_result.module_type_from_syntax = false;
         if let Some(promise) = self.pending_internal_promise {
             if self.pending_internal_promise_is_protected {
                 JSValue::from_cell(promise).unprotect();

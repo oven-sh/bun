@@ -457,6 +457,15 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     }
 }
 
+// Node runs a CommonJS entry point synchronously and then the process.nextTick queue, before any
+// microtask the entry point queued. Here the entry point runs inside a module loader microtask, so
+// the queue runs when that microtask ends. The check armed at startup does that only until the
+// queue exists, and a module that loads before the entry point (a preload) can make it exist.
+void Zig::GlobalObject::drainNextTickQueueAfterEntryPoint()
+{
+    vm().setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+}
+
 extern "C" size_t Bun__reported_memory_size;
 
 // executionContextId: -1 for main thread
@@ -4326,6 +4335,24 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     Bun__VM__noteEntryEvaluationStarted(bunVM);
 }
 
+extern "C" bool Bun__VM__specifierIsEntryPointWithModuleTypeFromSyntax(void*, EncodedJSValue);
+
+// When neither its extension nor its package.json says what the entry point is, Node runs one that
+// has no import, no export and no top-level await as CommonJS. The transpiler makes an ES module of
+// it, which gets the CommonJS entry point's process.nextTick checkpoint
+// (GlobalObject::drainNextTickQueueAfterEntryPoint). Few modules import nothing, so the path
+// compare is rare.
+static bool isEntryPointNodeRunsAsCommonJS(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue)
+{
+    auto* record = dynamicDowncast<JSC::JSModuleRecord>(moduleRecordValue);
+    if (!record || !record->requestedModules().isEmpty() || record->hasTLA() || !key.isString())
+        return false;
+    // A Bun.ModuleGraph has its own loader and no entry point.
+    if (moduleLoader != globalObject->moduleLoader() || !Bun__VM__specifierIsEntryPointWithModuleTypeFromSyntax(globalObject->bunVM(), JSValue::encode(key)))
+        return false;
+    return record->exportEntries().isEmpty() && record->starExportEntries().isEmpty();
+}
+
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
@@ -4336,8 +4363,13 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
-    RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    noteModuleEvaluation(globalObject, moduleLoader);
+    bool nodeRunsAsCommonJS = isEntryPointNodeRunsAsCommonJS(globalObject, moduleLoader, key, moduleRecordValue);
+    JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+    if (nodeRunsAsCommonJS)
+        globalObject->drainNextTickQueueAfterEntryPoint();
+    RELEASE_AND_RETURN(scope, result);
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
@@ -4356,8 +4388,11 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
     noteModuleEvaluation(globalObject, moduleLoader);
+    bool nodeRunsAsCommonJS = isEntryPointNodeRunsAsCommonJS(globalObject, moduleLoader, key, moduleRecordValue);
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
+    if (nodeRunsAsCommonJS)
+        globalObject->drainNextTickQueueAfterEntryPoint();
     // The new C++ loader propagates the module body's throw out of
     // evaluateNonVirtual; the old JS-side ModuleLoader.js swallowed it before
     // dispatching here. Don't call back into native code (which opens an

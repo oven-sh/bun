@@ -4170,6 +4170,12 @@ pub unsafe extern "C" fn Bun__transpileFile(
         // For JSX/TSX and other extensions, let the file contents decide.
         ModuleType::Unknown
     };
+    if lr.is_main {
+        // Node always runs a `data:` URL as an ES module.
+        let from_syntax = module_type == ModuleType::Unknown && !lr.specifier.starts_with(b"data:");
+        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+        unsafe { (*jsc_vm).entry_point_result.module_type_from_syntax = from_syntax };
+    }
     let pkg_name: Option<&[u8]> = lr
         .package_json
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));

@@ -110,8 +110,9 @@ static bool canPerformFastEnumeration(Structure* s)
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
+extern "C" bool Bun__VM__specifierIsEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
-extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
+extern "C" bool Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
 
 // The module a require() function is bound to.
 static JSCommonJSModule* requirerOf(JSValue require)
@@ -184,11 +185,12 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // Node reports a CJS entry's top-level throw as origin "uncaughtException", not
     // "unhandledRejection"; record the entry mode for the run command. Only the root
     // module (m_id == ".") can be the entry, so the FFI compare runs at most once.
+    bool isEntryPoint = false;
     if (auto* id = moduleObject->m_id.get(); id && id->length() == 1) [[unlikely]] {
         auto view = id->view(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         if (view == "."_s)
-            Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
+            isEntryPoint = Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
     }
 
     JSFunction* resolveFunction = nullptr;
@@ -237,6 +239,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         // exit 0 silently. Use the out-param overload and rethrow.
         WTF::NakedPtr<JSC::Exception> returnedException;
         JSValue result = JSC::evaluate(globalObject, code, jsUndefined(), returnedException);
+        if (isEntryPoint)
+            globalObject->drainNextTickQueueAfterEntryPoint();
         if (returnedException) [[unlikely]] {
             scope.throwException(globalObject, returnedException.get());
             return false;
@@ -309,6 +313,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
     //
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
+    if (isEntryPoint)
+        globalObject->drainNextTickQueueAfterEntryPoint();
     RETURN_IF_EXCEPTION(scope, false);
     return true;
 }
@@ -1628,7 +1634,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        if (!graph && Bun__VM__specifierIsEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1758,7 +1764,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        if (!graph && Bun__VM__specifierIsEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 

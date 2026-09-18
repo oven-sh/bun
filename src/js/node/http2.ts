@@ -6072,11 +6072,16 @@ class ClientHttp2Session extends Http2Session {
         method = "GET";
         headers[":method"] = method;
       }
+      // `authority` is the origin of the request (node's stream[kOrigin], from getAuthority()):
+      // :authority, else host, else the session authority. A 421 removes it from originSet.
       let authority = headers[":authority"];
       if (!authority) {
-        // Use precomputed authority (like Node.js's session[kAuthority])
-        authority = this.#authority;
-        if (!headers["host"]) {
+        const host = headers["host"];
+        if (host) {
+          authority = host;
+        } else {
+          // Use precomputed authority (like Node.js's session[kAuthority])
+          authority = this.#authority;
           headers[":authority"] = authority;
         }
       }

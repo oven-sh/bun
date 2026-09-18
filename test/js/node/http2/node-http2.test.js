@@ -6329,3 +6329,56 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+describe.concurrent("http2 client 421 removes the origin of the request from originSet", () => {
+  async function originSetAfter421(requestHeaders) {
+    const server = http2.createSecureServer(TLS_CERT);
+    server.on("stream", stream => {
+      stream.respond({ ":status": 421 });
+      stream.end();
+    });
+    const { promise: listening, resolve: onListening } = Promise.withResolvers();
+    server.listen(0, "127.0.0.1", onListening);
+    await listening;
+    const port = server.address().port;
+    const sessionOrigin = `https://localhost:${port}`;
+    try {
+      const client = http2.connect(sessionOrigin, TLS_OPTIONS);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      client.on("connect", () => {
+        expect(client.originSet).toEqual([sessionOrigin]);
+        const req = client.request(requestHeaders);
+        req.on("error", reject);
+        req.on("response", headers => {
+          expect(headers[":status"]).toBe(421);
+          resolve([...client.originSet]);
+        });
+        req.resume();
+        req.end();
+      });
+      try {
+        return { sessionOrigin, originSet: await promise };
+      } finally {
+        client.close();
+      }
+    } finally {
+      server.close();
+    }
+  }
+
+  it("keeps the session origin when the request used host instead of :authority", async () => {
+    const { sessionOrigin, originSet } = await originSetAfter421({ ":path": "/", host: "example.test" });
+    expect(originSet).toEqual([sessionOrigin]);
+  });
+
+  it("removes the :authority origin of the request", async () => {
+    const { sessionOrigin, originSet } = await originSetAfter421({ ":path": "/", ":authority": "example.test" });
+    expect(originSet).toEqual([sessionOrigin]);
+  });
+
+  it("removes the session origin when the request used the default :authority", async () => {
+    const { originSet } = await originSetAfter421({ ":path": "/" });
+    expect(originSet).toEqual([]);
+  });
+});

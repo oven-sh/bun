@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -705,3 +705,159 @@ function extractCssUrl(backgroundImage: string): string {
   }
   return url[2];
 }
+
+// A stylesheet that a framework route imports has a node in the server graph. A failure of the
+// stylesheet has to reach the route through that node: the stylesheet has no importer in the
+// client graph.
+devTest("framework route with a stylesheet that fails to build", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../one.css";
+      export default (req, meta) => Response.json(meta.styles);
+    `,
+    "one.css": `.one { color: red; }`,
+  },
+  async test(dev) {
+    const before: string[] = await dev.fetch("/").json();
+    expect(before).toHaveLength(1);
+    expect((await dev.fetch(before[0])).status).toBe(200);
+
+    // The route answers with the error page, like an html route whose stylesheet fails. The page
+    // lists the failure once: the rebuild of the route parses the stylesheet again, with the
+    // target of the route, and that must not add a second entry.
+    await dev.write("one.css", `.one { color }`, { errors: null });
+    {
+      await using c = await dev.client("/", { errors: ["one.css:1:14: error: Unexpected end of input"] });
+    }
+
+    await dev.write("one.css", `.one { color: #00f; }`);
+    const after: string[] = await dev.fetch("/").json();
+    expect(after).toEqual(before);
+    const stylesheet = await dev.fetch(after[0]);
+    expect(await stylesheet.text()).toContain("#00f");
+    expect(stylesheet.status).toBe(200);
+  },
+});
+
+devTest("framework route with a stylesheet whose import fails to build", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../one.css";
+      export default (req, meta) => Response.json(meta.styles);
+    `,
+    "one.css": `@import "./two.css";\n.one { color: red; }`,
+    "two.css": `.two { color: red; }`,
+  },
+  async test(dev) {
+    const before: string[] = await dev.fetch("/").json();
+    expect(before).toHaveLength(1);
+    await dev.fetch(before[0]).expect.toContain(".two");
+
+    // The trace reaches the route through "one.css", not through the file that failed.
+    await dev.write("two.css", `.two { color }`, { errors: null });
+    const during = await dev.fetch("/");
+    expect(await during.text()).toContain("Build Failed");
+    expect(during.status).toBe(500);
+
+    await dev.write("two.css", `.two { color: #00f; }`);
+    const after: string[] = await dev.fetch("/").json();
+    expect(after).toEqual(before);
+    expect((await dev.fetch(after[0])).status).toBe(200);
+  },
+});
+
+devTest("framework route edited while its stylesheet fails to build", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../one.css";
+      export default (req, meta) => Response.json(meta.styles);
+    `,
+    "one.css": `.one { color: red; }`,
+  },
+  async test(dev) {
+    const before: string[] = await dev.fetch("/").json();
+    expect(before).toHaveLength(1);
+
+    // The server bundle of the route must not depend on a module for the failed stylesheet.
+    // previously: error: Failed to load bundled module 'one.css'
+    await dev.write("one.css", `.one { color }`, { errors: null });
+    await dev.write(
+      "routes/index.ts",
+      `
+        import "../one.css";
+        export default (req, meta) => Response.json(["edited", ...meta.styles]);
+      `,
+      { errors: null },
+    );
+    expect((await dev.fetch("/")).status).toBe(500);
+
+    await dev.write("one.css", `.one { color: #00f; }`);
+    expect(await dev.fetch("/").json()).toEqual(["edited", ...before]);
+  },
+});
+
+devTest("framework route whose stylesheet fails to build at the first request", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../one.css";
+      export default (req, meta) => Response.json(meta.styles);
+    `,
+    "one.css": `.one { color }`,
+  },
+  async test(dev) {
+    const error = "one.css:1:14: error: Unexpected end of input";
+    {
+      await using c = await dev.client("/", { errors: [error] });
+    }
+
+    // The stylesheet never built, so the route learns of it only through the server graph.
+    await dev.write("one.css", `.one { color: red; }`);
+    const styles: string[] = await dev.fetch("/").json();
+    expect(styles).toHaveLength(1);
+    await dev.fetch(styles[0]).expect.toContain("red");
+
+    await dev.write("one.css", `.one { color }`, { errors: null });
+    {
+      await using c = await dev.client("/", { errors: [error] });
+    }
+
+    await dev.write("one.css", `.one { color: #00f; }`);
+    expect(await dev.fetch("/").json()).toEqual(styles);
+    await dev.fetch(styles[0]).expect.toContain("#00f");
+  },
+});
+
+devTest("framework route with a stylesheet whose import does not resolve", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../one.css";
+      export default (req, meta) => Response.json(meta.styles);
+    `,
+    "one.css": `.one { color: red; }`,
+  },
+  async test(dev) {
+    const before: string[] = await dev.fetch("/").json();
+    expect(before).toHaveLength(1);
+
+    // A resolution failure of the stylesheet is reported like a syntax error: once, and it clears.
+    const error = 'one.css:1:1: error: Could not resolve: "./missing.css"';
+    await dev.write("one.css", `@import "./missing.css";\n.one { color: red; }`, { errors: null });
+    {
+      await using c = await dev.client("/", { errors: [error] });
+    }
+
+    await dev.write("one.css", `.one { color: #00f; }`);
+    expect(await dev.fetch("/").json()).toEqual(before);
+    await dev.fetch(before[0]).expect.toContain("#00f");
+
+    await dev.write("one.css", `@import "./missing.css";\n.one { color: red; }`, { errors: null });
+    {
+      await using c = await dev.client("/", { errors: [error] });
+    }
+  },
+});

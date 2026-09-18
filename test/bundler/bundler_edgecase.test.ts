@@ -3549,6 +3549,23 @@ describe("bundler", () => {
       `);
     },
   });
+  itBundled("edgecase/LetIndexAfterPureCommentKeepsParens", {
+    files: {
+      "/entry.cjs": `
+        globalThis.let = [() => 1];
+        for (/* @__PURE__ */ (let)[0]();;) break;
+        console.log(typeof let);
+      `,
+    },
+    outfile: "out.cjs",
+    target: "node",
+    format: "cjs",
+    emitDCEAnnotations: true,
+    onAfterBundle(api) {
+      api.expectFile("out.cjs").toContain("for (/* @__PURE__ */ (let)[0]();;");
+    },
+    run: { stdout: "object" },
+  });
   itBundled("edgecase/NonAsciiIdentifierPreserved", {
     files: {
       "/entry.js": /* js */ `

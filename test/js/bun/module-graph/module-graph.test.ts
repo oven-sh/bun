@@ -2202,6 +2202,61 @@ describe("Bun.ModuleGraph — nested graphs, stack traces, misc host integration
     const i = await ModuleGraph().import(join(dir, "intl.mjs"));
     expect([i.fmt, i.url, i.enc, i.b64, i.perf]).toEqual(["1,234.5", "http://h/x", "ok", "aGk=", "number"]);
   });
+  test("a host Agent's pooled socket does not keep the AsyncLocalStorage store of the graph request that opened it", async () => {
+    expect(
+      await runBun([
+        "-e",
+        `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const http = require("node:http");
+        const als = new AsyncLocalStorage();
+        const graph = new Bun.ModuleGraph();
+        const agent = new http.Agent({ keepAlive: true });
+        const server = http.createServer((req, res) => res.end("ok"));
+        server.listen(0, "127.0.0.1", async () => {
+          const port = server.address().port;
+          let ref;
+          await new Promise(done => {
+            const store = { big: true };
+            ref = new WeakRef(store);
+            als.run(store, () => graph.run(() => {
+              http.get({ port, host: "127.0.0.1", agent }, res => { res.resume(); res.on("end", done); });
+            }));
+          });
+          for (let i = 0; i < 50 && ref.deref() !== undefined; i++) { Bun.gc(true); await new Promise(resolve => setImmediate(resolve)); }
+          console.log(JSON.stringify({ pooled: Object.values(agent.freeSockets).flat().length, store: ref.deref() === undefined ? "collected" : "retained" }));
+          process.exit(0);
+        });
+      `,
+      ]),
+    ).toMatchObject({ stdout: `{"pooled":1,"store":"collected"}`, exitCode: 0 });
+  });
+  test("destroying an http2 session made in a graph tears its streams down in the caller's context", async () => {
+    expect(
+      await runBun([
+        "-e",
+        `
+        const http2 = require("node:http2");
+        const { once } = require("node:events");
+        const where = () => (Bun.ModuleGraph.current === undefined ? "the host's context" : "a graph's context");
+        const server = http2.createServer();
+        server.on("stream", () => {});
+        server.listen(0, "127.0.0.1", async () => {
+          const graph = new Bun.ModuleGraph();
+          const client = graph.run(() => http2.connect("http://127.0.0.1:" + server.address().port));
+          client.on("error", () => {});
+          await once(client, "connect");
+          const request = client.request({ ":path": "/" });
+          const seen = {};
+          request.on("error", () => { seen.error = where(); });
+          request.on("close", () => { seen.close = where(); console.log(JSON.stringify(seen)); process.exit(0); });
+          await once(request, "ready");
+          client.destroy();
+        });
+      `,
+      ]),
+    ).toMatchObject({ stdout: `{"error":"the host's context","close":"the host's context"}`, exitCode: 0 });
+  });
   test("an Agent and a perf_hooks observer made in a graph do not keep the AsyncLocalStorage store the graph was entered under", async () => {
     expect(
       await runBun([

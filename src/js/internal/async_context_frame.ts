@@ -44,20 +44,24 @@ const AsyncContextFrame = {
     }
   },
   /**
-   * Call `fn` inside `graph`'s context (a currentGraph() of earlier; undefined: the host's), so
-   * that what it opens is that graph's. The async-context frame stays the caller's.
+   * Call `fn` as `graph` (a currentGraph() of earlier; undefined: the host), so that what it
+   * opens is that graph's. When that is not the caller's graph, the caller's AsyncLocalStorage
+   * frame does not come along: what `fn` opens outlives the call and would keep its stores.
    */
   runInGraph(graph, fn, thisArg?, ...args) {
-    const prev = $getInternalField($asyncContext, 1);
-    if (graph === prev) return fn.$apply(thisArg, args);
+    const prevGraph = $getInternalField($asyncContext, 1);
+    if (graph === prevGraph) return fn.$apply(thisArg, args);
+    const prevFrame = $getInternalField($asyncContext, 0);
+    $putInternalField($asyncContext, 0, undefined);
     $putInternalField($asyncContext, 1, graph);
     try {
       return fn.$apply(thisArg, args);
     } finally {
-      $putInternalField($asyncContext, 1, prev);
+      $putInternalField($asyncContext, 0, prevFrame);
+      $putInternalField($asyncContext, 1, prevGraph);
     }
   },
-  /** run() and runInGraph() at once: what script that kept both for later calls back in. */
+  /** Call `fn` with `frame` and `graph` installed: what script that kept both for later calls back in. */
   runInContext(frame, graph, fn, thisArg?, ...args) {
     const prevFrame = $getInternalField($asyncContext, 0);
     const prevGraph = $getInternalField($asyncContext, 1);

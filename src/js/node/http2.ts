@@ -347,10 +347,12 @@ const bunHTTP2AsyncContextFrame = Symbol("::bunhttp2asynccontextframe::");
 // The Bun.ModuleGraph context that was current next to that frame (undefined: the host's).
 const bunHTTP2Graph = Symbol("::bunhttp2graph::");
 const bunHTTP2SessionTeardownFrame = Symbol("::bunhttp2sessionteardownframe::");
+// The Bun.ModuleGraph context of the destroy() caller, next to that frame.
+const bunHTTP2SessionTeardownGraph = Symbol("::bunhttp2sessionteardowngraph::");
 // Sentinel for bunHTTP2SessionTeardownFrame: a captured frame can itself be
 // undefined (the root context), so "no teardown in progress" needs its own value.
 const kNoSessionTeardown = Symbol("::bunhttp2noteardown::");
-const { run: runInFrame, runInContext } = require("internal/async_context_frame");
+const { runInContext } = require("internal/async_context_frame");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 
@@ -1871,6 +1873,7 @@ type Settings = {
 
 class Http2Session extends EventEmitter {
   [bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
+  [bunHTTP2SessionTeardownGraph] = undefined;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
   [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
   // Session-level frame (Node's Http2Session AsyncWrap): destroy()'s emits
@@ -2945,10 +2948,11 @@ function withStreamFrame(handler) {
     // A session mid-destroy() fans onStreamError out via emitErrorToAllStreams
     // under the destroy() caller's captured frame (Node's teardown context),
     // scoped to that session so a coincident dispatch elsewhere is unaffected.
-    // (The caller is on the stack: its Bun.ModuleGraph context is the current one.)
+    // (With the caller's Bun.ModuleGraph context too: the parser calls these handlers in the
+    // context the session was made in.)
     const teardownFrame = self != null ? self[bunHTTP2SessionTeardownFrame] : kNoSessionTeardown;
     if (teardownFrame !== kNoSessionTeardown)
-      return runInFrame(teardownFrame, handler, undefined, self, stream, a, b, c);
+      return runInContext(teardownFrame, self[bunHTTP2SessionTeardownGraph], handler, undefined, self, stream, a, b, c);
     return runInContext(
       stream[bunHTTP2AsyncContextFrame],
       stream[bunHTTP2Graph],
@@ -5874,10 +5878,12 @@ class ClientHttp2Session extends Http2Session {
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
         this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);
+        this[bunHTTP2SessionTeardownGraph] = $getInternalField($asyncContext, 1);
         try {
           parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
         } finally {
           this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
+          this[bunHTTP2SessionTeardownGraph] = undefined;
         }
         parser.detach();
       }

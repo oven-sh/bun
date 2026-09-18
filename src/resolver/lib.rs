@@ -1856,30 +1856,18 @@ pub mod dir_entry_accessor {
     }
 
     pub struct DirEntryIterResult {
-        pub(crate) name: DirEntryNameWrapper,
+        /// The entry in the EntryStore singleton. Its `base()` is the on-disk
+        /// spelling of the name; the `DirEntry.data` key is lowercased.
+        pub(crate) entry: bun_ptr::BackRef<Entry>,
         pub(crate) kind: bun_sys::FileKind,
         /// Resolver-cached real path of a symlink entry's target
         /// (`Interned::EMPTY` for non-symlinks).
         pub(crate) symlink_target: bun_ptr::Interned,
     }
 
-    pub(crate) struct DirEntryNameWrapper {
-        // BACKREF: `Entry::base()` bytes. The `Entry` lives in the EntryStore
-        // singleton, which outlives every `DirEntry` and this wrapper.
-        pub value: bun_ptr::RawSlice<u8>,
-    }
-
-    impl DirEntryNameWrapper {
-        #[inline]
-        fn slice(&self) -> &[u8] {
-            // BACKREF: see the field comment.
-            self.value.slice()
-        }
-    }
-
     impl AccessorDirEntry for DirEntryIterResult {
         fn name_slice(&self) -> &[u8] {
-            self.name.slice()
+            self.entry.base()
         }
         fn kind(&self) -> bun_sys::FileKind {
             self.kind
@@ -1897,7 +1885,6 @@ pub mod dir_entry_accessor {
         #[inline]
         fn next(&mut self) -> Maybe<Option<DirEntryIterResult>> {
             if let Some(value) = &mut self.value {
-                // The key is lowercased; the walker needs `Entry::base()` to open paths.
                 let Some((_, val)) = value.next() else {
                     return Ok(None);
                 };
@@ -1922,9 +1909,7 @@ pub mod dir_entry_accessor {
                 // cached realpath is what records the entry as a symlink.
                 let symlink_target = entry.cache().symlink;
                 Ok(Some(DirEntryIterResult {
-                    name: DirEntryNameWrapper {
-                        value: bun_ptr::RawSlice::new(entry.base()),
-                    },
+                    entry,
                     kind: fskind,
                     symlink_target,
                 }))

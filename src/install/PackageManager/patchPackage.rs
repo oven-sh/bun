@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
-use bun_core::{ZStr, strings};
+use bun_core::{ZStr, handle_oom, strings};
 use bun_paths::platform;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, Platform, SEP};
@@ -12,7 +12,8 @@ use bun_sys::{self as sys, Dir, Fd, FdDirExt as _, FdExt as _};
 use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _};
-use crate::isolated_install::FileCopier;
+use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
+use crate::isolated_install::{FileCopier, Timings, build_store};
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::tree;
 use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
@@ -126,7 +127,8 @@ pub fn do_patch_commit(
             workspace_package_id,
             argument,
         ) {
-            // prepare_patch detaches symlinks; a symlink here means the prepared copy is at the root
+            // prepare_patch replaces the link at the hoisted path. A symlink here means the copy is at
+            // the root, or it is the store folder that the symlink points to.
             if !is_real_dir_not_symlink(&rel_path) && is_real_dir_not_symlink(argument) {
                 argument
             } else {
@@ -257,15 +259,17 @@ pub fn do_patch_commit(
             let (pkg_id, node_modules_relative_path) =
                 pkg_info_for_name_and_version(&lockfile, &mut iterator, argument, name, version);
 
-            let changes_dir = resolve_path::join_z_buf::<platform::Auto>(
+            let hoisted_folder = resolve_path::join_z_buf::<platform::Auto>(
                 &mut pathbuf[..],
                 &[&node_modules_relative_path, name],
             )
             .as_bytes()
             .to_vec();
+            let changes_dir = installed_module_folder(manager, &lockfile, pkg_id, hoisted_folder);
             break 'brk (changes_dir, *lockfile.packages.get(pkg_id as usize));
         }
     };
+    let changes_dir = resolve_symlinked_folder(changes_dir);
 
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
@@ -887,6 +891,13 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                     version,
                 );
 
+                let module_folder_ = installed_module_folder(
+                    manager,
+                    &manager.lockfile,
+                    pkg_id,
+                    resolve_path::join::<platform::Auto>(&[&folder_relative_path, name]).to_vec(),
+                );
+
                 let strbuf = manager.lockfile.buffers.string_bytes.as_slice();
                 let pkg = *manager.lockfile.packages.get(pkg_id as usize);
                 let pkg_name = pkg.name.slice(strbuf).to_vec();
@@ -925,14 +936,12 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let cache_dir = cache_result.cache_dir;
                 let cache_dir_subpath = cache_result.cache_dir_subpath;
 
-                let module_folder_ =
-                    resolve_path::join::<platform::Auto>(&[&folder_relative_path, name]);
                 #[cfg(windows)]
                 let buf =
-                    resolve_path::path_to_posix_buf::<u8>(module_folder_, &mut win_normalizer[..])
+                    resolve_path::path_to_posix_buf::<u8>(&module_folder_, &mut win_normalizer[..])
                         .to_vec();
                 #[cfg(not(windows))]
-                let buf = module_folder_.to_vec();
+                let buf = module_folder_;
 
                 break 'brk (cache_dir, cache_dir_subpath.as_bytes(), buf, pkg_name);
             }
@@ -1004,13 +1013,22 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     Ok(())
 }
 
-fn is_real_dir_not_symlink(path: &[u8]) -> bool {
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum FolderKind {
+    Missing,
+    Symlink,
+    RealDir,
+    Other,
+}
+
+/// What `path` itself is: a symlink or junction in its last component is not followed.
+fn folder_kind(path: &[u8]) -> FolderKind {
     #[cfg(windows)]
     let mut native_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     let native: &[u8] = {
         if path.len() > native_buf.len() {
-            return false;
+            return FolderKind::Missing;
         }
         native_buf[0..path.len()].copy_from_slice(path);
         let slice = &mut native_buf[0..path.len()];
@@ -1021,23 +1039,106 @@ fn is_real_dir_not_symlink(path: &[u8]) -> bool {
     let native: &[u8] = path;
 
     let Ok(mut p) = bun_paths::Path::<u8>::from(native) else {
-        return false;
+        return FolderKind::Missing;
     };
 
     #[cfg(windows)]
     {
         match sys::get_file_attributes(p.slice_z()) {
-            Some(attrs) => attrs.is_directory && !attrs.is_reparse_point,
-            None => false,
+            Some(attrs) if attrs.is_reparse_point => FolderKind::Symlink,
+            Some(attrs) if attrs.is_directory => FolderKind::RealDir,
+            Some(_) => FolderKind::Other,
+            None => FolderKind::Missing,
         }
     }
     #[cfg(not(windows))]
     {
         match sys::lstat(p.slice_z()) {
-            Ok(st) => sys::posix::s_isdir(st.st_mode as u32),
-            Err(_) => false,
+            Ok(st) if sys::posix::s_islnk(st.st_mode as u32) => FolderKind::Symlink,
+            Ok(st) if sys::posix::s_isdir(st.st_mode as u32) => FolderKind::RealDir,
+            Ok(_) => FolderKind::Other,
+            Err(_) => FolderKind::Missing,
         }
     }
+}
+
+fn is_real_dir_not_symlink(path: &[u8]) -> bool {
+    folder_kind(path) == FolderKind::RealDir
+}
+
+/// The folder that holds the installed package `pkg_id`. `hoisted_folder` is where the hoisted
+/// tree puts it. The isolated linker links a package only into the packages that depend on it,
+/// so a package that the root does not depend on has nothing at `hoisted_folder`. Its files are
+/// in its store entry, `node_modules/.bun/<entry>/node_modules/<name>`, and every dependent
+/// links to that folder.
+fn installed_module_folder(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    pkg_id: PackageID,
+    hoisted_folder: Vec<u8>,
+) -> Vec<u8> {
+    if folder_kind(&hoisted_folder) != FolderKind::Missing {
+        return hoisted_folder;
+    }
+    isolated_store_folder(manager, lockfile, pkg_id).unwrap_or(hoisted_folder)
+}
+
+/// A package has one store entry for each set of peer dependencies it resolves with. The first
+/// entry that is in the project is the one `bun patch` and `bun patch --commit` both name.
+fn isolated_store_folder(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    pkg_id: PackageID,
+) -> Option<Vec<u8>> {
+    let store = handle_oom(build_store(
+        manager,
+        lockfile,
+        true,
+        &[],
+        None,
+        Timings::Quiet,
+    ));
+    let name = lockfile.packages.items_name()[pkg_id as usize]
+        .slice(lockfile.buffers.string_bytes.as_slice());
+    let node_pkg_ids = store.nodes.items_pkg_id();
+    let mut folder = Vec::new();
+    for (entry_idx, node_id) in store.entries.items_node_id().iter().enumerate() {
+        if node_pkg_ids[node_id.get() as usize] != pkg_id {
+            continue;
+        }
+        folder.clear();
+        write!(
+            folder,
+            "node_modules/.bun/{}",
+            store_entry::fmt_store_path(store_entry::Id::from(entry_idx as u32), &store, lockfile),
+        )
+        .expect("formatting into a Vec is infallible");
+        // A link here leads into the global store. A copy detached from it does not survive the
+        // next install: `link_project_to_global_store` replaces a real directory with the link.
+        if folder_kind(&folder) != FolderKind::RealDir {
+            continue;
+        }
+        write!(folder, "/node_modules/{}", bstr::BStr::new(name))
+            .expect("formatting into a Vec is infallible");
+        if folder_kind(&folder) == FolderKind::RealDir {
+            return Some(folder);
+        }
+    }
+    None
+}
+
+/// `git diff --no-index` reads a symlink operand as a file. A link to the package, for example
+/// the isolated linker's `node_modules/<name>`, stands for the folder it points to.
+fn resolve_symlinked_folder(folder: Vec<u8>) -> Vec<u8> {
+    if folder_kind(&folder) != FolderKind::Symlink {
+        return folder;
+    }
+    let Ok(dir) = Dir::cwd().open_dir(&folder, sys::OpenDirOptions::default()) else {
+        return folder;
+    };
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let resolved = sys::get_fd_path(dir.fd, &mut buf).map(|path| path.to_vec());
+    resolved.unwrap_or(folder)
 }
 
 fn detach_module_folder_from_shared_store(module_folder: &[u8]) {

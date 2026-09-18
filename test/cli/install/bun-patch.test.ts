@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
+import { lstatSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -177,16 +177,240 @@ describe("packages whose label is longer than 1024 bytes", () => {
   });
 });
 
+// The isolated linker links a package only into the packages that depend on it. A package
+// that the root does not depend on has nothing at its hoisted path (`node_modules/<name>`,
+// `node_modules/<dependent>/node_modules/<name>`), so `bun patch <name>` edits its store
+// folder. It used to create the hoisted path as a real directory that no install removed.
+describe("isolated linker: package with no folder at its hoisted path", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  const storeFolder = (entry: string, name: string) => `node_modules/.bun/${entry}/node_modules/${name}`;
+  const patched = "module.exports = 'patched';\n";
+
+  function kind(...path: string[]) {
+    const stat = lstatSync(join(...path), { throwIfNoEntry: false });
+    if (!stat) return "missing";
+    return stat.isSymbolicLink() ? "link" : stat.isDirectory() ? "directory" : "file";
+  }
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`.
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function runOk(cwd: string, ...args: string[]) {
+    const { stdout, stderr, exitCode } = await runBun(cwd, ...args);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  async function patch(cwd: string, arg: string, pkg: string, folder: string) {
+    const stdout = await runOk(cwd, "patch", arg);
+    expect(stdout).toContain(`To patch ${pkg}, edit the following folder:\n\n  ${folder}\n`);
+    expect(stdout).toContain(`bun patch --commit '${folder}'`);
+    expect(kind(cwd, folder)).toBe("directory");
+  }
+
+  test.concurrent("a transitive dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "app", dependencies: { "one-fixed-dep": "1.0.0" } }),
+      },
+    });
+    await runOk(packageDir, "install");
+
+    const folder = storeFolder("no-deps@1.0.0", "no-deps");
+    await patch(packageDir, "no-deps", "no-deps", folder);
+    expect(kind(packageDir, "node_modules", "no-deps")).toBe("missing");
+
+    await Bun.write(join(packageDir, folder, "index.js"), patched);
+    // The dependent links to the store folder, so it loads the edit before the commit.
+    const loadDependency = "console.log(require('one-fixed-dep').dependencies['no-deps'])";
+    expect(await runOk(packageDir, "-e", loadDependency)).toBe("patched\n");
+
+    await runOk(packageDir, "patch", "--commit", "no-deps");
+
+    expect(await Bun.file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
+      "+module.exports = 'patched';",
+    );
+    expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
+      "no-deps@1.0.0": "patches/no-deps@1.0.0.patch",
+    });
+    expect({
+      hoistedPath: kind(packageDir, "node_modules", "no-deps"),
+      dependentLink: kind(packageDir, storeFolder("one-fixed-dep@1.0.0", "no-deps")),
+      store: await Bun.file(join(packageDir, folder, "index.js")).text(),
+    }).toEqual({ hoistedPath: "missing", dependentLink: "link", store: patched });
+    expect(await runOk(packageDir, "-e", loadDependency)).toBe("patched\n");
+  });
+
+  test.concurrent("a dependency of a workspace that the root does not depend on", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "2.0.0" },
+        }),
+        packages: {
+          w: {
+            "package.json": JSON.stringify({ name: "w", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+            "index.js": "module.exports = require('no-deps');\n",
+          },
+        },
+      },
+    });
+    await runOk(packageDir, "install");
+
+    // The hoisted tree puts this copy at `node_modules/w/node_modules/no-deps`.
+    const folder = storeFolder("no-deps@1.0.0", "no-deps");
+    await patch(packageDir, "no-deps@1.0.0", "no-deps", folder);
+    await Bun.write(join(packageDir, folder, "index.js"), patched);
+    await runOk(packageDir, "patch", "--commit", folder);
+
+    expect({
+      hoistedPath: kind(packageDir, "node_modules", "w"),
+      workspaceLink: kind(packageDir, "packages", "w", "node_modules", "no-deps"),
+      workspaceCopy: await Bun.file(join(packageDir, "packages", "w", "node_modules", "no-deps", "index.js")).text(),
+    }).toEqual({ hoistedPath: "missing", workspaceLink: "link", workspaceCopy: patched });
+
+    // A directory left at `node_modules/w` kept the install from linking the workspace there.
+    const root = await Bun.file(packageJson).json();
+    root.dependencies.w = "workspace:*";
+    await Bun.write(packageJson, JSON.stringify(root));
+    await runOk(packageDir, "install");
+    expect(kind(packageDir, "node_modules", "w")).toBe("link");
+    expect(await runOk(packageDir, "-e", "console.log(require('w'))")).toBe("patched\n");
+  });
+
+  test.concurrent("a dependency that the hoisted tree nests under its dependent", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { "one-fixed-dep": "1.0.0", "no-deps": "2.0.0" },
+        }),
+      },
+    });
+    await runOk(packageDir, "install");
+
+    // The hoisted tree puts this copy at `node_modules/one-fixed-dep/node_modules/no-deps`.
+    // `node_modules/one-fixed-dep` is a link, so that path is inside the store entry of the dependent.
+    const folder = storeFolder("no-deps@1.0.0", "no-deps");
+    const nestedInDependent = join(storeFolder("one-fixed-dep@1.0.0", "one-fixed-dep"), "node_modules");
+    await patch(packageDir, "no-deps@1.0.0", "no-deps", folder);
+    expect(kind(packageDir, nestedInDependent)).toBe("missing");
+
+    await Bun.write(join(packageDir, folder, "index.js"), patched);
+    await runOk(packageDir, "patch", "--commit", "no-deps@1.0.0");
+
+    expect(kind(packageDir, nestedInDependent)).toBe("missing");
+    const load = "console.log(require('one-fixed-dep').dependencies['no-deps'], require('no-deps').version)";
+    expect(await runOk(packageDir, "-e", load)).toBe("patched 2.0.0\n");
+  });
+
+  // `peer-deps@1.0.0` has the peer dependency `no-deps`. Each workspace resolves it to another
+  // version, so the package has one store entry for each workspace.
+  test.concurrent("a package with one store entry for each peer resolution", async () => {
+    const versions = ["1.0.0", "2.0.0"];
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+        packages: Object.fromEntries(
+          versions.map(version => [
+            `pkg-${version}`,
+            {
+              "package.json": JSON.stringify({
+                name: `pkg-${version}`,
+                version: "1.0.0",
+                dependencies: { "peer-deps": "1.0.0", "no-deps": version },
+              }),
+            },
+          ]),
+        ),
+      },
+    });
+    await runOk(packageDir, "install");
+
+    const entries = readdirSync(join(packageDir, "node_modules", ".bun")).filter(entry =>
+      entry.startsWith("peer-deps@1.0.0+"),
+    );
+    expect(entries).toHaveLength(versions.length);
+
+    const stdout = await runOk(packageDir, "patch", "peer-deps");
+    const folder = stdout.match(/bun patch --commit '([^']+)'/)?.[1];
+    expect(entries.map(entry => storeFolder(entry, "peer-deps"))).toContain(folder);
+
+    await Bun.write(join(packageDir, folder!, "index.js"), patched);
+    await runOk(packageDir, "patch", "--commit", "peer-deps");
+
+    expect(kind(packageDir, "node_modules", "peer-deps")).toBe("missing");
+    for (const entry of entries) {
+      expect(await Bun.file(join(packageDir, storeFolder(entry, "peer-deps"), "index.js")).text()).toBe(patched);
+    }
+  });
+
+  // With the global store `node_modules/.bun/<entry>` is a link into the cache. An install puts
+  // that link back over a directory it finds there, so a copy made in the store folder would
+  // lose its edits. The copy stays at the hoisted path, which an install does not touch.
+  test.concurrent("a package in the global store", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+      files: {
+        "package.json": JSON.stringify({ name: "app", dependencies: { "one-fixed-dep": "1.0.0" } }),
+      },
+    });
+    await runOk(packageDir, "install");
+    expect(kind(packageDir, "node_modules", ".bun", "no-deps@1.0.0")).toBe("link");
+
+    await patch(packageDir, "no-deps", "no-deps", "node_modules/no-deps");
+    await Bun.write(join(packageDir, "node_modules", "no-deps", "index.js"), patched);
+    await runOk(packageDir, "install");
+
+    expect({
+      storeEntry: kind(packageDir, "node_modules", ".bun", "no-deps@1.0.0"),
+      globalStore: await Bun.file(join(packageDir, storeFolder("no-deps@1.0.0", "no-deps"), "index.js")).text(),
+      copy: await Bun.file(join(packageDir, "node_modules", "no-deps", "index.js")).text(),
+    }).toEqual({
+      storeEntry: "link",
+      globalStore: expect.not.stringContaining("patched"),
+      copy: patched,
+    });
+  });
+});
+
 describe("bun patch <pkg>", async () => {
   describe("workspace interactions", async () => {
     /**
      * @repo/eslint-config and @repo/typescript-config both depend on @types/ws@8.5.4
-     * so it should be hoisted to the root node_modules
+     * so the hoisted tree puts it in the root node_modules. The root does not depend on it,
+     * so the isolated linker has no root `node_modules/@types/ws` and the store folder is patched.
      */
     describe("inside workspace with hoisting", async () => {
       const args = [
         ["packages/eslint-config/node_modules/@types/ws", "packages/eslint-config/node_modules/@types/ws"],
-        ["@types/ws@8.5.4", "node_modules/@types/ws"],
+        ["@types/ws@8.5.4", "node_modules/.bun/@types+ws@8.5.4/node_modules/@types/ws"],
       ];
       for (const [arg, path] of args) {
         test(arg, async () => {
@@ -443,7 +667,7 @@ describe("bun patch <pkg>", async () => {
         expect(isAbsolute(absPath.replaceAll("/", sep))).toBe(true);
         expect(absPath).toContain("node_modules");
 
-        await Bun.write(join(tempdir, "node_modules", "is-odd", "index.js"), "module.exports = () => 'patched';\n");
+        await Bun.write(join(absPath.replaceAll("/", sep), "index.js"), "module.exports = () => 'patched';\n");
         return { subdir, absPath };
       }
 
@@ -459,6 +683,8 @@ describe("bun patch <pkg>", async () => {
         expect(patch).not.toContain("new file mode 120000");
         expect(patch).not.toContain("deleted file mode");
         expect(patch).toContain("patched");
+        // The root does not depend on is-odd, so the isolated linker has no folder for it there.
+        expect(lstatSync(join(tempdir, "node_modules", "is-odd"), { throwIfNoEntry: false })).toBeUndefined();
       }
 
       // On Windows the suggested path is a drive-letter absolute path like
@@ -473,9 +699,9 @@ describe("bun patch <pkg>", async () => {
       });
 
       // With the isolated linker `packages/server/node_modules/is-odd` is a
-      // symlink into `.bun/`. `bun patch is-odd` placed the editable copy at
-      // the root `node_modules/is-odd`, so committing `node_modules/is-odd`
-      // from the subdir must diff the root copy, not the symlink.
+      // symlink to the store folder in `.bun/`, which is the copy that
+      // `bun patch is-odd` prepared. Committing `node_modules/is-odd` from the
+      // subdir must diff that folder, not the symlink.
       test("relative node_modules/<pkg>", async () => {
         await using tempdir = tempDir("patch-ws-rel", files);
         const { subdir } = await prepare(String(tempdir));

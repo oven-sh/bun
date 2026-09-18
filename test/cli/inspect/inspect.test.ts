@@ -377,6 +377,215 @@ describe("http metadata endpoint", () => {
   });
 });
 
+// The backend uses the ids a client sends (a scriptId, a sourceID, the injectedScriptId in an objectId) as
+// keys of WTF HashMaps with integer keys. Such a map reserves two keys (0 and -1) for its empty and deleted
+// buckets, and a lookup of a reserved key matches an empty bucket. Without a check before the lookup, a
+// release build uses that bucket's default value as an entry and a build with assertions aborts. A map has
+// no table, and nothing to match, until its first entry, so each test makes the backend fill the map first.
+describe.concurrent("an id from the client that names nothing", () => {
+  async function openSession() {
+    const debuggee = spawn({
+      cmd: [bunExe(), "--inspect=127.0.0.1:0", "-e", "setInterval(() => {}, 1 << 30)"],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const { promise: listening, resolve: foundUrl, reject: noUrl } = Promise.withResolvers<string>();
+    (async () => {
+      let stderr = "";
+      const decoder = new TextDecoder();
+      for await (const chunk of debuggee.stderr) {
+        stderr += decoder.decode(chunk, { stream: true });
+        const line = stderr
+          .split("\n")
+          .slice(0, -1)
+          .find(line => line.trim().startsWith("ws://"));
+        if (line) foundUrl(line.trim());
+      }
+      noUrl(new Error(`No inspector URL in stderr:\n${stderr}`));
+    })();
+
+    const pending = new Map<number, (reply: object) => void>();
+    const events: { method: string; params: any }[] = [];
+    let exited: { exitCode: number | null; signalCode: string | null } | undefined;
+    let wake = () => {};
+    let webSocket: WebSocket;
+    try {
+      webSocket = new WebSocket(await listening);
+      const { promise: open, resolve: opened, reject: failed } = Promise.withResolvers<void>();
+      webSocket.addEventListener("open", () => opened());
+      webSocket.addEventListener("error", cause => failed(new Error("WebSocket error", { cause })));
+      await open;
+    } catch (error) {
+      debuggee.kill();
+      throw error;
+    }
+    webSocket.addEventListener("message", ({ data }) => {
+      const { id, method, params, ...reply } = JSON.parse(data.toString());
+      if (method) events.push({ method, params });
+      else pending.get(id)?.(reply);
+      wake();
+    });
+    // If the debuggee dies, every pending command and event resolves to how it died.
+    webSocket.addEventListener("close", async () => {
+      await debuggee.exited;
+      exited = { exitCode: debuggee.exitCode, signalCode: debuggee.signalCode };
+      for (const resolve of pending.values()) resolve({ exited });
+      wake();
+    });
+
+    let nextId = 1;
+    return {
+      send(method: string, params: object = {}): Promise<any> {
+        const id = nextId++;
+        const { promise, resolve } = Promise.withResolvers<object>();
+        pending.set(id, resolve);
+        webSocket.send(JSON.stringify({ id, method, params }));
+        return promise;
+      },
+      /** The params of the first event of this kind that no earlier call took. */
+      async event(method: string, matches: (params: any) => boolean = () => true): Promise<any> {
+        while (true) {
+          const index = events.findIndex(event => event.method === method && matches(event.params));
+          if (index !== -1) return events.splice(index, 1)[0].params ?? {};
+          if (exited) return { exited };
+          await new Promise<void>(resolve => (wake = resolve));
+        }
+      },
+      async [Symbol.asyncDispose]() {
+        webSocket.close();
+        debuggee.kill();
+        await debuggee.exited;
+      },
+    };
+  }
+
+  test("injectedScriptId in an objectId or a callFrameId", async () => {
+    await using session = await openSession();
+    const evaluated = await session.send("Runtime.evaluate", { expression: "({ a: 1 })" });
+    expect(evaluated).toMatchObject({ result: { result: { type: "object", className: "Object" } } });
+    const objectId = JSON.parse(evaluated.result.result.objectId);
+    expect(objectId.injectedScriptId).toBe(1);
+
+    // 0.5 and -1.5 are 0 and -1 after the backend converts them to int.
+    for (const injectedScriptId of [0, -1, 0.5, -1.5]) {
+      const reserved = JSON.stringify({ ...objectId, injectedScriptId });
+      expect({
+        injectedScriptId,
+        reply: await session.send("Runtime.getProperties", { objectId: reserved }),
+      }).toMatchObject({
+        injectedScriptId,
+        reply: { error: { message: "Missing injected script for given objectId" } },
+      });
+    }
+    expect(
+      await session.send("Debugger.evaluateOnCallFrame", {
+        callFrameId: JSON.stringify({ ordinal: 0, injectedScriptId: 0 }),
+        expression: "1",
+      }),
+    ).toMatchObject({ error: { message: "Missing injected script for given callFrameId" } });
+
+    // The real objectId still resolves in the same session.
+    expect(
+      await session.send("Runtime.getProperties", { objectId: JSON.stringify(objectId), ownProperties: true }),
+    ).toMatchObject({
+      result: { properties: [{ name: "a", value: { type: "number", value: 1 } }, { name: "__proto__" }] },
+    });
+  });
+
+  test("scriptId", async () => {
+    await using session = await openSession();
+    expect(await session.send("Debugger.enable")).toEqual({ result: {} });
+    expect(await session.send("Debugger.setBreakpointsActive", { active: true })).toEqual({ result: {} });
+    expect(await session.send("Debugger.setPauseOnDebuggerStatements", { enabled: true })).toEqual({ result: {} });
+
+    // "-1", the overflow and "x" do not parse, and the backend uses 0 for them. 4294967295 is -1 as a SourceID.
+    const commands: [method: string, params: (scriptId: string) => object, message: string][] = [
+      ["Debugger.getScriptSource", scriptId => ({ scriptId }), "Missing script for given scriptId"],
+      ["Debugger.searchInContent", scriptId => ({ scriptId, query: "a" }), "Missing script for given scriptId"],
+      [
+        "Debugger.setBreakpoint",
+        scriptId => ({ location: { scriptId, lineNumber: 0 } }),
+        "Missing script for scriptId in given location",
+      ],
+      [
+        "Debugger.getBreakpointLocations",
+        scriptId => ({ start: { scriptId, lineNumber: 0 }, end: { scriptId, lineNumber: 0 } }),
+        "Missing script for scriptId in given start",
+      ],
+    ];
+    for (const scriptId of ["0", "4294967295", "-1", "99999999999999999999", "x"]) {
+      for (const [method, params, message] of commands) {
+        expect({ method, scriptId, reply: await session.send(method, params(scriptId)) }).toMatchObject({
+          method,
+          scriptId,
+          reply: { error: { message } },
+        });
+      }
+    }
+
+    // Debugger.continueToLocation needs a paused debuggee. It resumes when it does not find the script.
+    let paused: any;
+    for (const scriptId of ["0", "4294967295"]) {
+      const timer = await session.send("Runtime.evaluate", { expression: "setTimeout(() => { debugger; }, 0); 1" });
+      expect(timer).toMatchObject({ result: { result: { value: 1 } } });
+      paused = await session.event("Debugger.paused");
+      expect(paused).toMatchObject({ reason: "DebuggerStatement" });
+      expect({
+        scriptId,
+        reply: await session.send("Debugger.continueToLocation", { location: { scriptId, lineNumber: 0 } }),
+      }).toMatchObject({ scriptId, reply: { error: { message: "Missing script for scriptId in given location" } } });
+      expect(await session.event("Debugger.resumed")).toEqual({});
+    }
+
+    // The scriptId of a real script still resolves in the same session.
+    const { scriptId } = paused.callFrames[0].location;
+    expect(await session.send("Debugger.getScriptSource", { scriptId })).toEqual({
+      result: { scriptSource: "setTimeout(() => { debugger; }, 0); 1" },
+    });
+  });
+
+  test("sourceID", async () => {
+    await using session = await openSession();
+    expect(await session.send("Debugger.enable")).toEqual({ result: {} });
+    expect(await session.send("Runtime.enableTypeProfiler")).toEqual({ result: {} });
+    expect(await session.send("Runtime.enableControlFlowProfiler")).toEqual({ result: {} });
+
+    const expression = "function typed(x) { return x; }\ntyped(1);\n//# sourceURL=typed.js";
+    expect(await session.send("Runtime.evaluate", { expression })).toMatchObject({ result: { result: { value: 1 } } });
+    const { scriptId } = await session.event("Debugger.scriptParsed", params => params.sourceURL === "typed.js");
+
+    // The first query that finds types gives the type profiler's query cache its table.
+    const divot = expression.indexOf("x)");
+    expect(
+      await session.send("Runtime.getRuntimeTypesForVariablesAtOffsets", {
+        locations: [{ typeInformationDescriptor: 1, sourceID: scriptId, divot }],
+      }),
+    ).toMatchObject({ result: { types: [{ isValid: true, typeSet: { isInteger: true } }] } });
+    expect(await session.send("Runtime.getBasicBlocks", { sourceID: scriptId })).toMatchObject({
+      result: { basicBlocks: expect.arrayContaining([expect.objectContaining({ hasExecuted: true })]) },
+    });
+
+    for (const sourceID of ["0", "4294967295", "x", ""]) {
+      expect({ sourceID, reply: await session.send("Runtime.getBasicBlocks", { sourceID }) }).toEqual({
+        sourceID,
+        reply: { result: { basicBlocks: [] } },
+      });
+    }
+    // The first two are the empty and the deleted key of the query cache. "x" and "" do not parse.
+    expect(
+      await session.send("Runtime.getRuntimeTypesForVariablesAtOffsets", {
+        locations: [
+          { typeInformationDescriptor: 2, sourceID: "0", divot: 0 },
+          { typeInformationDescriptor: 2, sourceID: "4294967295", divot: -1 },
+          { typeInformationDescriptor: 1, sourceID: "x", divot },
+          { typeInformationDescriptor: 1, sourceID: "", divot },
+        ],
+      }),
+    ).toEqual({ result: { types: [{ isValid: false }, { isValid: false }, { isValid: false }, { isValid: false }] } });
+  });
+});
+
 describe("unix domain socket without websocket", () => {
   let tempdir: string;
   let randomSocketPath: () => string;

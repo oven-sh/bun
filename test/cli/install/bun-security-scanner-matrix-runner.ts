@@ -1,73 +1,101 @@
-import { bunEnv, bunExe, isWindows, runBunInstall, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, nodeModulesPackages, normalizeBunSnapshot, tempDir } from "harness";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { isCI } from "../../harness";
-import { getRegistry, SimpleRegistry, startRegistry, stopRegistry } from "./simple-dummy-registry";
+import { SimpleRegistry } from "./simple-dummy-registry";
 
 const CI_SAMPLE_PERCENT = 10; // only 10% of tests will run in CI because this matrix generates so many tests
 
-const redSubprocessPrefix = "\x1b[31m [SUBPROC]\x1b[0m";
-const redDebugPrefix = "\x1b[31m   [DEBUG]\x1b[0m";
-const redShellPrefix = "\x1b[31m   [SHELL] $\x1b[0m";
-
 function getTestName(testId: string, hasExistingNodeModules: boolean) {
-  return `${testId} (${hasExistingNodeModules ? "with modules" : "without modules"})` as const;
+  return `${testId} (${hasExistingNodeModules ? "with modules" : "without modules"})`;
 }
-type TestName = ReturnType<typeof getTestName>;
-
-// prettier-ignore
-// These tests are failing for other reasons outside of the security scanner.
-// You should leave a comment above pointing to a GitHub issue for reference, so these
-// don't get totally lost.
-const TESTS_TO_SKIP: Set<string> = new Set<TestName>([
-  // https://github.com/oven-sh/bun/issues/22255
-  // remove "is-even"
-  "0481 (without modules)", "0486 (without modules)", "0491 (without modules)", "0496 (without modules)", "0511 (without modules)", "0516 (without modules)", "0521 (without modules)", "0526 (without modules)",
-  // remove "left-pad,is-even"
-  "0541 (without modules)", "0546 (without modules)", "0551 (without modules)", "0556 (without modules)", "0571 (without modules)", "0576 (without modules)", "0581 (without modules)", "0586 (without modules)",
-  // uninstall "is-even"
-  "0601 (without modules)", "0606 (without modules)", "0611 (without modules)", "0616 (without modules)", "0631 (without modules)", "0636 (without modules)", "0641 (without modules)", "0646 (without modules)",
-  // uninstall "left-pad,is-even"
-  "0661 (without modules)", "0666 (without modules)", "0671 (without modules)", "0676 (without modules)", "0691 (without modules)", "0696 (without modules)", "0701 (without modules)", "0706 (without modules)",
-]);
 
 interface SecurityScannerTestOptions {
   command: "install" | "update" | "add" | "remove" | "uninstall";
   args: readonly string[];
   hasExistingNodeModules: boolean;
+  hasLockfile: boolean;
   linker: "hoisted" | "isolated";
+  // "npm.bunfigonly" names the npm scanner in bunfig.toml without declaring it in package.json, so bun
+  // has nowhere to install it from and every command fails before the scanner runs.
   scannerType: "local" | "npm" | "npm.bunfigonly";
   scannerReturns: "none" | "warn" | "fatal";
-  shouldFail: boolean;
 
-  hasLockfile: boolean;
-  scannerSyncronouslyThrows: boolean;
-
-  // TTY options for testing interactive prompts
+  // The prompt only exists for "warn": "none" needs no answer and "fatal" never asks.
   hasTTY: boolean;
-  ttyResponse: "y" | "n"; // Response to send when prompted (only used when hasTTY is true and scannerReturns is "warn")
+  ttyResponse: "y" | "n";
 }
 
 const DO_TEST_DEBUG = process.env.SCANNER_TEST_DEBUG === "true";
 
-async function globEverything(dir: string) {
-  return await Array.fromAsync(
-    new Bun.Glob("**/*").scan({ cwd: dir, dot: true, followSymlinks: false, onlyFiles: false }),
-  );
+const SCANNER_PACKAGE = "test-security-scanner";
+
+const versionOf = (name: string) => SimpleRegistry.packages[name][0];
+const nameWithVersion = (name: string) => `${name}@${versionOf(name)}`;
+const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
+/**
+ * Every package an install of `roots` ends up with. The first entry is the first root: bun hands the
+ * scanner its packages in this order, and both test scanners flag `packages[0]`.
+ */
+function installTree(roots: readonly string[]): string[] {
+  const tree: string[] = [];
+  const queue = [...roots];
+  for (let name = queue.shift(); name !== undefined; name = queue.shift()) {
+    if (tree.includes(name)) continue;
+    tree.push(name);
+    queue.push(...Object.keys(SimpleRegistry.dependencies[name]));
+  }
+  return tree;
 }
 
-let registryUrl: string;
+/** `dependencies` of the package.json each case starts from. */
+function fixtureDependencies({ command, args, scannerType }: SecurityScannerTestOptions): Record<string, string> {
+  return {
+    "left-pad": versionOf("left-pad"),
 
-async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
-  const registry = getRegistry();
+    // For remove/uninstall commands, add the packages we're trying to remove
+    ...(command === "remove" || command === "uninstall"
+      ? { "is-even": versionOf("is-even"), "is-odd": versionOf("is-odd") }
+      : {}),
 
-  if (!registry) {
-    throw new Error("Registry not found");
-  }
+    // `bun update <name>` only updates a declared dependency; it never adds one
+    ...(command === "update" ? Object.fromEntries(args.map(arg => [arg, versionOf(arg)])) : {}),
 
-  registry.clearRequestLog();
-  registry.setScannerBehavior(options.scannerReturns ?? "none");
+    // For npm scanner, add it to dependencies so it gets installed
+    ...(scannerType === "npm" ? { [SCANNER_PACKAGE]: versionOf(SCANNER_PACKAGE) } : {}),
+  };
+}
 
+interface ProjectState {
+  /** `nodeModulesPackages()` of the project: one `<dir>/<name>@<version>` line per extracted package. */
+  installedPackages: string[];
+  packageJsonDependencies: Record<string, string>;
+  /** Keys of the `packages` section of bun.lock, or null when there is no bun.lock. */
+  lockfilePackages: string[] | null;
+}
+
+interface CommandResult extends ProjectState {
+  exitCode: number;
+  /** Without a TTY each stream is captured on its own. */
+  stdout?: string;
+  stderr?: string;
+  /** With a TTY this is everything the terminal received: both streams plus the echoed answer. */
+  terminal?: string;
+  /** The `SCANNER_RAN` lines the scanner itself printed, taken out of the stream(s) above. */
+  scannerOutput: string[];
+  requestedPackages: string[];
+  requestedTarballs: string[];
+}
+
+/** The `installedPackages` line for one package, depending on where the linker puts it. */
+function packageLocation(linker: SecurityScannerTestOptions["linker"], name: string): string {
+  const folder =
+    linker === "hoisted" ? `node_modules/${name}` : `node_modules/.bun/${nameWithVersion(name)}/node_modules/${name}`;
+  return `${folder}/${nameWithVersion(name)}`;
+}
+
+/** What a case must look like before the command runs, and what the command must produce. */
+function expectationsFor(options: SecurityScannerTestOptions): { before: ProjectState; after: CommandResult } {
   const {
     command,
     args,
@@ -76,455 +104,376 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
     linker,
     scannerType,
     scannerReturns,
-    shouldFail,
-    scannerSyncronouslyThrows,
     hasTTY,
     ttyResponse,
   } = options;
+  // `bun install <pkg>` is `bun add <pkg>`, and `bun uninstall` is `bun remove`.
+  const adds = command === "add" || (command === "install" && args.length > 0);
+  const removes = command === "remove" || command === "uninstall";
+  const updates = command === "update";
 
-  const expectedExitCode = shouldFail ? 1 : 0;
+  const dependenciesBefore = fixtureDependencies(options);
+  const rootsBefore = Object.keys(dependenciesBefore);
+  // add/remove edit the root dependencies before anything is resolved or scanned, even if the scanner cancels later.
+  const roots = adds
+    ? [...new Set([...rootsBefore, ...args])]
+    : removes
+      ? rootsBefore.filter(d => !args.includes(d))
+      : rootsBefore;
+  const treeBefore = installTree(rootsBefore);
+  const tree = installTree(roots);
+  const installedBefore = hasExistingNodeModules ? treeBefore : [];
 
-  const scannerCode =
-    scannerType === "local" || scannerType === "npm"
-      ? `export const scanner = {
-      version: "1",
-      scan: async function(payload) {
-        console.error("SCANNER_RAN: " + payload.packages.length + " packages");
-        
-        ${scannerSyncronouslyThrows ? "throw new Error('Scanner error!');" : ""}
-        
-        const results = [];
-        ${
-          scannerReturns === "warn"
-            ? `
-        if (payload.packages.length > 0) {
+  const scannerRuns = scannerType !== "npm.bunfigonly";
+  // Without node_modules bun has to install the npm scanner before it can run it, whatever happens afterwards.
+  const installsScannerFirst = scannerType === "npm" && !hasExistingNodeModules;
+  // add and `update <pkg>` scan what they were asked for; everything else scans the whole tree, root
+  // dependencies in name order.
+  const scanned = adds || (updates && args.length > 0) ? installTree(args) : installTree([...roots].sort());
+  const flagged = scanned[0];
+  const proceeds =
+    scannerRuns && (scannerReturns === "none" || (scannerReturns === "warn" && hasTTY && ttyResponse === "y"));
+
+  // install and remove trust an existing lockfile, add and update always re-resolve what they were given.
+  let manifests: string[];
+  if (!hasLockfile) {
+    manifests = tree;
+  } else if (updates) {
+    manifests = args.length > 0 ? [...args] : rootsBefore;
+  } else if (adds) {
+    manifests = installTree(args).filter(name => args.includes(name) || !treeBefore.includes(name));
+  } else {
+    manifests = [];
+  }
+  const resolves = !hasLockfile || adds || updates;
+  // Downloads wait for the scanner's verdict. Only the scanner's own install happens before it.
+  const downloads = proceeds
+    ? tree.filter(name => !installedBefore.includes(name))
+    : installsScannerFirst
+      ? [SCANNER_PACKAGE]
+      : [];
+  const newlyInstalled = tree.filter(
+    name => !installedBefore.includes(name) && !(installsScannerFirst && name === SCANNER_PACKAGE),
+  );
+  // remove reports how many of its arguments left the lockfile, which takes a lockfile to compare against.
+  const removedFromLockfile = removes && hasLockfile ? args.filter(arg => !tree.includes(arg)).length : 0;
+  const savesLockfile = proceeds && (!hasLockfile || adds || removes);
+
+  function summary(): string {
+    if (newlyInstalled.length > 0) {
+      const added = roots
+        .filter(name => newlyInstalled.includes(name) && !(adds && args.includes(name)))
+        .sort()
+        .map(name => `+ ${nameWithVersion(name)}`);
+      const requested = adds ? args.map(name => `installed ${nameWithVersion(name)}`) : [];
+      const lines = [added, requested].filter(block => block.length > 0).map(block => block.join("\n"));
+      lines.push(`${count(newlyInstalled.length, "package")} installed [<time>]`);
+      return lines.join("\n\n") + (removedFromLockfile > 0 ? `\nRemoved: ${removedFromLockfile}` : "");
+    }
+    if (!removes) {
+      // The package count includes the root package. The isolated linker counts the root as an install too.
+      const packages = count(tree.length + 1, "package");
+      return linker === "hoisted"
+        ? `Checked ${count(tree.length, "install")} across ${packages} (no changes) [<time>]`
+        : `Done! Checked ${packages} (no changes) [<time>]`;
+    }
+    // With nothing to install, remove lists the names it dropped from package.json (again only with a lockfile
+    // to compare against), then either the count of packages that left the lockfile or just the timing.
+    const dropped = hasLockfile ? args.map(arg => `- ${arg}\n`).join("") : "";
+    return (
+      dropped +
+      (removedFromLockfile > 0 ? `${count(removedFromLockfile, "package")} removed [<time>]` : "[<time>] done")
+    );
+  }
+
+  // bun's output in the order it appears on a terminal. Without a TTY the two streams are read separately,
+  // so only the order within each stream matters there.
+  const output: [stream: "stdout" | "stderr" | "echo", text: string][] = [];
+  output.push(["stdout", `bun ${adds ? "add" : removes ? "remove" : command} <version> (<revision>)\n`]);
+  if (resolves) {
+    // One task per manifest fetched plus one per package resolved from it. Every manifest here resolves exactly one package.
+    output.push(["stderr", `Resolving dependencies\nResolved, downloaded and extracted [${manifests.length * 2}]\n`]);
+  }
+  if (installsScannerFirst) {
+    output.push([
+      "stdout",
+      "Attempting to install security scanner from npm...\nSecurity scanner installed successfully.\n",
+    ]);
+  }
+  if (!scannerRuns) {
+    output.push([
+      "stderr",
+      `error: Security scanner '${SCANNER_PACKAGE}' is configured in bunfig.toml but is not installed.\n` +
+        `  To install it, run: bun add --dev ${SCANNER_PACKAGE}\n` +
+        "error: security scanner failed: SecurityScannerNotInDependencies\n",
+    ]);
+  } else if (scannerReturns === "fatal") {
+    output.push([
+      "stdout",
+      `\n  FATAL: ${flagged}\n    via test-app › ${flagged}\n    Test fatal error\n\n1 advisory (1 fatal)\n`,
+    ]);
+    output.push(["stdout", "Installation aborted due to fatal security advisories\n"]);
+  } else if (scannerReturns === "warn") {
+    output.push([
+      "stdout",
+      `\n  WARNING: ${flagged}\n    via test-app › ${flagged}\n    Test warning\n\n1 advisory (1 warning)\n`,
+    ]);
+    if (!hasTTY) {
+      output.push([
+        "stdout",
+        "\nSecurity warnings found. Cannot prompt for confirmation (no TTY).\nInstallation cancelled.\n",
+      ]);
+    } else {
+      output.push(["stdout", "\nSecurity warnings found. Continue anyway? [y/N] "]);
+      output.push(["echo", `${ttyResponse}\n`]);
+      output.push(["stdout", proceeds ? "\nContinuing with installation...\n\n" : "\nInstallation cancelled.\n"]);
+    }
+  }
+  if (savesLockfile) output.push(["stderr", "Saved lockfile\n"]);
+  if (proceeds) output.push(["stdout", `\n${summary()}`]);
+
+  const textOf = (streams: readonly string[]) =>
+    output
+      .filter(([stream]) => streams.includes(stream))
+      .map(([, text]) => text)
+      .join("")
+      .trim();
+
+  let installedAfter: string[];
+  if (!proceeds) {
+    installedAfter = installsScannerFirst ? [...installedBefore, SCANNER_PACKAGE] : installedBefore;
+  } else if (removes && hasExistingNodeModules && linker === "isolated") {
+    // The isolated linker only unlinks a removed package, its store entry stays behind.
+    installedAfter = installedBefore;
+  } else {
+    // `remove is-even` without node_modules installs is-even: it is still a dependency of is-odd. This is what
+    // https://github.com/oven-sh/bun/issues/22255 describes, its reproduction has the same dependency graph.
+    installedAfter = tree;
+  }
+
+  let dependenciesAfter = dependenciesBefore;
+  if (proceeds && adds) {
+    dependenciesAfter = { ...dependenciesBefore, ...Object.fromEntries(args.map(arg => [arg, `^${versionOf(arg)}`])) };
+  } else if (proceeds && removes) {
+    dependenciesAfter = Object.fromEntries(Object.entries(dependenciesBefore).filter(([name]) => !args.includes(name)));
+  }
+
+  const packageLocations = (names: readonly string[]) => names.map(name => packageLocation(linker, name)).sort();
+
+  return {
+    before: {
+      installedPackages: packageLocations(installedBefore),
+      packageJsonDependencies: dependenciesBefore,
+      lockfilePackages: hasLockfile ? [...treeBefore].sort() : null,
+    },
+    after: {
+      exitCode: proceeds ? 0 : 1,
+      ...(hasTTY
+        ? { terminal: textOf(["stdout", "stderr", "echo"]) }
+        : { stdout: textOf(["stdout"]), stderr: textOf(["stderr"]) }),
+      scannerOutput: scannerRuns ? [`SCANNER_RAN: ${scanned.length} packages`] : [],
+      installedPackages: packageLocations(installedAfter),
+      packageJsonDependencies: dependenciesAfter,
+      lockfilePackages: proceeds ? [...tree].sort() : hasLockfile ? [...treeBefore].sort() : null,
+      requestedPackages: [...manifests].sort(),
+      requestedTarballs: downloads.map(name => `/${name}-${versionOf(name)}.tgz`).sort(),
+    },
+  };
+}
+
+function localScannerSource(scannerReturns: SecurityScannerTestOptions["scannerReturns"]): string {
+  // Same behavior as the test-security-scanner-1.0.0-*.tgz fixtures, see generate-scanner-tarballs.ts
+  const advisory =
+    scannerReturns === "none"
+      ? ""
+      : `if (payload.packages.length > 0) {
           results.push({
             package: payload.packages[0].name,
-            level: "warn",
-            description: "Test warning"
+            level: ${JSON.stringify(scannerReturns)},
+            description: ${JSON.stringify(scannerReturns === "warn" ? "Test warning" : "Test fatal error")},
           });
-        }`
-            : ""
-        }
-        ${
-          scannerReturns === "fatal"
-            ? `
-        if (payload.packages.length > 0) {
-          results.push({
-            package: payload.packages[0].name,
-            level: "fatal",
-            description: "Test fatal error"
-          });
-        }`
-            : ""
-        }
-        return results;
-      }
-    }`
-      : `throw new Error("Should not have been loaded")`;
+        }`;
+  return `export const scanner = {
+    version: "1",
+    scan: async function (payload) {
+      console.error("SCANNER_RAN: " + payload.packages.length + " packages");
+      const results = [];
+      ${advisory}
+      return results;
+    },
+  };`;
+}
 
-  // Base files for the test directory
+async function readProjectState(dir: string): Promise<ProjectState> {
+  const lockfile = Bun.file(join(dir, "bun.lock"));
+  return {
+    // With the cache disabled bun keeps the tarballs it extracts in node_modules/.cache. Those are not installs.
+    installedPackages: nodeModulesPackages(dir)
+      .split("\n")
+      .filter(line => line !== "" && !line.startsWith("node_modules/.cache/")),
+    packageJsonDependencies: (await Bun.file(join(dir, "package.json")).json()).dependencies,
+    lockfilePackages: (await lockfile.exists())
+      ? Object.keys((Bun.JSONC.parse(await lockfile.text()) as { packages: Record<string, unknown> }).packages).sort()
+      : null,
+  };
+}
+
+/** Normalizes one captured stream, taking the scanner's own lines out of it. */
+function normalizeOutput(raw: string, dir: string): { text: string; scannerOutput: string[] } {
+  const scannerOutput: string[] = [];
+  const text = raw
+    .replaceAll("\r\n", "\n")
+    // The scanner writes straight to the inherited stderr, so where its lines land relative to bun's own
+    // output is up to process scheduling. Compare them on their own.
+    .replace(/^SCANNER_RAN: .*\n?/gm, line => {
+      scannerOutput.push(line.trim());
+      return "";
+    })
+    // Debug builds print these two and release builds do not: `debug warn:` diagnostics, and the timing
+    // line bun adds when a scan takes longer than a second.
+    .replace(/^debug warn: .*\n?/gm, "")
+    .replace(/\[[^\]\n]*\] Scanning \d+ packages? took \d+ms\n?/g, "")
+    .replace(/\[\d+\.\d\dm?s\]/g, "[<time>]");
+  return { text: normalizeBunSnapshot(text, dir), scannerOutput };
+}
+
+async function runPiped(cmd: string[], cwd: string) {
+  await using proc = Bun.spawn({
+    cmd,
+    cwd,
+    env: bunEnv,
+    // Anything but a TTY: bun must report that it cannot prompt instead of waiting for an answer.
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+async function runInTerminal(cmd: string[], cwd: string, answer: SecurityScannerTestOptions["ttyResponse"]) {
+  const decoder = new TextDecoder();
+  let terminal = "";
+  let answered = false;
+  const closed = Promise.withResolvers<void>();
+
+  await using proc = Bun.spawn({
+    cmd,
+    cwd,
+    env: bunEnv,
+    terminal: {
+      cols: 80,
+      rows: 24,
+      data(pty, chunk) {
+        terminal += decoder.decode(chunk, { stream: true });
+        if (!answered && terminal.includes("Continue anyway? [y/N]")) {
+          answered = true;
+          pty.write(`${answer}\n`);
+        }
+      },
+      // Output can still be in flight when the process exits. A terminal created by the spawn is closed
+      // once the child exits, after the remaining output was delivered, and that close ends up here.
+      exit() {
+        closed.resolve();
+      },
+    },
+  });
+  const [exitCode] = await Promise.all([proc.exited, closed.promise]);
+  terminal += decoder.decode();
+  return { terminal, exitCode };
+}
+
+async function runSecurityScannerTest(expect: typeof import("bun:test").expect, options: SecurityScannerTestOptions) {
+  const {
+    command,
+    args,
+    hasExistingNodeModules,
+    hasLockfile,
+    linker,
+    scannerType,
+    scannerReturns,
+    hasTTY,
+    ttyResponse,
+  } = options;
+  const expected = expectationsFor(options);
+
+  // Every case gets its own registry: the request log and the scanner tarball it serves are per case.
+  using registry = new SimpleRegistry(DO_TEST_DEBUG);
+  const registryUrl = `http://localhost:${await registry.start()}`;
+  registry.setScannerBehavior(scannerReturns);
+
   const files: Record<string, string> = {
     "package.json": JSON.stringify(
-      {
-        name: "test-app",
-        version: "1.0.0",
-        dependencies: {
-          "left-pad": "1.3.0",
-
-          // For remove/uninstall commands, add the packages we're trying to remove
-          ...(command === "remove" || command === "uninstall"
-            ? {
-                "is-even": "1.0.0",
-                "is-odd": "1.0.0",
-              }
-            : {}),
-
-          // `bun update <name>` only updates a declared dependency; it never adds one
-          ...(command === "update" ? Object.fromEntries(args.map(arg => [arg, SimpleRegistry.packages[arg][0]])) : {}),
-
-          // For npm scanner, add it to dependencies so it gets installed
-          ...(scannerType === "npm"
-            ? {
-                "test-security-scanner": "1.0.0",
-              }
-            : {}),
-        },
-      },
+      { name: "test-app", version: "1.0.0", dependencies: expected.before.packageJsonDependencies },
       null,
       "\t",
     ),
   };
-
   if (scannerType === "local") {
-    files["scanner.js"] = scannerCode;
+    files["scanner.js"] = localScannerSource(scannerReturns);
   }
+  using tmp = tempDir("scanner-matrix", files);
+  const dir = String(tmp);
 
-  const dir = tempDirWithFiles("scanner-matrix", files);
-
-  const scannerPath = scannerType === "local" ? "./scanner.js" : "test-security-scanner";
-
-  // The manifest cache is off for both installs: the setup install writes its
-  // manifests to the cache asynchronously and `bun install` does not wait for
-  // those writes before exiting, so with the cache on, which manifests the
-  // install under test has to request would depend on whether they had landed.
+  // The manifest cache is off for both installs: the setup install writes its manifests to the cache
+  // asynchronously and does not wait for those writes before exiting, so with the cache on, which manifests
+  // the command under test requests would depend on whether they had landed.
   const cache = { disable: true, disableManifest: true };
+  const writeBunfig = (scanner?: string) =>
+    Bun.write(
+      join(dir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: { cache, linker, registry: `${registryUrl}/`, ...(scanner ? { security: { scanner } } : {}) },
+      }),
+    );
 
-  // First write bunfig WITHOUT scanner for pre-install
-  await Bun.write(
-    join(dir, "bunfig.toml"),
-    Bun.TOML.stringify({
-      install: {
-        cache,
-        linker,
-        registry: `${registryUrl}/`,
-      },
-    }),
-  );
-
-  const shouldDoInitialInstall = hasExistingNodeModules || hasLockfile;
   if (hasExistingNodeModules || hasLockfile) {
-    if (DO_TEST_DEBUG) console.log(redShellPrefix, `${bunExe()} install`);
-    await runBunInstall(bunEnv, dir);
+    await writeBunfig();
+    const setup = await runPiped([bunExe(), "install"], dir);
+    if (setup.exitCode !== 0) {
+      throw new Error(`setup install exited with ${setup.exitCode}:\n${setup.stderr}`);
+    }
+    if (!hasExistingNodeModules) await rm(join(dir, "node_modules"), { recursive: true });
+    if (!hasLockfile) await rm(join(dir, "bun.lock"));
   }
-
-  if (shouldDoInitialInstall && !hasExistingNodeModules) {
-    if (DO_TEST_DEBUG) console.log(redShellPrefix, `rm -rf ${dir}/node_modules`);
-    await rm(join(dir, "node_modules"), { recursive: true });
-  }
-
-  if (shouldDoInitialInstall && !hasLockfile) {
-    if (DO_TEST_DEBUG) console.log(redShellPrefix, `rm ${dir}/bun.lock`);
-    await rm(join(dir, "bun.lock"));
-  }
+  expect(await readProjectState(dir)).toEqual(expected.before);
 
   ////////////////////////// POST SETUP DONE //////////////////////////
 
-  const cmd = [bunExe(), command, ...args];
-
-  if (DO_TEST_DEBUG) {
-    console.log(redDebugPrefix, "SETUP DONE");
-    console.log("-------------------------------- THE REAL TEST IS ABOUT TO HAPPEN --------------------------------");
-    console.log(redShellPrefix, cmd.join(" "));
-  }
-
   registry.clearRequestLog();
+  await writeBunfig(scannerType === "local" ? "./scanner.js" : SCANNER_PACKAGE);
 
-  // write the full bunfig WITH scanner configuration
-  await Bun.write(
-    join(dir, "bunfig.toml"),
-    Bun.TOML.stringify({
-      install: {
-        cache,
-        linker,
-        registry: `${registryUrl}/`,
-        security: {
-          scanner: scannerPath,
-        },
-      },
-    }),
-  );
+  const cmd = [bunExe(), command, ...args];
+  const run = hasTTY ? await runInTerminal(cmd, dir, ttyResponse) : await runPiped(cmd, dir);
 
   if (DO_TEST_DEBUG) {
-    console.log(`[DEBUG] Test directory: ${dir}`);
-    console.log(`[DEBUG] Command: ${cmd.join(" ")}`);
-    console.log(`[DEBUG] Scanner type: ${scannerType}`);
-    console.log(`[DEBUG] Scanner returns: ${scannerReturns}`);
-    console.log(`[DEBUG] Has existing node_modules: ${hasExistingNodeModules}`);
-    console.log(`[DEBUG] Linker: ${linker}`);
-    console.log("");
-    console.log("Files in test directory:");
-    const files = await globEverything(dir);
-    for (const file of files) {
-      console.log(`  ${file}`);
-    }
-    console.log("");
-    console.log("bunfig.toml contents:");
-    console.log(await Bun.file(join(dir, "bunfig.toml")).text());
-    console.log("");
-    console.log("package.json contents:");
-    console.log(await Bun.file(join(dir, "package.json")).text());
-    console.log("");
-    console.log("To run the command manually:");
-    console.log(`cd ${dir} && ${cmd.join(" ")}`);
+    console.log(`$ cd ${dir} && ${cmd.join(" ")}`, "\n", run);
   }
 
-  let errAndOut = "";
-  let exitCode: number;
-
-  if (hasTTY) {
-    let responseSent = false;
-
-    await using terminal = new Bun.Terminal({
-      cols: 80,
-      rows: 24,
-      data(_term, data) {
-        const text = new TextDecoder().decode(data);
-        errAndOut += text;
-
-        if (DO_TEST_DEBUG) {
-          const lines = text.split("\n");
-          for (const line of lines) {
-            process.stdout.write(redSubprocessPrefix);
-            process.stdout.write(" ");
-            process.stdout.write(line);
-            process.stdout.write("\n");
-          }
-        }
-
-        // When we see the prompt, send the configured response
-        if (!responseSent && errAndOut.includes("Continue anyway? [y/N]")) {
-          responseSent = true;
-          terminal.write(ttyResponse + "\n");
-        }
-      },
-    });
-
-    await using proc = Bun.spawn(cmd, {
-      cwd: dir,
-      env: bunEnv,
-      terminal,
-    });
-
-    exitCode = await proc.exited;
-  } else {
-    // Non-TTY mode: use piped stdin to ensure isatty(stdin) returns false
-    await using proc = Bun.spawn({
-      cmd,
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "pipe",
-      env: bunEnv,
-    });
-
-    if (DO_TEST_DEBUG) {
-      const write = (chunk: Uint8Array<ArrayBuffer>, stream: NodeJS.WriteStream, decoder: TextDecoder) => {
-        const str = decoder.decode(chunk, { stream: true });
-
-        errAndOut += str;
-
-        const lines = str.split("\n");
-        for (const line of lines) {
-          stream.write(redSubprocessPrefix);
-          stream.write(" ");
-          stream.write(line);
-          stream.write("\n");
-        }
-      };
-
-      const outDecoder = new TextDecoder();
-      const stdoutWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
-        write: chunk => write(chunk, process.stdout, outDecoder),
-        close: () => void process.stdout.write(outDecoder.decode()),
-      });
-
-      const errDecoder = new TextDecoder();
-      const stderrWriter = new WritableStream<Uint8Array<ArrayBuffer>>({
-        write: chunk => write(chunk, process.stderr, errDecoder),
-        close: () => void process.stderr.write(errDecoder.decode()),
-      });
-
-      await Promise.all([proc.stdout.pipeTo(stdoutWriter), proc.stderr.pipeTo(stderrWriter)]);
-    } else {
-      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-      errAndOut = stdout + stderr;
-    }
-
-    exitCode = await proc.exited;
+  const streams = "terminal" in run ? { terminal: run.terminal } : { stdout: run.stdout, stderr: run.stderr };
+  const scannerOutput: string[] = [];
+  const output: Record<string, string> = {};
+  for (const [stream, raw] of Object.entries(streams)) {
+    const normalized = normalizeOutput(raw, dir);
+    output[stream] = normalized.text;
+    scannerOutput.push(...normalized.scannerOutput);
   }
 
-  if (exitCode !== expectedExitCode) {
-    console.log("Command:", cmd.join(" "));
-    console.log("Expected exit code:", expectedExitCode, "Got:", exitCode);
-    console.log("Test directory:", dir);
-    console.log("Files in test dir:", await globEverything(dir));
-    console.log("Registry:", registryUrl);
-    console.log();
-    console.log("bunfig:");
-    console.log(await Bun.file(join(dir, "bunfig.toml")).text());
-    console.log();
-  }
-
-  expect(exitCode).toBe(expectedExitCode);
-
-  // If the scanner is from npm and there are no node modules when the test "starts"
-  // then we should expect Bun to do the partial install first of all
-  if (scannerType === "npm" && !hasExistingNodeModules) {
-    expect(errAndOut).toContain("Attempting to install security scanner from npm");
-    expect(errAndOut).toContain("Security scanner installed successfully");
-  }
-
-  if (scannerType === "npm.bunfigonly") {
-    expect(errAndOut).toContain("");
-  }
-
-  if (scannerType !== "npm.bunfigonly" && !scannerSyncronouslyThrows) {
-    expect(errAndOut).toContain("SCANNER_RAN");
-
-    if (scannerReturns === "warn") {
-      expect(errAndOut).toContain("WARNING:");
-      expect(errAndOut).toContain("Test warning");
-
-      if (hasTTY) {
-        // In TTY mode, we should see the interactive prompt
-        expect(errAndOut).toContain("Continue anyway? [y/N]");
-        if (ttyResponse === "y") {
-          expect(errAndOut).toContain("Continuing with installation...");
-        } else {
-          expect(errAndOut).toContain("Installation cancelled.");
-        }
-      } else {
-        // In non-TTY mode, we should see the no-TTY error message
-        expect(errAndOut).toContain("Security warnings found. Cannot prompt for confirmation (no TTY).");
-        expect(errAndOut).toContain("Installation cancelled.");
-      }
-    } else if (scannerReturns === "fatal") {
-      expect(errAndOut).toContain("FATAL:");
-      expect(errAndOut).toContain("Test fatal error");
-    }
-  }
-
-  if (scannerType !== "npm.bunfigonly" && !hasExistingNodeModules) {
-    switch (scannerReturns) {
-      case "fatal": {
-        // Fatal advisories always cancel installation
-        expect(await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists()).toBe(false);
-        break;
-      }
-
-      case "warn": {
-        if (hasTTY && ttyResponse === "y") {
-          // User accepted the warning in TTY mode, command proceeds normally
-          // For remove/uninstall without existing node_modules, nothing gets installed
-          // For other commands, packages should be installed
-          if (command === "remove" || command === "uninstall") {
-            // These commands don't install packages, they remove them
-            // Without existing node_modules, there's nothing to verify
-          } else {
-            expect(await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists()).toBe(true);
-          }
-        } else {
-          // No TTY to prompt OR user rejected, installation is cancelled
-          expect(await Bun.file(join(dir, "node_modules", "left-pad", "package.json")).exists()).toBe(false);
-        }
-        break;
-      }
-
-      case "none": {
-        // When there are no security issues, packages should be installed normally
-
-        switch (command) {
-          case "remove":
-          case "uninstall": {
-            for (const arg of args) {
-              switch (linker) {
-                case "hoisted": {
-                  expect(await Bun.file(join(dir, "node_modules", arg, "package.json")).exists()).toBe(false);
-                  break;
-                }
-
-                case "isolated": {
-                  const versionInRegistry = SimpleRegistry.packages[arg][0];
-                  const path = join(
-                    dir,
-                    "node_modules",
-                    ".bun",
-                    `${arg}@${versionInRegistry}`,
-                    "node_modules",
-                    arg,
-                    "package.json",
-                  );
-                  expect(await Bun.file(path).exists()).toBe(false);
-                  break;
-                }
-              }
-            }
-            break;
-          }
-
-          default: {
-            for (const arg of args) {
-              switch (linker) {
-                case "hoisted": {
-                  expect(await Bun.file(join(dir, "node_modules", arg, "package.json")).exists()).toBe(true);
-                  break;
-                }
-
-                case "isolated": {
-                  const versionInRegistry = SimpleRegistry.packages[arg][0];
-                  const path = join(
-                    dir,
-                    "node_modules",
-                    ".bun",
-                    `${arg}@${versionInRegistry}`,
-                    "node_modules",
-                    arg,
-                    "package.json",
-                  );
-                  expect(await Bun.file(path).exists()).toBe(true);
-                  break;
-                }
-              }
-            }
-            break;
-          }
-        }
-
-        break;
-      }
-    }
-  }
-
-  const requestedPackages = registry.getRequestedPackages();
-  const requestedTarballs = registry.getRequestedTarballs();
-
-  // when we have no node modules and the scanner comes from npm, we must first install the scanner
-  // but, if we expect the scanner to report failure then we should ONLY see the scanner tarball requested, no others
-  // Exception: when hasTTY is true and ttyResponse is "y", the user accepts the warning and installation continues
-  const installationWasCancelled =
-    scannerReturns === "fatal" || (scannerReturns === "warn" && (!hasTTY || ttyResponse === "n"));
-
-  if (scannerType === "npm" && !hasExistingNodeModules && installationWasCancelled) {
-    const doWeExpectToAlwaysTryToResolve =
-      // If there is no lockfile, we will resolve packages
-      !hasLockfile ||
-      // Unless we are updating
-      (command === "update" && args.length === 0) ||
-      // Unless there are arguments, but it's chill because one of the arguments is the security
-      // scanner, so we would expect to be resolving
-      args.includes("test-security-scanner");
-
-    if (doWeExpectToAlwaysTryToResolve) {
-      expect(requestedPackages).toContain("test-security-scanner");
-    } else {
-      expect(requestedPackages).not.toContain("test-security-scanner");
-    }
-
-    // we should have ONLY requested the security scanner at this point
-    expect(requestedTarballs).toEqual(["/test-security-scanner-1.0.0.tgz"]);
-  }
-
-  const sortedPackages = [...requestedPackages].sort();
-  const sortedTarballs = [...requestedTarballs].sort();
-
-  const key = `${command} ${args.length > 0 ? "with args" : "without args"}` as const;
-  expect(sortedPackages).toMatchSnapshot(`requested-packages: ${key}`);
-  expect(sortedTarballs).toMatchSnapshot(`requested-tarballs: ${key}`);
+  const actual: CommandResult = {
+    exitCode: run.exitCode,
+    ...output,
+    scannerOutput,
+    ...(await readProjectState(dir)),
+    requestedPackages: registry.getRequestedPackages().sort(),
+    requestedTarballs: registry.getRequestedTarballs().sort(),
+  };
+  expect(actual).toEqual(expected.after);
 }
 
 export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeModules: boolean) {
   let i = 0;
 
-  const { describe, beforeAll, afterAll, test } = Bun.jest(selfModuleName);
-
-  beforeAll(async () => {
-    registryUrl = await startRegistry(DO_TEST_DEBUG);
-  });
-
-  afterAll(() => {
-    stopRegistry();
-  });
+  const { describe, expect, test } = Bun.jest(selfModuleName);
 
   const ttyConfigs = [
     { hasTTY: false, ttyResponse: "n", ttyLabel: "no-TTY" } as const,
@@ -557,57 +506,29 @@ export function runSecurityScannerTests(selfModuleName: string, hasExistingNodeM
 
                 const testName = getTestName(String(++i).padStart(4, "0"), hasExistingNodeModules);
 
-                if (TESTS_TO_SKIP.has(testName)) {
-                  return test.skip(testName, async () => {
-                    // TODO
-                  });
+                const skip =
+                  // PTY not supported on Windows
+                  (hasTTY && isWindows) ||
+                  // `uninstall` is the same as `remove`, optimising for CI time here
+                  (isCI && command === "uninstall") ||
+                  (isCI && Math.random() < (100 - CI_SAMPLE_PERCENT) / 100);
+
+                if (skip) {
+                  // A plain test.skip ends the concurrent group it sits in, so with most of the matrix skipped the
+                  // cases that do run would run one at a time.
+                  return test.concurrent.skip(testName, () => {});
                 }
 
-                if (hasTTY && isWindows) {
-                  return test.skip(testName, async () => {
-                    // PTY not supported on Windows
-                  });
-                }
-
-                if (isCI) {
-                  if (command === "uninstall") {
-                    return test.skip(testName, async () => {
-                      // Same as `remove`, optimising for CI time here
-                    });
-                  }
-
-                  const random = Math.random();
-
-                  if (random < (100 - CI_SAMPLE_PERCENT) / 100) {
-                    return test.skip(testName, async () => {
-                      // skipping this one for CI
-                    });
-                  }
-                }
-
-                // npm.bunfigonly is the case where a scanner is a valid npm package name identifier
-                // but is not referenced in package.json anywhere and is not in the lockfile, so the only knowledge
-                // of this package's existence is the fact that it was defined in as the value in bunfig.toml
-                // Therefore, we should fail because we don't know where to install it from
-                const shouldFail =
-                  scannerType === "npm.bunfigonly" ||
-                  scannerReturns === "fatal" ||
-                  (scannerReturns === "warn" && (!hasTTY || ttyResponse === "n"));
-
-                test(testName, async () => {
-                  await runSecurityScannerTest({
+                // Every case has its own directory and registry, so the whole matrix can run at once.
+                test.concurrent(testName, async () => {
+                  await runSecurityScannerTest(expect, {
                     command,
                     args,
                     hasExistingNodeModules,
+                    hasLockfile,
                     linker,
                     scannerType,
                     scannerReturns,
-                    shouldFail,
-                    hasLockfile,
-
-                    // TODO(@alii): Test this case
-                    scannerSyncronouslyThrows: false,
-
                     hasTTY,
                     ttyResponse,
                   });

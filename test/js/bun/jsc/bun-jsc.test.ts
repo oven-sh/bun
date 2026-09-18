@@ -101,8 +101,78 @@ describe("bun:jsc", () => {
   it("reoptimizationRetryCount", () => {
     expect(reoptimizationRetryCount(count)).toBeGreaterThanOrEqual(0);
   });
-  it("drainMicrotasks", () => {
-    expect(drainMicrotasks()).toBeUndefined();
+  describe("drainMicrotasks", () => {
+    it("returns undefined", () => {
+      expect(drainMicrotasks()).toBeUndefined();
+    });
+
+    it("runs promise reactions, queueMicrotask() and process.nextTick() callbacks", () => {
+      const ran: string[] = [];
+      Promise.resolve().then(() => ran.push("promise"));
+      queueMicrotask(() => ran.push("queueMicrotask"));
+      process.nextTick(() => ran.push("nextTick"));
+      drainMicrotasks();
+      expect(ran.sort()).toEqual(["nextTick", "promise", "queueMicrotask"]);
+    });
+
+    it("does not run a task that this thread has queued", async () => {
+      const { port1, port2 } = new MessageChannel();
+      try {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        const log: string[] = [];
+        port2.onmessage = e => {
+          log.push("message");
+          resolve(e.data);
+        };
+        // A message to a port of the same thread is a task in the event loop's queue from here on.
+        port1.postMessage("from port1");
+        drainMicrotasks();
+        log.push("after drainMicrotasks");
+
+        expect(await promise).toBe("from port1");
+        expect(log).toEqual(["after drainMicrotasks", "message"]);
+      } finally {
+        port1.close();
+        port2.close();
+      }
+    });
+
+    it("does not run a task that another thread has posted", async () => {
+      const ready = new Int32Array(new SharedArrayBuffer(4));
+      const url = URL.createObjectURL(
+        new Blob(
+          [
+            `self.onmessage = ({ data: ready }) => {
+              postMessage("from worker");
+              Atomics.store(ready, 0, 1);
+              Atomics.notify(ready, 0);
+            };`,
+          ],
+          { type: "text/javascript" },
+        ),
+      );
+      const worker = new Worker(url);
+      try {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        const log: string[] = [];
+        worker.onerror = reject;
+        worker.onmessage = e => {
+          log.push("message");
+          resolve(e.data);
+        };
+        worker.postMessage(ready);
+        // Block until the worker has posted its message, so that the task is in the queue for certain.
+        expect(Atomics.wait(ready, 0, 0, 30_000)).not.toBe("timed-out");
+        drainMicrotasks();
+        log.push("after drainMicrotasks");
+
+        expect(await promise).toBe("from worker");
+        expect(log).toEqual(["after drainMicrotasks", "message"]);
+      } finally {
+        worker.terminate();
+        URL.revokeObjectURL(url);
+      }
+    });
   });
   it("startRemoteDebugger", () => {
     // try {
@@ -196,11 +266,22 @@ describe("bun:jsc", () => {
     // sampled regardless of how fast the optimized code runs.
     const sampleInterval = 50;
 
-    // fib(26) keeps each call long enough (~400k recursive calls) to collect
-    // samples at a 50us interval while staying within the per-test timeout on
-    // slow debug builds; fib(30) takes >4s per call there.
+    // Keep the JS thread busy for a fixed wall-clock window so the sampler
+    // thread is guaranteed time to fire regardless of how fast the JIT makes
+    // fib() or how slowly the sampler thread wakes after start()/pause(). A
+    // single fib(n) call has no such lower bound: once JIT-compiled, fib(26)
+    // can complete inside one 50us sample interval on fast release hardware.
+    const work = () => {
+      const start = performance.now();
+      let acc = 0;
+      do {
+        acc += fib(18);
+      } while (performance.now() - start < 10);
+      return acc;
+    };
+
     // First profile call
-    const result1 = profile(() => fib(26), sampleInterval);
+    const result1 = profile(work, sampleInterval);
     expect(result1).toBeDefined();
     expect(result1.functions).toBeDefined();
     expect(result1.stackTraces).toBeDefined();
@@ -208,18 +289,40 @@ describe("bun:jsc", () => {
 
     // Second profile call - should work after first one completed
     // This verifies that shutdown() -> pause() fix works
-    const result2 = profile(() => fib(26), sampleInterval);
+    const result2 = profile(work, sampleInterval);
     expect(result2).toBeDefined();
     expect(result2.functions).toBeDefined();
     expect(result2.stackTraces).toBeDefined();
     expect(result2.stackTraces.traces.length).toBeGreaterThan(0);
 
     // Third profile call - verify profiler can be reused multiple times
-    const result3 = profile(() => fib(26), sampleInterval);
+    const result3 = profile(work, sampleInterval);
     expect(result3).toBeDefined();
     expect(result3.functions).toBeDefined();
     expect(result3.stackTraces).toBeDefined();
     expect(result3.stackTraces.traces.length).toBeGreaterThan(0);
+  });
+
+  it("profile accepts a callable Proxy", async () => {
+    // functionRunProfiler used to uncheckedDowncast<JSFunction> the callback after only
+    // checking isCallable(), which aborts asserts builds when the callable is a ProxyObject.
+    const script = `
+      const { profile } = require("bun:jsc");
+      const result = profile(new Proxy(function () { return 1; }, {}));
+      if (!result || typeof result.functions !== "string" || !("stackTraces" in result)) {
+        throw new Error("unexpected profile() result keys: " + JSON.stringify(result && Object.keys(result)));
+      }
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -306,6 +409,58 @@ it("deserialize rejects a typed array whose backing store is not an array buffer
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe("rejected\ntrue 1,2,3,4\ntrue 513,1027\n");
+  expect(exitCode).toBe(0);
+});
+
+it("deserialize rejects a RegExp record whose pattern does not parse", async () => {
+  // A serialized RegExp whose pattern bytes are rewritten to an unparseable
+  // expression must be rejected at deserialize time instead of producing a
+  // RegExp object that throws SyntaxError on every use.
+  const script = `
+    import { serialize, deserialize } from "bun:jsc";
+    import * as v8 from "node:v8";
+
+    function patch(buf) {
+      const bytes = buf instanceof Buffer ? buf : Buffer.from(buf);
+      const idx = bytes.indexOf("abc");
+      bytes.write("(((", idx, "latin1");
+      return buf;
+    }
+
+    for (const [name, ser, deser] of [
+      ["bun:jsc", serialize, deserialize],
+      ["node:v8", v8.serialize, v8.deserialize],
+    ]) {
+      let outcome;
+      try {
+        const value = deser(patch(ser(/abc/g)));
+        outcome = "accepted " + value.source + " " + value.flags;
+      } catch (error) {
+        outcome = error instanceof Error ? "rejected " + error.constructor.name : "threw non-error";
+      }
+      console.log(name, outcome);
+      // A valid RegExp still round-trips.
+      const roundTripped = deser(ser(/xyz/gi));
+      console.log(name, roundTripped instanceof RegExp, roundTripped.source, roundTripped.flags, roundTripped.test("AXYZB"));
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    [
+      "bun:jsc rejected TypeError",
+      "bun:jsc true xyz gi true",
+      "node:v8 rejected TypeError",
+      "node:v8 true xyz gi true",
+      "",
+    ].join("\n"),
+  );
   expect(exitCode).toBe(0);
 });
 
@@ -503,4 +658,31 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
+});
+
+describe("JsRef::Weak liveness", () => {
+  // collectSyncWithoutSweep leaves dead cells allocated until the incremental sweeper reaches them.
+  it("dead-but-unswept cells read as not live, kept cells read as live", () => {
+    const { jscInternals } = require("bun:internal-for-testing");
+    let objects: object[] = [];
+    const dropped: bigint[] = [];
+    for (let i = 0; i < 2000; i++) {
+      const o = { i, pad: [i] };
+      objects.push(o);
+      dropped.push(jscInternals.rawCellAddress(o));
+    }
+    const kept = { keep: true };
+    const keptAddr = jscInternals.rawCellAddress(kept);
+    expect(dropped.every(a => jscInternals.isLiveCellAtRawAddress(a))).toBe(true);
+    expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
+
+    objects = [];
+    jscInternals.collectSyncWithoutSweep();
+
+    // A few may survive via the conservative stack scan; the bulk must read as dead.
+    const stillLive = dropped.filter(a => jscInternals.isLiveCellAtRawAddress(a)).length;
+    expect(stillLive).toBeLessThan(dropped.length / 2);
+    expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
+    expect(kept.keep).toBe(true);
+  });
 });

@@ -23,12 +23,26 @@ interface Case {
 }
 
 const sym = Symbol("shared");
+const sharedArrayBuffer = new ArrayBuffer(4);
+
+function float64WithNaNPayload(bits: bigint) {
+  const arr = new Float64Array(1);
+  new BigUint64Array(arr.buffer)[0] = bits;
+  return arr;
+}
 
 class WithPrototypeGetter {
   get a() {
     return 1;
   }
 }
+
+class WithValue {
+  a = 1;
+}
+
+const sharedConstructor = function sharedConstructor() {};
+const sharedPrototype = { p: 1 };
 
 function anonymousClassInstance() {
   return new (class {
@@ -45,6 +59,27 @@ function sameNameClassInstance() {
 function nonEnumerable() {
   const object = {};
   Object.defineProperty(object, "hidden", { value: 1, enumerable: false });
+  return object;
+}
+
+function withHiddenProperty<T extends object>(object: T, key: PropertyKey, value: unknown): T {
+  return Object.defineProperty(object, key, { value, writable: true, configurable: true });
+}
+
+function withOwnConstructor(prototype: object | null, constructor: unknown) {
+  return Object.create(prototype, { constructor: { value: constructor } });
+}
+
+function seventyProperties<T extends Record<string, unknown>>(object: T): T {
+  for (let i = 0; i < 70; i++) (object as Record<string, unknown>)["k" + i] = i;
+  return object;
+}
+
+function dictionaryMode<T extends Record<string, unknown>>(object: T): T {
+  for (let i = 0; i < 5; i++) {
+    (object as Record<string, unknown>)["t" + i] = 1;
+    delete (object as Record<string, unknown>)["t" + i];
+  }
   return object;
 }
 
@@ -117,6 +152,34 @@ const cases: Case[] = [
     loose: true,
   },
   { name: "two boxed bigints", a: () => Object(1n), b: () => Object(1n), strict: true, loose: true },
+  {
+    name: "two boxed symbols wrapping distinct symbols",
+    a: () => Object(Symbol("s")),
+    b: () => Object(Symbol("s")),
+    strict: false,
+    loose: false,
+  },
+  { name: "two boxed unequal bigints", a: () => Object(1n), b: () => Object(2n), strict: false, loose: false },
+  {
+    name: "a boxed string with an extra own property",
+    a: () => withExtraProperty(new String("test")),
+    b: () => new String("test"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "a boxed string with an out-of-range indexed own property",
+    a: () => {
+      const boxed = new String("ab");
+      boxed[5] = "x";
+      return boxed;
+    },
+    b: () => new String("ab"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
 
   // Undefined-valued and missing properties. Both modes compare own key counts.
   {
@@ -167,7 +230,6 @@ const cases: Case[] = [
     b: () => ({}),
     strict: false,
     loose: true,
-    strictBug: "reports equal",
   },
   {
     name: "two null-prototype objects with the same keys",
@@ -205,7 +267,6 @@ const cases: Case[] = [
     b: anonymousClassInstance,
     strict: false,
     loose: true,
-    strictBug: "matches classes by name, so reports equal",
   },
   {
     name: "instances of two distinct identically named classes",
@@ -213,7 +274,6 @@ const cases: Case[] = [
     b: sameNameClassInstance,
     strict: false,
     loose: true,
-    strictBug: "matches classes by name, so reports equal",
   },
   {
     name: "an Array subclass instance and an array",
@@ -221,7 +281,6 @@ const cases: Case[] = [
     b: () => [],
     strict: false,
     loose: true,
-    strictBug: "reports equal",
   },
   {
     name: "[] and Object.create(Array.prototype)",
@@ -229,6 +288,280 @@ const cases: Case[] = [
     b: () => Object.create(Array.prototype),
     strict: false,
     loose: false,
+  },
+  // Strict mode compares the inherited constructor, not the [[Prototype]]
+  // itself: an object with a plain-object prototype chain still equals {}.
+  {
+    name: "Object.create({ x: 1 }) and {}",
+    a: () => Object.create({ x: 1 }),
+    b: () => ({}),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{} and Object.create({ x: 1 })",
+    a: () => ({}),
+    b: () => Object.create({ x: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "two objects with different non-null prototypes",
+    a: () => Object.create({ x: 1 }),
+    b: () => Object.create({ z: 2 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "nested objects whose prototypes differ",
+    a: () => ({ a: { ns: Object.create({ inherited: 1 }) } }),
+    b: () => ({ a: { ns: {} } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a class instance and an object inheriting the same prototype",
+    a: () => new WithValue(),
+    b: () => Object.assign(Object.create(WithValue.prototype), { a: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Map subclass instance and a Map",
+    a: () => new (class extends Map {})(),
+    b: () => new Map(),
+    strict: false,
+    loose: true,
+  },
+  // An own "constructor" property only short-circuits the prototype
+  // comparison when its value is a well-known built-in constructor.
+  {
+    name: "own constructor: Object on objects with different prototypes",
+    a: () => Object.create({ q: 1 }, { constructor: { value: Object } }),
+    b: () => Object.create({ w: 2 }, { constructor: { value: Object } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: a user function on objects with different prototypes",
+    a: () => Object.create({ q: 1 }, { constructor: { value: sharedConstructor } }),
+    b: () => Object.create({ w: 2 }, { constructor: { value: sharedConstructor } }),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "own constructor: a user function on objects with the same prototype",
+    a: () => Object.create(sharedPrototype, { constructor: { value: sharedConstructor } }),
+    b: () => Object.create(sharedPrototype, { constructor: { value: sharedConstructor } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: different non-enumerable user functions on objects with the same prototype",
+    a: () => Object.create(sharedPrototype, { constructor: { value: function A() {} } }),
+    b: () => Object.create(sharedPrototype, { constructor: { value: function B() {} } }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Proxy of {} and {}",
+    a: () => new Proxy({}, {}),
+    b: () => ({}),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Proxy of { a: 1 } and { a: 1 }",
+    a: () => new Proxy({ a: 1 }, {}),
+    b: () => ({ a: 1 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{ a: 1 } and a Proxy of { a: 2 }",
+    a: () => ({ a: 1 }),
+    b: () => new Proxy({ a: 2 }, {}),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "a Proxy of a class instance and another instance of that class",
+    a: () => new Proxy(new WithValue(), {}),
+    b: () => new WithValue(),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a Proxy whose getPrototypeOf trap returns null and a null-prototype object",
+    a: () => new Proxy({}, { getPrototypeOf: () => null }),
+    b: () => Object.create(null),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "a Proxy with an own constructor: Object and an object with another prototype and the same own constructor",
+    a: () => new Proxy({ constructor: Object }, {}),
+    b: () => Object.create({ z: 1 }, { constructor: { value: Object, enumerable: true } }),
+    strict: true,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "own constructor: Uint8Array on objects with different prototypes",
+    a: () => withOwnConstructor({ q: 1 }, Uint8Array),
+    b: () => withOwnConstructor({ w: 2 }, Uint8Array),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: Buffer on objects with different prototypes",
+    a: () => withOwnConstructor({ q: 1 }, Buffer),
+    b: () => withOwnConstructor({ w: 2 }, Buffer),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: DataView on objects with different prototypes",
+    a: () => withOwnConstructor({ q: 1 }, DataView),
+    b: () => withOwnConstructor({ w: 2 }, DataView),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "own constructor: TypeError on objects with different prototypes",
+    a: () => withOwnConstructor({ q: 1 }, TypeError),
+    b: () => withOwnConstructor({ w: 2 }, TypeError),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "own non-enumerable constructor: Object and Array on the same structure",
+    a: () => withHiddenProperty({}, "constructor", Object),
+    b: () => withHiddenProperty({}, "constructor", Array),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "objects with different prototypes whose inherited constructor is undefined",
+    a: () => Object.create(withOwnConstructor(null, undefined)),
+    b: () => Object.create(withOwnConstructor(null, undefined)),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "Object.setPrototypeOf([], null) and []",
+    a: () => Object.setPrototypeOf([], null),
+    b: () => [],
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "{} and Object.create(Object.create(Object.prototype))",
+    a: () => ({}),
+    b: () => Object.create(Object.create(Object.prototype)),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{} and an object whose prototype has a getter",
+    a: () => ({}),
+    b: () =>
+      Object.create({
+        get g() {
+          return 1;
+        },
+      }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{} and an object inheriting Symbol.toStringTag",
+    a: () => ({}),
+    b: () => Object.create({ [Symbol.toStringTag]: "X" }),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "Object.create({ x: 1 }) and { x: 1 }",
+    a: () => Object.create({ x: 1 }),
+    b: () => ({ x: 1 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "70-property objects, one with an inherited enumerable property",
+    a: () => seventyProperties({}),
+    b: () => seventyProperties(Object.create({ inherited: 1 })),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "a dictionary-mode object and one with an inherited enumerable property",
+    a: () => dictionaryMode({ x: 1, y: 2 }),
+    b: () => Object.assign(Object.create({ inherited: 1 }), { x: 1, y: 2 }),
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "{ x: 1 } and an object with a non-enumerable x",
+    a: () => ({ x: 1 }),
+    b: () => withHiddenProperty({}, "x", 1),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "an object with a non-enumerable x and { x: 1 }",
+    a: () => withHiddenProperty({}, "x", 1),
+    b: () => ({ x: 1 }),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "{ x: 1, y: 2 } and { x: 1 } with a non-enumerable y",
+    a: () => ({ x: 1, y: 2 }),
+    b: () => withHiddenProperty({ x: 1 }, "y", 2),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "a Date and a Date subclass instance with the same time",
+    a: () => new Date(0),
+    b: () => new (class extends Date {})(0),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "a boxed string and a null-prototype boxed string",
+    a: () => new String("a"),
+    b: () => Object.setPrototypeOf(new String("a"), null),
+    strict: false,
+    loose: true,
+    looseBug: "throws a TypeError",
+  },
+  {
+    name: "new Number(1) and Object.create(Number.prototype)",
+    a: () => new Number(1),
+    b: () => Object.create(Number.prototype),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "an Error and a plain object inheriting Error.prototype with the same message",
+    a: () => new Error("a"),
+    b: () => withHiddenProperty(withHiddenProperty(Object.create(Error.prototype), "message", "a"), "stack", ""),
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "two pending Promises",
+    a: () => new Promise(() => {}),
+    b: () => new Promise(() => {}),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
   },
 
   // Symbol keys: compared in strict mode, ignored in loose mode.
@@ -245,6 +578,20 @@ const cases: Case[] = [
     a: () => ({ [sym]: 1 }),
     b: () => ({ [sym]: 1 }),
     strict: true,
+    loose: true,
+  },
+  {
+    name: "an enumerable symbol key and a non-enumerable one",
+    a: () => ({ [sym]: 1 }),
+    b: () => Object.defineProperty({}, sym, { value: 1, enumerable: false }),
+    strict: false,
+    loose: true,
+  },
+  {
+    name: "typed arrays differing only in a symbol property",
+    a: () => Object.assign(new Uint8Array([1]), { [sym]: true }),
+    b: () => Object.assign(new Uint8Array([1]), { [sym]: false }),
+    strict: false,
     loose: true,
   },
   {
@@ -293,7 +640,6 @@ const cases: Case[] = [
     b: () => new Date(0),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
 
@@ -306,7 +652,6 @@ const cases: Case[] = [
     b: () => /a/g,
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
 
@@ -392,7 +737,6 @@ const cases: Case[] = [
     b: () => new Map(),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
   {
@@ -413,7 +757,6 @@ const cases: Case[] = [
     b: () => new WeakMap(),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
   {
@@ -422,7 +765,6 @@ const cases: Case[] = [
     b: () => new WeakSet(),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
   {
@@ -485,12 +827,28 @@ const cases: Case[] = [
     loose: true,
   },
   {
+    name: "a DataView with an extra own string-named property",
+    a: () => withExtraProperty(new DataView(new ArrayBuffer(2))),
+    b: () => new DataView(new ArrayBuffer(2)),
+    strict: false,
+    loose: false,
+  },
+  {
+    // node's DataView compare uses getOwnNonIndexProperties; an integer-index
+    // own property is ignored, like on typed arrays.
+    name: "a DataView with an extra integer-index own property",
+    a: () => Object.assign(new DataView(new ArrayBuffer(2)), { 0: 1 }),
+    b: () => new DataView(new ArrayBuffer(2)),
+    strict: true,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
     name: "a Buffer and a Uint8Array with the same bytes",
     a: () => Buffer.from([1]),
     b: () => new Uint8Array([1]),
     strict: false,
     loose: true,
-    strictBug: "reports equal",
   },
   {
     name: "a typed array with an extra own property",
@@ -498,8 +856,31 @@ const cases: Case[] = [
     b: () => new Uint8Array([1]),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
+  },
+  {
+    name: "an empty typed array with an extra own property",
+    a: () => withExtraProperty(new Uint8Array(0)),
+    b: () => new Uint8Array(0),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "two views over the same ArrayBuffer, one with an extra own property",
+    a: () => withExtraProperty(new Uint8Array(sharedArrayBuffer)),
+    b: () => new Uint8Array(sharedArrayBuffer),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    // Strict mode compares the bytes; the property walk would see both as NaN and accept them.
+    name: "Float64Arrays with distinct NaN payloads and an extra own property",
+    a: () => withExtraProperty(float64WithNaNPayload(0x7ff8000000000001n)),
+    b: () => withExtraProperty(float64WithNaNPayload(0x7ff8000000000002n)),
+    strict: false,
+    loose: false,
   },
 
   // Arrays.
@@ -510,7 +891,6 @@ const cases: Case[] = [
     b: () => [1],
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
   { name: "arrays of different length", a: () => [1, 2], b: () => [1], strict: false, loose: false },
@@ -616,6 +996,157 @@ describe("util.isDeepStrictEqual", () => {
     expect(util.isDeepStrictEqual(undefined, undefined)).toBe(true);
     expect(util.isDeepStrictEqual(null, undefined)).toBe(false);
     expect(util.isDeepStrictEqual(Object.create(null), Object.create(null))).toBe(true);
+  });
+
+  test("reads an array's own symbol-keyed getter once per side", () => {
+    const s = Symbol("k");
+    let calls = 0;
+    const make = () => {
+      const a = [1];
+      Object.defineProperty(a, s, { enumerable: true, get: () => (calls++, 42) });
+      return a;
+    };
+    expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  // The third argument was added in Node v26.
+  describe("skipPrototype", () => {
+    class Foo {
+      constructor(value) {
+        this.value = value;
+      }
+    }
+    class Bar {
+      constructor(value) {
+        this.value = value;
+      }
+    }
+
+    test("ignores differing constructors when set", () => {
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42))).toBe(false);
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42), true)).toBe(true);
+    });
+
+    test("still compares values", () => {
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(99), true)).toBe(false);
+    });
+
+    test.each([
+      ["object property", () => ({ inner: new Foo(1) }), () => ({ inner: new Bar(1) })],
+      ["array element", () => [new Foo(1)], () => [new Bar(1)]],
+      ["Map value", () => new Map([["k", new Foo(1)]]), () => new Map([["k", new Bar(1)]])],
+      ["Set element", () => new Set([new Foo(1)]), () => new Set([new Bar(1)])],
+      ["Error cause", () => new Error("e", { cause: new Foo(1) }), () => new Error("e", { cause: new Bar(1) })],
+    ])("propagates through %s", (_name, makeA, makeB) => {
+      expect(util.isDeepStrictEqual(makeA(), makeB())).toBe(false);
+      expect(util.isDeepStrictEqual(makeA(), makeB(), true)).toBe(true);
+    });
+
+    test("still compares Object.prototype.toString tags", () => {
+      expect(util.isDeepStrictEqual(argumentsObject(1), { 0: 1 }, true)).toBe(false);
+      expect(util.isDeepStrictEqual(argumentsObject(1), argumentsObject(1), true)).toBe(true);
+      expect(util.isDeepStrictEqual(Object.create({ [Symbol.toStringTag]: "X" }), {}, true)).toBe(false);
+    });
+
+    test("ignores the boxed-primitive subclass distinction", () => {
+      class S extends String {}
+      expect(util.isDeepStrictEqual(new String("a"), new S("a"))).toBe(false);
+      expect(util.isDeepStrictEqual(new String("a"), new S("a"), true)).toBe(true);
+    });
+
+    test("does not leak into assert.deepStrictEqual", () => {
+      expect(() => assert.deepStrictEqual(new Foo(42), new Bar(42))).toThrow();
+    });
+  });
+});
+
+describe("detached ArrayBuffer", () => {
+  function detached() {
+    const buf = new ArrayBuffer(4);
+    buf.transfer();
+    return buf;
+  }
+
+  const table: Array<[string, Thunk, Thunk]> = [
+    ["two distinct detached ArrayBuffers", detached, detached],
+    ["a detached ArrayBuffer and a zero-length ArrayBuffer", detached, () => new ArrayBuffer(0)],
+    ["a zero-length ArrayBuffer and a detached ArrayBuffer", () => new ArrayBuffer(0), detached],
+    ["nested detached ArrayBuffers", () => ({ x: detached() }), () => ({ x: detached() })],
+  ];
+
+  for (const [label, a, b] of table) {
+    test(`throws TypeError on ${label}`, () => {
+      expect(() => assert.deepStrictEqual(a(), b())).toThrow(TypeError);
+      expect(() => assert.deepEqual(a(), b())).toThrow(TypeError);
+      expect(() => assert.notDeepStrictEqual(a(), b())).toThrow(TypeError);
+      expect(() => assert.notDeepEqual(a(), b())).toThrow(TypeError);
+      expect(() => util.isDeepStrictEqual(a(), b())).toThrow(TypeError);
+    });
+  }
+
+  test("deepStrictEqual throws Node's DataView TypeError on a detached view", () => {
+    const detachedView = () => {
+      const ab = new ArrayBuffer(4);
+      const dv = new DataView(ab);
+      structuredClone(ab, { transfer: [ab] });
+      return dv;
+    };
+    const error = caught(() => assert.deepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0))));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error?.message).toBe(
+      "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer",
+    );
+    expect(() => util.isDeepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0)))).toThrow(TypeError);
+    // Bun.deepEquals keeps its own-properties DataView surface: no throw.
+    expect(Bun.deepEquals(detachedView(), new DataView(new ArrayBuffer(0)), true)).toBe(true);
+  });
+
+  test("assert.partialDeepStrictEqual throws TypeError on a detached ArrayBuffer", () => {
+    expect(() => assert.partialDeepStrictEqual(detached(), new ArrayBuffer(0))).toThrow(TypeError);
+  });
+
+  test("assert.partialDeepStrictEqual checks own properties on a KeyObject after equals()", () => {
+    const crypto = require("node:crypto");
+    const key = crypto.createSecretKey(Buffer.from("secret"));
+    const key2 = crypto.createSecretKey(Buffer.from("secret"));
+    Object.assign(key2, { x: 1 });
+    // expected has {x:1} that actual lacks: node throws ERR_ASSERTION.
+    expect(() => assert.partialDeepStrictEqual(key, key2)).toThrow(assert.AssertionError);
+    // subset direction: extra own prop on actual is fine.
+    expect(() =>
+      assert.partialDeepStrictEqual(Object.assign(key, { x: 1 }), crypto.createSecretKey(Buffer.from("secret"))),
+    ).not.toThrow();
+  });
+
+  test("error matches Node's message", () => {
+    const error = caught(() => assert.deepStrictEqual(detached(), new ArrayBuffer(0)));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error?.message).toBe("Cannot perform Construct on a detached ArrayBuffer");
+  });
+
+  test("reference-identical detached ArrayBuffer short-circuits as equal", () => {
+    const buf = detached();
+    expect(() => assert.deepStrictEqual(buf, buf)).not.toThrow();
+    expect(util.isDeepStrictEqual(buf, buf)).toBe(true);
+  });
+
+  test("detached ArrayBuffer vs non-zero-length ArrayBuffer is an ordinary mismatch", () => {
+    const error = caught(() => assert.deepStrictEqual(detached(), new ArrayBuffer(4)));
+    expect(error?.code).toBe("ERR_ASSERTION");
+  });
+
+  // Node v26 passes typed-array views directly to Buffer.compare (no re-wrap over
+  // .buffer), so a detached view compares as zero-length. Node v22 and earlier threw.
+  test("a detached typed-array view is comparable as zero-length", () => {
+    function detachedView() {
+      const buf = new ArrayBuffer(4);
+      const view = new Uint8Array(buf);
+      buf.transfer();
+      return view;
+    }
+    expect(() => assert.deepStrictEqual(detachedView(), detachedView())).not.toThrow();
+    expect(() => assert.deepStrictEqual(detachedView(), new Uint8Array(0))).not.toThrow();
   });
 });
 

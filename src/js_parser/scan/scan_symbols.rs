@@ -5,23 +5,24 @@ use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub fn find_symbol(
+    pub(crate) fn find_symbol(
         &mut self,
         loc: bun_ast::Loc,
         name: &'a [u8],
-    ) -> Result<FindSymbolResult, bun_core::Error> {
+    ) -> Result<FindSymbolResult, crate::Error> {
         self.find_symbol_with_record_usage::<true>(loc, name)
     }
 
-    pub fn find_symbol_with_record_usage<const RECORD_USAGE: bool>(
+    pub(crate) fn find_symbol_with_record_usage<const RECORD_USAGE: bool>(
         &mut self,
         loc: bun_ast::Loc,
         name: &'a [u8],
-    ) -> Result<FindSymbolResult, bun_core::Error> {
+    ) -> Result<FindSymbolResult, crate::Error> {
         // Every `break 'brk` below assigns `declare_loc` first; the one
         // early-`return` builds its own `FindSymbolResult` without reading it.
         let declare_loc: bun_ast::Loc;
         let mut is_inside_with_scope = false;
+        let mut scope_use = true;
         // This function can show up in profiling.
         // That's part of why we do this.
         // Instead of rehashing `name` for every scope, we do it just once.
@@ -54,6 +55,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Is the symbol a member of this scope?
                 if let Some(member) = scope.get_member_with_hash(name, hash) {
                     declare_loc = member.loc;
+                    // Unbound globals live in the module scope.
+                    scope_use = self.track_scope_uses
+                        && (scope.parent.is_some()
+                            || self.symbols[member.ref_.inner_index() as usize].kind
+                                != js_ast::symbol::Kind::Unbound);
                     break 'brk member.ref_;
                 }
 
@@ -77,7 +83,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     break 'brk *existing;
                                 }
                                 let arg_ref = ts.arg_ref;
-                                let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name)?;
+                                let new_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
                                 // Re-borrow ts_namespace mutably after &mut self.
                                 let ts_mut = &mut *ts_namespace;
                                 ts_mut.property_accesses.insert(name, new_ref);
@@ -106,9 +112,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
             }
 
-            let gpe = self
-                .module_scope_mut()
-                .get_or_put_member_with_hash(name, hash);
+            // SAFETY: `name` is a slice of the source or the lexer's string table.
+            let gpe = unsafe {
+                self.module_scope_mut()
+                    .get_or_put_member_with_hash(name, hash)
+            };
 
             // I don't think this happens?
             if gpe.found_existing {
@@ -119,16 +127,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // gpe borrows self.module_scope while self.new_symbol needs &mut self.
             // Drop gpe, allocate, then re-insert.
-            let new_ref = self
-                .new_symbol(js_ast::symbol::Kind::Unbound, name)
-                .expect("unreachable");
+            let new_ref = self.new_symbol(js_ast::symbol::Kind::Unbound, name);
 
-            *self
-                .module_scope_mut()
-                .get_or_put_member_with_hash(name, hash)
-                .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
+            // SAFETY: as above.
+            *unsafe {
+                self.module_scope_mut()
+                    .get_or_put_member_with_hash(name, hash)
+            }
+            .value_ptr = js_ast::scope::Member { ref_: new_ref, loc };
 
             declare_loc = loc;
+            scope_use = false;
 
             break 'brk new_ref;
         };
@@ -143,7 +152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Track how many times we've referenced this symbol
         if RECORD_USAGE {
-            self.record_usage(ref_);
+            self.record_usage_impl(ref_, scope_use);
         }
 
         Ok(FindSymbolResult {

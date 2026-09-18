@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { symlink } from "fs/promises";
-import { tempDirWithFiles } from "harness";
+import { tempDir } from "harness";
 import path from "path";
 
 test("Object prototype followSymlinks", async () => {
-  const dir = tempDirWithFiles("glob-follow", {
+  await using dir = tempDir("glob-follow", {
     "abc/def/file.txt": "file",
     "symed/file2.txt": "file",
   });

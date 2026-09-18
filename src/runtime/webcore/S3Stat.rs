@@ -1,19 +1,19 @@
-use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_core::String as BunString;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 
 bun_output::declare_scope!(S3Stat, visible);
 
 #[bun_jsc::JsClass]
 pub struct S3Stat {
-    pub size: u64,
-    pub etag: BunString,
-    pub content_type: BunString,
-    pub last_modified: f64,
+    pub(crate) size: u64,
+    pub(crate) etag: BunString,
+    pub(crate) content_type: BunString,
+    pub(crate) last_modified: f64,
 }
 
 impl S3Stat {
     pub(crate) fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
-        Err(global.throw_illegal_constructor("S3Stat"))
+        Err(global.throw_illegal_constructor())
     }
 
     pub(crate) fn init(
@@ -23,10 +23,8 @@ impl S3Stat {
         last_modified: &[u8],
         global: &JSGlobalObject,
     ) -> JsResult<Box<Self>> {
-        // `bun_core::String` is `Copy` (no `Drop`); wrap in `OwnedString` so the
-        // string is deref'd on both the `Ok` and `?`-error paths.
-        let mut date_str = OwnedString::new(BunString::init(last_modified));
-        let last_modified = bun_jsc::bun_string_jsc::parse_date(&mut date_str, global)?;
+        let last_modified =
+            bun_string_jsc::parse_date(&BunString::from_bytes(last_modified), global)?;
 
         Ok(Box::new(S3Stat {
             size,
@@ -54,17 +52,5 @@ impl S3Stat {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_last_modified(&self, global: &JSGlobalObject) -> JSValue {
         JSValue::from_date_number(global, self.last_modified)
-    }
-}
-
-impl Drop for S3Stat {
-    fn drop(&mut self) {
-        // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl
-        // (src/string/lib.rs), so dropping the Box alone would leak the +1
-        // WTFStringImpl refs taken by `clone_utf8` in `init`. Release them
-        // explicitly.
-        // The default `JsFinalize::finalize` (`drop(self)`) runs this on GC.
-        self.etag.deref();
-        self.content_type.deref();
     }
 }

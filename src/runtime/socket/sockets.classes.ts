@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 function generate(ssl) {
   return define({
@@ -8,8 +8,13 @@ function generate(ssl) {
     configurable: false,
     memoryCost: true,
     // Visited slot holding the shared JSSocketHandlers cell, so the callbacks
-    // stay alive as long as any socket that can still fire them.
-    values: ["handlers"],
+    // stay alive as long as any socket that can still fire them. The duplex*
+    // slots carry the origin stream and the four native listener thunks for a
+    // TLSSocket driven by an upgraded Duplex (UpgradedDuplex); plain TCP
+    // sockets never populate them.
+    values: ssl
+      ? ["handlers", "duplexOrigin", "duplexOnData", "duplexOnEnd", "duplexOnWritable", "duplexOnClose"]
+      : ["handlers"],
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",
@@ -192,10 +197,6 @@ function generate(ssl) {
         cache: true,
       },
 
-      //   cork: {
-      //     fn: "cork",
-      //     length: 1,
-      //   },
       data: {
         getter: "getData",
         cache: true,
@@ -204,10 +205,6 @@ function generate(ssl) {
       readyState: {
         getter: "getReadyState",
       },
-
-      // topics: {
-      //   getter: "getTopics",
-      // },
 
       remoteFamily: {
         getter: "getRemoteFamily",
@@ -249,7 +246,7 @@ function generate(ssl) {
       },
       ...(ssl ? sslOnly : {}),
     },
-    finalize: true,
+    refCounted: true,
     construct: true,
     klass: {},
   });
@@ -389,6 +386,9 @@ export default [
       closed: {
         getter: "getClosed",
       },
+      fd: {
+        getter: "getFd",
+      },
       setBroadcast: {
         fn: "setBroadcast",
         length: 1,
@@ -490,7 +490,7 @@ export default [
     name: "BlockList",
     construct: true,
     call: false,
-    finalize: true,
+    refCounted: true,
     estimatedSize: true,
     // inspectCustom: true,
     structuredClone: { transferable: false, tag: 251, storable: false },

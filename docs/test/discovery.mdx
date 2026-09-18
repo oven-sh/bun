@@ -59,7 +59,7 @@ To filter tests by name rather than file path, use the `-t`/`--test-name-pattern
 bun test --test-name-pattern addition
 ```
 
-The pattern is matched against the test name prefixed with the labels of all its parent `describe` blocks, separated by spaces. For example, a test defined as:
+`bun test` matches the pattern against the test name prefixed with the labels of all its parent `describe` blocks, separated by spaces. For example, a test defined as:
 
 ```ts title="math.test.ts" icon="/icons/typescript.svg"
 describe("Math", () => {
@@ -71,7 +71,7 @@ describe("Math", () => {
 });
 ```
 
-This test is matched against the string "Math operations should add correctly".
+For this test, `bun test` matches the pattern against the string "Math operations should add correctly".
 
 ### Changing the Root Directory
 
@@ -86,5 +86,5 @@ root = "src"  # Only scan for tests in the src directory
 
 Tests run in the following order:
 
-1. Test files run sequentially (not in parallel)
+1. Test files run sequentially, or across worker processes with [`--parallel`](/test/parallel)
 2. Within each file, tests run sequentially in definition order

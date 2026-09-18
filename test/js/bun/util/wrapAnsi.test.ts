@@ -47,6 +47,16 @@ describe("Bun.wrapAnsi", () => {
       // The behavior may vary - just check it doesn't crash
       expect(typeof result).toBe("string");
     });
+
+    // wordWrap defaults on and is `options.wordWrap !== false`: only an
+    // explicit `false` turns it off, other falsy values keep the default.
+    test.each([undefined, null, 0, ""])("wordWrap: %p keeps word wrapping on", value => {
+      expect(Bun.wrapAnsi("hello world", 3, { wordWrap: value as boolean })).toBe("hello\nworld");
+    });
+
+    test("wordWrap: false breaks words character-by-character", () => {
+      expect(Bun.wrapAnsi("hello world", 3, { wordWrap: false })).toBe("hel\nlo\nwor\nld");
+    });
   });
 
   describe("trim option", () => {
@@ -56,6 +66,80 @@ describe("Bun.wrapAnsi", () => {
 
     test("trim false preserves leading whitespace", () => {
       expect(Bun.wrapAnsi("  hello", 10, { trim: false })).toBe("  hello");
+    });
+
+    // trim defaults on and is `options.trim !== false`: only an explicit
+    // `false` turns it off, other falsy values keep the default.
+    test.each([undefined, null, 0, ""])("trim: %p keeps trimming on", value => {
+      expect(Bun.wrapAnsi("hello world", 5, { trim: value as boolean })).toBe("hello\nworld");
+    });
+
+    test("trim: false keeps the separator space on its own row", () => {
+      expect(Bun.wrapAnsi("hello world", 5, { trim: false })).toBe("hello\n \nworld");
+    });
+
+    describe("keeps zero-width non-space characters", () => {
+      // Trailing-space trim removes only U+0020 past the last visible word;
+      // zero-width content (ZWSP, ZWJ, combining marks, escapes) is kept, as in
+      // wrap-ansi's stringVisibleTrimSpacesRight.
+      const cases: [label: string, input: string, columns: number, expected: string][] = [
+        ["ZWSP word wrapped", "ab \u200B cd", 2, "ab\u200B\ncd"],
+        ["ZWSP trailing word fits", "ab \u200B", 5, "ab\u200B"],
+        ["ZWSP trailing word wrapped", "ab \u200B", 2, "ab\u200B"],
+        ["ZWSP alone", "\u200B", 5, "\u200B"],
+        ["ZWSP with surrounding spaces", " \u200B ", 5, "\u200B"],
+        ["ZWSP inside SGR", "ab \x1b[31m\u200B\x1b[39m cd", 2, "ab\x1b[31m\u200B\x1b[39m\ncd"],
+        ["ZWSP inside SGR alone", "\x1b[31m\u200B\x1b[39m", 5, "\x1b[31m\u200B\x1b[39m"],
+        ["ZWJ word", "a \u200D b", 1, "a\u200D\nb"],
+        ["combining mark word", "ab \u0301 cd", 2, "ab\u0301\ncd"],
+        ["trailing space after zero-width word", "ab \u200B ", 10, "ab\u200B"],
+        ["zero-width tail then SGR", "ab \u200B \x1b[31m", 2, "ab\u200B\x1b[31m"],
+      ];
+      test.each(cases)("%s", (_, input, columns, expected) => {
+        expect(Bun.wrapAnsi(input, columns)).toBe(expected);
+        expect(Bun.wrapAnsi(input, columns, { hard: true })).toBe(expected);
+      });
+
+      test("family emoji hard-wrapped at columns=1 keeps every ZWJ", () => {
+        const fam = "\u{1F469}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}";
+        expect(Bun.wrapAnsi(fam, 1, { hard: true })).toBe(
+          "\n\u{1F469}\n\u200D\n\u{1F469}\n\u200D\n\u{1F467}\n\u200D\n\u{1F466}",
+        );
+      });
+    });
+
+    // Leading-whitespace trim must not depend on which escape sequence precedes
+    // it: the CSI scanner ends on any final byte in 0x40-0x7E (ECMA-48 §5.4),
+    // not just SGR's 'm'. With the escape stripped the result is identical.
+    describe("leading trim after non-SGR escape prefixes", () => {
+      const trimCases: [label: string, input: string, columns: number, expected: string][] = [
+        ["SGR red", "\x1b[31m\tab cd", 2, "\x1b[31mab\x1b[39m\n\x1b[31mcd"],
+        ["clear screen", "\x1b[2J\tab cd", 2, "\x1b[2Jab\ncd"],
+        ["erase line", "\x1b[0K\tab cd", 2, "\x1b[0Kab\ncd"],
+        ["cursor home", "\x1b[H\tab cd", 2, "\x1b[Hab\ncd"],
+        ["cursor up", "\x1b[1A\tab cd", 2, "\x1b[1Aab\ncd"],
+        ["cursor position", "\x1b[1;1H\tab cd", 2, "\x1b[1;1Hab\ncd"],
+        ["DEC private mode", "\x1b[?25l\tab cd", 2, "\x1b[?25lab\ncd"],
+        [
+          "OSC 8 hyperlink",
+          "\x1b]8;;http://x\x07\tab cd",
+          2,
+          "\x1b]8;;http://x\x07ab\x1b]8;;\x07\n\x1b]8;;http://x\x07cd",
+        ],
+        ["CSI then SGR", "\x1b[2J\x1b[31m\tab cd", 2, "\x1b[2J\x1b[31mab\x1b[39m\n\x1b[31mcd"],
+      ];
+
+      describe.each(trimCases)("%s", (_, input, columns, expected) => {
+        test("trims leading tab", () => {
+          expect(Bun.wrapAnsi(input, columns)).toBe(expected);
+        });
+        test("stripANSI composes with wrapAnsi", () => {
+          expect(Bun.stripANSI(Bun.wrapAnsi(input, columns))).toBe(Bun.wrapAnsi(Bun.stripANSI(input), columns));
+        });
+        test("trim:false preserves leading tab", () => {
+          expect(Bun.wrapAnsi(input, columns, { trim: false })).toContain("\t");
+        });
+      });
     });
   });
 
@@ -94,6 +178,211 @@ describe("Bun.wrapAnsi", () => {
       // ANSI codes should not count toward width
       // "ab" is 2 chars, should fit in width 2
       expect(Bun.wrapAnsi(input, 2)).toBe(input);
+    });
+
+    // SGR close codes (22-29, 49, 55) and unknown codes have no close mapping
+    // in ansi-styles' codes map, so npm wrap-ansi never re-emits them after a
+    // line break. Only open codes with a known close code are closed-then-reopened.
+    test.each([22, 23, 24, 25, 27, 28, 29, 49, 55, 39, 0, 200])(
+      "does not re-open SGR close/unknown code %p after line break",
+      code => {
+        expect(Bun.wrapAnsi(`\x1b[${code}mabc def`, 3)).toBe(`\x1b[${code}mabc\ndef`);
+      },
+    );
+
+    test.each([
+      [1, 22],
+      [4, 24],
+      [31, 39],
+      [42, 49],
+      [53, 55],
+      [100, 49],
+    ])("re-opens SGR open code %p after line break", (open, close) => {
+      expect(Bun.wrapAnsi(`\x1b[${open}mabc def`, 3)).toBe(`\x1b[${open}mabc\x1b[${close}m\n\x1b[${open}mdef`);
+    });
+
+    test("close code following an open code is not carried across line break", () => {
+      expect(Bun.wrapAnsi("\x1b[42mab\x1b[49mcd ef", 4)).toBe("\x1b[42mab\x1b[49mcd\nef");
+    });
+  });
+
+  // Every escape form from the ECMA-48 grammar is zero-width and never split:
+  // nF (ESC ( 0), Fs (ESC 7), C1 CSI (0x9b) and control strings (DCS ... ST).
+  describe("escape grammar", () => {
+    const boxes = "x\x1b(0lqqqqqqqqqqk\x1b(B";
+    const cases: [
+      label: string,
+      input: string,
+      columns: number,
+      options: Bun.WrapAnsiOptions | undefined,
+      expected: string,
+    ][] = [
+      ["DEC line-drawing charset (ESC ( 0) hard", boxes, 6, { hard: true }, "x\x1b(0lqqqq\nqqqqqq\nk\x1b(B"],
+      ["DEC line-drawing charset soft", boxes, 6, undefined, boxes],
+      ["Fs escape (ESC 7) hard", "aaa \x1b7bbbbbbb cc", 6, { hard: true }, "aaa \x1b7bb\nbbbbb\ncc"],
+      [
+        "Fs escape (ESC 7) hard trim:false",
+        "aaa \x1b7bbbbbbb cc",
+        6,
+        { hard: true, trim: false },
+        "aaa \x1b7bb\nbbbbb \ncc",
+      ],
+      ["Fs escape (ESC 7) soft", "aaa \x1b7bbbbbbb cc", 6, undefined, "aaa\n\x1b7bbbbbbb\ncc"],
+      ["Fs escape (ESC 7) wordWrap:false", "aaa \x1b7bbbbbbb cc", 6, { wordWrap: false }, "aaa \x1b7bb\nbbbbb\ncc"],
+      ["C1 CSI (0x9b) hard", "aaaa\x9b31mbb", 3, { hard: true }, "aaa\na\x9b31mbb"],
+      ["C1 CSI non-SGR final byte (K)", "\x9b2Kabcdef", 3, { hard: true }, "\x9b2Kabc\ndef"],
+      ["C1 CSI SGR carried across a row break", "\x9b31mabc def", 3, undefined, "\x9b31mabc\x1b[39m\n\x1b[31mdef"],
+      ["DCS payload with a space", "ab \x1bPfoo bar\x1b\\cd ef", 5, undefined, "ab \x1bPfoo bar\x1b\\cd\nef"],
+      ["C1 DCS (0x90) with C1 ST (0x9c)", "ab \x90foo bar\x9ccd ef", 5, undefined, "ab \x90foo bar\x9ccd\nef"],
+      // A control-string payload is opaque: C1 CSI / OSC 8 bytes inside it do
+      // not open a style or hyperlink that would be carried across rows.
+      [
+        "C1 CSI bytes inside an SOS payload are not a style",
+        "\x1bXnote\x9b31m\x1b\\aaaa bbbb",
+        4,
+        undefined,
+        "\x1bXnote\x9b31m\x1b\\aaaa\nbbbb",
+      ],
+      [
+        "C1 OSC 8 inside an SOS payload is not a hyperlink",
+        "\x1bXn\x9d8;;http://evil\x07\x1b\\aaaa bbbb",
+        4,
+        undefined,
+        "\x1bXn\x9d8;;http://evil\x07\x1b\\aaaa\nbbbb",
+      ],
+      [
+        "SGR hard wrap around wide chars (UTF-16 path)",
+        "\x1b[31m日本語\x1b[39m",
+        4,
+        { hard: true },
+        "\x1b[31m日本\x1b[39m\n\x1b[31m語\x1b[39m",
+      ],
+    ];
+    test.each(cases)("%s", (_, input, columns, options, expected) => {
+      expect(Bun.wrapAnsi(input, columns, options)).toBe(expected);
+    });
+  });
+
+  describe("OSC 8 hyperlinks", () => {
+    const cases: [
+      label: string,
+      input: string,
+      columns: number,
+      options: Bun.WrapAnsiOptions | undefined,
+      expected: string,
+    ][] = [
+      // A space inside the URL is OSC payload, not a word boundary; the link is
+      // closed at the row end and re-opened on the next row.
+      [
+        "BEL terminator, space in URL",
+        "\x1b]8;;file:///a b.txt\x07link text\x1b]8;;\x07",
+        5,
+        undefined,
+        "\x1b]8;;file:///a b.txt\x07link\x1b]8;;\x07\n\x1b]8;;file:///a b.txt\x07text\x1b]8;;\x07",
+      ],
+      [
+        "ST terminator (ESC backslash)",
+        "\x1b]8;;http://example.com\x1b\\text here\x1b]8;;\x1b\\",
+        5,
+        undefined,
+        "\x1b]8;;http://example.com\x1b\\text\x1b]8;;\x07\n\x1b]8;;http://example.com\x07here\x1b]8;;\x1b\\",
+      ],
+      // The id= params are kept when the link is re-opened on the next row.
+      [
+        "id= params",
+        "\x1b]8;id=foo;http://example.com\x07link text here\x1b]8;;\x07",
+        5,
+        undefined,
+        "\x1b]8;id=foo;http://example.com\x07link\x1b]8;;\x07\n\x1b]8;id=foo;http://example.com\x07text\x1b]8;;\x07\n\x1b]8;id=foo;http://example.com\x07here\x1b]8;;\x07",
+      ],
+      [
+        "hard wrap inside link text",
+        "\x1b]8;;http://x\x07abcdef\x1b]8;;\x07",
+        3,
+        { hard: true },
+        "\x1b]8;;http://x\x07abc\x1b]8;;\x07\n\x1b]8;;http://x\x07def\x1b]8;;\x07",
+      ],
+      [
+        "C1 OSC (0x9d) with C1 ST (0x9c)",
+        "\x9d8;;http://x\x9cab cd",
+        2,
+        undefined,
+        "\x9d8;;http://x\x9cab\x1b]8;;\x07\n\x1b]8;;http://x\x07cd",
+      ],
+      // An OSC 8 aborted by CAN/SUB (payload discarded) or by a new escape
+      // sequence never opened a link, so nothing is closed/re-opened at rows.
+      [
+        "OSC 8 aborted by CAN opens no link",
+        "\x1b]8;;http://x\x18clickable words here",
+        9,
+        undefined,
+        "\x1b]8;;http://x\x18clickable\nwords\nhere",
+      ],
+      [
+        "OSC 8 aborted by SUB opens no link",
+        "\x1b]8;;http://x\x1aclickable words here",
+        9,
+        undefined,
+        "\x1b]8;;http://x\x1aclickable\nwords\nhere",
+      ],
+      [
+        "OSC 8 aborted by a new escape sequence opens no link",
+        "\x1b]8;;http://x\x1b7clickable words here",
+        9,
+        undefined,
+        "\x1b]8;;http://x\x1b7clickable\nwords\nhere",
+      ],
+      [
+        "closed link with a spaced URL fits on one row",
+        "\x1b]8;;file:///Users/me/My Documents/notes.txt\x07notes\x1b]8;;\x07 open",
+        10,
+        undefined,
+        "\x1b]8;;file:///Users/me/My Documents/notes.txt\x07notes\x1b]8;;\x07 open",
+      ],
+      [
+        "closed link with a spaced URL wraps between words",
+        "\x1b]8;;file:///Users/me/My Documents/notes.txt\x07notes\x1b]8;;\x07 open",
+        5,
+        undefined,
+        "\x1b]8;;file:///Users/me/My Documents/notes.txt\x07notes\x1b]8;;\x07\nopen",
+      ],
+    ];
+    test.each(cases)("%s", (_, input, columns, options, expected) => {
+      expect(Bun.wrapAnsi(input, columns, options)).toBe(expected);
+    });
+
+    // An unterminated OSC swallows the rest of the line as payload (as a
+    // terminal does), so it is never split and the output cannot grow beyond
+    // the input.
+    test.each([false, true])("unterminated OSC 8 is not split (hard: %p)", hard => {
+      const input = "\x1b]8;;http://x/" + Buffer.alloc(1000 * 5, " word").toString();
+      const output = Bun.wrapAnsi(input, 80, { hard });
+      expect({ length: output.length, sameAsInput: output === input }).toEqual({
+        length: input.length,
+        sameAsInput: true,
+      });
+      expect(output.length).toBeLessThan(input.length * 2);
+    });
+  });
+
+  describe("carriage return", () => {
+    // A bare \r breaks a line like \n does (each break is emitted as one \n).
+    // Claude Code's wrap-text maps wrapped output back onto the original
+    // string by relying on every \r becoming a break.
+    test.each([undefined, { hard: true }])("bare \\r is a line break (%p)", options => {
+      expect(Bun.wrapAnsi("AA\rBB\rCC", 100, options)).toBe("AA\nBB\nCC");
+      expect(Bun.wrapAnsi("Downloading  40%\rDownloading 100% done, moving on to next step", 24, options)).toBe(
+        "Downloading  40%\nDownloading 100% done,\nmoving on to next step",
+      );
+    });
+
+    test("trailing bare \\r is a break to an empty final line", () => {
+      expect(Bun.wrapAnsi("abc\r", 10)).toBe("abc\n");
+    });
+
+    test("\\r\\n normalizes to \\n", () => {
+      expect(Bun.wrapAnsi("hello\r\nworld", 10)).toBe("hello\nworld");
+      expect(Bun.wrapAnsi("hello\r\nworld", 3, { hard: true })).toBe("hel\nlo\nwor\nld");
     });
   });
 
@@ -653,6 +942,112 @@ describe("Bun.wrapAnsi", () => {
     });
   });
 
+  // A 64 KiB synthetic allocation limit: 2048 rows in a line, 65,536 Latin-1 or 32,768 UTF-16 characters in a row.
+  describe("a row or a row list that cannot grow", () => {
+    const outOfMemory = "RangeError: Out of memory";
+
+    // `cases` is the source of { name: [input, columns, options?] }. The child reports each result's length, or the
+    // error. It builds the inputs with repeat(), which does not depend on the limit the child runs under.
+    async function wrapWithSyntheticLimit(cases: string) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const cases = ${cases};
+          const results = {};
+          for (const [name, args] of Object.entries(cases)) {
+            try {
+              results[name] = Bun.wrapAnsi(...args).length;
+            } catch (e) {
+              results[name] = e.name + ": " + e.message;
+            }
+          }
+          console.log(JSON.stringify(results));`,
+        ],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
+    }
+
+    test.concurrent("throws when the list of rows cannot grow", async () => {
+      const result = await wrapWithSyntheticLimit(`{
+        rowsAtBound: ["a ".repeat(2048), 1],
+        rowsPastBound: ["a ".repeat(2049), 1],
+        wideRowsAtBound: ["あ ".repeat(2048), 2],
+        wideRowsPastBound: ["あ ".repeat(2049), 2],
+        // In each case below a different statement of wrapAnsi.cpp starts the row that does not fit.
+        // placeWord(): the row is full and wordWrap is off.
+        wordsNoWordWrap: ["a ".repeat(3000), 1, { wordWrap: false }],
+        // placeWord(): a hard-wrapped word starts on a row of its own.
+        hardWords: ["bb ".repeat(1500), 1, { hard: true }],
+        // wrapWord(): the row is full and the word goes on.
+        hardWord: ["a".repeat(3000), 1, { hard: true }],
+        // wrapWord(): a wide character does not fit in the row.
+        wideHardWord: ["あ".repeat(3000), 1, { hard: true }],
+        // The other two callers of wrapWord().
+        wordNoWordWrap: ["a".repeat(3000), 1, { wordWrap: false }],
+        wordNoWordWrapAfterText: ["a " + "b".repeat(7000), 3, { wordWrap: false }],
+      }`);
+      expect(result).toEqual({
+        stdout: {
+          rowsAtBound: 4095,
+          rowsPastBound: outOfMemory,
+          wideRowsAtBound: 4095,
+          wideRowsPastBound: outOfMemory,
+          wordsNoWordWrap: outOfMemory,
+          hardWords: outOfMemory,
+          hardWord: outOfMemory,
+          wideHardWord: outOfMemory,
+          wordNoWordWrap: outOfMemory,
+          wordNoWordWrapAfterText: outOfMemory,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("throws when one row cannot grow", async () => {
+      // No text here is wider than columns before a row passes the bound, so one row takes all of it.
+      const result = await wrapWithSyntheticLimit(`{
+        wordAtBound: ["a".repeat(65536), 100000],
+        wordPastBound: ["a".repeat(65537), 100000],
+        wideWordAtBound: ["あ".repeat(32768), 100000],
+        wideWordPastBound: ["あ".repeat(32769), 100000],
+        // The last space is character 65,536 of its row, then character 65,537.
+        spaceAtBound: ["a" + " a".repeat(32767) + " ", 100000],
+        spacePastBound: ["aa" + " a".repeat(32767) + " ", 100000],
+        // In each case below a different statement of wrapAnsi.cpp adds the text that does not fit.
+        // placeWord(): a word after other words.
+        words: ["ab ".repeat(30000), 100000],
+        // wrapWord(): one character of a hard-wrapped word.
+        hardWord: ["a".repeat(70000), 69999, { hard: true }],
+        // wrapWord(): an escape sequence in a hard-wrapped word.
+        escapesInHardWord: ["\\x1b[31m".repeat(14000) + "a".repeat(11), 10, { hard: true }],
+        // wrapWord(): a last row of only escape sequences goes back into the row before it.
+        trailingEscapeFoldedBack: ["a".repeat(2 * 65534) + "\\x1b[39m", 65534, { hard: true }],
+      }`);
+      expect(result).toEqual({
+        stdout: {
+          wordAtBound: 65536,
+          wordPastBound: outOfMemory,
+          wideWordAtBound: 32768,
+          wideWordPastBound: outOfMemory,
+          spaceAtBound: 65535,
+          spacePastBound: outOfMemory,
+          words: outOfMemory,
+          hardWord: outOfMemory,
+          escapesInHardWord: outOfMemory,
+          trailingEscapeFoldedBack: outOfMemory,
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   describe("long inputs", () => {
     test("wraps a long run of color escape sequences on one line", async () => {
       await using proc = Bun.spawn({
@@ -665,6 +1060,30 @@ describe("Bun.wrapAnsi", () => {
             `const expected = Buffer.alloc(count * 5, "\\x1b[31m").toString();`,
             `const result = Bun.wrapAnsi(input, 80);`,
             `console.log(result === expected ? "match" : "mismatch:" + result.length);`,
+          ].join("\n"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("match\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // A single word made of many escape sequences (no separator spaces) must
+    // stay linear: the word-separator scan advances past each escape once
+    // instead of re-searching to the end of the line per escape.
+    test("keeps a long space-free run of colored characters on one row", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          [
+            `const input = Buffer.alloc(100000 * 6, "\\x1b[31mX").toString();`,
+            `const result = Bun.wrapAnsi(input, 80);`,
+            `console.log(result === input ? "match" : "mismatch:" + result.length);`,
           ].join("\n"),
         ],
         env: bunEnv,

@@ -11,8 +11,6 @@ use core::ffi::c_void;
 
 use super::ref_counted_str::RefCountedStr;
 
-bun_core::declare_scope!(EnvStrLog, hidden);
-
 /// Packed `u128` layout (LSB-first):
 /// - bits  0..48  : `ptr` (u48)
 /// - bits 48..64  : `tag` (u16)
@@ -73,7 +71,7 @@ impl EnvStr {
     }
 
     #[inline]
-    pub fn init_slice(str: &[u8]) -> EnvStr {
+    pub(crate) fn init_slice(str: &[u8]) -> EnvStr {
         if str.is_empty() {
             // Zero length strings may have invalid pointers, leading to a bad integer cast.
             return Self::pack(0, Tag::Empty, 0);
@@ -83,7 +81,7 @@ impl EnvStr {
     }
 
     /// Same thing as `init_ref_counted` except it duplicates the passed string
-    pub fn dupe_ref_counted(old_str: &[u8]) -> EnvStr {
+    pub(crate) fn dupe_ref_counted(old_str: &[u8]) -> EnvStr {
         if old_str.is_empty() {
             return Self::pack(0, Tag::Empty, 0);
         }
@@ -102,7 +100,7 @@ impl EnvStr {
     /// Takes ownership of the backing allocation (hands the slice to
     /// `RefCountedStr` without copying). Use [`Self::dupe_ref_counted`] to
     /// copy a borrowed slice instead.
-    pub fn init_ref_counted(str: Box<[u8]>) -> EnvStr {
+    pub(crate) fn init_ref_counted(str: Box<[u8]>) -> EnvStr {
         if str.is_empty() {
             return Self::pack(0, Tag::Empty, 0);
         }
@@ -116,7 +114,7 @@ impl EnvStr {
         )
     }
 
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         // NOTE: the returned slice borrows either external memory (Tag::Slice) or the
         // RefCountedStr buffer. Tying the return lifetime to `&self` prevents the caller from
         // conjuring `&'static [u8]` (PORTING.md §Forbidden: lifetime-extension via raw-pointer
@@ -133,7 +131,7 @@ impl EnvStr {
         }
     }
 
-    pub fn memory_cost(self) -> usize {
+    pub(crate) fn memory_cost(self) -> usize {
         let divisor: usize = 'brk: {
             if let Some(refc) = self.as_ref_counted() {
                 break 'brk refc.refcount.get() as usize;

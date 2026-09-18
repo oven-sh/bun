@@ -15,10 +15,10 @@ const ObjectFreeze = Object.freeze;
 const TypedArrayPrototypeFill = Uint8Array.prototype.fill;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const NumberIsNaN = Number.isNaN;
+const NumberIsInteger = Number.isInteger;
 const MathMax = Math.max;
 
-const ArrayBufferIsView = ArrayBuffer.isView;
-const isArrayBufferView = ArrayBufferIsView;
+const isArrayBufferView = ArrayBuffer.isView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
@@ -308,6 +308,21 @@ ZlibBase.prototype._processChunk = function (chunk, flushFlag, cb) {
   else return processChunkSync(this, chunk, flushFlag);
 };
 
+// Takes `have` bytes at `offset` out of an output chunk, without `slice` where possible. A slice gives
+// the chunk an ArrayBuffer. JSC then counts the chunk as allocated a second time, and only a full
+// collection takes it out of the heap size again, so full collections come often. A slice also keeps
+// the whole chunk alive with the result. nativeDecodePullResult in BunStreamSource.cpp has the same rule.
+function takeOutput(buffer, offset, have) {
+  // A full chunk: hand it over. The caller replaces an exhausted chunk.
+  if (offset === 0 && have === buffer.byteLength) return buffer;
+  // At most one default chunk: copy it out. A fractional chunkSize gives fractional offsets, which
+  // `slice` truncates and `copyBytesFrom` rejects.
+  if (have <= Z_DEFAULT_CHUNK && NumberIsInteger(offset) && NumberIsInteger(have)) {
+    return Buffer.copyBytesFrom(buffer, offset, have);
+  }
+  return buffer.slice(offset, offset + have);
+}
+
 function processChunkSync(self, chunk, flushFlag) {
   let availInBefore = chunk.byteLength;
   let availOutBefore = self._chunkSize - self._outOffset;
@@ -356,7 +371,7 @@ function processChunkSync(self, chunk, flushFlag) {
 
     const have = availOutBefore - availOutAfter;
     if (have > 0) {
-      const out = buffer.slice(offset, offset + have);
+      const out = takeOutput(buffer, offset, have);
       offset += have;
       ArrayPrototypePush.$call(buffers, out);
       nread += out.byteLength;
@@ -442,7 +457,7 @@ function processCallback() {
   const have = handle.availOutBefore - availOutAfter;
   let streamBufferIsFull = false;
   if (have > 0) {
-    const out = self._outBuffer.slice(self._outOffset, self._outOffset + have);
+    const out = takeOutput(self._outBuffer, self._outOffset, have);
     self._outOffset += have;
     streamBufferIsFull = !self.push(out);
   } else {
@@ -507,6 +522,7 @@ function processCallback() {
     // stream has ended early.
     // This applies to streams where we don't check data past the end of
     // what was consumed; that is, everything except Gunzip/Unzip.
+
     self.push(null);
   }
 
@@ -564,7 +580,11 @@ function Zlib(opts, mode) {
       if (isAnyArrayBuffer(dictionary)) {
         dictionary = Buffer.from(dictionary);
       } else {
-        throw $ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
+        throw $ERR_INVALID_ARG_TYPE(
+          "options.dictionary",
+          ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+          dictionary,
+        );
       }
     }
   }
@@ -674,7 +694,7 @@ function createConvenienceMethod(ctor, sync, methodName, isZstd) {
           bufferSize = 0;
         }
         // Set pledgedSrcSize if not already set
-        if (!opts.pledgedSrcSize && bufferSize > 0) {
+        if (!opts?.pledgedSrcSize && bufferSize > 0) {
           opts = { ...opts, pledgedSrcSize: bufferSize };
         }
       }
@@ -713,10 +733,23 @@ function Brotli(opts, mode) {
     });
   }
 
+  let dictionary = opts?.dictionary;
+  if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
+    if (isAnyArrayBuffer(dictionary)) {
+      dictionary = Buffer.from(dictionary);
+    } else {
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.dictionary",
+        ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+        dictionary,
+      );
+    }
+  }
+
   const handle = new NativeBrotli(mode);
 
   this._writeState = new Uint32Array(2);
-  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback)) {
+  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback, dictionary)) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
@@ -767,7 +800,16 @@ class Zstd extends ZlibBase {
     const pledgedSrcSize = opts?.pledgedSrcSize ?? undefined;
 
     const writeState = new Uint32Array(2);
-    handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback);
+    // Node does not validate options.dictionary here (unlike Zlib/Brotli) — a
+    // non-view is silently ignored — and re-reads it rather than caching. Both
+    // are load-bearing for parity, so this mirrors lib/zlib.js:920 verbatim.
+    handle.init(
+      initParamsArray,
+      pledgedSrcSize,
+      writeState,
+      processCallback,
+      opts?.dictionary && isArrayBufferView(opts.dictionary) ? opts.dictionary : undefined,
+    );
     super(opts, mode, handle, zstdDefaultOpts);
     this._writeState = writeState;
   }

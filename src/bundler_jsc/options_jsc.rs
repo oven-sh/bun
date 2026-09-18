@@ -3,7 +3,6 @@
 
 // `bun_bundler::options` re-exports `Target`/`Loader` but not `Format`; pull it
 // from the lower-tier source crate directly.
-use bun_core::ZigString;
 use bun_jsc::ComptimeStringMapExt as _;
 use bun_options_types::compile_target::CompileTarget;
 
@@ -31,25 +30,42 @@ pub fn loader_from_js(
         return Err(global.throw_invalid_arguments(format_args!("loader must be a string")));
     }
 
-    let mut zig_str = ZigString::init(b"");
-    loader.to_zig_string(&mut zig_str, global)?;
-    if zig_str.len == 0 {
+    let loader_str = loader.to_js_string_view(global)?;
+    if loader_str.is_empty() {
         return Ok(None);
     }
 
-    let slice = zig_str.to_slice();
+    let slice = loader_str.to_utf8();
 
     let Some(v) = bun_ast::Loader::from_string(slice.slice()) else {
         return Err(global.throw_invalid_arguments(format_args!(
-            "invalid loader - must be js, jsx, tsx, ts, css, file, toml, yaml, wasm, bunsh, json, or md"
+            "invalid loader - must be js, jsx, tsx, ts, css, json, jsonc, json5, toml, yaml, xml, text, wasm, or md"
         )));
     };
+    // These are valid `Loader` variants for the bundler but have no source-text
+    // transform; letting them through hits `parse_unsupported_loader` and aborts.
+    if matches!(
+        v,
+        bun_ast::Loader::File
+            | bun_ast::Loader::Napi
+            | bun_ast::Loader::Base64
+            | bun_ast::Loader::Dataurl
+            | bun_ast::Loader::Bunsh
+            | bun_ast::Loader::Sqlite
+            | bun_ast::Loader::SqliteEmbedded
+            | bun_ast::Loader::Html
+    ) {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "loader \"{}\" is not supported in Bun.Transpiler",
+            bstr::BStr::new(slice.slice()),
+        )));
+    }
     Ok(Some(v))
 }
 
 // ── CompileTarget ──────────────────────────────────────────────────────────
 pub fn compile_target_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<CompileTarget> {
-    let slice = value.to_slice(global)?;
+    let slice = value.to_utf8(global)?;
     if !slice.slice().starts_with(b"bun-") {
         return Err(global.throw_invalid_arguments(format_args!(
             "Expected compile target to start with 'bun-', got {}",

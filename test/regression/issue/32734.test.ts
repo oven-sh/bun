@@ -67,16 +67,25 @@ test("node:http upgrade socket emits 'close' when the WebSocket peer closes", as
   }
 });
 
-// The same fix covers CONNECT tunnels: a detached node:http CONNECT socket must
-// emit 'close' when the peer tears down the connection.
-test("node:http CONNECT tunnel socket emits 'close' when the peer closes", async () => {
+// CONNECT tunnels keep node's half-open semantics: after the peer's FIN the socket
+// emits 'end' but stays writable (node v26.3.0 emits no 'close' for a bare peer
+// teardown), and 'close' fires once this side finishes too. The tunnel lifecycle
+// must complete without hanging.
+test("node:http CONNECT tunnel socket emits 'end' on the peer's FIN and 'close' once ended", async () => {
   const server = http.createServer();
 
   const established = Promise.withResolvers<void>();
+  const tunnelEnded = Promise.withResolvers<void>();
   const connectClosed = Promise.withResolvers<void>();
 
   server.on("connect", (req, socket) => {
     socket.once("error", err => connectClosed.reject(err));
+    // Like node: the tunnel is half-open after the peer's FIN, so finish this
+    // half once the peer's side ends to complete the socket's lifecycle.
+    socket.once("end", () => {
+      tunnelEnded.resolve();
+      socket.end();
+    });
     socket.once("close", () => connectClosed.resolve());
     socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
   });
@@ -110,14 +119,15 @@ test("node:http CONNECT tunnel socket emits 'close' when the peer closes", async
       if (statusLine.includes(" 200 ")) {
         tunnelEstablished = true;
         established.resolve();
-        client!.destroy(); // peer tears down -> server tunnel socket must 'close'
+        client!.destroy(); // peer tears down -> the tunnel gets 'end', then 'close' once we end
       } else {
         established.reject(new Error(`unexpected CONNECT response: ${statusLine}`));
       }
     });
 
     await established.promise;
-    await connectClosed.promise; // hangs without the fix
+    await tunnelEnded.promise; // hangs if the peer's FIN never surfaces on the tunnel
+    await connectClosed.promise; // hangs if the completed tunnel never emits 'close'
   } finally {
     client?.destroy();
     server.close();

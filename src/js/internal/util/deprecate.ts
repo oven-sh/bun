@@ -37,6 +37,21 @@ function deprecate(fn, msg, code) {
 
   // The wrapper will keep the same prototype as fn to maintain prototype chain
   Object.setPrototypeOf(deprecated, fn);
+  const fnPrototype = fn.prototype;
+  if (fnPrototype) {
+    // Sharing fn.prototype makes instanceof work across the wrapper. Use defineProperty:
+    // builtin-compiled wrappers lack an own "prototype", so a plain assignment would hit
+    // fn's non-writable "prototype" through the prototype chain.
+    Object.defineProperty(deprecated, "prototype", {
+      __proto__: null,
+      value: fnPrototype,
+      writable: true,
+    });
+  }
+  Object.defineProperty(deprecated, "length", {
+    __proto__: null,
+    ...Object.getOwnPropertyDescriptor(fn, "length"),
+  });
   return deprecated;
 }
 

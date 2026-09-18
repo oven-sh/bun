@@ -37,7 +37,20 @@ static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBufferWithSize<8> args = MarkedArgumentBufferWithSize<8>();
     for (unsigned i = 0, size = callFrame->argumentCount(); i < size; ++i) {
-        args.append(callFrame->argument(i));
+        JSValue arg = callFrame->argument(i);
+        // A String object can run user JS (Symbol.toPrimitive / toString) when
+        // stringified; do it here so the resulting JSString is rooted in `args`
+        // before the native side borrows characters from any argument.
+        if (Function != Bun__Path__format && Function != Bun__Path__toNamespacedPath) {
+            if (arg.isCell()) {
+                const JSC::JSType type = arg.asCell()->type();
+                if (type == JSC::StringObjectType || type == JSC::DerivedStringObjectType) {
+                    arg = arg.toString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+            }
+        }
+        args.append(arg);
     }
     const auto result = Function(globalObject, isWindows, args.data(), args.size());
     RETURN_IF_EXCEPTION(scope, {});
@@ -141,15 +154,13 @@ JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto binding = constructEmptyArray(globalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(scope, {});
-    binding->putDirectIndex(
-        globalObject,
-        (unsigned)0,
-        Zig::createPath(globalObject, false));
+    auto* posix = Zig::createPath(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
-    binding->putDirectIndex(
-        globalObject,
-        (unsigned)1,
-        Zig::createPath(globalObject, true));
+    binding->putDirectIndex(globalObject, (unsigned)0, posix);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* win32 = Zig::createPath(globalObject, true);
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(globalObject, (unsigned)1, win32);
     RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }

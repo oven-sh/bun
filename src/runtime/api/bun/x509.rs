@@ -1,8 +1,6 @@
 use bun_boringssl_sys::X509;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-pub use bun_boringssl::x509::is_safe_alt_name;
-
 pub fn to_js(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     bun_jsc::from_js_host_call(global_object, || {
         Bun__X509__toJSLegacyEncoding(cert, global_object)

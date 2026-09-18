@@ -44,6 +44,19 @@
     "bench/react-hello-world/*.js",
     "bun.lock",
 
+    // Verbatim ports from Node.js v26.3.0 (lib/) — keep close to upstream
+    "src/js/node/repl.js",
+    "src/js/node/readline.js",
+    "src/js/node/readline.promises.js",
+    "src/js/internal/repl.js",
+    "src/js/internal/readline/**",
+    "src/js/internal/repl/history.js",
+    "src/js/internal/repl/utils.js",
+    "src/js/internal/repl/completion.js",
+    "src/js/internal/repl/await.js",
+    "src/js/internal/repl/acorn.js",
+    "src/js/internal/repl/acorn-walk.js",
+
     "test/js/node/**/parallel/**",
     "test/js/node/test/fixtures", // full of JS with intentional syntax errors
     "test/snippets/**",

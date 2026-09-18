@@ -1,7 +1,0 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::strings;
-use super::Expect;
-
-pub(crate) fn to_start_with(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    this.run_string_affix_matcher(global, frame, "toStartWith", "start with", strings::starts_with)
-}

@@ -17,8 +17,12 @@ import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { parsePackedFeaturesList } from "../../scripts/build/features-json.ts";
 import { computeFlags, DARWIN_STACK_SIZE } from "../../scripts/build/flags.ts";
 import { MACOS_SDK_VERSION, macosSdkCachePath, resolveMacosSdkPath } from "../../scripts/build/macos-sdk.ts";
-import { rustCanCrossFromLinux, rustTarget } from "../../scripts/build/rust.ts";
-import { machoEntitlementsPlist, machoPostlinkCommand } from "../../scripts/build/shims.ts";
+import { rustTarget } from "../../scripts/build/rust.ts";
+import {
+  elfDebugCompressPostlinkCommand,
+  machoEntitlementsPlist,
+  machoPostlinkCommand,
+} from "../../scripts/build/shims.ts";
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -33,10 +37,12 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
     rustLlvmVersion: "22.1.4",
-    rustSysroot: undefined,
-    rustHostTriple: undefined,
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
+    nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
@@ -181,7 +187,7 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
 
   test("native links don't get a postlink command", () => {
     const linux = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release" },
+      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", linuxSysroot: "/fake" },
       mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined }),
     );
     expect(machoPostlinkCommand(linux)).toBe("");
@@ -197,31 +203,59 @@ describe.skipIf(isMacOS)("macOS cross-compile config (non-darwin host)", () => {
   test("rust side cross-compiles to apple-darwin triples from linux", () => {
     const cfg = resolveDarwin();
     expect(rustTarget(cfg)).toBe("aarch64-apple-darwin");
-    expect(rustCanCrossFromLinux(cfg)).toBe(true);
     expect(rustTarget(resolveDarwin({ arch: "x64" }))).toBe("x86_64-apple-darwin");
   });
 
   test("WebKit prebuilt resolves to the macOS tarball with a macos-keyed cache dir", () => {
-    const cfg = resolveDarwin();
+    const cfg = resolveDarwin({ lto: false });
     const source = webkit.source(cfg);
     if (source.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${source.kind}`);
     expect(source.url).toContain("bun-webkit-macos-arm64.tar.gz");
     expect(source.destDir).toContain("-macos-arm64");
 
-    const x64 = webkit.source(resolveDarwin({ arch: "x64" }));
+    const x64 = webkit.source(resolveDarwin({ arch: "x64", lto: false }));
     if (x64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${x64.kind}`);
     expect(x64.url).toContain("bun-webkit-macos-amd64.tar.gz");
+
+    // Release defaults to LTO, which selects the bitcode (-lto) tarball.
+    const lto = webkit.source(resolveDarwin());
+    if (lto.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${lto.kind}`);
+    expect(lto.url).toContain("bun-webkit-macos-arm64-lto.tar.gz");
   });
 
-  test("native linux configs are unaffected", () => {
+  test("rust-lld links compress ELF debug sections post-link, not at link time", () => {
+    // rust-lld (built without LLVM_ENABLE_ZLIB) can't take
+    // --compress-debug-sections=zlib, so when the crosslang-LTO swap picks it
+    // the flag is dropped and llvm-objcopy compresses after the link instead.
+    // Uncompressed DWARF roughly doubles bun-profile, which every `--compile`
+    // test copies — the size is a CI-timeout regression, not just cosmetic.
+    const rustLld = "/fake/rust/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld/ld.lld";
+    const linux = { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", linuxSysroot: "/fake" } as const;
+    const withRustLld = resolveConfig(
+      { ...linux, lto: true },
+      mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined, rustLld }),
+    );
+    expect(withRustLld.ld).toBe(rustLld);
+    expect(computeFlags(withRustLld).ldflags).not.toContain("-Wl,--compress-debug-sections=zlib");
+    expect(elfDebugCompressPostlinkCommand(withRustLld)).toContain("--compress-debug-sections=zlib $out");
+
+    // System lld (no LTO, so no swap): compress at link time, no postlink pass.
+    const systemLld = resolveConfig(
+      { ...linux, lto: false },
+      mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined, rustLld }),
+    );
+    expect(systemLld.ld).toBe("/fake/llvm/bin/ld.lld");
+    expect(computeFlags(systemLld).ldflags).toContain("-Wl,--compress-debug-sections=zlib");
+    expect(elfDebugCompressPostlinkCommand(systemLld)).toBe("");
+  });
+
+  test("linux configs don't pick up darwin cross machinery", () => {
     const cfg = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release" },
+      { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", linuxSysroot: "/fake" },
       mockToolchain({ ld64Lld: undefined, llvmStrip: undefined, dsymutil: undefined }),
     );
-    expect(cfg.crossTarget).toBeUndefined();
     expect(cfg.osxSysroot).toBeUndefined();
     expect(cfg.ld).toBe("/fake/llvm/bin/ld.lld");
-    expect(cfg.strip).toBe("/fake/bin/strip");
 
     const flags = computeFlags(cfg);
     expect(flags.cxxflags.some(f => f.includes("apple-macosx"))).toBe(false);

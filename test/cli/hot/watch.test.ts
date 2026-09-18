@@ -1,13 +1,13 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isBroken, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, forEachLine, isBroken, isWindows, tempDir } from "harness";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe.todoIf(isBroken && isWindows)("--watch works", async () => {
   for (const watchedFile of ["entry.js", "tmp.js"]) {
     test(`with ${watchedFile}`, async () => {
-      const tmpdir_ = tempDirWithFiles("watch-fixture", {
+      await using tmpdir_ = tempDir("watch-fixture", {
         "tmp.js": "console.log('hello #1')",
         "entry.js": "import './tmp.js'",
         "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),

@@ -39,13 +39,6 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
         self.ptr.as_ptr()
     }
 
-    /// Alias of [`Self::get`] — provided so call sites that previously used a
-    /// hand-rolled `NonNull` wrapper (e.g. `AbortSignalRef`) keep compiling.
-    #[inline]
-    pub fn as_ptr(&self) -> *mut T {
-        self.ptr.as_ptr()
-    }
-
     /// # Safety
     /// `raw` must be a valid pointer managed by the external refcount.
     pub unsafe fn clone_from_raw(raw: *mut T) -> Self {
@@ -55,20 +48,6 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
             // SAFETY: caller contract requires `raw` to be a valid (hence
             // non-null) pointer.
             ptr: unsafe { NonNull::new_unchecked(raw) },
-        }
-    }
-
-    /// Returns the raw pointer without decrementing the ref count. Consumes `self`.
-    pub fn leak(self) -> *mut T {
-        let this = core::mem::ManuallyDrop::new(self);
-        this.ptr.as_ptr()
-    }
-
-    /// Consumes `self`, converting into the optional form.
-    pub fn into_optional(self) -> ExternalSharedOptional<T> {
-        let this = core::mem::ManuallyDrop::new(self);
-        ExternalSharedOptional {
-            ptr: Some(this.ptr),
         }
     }
 }
@@ -102,81 +81,6 @@ impl<T: ExternalSharedDescriptor> Drop for ExternalShared<T> {
     fn drop(&mut self) {
         // SAFETY: `self.ptr` is valid; we hold one ref which we now release.
         unsafe { T::ext_deref(self.ptr.as_ptr()) };
-    }
-}
-
-/// Optional variant of [`ExternalShared`].
-#[repr(transparent)]
-pub struct ExternalSharedOptional<T: ExternalSharedDescriptor> {
-    ptr: Option<NonNull<T>>,
-}
-
-impl<T: ExternalSharedDescriptor> ExternalSharedOptional<T> {
-    pub const fn init_null() -> Self {
-        Self { ptr: None }
-    }
-
-    /// `incremented_raw`, if non-null, should have already had its ref count incremented by 1.
-    ///
-    /// # Safety
-    /// If non-null, `incremented_raw` must be valid and carry one transferred ref.
-    pub unsafe fn adopt(incremented_raw: *mut T) -> Self {
-        Self {
-            ptr: NonNull::new(incremented_raw),
-        }
-    }
-
-    pub fn get(&self) -> Option<*mut T> {
-        self.ptr.map(|p| p.as_ptr())
-    }
-
-    /// Sets `self` to null, returning the non-optional pointer if present.
-    pub fn take(&mut self) -> Option<ExternalShared<T>> {
-        let ptr = self.ptr.take()?;
-        Some(ExternalShared { ptr })
-    }
-
-    /// # Safety
-    /// If non-null, `raw` must be a valid pointer managed by the external refcount.
-    pub unsafe fn clone_from_raw(raw: *mut T) -> Self {
-        if let Some(some_raw) = NonNull::new(raw) {
-            // SAFETY: caller contract.
-            unsafe { T::ext_ref(some_raw.as_ptr()) };
-        }
-        Self {
-            ptr: NonNull::new(raw),
-        }
-    }
-
-    /// Returns the raw pointer without decrementing the ref count. Consumes `self`.
-    pub fn leak(self) -> Option<*mut T> {
-        let this = core::mem::ManuallyDrop::new(self);
-        this.ptr.map(|p| p.as_ptr())
-    }
-}
-
-impl<T: ExternalSharedDescriptor> Default for ExternalSharedOptional<T> {
-    fn default() -> Self {
-        Self::init_null()
-    }
-}
-
-impl<T: ExternalSharedDescriptor> Clone for ExternalSharedOptional<T> {
-    fn clone(&self) -> Self {
-        if let Some(ptr) = self.ptr {
-            // SAFETY: `ptr` is valid while `self` is alive.
-            unsafe { T::ext_ref(ptr.as_ptr()) };
-        }
-        Self { ptr: self.ptr }
-    }
-}
-
-impl<T: ExternalSharedDescriptor> Drop for ExternalSharedOptional<T> {
-    fn drop(&mut self) {
-        if let Some(ptr) = self.ptr {
-            // SAFETY: `ptr` is valid; we hold one ref which we now release.
-            unsafe { T::ext_deref(ptr.as_ptr()) };
-        }
     }
 }
 

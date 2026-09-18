@@ -35,7 +35,7 @@ $ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config 
 ```
 
 ```bash#Fedora
-$ sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+$ sudo dnf install clang23 llvm23 lld23 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash#openSUSE Tumbleweed
@@ -94,17 +94,17 @@ Our build scripts will automatically detect and use `ccache` if available. You c
 
 ## Install LLVM
 
-Bun requires LLVM 21.1.8 (`clang` is part of LLVM). This version is enforced by the build system — mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
+Bun requires LLVM 23.1.1 (`clang` is part of LLVM). This version is enforced by the build system — mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
 {% codetabs group="os" %}
 
 ```bash#macOS (Homebrew)
-$ brew install llvm@21
+$ brew install llvm@23
 ```
 
 ```bash#Ubuntu/Debian
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
-$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 21 all
+$ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 23 all
 ```
 
 ```bash#Arch
@@ -116,17 +116,17 @@ $ sudo dnf install llvm clang lld-devel
 ```
 
 ```bash#openSUSE Tumbleweed
-$ sudo zypper install clang21 lld21 llvm21
+$ sudo zypper install clang23 lld23 llvm23
 ```
 
 {% /codetabs %}
 
-If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
+If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.1).
 
-Make sure Clang/LLVM 21 is in your path:
+Make sure Clang/LLVM 23 is in your path:
 
 ```bash
-$ which clang-21
+$ which clang-23
 ```
 
 If not, run this to manually add it:
@@ -135,13 +135,13 @@ If not, run this to manually add it:
 
 ```bash#macOS (Homebrew)
 # use fish_add_path if you're using fish
-# use path+="$(brew --prefix llvm@21)/bin" if you are using zsh
-$ export PATH="$(brew --prefix llvm@21)/bin:$PATH"
+# use path+="$(brew --prefix llvm@23)/bin" if you are using zsh
+$ export PATH="$(brew --prefix llvm@23)/bin:$PATH"
 ```
 
 ```bash#Arch
 # use fish_add_path if you're using fish
-$ export PATH="$PATH:/usr/lib/llvm21/bin"
+$ export PATH="$PATH:/usr/lib/llvm23/bin"
 ```
 
 {% /codetabs %}
@@ -275,8 +275,9 @@ WebKit is not cloned by default (to save time and disk space). To clone and buil
 # Clone WebKit into ./vendor/WebKit
 $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 
-# Check out the commit hash specified in WEBKIT_VERSION in scripts/build/deps/webkit.ts
-$ git -C vendor/WebKit checkout <commit_hash>
+# Check out the version pinned in WEBKIT_VERSION in scripts/build/deps/webkit.ts
+# (a commit sha or an autobuild-* release tag; this handles both)
+$ bun sync-webkit-source
 
 # Build bun with the local JSC build — this automatically configures and builds JSC
 $ bun run build:local
@@ -294,7 +295,7 @@ Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
 
-Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in [`scripts/build/deps/webkit.ts`](/scripts/build/deps/webkit.ts) to point to the commit hash.
+Note that if you make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change `WEBKIT_VERSION` in [`scripts/build/deps/webkit.ts`](/scripts/build/deps/webkit.ts) to point to your commit hash or release tag.
 
 ## Troubleshooting
 
@@ -317,7 +318,7 @@ The issue may manifest when initially running `bun setup` as Clang being unable 
 ```
 The C++ compiler
 
-  "/usr/bin/clang++-21"
+  "/usr/bin/clang++-23"
 
 is not able to compile a simple test program.
 ```

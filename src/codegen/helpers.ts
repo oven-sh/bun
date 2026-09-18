@@ -1,41 +1,7 @@
 import { isAscii } from "buffer";
+import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
-
-// MSVC has a max of 16k characters per string literal
-// Combining string literals didn't support constexpr apparently
-// so we have to do this the gigantic array way
-export function fmtCPPCharArray(str: string, nullTerminated: boolean = true) {
-  const normalized = str + "\n";
-
-  var remain = normalized;
-
-  const chars =
-    "{" +
-    remain
-      .split("")
-      .map(a => a.charCodeAt(0))
-      .join(",") +
-    (nullTerminated ? ",0" : "") +
-    "}";
-  return [chars, normalized.length + (nullTerminated ? 1 : 0)] as const;
-}
-
-export function addCPPCharArray(str: string, nullTerminated: boolean = true) {
-  const normalized = str.trim() + "\n";
-  return (
-    normalized
-      .split("")
-      .map(a => a.charCodeAt(0))
-      .join(",") + (nullTerminated ? ",0" : "")
-  );
-}
-
-export function declareASCIILiteral(name: string, value: string) {
-  const [chars, count] = fmtCPPCharArray(value, true);
-  return `static constexpr const char ${name}Bytes[${count}] = ${chars};
-static constexpr ASCIILiteral ${name} = ASCIILiteral::fromLiteralUnsafe(${name}Bytes);`;
-}
 
 export function cap(str: string) {
   return str[0].toUpperCase() + str.slice(1);
@@ -49,8 +15,13 @@ export function low(str: string) {
   return str[0].toLowerCase() + str.slice(1);
 }
 
+/** Every file under `root`, sorted by name in each directory. */
 export function readdirRecursive(root: string): string[] {
-  const files = fs.readdirSync(root, { withFileTypes: true });
+  // The order of readdirSync() depends on the runtime and the file system:
+  // node sorts the entries, and bun does not.
+  const files = fs
+    .readdirSync(root, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return files.flatMap(file => {
     const fullPath = path.join(root, file.name);
     return file.isDirectory() ? readdirRecursive(fullPath) : fullPath;
@@ -73,6 +44,13 @@ export function checkAscii(str: string) {
   return str;
 }
 
+/** The first four bytes of the SHA-256 digest of the sources, read as a big-endian u32. */
+export function sourceStamp(sources: Iterable<string>): number {
+  const hash = createHash("sha256");
+  for (const source of sources) hash.update(source);
+  return hash.digest().readUInt32BE(0);
+}
+
 export function writeIfNotChanged(file: string, contents: string) {
   if (Array.isArray(contents)) contents = contents.join("");
   contents = contents.replaceAll("\r\n", "\n").trim() + "\n";
@@ -93,6 +71,18 @@ export function writeIfNotChanged(file: string, contents: string) {
 
   if (fs.readFileSync(file, "utf8") !== contents) {
     throw new Error(`Failed to write file ${file}`);
+  }
+}
+
+export function writeIfNotChangedBinary(file: string, contents: Buffer) {
+  try {
+    if (fs.readFileSync(file).equals(contents)) return;
+  } catch {}
+  try {
+    fs.writeFileSync(file, contents);
+  } catch {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, contents);
   }
 }
 
@@ -119,16 +109,6 @@ export function pathToUpperSnakeCase(filepath: string) {
     .split(/[-_./\\]/g)
     .join("_")
     .toUpperCase();
-}
-
-export function camelCase(string: string) {
-  return string
-    .split(/[\s_]/)
-    .map((e, i) => (i ? e.charAt(0).toUpperCase() + e.slice(1).toLowerCase() : e.toLowerCase()));
-}
-
-export function pascalCase(string: string) {
-  return string.split(/[\s_]/).map((e, i) => (i ? e.charAt(0).toUpperCase() + e.slice(1) : e.toLowerCase()));
 }
 
 export function argParse(keys: string[]): any {

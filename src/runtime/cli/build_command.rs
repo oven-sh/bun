@@ -11,8 +11,8 @@ use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
-use bun_paths::{PathBuffer, resolve_path};
-use bun_sys::{self, Fd};
+use bun_paths::resolve_path;
+use bun_sys::{self, Fd, FdExt as _};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
@@ -30,7 +30,7 @@ fn splat_byte_all(
     writer: &mut bun_core::io::Writer,
     byte: u8,
     count: usize,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let buf = [byte; 64];
     let mut remaining = count;
     while remaining > 0 {
@@ -57,7 +57,7 @@ impl BuildCommand {
     pub(crate) fn exec(
         ctx: Context,
         fetcher: Option<&bundle_v2::DependenciesScanner>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: true,
             ..Default::default()
@@ -154,7 +154,11 @@ impl BuildCommand {
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
 
-        this_transpiler.options.compile = ctx.bundler_options.compile;
+        this_transpiler.options.compile_mode = if ctx.bundler_options.compile {
+            options::CompileMode::Executable
+        } else {
+            options::CompileMode::None
+        };
 
         if this_transpiler.options.source_map == options::SourceMapOption::External
             && ctx.bundler_options.outdir.is_empty()
@@ -204,11 +208,14 @@ impl BuildCommand {
         this_transpiler.options.inline_entrypoint_import_meta_main =
             ctx.bundler_options.inline_entrypoint_import_meta_main;
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
+        this_transpiler.options.split_require = ctx.bundler_options.split_require;
         this_transpiler.options.minify_syntax = ctx.bundler_options.minify_syntax;
         this_transpiler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
+        this_transpiler.options.deprecated_namespace_object_setters =
+            ctx.bundler_options.deprecated_namespace_object_setters;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
         this_transpiler.options.banner =
@@ -231,6 +238,8 @@ impl BuildCommand {
                 options::AllowUnresolved::All
             };
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
+        this_transpiler.options.min_chunk_size = ctx.bundler_options.min_chunk_size;
+        this_transpiler.options.module_preload = ctx.bundler_options.module_preload;
         this_transpiler.options.metafile =
             !ctx.bundler_options.metafile.is_empty() || !ctx.bundler_options.metafile_md.is_empty();
 
@@ -245,6 +254,8 @@ impl BuildCommand {
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
+        this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
+        this_transpiler.options.optimize_bytecode = ctx.bundler_options.optimize_bytecode;
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {
@@ -277,10 +288,15 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
+                if !ctx.bundler_options.compile_assets.is_empty() {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> cannot use --compile --target browser with --asset"
+                    );
+                    Global::exit(1);
+                }
 
-                this_transpiler.options.compile_to_standalone_html = true;
                 // This is not a bun executable compile - clear compile flags
-                this_transpiler.options.compile = false;
+                this_transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;
                 ctx.bundler_options.compile = false;
 
                 if ctx.bundler_options.outdir.is_empty() && outfile.is_empty() {
@@ -343,6 +359,9 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
+
+                this_transpiler.options.compile_entry_point_name =
+                    bun_paths::basename(compile_outfile(outfile)).into();
             }
         }
 
@@ -376,7 +395,7 @@ impl BuildCommand {
             }
         }
 
-        let mut src_root_dir_buf = PathBuffer::uninit();
+        let mut src_root_dir_buf = bun_paths::path_buffer_pool::get();
         let src_root_dir: &[u8] = 'brk1: {
             let path: &[u8] = 'brk2: {
                 if !ctx.bundler_options.root_dir.is_empty() {
@@ -443,6 +462,29 @@ impl BuildCommand {
 
         this_transpiler.configure_defines()?;
         this_transpiler.configure_linker();
+
+        // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
+        this_transpiler.options.compile_target_builtins = if ctx.bundler_options.compile
+            && ctx.bundler_options.bytecode
+            && (!ctx.bundler_options.compile_target.is_default()
+                || ctx.bundler_options.compile_executable_path.is_some())
+        {
+            match bun_standalone_module_graph::StandaloneModuleGraph::target_builtins(
+                &ctx.bundler_options.compile_target,
+                // SAFETY: `env` is a process-lifetime singleton.
+                unsafe { &mut *this_transpiler.env },
+                ctx.bundler_options.compile_executable_path.as_deref(),
+            ) {
+                Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),
+                Ok(None) => options::CompileTargetBuiltins::None,
+                Err(err) => {
+                    Output::print_errorln(format_args!("{}", bstr::BStr::new(err.slice())));
+                    Global::exit(1);
+                }
+            }
+        } else {
+            options::CompileTargetBuiltins::Host
+        };
 
         if !this_transpiler.options.production {
             this_transpiler
@@ -729,6 +771,18 @@ impl BuildCommand {
 
             break 'brk build_result.output_files;
         };
+
+        if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
+            if let Err(msg) = collect_compile_assets(
+                &ctx.bundler_options.compile_assets,
+                compile_outfile(outfile),
+                &mut output_files,
+            ) {
+                Output::err_generic("{}", (msg.as_str(),));
+                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+            }
+        }
+
         let output_files: &mut [options::OutputFile] = &mut output_files;
         let bundled_end = bun_core::time::nano_timestamp();
 
@@ -749,20 +803,8 @@ impl BuildCommand {
 
             if output_dir.is_empty() && !outfile.is_empty() && will_be_one_file {
                 output_dir = bun_core::dirname(outfile).unwrap_or(b".");
-                if ctx.bundler_options.compile {
-                    // If the first output file happens to be a client-side chunk imported server-side
-                    // then don't rename it to something else, since an HTML
-                    // import manifest might depend on the file path being the
-                    // one we think it should be.
-                    for f in output_files.iter_mut() {
-                        if f.output_kind == options::OutputKind::EntryPoint
-                            && f.side.unwrap_or(options::Side::Server) == options::Side::Server
-                        {
-                            f.dest_path = bun_paths::basename(outfile).into();
-                            break;
-                        }
-                    }
-                } else {
+                // With --compile, the bundler already named the entry point's chunk after the outfile.
+                if !ctx.bundler_options.compile {
                     output_files[0].dest_path = bun_paths::basename(outfile).into();
                 }
             }
@@ -836,9 +878,7 @@ impl BuildCommand {
 
                 let is_cross_compile = !compile_target.is_default();
 
-                if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
-                    outfile = b"index";
-                }
+                outfile = compile_outfile(outfile);
 
                 let mut outfile_owned: Vec<u8>;
                 if compile_target.os == OperatingSystem::Windows
@@ -850,7 +890,7 @@ impl BuildCommand {
                     outfile = &outfile_owned;
                 } else if was_renamed_from_index && outfile != b"index" {
                     // If we're going to fail due to EISDIR, we should instead pick a different name.
-                    let mut zbuf = PathBuffer::uninit();
+                    let mut zbuf = bun_paths::path_buffer_pool::get();
                     let n = outfile.len().min(zbuf.0.len() - 1);
                     zbuf.0[..n].copy_from_slice(&outfile[..n]);
                     zbuf.0[n] = 0;
@@ -892,6 +932,9 @@ impl BuildCommand {
                             flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
                         }
                         flags
+                    },
+                    bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
+                        jit_policy: ctx.bundler_options.compile_jit_policy,
                     },
                 ) {
                     Ok(r) => r,
@@ -957,7 +1000,7 @@ impl BuildCommand {
                             // root_dir already points to the outfile's parent directory,
                             // so use map_basename (not a path with directory components)
                             // to avoid writing to a doubled directory path.
-                            let mut pathbuf = PathBuffer::uninit();
+                            let mut pathbuf = bun_paths::path_buffer_pool::get();
                             match bun_sys::write_file_with_path_buffer(
                                 &mut pathbuf,
                                 &bun_sys::WriteFileArgs {
@@ -1044,7 +1087,7 @@ impl BuildCommand {
             }
 
             for f in output_files.iter() {
-                if let Err(err) = f.write_to_disk(root_dir.fd, from_path) {
+                if let Err(err) = f.write_to_disk(root_dir.fd) {
                     Output::err(
                         err,
                         "failed to write file '{}'",
@@ -1069,7 +1112,11 @@ impl BuildCommand {
                         options::OutputKind::Asset => "<magenta>",
                         options::OutputKind::Sourcemap => "<d>",
                         options::OutputKind::Bytecode => "<d>",
-                        options::OutputKind::ModuleInfo => "<d>",
+                        options::OutputKind::ModuleInfo
+                        | options::OutputKind::BuiltinBytecode
+                        | options::OutputKind::BytecodeStringTable
+                        | options::OutputKind::ModuleInfoStringTable
+                        | options::OutputKind::PrelinkedModuleGraph => "<d>",
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
                     }))?;
@@ -1115,6 +1162,10 @@ impl BuildCommand {
                         options::OutputKind::Sourcemap => "source map",
                         options::OutputKind::Bytecode => "bytecode",
                         options::OutputKind::ModuleInfo => "module info",
+                        options::OutputKind::BuiltinBytecode => "builtin bytecode",
+                        options::OutputKind::BytecodeStringTable => "bytecode strings",
+                        options::OutputKind::ModuleInfoStringTable => "module info strings",
+                        options::OutputKind::PrelinkedModuleGraph => "module graph",
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
                     }
@@ -1136,6 +1187,14 @@ impl BuildCommand {
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,
         );
+    }
+}
+
+fn compile_outfile(outfile: &[u8]) -> &[u8] {
+    if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
+        b"index"
+    } else {
+        outfile
     }
 }
 
@@ -1215,4 +1274,169 @@ fn print_summary(
     );
     Output::print_elapsed_stdout_trim(bundle_elapsed as f64);
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
+}
+
+pub(crate) fn collect_compile_assets(
+    assets: &[Box<[u8]>],
+    outfile: &[u8],
+    out: &mut Vec<options::OutputFile>,
+) -> Result<(), String> {
+    use bun_ast::Loader;
+    use bun_collections::StringArrayHashMap;
+    use bun_sys::EntryKind;
+
+    let fail = |err: bun_sys::Error| -> Result<(), String> {
+        Err(format!(
+            "failed to read asset {}: {}",
+            bun_fmt::quote(&err.path),
+            err,
+        ))
+    };
+    let entry_name = bun_paths::basename(outfile);
+
+    let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
+    for f in out.iter() {
+        if !f.output_kind.is_file_in_standalone_mode() {
+            continue;
+        }
+        let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
+    }
+    let mut push =
+        |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {
+            if seen.contains_key(&dest) {
+                return Err(format!(
+                    "asset {} collides with another embedded file at {}",
+                    bun_fmt::quote(asset),
+                    bun_fmt::quote(&dest),
+                ));
+            }
+            let _ = seen.put(&dest, ());
+            out.push(options::OutputFile {
+                loader: Loader::File,
+                input_loader: Loader::File,
+                output_kind: options::OutputKind::Asset,
+                dest_path: dest.into_boxed_slice(),
+                size: bytes.len(),
+                size_without_sourcemap: bytes.len(),
+                value: options::OutputFileValue::Buffer {
+                    bytes: bytes.into_boxed_slice(),
+                },
+                side: Some(options::Side::Client),
+                ..options::OutputFile::zero_value()
+            });
+            Ok(())
+        };
+
+    let cwd = Fd::cwd();
+    let mut zbuf = bun_paths::path_buffer_pool::get();
+    for asset in assets {
+        let asset_trimmed: &[u8] = {
+            let mut a: &[u8] = asset;
+            while matches!(a.last(), Some(b'/') | Some(b'\\')) {
+                a = &a[..a.len() - 1];
+            }
+            a
+        };
+        let base = bun_paths::basename(asset_trimmed);
+        if base.is_empty() || base == b"." || base == b".." {
+            return fail(
+                bun_sys::Error::from_code(bun_sys::E::EINVAL, bun_sys::Tag::open).with_path(asset),
+            );
+        }
+        if base == entry_name {
+            return Err(format!(
+                "asset {} would embed at the same path as the entry point; use a different outfile",
+                bun_fmt::quote(asset),
+            ));
+        }
+
+        if asset_trimmed.len() >= zbuf.len() || strings::index_of_char(asset_trimmed, 0).is_some() {
+            return fail(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                    .with_path(asset),
+            );
+        }
+        let n = asset_trimmed.len();
+        zbuf[..n].copy_from_slice(asset_trimmed);
+        zbuf[n] = 0;
+        let asset_z = bun_core::ZStr::from_buf(&zbuf[..], n);
+
+        let st = match bun_sys::stat(asset_z) {
+            Ok(st) => st,
+            Err(e) => return fail(e.with_path(asset)),
+        };
+        if bun_core::S::ISDIR(st.st_mode as _) {
+            let dir = match bun_sys::open_dir_for_iteration(cwd, asset_trimmed) {
+                Ok(d) => d,
+                Err(e) => return fail(e.with_path(asset)),
+            };
+            let _close = scopeguard::guard(dir, |fd| fd.close());
+            let mut walker = match bun_sys::walker_skippable::walk(dir, &[], &[]) {
+                Ok(w) => w,
+                Err(_) => bun_core::out_of_memory(),
+            };
+            walker.resolve_unknown_entry_types = true;
+            loop {
+                let entry = match walker.next() {
+                    Ok(Some(e)) => e,
+                    Ok(None) => break,
+                    Err(e) => return fail(e.with_path(asset)),
+                };
+                if entry.kind != EntryKind::File {
+                    continue;
+                }
+                #[cfg(windows)]
+                let (rel, bytes) = {
+                    let mut rel_buf = bun_paths::path_buffer_pool::get();
+                    let rel_z = bun_paths::string_paths::from_w_path(
+                        &mut rel_buf[..],
+                        entry.path.as_slice(),
+                    );
+                    let mut rel = rel_z.as_bytes().to_vec();
+                    for b in rel.iter_mut() {
+                        if *b == b'\\' {
+                            *b = b'/';
+                        }
+                    }
+                    let mut base_buf = bun_paths::path_buffer_pool::get();
+                    let base_z = bun_paths::string_paths::from_w_path(
+                        &mut base_buf[..],
+                        entry.basename.as_slice(),
+                    );
+                    let bytes = match bun_sys::File::read_from(entry.dir, base_z.as_bytes()) {
+                        Ok(b) => b,
+                        Err(e) => return fail(e.with_path(&rel)),
+                    };
+                    (rel, bytes)
+                };
+                #[cfg(not(windows))]
+                let (rel, bytes) = {
+                    let rel = entry.path.as_bytes().to_vec();
+                    let bytes = match bun_sys::File::read_from(entry.dir, entry.basename.as_bytes())
+                    {
+                        Ok(b) => b,
+                        Err(e) => return fail(e.with_path(entry.path.as_bytes())),
+                    };
+                    (rel, bytes)
+                };
+                let mut dest = Vec::with_capacity(base.len() + 1 + rel.len());
+                dest.extend_from_slice(base);
+                dest.push(b'/');
+                dest.extend_from_slice(&rel);
+                push(out, asset, dest, bytes)?;
+            }
+        } else if bun_core::S::ISREG(st.st_mode as _) {
+            let bytes = match bun_sys::File::read_from(cwd, asset_trimmed) {
+                Ok(b) => b,
+                Err(e) => return fail(e.with_path(asset)),
+            };
+            push(out, asset, base.to_vec(), bytes)?;
+        } else {
+            return Err(format!(
+                "asset {} is not a regular file or directory",
+                bun_fmt::quote(asset),
+            ));
+        }
+    }
+    Ok(())
 }

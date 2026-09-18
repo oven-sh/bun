@@ -33,8 +33,8 @@ const { kMaxLength } = require('buffer');
 const kMaxInt32 = 2 ** 31 - 1;
 const kMaxPossibleLength = Math.min(kMaxLength, kMaxInt32);
 
-// common.expectWarning('DeprecationWarning',
-//                      'crypto.pseudoRandomBytes is deprecated.', 'DEP0115');
+common.expectWarning('DeprecationWarning',
+                     'crypto.pseudoRandomBytes is deprecated.', 'DEP0115');
 
 {
   [crypto.randomBytes, crypto.pseudoRandomBytes].forEach((f) => {
@@ -53,7 +53,7 @@ const kMaxPossibleLength = Math.min(kMaxLength, kMaxInt32);
       const errObj = {
         code: 'ERR_OUT_OF_RANGE',
         name: 'RangeError',
-        message: 'The value of "size" is out of range. It must be >= 0 and <= ' +
+        message: 'The value of "size" is out of range. It must be >= 0 && <= ' +
                  `${kMaxPossibleLength}. Received ${value}`
       };
       assert.throws(() => f(value), errObj);
@@ -252,7 +252,7 @@ const kMaxPossibleLength = Math.min(kMaxLength, kMaxInt32);
         code: 'ERR_OUT_OF_RANGE',
         name: 'RangeError',
         message: 'The value of "offset" is out of range. ' +
-                 `It must be >= 0 and <= 10. Received ${offsetSize}`
+                 `It must be >= 0 && <= 10. Received ${offsetSize}`
       };
 
       assert.throws(() => crypto.randomFillSync(buf, offsetSize), errObj);
@@ -262,7 +262,7 @@ const kMaxPossibleLength = Math.min(kMaxLength, kMaxInt32);
         errObj);
 
       errObj.message = 'The value of "size" is out of range. It must be >= ' +
-                       `0 and <= ${kMaxPossibleLength}. Received ${offsetSize}`;
+                       `0 && <= ${kMaxPossibleLength}. Received ${offsetSize}`;
       assert.throws(() => crypto.randomFillSync(buf, 1, offsetSize), errObj);
 
       assert.throws(
@@ -295,7 +295,7 @@ assert.throws(
     code: 'ERR_OUT_OF_RANGE',
     name: 'RangeError',
     message: 'The value of "size" is out of range. ' +
-             `It must be >= 0 and <= ${kMaxPossibleLength}. Received 4294967296`
+             `It must be >= 0 && <= ${kMaxPossibleLength}. Received 4294967296`
   }
 );
 
@@ -499,7 +499,7 @@ assert.throws(
       name: 'RangeError',
       message: 'The value of "max - min" is out of range. ' +
                `It must be <= ${MAX_RANGE}. ` +
-               'Received 281474976710656'
+               'Received 281_474_976_710_656'
     }
   );
 
@@ -508,7 +508,7 @@ assert.throws(
     name: 'RangeError',
     message: 'The value of "max" is out of range. ' +
              `It must be <= ${MAX_RANGE}. ` +
-             'Received 281474976710656'
+             'Received 281_474_976_710_656'
   });
 
   [true, NaN, null, {}, [], 10].forEach((i) => {

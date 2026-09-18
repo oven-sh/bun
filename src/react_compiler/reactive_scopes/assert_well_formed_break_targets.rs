@@ -17,7 +17,7 @@ use crate::hir::{
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 
 /// Assert that all break/continue targets reference existent labels.
-pub fn assert_well_formed_break_targets(func: &ReactiveFunction, env: &Environment) {
+pub(crate) fn assert_well_formed_break_targets(func: &ReactiveFunction, env: &Environment) {
     let visitor = Visitor { env };
     let mut state: HashSet<BlockId> = HashSet::new();
     visit_reactive_function(func, &visitor, &mut state);

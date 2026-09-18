@@ -23,7 +23,7 @@ unsafe extern "C" {
 /// Direct call to `WTF::parseES5Date`. Returns NaN for any input the WTF
 /// parser rejects. `s` is treated as Latin-1.
 #[inline]
-pub fn parse_es5_date_raw(s: &[u8]) -> f64 {
+pub(crate) fn parse_es5_date_raw(s: &[u8]) -> f64 {
     // SAFETY: s.as_ptr() is valid for s.len() bytes.
     unsafe { WTF__parseES5Date(s.as_ptr(), s.len()) }
 }
@@ -37,12 +37,6 @@ impl core::fmt::Display for InvalidDate {
     }
 }
 impl core::error::Error for InvalidDate {}
-
-impl From<InvalidDate> for crate::Error {
-    fn from(_: InvalidDate) -> Self {
-        crate::Error::from_name("InvalidDate")
-    }
-}
 
 /// `bun.jsc.wtf.parseES5Date` shape — `Err` on empty input or non-finite result.
 /// `2000-01-01T00:00:00.000Z` → `Ok(946684800000.0)`.
@@ -62,6 +56,5 @@ pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {
 // `bun_core::wtf::parse_double` (formerly `bun_core::wtf::parse_double`)
 // resolves unchanged.
 pub use crate::string::wtf::{
-    InvalidCharacter, RefPtr, StringImpl, WTFString, WTFStringImpl, WTFStringImplExt,
-    WTFStringImplStruct, parse_double,
+    InvalidCharacter, WTFString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct, parse_double,
 };

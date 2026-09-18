@@ -25,10 +25,10 @@ use crate::chunk::{Content, CssImportOrderKind};
 // `linker` retains write provenance over the whole bundle, and (b) multiple
 // tasks may hold pointers to the same `LinkerContext` concurrently without
 // materializing aliased Rust references.
-pub struct PrepareCssAstTask {
-    pub task: ThreadPoolLib::Task,
-    pub chunk: *mut Chunk,
-    pub linker: *mut LinkerContext<'static>,
+pub(crate) struct PrepareCssAstTask {
+    pub(crate) task: ThreadPoolLib::CountedTask,
+    pub(crate) chunk: *mut Chunk,
+    pub(crate) linker: *mut LinkerContext<'static>,
 }
 
 // SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
@@ -52,7 +52,7 @@ unsafe impl Send for PrepareCssAstTask {}
 /// `task` must be the intrusive `task` field of a live [`PrepareCssAstTask`]
 /// scheduled by `generate_chunks_in_parallel`. Matches the
 /// `Task::callback: unsafe fn(*mut Task)` contract.
-pub unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
+pub(crate) unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) {
     // SAFETY: `task` points to `PrepareCssAstTask.task` (intrusive thread-pool
     // node); the thread pool hands us exclusive access for the callback's
     // duration. We only read the two raw-pointer fields.
@@ -554,6 +554,4 @@ fn wrap_rules_with_conditions(
     debug_assert!(dummy_import_records.len() == 0);
 }
 
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
 pub use crate::ThreadPool;

@@ -1840,6 +1840,7 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
   const manifests: Manifests = {
     "aauser": { "1.0.0": { dependencies: { shared: "^1.0.0" } } },
     "aauser-long": { "1.0.0": { dependencies: { "shared-long-name": "^1.0.0" } } },
+    "has-optional": { "1.0.0": { optionalDependencies: { shared: "^3.0.0" } } },
     "has-peer": { "1.0.0": { peerDependencies: { shared: "^1.0.0" } } },
     "needs-1-5": { "1.0.0": { dependencies: { shared: "^1.5.0" } } },
     "pinner": { "1.0.0": { dependencies: { shared: "1.5.0" } } },
@@ -1873,7 +1874,7 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
     return { out, err, exitCode };
   }
 
-  // `name@version` of the package that code in `from` gets for `request`.
+  // `name@version` of the package that code in `from` gets for `request`. Once per directory: the resolver caches.
   async function seenFrom(from: string, request: string) {
     const { name, version } = await file(Bun.resolveSync(`${request}/package.json`, realpathSync(from))).json();
     return `${name}@${version}`;
@@ -2062,6 +2063,13 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
       breakLockfile: lockfile => lockfile,
       seen: [["node_modules/has-peer", "shared", "shared@2.0.0"]],
     },
+    // No shared@3 exists, so a fresh install leaves the row unresolved. bun.lock cannot say so, and loading binds it to
+    // the hoisted 2.0.0. A registry that gains 3.0.0 later must not change what a frozen install does.
+    "an optional dependency that no version satisfies": {
+      packageJsons: { "package.json": { name: "app", dependencies: { "has-optional": "1.0.0", shared: "2.0.0" } } },
+      breakLockfile: lockfile => lockfile,
+      seen: [[".", "shared", "shared@2.0.0"]],
+    },
     // The override replaces the declared ^1.0.0.
     "a dependency that an override binds outside its declared range": {
       packageJsons: {
@@ -2146,7 +2154,7 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
     });
     const cwd = String(dir);
     expect(await install(cwd)).toMatchObject({ exitCode: 0 });
-    expect(await seenFrom(join(cwd, "node_modules", "aauser"), "shared")).toBe("shared@2.0.0");
+    expect(await file(join(cwd, "bun.lock")).text()).not.toContain("shared@1.5.0");
 
     await write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: { aauser: "1.0.0" } }));
     await dropNodeModules(cwd);
@@ -2158,6 +2166,37 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
     expect(await install(cwd, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
     expect(await file(join(cwd, "bun.lock")).text()).toBe(lockfile);
     expect(await seenFrom(join(cwd, "node_modules", "aauser"), "shared")).toBe("shared@1.5.0");
+  });
+
+  // aauser's plain ^1.0.0 is on 2.0.0 only because it follows the catalog's alias. bun.lock still lists that alias
+  // when this install starts, and the row must not follow it again.
+  it("a catalog entry that stops being an npm: alias resolves the dependency that followed it again", async () => {
+    using registry = await serveRegistry(manifests);
+    const root = (shared: string) => ({
+      name: "app",
+      workspaces: { packages: ["packages/*"], catalog: { shared } },
+      dependencies: { aauser: "1.0.0" },
+    });
+    using dir = createProject(registry.url, "hoisted", {
+      "package.json": root("npm:shared@>=1.0.0"),
+      "packages/lib/package.json": { name: "lib", version: "1.0.0", dependencies: { shared: "catalog:" } },
+    });
+    const cwd = String(dir);
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    expect(await file(join(cwd, "bun.lock")).text()).not.toContain("shared@1.5.0");
+
+    await write(join(cwd, "package.json"), JSON.stringify(root("^2.0.0")));
+    await dropNodeModules(cwd);
+    expect(await install(cwd)).toMatchObject({ err: expect.stringContaining("Saved lockfile"), exitCode: 0 });
+    const lockfile = await file(join(cwd, "bun.lock")).text();
+
+    await dropNodeModules(cwd);
+    expect(await install(cwd, "--frozen-lockfile")).toMatchObject({ exitCode: 0 });
+    expect(await file(join(cwd, "bun.lock")).text()).toBe(lockfile);
+    expect({
+      aauser: await seenFrom(join(cwd, "node_modules", "aauser"), "shared"),
+      lib: await seenFrom(join(cwd, "packages", "lib"), "shared"),
+    }).toEqual({ aauser: "shared@1.5.0", lib: "shared@2.0.0" });
   });
 
   // lib's rows are read again and resolve during this install. aauser is reached only through them.

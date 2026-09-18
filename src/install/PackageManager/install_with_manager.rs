@@ -693,9 +693,10 @@ pub fn install_with_manager(
     };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
     // `eql` compares placements, and a row that moved onto a package bun.lock already places elsewhere adds none.
-    let rebound_rows = unsatisfied
-        .iter()
-        .any(|row| lockfile_before_clean.buffers.resolutions[row.dep_id as usize] != row.target);
+    let rebound_rows = unsatisfied.iter().any(|row| {
+        let package_id = lockfile_before_clean.buffers.resolutions[row.dep_id as usize];
+        package_id != row.target && (package_id as usize) < lockfile_before_clean.packages.len()
+    });
     if manager.subcommand == Subcommand::Update && !manager.options.dry_run {
         Output::flush();
         crate::update_transitive::warn_orphaned_patches(manager);
@@ -1596,6 +1597,10 @@ fn unsatisfied_rows(lockfile: &Lockfile) -> Vec<UnsatisfiedRow> {
             if dep.behavior.is_peer() || dep.behavior.is_bundled() {
                 continue;
             }
+            // bun.lock does not record that an optional row found no version: loading binds it to a hoisted copy.
+            if dep.behavior.is_optional() {
+                continue;
+            }
 
             // What the resolver asks the registry for: an override or a catalog entry stands in for the declared range.
             let replaced;
@@ -1709,6 +1714,18 @@ fn enqueue_unsatisfied_rows(manager: &mut PackageManager, rows: &mut Vec<Unsatis
                 && dep_slices[row.owner as usize].contains(row.dep_id)
                 && reachable_packages.is_set(row.owner as usize)
         });
+    }
+    if rows.is_empty() {
+        return;
+    }
+    // The map still holds aliases that package.json dropped, and versions parsed into another lockfile's strings.
+    let aliases: Vec<(PackageNameHash, DependencyVersion)> = npm_aliases(&manager.lockfile)
+        .into_iter()
+        .map(|(name_hash, aliased)| (name_hash, aliased.clone()))
+        .collect();
+    manager.known_npm_aliases.clear();
+    for (name_hash, aliased) in aliases {
+        manager.known_npm_aliases.insert(name_hash, aliased);
     }
     for row in rows.iter() {
         let dependency = manager.lockfile.buffers.dependencies[row.dep_id as usize].clone();

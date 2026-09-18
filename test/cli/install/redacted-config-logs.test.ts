@@ -202,6 +202,30 @@ describe.concurrent("redact", async () => {
       secret: "SECRETVALUE",
     },
     {
+      title: "escaped quote inside a multi-line basic string",
+      bunfig: '[install]\ntoken = """SE\\"""CRETVALUE""" ]',
+      expected: '"""***************"""',
+      secret: "CRETVALUE",
+    },
+    {
+      title: "backslash inside a multi-line literal string",
+      bunfig: "[install]\ntoken = '''SECRETVALUE\\''' ]",
+      expected: "'''************'''",
+      secret: "SECRETVALUE",
+    },
+    {
+      title: "multi-line basic string closed by four quotes",
+      bunfig: '[install]\ntoken = """SECRETVALUE"""" ]',
+      expected: '"""************"""',
+      secret: "SECRETVALUE",
+    },
+    {
+      title: "quoted key",
+      bunfig: '[install]\n"token" = "SECRETVALUE" ]',
+      expected: "***********",
+      secret: "SECRETVALUE",
+    },
+    {
       title: "invalid _auth",
       npmrc: "//registry.npmjs.org/:_auth = does-not-decode",
       expected: "****************",

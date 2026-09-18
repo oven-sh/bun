@@ -2069,6 +2069,12 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     break 'try_redact;
                                 }
 
+                                // TOML quoted key: `"token" = "..."`
+                                if RedactedKeywords::has(inner) {
+                                    should_redact_value = true;
+                                    break 'try_redact;
+                                }
+
                                 if inner.len() == 36 && strings::is_uuid(inner) {
                                     write!(writer, "{}\x1b[32m{}", Output::RESET, char_ as char)?;
                                     splat_byte_all(writer, b'*', 36)?;

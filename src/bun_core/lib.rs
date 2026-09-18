@@ -2013,16 +2013,23 @@ pub(crate) mod strings_impl {
         }
         i
     }
-    /// `text` starts right after an opening `"""` or `'''`. Returns the offset
-    /// of the closing triple on the same line. Backslash escapes only apply
-    /// inside `"""`, as in the TOML parser.
+    /// `text` starts right after an opening `"""` or `'''`. Returns the length
+    /// of the value up to the closing triple on the same line. As in the TOML
+    /// parser, backslash escapes only apply inside `"""`, and a run of four or
+    /// five quotes closes the string with the extra quotes as part of the value.
     pub(crate) fn find_closing_triple_quote(text: &[u8], q: u8) -> Option<usize> {
         let mut i = 0usize;
         while i + 2 < text.len() {
             match text[i] {
                 b'\n' => return None,
                 b'\\' if q == b'"' && text[i + 1] != b'\n' => i += 2,
-                c if c == q && text[i + 1] == q && text[i + 2] == q => return Some(i),
+                c if c == q && text[i + 1] == q && text[i + 2] == q => {
+                    let mut extra = 0usize;
+                    while extra < 2 && i + 3 + extra < text.len() && text[i + 3 + extra] == q {
+                        extra += 1;
+                    }
+                    return Some(i + extra);
+                }
                 _ => i += 1,
             }
         }

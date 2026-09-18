@@ -267,6 +267,17 @@ pub fn do_patch_commit(
         }
     };
 
+    // A link into the isolated store is not a copy from `bun patch`. `git diff` would record the
+    // link itself (`new file mode 120000`), and no install can apply that patch.
+    if !is_real_dir_not_symlink(&changes_dir) {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: <b>{}<r> is not a folder that bun patch prepared. Run `<cyan>bun patch {}<r>` first.",
+            bstr::BStr::new(&changes_dir),
+            bstr::BStr::new(manager.options.positionals[1]),
+        );
+        Global::crash();
+    }
+
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
     let name = manager.lockfile.str(&pkg.name).to_vec();
@@ -599,6 +610,8 @@ pub fn do_patch_commit(
         changes_dir,
         b".bun-patch-tag",
     ]));
+
+    manager.committed_patch = Some(string_hash(&patch_key));
 
     Ok(Some(PatchCommitResult {
         patch_key: patch_key.into_boxed_slice(),

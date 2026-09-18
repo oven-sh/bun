@@ -21,8 +21,9 @@ use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::resolution;
 use crate::{
-    self as install, DependencyID, Lockfile, PackageID, PackageManager, PackageNameHash,
-    Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin, invalid_dependency_id,
+    self as install, DependencyID, Lockfile, PackageID, PackageManager, PackageNameAndVersionHash,
+    PackageNameHash, Resolution, TaskCallbackContext, TruncatedPackageNameHash, bin,
+    invalid_dependency_id,
 };
 // Bring `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
@@ -1488,12 +1489,13 @@ impl Task {
                         symlinker::Strategy::ExpectMissing
                     };
 
-                    let changed = match installer.symlink_dependencies(self.entry_id, strategy) {
-                        sys::Result::Ok(changed) => changed,
-                        sys::Result::Err(err) => {
-                            return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
-                        }
-                    };
+                    let changed =
+                        match installer.symlink_dependencies(self.entry_id, strategy, None) {
+                            sys::Result::Ok(changed) => changed,
+                            sys::Result::Err(err) => {
+                                return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
+                            }
+                        };
 
                     if relinking {
                         if !changed {
@@ -1536,6 +1538,13 @@ impl Task {
 
                 Step::SymlinkDependencyBinaries => {
                     let current_step = Step::SymlinkDependencyBinaries;
+                    if matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+                        if let sys::Result::Err(err) =
+                            installer.relink_committed_patch(self.entry_id)
+                        {
+                            return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
+                        }
+                    }
                     if let Err(err) = installer.link_dependency_bins(self.entry_id) {
                         return Ok(Yield::failure(TaskError::Binaries(err)));
                     }
@@ -2235,10 +2244,12 @@ impl<'a> Installer<'a> {
     }
 
     /// Ok(true) when at least one dependency link of the entry was written.
+    /// `only_patch` limits the links to that patched package, once the store holds it patched.
     fn symlink_dependencies(
         &self,
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
+        only_patch: Option<PackageNameAndVersionHash>,
     ) -> sys::Result<bool> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2279,6 +2290,12 @@ impl<'a> Installer<'a> {
                 self.append_store_path(&mut dep_store_path, dep.entry_id);
             }
 
+            if let Some(patch) = only_patch {
+                if !self.store_holds_patch(dep.entry_id, patch, &mut dep_store_path) {
+                    continue;
+                }
+            }
+
             let dest_len = dest.len();
             dest.undo(1);
             let target = dest.relative(&dep_store_path);
@@ -2296,6 +2313,50 @@ impl<'a> Installer<'a> {
         }
 
         Ok(changed)
+    }
+
+    /// True when `entry_id` is the package that `patch` applies to, and `store_path` (the
+    /// package directory of the entry) has the tag file of that patch.
+    fn store_holds_patch(
+        &self,
+        entry_id: StoreEntryId,
+        patch: PackageNameAndVersionHash,
+        store_path: &mut AutoAbsPath,
+    ) -> bool {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let pkgs = self.lockfile().packages.slice();
+
+        let Ok(PatchInfo::Patch(info)) = self.package_patch_info(
+            pkgs.items_name()[pkg_id as usize],
+            pkgs.items_name_hash()[pkg_id as usize],
+            &pkgs.items_resolution()[pkg_id as usize],
+        ) else {
+            return false;
+        };
+        if info.name_and_version_hash != patch {
+            return false;
+        }
+
+        let mut tag_buf: install::BuntagHashBuf = Default::default();
+        let tag = install::buntaghashbuf_make(&mut tag_buf, info.contents_hash);
+        let store_path_len = store_path.len();
+        store_path.append(&*tag).assume_ok();
+        let has_tag = sys::exists_z(store_path.slice_z());
+        store_path.set_length(store_path_len);
+        has_tag
+    }
+
+    /// `bun patch` swaps the link of a root or workspace dependency for a detached copy of the
+    /// package, and `Strategy::ExpectExisting` keeps a real directory. `bun patch --commit` puts
+    /// the link back here, after the dependencies of the entry are installed: a patch that did
+    /// not apply leaves no tag in the store, and then the copy with the edits stays.
+    fn relink_committed_patch(&self, entry_id: StoreEntryId) -> sys::Result<()> {
+        let Some(patch) = self.manager().committed_patch else {
+            return Ok(());
+        };
+        self.symlink_dependencies(entry_id, symlinker::Strategy::ReplaceDirectory, Some(patch))?;
+        Ok(())
     }
 
     pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {

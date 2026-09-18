@@ -461,6 +461,9 @@ pub struct PackageManager {
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
 
+    // bun patch --commit: the package whose patch was just written; the isolated linker puts its links back.
+    pub(crate) committed_patch: Option<PackageNameAndVersionHash>,
+
     pub(crate) active_lifecycle_scripts: crate::lifecycle_script_runner::List<'static>,
     pub(crate) last_reported_slow_lifecycle_script_at: u64,
     pub(crate) cached_tick_for_slow_lifecycle_script_logging: u64,
@@ -2147,6 +2150,7 @@ pub fn init(
         wr!(edited_package_jsons, Vec::new());
         wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
+        wr!(committed_patch, None);
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
@@ -2615,6 +2619,7 @@ fn init_with_runtime_once(
         wr!(edited_package_jsons, Vec::new());
         wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
+        wr!(committed_patch, None);
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }

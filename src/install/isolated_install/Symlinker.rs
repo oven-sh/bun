@@ -54,7 +54,7 @@ impl Symlinker {
                     },
                 };
             }
-            Strategy::ExpectExisting => {
+            Strategy::ExpectExisting | Strategy::ReplaceDirectory => {
                 let mut current_link_buf = bun_paths::path_buffer_pool::get();
                 let current_link_len =
                     match bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf) {
@@ -80,7 +80,9 @@ impl Symlinker {
                                 // directory, leave it: this is the `bun patch <pkg>`
                                 // workspace (a detached copy the user is editing
                                 // before `--commit`), and `deleteTree` here would
-                                // silently destroy their in-progress edits. If it's
+                                // silently destroy their in-progress edits. After
+                                // `--commit` those edits are in the store, and
+                                // `ReplaceDirectory` puts the link back. If it's
                                 // a regular file, replace it.
                                 _ => {
                                     #[cfg(windows)]
@@ -99,10 +101,10 @@ impl Symlinker {
                                     } else {
                                         false
                                     };
-                                    if is_dir {
+                                    if is_dir && !matches!(strategy, Strategy::ReplaceDirectory) {
                                         return Ok(false);
                                     }
-                                    let _ = bun_sys::unlink(self.dest.slice_z());
+                                    let _ = Fd::cwd().delete_tree(self.dest.slice_z());
                                     return self.symlink().map(|()| true);
                                 }
                             };
@@ -153,4 +155,6 @@ impl Symlinker {
 pub enum Strategy {
     ExpectExisting,
     ExpectMissing,
+    /// `ExpectExisting`, except that a real directory at `dest` is deleted and replaced by the link.
+    ReplaceDirectory,
 }

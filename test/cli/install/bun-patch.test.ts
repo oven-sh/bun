@@ -1,7 +1,7 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { existsSync, lstatSync, readFileSync, symlinkSync } from "fs";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -66,21 +66,35 @@ describe("error messages", () => {
   });
 });
 
+// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`. Concurrent tests that
+// install the same tarball spec into one shared cache replace each other's `@T@<hash>` folder on Windows.
+async function runBun(cwd: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+const registry = new VerdaccioRegistry();
+
+beforeAll(async () => {
+  await registry.start();
+});
+
+afterAll(() => {
+  registry.stop();
+});
+
 // `bun patch` identifies packages by `name@label`, where a tarball package's label is
 // the spec it was installed from. These labels used to be formatted into 1024 byte
 // stack buffers (512 bytes in the installer itself), so a long enough spec crashed
 // every command that formatted it.
 describe("packages whose label is longer than 1024 bytes", () => {
-  const registry = new VerdaccioRegistry();
-
-  beforeAll(async () => {
-    await registry.start();
-  });
-
-  afterAll(() => {
-    registry.stop();
-  });
-
   // `x/../` normalizes away, so the tarball still lives at a short path that is valid
   // on every platform while the recorded spec stays long.
   const longSpec = (tarball: string) => `./${Buffer.alloc(1050, "x/../").toString()}${tarball}`;
@@ -94,20 +108,6 @@ describe("packages whose label is longer than 1024 bytes", () => {
       },
     });
     return packageDir;
-  }
-
-  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`. Two of these concurrent
-  // tests install the same tarball spec; sharing one cache, they replace each other's `@T@<hash>` folder on Windows.
-  async function runBun(cwd: string, ...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
   }
 
   async function install(cwd: string) {
@@ -174,6 +174,162 @@ describe("packages whose label is longer than 1024 bytes", () => {
     expect(commit.stderr).toContain("failed renaming patch file to patches dir");
     expect(commit.exitCode).toBe(1);
     expect(await Bun.file(join(packageDir, "package.json")).json()).toEqual(packageJson);
+  });
+});
+
+// With the isolated linker `node_modules/<pkg>` is a link into `node_modules/.bun`, and the
+// dependencies of <pkg> are siblings of its store entry. `bun patch <pkg>` swaps the link for a
+// detached copy of the package, and a copy in a real directory cannot reach those siblings.
+describe("bun patch --commit with the isolated linker", () => {
+  const isLink = (path: string) => lstatSync(path).isSymbolicLink();
+  const NOT_PREPARED = "is not a folder that bun patch prepared.";
+
+  async function install(globalStore: boolean, files: Record<string, unknown>) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore },
+      files: files as any,
+    });
+    const { stderr, exitCode } = await runBun(packageDir, "install");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return packageDir;
+  }
+
+  // Returns the detached copy that `bun patch <arg>` puts in place of the link at `folder`.
+  async function patch(packageDir: string, arg: string, folder: string) {
+    const copy = join(packageDir, folder);
+    expect(isLink(copy)).toBe(true);
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", arg);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain(`edit the following folder:\n\n  ${folder}\n`);
+    expect(exitCode).toBe(0);
+    expect(isLink(copy)).toBe(false);
+    return copy;
+  }
+
+  // index.js of has-bin-entries requires each dependency of the package, and "no-deps" is one.
+  const addPatchedExport = async (copy: string) =>
+    Bun.write(
+      join(copy, "index.js"),
+      (await Bun.file(join(copy, "index.js")).text()) + "\nmodule.exports.patched = true;\n",
+    );
+  const load = (cwd: string) =>
+    runBun(
+      cwd,
+      "-e",
+      `const pkg = require("has-bin-entries"); console.log(pkg.version, pkg.patched, pkg.dependencies["no-deps"].version);`,
+    );
+
+  const rootOnly = {
+    "package.json": JSON.stringify({
+      name: "foo",
+      dependencies: { "has-bin-entries": "1.0.0", "a-dep": "1.0.1" },
+    }),
+  };
+
+  test.concurrent.each([
+    { globalStore: false, commitArg: "has-bin-entries" },
+    { globalStore: true, commitArg: "node_modules/has-bin-entries" },
+  ])(
+    "links node_modules/<pkg> into node_modules/.bun again (globalStore: $globalStore, --commit $commitArg)",
+    async ({ globalStore, commitArg }) => {
+      const packageDir = await install(globalStore, rootOnly);
+      const committed = await patch(packageDir, "has-bin-entries", "node_modules/has-bin-entries");
+      const uncommitted = await patch(packageDir, "a-dep", "node_modules/a-dep");
+      await addPatchedExport(committed);
+      await Bun.write(join(uncommitted, "edit.js"), "module.exports = 'in progress';\n");
+
+      const commit = await runBun(packageDir, "patch", "--commit", commitArg);
+      expect(commit.stderr).not.toContain("error:");
+      expect(commit.exitCode).toBe(0);
+
+      // The edits to a-dep are not committed, so its copy stays.
+      expect({
+        committed: isLink(committed),
+        uncommitted: isLink(uncommitted),
+        edit: await Bun.file(join(uncommitted, "edit.js")).text(),
+      }).toEqual({
+        committed: true,
+        uncommitted: false,
+        edit: "module.exports = 'in progress';\n",
+      });
+
+      const loaded = await load(packageDir);
+      expect(loaded.stderr).toBe("");
+      expect(loaded.stdout).toBe("1.0.0 true 1.0.0\n");
+      expect(loaded.exitCode).toBe(0);
+
+      // bin-with-require.js requires "no-deps" as well.
+      const bin = await runBun(packageDir, "run", "has-bin-entries-with-require");
+      expect(bin.stdout).toBe("no-deps\n1.0.0\n");
+      expect(bin.exitCode).toBe(0);
+
+      // The copy is gone. A second --commit must not write a patch of the link.
+      const patchFile = join(packageDir, "patches", "has-bin-entries@1.0.0.patch");
+      const patchText = await Bun.file(patchFile).text();
+      const again = await runBun(packageDir, "patch", "--commit", commitArg);
+      expect(again.stderr).toContain(NOT_PREPARED);
+      expect(again.exitCode).toBe(1);
+      expect(await Bun.file(patchFile).text()).toBe(patchText);
+    },
+  );
+
+  test.concurrent("refuses to commit a link that bun patch did not replace", async () => {
+    const packageDir = await install(false, rootOnly);
+    const packageJson = await Bun.file(join(packageDir, "package.json")).text();
+
+    for (const arg of ["has-bin-entries", "node_modules/has-bin-entries"]) {
+      const commit = await runBun(packageDir, "patch", "--commit", arg);
+      expect(commit.stderr).toContain(`${NOT_PREPARED} Run \`bun patch ${arg}\` first.`);
+      expect(commit.exitCode).toBe(1);
+    }
+
+    expect({
+      patches: existsSync(join(packageDir, "patches")),
+      packageJson: await Bun.file(join(packageDir, "package.json")).text(),
+    }).toEqual({ patches: false, packageJson });
+  });
+
+  test.concurrent("links the dependency of a workspace package again", async () => {
+    const packageDir = await install(false, {
+      "package.json": JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: { "has-bin-entries": "2.0.0", w: "workspace:*" },
+      }),
+      packages: {
+        w: {
+          "package.json": JSON.stringify({ name: "w", version: "1.0.0", dependencies: { "has-bin-entries": "1.0.0" } }),
+        },
+      },
+    });
+    // `node_modules/w` is a link to packages/w, so this is packages/w/node_modules/has-bin-entries.
+    const folder = "node_modules/w/node_modules/has-bin-entries";
+    await addPatchedExport(await patch(packageDir, "has-bin-entries@1.0.0", folder));
+
+    const commit = await runBun(packageDir, "patch", "--commit", folder);
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+
+    expect(isLink(join(packageDir, "packages", "w", "node_modules", "has-bin-entries"))).toBe(true);
+    const loaded = await load(join(packageDir, "packages", "w"));
+    expect(loaded.stderr).toBe("");
+    expect(loaded.stdout).toBe("1.0.0 true 1.0.0\n");
+    expect(loaded.exitCode).toBe(0);
+  });
+
+  // A patch that adds a symlink does not apply (`bad_file_mode`). Windows is skipped: git records
+  // a symlink as mode 120000 only with `core.symlinks`, which is off there by default.
+  test.skipIf(isWindows).concurrent("keeps the edited copy when the patch does not apply", async () => {
+    const packageDir = await install(false, rootOnly);
+    const copy = await patch(packageDir, "has-bin-entries", "node_modules/has-bin-entries");
+    symlinkSync("index.js", join(copy, "link.js"));
+
+    const commit = await runBun(packageDir, "patch", "--commit", "has-bin-entries");
+    expect(commit.stderr).toContain("failed to patch package: has-bin-entries@1.0.0");
+    expect(commit.exitCode).toBe(1);
+
+    expect({ copy: isLink(copy), edit: isLink(join(copy, "link.js")) }).toEqual({ copy: false, edit: true });
   });
 });
 

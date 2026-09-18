@@ -4624,7 +4624,7 @@ pub mod bv2_impl {
                 return;
             }
             let transpiler = self.transpiler_for_target(task.known_target);
-            // A call that fails logs only about itself (a directory that it may not list), and only this probe makes it.
+            // The resolver logs to a scratch log: the build must not fail because this call cannot list a directory.
             let mut probe_log = bun_ast::Log {
                 level: transpiler.resolver.log_mut().level,
                 ..Default::default()
@@ -4642,11 +4642,22 @@ pub mod bv2_impl {
                     kind,
                 )
             };
+            if result.is_err() {
+                // Nothing else asks the resolver about this path, so a directory that it may not list is not a build error.
+                probe_log
+                    .msgs
+                    .retain(|msg| !msg.data.text.starts_with(b"Cannot read directory"));
+                let errors = probe_log
+                    .msgs
+                    .iter()
+                    .filter(|msg| msg.kind == bun_ast::Kind::Err);
+                probe_log.errors = u32::try_from(errors.count()).expect("int cast");
+            }
+            // The resolver parses a package.json or tsconfig.json once per process, so its errors are reported now or never.
+            probe_log.append_to_with_recycled(transpiler.resolver.log_mut(), true);
             let Ok(result) = result else {
                 return;
             };
-            // The resolver parses a package.json or tsconfig.json once per process, so its errors are reported now or never.
-            probe_log.append_to_with_recycled(transpiler.resolver.log_mut(), true);
             // Only then can another import make this module through the resolver, and the first one to land wins.
             if result.flags.is_external()
                 || result

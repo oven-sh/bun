@@ -2122,7 +2122,7 @@ describe("bundler", () => {
   // A path through a symlinked directory is not the path the resolver prints, so the module does not take the
   // resolver's result, but the resolver still read the directory.
   for (const spelling of ["the resolver's path", "a path through a symlinked directory"] as const) {
-    test.skipIf(isWindows && spelling !== "the resolver's path")(
+    test.concurrent.skipIf(isWindows && spelling !== "the resolver's path")(
       `plugin/onResolve with ${spelling} reports a tsconfig.json that does not parse`,
       async () => {
         using dir = tempDir("plugin-resolved-file-logs", {
@@ -2156,38 +2156,59 @@ describe("bundler", () => {
 
   // A directory that the user may traverse but not list: the file in it can be read, and that is all a module
   // needs. The resolver cannot list the directory and logs an error. Without the plugin path nothing asks the
-  // resolver about this directory, so that error must not reach the build.
-  test.skipIf(isWindows || process.getuid?.() === 0)(
-    "plugin/onResolve path in a directory that cannot be listed still builds",
-    async () => {
-      using dir = tempDir("plugin-resolved-file-unlistable", {
-        "entry.js": `import "alias/leaf";`,
-        "unlistable/leaf.js": `console.log("leaf ran");`,
-      });
-      const root = String(dir);
-      chmodSync(join(root, "unlistable"), 0o311);
-      try {
-        const result = await Bun.build({
-          entrypoints: [join(root, "entry.js")],
-          throw: false,
-          plugins: [
-            {
-              name: "alias",
-              setup(build) {
-                build.onResolve({ filter: /^alias\/leaf$/ }, () => ({ path: join(root, "unlistable", "leaf.js") }));
+  // resolver about this directory, so that error must not reach the build. A tsconfig.json above it that does
+  // not parse is another matter: the resolver parsed it on the way, and the import of the sibling, which
+  // starts only after that, would not report it again.
+  for (const tsconfigAbove of ["no tsconfig.json", "a tsconfig.json that does not parse"] as const) {
+    test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+      `plugin/onResolve path in a directory that cannot be listed, below ${tsconfigAbove}`,
+      async () => {
+        const broken = tsconfigAbove !== "no tsconfig.json";
+        using dir = tempDir("plugin-resolved-file-unlistable", {
+          "entry.js": `
+            import "alias/leaf";
+            import "alias/late";
+          `,
+          "late.js": `import "./lib/sibling.js";`,
+          "lib/sibling.js": `console.log("sibling ran");`,
+          "lib/unlistable/leaf.js": `console.log("leaf ran");`,
+          ...(broken ? { "lib/tsconfig.json": `{ "compilerOptions": ` } : {}),
+        });
+        const root = String(dir);
+        chmodSync(join(root, "lib", "unlistable"), 0o311);
+        try {
+          const leafLoads = Promise.withResolvers<void>();
+          const result = await Bun.build({
+            entrypoints: [join(root, "entry.js")],
+            throw: false,
+            plugins: [
+              {
+                name: "alias",
+                setup(build) {
+                  build.onResolve({ filter: /^alias\/leaf$/ }, () => ({
+                    path: join(root, "lib", "unlistable", "leaf.js"),
+                  }));
+                  build.onLoad({ filter: /unlistable[\\/]leaf\.js$/ }, () => {
+                    leafLoads.resolve();
+                    return undefined;
+                  });
+                  build.onResolve({ filter: /^alias\/late$/ }, async () => {
+                    await leafLoads.promise;
+                    return { path: join(root, "late.js") };
+                  });
+                },
               },
-            },
-          ],
-        });
-        expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
-          success: true,
-          logs: [],
-        });
-      } finally {
-        chmodSync(join(root, "unlistable"), 0o755);
-      }
-    },
-  );
+            ],
+          });
+          expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual(
+            broken ? { success: false, logs: ["Unexpected end of file"] } : { success: true, logs: [] },
+          );
+        } finally {
+          chmodSync(join(root, "lib", "unlistable"), 0o755);
+        }
+      },
+    );
+  }
 
   // The resolver remembers a directory that it did not find. A plugin can name a path in a directory that does
   // not exist yet and create the directory later, so the bundler asks the resolver only about a path on disk.

@@ -426,13 +426,13 @@ impl<'a> Transpiler<'a> {
             entry_point,
             bun_ast::ImportKind::EntryPointBuild,
         ) {
-            Ok(r) if !r.flags.is_external() => return Ok(r),
             // A data: URL whose MIME type is not code; there is no module in it.
-            Ok(r) if r.path_pair.primary.is_data_url() => {
+            Ok(r) if r.flags.is_external() && r.path_pair.primary.is_data_url() => {
                 Err(resolver::Error::ModuleNotFound.into())
             }
-            // A builtin. `reject_unbundleable_entry_point` reports it unless the name is also a file.
-            Ok(builtin) => Ok(builtin),
+            // `reject_unbundleable_entry_point` reports a builtin unless the name is also a file.
+            Ok(builtin) if Self::entry_point_is_builtin(&builtin) => Ok(builtin),
+            Ok(r) => return Ok(r),
             Err(err) => Err(err.into()),
         };
 
@@ -451,13 +451,23 @@ impl<'a> Transpiler<'a> {
                 &prefixed,
                 bun_ast::ImportKind::EntryPointBuild,
             ) {
-                if !r.flags.is_external() {
+                if !Self::entry_point_is_builtin(&r) {
                     return Ok(r);
                 }
             }
             // return the original result
         }
         first
+    }
+
+    /// `--external` skips entry points, so an external result is a builtin that `--target=bun/node`
+    /// keeps as an import. `--target=browser` resolves a builtin to its polyfill, or to a disabled
+    /// stub when it has none. A Bake framework module shares the "node" namespace and is bundled.
+    fn entry_point_is_builtin(resolved: &resolver::Result) -> bool {
+        let path = &resolved.path_pair.primary;
+        resolved.flags.is_external()
+            || (path.namespace == b"node"
+                && (path.is_disabled || path.text.starts_with(NodeFallbackModules::IMPORT_PATH)))
     }
 
     /// Resolve an entry-point specifier, busting the directory cache and
@@ -538,23 +548,15 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// A disabled module imports as `{}` and an external one stays an import. An entry point has
-    /// nothing to emit in either case. `--external` skips entry points, so external means builtin.
+    /// An entry point is bundled from the user's own source. A builtin has none: it stays an import
+    /// or becomes Bun's polyfill or stub (see `entry_point_is_builtin`). A module that a "browser"
+    /// map disabled imports as `{}` and has nothing to emit either.
     fn reject_unbundleable_entry_point(
         &self,
         resolved: resolver::Result,
         entry_point: &[u8],
     ) -> crate::Result<resolver::Result> {
-        let is_builtin = if resolved.flags.is_external() {
-            true
-        } else if resolved.path_const().is_some() {
-            return Ok(resolved);
-        } else {
-            // Stubbed builtins carry the "node" namespace; anything else came from a "browser" map.
-            resolved.path_pair.primary.namespace == b"node"
-        };
-
-        if is_builtin {
+        if Self::entry_point_is_builtin(&resolved) {
             self.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
@@ -563,6 +565,8 @@ impl<'a> Transpiler<'a> {
                     bstr::BStr::new(entry_point)
                 ),
             );
+        } else if resolved.path_const().is_some() {
+            return Ok(resolved);
         } else {
             self.log_mut().add_error_fmt(
                 None,

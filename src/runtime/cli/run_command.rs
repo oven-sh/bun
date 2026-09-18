@@ -217,6 +217,23 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         })
     }
 
+    /// The interpreter that `--filter`, `--parallel` and `--sequential` spawn
+    /// each script with, as `(argv[0], argv[1])`: `<shell> -c`, `cmd.exe /c`,
+    /// or `<bun> exec`. With `use_system_shell == false` no system shell is
+    /// looked up, so `--shell=bun` works on an image that has none.
+    pub(crate) fn script_shell_argv(
+        use_system_shell: bool,
+        path: &[u8],
+        cwd: &[u8],
+    ) -> crate::Result<(&'static ZStr, &'static ::core::ffi::CStr)> {
+        if !use_system_shell {
+            let bun = bun_core::self_exe_path().map_err(|_| crate::Error::MissingShell)?;
+            return Ok((bun, c"exec"));
+        }
+        let shell = Self::find_shell(path, cwd).ok_or(crate::Error::MissingShell)?;
+        Ok((shell, if cfg!(windows) { c"/c" } else { c"-c" }))
+    }
+
     // Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
     // `npm run` / `npx` / `pnpx` and replace them with `bun run` / `bun x`.
     //

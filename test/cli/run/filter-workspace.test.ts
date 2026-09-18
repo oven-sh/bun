@@ -1311,3 +1311,76 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(1);
   });
 });
+
+describe("--shell and [run] shell pick the interpreter for --filter", () => {
+  // `echo $0` tells the shells apart. A POSIX shell prints its own path. The
+  // Bun shell does not. On Windows cmd.exe expands %COMSPEC% to its own path
+  // and the Bun shell prints it as written.
+  const probe = isWindows ? "echo %COMSPEC%" : "echo $0";
+  const systemShell = isWindows ? /cmd\.exe/i : /\/(bash|sh|zsh)\b/;
+
+  function workspace(prefix: string, bunfig?: string) {
+    return tempDir(prefix, {
+      ...(bunfig ? { "bunfig.toml": bunfig } : {}),
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: {
+        dep0: {
+          "package.json": JSON.stringify({ name: "dep0", scripts: { probe } }),
+        },
+      },
+    });
+  }
+
+  function run(dir: string, args: string[]) {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { exitCode, stdout: stdout.toString(), stderr: stderr.toString() };
+  }
+
+  test("--shell=bun runs the script in the Bun shell", () => {
+    using dir = workspace("filter-shell-bun");
+    const r = run(String(dir), ["run", "--shell=bun", "--filter", "dep0", "probe"]);
+    expect(r.stdout).toContain("dep0 probe:");
+    expect(r.stdout).not.toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("--shell=system runs the script in the system shell", () => {
+    using dir = workspace("filter-shell-system");
+    const r = run(String(dir), ["run", "--shell=system", "--filter", "dep0", "probe"]);
+    expect(r.stdout).toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test('[run] shell = "bun" runs the script in the Bun shell', () => {
+    using dir = workspace("filter-bunfig-shell-bun", '[run]\nshell = "bun"\n');
+    const r = run(String(dir), ["run", "--filter", "dep0", "probe"]);
+    expect(r.stdout).toContain("dep0 probe:");
+    expect(r.stdout).not.toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test('[run] shell = "system" runs the script in the system shell', () => {
+    using dir = workspace("filter-bunfig-shell-system", '[run]\nshell = "system"\n');
+    const r = run(String(dir), ["run", "--filter", "dep0", "probe"]);
+    expect(r.stdout).toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("the default stays the platform shell", () => {
+    using dir = workspace("filter-shell-default");
+    const r = run(String(dir), ["run", "--filter", "dep0", "probe"]);
+    expect(r.stdout).toContain("dep0 probe:");
+    if (isWindows) {
+      expect(r.stdout).not.toMatch(systemShell);
+    } else {
+      expect(r.stdout).toMatch(systemShell);
+    }
+    expect(r.exitCode).toBe(0);
+  });
+});

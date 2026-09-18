@@ -2206,3 +2206,54 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(1);
   });
 });
+
+describe.concurrent("--shell and [run] shell pick the interpreter", () => {
+  // `echo $0` tells the shells apart. A POSIX shell prints its own path. The
+  // Bun shell does not. On Windows cmd.exe expands %COMSPEC% to its own path
+  // and the Bun shell prints it as written.
+  const probe = isWindows ? "echo %COMSPEC%" : "echo $0";
+  const systemShell = isWindows ? /cmd\.exe/i : /\/(bash|sh|zsh)\b/;
+  const pkg = JSON.stringify({ scripts: { one: probe, two: probe } });
+
+  test.each([
+    ["--parallel", ["run", "--shell=bun", "--parallel", "one", "two"]],
+    ["--sequential", ["run", "--shell=bun", "--sequential", "one", "two"]],
+  ])("--shell=bun %s runs the scripts in the Bun shell", async (_, args) => {
+    using dir = tempDir("mr-shell-bun", { "package.json": pkg });
+    const r = await runMulti(args, String(dir));
+    expectDone(r.stderr, "one");
+    expectDone(r.stderr, "two");
+    expect(r.stdout).not.toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test.each([
+    ["--parallel", ["run", "--shell=system", "--parallel", "one"]],
+    ["--sequential", ["run", "--shell=system", "--sequential", "one"]],
+  ])("--shell=system %s runs the scripts in the system shell", async (_, args) => {
+    using dir = tempDir("mr-shell-system", { "package.json": pkg });
+    const r = await runMulti(args, String(dir));
+    expect(r.stdout).toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test('[run] shell = "bun" runs the scripts in the Bun shell', async () => {
+    using dir = tempDir("mr-bunfig-shell-bun", { "bunfig.toml": '[run]\nshell = "bun"\n', "package.json": pkg });
+    const r = await runMulti(["run", "--parallel", "one"], String(dir));
+    expectDone(r.stderr, "one");
+    expect(r.stdout).not.toMatch(systemShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("the default stays the platform shell", async () => {
+    using dir = tempDir("mr-shell-default", { "package.json": pkg });
+    const r = await runMulti(["run", "--parallel", "one"], String(dir));
+    expectDone(r.stderr, "one");
+    if (isWindows) {
+      expect(r.stdout).not.toMatch(systemShell);
+    } else {
+      expect(r.stdout).toMatch(systemShell);
+    }
+    expect(r.exitCode).toBe(0);
+  });
+});

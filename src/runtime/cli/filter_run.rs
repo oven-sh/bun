@@ -91,11 +91,7 @@ impl<'a> ProcessHandle<'a> {
 
         let argv: [*const c_char; 4] = [
             state.shell_bin.as_ptr().cast(),
-            if cfg!(unix) {
-                c"-c".as_ptr()
-            } else {
-                c"exec".as_ptr()
-            },
+            state.shell_flag.as_ptr(),
             handle.config.combined.as_ptr().cast(),
             core::ptr::null(),
         ];
@@ -325,6 +321,8 @@ struct State<'a> {
     last_lines_written: usize,
     pretty_output: bool,
     shell_bin: &'static ZStr, // intentionally leaked (process exits)
+    /// `-c`, `/c` or `exec`: argv[1] that goes with `shell_bin`.
+    shell_flag: &'static core::ffi::CStr,
     aborted: bool,
     // Raw `*mut` — process-lifetime singleton owned
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
@@ -868,6 +866,17 @@ pub(crate) fn run_scripts_with_filter(
 
             for part in &ctx.passthrough {
                 copy_script.push(b' ');
+                if cfg!(windows)
+                    && ctx.debug.use_system_shell
+                    && bun_which::batch_arg_has_cmd_metachars(part)
+                {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: Failed to run script <b>{}<r>: argument {} contains a cmd.exe special character and cannot be passed to the system shell",
+                        bstr::BStr::new(script_name),
+                        bun_core::fmt::quote(&part[..]),
+                    );
+                    Global::exit(1);
+                }
                 if crate::shell::needs_escape_utf8_ascii_latin1(part) {
                     crate::shell::escape_8bit::<true, false>(part, &mut copy_script)?;
                 } else {
@@ -934,21 +943,12 @@ pub(crate) fn run_scripts_with_filter(
     bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
         &mut *event_loop
     }));
-    let shell_bin: &'static ZStr = {
-        #[cfg(unix)]
-        {
-            RunCommand::find_shell(
-                // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
-                unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
-                fsinstance.top_level_dir,
-            )
-            .ok_or(crate::Error::MissingShell)?
-        }
-        #[cfg(not(unix))]
-        {
-            bun_core::self_exe_path().map_err(|_| crate::Error::MissingShell)?
-        }
-    };
+    let (shell_bin, shell_flag) = RunCommand::script_shell_argv(
+        ctx.debug.use_system_shell,
+        // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
+        unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
+        fsinstance.top_level_dir,
+    )?;
 
     let handles: Box<[ProcessHandle]> = Vec::with_capacity(scripts.len()).into();
     // We build into a Vec first, but need stable addresses for `&state` backref and `&mut handles[i]`
@@ -972,6 +972,7 @@ pub(crate) fn run_scripts_with_filter(
             }
         },
         shell_bin,
+        shell_flag,
         aborted: false,
         env: env_ptr,
     };

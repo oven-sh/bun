@@ -144,11 +144,7 @@ impl<'a> ProcessHandle<'a> {
         // Null-terminated argv array, as required by spawnProcess.
         let argv: [*const c_char; 4] = [
             state.shell_bin.as_ptr().cast::<c_char>(),
-            if cfg!(unix) {
-                c"-c".as_ptr()
-            } else {
-                c"exec".as_ptr()
-            },
+            state.shell_flag.as_ptr(),
             self.config.command.as_ptr().cast::<c_char>(),
             ptr::null(),
         ];
@@ -349,8 +345,9 @@ struct State<'a> {
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
-    // NUL-terminated (last byte is 0) for argv[0].
-    shell_bin: Box<[u8]>,
+    shell_bin: &'static bun::ZStr,
+    /// `-c`, `/c` or `exec`: argv[1] that goes with `shell_bin`.
+    shell_flag: &'static core::ffi::CStr,
     aborted: bool,
     no_exit_on_error: bool,
     env: *mut DotEnvLoader,
@@ -906,23 +903,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
         EventLoopHandle::init_mini(event_loop),
     ));
-    // shell_bin is NUL-terminated ([:0]const u8) for argv use.
-    let shell_bin: Box<[u8]> = if cfg!(unix) {
+    let (shell_bin, shell_flag) = RunCommand::script_shell_argv(
+        ctx.debug.use_system_shell,
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to
         // init_global above has been released, so this read does not alias a live &mut.
-        let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
-        Box::from(
-            RunCommand::find_shell(path_env, cwd)
-                .ok_or(crate::Error::MissingShell)?
-                .as_bytes_with_nul(),
-        )
-    } else {
-        Box::from(
-            bun::self_exe_path()
-                .map_err(|_| crate::Error::MissingShell)?
-                .as_bytes_with_nul(),
-        )
-    };
+        unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
+        cwd,
+    )?;
 
     // Build ScriptConfigs and ProcessHandles
     // Each script name can produce up to 3 handles (pre, main, post)
@@ -1136,6 +1123,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         remaining_scripts: 0,
         max_label_len,
         shell_bin,
+        shell_flag,
         aborted: false,
         no_exit_on_error: ctx.no_exit_on_error,
         env: env_ptr,

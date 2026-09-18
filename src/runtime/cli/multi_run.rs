@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::Error;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Global, Output, UnwrapOrOom};
+use bun_core::{self as bun, Global, Output, UnwrapOrOom, ZStr};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_install::package_manager::workspace_selection;
@@ -15,7 +15,7 @@ use bun_paths as path;
 
 use crate::Command;
 use crate::filter_arg as FilterArg;
-use crate::run_command::{ConfigureEnvOptions, RunCommand};
+use crate::run_command::{ConfigureEnvOptions, RunCommand, ScriptShell};
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
 // lives under crate::api::bun::process.
@@ -141,17 +141,9 @@ impl<'a> ProcessHandle<'a> {
         let state = unsafe { &mut *self.state.cast_mut() };
         state.remaining_scripts += 1;
 
-        // Null-terminated argv array, as required by spawnProcess.
-        let argv: [*const c_char; 4] = [
-            state.shell_bin.as_ptr().cast::<c_char>(),
-            if cfg!(unix) {
-                c"-c".as_ptr()
-            } else {
-                c"exec".as_ptr()
-            },
-            self.config.command.as_ptr().cast::<c_char>(),
-            ptr::null(),
-        ];
+        let argv = state
+            .shell
+            .argv(ZStr::from_slice_with_nul(&self.config.command));
 
         let start_time = Instant::now();
         let envp;
@@ -349,8 +341,7 @@ struct State<'a> {
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
-    // NUL-terminated (last byte is 0) for argv[0].
-    shell_bin: Box<[u8]>,
+    shell: ScriptShell,
     aborted: bool,
     no_exit_on_error: bool,
     env: *mut DotEnvLoader,
@@ -906,23 +897,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
         EventLoopHandle::init_mini(event_loop),
     ));
-    // shell_bin is NUL-terminated ([:0]const u8) for argv use.
-    let shell_bin: Box<[u8]> = if cfg!(unix) {
+    let shell = ScriptShell::find(
+        ctx.debug.use_system_shell,
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to
         // init_global above has been released, so this read does not alias a live &mut.
-        let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
-        Box::from(
-            RunCommand::find_shell(path_env, cwd)
-                .ok_or(crate::Error::MissingShell)?
-                .as_bytes_with_nul(),
-        )
-    } else {
-        Box::from(
-            bun::self_exe_path()
-                .map_err(|_| crate::Error::MissingShell)?
-                .as_bytes_with_nul(),
-        )
-    };
+        unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
+        cwd,
+    )?;
 
     // Build ScriptConfigs and ProcessHandles
     // Each script name can produce up to 3 handles (pre, main, post)
@@ -1135,7 +1116,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         max_label_len,
-        shell_bin,
+        shell,
         aborted: false,
         no_exit_on_error: ctx.no_exit_on_error,
         env: env_ptr,

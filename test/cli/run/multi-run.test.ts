@@ -2206,3 +2206,50 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(1);
   });
 });
+
+// ─── --shell ──────────────────────────────────────────────────────────────────
+
+describe.concurrent("--shell", () => {
+  // `$0` tells the shells apart. A system shell expands it to its own path.
+  // Bun's shell runs here through `bun exec`, where `$0` is the script text.
+  const files = (bunfig?: string) => ({
+    ...(bunfig === undefined ? {} : { "bunfig.toml": bunfig }),
+    "package.json": JSON.stringify({ scripts: { one: "echo $0" } }),
+  });
+  const inBunShell = /^one\s+\| echo \$0$/m;
+  const inSystemShell = /^one\s+\| .*\/(bash|sh|zsh)$/m;
+
+  test.each([
+    ["bun run --parallel", ["run", "--shell=bun", "--parallel", "one"]],
+    ["bun --parallel", ["--shell=bun", "--parallel", "one"]],
+    ["bun run --sequential", ["run", "--shell=bun", "--sequential", "one"]],
+  ])("%s runs the script in Bun's shell with --shell=bun", async (_, args) => {
+    using dir = tempDir("mr-shell-bun", files());
+    const r = await runMulti(args, String(dir));
+    expect(r.stdout).toMatch(inBunShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test('[run] shell = "bun" runs the script in Bun\'s shell', async () => {
+    using dir = tempDir("mr-shell-bunfig", files('[run]\nshell = "bun"\n'));
+    const r = await runMulti(["run", "--parallel", "one"], String(dir));
+    expect(r.stdout).toMatch(inBunShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  // Windows runs these scripts in Bun's shell whatever the setting is.
+  test.skipIf(isWindows).each([
+    ["by default", undefined, ["run", "--parallel", "one"]],
+    ["with --shell=system", undefined, ["run", "--shell=system", "--parallel", "one"]],
+    [
+      'with --shell=system over [run] shell = "bun"',
+      '[run]\nshell = "bun"\n',
+      ["run", "--shell=system", "--parallel", "one"],
+    ],
+  ])("the system shell runs the script %s", async (_, bunfig, args) => {
+    using dir = tempDir("mr-shell-system", files(bunfig));
+    const r = await runMulti(args, String(dir));
+    expect(r.stdout).toMatch(inSystemShell);
+    expect(r.exitCode).toBe(0);
+  });
+});

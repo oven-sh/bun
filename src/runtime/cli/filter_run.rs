@@ -8,7 +8,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
-use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
+use crate::cli::run_command::{ConfigureEnvOptions, RunCommand, ScriptShell};
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -89,16 +89,7 @@ impl<'a> ProcessHandle<'a> {
         state.remaining_scripts += 1;
         let handle = self;
 
-        let argv: [*const c_char; 4] = [
-            state.shell_bin.as_ptr().cast(),
-            if cfg!(unix) {
-                c"-c".as_ptr()
-            } else {
-                c"exec".as_ptr()
-            },
-            handle.config.combined.as_ptr().cast(),
-            core::ptr::null(),
-        ];
+        let argv = state.shell.argv(handle.config.combined);
         let start_time = Instant::now();
         let spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
@@ -324,7 +315,7 @@ struct State<'a> {
     draw_buf: Vec<u8>,
     last_lines_written: usize,
     pretty_output: bool,
-    shell_bin: &'static ZStr, // intentionally leaked (process exits)
+    shell: ScriptShell,
     aborted: bool,
     // Raw `*mut` — process-lifetime singleton owned
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
@@ -934,21 +925,12 @@ pub(crate) fn run_scripts_with_filter(
     bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
         &mut *event_loop
     }));
-    let shell_bin: &'static ZStr = {
-        #[cfg(unix)]
-        {
-            RunCommand::find_shell(
-                // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
-                unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
-                fsinstance.top_level_dir,
-            )
-            .ok_or(crate::Error::MissingShell)?
-        }
-        #[cfg(not(unix))]
-        {
-            bun_core::self_exe_path().map_err(|_| crate::Error::MissingShell)?
-        }
-    };
+    let shell = ScriptShell::find(
+        ctx.debug.use_system_shell,
+        // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
+        unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
+        fsinstance.top_level_dir,
+    )?;
 
     let handles: Box<[ProcessHandle]> = Vec::with_capacity(scripts.len()).into();
     // We build into a Vec first, but need stable addresses for `&state` backref and `&mut handles[i]`
@@ -971,7 +953,7 @@ pub(crate) fn run_scripts_with_filter(
                 Output::enable_ansi_colors_stdout()
             }
         },
-        shell_bin,
+        shell,
         aborted: false,
         env: env_ptr,
     };

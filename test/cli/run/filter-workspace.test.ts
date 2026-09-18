@@ -1311,3 +1311,137 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.exitCode).toBe(1);
   });
 });
+
+describe.concurrent("--shell", () => {
+  // `$0` tells the shells apart. A system shell expands it to its own path.
+  // Bun's shell runs here through `bun exec`, where `$0` is the script text.
+  const script = "echo $0";
+  const inBunShell = /^dep0 script: echo \$0$/m;
+  const inSystemShell = /^dep0 script: .*\/(bash|sh|zsh)$/m;
+
+  function workspace(prefix: string, bunfig?: string) {
+    return tempDir(prefix, {
+      ...(bunfig === undefined ? {} : { "bunfig.toml": bunfig }),
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: { dep0: { "package.json": JSON.stringify({ name: "dep0", scripts: { script } }) } },
+    });
+  }
+
+  async function run(dir: string, args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    ["bun run --filter", ["run", "--shell=bun", "--filter", "dep0", "script"]],
+    ["bun --filter", ["--shell=bun", "--filter", "dep0", "script"]],
+    ["bun run --workspaces", ["run", "--shell=bun", "--workspaces", "script"]],
+  ])("%s runs the script in Bun's shell with --shell=bun", async (_, args) => {
+    using dir = workspace("filter-shell-bun");
+    const r = await run(String(dir), args);
+    expect(r.stdout).toMatch(inBunShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  test('[run] shell = "bun" runs the script in Bun\'s shell', async () => {
+    using dir = workspace("filter-shell-bunfig", '[run]\nshell = "bun"\n');
+    const r = await run(String(dir), ["run", "--filter", "dep0", "script"]);
+    expect(r.stdout).toMatch(inBunShell);
+    expect(r.exitCode).toBe(0);
+  });
+
+  // Windows runs these scripts in Bun's shell whatever the setting is.
+  test.skipIf(isWindows).each([
+    ["by default", undefined, ["run", "--filter", "dep0", "script"]],
+    ["with --shell=system", undefined, ["run", "--shell=system", "--filter", "dep0", "script"]],
+    [
+      'with --shell=system over [run] shell = "bun"',
+      '[run]\nshell = "bun"\n',
+      ["run", "--shell=system", "--filter", "dep0", "script"],
+    ],
+  ])("the system shell runs the script %s", async (_, bunfig, args) => {
+    using dir = workspace("filter-shell-system", bunfig);
+    const r = await run(String(dir), args);
+    expect(r.stdout).toMatch(inSystemShell);
+    expect(r.exitCode).toBe(0);
+  });
+});
+
+// The runner never passes the default .env* files into a script (see "does not
+// pass variables from .env files into scripts" in env.test.ts). The bun that the
+// script starts loads them, so `NODE_ENV=production bun x` reads .env.production
+// and not the file the runner's NODE_ENV selects (#9635). `sh -c` adds nothing to
+// the environment the runner built, and Bun's shell (`bun exec`) must not either.
+describe.each([
+  { via: "--filter", argv: (script: string) => ["--filter", "app", script], cwd: (root: string) => root },
+  {
+    via: "run --parallel",
+    argv: (script: string) => ["--parallel", script],
+    cwd: (root: string) => join(root, "packages", "app"),
+  },
+])("$via --shell=bun: scripts only see the environment the runner built", ({ argv, cwd }) => {
+  function workspace() {
+    return tempDir("filter-shell-env", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        scripts: {
+          "show-env": "echo ENV_FILE_NAME=$ENV_FILE_NAME CUSTOM=$CUSTOM_VAR INHERITED=$INHERITED_VAR",
+          "show-env-prod": `NODE_ENV=production "${bunExe()}" show-env.js`,
+        },
+      }),
+      "packages/app/show-env.js": `
+        const { ENV_FILE_NAME = "", CUSTOM_VAR = "", INHERITED_VAR = "" } = process.env;
+        console.log("ENV_FILE_NAME=" + ENV_FILE_NAME + " CUSTOM=" + CUSTOM_VAR + " INHERITED=" + INHERITED_VAR);
+      `,
+      // One of these is in the default set for every NODE_ENV the test runner can
+      // have, so a default file that was loaded shows as a non-empty ENV_FILE_NAME.
+      "packages/app/.env": "ENV_FILE_NAME=.env",
+      "packages/app/.env.development": "ENV_FILE_NAME=.env.development",
+      "packages/app/.env.production": "ENV_FILE_NAME=.env.production",
+      "packages/app/.env.test": "ENV_FILE_NAME=.env.test",
+      "packages/app/.env.custom": "CUSTOM_VAR=from-custom",
+    });
+  }
+
+  async function run(root: string, runnerFlags: string[], script = "show-env") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--shell=bun", ...runnerFlags, ...argv(script)],
+      cwd: cwd(root),
+      env: { ...bunEnv, ENV_FILE_NAME: undefined, CUSTOM_VAR: undefined, INHERITED_VAR: "from-parent" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const line = stdout.match(/ENV_FILE_NAME=(\S*) CUSTOM=(\S*) INHERITED=(\S*)/);
+    if (!line) throw new Error(`script output missing.\nstdout: ${stdout}\nstderr: ${stderr}`);
+    return { envFile: line[1], custom: line[2], inherited: line[3], exitCode };
+  }
+
+  test.concurrent("the package directory's .env* files are not loaded", async () => {
+    using dir = workspace();
+    expect(await run(String(dir), [])).toEqual({ envFile: "", custom: "", inherited: "from-parent", exitCode: 0 });
+  });
+
+  test.concurrent("--env-file loads only the requested file", async () => {
+    using dir = workspace();
+    const envFile = join(String(dir), "packages", "app", ".env.custom");
+    expect(await run(String(dir), ["--env-file", envFile])).toEqual({
+      envFile: "",
+      custom: "from-custom",
+      inherited: "from-parent",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("a script that sets its own NODE_ENV gets the matching .env file (#9635)", async () => {
+    using dir = workspace();
+    expect(await run(String(dir), [], "show-env-prod")).toEqual({
+      envFile: ".env.production",
+      custom: "",
+      inherited: "from-parent",
+      exitCode: 0,
+    });
+  });
+});

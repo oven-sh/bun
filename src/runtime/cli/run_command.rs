@@ -94,6 +94,53 @@ pub(crate) struct ConfigureEnvOptions {
     pub(crate) store_root_fd: bool,
 }
 
+/// The interpreter `bun run --filter`, `--parallel` and `--sequential` spawn
+/// each script under. Windows always gets Bun's shell.
+pub(crate) enum ScriptShell {
+    /// `<shell> -c <script>`
+    System(&'static ZStr),
+    /// `<bun> exec --no-env-file <script>`
+    Bun(&'static ZStr),
+}
+
+impl ScriptShell {
+    /// Only looks for a system shell when one is asked for, so `--shell=bun`
+    /// works on a machine that has none.
+    pub(crate) fn find(use_system_shell: bool, path: &[u8], cwd: &[u8]) -> crate::Result<Self> {
+        if use_system_shell && cfg!(unix) {
+            return Ok(Self::System(
+                RunCommand::find_shell(path, cwd).ok_or(crate::Error::MissingShell)?,
+            ));
+        }
+        Ok(Self::Bun(bun_core::self_exe_path()?))
+    }
+
+    /// Null-terminated argv for `spawn_process`; the pointers borrow `script`.
+    ///
+    /// The envp the runner spawns with is the script's whole environment. `sh`
+    /// adds nothing to it. `bun exec` would load the `.env` files of the
+    /// script's directory on top of it, so it gets `--no-env-file`.
+    pub(crate) fn argv(&self, script: &ZStr) -> [*const c_char; 5] {
+        let null = ::core::ptr::null();
+        match *self {
+            Self::System(shell) => [
+                shell.as_ptr().cast(),
+                c"-c".as_ptr(),
+                script.as_ptr().cast(),
+                null,
+                null,
+            ],
+            Self::Bun(bun) => [
+                bun.as_ptr().cast(),
+                c"exec".as_ptr(),
+                c"--no-env-file".as_ptr(),
+                script.as_ptr().cast(),
+                null,
+            ],
+        }
+    }
+}
+
 pub(crate) struct RunCommand;
 
 impl RunCommand {

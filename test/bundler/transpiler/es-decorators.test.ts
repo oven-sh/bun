@@ -706,7 +706,7 @@ describe("ES Decorators", () => {
       console.log(seen.join(","));
     `;
     const tsError = "error: Parameter decorators only work when experimental decorators are enabled";
-    const tsNote = `note: You can enable experimental decorators by adding "experimentalDecorators": true to your "tsconfig.json" file. Bun found no tsconfig.json that enables them for this file.`;
+    const tsNote = `note: You can enable experimental decorators by adding "experimentalDecorators": true to your "tsconfig.json" file. That option is not set for this file.`;
     const jsError = "error: Parameter decorators are not allowed in JavaScript";
 
     function count(haystack: string, needle: string) {

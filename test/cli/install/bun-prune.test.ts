@@ -11,12 +11,13 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const registry = new VerdaccioRegistry();
@@ -62,6 +63,7 @@ async function prune(where: string | { dir: string; cwd: string }, ...args: stri
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expectNoDanglingStoreLinks(dir);
   return { stdout, stderr, exitCode };
 }
 
@@ -78,10 +80,54 @@ async function pruneMerged(dir: string, ...args: string[]) {
       stderr: fd,
     });
     const exitCode = await proc.exited;
+    expectNoDanglingStoreLinks(dir);
     return { lines: out(readFileSync(log, "utf8")).split("\n"), exitCode };
   } finally {
     closeSync(fd);
   }
+}
+
+// Whatever a prune removes from node_modules/.bun, no package link of the store that stays may point at it: not
+// in an entry's node_modules, not in the package's own node_modules (where a dependency with the package's name
+// is linked), and not in the hidden hoisted folder node_modules/.bun/node_modules.
+function expectNoDanglingStoreLinks(dir: string) {
+  const store = join(dir, "node_modules", ".bun");
+  const isRealDirectory = (path: string) => lstatSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false;
+  const dangling: string[] = [];
+  const scan = (folder: string) => {
+    if (!isRealDirectory(folder)) {
+      return;
+    }
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      const path = join(folder, entry.name);
+      if (entry.isSymbolicLink()) {
+        if (resolve(folder, readlinkSync(path)).startsWith(store + sep) && !existsSync(path)) {
+          dangling.push(relative(dir, path));
+        }
+      } else if (entry.isDirectory() && entry.name.startsWith("@")) {
+        scan(path);
+      }
+    }
+  };
+  for (const entry of existsSync(store) ? readdirSync(store, { withFileTypes: true }) : []) {
+    // A symlinked entry belongs to the global store.
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    if (entry.name === "node_modules") {
+      scan(join(store, "node_modules"));
+      continue;
+    }
+    const modules = join(store, entry.name, "node_modules");
+    scan(modules);
+    // `name@version` or `@scope+name@version`
+    const name = entry.name.split("@", entry.name.startsWith("@") ? 2 : 1).join("@");
+    const own = name.startsWith("@") ? name.replace("+", "/") : name;
+    if (isRealDirectory(join(modules, own))) {
+      scan(join(modules, own, "node_modules"));
+    }
+  }
+  expect(dangling).toEqual([]);
 }
 
 function out(stdout: string) {
@@ -3036,6 +3082,231 @@ test.concurrent.each([["--os=aix"], ["--cpu=s390x"]])(
     expect(existsSync(join(store, "no-deps@1.0.0"))).toBeTrue();
     expect(existsSync(join(nm, "no-deps", "package.json"))).toBeTrue();
     expect(await install(dir, flag, "--linker", "isolated")).toContain("no changes");
+  },
+);
+
+// Every entry below node_modules: "dir", "file", or where a link points, relative to `dir`.
+// A relinking install links the bins of an entry's dependencies again but not the entry's own bins, so prune
+// leaves the `.bin` folder of a store entry alone. `storeBins: false` leaves those folders out.
+function nodeModulesTree(dir: string, { storeBins }: { storeBins: boolean }) {
+  const tree: Record<string, string> = {};
+  const walk = (rel: string) => {
+    for (const entry of readdirSync(join(dir, rel), { withFileTypes: true })) {
+      const path = `${rel}/${entry.name}`;
+      if (entry.name === ".bin" && !storeBins && rel !== "node_modules") {
+        continue;
+      }
+      if (entry.isSymbolicLink()) {
+        const target = resolve(dir, rel, readlinkSync(join(dir, path)));
+        tree[path] = `-> ${relative(dir, target).replaceAll("\\", "/")}`;
+      } else if (entry.isDirectory()) {
+        tree[path] = "dir";
+        walk(path);
+      } else {
+        tree[path] = "file";
+      }
+    }
+  };
+  walk("node_modules");
+  return tree;
+}
+
+// What `bun install <flags>` lays out in an empty folder from the package.json, bun.lock and tarballs of `dir`.
+async function freshInstallTree(dir: string, ...flags: string[]) {
+  const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  for (const name of readdirSync(dir)) {
+    if (name === "package.json" || name === "bun.lock" || name.endsWith(".tgz")) {
+      copyFileSync(join(dir, name), join(packageDir, name));
+    }
+  }
+  await install(packageDir, "--frozen-lockfile", "--linker", "isolated", ...flags);
+  return nodeModulesTree(packageDir, { storeBins: false });
+}
+
+test.concurrent.each([["--omit=optional"], ["--os=aix"], ["--cpu=s390x"]])(
+  "isolated: %s unlinks a removed optional dependency from the store entry of its dependent",
+  async (flag: string) => {
+    const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "test-postinstall-skip": "1.0.0" } });
+    const dependent = join(dir, "node_modules", ".bun", "test-postinstall-skip@1.0.0", "node_modules");
+    expect(readdirSync(dependent).toSorted()).toStrictEqual([
+      ".bin",
+      "test-postinstall-skip",
+      "test-postinstall-skip-native",
+    ]);
+    expect(isSymlink(join(dependent, "test-postinstall-skip-native"))).toBeTrue();
+    const installed = nodeModulesTree(dir, { storeBins: true });
+
+    const { stdout, exitCode } = await prune(dir, flag, "--linker", "isolated");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - test-postinstall-skip-native@1.0.0
+      1 package removed (checked 3 installed packages)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual(["test-postinstall-skip@1.0.0"]);
+    expect(readdirSync(dependent).toSorted()).toStrictEqual([".bin", "test-postinstall-skip"]);
+    expect(nodeModulesTree(dir, { storeBins: false })).toEqual(await freshInstallTree(dir, flag));
+
+    // An install without the flag puts the entry and the link back.
+    await install(dir, "--linker", "isolated");
+    expect(nodeModulesTree(dir, { storeBins: true })).toEqual(installed);
+  },
+);
+
+test.concurrent("isolated: a dangling link in a store entry that points outside the store is kept", async () => {
+  const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "test-postinstall-skip": "1.0.0" } });
+  const dependent = "node_modules/.bun/test-postinstall-skip@1.0.0/node_modules";
+  // A dependency on a workspace package is a link like these; here the folder it points at is gone.
+  const kept = ["absolute"];
+  rmSync(linkOutside(dir, `${dependent}/absolute`), { recursive: true });
+  if (!isWindows) {
+    kept.push("relative");
+    symlinkSync("../../../../outside/relative", join(dir, dependent, "relative"));
+  }
+  for (const name of kept) {
+    expect(isSymlink(join(dir, dependent, name))).toBeTrue();
+    expect(existsSync(join(dir, dependent, name))).toBeFalse();
+  }
+  // The installer's own link into the store is the one that goes.
+  expect(isSymlink(join(dir, dependent, "test-postinstall-skip-native"))).toBeTrue();
+
+  const { stdout, exitCode } = await prune(dir, "--omit=optional", "--linker", "isolated");
+  expect(lines(stdout)).toStrictEqual([BANNER, "", "- test-postinstall-skip-native@1.0.0", REMOVED(1, 3)]);
+  expect(exitCode).toBe(0);
+  expect(readdirSync(join(dir, dependent)).toSorted()).toStrictEqual([".bin", ...kept, "test-postinstall-skip"]);
+  for (const name of kept) {
+    expect(isSymlink(join(dir, dependent, name))).toBeTrue();
+  }
+});
+
+// `bun install` falls back to a junction when Windows refuses a symlink. A junction holds the absolute path.
+test.concurrent("isolated: an absolute link from a kept store entry to a removed one is unlinked", async () => {
+  const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "no-deps": "1.0.0" } });
+  const kept = join(dir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules");
+  const stale = plant(dir, "node_modules/.bun/stale@1.0.0/node_modules/stale");
+  const scopedStale = plant(dir, "node_modules/.bun/@scope+stale@1.0.0/node_modules/@scope/stale");
+  mkdirSync(join(kept, "@scope"));
+  symlinkSync(stale, join(kept, "stale"), "junction");
+  symlinkSync(scopedStale, join(kept, "@scope", "stale"), "junction");
+  expect(existsSync(join(kept, "stale", "package.json"))).toBeTrue();
+  expect(existsSync(join(kept, "@scope", "stale", "package.json"))).toBeTrue();
+
+  const { stdout, exitCode } = await prune(dir, "--linker", "isolated");
+  expect(lines(stdout)).toStrictEqual([BANNER, "", "- @scope/stale@1.0.0", "- stale@1.0.0", REMOVED(2, 4)]);
+  expect(exitCode).toBe(0);
+  expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.0"]);
+  expect(readdirSync(kept)).toStrictEqual(["no-deps"]);
+});
+
+// A package a test packs itself, installed as `file:./<name>-<version>.tgz`.
+async function packTarball(dir: string, pkg: { name: string; version: string } & Record<string, unknown>) {
+  const tarball = `${pkg.name}-${pkg.version}.tgz`;
+  await Bun.Archive.write(join(dir, tarball), { "package/package.json": JSON.stringify(pkg) }, { compress: "gzip" });
+  return `file:./${tarball}`;
+}
+
+test.concurrent(
+  "isolated: --omit=optional unlinks the scoped and the unscoped optional dependencies of a tarball package",
+  async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const dependency = await packTarball(dir, {
+      name: "dependent",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0" },
+      optionalDependencies: { "what-bin": "1.0.0", "@scoped/has-bin-entry": "1.0.0" },
+    });
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { dependent: dependency } }));
+    await install(dir, "--linker", "isolated");
+    const entry = storeEntries(dir).find(name => name.startsWith("dependent@"))!;
+    const dependent = join(dir, "node_modules", ".bun", entry, "node_modules");
+    expect(readdirSync(dependent).toSorted()).toStrictEqual([".bin", "@scoped", "dependent", "no-deps", "what-bin"]);
+    expectBinInstalled(dependent, "what-bin");
+    expectBinInstalled(dependent, "has-bin-entry");
+    const installed = nodeModulesTree(dir, { storeBins: true });
+
+    const { stdout, exitCode } = await prune(dir, "--omit=optional", "--linker", "isolated");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - @scoped/has-bin-entry@1.0.0
+      - what-bin@1.0.0
+      2 packages removed (checked 5 installed packages)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual([entry, "no-deps@1.0.0"]);
+    expect(readdirSync(dependent).toSorted()).toStrictEqual([".bin", "dependent", "no-deps"]);
+    expect(isSymlink(join(dependent, "no-deps"))).toBeTrue();
+    expect(nodeModulesTree(dir, { storeBins: false })).toEqual(await freshInstallTree(dir, "--omit=optional"));
+
+    // An install without the flag puts the entries, the links and the bins back.
+    await install(dir, "--linker", "isolated");
+    expect(nodeModulesTree(dir, { storeBins: true })).toEqual(installed);
+  },
+);
+
+// The installer links a dependency that has the name of the package itself inside the package:
+// <entry>/node_modules/<name>/node_modules/<name>.
+test.concurrent(
+  "isolated: --omit=optional unlinks an optional dependency that has the dependent's own name",
+  async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const dependency = await packTarball(dir, {
+      name: "no-deps",
+      version: "9.9.9",
+      optionalDependencies: { "no-deps": "1.0.0" },
+    });
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": dependency } }));
+    await install(dir, "--linker", "isolated");
+    const entry = storeEntries(dir).find(name => name !== "no-deps@1.0.0")!;
+    const own = join(dir, "node_modules", ".bun", entry, "node_modules", "no-deps");
+    expect(await file(join(own, "package.json")).json()).toMatchObject({ version: "9.9.9" });
+    expect(isSymlink(join(own, "node_modules", "no-deps"))).toBeTrue();
+    expect(await file(join(own, "node_modules", "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
+    const installed = nodeModulesTree(dir, { storeBins: true });
+
+    const { stdout, exitCode } = await prune(dir, "--omit=optional", "--linker", "isolated");
+    expect(lines(stdout)).toStrictEqual([BANNER, "", "- no-deps@1.0.0", REMOVED(1, 3)]);
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual([entry]);
+    expect(readdirSync(own)).toStrictEqual(["package.json"]);
+    expect(nodeModulesTree(dir, { storeBins: false })).toEqual(await freshInstallTree(dir, "--omit=optional"));
+
+    await install(dir, "--linker", "isolated");
+    expect(nodeModulesTree(dir, { storeBins: true })).toEqual(installed);
+  },
+);
+
+// `nativeDependencies` points the bins of a package at the platform package it depends on, as it does for esbuild
+// by default. A relinking install does not link those bins again, so prune must leave them for the entry to return.
+test.concurrent(
+  "isolated: an install after --omit=optional restores the bins that point into a native package",
+  async () => {
+    const dir = await setupWithLinker("isolated", {
+      name: "foo",
+      dependencies: { "test-postinstall-skip-parent": "1.0.0" },
+      nativeDependencies: ["test-postinstall-skip"],
+    });
+    const store = join(dir, "node_modules", ".bun");
+    const native = "test-postinstall-skip-native@1.0.0";
+    for (const entry of ["test-postinstall-skip-parent@1.0.0", "test-postinstall-skip@1.0.0"]) {
+      expectBinInstalled(join(store, entry, "node_modules"), "skip-test-cmd");
+    }
+    const installed = nodeModulesTree(dir, { storeBins: true });
+    if (!isWindows) {
+      const ownBin = `node_modules/.bun/test-postinstall-skip@1.0.0/node_modules/.bin/skip-test-cmd`;
+      expect(installed[ownBin]).toBe(
+        `-> node_modules/.bun/${native}/node_modules/test-postinstall-skip-native/bin/cmd.js`,
+      );
+    }
+
+    const { stdout, exitCode } = await prune(dir, "--omit=optional", "--linker", "isolated");
+    expect(lines(stdout)).toStrictEqual([BANNER, "", `- ${native}`, REMOVED(1, 4)]);
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual(["test-postinstall-skip-parent@1.0.0", "test-postinstall-skip@1.0.0"]);
+
+    await install(dir, "--linker", "isolated");
+    expect(nodeModulesTree(dir, { storeBins: true })).toEqual(installed);
   },
 );
 

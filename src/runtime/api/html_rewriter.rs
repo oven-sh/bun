@@ -215,15 +215,7 @@ pub(crate) struct ElementHandlerEntry {
 #[derive(Clone, Copy)]
 pub(crate) struct HandlerSlot(u32);
 
-/// The JS array holding every callback and handler object given to `on()` /
-/// `onDocument()`. It is what keeps them alive: it sits in the visited
-/// `handlers` slot of the `HTMLRewriter` wrapper and of every transform cell
-/// made from it, so they live as long as something that can still invoke them.
-/// Nothing is `gcProtect`ed, so a handler that reaches its own rewriter or the
-/// transformed `Response` is a cycle the collector can free.
-///
-/// Append-only, and never handed to script. Unrooted: only valid while one of
-/// those wrappers is alive.
+/// JS array of the `on()` / `onDocument()` callbacks and handler objects. Visited slots hold it.
 #[derive(Clone, Copy)]
 struct HandlerList(JSValue);
 
@@ -242,8 +234,7 @@ impl HandlerList {
         slot.filter(|list| list.is_cell()).map(Self)
     }
 
-    /// Own-property stores and loads only: an indexed accessor that script put
-    /// on `Array.prototype` never sees a handler.
+    /// `put_index` defines an own property, so an `Array.prototype` setter never sees a handler.
     fn append(self, global: &JSGlobalObject, value: JSValue) -> JsResult<HandlerSlot> {
         let index = self.0.get_length(global)? as u32;
         self.0.put_index(global, index, value)?;
@@ -450,10 +441,9 @@ impl HTMLRewriter {
         Ok(call_frame.this())
     }
 
-    /// `this_value` is this rewriter's JS wrapper. `sync_only_noun` is
-    /// `Some("a string" | "an ArrayBuffer")` when the caller needs the rewrite
-    /// to finish before `transform()` returns; a handler that would suspend
-    /// then fails the rewrite instead.
+    /// `sync_only_noun` is `Some("a string" | "an ArrayBuffer")` when the
+    /// caller needs the rewrite to finish before `transform()` returns; a
+    /// handler that would suspend then fails the rewrite instead.
     pub(crate) fn begin_transform(
         &self,
         cx: &bun_jsc::JsThread<'_>,
@@ -1134,10 +1124,9 @@ impl RewriterPipe {
         let response_js_value = result_ref.to_js(&this.global);
 
         // Hand ownership of `pipe` to its `JSHTMLRewriterTransform` wrapper cell.
-        // The cell's WriteBarrier slots root the Response, the handlers and
-        // (later) the input/output streams; the Response's `transform` slot
-        // roots the cell so it survives as long as user code can reach the
-        // output.
+        // The cell's WriteBarrier slots root the Response and (later) the
+        // input/output streams; the Response's `transform` slot roots the cell
+        // so it survives as long as user code can reach the output.
         let cell = js_HTMLRewriterTransform::to_js(pipe.as_ptr(), cx.global());
         if !cell.is_cell() {
             // No wrapper exists to own the initial ref, so drop it here.
@@ -1147,8 +1136,7 @@ impl RewriterPipe {
         this.cell.set(cell);
         js_HTMLRewriterTransform::response_set_cached(cell, cx.global(), response_js_value);
         js_Response::transform_set_cached(response_js_value, cx.global(), cell);
-        // The rewriter's wrapper can be collected while this rewrite is still
-        // in flight; its handlers cannot.
+        // This rewrite can outlive the rewriter's wrapper. Its handlers must not die with it.
         if let Some(handlers) = handlers {
             js_HTMLRewriterTransform::handlers_set_cached(cell, cx.global(), handlers.0);
         }
@@ -1577,11 +1565,7 @@ impl RewriterPipe {
         if self.rewriter.get().is_none() {
             return None;
         }
-        // Handlers are read off the cell's `handlers` slot and record their
-        // errors on it. One of them can drop every other path to the cell
-        // (cancel the output reader) while lol-html still has handlers to run
-        // for the rest of the chunk, so the cell stays on the stack until
-        // lol-html returns.
+        // A handler can cut every other path to the cell while lol-html has handlers left to run.
         let cell = self.cell.get();
         let _active = ActiveSinkGuard::enter(self);
         self.driving.set(true);
@@ -1599,9 +1583,7 @@ impl RewriterPipe {
         res
     }
 
-    /// The callbacks and handler objects this rewrite can invoke. `None` when
-    /// the rewriter had no handlers, once the rewrite is over, or once the
-    /// cell has been swept.
+    /// `None` once the rewrite is over or the cell is swept.
     fn handler_list(&self) -> Option<HandlerList> {
         let cell = self.cell.get();
         if !cell.is_cell() {
@@ -1610,13 +1592,11 @@ impl RewriterPipe {
         HandlerList::existing(js_HTMLRewriterTransform::handlers_get_cached(cell))
     }
 
-    /// The rewrite is over, so no handler runs again: an output `Response`
-    /// that outlives it stops keeping them alive. A lol-html call that is
-    /// still on the stack runs the handlers for the rest of its chunk first,
-    /// and `drive_rewriter` calls this again when it returns.
+    /// The rewrite is over: an output `Response` that outlives it stops retaining the handlers.
     fn release_handlers(&self) {
         debug_assert!(self.phase.get() == RewritePhase::Done);
         if self.driving.get() {
+            // lol-html runs the handlers for the rest of this chunk. `drive_rewriter` calls again.
             return;
         }
         let cell = self.cell.get();
@@ -2088,8 +2068,7 @@ fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 // ──────────────────────── DocumentHandler ────────────────────────────────
 
 pub struct DocumentHandler {
-    // The callbacks and the handler object live in the rewriter's
-    // [`HandlerList`]; `None` ⇒ the handler object had no such callback.
+    // Positions in the rewriter's [`HandlerList`]. `None`: the handler object had no such callback.
     pub(crate) on_doc_type_callback: Option<HandlerSlot>,
     pub(crate) on_comment_callback: Option<HandlerSlot>,
     pub(crate) on_text_callback: Option<HandlerSlot>,
@@ -2127,8 +2106,7 @@ impl DocumentHandler {
         })
     }
 
-    /// `rewriter` is the `HTMLRewriter` wrapper whose [`HandlerList`] takes
-    /// the callbacks and `this_object`.
+    /// `rewriter`: the `HTMLRewriter` wrapper whose [`HandlerList`] takes the values.
     pub(crate) fn init(
         global: &JSGlobalObject,
         rewriter: JSValue,
@@ -2175,8 +2153,7 @@ fn callback_property(
 /// Where a handler's callback lives.
 #[derive(Clone, Copy)]
 enum HandlerCallback {
-    /// Given to `on()` / `onDocument()`: in the rewrite's [`HandlerList`], and
-    /// called on the handler object it was read from.
+    /// Given to `on()` / `onDocument()`: in the [`HandlerList`], called on its handler object.
     Listed {
         callback: HandlerSlot,
         this_object: HandlerSlot,
@@ -2335,8 +2312,7 @@ where
         }
     };
 
-    // Made after the early returns above: only `to_js` below hands the
-    // wrapper's initial ref to an owner.
+    // After the early returns: only `to_js` below gives the wrapper's first ref an owner.
     let wrapper: NonNull<Z> = Z::init(value);
 
     // Our ref across the handler call; the guard detaches then drops it. On
@@ -2458,8 +2434,7 @@ pub struct ElementHandler {
 }
 
 impl ElementHandler {
-    /// `rewriter` is the `HTMLRewriter` wrapper whose [`HandlerList`] takes
-    /// the callbacks and `this_object`.
+    /// `rewriter`: the `HTMLRewriter` wrapper whose [`HandlerList`] takes the values.
     pub(crate) fn init(
         global: &JSGlobalObject,
         rewriter: JSValue,
@@ -2826,8 +2801,7 @@ pub struct EndTag {
 }
 
 struct EndTagHandler {
-    // GC-rooted via `ProtectedJSValue` (RAII protect/unprotect) until lol-html
-    // runs or drops the handler — self-unprotects on drop.
+    // GC-rooted via `ProtectedJSValue` until lol-html runs or drops the handler.
     pub callback: Option<ProtectedJSValue>,
     pub global: GlobalRef, // JSC_BORROW
 }

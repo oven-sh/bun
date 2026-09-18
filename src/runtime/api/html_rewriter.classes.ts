@@ -10,9 +10,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     klass: {},
-    // Visited slot holding the array of callbacks and handler objects given to
-    // `on()` / `onDocument()`, shared with every transform cell made from this
-    // rewriter.
+    // The `on()` / `onDocument()` callbacks: `HandlerList` in html_rewriter.rs.
     values: ["handlers"],
     proto: {
       on: {

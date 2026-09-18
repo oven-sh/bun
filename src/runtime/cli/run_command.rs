@@ -101,7 +101,8 @@ pub(crate) enum EntryPath {
     Resolved,
     /// A path as `node` takes it: a directory, or a file without its
     /// extension, also runs. `boot` resolves it to the file to run and keeps
-    /// the given path as `process.argv[1]`.
+    /// the given path as `process.argv[1]`, like Node's `resolveMainPath`:
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L29-L45
     Unresolved,
 }
 

@@ -488,6 +488,11 @@ describe("a hostile macro", () => {
     ["process.exit()", `process.exit(42)`, "process.exit() cannot be called from a macro"],
     ["process.reallyExit()", `process.reallyExit(42)`, "process.reallyExit() cannot be called from a macro"],
     ["process.abort()", `process.abort()`, "process.abort() cannot be called from a macro"],
+    [
+      "process.kill(process.pid)",
+      `process.kill(process.pid)`,
+      "process.kill() cannot signal the current process from a macro",
+    ],
   ])("%s inside a macro fails the build instead of the process", async (_name, call, message) => {
     const { stderr, exitCode, signalCode } = await build({ "m.ts": `export function m() { ${call}; }` });
     expect({ exitCode, signalCode, stderr }).toEqual({
@@ -675,6 +680,83 @@ describe("a hostile macro", () => {
       exitCode: 0,
       signalCode: null,
       stderr: expect.any(String),
+    });
+  });
+
+  // require() runs the macro in the program's own VM. The macro's error is printed and the require()
+  // throws; it must not also go down the program's fatal-error path (exit code 1, event loop abandoned).
+  test.concurrent.each([
+    ["throws", `export function m() { throw new Error("macro boom"); }`],
+    ["returns an Error", `export function m() { return new Error("macro boom"); }`],
+    ["returns a promise that rejects", `export async function m() { await 1; throw new Error("macro boom"); }`],
+    ["throws while its module loads", `throw new Error("macro boom");\nexport function m() {}`],
+  ])("a program that catches the require() of a file whose macro %s keeps running", async (_name, macro) => {
+    using dir = tempDir("macro-hostile-caught", {
+      "m.ts": macro,
+      "uses.ts": `import { m } from "./m.ts" with { type: "macro" };\nexport const v = m();\n`,
+      "index.ts": [
+        `try {`,
+        `  require("./uses.ts");`,
+        `  console.log("required");`,
+        `} catch {`,
+        `  console.log("caught");`,
+        `}`,
+        `setTimeout(() => console.log("timer fired"), 1);`,
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout
+      .trim()
+      .split("\n")
+      .filter(line => !line.startsWith("[macro]"));
+    expect({ lines, stderr, exitCode }).toEqual({
+      lines: ["caught", "timer fired"],
+      stderr: expect.stringContaining("error: macro boom"),
+      exitCode: 0,
+    });
+  });
+
+  // The runtime keeps one macro table for the VM's lifetime. Before: the second file kept its `m()` call
+  // with the import gone, loaded, and threw a ReferenceError when the line ran.
+  test.concurrent("a second file using a macro that failed to load fails too", async () => {
+    using dir = tempDir("macro-hostile-reload", {
+      "m.ts": `throw new Error("macro boom");\nexport function m() {}`,
+      "a.ts": `import { m } from "./m.ts" with { type: "macro" };\nexport const v = m();\n`,
+      "b.ts": `import { m } from "./m.ts" with { type: "macro" };\nexport const w = m();\n`,
+      "index.ts": [
+        `for (const file of ["./a.ts", "./b.ts"]) {`,
+        `  try {`,
+        `    require(file);`,
+        `    console.log(file + " loaded");`,
+        `  } catch (e) {`,
+        `    console.log(file + ": " + String(e.message).split("\\n")[0]);`,
+        `  }`,
+        `}`,
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lines = stdout
+      .trim()
+      .split("\n")
+      .filter(line => !line.startsWith("[macro]"));
+    expect({ lines, stderr, exitCode }).toEqual({
+      lines: [`./a.ts: "MacroLoadError" error in macro`, `./b.ts: macro "./m.ts" failed to load`],
+      stderr: expect.stringContaining("error: macro boom"),
+      exitCode: 0,
     });
   });
 });

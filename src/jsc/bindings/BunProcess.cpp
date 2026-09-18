@@ -4818,10 +4818,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
 #else
     int ownPid = uv_os_getpid();
 #endif
+    bool isSelfDirected = pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid;
+    // A macro may signal a child it spawned, not the process that runs it.
+    if (signal > 0 && isSelfDirected && isRunningMacro(defaultGlobalObject(globalObject))) [[unlikely]] {
+        throwTypeError(globalObject, scope, "process.kill() cannot signal the current process from a macro"_s);
+        return {};
+    }
     // Node's Kill binding runs RunAtExit for a self-directed unhandled signal, so flush profiles
     // first. `signalToContextIdsMap` is mutated only on the main thread; workers never set
     // profiler configs, so skipping the flush there avoids a rehash race.
-    if (signal > 0 && (pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid)
+    if (signal > 0 && isSelfDirected
         && !(Bun__isMainThreadVM() && signalToContextIdsMap && signalToContextIdsMap->contains(signal))) {
         Bun__writeProfilesBeforeSelfKill();
     }

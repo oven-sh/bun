@@ -220,7 +220,17 @@ impl MacroContext {
         let macro_vm = macro_entry.value_ptr.vm;
         let macro_: *const Macro = macro_entry.value_ptr;
         if macro_disabled {
-            return Ok(caller);
+            // Its load failed on an earlier call. Returning `caller` would leave this call in the
+            // output with its import gone.
+            log.add_error_fmt(
+                Some(source),
+                caller.loc,
+                format_args!(
+                    "macro \"{}\" failed to load",
+                    bstr::BStr::new(import_record_path)
+                ),
+            );
+            return Err(crate::Error::MacroFailed);
         }
         // SAFETY: `Some` for every non-disabled Macro; see `Macro` struct comment.
         let vm = macro_vm
@@ -480,11 +490,8 @@ impl Macro {
         };
         match unwrapped {
             jsc::PromiseResult::Rejected(result) => {
-                // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
-                // is a live promise cell.
-                unsafe {
-                    (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
-                }
+                // SAFETY: `vm` is the live per-thread VM.
+                unsafe { (*vm).run_error_handler(result, None) };
                 return Err(crate::Error::MacroLoadError);
             }
             // A `Macro` returned here would leave its first call in the output as an
@@ -591,10 +598,12 @@ impl<'a> Run<'a> {
         let result = match vm.run_with_api_lock(|| macro_callback.call(global, JSValue::ZERO, args))
         {
             Ok(result) => result,
-            // The macro threw: report it (with its stack) and fail this expansion.
+            // The macro threw: print it (with its stack) and fail this expansion. Not
+            // `uncaught_exception`: on the program's own VM (a `require()`d file) that is the
+            // fatal-error path, and the program may catch the failed `require()` and go on.
             Err(JsError::Thrown) => {
                 let err = global.take_exception(JsError::Thrown);
-                vm.as_mut().uncaught_exception(global, err, false);
+                vm.as_mut().run_error_handler(err, None);
                 return Err(MacroError::MacroFailed);
             }
             Err(e) => return Err(e.into()),
@@ -618,7 +627,7 @@ impl<'a> Run<'a> {
             // A throw while converting the result (a getter) is reported like a throw from the macro.
             Err(MacroError::Js(JsError::Thrown)) => {
                 let err = global.take_exception(JsError::Thrown);
-                vm.as_mut().uncaught_exception(global, err, false);
+                vm.as_mut().run_error_handler(err, None);
                 Err(MacroError::MacroFailed)
             }
             other => other,
@@ -679,8 +688,7 @@ impl<'a> Run<'a> {
             T::Error => {
                 // Returning `self.caller` would leave the call in the output with its import gone.
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                let _ =
-                    unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
+                unsafe { (*self.macro_.vm()).run_error_handler(value, None) };
                 return Err(MacroError::MacroFailed);
             }
             T::Undefined => {
@@ -715,9 +723,7 @@ impl<'a> Run<'a> {
                         || value.as_::<BuildMessage>().is_some()
                     {
                         // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                        let _ = unsafe {
-                            (*self.macro_.vm()).uncaught_exception(self.global, value, false)
-                        };
+                        unsafe { (*self.macro_.vm()).run_error_handler(value, None) };
                         return Err(MacroError::MacroFailed);
                     }
                 }
@@ -914,6 +920,9 @@ impl<'a> Run<'a> {
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
+                // This wait is the promise's handler: a rejection is reported below, not by the
+                // VM's unhandled-rejection path (fatal to a program that `require()`d the file).
+                promise.set_handled(vm.jsc_vm());
                 match vm.as_mut().wait_for_promise_until_idle(promise) {
                     Ok(()) => {}
                     // The VM stopped before the macro's promise settled: throw its termination and unwind.
@@ -950,11 +959,7 @@ impl<'a> Run<'a> {
                     || promise_result
                         .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
                 {
-                    vm.as_mut().unhandled_rejection(
-                        self.global,
-                        promise_result,
-                        promise.as_value(),
-                    );
+                    vm.as_mut().run_error_handler(promise_result, None);
                     return Err(MacroError::MacroFailed);
                 }
                 self.is_top_level = false;

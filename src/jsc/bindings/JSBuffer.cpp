@@ -671,7 +671,8 @@ static JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObj
     auto view = str->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (arg1 && arg1.isString()) {
+    // Node's fromString uses utf8 when the encoding is not a string or is the empty string.
+    if (arg1 && arg1.isString() && asString(arg1)->length()) {
         std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
         RETURN_IF_EXCEPTION(scope, {});
         if (!encoded) {
@@ -2558,8 +2559,12 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
 
         auto* str = stringValue.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
-        RETURN_IF_EXCEPTION(scope, {});
+        // Node's write() uses utf8 for a falsy encoding, and a string is falsy only when empty.
+        auto encoding = WebCore::BufferEncodingType::utf8;
+        if (asString(encodingValue)->length()) {
+            encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         if (castedThis->isDetached()) [[unlikely]] {
             throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
             return {};

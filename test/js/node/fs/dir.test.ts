@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { tempDir } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -199,6 +200,16 @@ describe("opendirSync string encoding shorthand", () => {
     } finally {
       fs.rmSync(dirname, { recursive: true, force: true });
     }
+  });
+
+  // Node's assertEncoding only checks a truthy encoding, and the native readdir then uses utf8.
+  it("reads utf8 names for an empty-string encoding", () => {
+    using dirname = tempDir("opendir-empty-enc", { "na\u00efve.txt": "x" });
+    const names = ["", { encoding: "" }].map(options => {
+      using dir = fs.opendirSync(String(dirname), options as fs.OpenDirOptions);
+      return dir.readSync()?.name;
+    });
+    expect(names).toEqual(["na\u00efve.txt", "na\u00efve.txt"]);
   });
 });
 

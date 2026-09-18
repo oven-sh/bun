@@ -1192,8 +1192,7 @@ pub struct TagResult {
 pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
-    /// The `wildcard` part is a written `x`, `X` or `*`. False when that part is only absent,
-    /// as in `1` or in text that is not a version (which also reads as `Wildcard::Major`).
+    /// The `wildcard` part is a written `x`, `X` or `*`, not a part that is only absent (`1`, or text with no number).
     pub(crate) wildcard_written: bool,
     pub version: Partial<T>,
     pub(crate) len: u32,

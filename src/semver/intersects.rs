@@ -78,8 +78,7 @@ impl<'a> Interval<'a> {
         let Some(u) = self.upper else {
             return true;
         };
-        // `0.0.0-0` is the lowest version, so an interval with no lower bound starts there.
-        // That makes `<0.0.0-0` (`Comparator::null_set`) empty on its own.
+        // `0.0.0-0` is the lowest version, so a missing lower bound starts there and `<0.0.0-0` alone is empty.
         let l = self.lower.unwrap_or_else(|| Bound {
             version: Comparator::null_set().version,
             buf: b"",

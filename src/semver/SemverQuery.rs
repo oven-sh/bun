@@ -696,13 +696,11 @@ impl Token {
         match self.wildcard {
             Wildcard::Major => match self.tag {
                 // https://github.com/npm/node-semver/blob/3a8a4309ae986c1967b3073ba88c9e69433d44cb/classes/range.js#L380-L387
-                // A wildcard major makes `<` and `>` allow nothing. An operator before text that is
-                // not a version also gets here, with no wildcard written (`>latest`) or as an
-                // invalid version (`>xenial`), and keeps reading as anything.
                 TokenTag::Lt | TokenTag::Gt if parsed.valid && parsed.wildcard_written => Range {
                     left: Comparator::null_set(),
                     ..Default::default()
                 },
+                // An operator before text that is not a version (`>latest`, `>xenial`) also gets here.
                 _ => Range {
                     left: Comparator {
                         op: RangeOp::Gte,

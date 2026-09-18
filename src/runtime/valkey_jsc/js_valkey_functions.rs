@@ -1,4 +1,4 @@
-use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs};
+use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs, StringOrBuffer};
 use bun_collections::VecExt as _;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
@@ -71,6 +71,35 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     }
 
     JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
+}
+
+fn hset_arg(
+    global: &JSGlobalObject,
+    name: &'static str,
+    value: JSValue,
+    arg_name: &'static str,
+) -> JsResult<JSArgument> {
+    match from_js(global, value)? {
+        Some(arg) => Ok(arg),
+        None => Err(global.throw_invalid_argument_type(name, arg_name, "string or buffer")),
+    }
+}
+
+fn key_field_value_args(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    name: &'static str,
+) -> JsResult<[JSArgument; 3]> {
+    let Some(key) = from_js(global, frame.argument(0))? else {
+        return Err(global.throw_invalid_argument_type(name, "key", "string or buffer"));
+    };
+    let Some(field) = from_js(global, frame.argument(1))? else {
+        return Err(global.throw_invalid_argument_type(name, "field", "string or buffer"));
+    };
+    let Some(value) = from_js(global, frame.argument(2))? else {
+        return Err(global.throw_invalid_argument_type(name, "value", "string or buffer"));
+    };
+    Ok([key, field, value])
 }
 
 /// Shim around `protocol::valkey_error_to_js` that:
@@ -1017,20 +1046,13 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hincrby")?;
 
-        let key = frame.argument(0).to_bun_string(global)?;
-        let field = frame.argument(1).to_bun_string(global)?;
-        let value = frame.argument(2).to_bun_string(global)?;
-
-        let key_slice = key.to_utf8();
-        let field_slice = field.to_utf8();
-        let value_slice = value.to_utf8();
-
+        let [key, field, value] = key_field_value_args(global, frame, "hincrby")?;
         send_cmd(
             this,
             global,
             frame.this(),
             b"HINCRBY",
-            CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
+            CommandArgs::Args(&[key, field, value]),
             CommandMeta::default(),
             "Failed to send HINCRBY command",
         )
@@ -1045,20 +1067,13 @@ impl JSValkeyClient {
     ) -> JsResult<JSValue> {
         require_not_subscriber(this, b"hincrbyfloat")?;
 
-        let key = frame.argument(0).to_bun_string(global)?;
-        let field = frame.argument(1).to_bun_string(global)?;
-        let value = frame.argument(2).to_bun_string(global)?;
-
-        let key_slice = key.to_utf8();
-        let field_slice = field.to_utf8();
-        let value_slice = value.to_utf8();
-
+        let [key, field, value] = key_field_value_args(global, frame, "hincrbyfloat")?;
         send_cmd(
             this,
             global,
             frame.this(),
             b"HINCRBYFLOAT",
-            CommandArgs::Slices(&[key_slice, field_slice, value_slice]),
+            CommandArgs::Args(&[key, field, value]),
             CommandMeta::default(),
             "Failed to send HINCRBYFLOAT command",
         )
@@ -1069,39 +1084,58 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
         command: &'static [u8],
+        name: &'static str,
+        err_msg: &'static str,
     ) -> JsResult<JSValue> {
-        require_not_subscriber(this, command)?;
+        require_not_subscriber(this, name.as_bytes())?;
 
-        let key = frame.argument(0).to_bun_string(global)?;
+        let Some(key) = from_js(global, frame.argument(0))? else {
+            return Err(global.throw_invalid_argument_type(name, "key", "string or buffer"));
+        };
 
         let second_arg = frame.argument(1);
 
         let object_iter;
-        let mut args: Vec<bun_core::Utf8Bytes<'_>> = Vec::new();
+        let mut args: Vec<JSArgument> = Vec::new();
 
-        args.push(key.to_utf8());
+        args.push(key);
 
-        if second_arg.is_object() && !second_arg.is_array() {
-            // Pattern 1: Object/Record - hset(key, {field: value, ...})
-            let Some(obj) = second_arg.get_object() else {
-                return Err(global.throw_invalid_argument_type(bname(command), "fields", "object"));
-            };
+        // Probed before the record form: a buffer or Blob is an object too.
+        if let Some(field) = from_js(global, second_arg)? {
+            // Pattern 2: Variadic - hset(key, field, value, ...)
+            let args_count = frame.arguments_count();
+            if args_count < 3 {
+                return Err(global.throw(format_args!(
+                    "{} requires at least key, field, and value arguments",
+                    bstr::BStr::new(command)
+                )));
+            }
 
-            object_iter = JSPropertyIterator::init(
-                global,
-                obj,
-                jsc::PropertyIteratorOptions {
-                    skip_empty_name: false,
-                    include_value: true,
-                },
-            )?;
+            let field_value_count = args_count - 1; // Exclude key
+            if !field_value_count.is_multiple_of(2) {
+                return Err(global.throw(format_args!(
+                    "{} requires field-value pairs (even number of arguments after key)",
+                    bstr::BStr::new(command)
+                )));
+            }
 
-            args.ensure_total_capacity(1 + object_iter.len * 2);
+            args.ensure_total_capacity(args_count as usize);
+            args.push(field);
 
-            while let Some((field_name, value)) = object_iter.next()? {
-                args.push(field_name.to_utf8());
-
-                args.push(value.to_utf8(global)?);
+            let mut i: u32 = 2;
+            while i < args_count {
+                let arg_name = if i.is_multiple_of(2) {
+                    "value"
+                } else {
+                    "field"
+                };
+                args.push(hset_arg(
+                    global,
+                    name,
+                    frame.argument(i as usize),
+                    arg_name,
+                )?);
+                i += 1;
             }
         } else if second_arg.is_array() {
             // Pattern 3: Array - hmset(key, [field, value, ...])
@@ -1115,57 +1149,53 @@ impl JSValkeyClient {
             args.ensure_total_capacity(1 + iter.len as usize);
 
             while let Some(field_js) = iter.next()? {
-                args.push(field_js.to_utf8(global)?);
+                args.push(hset_arg(global, name, field_js, "field")?);
 
                 let Some(value_js) = iter.next()? else {
                     return Err(global.throw(format_args!(
                         "Array must have an even number of elements (field-value pairs)"
                     )));
                 };
-                args.push(value_js.to_utf8(global)?);
+                args.push(hset_arg(global, name, value_js, "value")?);
+            }
+        } else if let Some(obj) = second_arg.get_object() {
+            // Pattern 1: Object/Record - hset(key, {field: value, ...})
+            object_iter = JSPropertyIterator::init(
+                global,
+                obj,
+                jsc::PropertyIteratorOptions {
+                    skip_empty_name: false,
+                    include_value: true,
+                },
+            )?;
+
+            args.ensure_total_capacity(1 + object_iter.len * 2);
+
+            while let Some((field_name, value)) = object_iter.next()? {
+                args.push(JSArgument::StringOrBuffer(StringOrBuffer::owned(
+                    field_name.to_owned_slice(),
+                )));
+                args.push(hset_arg(global, name, value, "value")?);
             }
         } else {
-            // Pattern 2: Variadic - hset(key, field, value, ...)
-            let args_count = frame.arguments_count();
-            if args_count < 3 {
-                return Err(global.throw(format_args!(
-                    "HSET requires at least key, field, and value arguments"
-                )));
-            }
-
-            let field_value_count = args_count - 1; // Exclude key
-            if !field_value_count.is_multiple_of(2) {
-                return Err(global.throw(format_args!(
-                    "HSET requires field-value pairs (even number of arguments after key)"
-                )));
-            }
-
-            args.ensure_total_capacity(args_count as usize);
-
-            let mut i: u32 = 1;
-            while i < args_count {
-                args.push(frame.argument(i as usize).to_utf8(global)?);
-                i += 1;
-            }
+            return Err(global.throw_invalid_argument_type(name, "field", "string or buffer"));
         }
 
         if args.len() == 1 {
-            return Err(global.throw(format_args!("HSET requires at least one field-value pair")));
+            return Err(global.throw(format_args!(
+                "{} requires at least one field-value pair",
+                bstr::BStr::new(command)
+            )));
         }
 
-        let msg = if command == b"HSET" {
-            "Failed to send HSET command"
-        } else {
-            "Failed to send HMSET command"
-        };
         send_cmd(
             this,
             global,
             frame.this(),
             command,
-            CommandArgs::Slices(&args),
+            CommandArgs::Args(&args),
             CommandMeta::default(),
-            msg,
+            err_msg,
         )
     }
 
@@ -1175,7 +1205,14 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::hset_impl(this, global, frame, b"HSET")
+        Self::hset_impl(
+            this,
+            global,
+            frame,
+            b"HSET",
+            "hset",
+            "Failed to send HSET command",
+        )
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1184,7 +1221,14 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::hset_impl(this, global, frame, b"HMSET")
+        Self::hset_impl(
+            this,
+            global,
+            frame,
+            b"HMSET",
+            "hmset",
+            "Failed to send HMSET command",
+        )
     }
 
     cmd_key_varargs!(hdel, b"hdel", "HDEL", "key", NotSubscriber);

@@ -21,7 +21,6 @@ pub struct Command<'a> {
 
 #[derive(Copy, Clone)]
 pub enum Args<'a> {
-    Slices(&'a [bun_core::Utf8Bytes<'a>]),
     Args(&'a [BlobOrStringOrBuffer]),
     Raw(&'a [&'a [u8]]),
 }
@@ -29,7 +28,6 @@ pub enum Args<'a> {
 impl<'a> Args<'a> {
     fn len(&self) -> usize {
         match self {
-            Args::Slices(args) => args.len(),
             Args::Args(args) => args.len(),
             Args::Raw(args) => args.len(),
         }
@@ -45,14 +43,6 @@ impl<'a> Command<'a> {
         writer.write_all(b"\r\n")?;
 
         match &self.args {
-            Args::Slices(args) => {
-                for arg in args.iter() {
-                    let bytes = arg.slice();
-                    write!(writer, "${}\r\n", bytes.len())?;
-                    writer.write_all(bytes)?;
-                    writer.write_all(b"\r\n")?;
-                }
-            }
             Args::Args(args) => {
                 for arg in args.iter() {
                     write!(writer, "${}\r\n", arg.byte_length())?;

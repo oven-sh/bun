@@ -311,9 +311,10 @@ impl CacheStaging {
             folder_name,
             bun_sys::RenameatConcurrentlyOptions {
                 move_fallback: false,
+                keep_existing_destination: true,
             },
         );
-        // After an exchange the temporary name holds the folder that was replaced.
+        // On failure the temporary name may still hold our copy.
         self.discard();
         if let Err(err) = renamed {
             log.add_error_fmt(
@@ -558,13 +559,17 @@ impl GitSubprocess {
             return Err(Error::InstallFailed);
         }
 
-        match bun_sys::Dir::borrow(&this.cache_dir).open_at(&checkout_folder_name(&resolved)) {
+        let folder_name = checkout_folder_name(&resolved);
+        match bun_sys::Dir::borrow(&this.cache_dir).open_at(&folder_name) {
             Ok(dir) => {
                 if bun_sys::exists_at(dir.fd(), bun_core::zstr!(".bun-tag")) {
                     Self::finish_on_pool(this, Finalize::CachedCheckout(dir));
                     return Ok(());
                 }
                 dir.close();
+                // Without `.bun-tag` the entry is invalid; remove it so the
+                // fresh checkout replaces it instead of being kept.
+                let _ = bun_sys::Dir::borrow(&this.cache_dir).delete_tree(&folder_name);
             }
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
             Err(err) => return Err(err.into()),

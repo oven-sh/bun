@@ -1109,6 +1109,12 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
     const emptiedMap = {};
     for (let i = 0; i < 100; i++) emptiedMap["k" + i] = i;
     for (let i = 0; i < 100; i++) delete emptiedMap["k" + i];
+    // An empty object with `count` prototypes, the last of which is `last`.
+    const withPrototypes = (count, last) => {
+      let object = last;
+      for (let i = 0; i < count; i++) object = Object.create(object);
+      return object;
+    };
     const empty = {
       plain: {},
       instance: new Empty(),
@@ -1121,6 +1127,8 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
       frozen: Object.freeze({}),
       proxy: new Proxy({}, {}),
       headers: new Headers(),
+      // The formatter reads four prototypes and no more.
+      keyOnFifthPrototype: withPrototypes(5, { leaf: 1 }),
     };
     const expected = {
       plain: "{}",
@@ -1134,6 +1142,7 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
       frozen: "{}",
       proxy: "{}",
       headers: "Headers {}",
+      keyOnFifthPrototype: "{}",
     };
 
     it.each(Object.keys(empty))("%s prints the same text as inside the cap", key => {
@@ -1158,6 +1167,7 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
           m() {}
         })(),
         inherited: Object.create({ x: 1 }),
+        keyOnFourthPrototype: withPrototypes(4, { leaf: 1 }),
         indexed: { 0: 1 },
         proxy: new Proxy({ x: 1 }, {}),
         headers: new Headers({ a: "b" }),
@@ -1166,8 +1176,8 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
       for (const key of Object.keys(value)) expect(Bun.inspect(value[key])).toContain(": ");
       expect(Bun.inspect(value, { depth: 0 })).toBe(
         "{\n  full: [Object ...],\n  symbolKey: [Object ...],\n  nonEnumerable: [Object ...],\n  getter: [Object ...],\n" +
-          "  method: [Object ...],\n  inherited: [Object ...],\n  indexed: [Object ...],\n  proxy: [Object ...],\n" +
-          "  headers: Headers [Object ...],\n}",
+          "  method: [Object ...],\n  inherited: [Object ...],\n  keyOnFourthPrototype: [Object ...],\n" +
+          "  indexed: [Object ...],\n  proxy: [Object ...],\n  headers: Headers [Object ...],\n}",
       );
     });
 
@@ -1195,7 +1205,15 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
       const src = `
         class Foo {}
         class Private { #x = 1; static read(p) { return p.#x; } }
-        console.log({ a: { b: { plain: {}, inst: new Foo(), nul: Object.create(null), priv: new Private(), full: { x: 1 } } } });
+        // A different private field on the object and on each of its four prototypes.
+        // Only then does the formatter read a fifth prototype, so this one is not empty.
+        let stamped = { leaf: 1 };
+        for (let i = 0; i < 5; i++) {
+          stamped = Object.create(stamped);
+          new (class extends function (o) { return o; } { #p = 1; constructor(o) { super(o); } })(stamped);
+        }
+        console.log(Bun.inspect(stamped, { compact: true }));
+        console.log({ a: { b: { plain: {}, inst: new Foo(), nul: Object.create(null), priv: new Private(), stamped, full: { x: 1 } } } });
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
@@ -1207,8 +1225,9 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({
         stdout:
+          "{ leaf: 1 }\n" +
           "{\n  a: {\n    b: {\n      plain: {},\n      inst: Foo {},\n      nul: [Object: null prototype] {},\n" +
-          "      priv: Private {},\n      full: [Object ...],\n    },\n  },\n}\n",
+          "      priv: Private {},\n      stamped: [Object ...],\n      full: [Object ...],\n    },\n  },\n}\n",
         stderr: "",
         exitCode: 0,
       });

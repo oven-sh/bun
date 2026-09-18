@@ -5731,9 +5731,10 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isDefinitelyEmptyForEachPr
         return false;
 
     auto& vm = JSC::getVM(globalObject);
-    // forEachProperty never looks past the fifth prototype.
-    constexpr unsigned maxPrototypeLevel = 5;
-    for (unsigned level = 0; level <= maxPrototypeLevel; level++) {
+    // forEachProperty reads the object and four prototypes. It reads a fifth prototype only when each
+    // level before it holds a private name, so a private name on a prototype returns false below.
+    constexpr unsigned maxLevels = 5;
+    for (unsigned level = 0; level < maxLevels; level++) {
         JSC::Structure* structure = object->structure();
         const JSC::TypeInfo& typeInfo = structure->typeInfo();
         // The property table must list every own property name of this level.
@@ -5745,8 +5746,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isDefinitelyEmptyForEachPr
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
             // forEachProperty hides every `constructor`. An own enumerable one is real content, so that object is not empty.
             bool isHiddenConstructor = entry.key() == vm.propertyNames->constructor && (level > 0 || (entry.attributes() & PropertyAttribute::DontEnum));
-            skipsEveryProperty = isHiddenConstructor
-                || (PropertyName(entry.key()).isPrivateName() && !JSC::Options::showPrivateScriptsInStackTraces());
+            bool isHiddenPrivateName = level == 0 && PropertyName(entry.key()).isPrivateName() && !JSC::Options::showPrivateScriptsInStackTraces();
+            skipsEveryProperty = isHiddenConstructor || isHiddenPrivateName;
             return skipsEveryProperty;
         });
         if (!skipsEveryProperty)

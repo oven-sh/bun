@@ -1695,6 +1695,8 @@ pub(crate) fn spawn_watcher_child(
     envbuf[size + WATCHER_CHILD_ENV.len() + 2] = 0;
     envbuf[size + WATCHER_CHILD_ENV.len() + 3] = 0;
 
+    let (cb_reserved2, lp_reserved2) = inherited_crt_fd_block();
+
     let mut startupinfo = STARTUPINFOEXW {
         StartupInfo: STARTUPINFOW {
             cb: size_of::<STARTUPINFOEXW>() as u32,
@@ -1710,8 +1712,8 @@ pub(crate) fn spawn_watcher_child(
             dwFillAttribute: 0,
             dwFlags: win32::STARTF_USESTDHANDLES,
             wShowWindow: 0,
-            cbReserved2: 0,
-            lpReserved2: ptr::null_mut(),
+            cbReserved2: cb_reserved2,
+            lpReserved2: lp_reserved2,
             hStdInput: bun_sys::Fd::stdin().native(),
             hStdOutput: bun_sys::Fd::stdout().native(),
             hStdError: bun_sys::Fd::stderr().native(),
@@ -1744,6 +1746,38 @@ pub(crate) fn spawn_watcher_child(
     debug_assert!(is_in_job != 0);
     let _ = kernel32_2::NtClose(procinfo.hThread);
     Ok(())
+}
+
+/// Our own `STARTUPINFO.lpReserved2` CRT fd block (`u32 count`, `u8 flags[count]`,
+/// unaligned `HANDLE[count]`), re-marked inheritable for the watcher child.
+fn inherited_crt_fd_block() -> (WORD, *mut u8) {
+    const HANDLE_FLAG_INHERIT: DWORD = 0x1;
+
+    let mut si = MaybeUninit::<STARTUPINFOW>::uninit();
+    kernel32_2::GetStartupInfoW(&mut si);
+    // SAFETY: `GetStartupInfoW` wrote every field.
+    let si = unsafe { si.assume_init() };
+    let size = si.cbReserved2 as usize;
+    let block = si.lpReserved2;
+    if block.is_null() || size < size_of::<u32>() {
+        return (0, ptr::null_mut());
+    }
+    // SAFETY: `block` is valid for `size >= 4` bytes; the count is unaligned.
+    let count = unsafe { block.cast::<u32>().read_unaligned() } as usize;
+    if size < size_of::<u32>() + count + count * size_of::<HANDLE>() {
+        return (0, ptr::null_mut());
+    }
+    // SAFETY: the size check above proves the handle array is inside the block.
+    let handles = unsafe { block.add(size_of::<u32>() + count).cast::<HANDLE>() };
+    for i in 0..count {
+        // SAFETY: `i < count`, and `handles` is an unaligned array of `count`.
+        let handle = unsafe { handles.add(i).read_unaligned() };
+        if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+            let _ =
+                kernel32_2::SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+        }
+    }
+    (si.cbReserved2, block)
 }
 
 /// Returns null on error. Use windows API to lookup the actual error.
@@ -1971,6 +2005,14 @@ mod kernel32_2 {
         // `STATUS_INVALID_HANDLE`, never UB (mirrors POSIX `close(fd)` →
         // `EBADF`, which is `safe fn` in `safe_libc`).
         pub(super) safe fn NtClose(Handle: HANDLE) -> NTSTATUS;
+        // safe: writes every field of the out-param; cannot fail.
+        pub(super) safe fn GetStartupInfoW(lpStartupInfo: &mut MaybeUninit<STARTUPINFOW>);
+        // safe: by-value args; bad handle → BOOL 0, never UB.
+        pub(super) safe fn SetHandleInformation(
+            hObject: HANDLE,
+            dwMask: DWORD,
+            dwFlags: DWORD,
+        ) -> BOOL;
     }
 }
 

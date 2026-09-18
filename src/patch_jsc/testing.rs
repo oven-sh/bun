@@ -2,7 +2,7 @@
 
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, SysErrorJsc};
-use bun_patch::{ParseErr, PatchFile, git_diff_internal, parse_patch_file};
+use bun_patch::{ApplyError, ParseErr, PatchFile, git_diff_internal, parse_patch_file};
 use bun_sys::{Fd, FdExt};
 
 pub(crate) struct TestingAPIs;
@@ -52,8 +52,14 @@ impl TestingAPIs {
         let patchfile: PatchFile<'_> =
             parse_patch_file(&args.patchfile_txt).expect("validated in parse_apply_args");
 
-        if let Some(err) = patchfile.apply(args.dirfd) {
-            return Err(global.throw_value(SysErrorJsc::to_js(&err, global)));
+        match patchfile.apply(args.dirfd) {
+            None => {}
+            Some(ApplyError::Sys(err)) => {
+                return Err(global.throw_value(SysErrorJsc::to_js(&err, global)));
+            }
+            Some(err @ ApplyError::HunkDoesNotApply { .. }) => {
+                return Err(global.throw(format_args!("{}", err)));
+            }
         }
 
         Ok(JSValue::TRUE)

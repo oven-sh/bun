@@ -1581,6 +1581,63 @@ it("should propagate exception in async data handler", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("request(urlString, cb) does not read options from Object.prototype", async () => {
+  // Pollutes Object.prototype, so it runs in a subprocess.
+  const script = `
+    const net = require("node:net");
+    const http = require("node:http");
+    const heads = [];
+    const server = net.createServer(socket => {
+      socket.once("data", data => {
+        heads.push(String(data).split("\\r\\n\\r\\n")[0]);
+        socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const url = "http://127.0.0.1:" + server.address().port + "/victim";
+    const get = () =>
+      new Promise((resolve, reject) => {
+        http.get(url, res => {
+          res.resume();
+          res.on("end", resolve);
+        }).on("error", reject);
+      });
+    const clean = await get().then(() => heads[0]);
+
+    Object.prototype.headers = { "x-injected": "1", host: "attacker.example" };
+    Object.prototype.auth = "attacker:pw";
+    Object.prototype.method = "DELETE";
+    await get();
+
+    let hijacked = false;
+    const { promise: hijack, resolve: onHijack } = Promise.withResolvers();
+    Object.prototype.agent = {
+      addRequest(req) {
+        hijacked = true;
+        req.destroy();
+        onHijack();
+      },
+    };
+    await Promise.race([get(), hijack]);
+    server.close();
+    console.log(JSON.stringify({ same: heads[1] === clean, hijacked, head: heads[1] }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout);
+  expect(result.head).not.toContain("x-injected");
+  expect(result.head).not.toContain("Authorization");
+  expect(result.head).toStartWith("GET /victim HTTP/1.1");
+  expect(result).toMatchObject({ same: true, hijacked: false });
+  expect(exitCode).toBe(0);
+});
+
 // This test is disabled because it can OOM the CI
 it.skip("should be able to stream huge amounts of data", async () => {
   const buf = Buffer.alloc(1024 * 1024 * 256);

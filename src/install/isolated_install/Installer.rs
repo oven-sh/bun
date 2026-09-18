@@ -1538,6 +1538,13 @@ impl Task {
 
                 Step::SymlinkDependencyBinaries => {
                     let current_step = Step::SymlinkDependencyBinaries;
+                    if matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+                        if let sys::Result::Err(err) =
+                            installer.relink_committed_patch(self.entry_id)
+                        {
+                            return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
+                        }
+                    }
                     if let Err(err) = installer.link_dependency_bins(self.entry_id) {
                         return Ok(Yield::failure(TaskError::Binaries(err)));
                     }
@@ -2341,11 +2348,24 @@ impl<'a> Installer<'a> {
         has_tag
     }
 
-    /// After every task: a patch that did not apply leaves no tag, and then the copy stays.
-    pub(crate) fn relink_committed_patch(&mut self) {
+    /// For a root or workspace entry whose dependencies are installed, before its scripts run.
+    fn relink_committed_patch(&self, entry_id: StoreEntryId) -> sys::Result<()> {
         let Some(committed) = self.manager().committed_patch.as_ref() else {
-            return;
+            return Ok(());
         };
+        self.symlink_dependencies(
+            entry_id,
+            symlinker::Strategy::ReplaceDirectory,
+            Some(committed),
+        )?;
+        Ok(())
+    }
+
+    /// An entry in a dependency cycle does not wait for its dependencies, so its task can be early.
+    pub(crate) fn relink_committed_patch_after_tasks(&mut self) {
+        if self.manager().committed_patch.is_none() {
+            return;
+        }
         let pkg_resolutions = self.lockfile().packages.items_resolution();
         let node_pkg_ids = self.store.nodes.items_pkg_id();
 
@@ -2354,11 +2374,8 @@ impl<'a> Installer<'a> {
             if !matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
                 continue;
             }
-            if let sys::Result::Err(err) = self.symlink_dependencies(
-                StoreEntryId::from(u32::try_from(entry_id).expect("int cast")),
-                symlinker::Strategy::ReplaceDirectory,
-                Some(committed),
-            ) {
+            let entry_id = StoreEntryId::from(u32::try_from(entry_id).expect("int cast"));
+            if let sys::Result::Err(err) = self.relink_committed_patch(entry_id) {
                 Output::err(err, "failed to link the patched package again", ());
                 Output::flush();
                 self.summary.fail += 1;

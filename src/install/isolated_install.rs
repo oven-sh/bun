@@ -2619,7 +2619,7 @@ pub(crate) fn install_isolated_packages(
             }
         }
 
-        installer.relink_committed_patch();
+        installer.relink_committed_patch_after_tasks();
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();

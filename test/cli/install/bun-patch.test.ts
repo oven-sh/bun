@@ -348,7 +348,8 @@ describe("bun patch --commit with the isolated linker", () => {
     });
   });
 
-  test.concurrent("links the dependency of a workspace package again", async () => {
+  // The postinstall script of a workspace package runs in every install, this one included.
+  test.concurrent("links the dependency of a workspace package again, before its scripts run", async () => {
     const packageDir = await install(false, {
       "package.json": JSON.stringify({
         name: "foo",
@@ -357,10 +358,18 @@ describe("bun patch --commit with the isolated linker", () => {
       }),
       packages: {
         w: {
-          "package.json": JSON.stringify({ name: "w", version: "1.0.0", dependencies: { "has-bin-entries": "1.0.0" } }),
+          "package.json": JSON.stringify({
+            name: "w",
+            version: "1.0.0",
+            dependencies: { "has-bin-entries": "1.0.0" },
+            scripts: { postinstall: `${bunExe()} postinstall.js` },
+          }),
+          "postinstall.js": `require("fs").writeFileSync("postinstall.txt", String(require("has-bin-entries").patched));`,
         },
       },
     });
+    const postinstall = join(packageDir, "packages", "w", "postinstall.txt");
+    expect(await Bun.file(postinstall).text()).toBe("undefined");
     // `node_modules/w` is a link to packages/w, so this is packages/w/node_modules/has-bin-entries.
     const folder = "node_modules/w/node_modules/has-bin-entries";
     await addPatchedExport(await patch(packageDir, "has-bin-entries@1.0.0", folder));
@@ -370,6 +379,7 @@ describe("bun patch --commit with the isolated linker", () => {
     expect(commit.exitCode).toBe(0);
 
     expect(isLink(join(packageDir, "packages", "w", "node_modules", "has-bin-entries"))).toBe(true);
+    expect(await Bun.file(postinstall).text()).toBe("true");
     const loaded = await load(join(packageDir, "packages", "w"));
     expect(loaded.stderr).toBe("");
     expect(loaded.stdout).toBe("1.0.0 true 1.0.0\n");

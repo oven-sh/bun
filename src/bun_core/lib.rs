@@ -2064,14 +2064,23 @@ pub(crate) mod strings_impl {
             ));
         }
         match text[offset] {
-            // a quote here is the value, unless a separator follows it (quoted key)
-            b'"' | b'\'' => {
+            q @ (b'"' | b'\'') => {
                 let mut sep = offset + 1;
                 while sep < text.len() && text[sep].is_ascii_whitespace() {
                     sep += 1;
                 }
+                let triple =
+                    offset + 2 < text.len() && text[offset + 1] == q && text[offset + 2] == q;
                 if sep < text.len() && matches!(text[sep], b'=' | b':') {
+                    // the closing quote of a quoted key
                     offset = sep + 1;
+                } else if !whitespace && !triple {
+                    // not a value opener (`x-access-token", password = ...`)
+                    let rest = &text[offset..];
+                    return Some((
+                        offset,
+                        crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
+                    ));
                 }
             }
             _ => offset += 1,

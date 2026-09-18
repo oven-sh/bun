@@ -240,7 +240,20 @@ describe.concurrent("redact", async () => {
     {
       title: "quoted sensitive word that is not a key",
       bunfig: '[install]\nx = ["token", "public"] ]',
-      expected: '"public"',
+      expected: '"token',
+      expectedColor: '"public"',
+    },
+    {
+      title: "quoted key with no separator",
+      bunfig: '[install]\n"token" "SECRETVALUE"',
+      expected: "***********",
+      secret: "SECRETVALUE",
+    },
+    {
+      title: "sensitive word at the end of another value",
+      bunfig: '[install]\nmyorg = { username = "x-access-token", password = "SECRETVALUE" ]',
+      expected: "***********",
+      secret: "SECRETVALUE",
     },
     {
       title: "quoted key with whitespace inside the quotes",
@@ -270,7 +283,7 @@ describe.concurrent("redact", async () => {
     },
   ];
 
-  for (const { title, bunfig, npmrc, expected, secret } of tests) {
+  for (const { title, bunfig, npmrc, expected, expectedColor, secret } of tests) {
     test(title + (bunfig ? " (bunfig)" : " (npmrc)"), async () => {
       const testDir = tmpdirSync();
       await Promise.all([
@@ -308,7 +321,7 @@ describe.concurrent("redact", async () => {
       const [out2, err2, exitCode2] = await Promise.all([proc2.stdout.text(), proc2.stderr.text(), proc2.exited]);
 
       expect(exitCode2).toBe(+!!bunfig);
-      expect(err2).toContain(expected || "*");
+      expect(err2).toContain(expectedColor || expected || "*");
       if (secret) {
         expect(err2).not.toContain(secret);
         expect(out2).not.toContain(secret);

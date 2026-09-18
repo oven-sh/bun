@@ -2069,13 +2069,15 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     break 'try_redact;
                                 }
 
-                                // TOML quoted key: `"token" = "..."`
+                                // TOML quoted key: `"token" = "..."`, or `"token" "..."` with the `=` missing
                                 if RedactedKeywords::has(inner.trim_ascii()) {
                                     let mut sep = i;
                                     while sep < text.len() && text[sep].is_ascii_whitespace() {
                                         sep += 1;
                                     }
-                                    if sep < text.len() && matches!(text[sep], b'=' | b':') {
+                                    if sep < text.len()
+                                        && matches!(text[sep], b'=' | b':' | b'"' | b'\'')
+                                    {
                                         should_redact_value = true;
                                         break 'try_redact;
                                     }

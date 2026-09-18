@@ -1430,6 +1430,81 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       }
     }, 30_000);
 
+    // A held body arms the session's socket timer for its next tick. A reset
+    // of that stream leaves the timer armed, and the tick must not be taken
+    // for the idle timeout of the other streams on the connection.
+    test("Expect: 100-continue: a reset of the held stream does not time out its sibling", async () => {
+      let sibling: { socket: nodetls.TLSSocket; id: number } | undefined;
+      let posts = 0;
+      const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2"] }, socket => {
+        let buf = Buffer.alloc(0);
+        let prefaceSeen = false;
+        socket.on("data", chunk => {
+          buf = Buffer.concat([buf, chunk]);
+          if (!prefaceSeen) {
+            if (buf.length < 24) return;
+            buf = buf.subarray(24);
+            prefaceSeen = true;
+            socket.write(frame(4, 0, 0));
+          }
+          while (buf.length >= 9) {
+            const len = buf.readUIntBE(0, 3);
+            if (buf.length < 9 + len) return;
+            const type = buf[3],
+              flags = buf[4],
+              id = buf.readUInt32BE(5) & 0x7fffffff;
+            buf = buf.subarray(9 + len);
+            if (type === 4 && !(flags & 1)) socket.write(frame(4, 1, 0));
+            if (type === 1 && flags & 1) {
+              // The GET. Answered last.
+              sibling = { socket, id };
+            } else if (type === 1 && ++posts === 1) {
+              // The first POST, on the GET's connection: reset it while its body is held.
+              socket.write(frame(3, 0, id, u32be(http2.constants.NGHTTP2_INTERNAL_ERROR)));
+            } else if (type === 0 && flags & 1) {
+              // The body of the second POST. Only a timer tick sends it, so the
+              // tick that the first POST armed has fired, or fires in this sweep.
+              socket.write(frame(1, 4, id, hpackStatus(200)));
+              socket.write(frame(0, 1, id, Buffer.from("sent")));
+              sibling!.socket.write(frame(1, 4, sibling!.id, hpackStatus(200)));
+              sibling!.socket.write(frame(0, 1, sibling!.id, Buffer.from("still open")));
+            }
+          }
+        });
+        socket.on("error", () => {});
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const { port } = server.address() as import("node:net").AddressInfo;
+      try {
+        await using proc = await spawnFetch(`
+          const text = p => p.then(r => r.text(), e => "rejected " + (e?.code ?? e));
+          const post = host =>
+            text(fetch("https://" + host + ":${port}", {
+              method: "POST",
+              headers: { Expect: "100-continue" },
+              body: "x",
+              tls: { rejectUnauthorized: false },
+            }));
+          const sibling = text(fetch("https://localhost:${port}", { tls: { rejectUnauthorized: false } }));
+          const reset = await post("localhost");
+          // Another host name is another connection.
+          const sent = await post("127.0.0.1");
+          console.log(JSON.stringify({ reset, sent, sibling: await sibling }));
+        `);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual({
+          reset: "rejected HTTP2StreamReset",
+          sent: "sent",
+          sibling: "still open",
+        });
+        expect(exitCode).toBe(0);
+      } finally {
+        server.close();
+      }
+    }, 30_000);
+
     test("Content-Length / DATA mismatch rejects", async () => {
       await withRawH2Server(
         (conn, id) => {

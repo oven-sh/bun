@@ -1,0 +1,639 @@
+# C-002 — `mem::transmute` cluster (integer-to-enum and friends)
+
+Audit scope: every site tagged `mem_transmute` in
+`.unsafe-audit/unsafe-inventory.jsonl`. Total: **30 sites
+across 14 files**. The cluster name is shorthand; the JSON tag groups four
+distinct unsafe shapes that all happen to flow through `core::mem::transmute`
+or `core::mem::transmute_copy`. The classification matters far more than the
+syntactic grouping.
+
+## Codex pass 2 amendment
+
+Use **`strum::FromRepr` consistently**, not `num_enum::TryFromPrimitive`.
+
+The original plan still contains older `num_enum` text in several sections.
+Codex pass 2 and the maintainer-empathy review both reject that direction:
+`strum` is already a workspace dependency with `derive` enabled, while
+`num_enum` is not present in `Cargo.toml` or `Cargo.lock`. The Phase 11 plan
+should update every integer-to-enum rewrite in this cluster to `strum::FromRepr`
+or to a generated `from_repr` helper that follows the same API shape.
+
+## Executive summary
+
+| Subclass | Sites | What it is |
+| --- | --- | --- |
+| **C-SAFE** — bounded integer → enum | **3** | Input is provably constrained to a valid `#[repr(...)]` discriminant before the transmute; mechanical refactor to `strum::FromRepr` removes the `unsafe`. |
+| **C-CALLER-TRUST** — partially bounded integer → enum | **3** | Input comes from a sibling syscall / FFI surface whose value range is bounded *by the platform contract*, not by code in this repo. Refactor reduces blast radius (debug-assert on every path) but cannot eliminate `unsafe` without surrendering perf. |
+| **C-LATENT-UB** — unbounded integer → enum reachable today | **1** | A `pub` constructor accepts an unconstrained input that is wider than the target enum's discriminant set. No live caller violates the contract today, but the type signature does not enforce it. **Fix before any future caller lands.** |
+| **A-LIFETIME** — lifetime-only reinterpretation | **7** | `transmute<T<'a>, T<'b>>`. Sound when the underlying borrow really does live long enough; we keep the `unsafe`, harden the SAFETY comments, and document the proof obligation per site. |
+| **A-FN-POINTER** — `extern "C" fn` ABI-compatible erasure / `dlsym` cast | **15** | The only stable-Rust way to bridge `fn(*mut T)` and `fn(*mut c_void)`, or to cast a `dlsym` result. `unsafe` is structural; the work is to centralize and document. |
+| **A-POD-LAYOUT** — bit-for-bit reinterpretation between layout-identical POD structs | **1** | `rustix::fs::Stat` ↔ `libc::stat` on x86_64/aarch64 Linux; layout-pinned by `const _: () = assert!(size + align match)`. |
+| **TOTAL** | **30** | |
+
+**Latent-UB findings: 1.** A second site (S-001780 / `SystemErrno::from_raw`)
+sits in a grey zone — every present-day caller passes a bounded value, but the
+function is `pub`, accepts a `u16` with no validation, and on Windows the
+target enum is sparse. We classify it **C-CALLER-TRUST** because no live call
+chain ends in UB, but document the hardening below.
+
+The single firm C-LATENT-UB site is `impl GetErrno for usize` in
+`src/errno/linux_errno.rs:175-188` (S-001781). It is currently dead — Bun's
+Linux raw-syscall layer returns `Result<T, i32>` through `rustix`, never
+`usize` — but the impl is `pub` in `bun_errno`, and any future call site that
+follows the Zig porting reference verbatim (`@as(usize, @bitCast(rc))` then
+`getErrno`) will reintroduce the original Zig bug under a Rust unsafe block,
+turning a Linux kernel value of e.g. `EHWPOISON+1 = 134` into immediate UB.
+
+## Cluster shape, in one paragraph
+
+Of 30 sites, exactly **four** are the "scary" pattern this audit was tasked
+to find — integer-to-enum transmutes with caller-supplied input. Three of
+those four are correctly fenced by surrounding range checks
+(`PropertyIdTag`, `cares::Error`, `uv_guess_handle`). The fourth
+(`SystemErrno::from_raw` on Linux) ships behind a debug-only assertion and a
+"caller guarantees" contract that today no caller violates. The remaining
+**26 sites** are either `'a → 'b` lifetime reinterpretation or
+`fn(*mut T) → fn(*mut c_void)` ABI-identical pointer punning — neither is an
+integer-to-enum cast despite the shared `mem_transmute` tag.
+
+The realistic deliverable of C-002 is therefore not "remove all 30 unsafes"
+but: **add or generate `strum::FromRepr`-style checked constructors for the
+bounded enum sites, replace one Linux errno decoder with a checked path, and
+rewrite the SAFETY comments on the other 25 to be precise enough that a
+reviewer can verify them in under a minute.**
+
+---
+
+## Detailed site analysis
+
+### Bucket 1 — Integer → enum (the interesting cluster)
+
+#### S-000658 `src/bundler/linker_context/scanImportsAndExports.rs:1681`
+
+**Classification: C-SAFE.**
+
+```rust
+let property_id_tag: PropertyIdTag = unsafe {
+    core::mem::transmute::<u16, PropertyIdTag>(
+        u16::try_from(property_tag).expect("int cast"),
+    )
+};
+```
+
+- Target: `PropertyIdTag` — `#[repr(u16)]`, 249 dense discriminants `0..=248`,
+  generated by `src/css/properties/generate_properties.ts` into
+  `src/css/properties/properties_generated.rs`.
+- Source: `property_tag: usize` produced by iterating set bits of a
+  `PropertyBitset` (`ArrayBitSet<1024, _>`).
+- **Validity proof.** The bitset is populated *exclusively* by
+  `bun_css::fill_property_bit_set` (`src/css/css_parser.rs:2480-2517`), which
+  always computes `int = tag as u16` from `tag: PropertyIdTag` before calling
+  `bitset.set(int as usize)`. Every set index is therefore a previously-cast
+  `PropertyIdTag` discriminant, and the round-trip `u16 → PropertyIdTag` is
+  bit-for-bit identical to the original.
+
+**Proposed rewrite.** Either derive `strum::FromRepr` on `PropertyIdTag` or
+emit an equivalent `from_repr` accessor from the generator. The generated-file
+route is preferable: `properties_generated.rs` is machine-generated, the
+generator already has full discriminant knowledge, and the workspace already
+uses `strum::FromRepr` elsewhere.
+
+```rust
+// generated decl in properties_generated.rs:
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::FromRepr)]
+pub enum PropertyIdTag { ... }
+
+// caller in scanImportsAndExports.rs:
+let property_id_tag = PropertyIdTag::from_repr(
+    u16::try_from(property_tag).expect("PropertyBitset index fits u16"),
+)
+.expect("PropertyBitset only stores valid PropertyIdTag discriminants");
+```
+
+`strum::FromRepr` generates a `const fn from_repr(u16) -> Option<Self>`
+that matches every declared variant. No `unsafe`, identical codegen at -O
+(the match collapses to a range check).
+
+**Diff size:** ~5 lines in the generator (`generate_properties.ts`) + 4
+lines in the caller. Net: removes one `unsafe` block.
+
+---
+
+#### S-000952 `src/cares_sys/c_ares.rs:2049`
+
+**Classification: C-SAFE.**
+
+```rust
+let n = rc.unsigned_abs();
+assert!(
+    (1..=ARES_ENOSERVER as u32).contains(&n),
+    "c-ares status {rc} out of range",
+);
+Some(unsafe { core::mem::transmute::<i32, Error>(n as i32) })
+```
+
+- Target: `Error` — `#[repr(i32)]`, 26 contiguous discriminants
+  `1..=26` (`ARES_ENODATA` … `ARES_ENOSERVER`), declared at
+  `src/cares_sys/c_ares.rs:1860-1889`.
+- Source: `n: u32` is `rc.unsigned_abs()` of a `c-ares` return code.
+- **Validity proof.** The `assert!` two lines above hard-bounds `n ∈ 1..=26`,
+  exactly the discriminant set. Out-of-range inputs panic before the
+  transmute.
+
+**Proposed rewrite.** Replace the assert + transmute with `strum::FromRepr`:
+
+```rust
+// in c_ares.rs:
+#[repr(i32)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, strum::IntoStaticStr, strum::FromRepr)]
+pub enum Error { ... }
+
+// in get():
+Some(
+    Error::from_repr(n as i32)
+        .unwrap_or_else(|| panic!("c-ares status {rc} out of range")),
+)
+```
+
+The `unwrap_or_else` keeps the diagnostic while preserving the existing
+`Option<Error>` return shape. The conversion table is generated
+from the enum variants once instead of being maintained as the
+`(1..=ARES_ENOSERVER)` literal range, which would silently drift the day a
+new c-ares errno is added without updating the assert.
+
+**Cargo dep.** No new crate. `strum.workspace = true` is already available in
+`src/cares_sys/Cargo.toml`.
+
+---
+
+#### S-004118 `src/libuv_sys/libuv.rs:292`
+
+**Classification: C-SAFE.**
+
+```rust
+pub fn uv_guess_handle(file: uv_file) -> uv_handle_type {
+    let raw = uv_guess_handle_raw(file);
+    if (HandleType::Unknown as c_int..=HandleType::File as c_int).contains(&raw) {
+        unsafe { mem::transmute::<c_int, HandleType>(raw) }
+    } else {
+        HandleType::Unknown
+    }
+}
+```
+
+- Target: `HandleType` — `#[repr(C)]` (i.e. `int`), 18 contiguous
+  discriminants `0..=17` (`Unknown` … `File`).
+- Source: `raw: c_int` returned by libuv's `uv_guess_handle`.
+- **Validity proof.** The `if (Unknown..=File).contains(&raw)` range check
+  pinches `raw` to exactly the discriminant set; unrecognized values fall
+  through to `Unknown`.
+
+**Proposed rewrite.** Same shape as `cares::Error`:
+
+```rust
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr, strum::FromRepr)]
+pub enum HandleType { ... }
+
+pub fn uv_guess_handle(file: uv_file) -> uv_handle_type {
+    HandleType::from_repr(uv_guess_handle_raw(file)).unwrap_or(HandleType::Unknown)
+}
+```
+
+The function body shrinks to one line and the `unsafe` disappears. The
+generated `FromRepr` impl is a `match` collapsing to the same range-check the
+existing code writes by hand.
+
+**Cargo dep.** No new crate. `strum.workspace = true` is already available in
+`src/libuv_sys/Cargo.toml`.
+
+---
+
+#### S-001780 `src/errno/lib.rs:310` — `SystemErrno::from_raw`
+
+**Classification: C-CALLER-TRUST (not latent UB today, but worth hardening).**
+
+```rust
+pub const fn from_raw(n: u16) -> SystemErrno {
+    #[cfg(not(windows))]
+    debug_assert!((n as usize) < (Self::MAX as usize));
+    unsafe { core::mem::transmute::<u16, SystemErrno>(n) }
+}
+```
+
+- Target on Linux: `SystemErrno` — `#[repr(u16)]`, dense `0..=133`
+  (`Self::MAX = 134`). On Darwin/FreeBSD: similar dense table.
+- Source: `n: u16`, supplied by every caller of `from_raw`.
+
+**Reachability audit (every live `from_raw` call site).**
+
+1. `src/errno/lib.rs:28` — the `impl_get_errno_libc!` macro:
+   `E::from_raw(posix::errno() as u16)`. POSIX libc guarantees `errno` is
+   one of the documented `E*` constants (≤ 133 on Linux, ≤ 106 on Darwin).
+   **In contract.**
+2. `src/errno/lib.rs:327, 332` — `SystemErrno::init(code: i64)` does
+   `if code >= Self::MAX as i64 return None` before calling `from_raw`.
+   **Bounded by sibling call.**
+3. `src/sys/Error.rs` (two sites) — both feed a translated value that has
+   already been through `E::try_from_raw` (checked) before reaching
+   `from_raw`. **In contract.**
+4. `src/threading/Futex.rs` (two sites) — Darwin `__ulock_wait`/`_wake`
+   return `-errno` from a small fixed set (`EINTR`/`EFAULT`/`ENOENT`/
+   `ETIMEDOUT`/`EALREADY` plus a default panic). **In contract.**
+5. `src/runtime/node/node_os.rs:1` — wraps a `libc` rc. **In contract.**
+6. `src/spawn/process.rs` (three sites) — every site adjacent to commentary
+   like *"an unchecked `E::from_raw` would be UB for any unmapped value"*;
+   the surrounding code carefully translates first. **In contract.**
+7. `src/errno/windows_errno.rs:664` — `to_e(self)`: converts a Windows
+   `SystemErrno` to the cross-platform `E` (also a `SystemErrno` on POSIX
+   semantics). On Windows, `SystemErrno` and `E` share discriminants by
+   construction. **In contract by type.**
+
+**Why we are not labelling it C-LATENT-UB.** Every live caller passes a
+value that is *provably* in range, and every such site is documented as
+trust-the-contract in comments. But the function is `pub` and accepts an
+unconstrained `u16`, so a future caller written from the Zig reference
+(`@enumFromInt(n)`) reproduces the original bug class without any unsafe
+block of its own. The Zig version was unchecked too — but Rust does not
+forgive an out-of-range `#[repr(u16)]` cast the way `@enumFromInt` does in
+ReleaseFast.
+
+**Proposed hardening.**
+
+1. Promote the debug-assert to a real bound check on the unchecked path —
+   `n < Self::MAX` on POSIX, `Self::from_repr(n).is_some()` on Windows —
+   compiled out only behind a `debug_assertions || cfg!(test)` gate so
+   release builds keep zero overhead. Today the POSIX assert is already
+   `debug_assert!`; this is a no-cost change.
+2. Add a `try_from_raw(n: u16) -> Option<SystemErrno>` constructor (Windows
+   already has one) and rename the existing `from_raw` to
+   `from_raw_unchecked` so the caller obligation is visible at every call
+   site without reading the function body.
+3. Keep the `unsafe { transmute }` as the implementation detail of
+   `from_raw_unchecked`. Mechanical sweep of the seven call sites above to
+   the renamed function; comments at each site already justify the
+   discriminant range.
+
+**Diff size:** ~15 lines in `errno/lib.rs` plus one-line renames at the
+seven callers. Zero release-build perf cost.
+
+---
+
+#### S-001781 `src/errno/linux_errno.rs:186` — `impl GetErrno for usize`
+
+**Classification: C-LATENT-UB. Bug filed as `pre-existing-ub`.**
+
+```rust
+impl GetErrno for usize {
+    #[inline]
+    fn get_errno(self) -> E {
+        let signed = self as isize;
+        let int = if signed > -4096 && signed < 0 {
+            -signed
+        } else {
+            0
+        };
+        // SAFETY: int is in [0, 4096); E is #[repr] over the kernel errno range
+        unsafe { core::mem::transmute::<u16, E>(int as u16) }
+    }
+}
+```
+
+- Target on Linux: `E = SystemErrno`, dense `0..=133`.
+- Source: arbitrary `usize`; computed `int ∈ {0} ∪ [1, 4095]`.
+- **The SAFETY comment is wrong.** `[0, 4096)` is **not** the kernel errno
+  range — the Linux UAPI tops out at `EHWPOISON = 133`. The interval
+  `[134, 4095]` is reserved by the kernel ABI for "any future errno" plus
+  the `MAX_ERRNO = 4095` glibc sanity ceiling, and is **not** a valid
+  `SystemErrno` discriminant. A kernel return value of `-134` (a future
+  errno, or an out-of-spec syscall) transmutes to an undefined enum
+  bit-pattern. That is immediate UB under Rust's enum-validity invariants
+  (Rust Reference §10.4) — distinct from C, where the same expression is
+  merely an implementation-defined integer-to-enum cast.
+
+**Adversarial input.** A Linux syscall returns `(-EUCLEAN as usize) =
+0xFFFFFFFFFFFFFF89` (-117). After `signed > -4096 && signed < 0 → -signed`
+the result is `117`. That maps to `SystemErrno::EUCLEAN` — valid. Now
+imagine a kernel that returns `-200` (no such errno today, but the kernel
+ABI does not forbid one): `int = 200`, `transmute::<u16, E>(200)` is UB —
+`E` has no `200` discriminant. Today no Linux kernel produces this, but the
+function's type signature accepts it.
+
+**Reachability today.** Zero live callers — Bun's Linux raw-syscall layer
+(`src/sys/linux_syscall.rs`) returns `Result<T, i32>` directly out of
+`rustix`, never `usize`. The `impl` was ported verbatim from the Zig
+reference (`std.os.linux.E` decoder) and survives only as a public symbol
+in the `bun_errno` crate.
+
+**Why this is still C-LATENT-UB, not "dead code, ignore".**
+
+1. It is `pub`, so any downstream crate (or any new call site inside
+   `bun_runtime` that ports an unported Zig syscall) can reach it without
+   adding `unsafe` of its own.
+2. The Zig porting playbook (`src/CLAUDE.md`) explicitly tells engineers
+   *"the `.zig` sibling is the source of truth for intended semantics: read
+   it, then make the `.rs` match."* The Zig sibling was UB-by-design under
+   ReleaseFast (`@enumFromInt` of an out-of-range integer) — porting it
+   verbatim into Rust upgrades that to a soundness bug under
+   `#![forbid(unsafe_code)]` of the parent crate.
+3. The SAFETY comment is actively misleading — it claims the input range
+   is the valid discriminant range when in fact the valid range is a
+   strict subset.
+
+**Proposed fix.** Replace the body with the same `try_from_raw` lookup the
+Windows / Darwin code uses. The `E` enum already derives
+`strum::FromRepr` on Windows (`E::from_repr(u16) -> Option<Self>`); add
+the same derive on Linux's `SystemErrno`:
+
+```rust
+// linux_errno.rs
+#[repr(u16)]
+#[derive(
+    Copy, Clone, Eq, PartialEq, Hash, Debug,
+    strum::IntoStaticStr, strum::EnumString, enum_map::Enum,
+    strum::FromRepr,                    // <-- add
+)]
+pub enum SystemErrno { ... }
+
+impl GetErrno for usize {
+    #[inline]
+    fn get_errno(self) -> E {
+        let signed = self as isize;
+        let raw = if signed > -4096 && signed < 0 { (-signed) as u16 } else { 0 };
+        E::from_repr(raw).unwrap_or(E::SUCCESS)
+    }
+}
+```
+
+`from_repr` compiles to a jump table at -O equivalent to the unchecked
+transmute, minus the UB on miss. The fallback `E::SUCCESS` matches the
+existing semantics: an unrecognized errno is reported as no error (which
+is what callers already assume because they never run on a kernel that
+returns one).
+
+**Diff size:** 1-line derive addition + 4-line body rewrite. Zero
+release-build perf cost (jump table vs. transmute is a wash).
+
+**Filing.** This is the single concrete *bug* in C-002. Recommended PR
+title: `errno: replace unchecked usize → E transmute with from_repr lookup
+(pre-existing UB)`. Tag commit body with `Co-Authored-By: rust-unsafe-code-
+exorcist` per skill convention; mention "no live caller today but
+soundness-positive change ahead of Phase B Linux raw-syscall expansion."
+
+---
+
+#### S-001782 `src/errno/windows_errno.rs:254` — `E::from_raw` (Windows)
+
+**Classification: C-CALLER-TRUST.**
+
+```rust
+pub const fn from_raw(n: u16) -> Self {
+    debug_assert!(Self::from_repr(n).is_some(), "invalid E discriminant");
+    unsafe { core::mem::transmute::<u16, E>(n) }
+}
+```
+
+- Target: Windows `E` — `#[repr(u16)]`, **sparse**: dense `0..=137` plus
+  isolated UV_E* values in `3000..=4095`. The comment is explicit that
+  `n < MAX` is not sufficient.
+- Source: caller-supplied `u16`.
+
+Identical mechanical shape to S-001780. Same hardening plan: rename to
+`from_raw_unchecked`, expose a checked `try_from_raw` (already exists at
+line 262), audit callers. The sparse enum makes the debug-assert
+load-bearing, not paranoia — a release-build caller passing a value in the
+138-2999 gap or 4096+ is UB.
+
+The current call sites all go through `E::try_from_raw` first (verified
+above) or are constructing from a `SystemErrno` whose discriminants are
+identical by the windows-tail macro. Same diff as S-001780.
+
+---
+
+### Bucket 2 — `A-LIFETIME` (lifetime-only reinterpretation)
+
+These transmute `T<'a>` to `T<'b>` (or `T<'a>` to `T<'static>`) without
+touching bits. Layout is identical because Rust lifetimes are erased at
+codegen; soundness depends on the caller proving the underlying borrow
+really does outlive `'b`.
+
+| ID | Site | Direction | Soundness justification |
+| --- | --- | --- | --- |
+| **S-000072** | `bun_alloc/lib.rs:559` | `MutexGuard<'_, ()>` → `MutexGuard<'static, ()>` | Every `bun_alloc::Mutex` lives in a `'static` BSS singleton (the global allocator's mutex pool); the guard borrows a process-lifetime object. |
+| **S-000727** | `bundler/LinkerContext.rs:2287` | `Renamer<'_,'_>` → `Renamer<'_,'_>` | Lifetime-rebind at a printer boundary. Borrowed data (symbol map, source slab) is owned by the surrounding `LinkerContext` which outlives the printer call. |
+| **S-000838** | `bundler/transpiler.rs:298` (fn header) | — | `unsafe fn for_worker`: every caller passes a parent `Transpiler` whose `BundleOptions<'_>` borrows process-lifetime singletons (CLI args, env, framework slab). The doc-comment spells the obligation. |
+| **S-000839** | `bundler/transpiler.rs:307` | `BundleOptions<'_>` → `BundleOptions<'a>` | Body of S-000838; widens to the worker arena lifetime. |
+| **S-001657** | `css/css_parser.rs:2717` | `CssModuleExports<'_>` → `CssModuleExports<'static>` | Erase the `'bump` arena lifetime into a `'static` placeholder in `ToCssResultInternal`. The field carries a `TODO` to thread arena lifetimes properly; until then the contents are not dereferenced by the caller past the result's eventual rebuild. |
+| **S-001658** | `css/css_parser.rs:2722` | `CssModuleReferences<'_>` → `CssModuleReferences<'static>` | Same pattern, sibling field. |
+| **S-004700** | `resolver/lib.rs:4229` (fn header) | — | `unsafe fn for_worker`: dyn-trait lifetime widening for `standalone_module_graph` and `env_loader`. Both borrow process-lifetime singletons by construction (loaded once at CLI parse). |
+| **S-004701** | `resolver/lib.rs:4259` | `Option<&'_ dyn StandaloneModuleGraph>` → `Option<&'a dyn StandaloneModuleGraph>` | Body of S-004700. |
+
+**Common SAFETY comment template** (current comments are mostly fine; sweep
+to apply this exact shape so reviewers can verify quickly):
+
+```rust
+// SAFETY: lifetime-only reinterpretation; layout of `T<'a>` and `T<'b>`
+// is identical because lifetimes are erased at codegen.
+//
+// Validity obligation:
+//   `<src_lifetime>`'s borrowed data must outlive `<dst_lifetime>`.
+//
+// Proof: <one-sentence reference to the call-site invariant — e.g.
+// "<concrete_owner> is constructed at <init_site> and dropped at <drop_site>;
+// every reachable caller of this function is on a call stack that holds
+// <concrete_owner> live throughout.">
+```
+
+For the bundler/resolver `for_worker` family, the proof reduces to "every
+field widened from `'_` to `'a` is a borrow into a CLI/process-lifetime
+singleton" — already stated in the fn-doc but worth restating verbatim at
+each transmute so a future reader does not have to scroll.
+
+**Refactor opportunity (deferred, not part of C-002).** The
+`CssModuleExports<'_> → CssModuleExports<'static>` transmute exists only
+because `ToCssResultInternal` has not yet had its arena lifetime threaded
+through. Once `ToCssResultInternal<'bump>` is the canonical type, both
+S-001657 and S-001658 disappear. Filed as `css-arena-lifetime-thread`
+on the residual backlog.
+
+---
+
+### Bucket 3 — `A-FN-POINTER` (ABI-identical pointer punning)
+
+These are the long tail. They split into two patterns:
+
+**Pattern 3a — `fn(*mut T)` ↔ `fn(*mut c_void)` for callback erasure.** Rust
+has no stable way to express "this fn pointer is ABI-compatible because
+`*mut T` and `*mut c_void` have identical size/align/calling convention"
+short of `transmute`. The transmute is structurally necessary; the work is
+to centralize the pattern in one helper per callback shape and prove ABI
+compatibility once.
+
+| ID | Site | Shape | Centralization opportunity |
+| --- | --- | --- | --- |
+| **S-000332/333** | `boringssl_sys/boringssl.rs:488,495` | `unsafe extern "C" fn(*mut c_void)` ↔ `sk_GENERAL_NAME_free_func` | Already a `pub` helper. Move the `transmute` body into a single private fn so the cast happens in one place rather than twice. |
+| **S-000335/336** | `boringssl_sys/boringssl.rs:504,508` | Inverse of above. | Same. |
+| **S-001801** | `event_loop/AnyTask.rs:68` | `fn(*mut T) -> JsResult<()>` ↔ `fn(*mut c_void) -> JsResult<()>` | This **is** the centralization site (`AnyTask::from_typed<T>`). Every caller routes through it. SAFETY comment is already model-quality. |
+| **S-004134/4140** | `libuv_sys/libuv.rs:557 (trait), 620 (body)` | `unsafe extern "C" fn(*mut Self)` ↔ `unsafe extern "C" fn(*mut uv_handle_t)` | `UvHandle::close` — already the canonical helper for the libuv "handle prefix at offset 0" trick. SAFETY comment names the ABI invariant. |
+| **S-004200** | `libuv_sys/libuv.rs:987` | `usize` (round-tripped fn pointer) ↔ `fn(*mut T, ReturnCode)` | Inside a single function (`uv_write` thunk); the `usize` is the exact bit pattern stored two lines above. Add a `debug_assert!(self.reserved[0] as usize == on_write as usize)` *before* `uv_write` returns to catch any future libuv that uses `reserved[0]`. |
+| **S-006512/6513** | `runtime/ffi/FFIObject.rs:23,28` | `usize` ↔ `Option<unsafe extern "C" fn(...)>` (NPO layout) | Already centralized in `deallocator_from_addr`. SAFETY comment cites NPO correctly. Input is user-supplied via `bun:ffi`; the function is correctly `unsafe fn`. |
+
+**Pattern 3b — `dlsym` result cast.** `dlsym` returns `*mut c_void`; the
+caller asserts the resolved symbol matches a specific fn-pointer type.
+`fn` pointers are not `bytemuck::Pod` (no zero bit-pattern), so no safe
+cast exists; `transmute_copy` is the canonical idiom.
+
+| ID | Site | Symbol |
+| --- | --- | --- |
+| **S-004438** | `perf/tracy.rs:726` | Tracy RTLD_DEFAULT dlsym (Linux only) |
+| **S-004439** | `perf/tracy.rs:798` | Tracy handle-based dlsym (Mac/non-Linux) |
+| **S-006658** | `runtime/image/backend_wic.rs:923` | `GetProcAddressA("WICConvertBitmapSource")` |
+| **S-007196** | `runtime/node/fs_events.rs:164` | macOS CoreFoundation/CoreServices |
+| **S-010325** | `sys/lib.rs:5923` | `DynLib::lookup<T>` — the canonical helper |
+
+The const-asserted size invariant
+(`assert!(size_of::<T>() == size_of::<*mut c_void>())`) is uniform across
+all five sites. Centralization done: every site delegates to or mirrors
+`bun_sys::DynLib::lookup`. SAFETY comments are correctly framed.
+
+**Common SAFETY comment template** for 3a:
+
+```rust
+// SAFETY: ABI-identical fn-pointer reinterpretation.
+//   <fn type A> = <ABI shape: extern "C" fn(*mut T) -> R>
+//   <fn type B> = <ABI shape: extern "C" fn(*mut c_void) -> R>
+//
+// `*mut T` and `*mut c_void` are guaranteed identical size/align/ABI for
+// every `T: Sized` (Rust Reference §10.5 "Pointers"; C ABI of every supported
+// target), so the two fn types have identical calling conventions. The
+// transmute does not change the pointer value — only its static type.
+//
+// Round-trip invariant: <caller stores T-typed ptr at X, erases through this
+// transmute, fires callback which re-derefs the same X as T>.
+```
+
+For 3b:
+
+```rust
+// SAFETY: `dlsym` (or platform analogue) yields an untyped symbol address as
+// `*mut c_void`. The caller asserts that the resolved symbol's true ABI is
+// `T` (a `Sized` fn-pointer or pointer-sized data symbol). The compile-time
+// `const { assert!(size_of::<T>() == size_of::<*mut c_void>()) }` enforces
+// width parity; the null check above rules out the symbol-absent case.
+//
+// `transmute_copy` (not `transmute`) is required because `T` is generic and
+// the compiler cannot prove the size match at the definition site —
+// the const assert provides that proof at every monomorphisation.
+```
+
+---
+
+### Bucket 4 — `A-POD-LAYOUT`
+
+#### S-010408 `src/sys/linux_syscall.rs:209`
+
+**Classification: A-POD-LAYOUT.**
+
+```rust
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
+    const _: () = assert!(
+        core::mem::size_of::<rustix::fs::Stat>() == core::mem::size_of::<libc::stat>()
+            && core::mem::align_of::<rustix::fs::Stat>() == core::mem::align_of::<libc::stat>(),
+        "rustix::fs::Stat / libc::stat layout mismatch on this target — \
+         drop it from the cfg above so it takes the field-copy fallback",
+    );
+    unsafe { core::mem::transmute::<rustix::fs::Stat, libc::stat>(s) }
+}
+```
+
+This is the perf fast-path used by `bun install`: 144-byte `memset` +
+field-copy chain was a profile hotspot, replaced by a bitwise reinterpret
+on the two arches where both types are the per-arch kernel UAPI
+`struct stat`. The const-asserted size + align gate + the fallback impl on
+non-`x86_64`/`aarch64` means a future layout drift in either crate is a
+compile error rather than silent corruption.
+
+**No refactor proposed.** The SAFETY comment is exemplary — it names the
+PoD-ness of every field (every bit-pattern valid) and the load-bearing
+const assert. The whole point of this site is "transmute is faster than
+field copy; here is the proof it's sound" — replacing it would regress the
+profile gain it was introduced for.
+
+The only hardening worth doing is a runtime test (`stat` a known file,
+compare every field of both representations) gated under `#[cfg(test)]` —
+a debug-build belt-and-braces against a future toolchain that satisfies
+the layout assertion by accident. Filed as `stat-to-libc-fuzz-test` on
+the residual backlog.
+
+---
+
+## Cargo-dep additions
+
+No new crate is required after Codex pass 2.
+
+Use `strum::FromRepr` uniformly. `strum` is already a workspace dependency with
+`derive` enabled, and the relevant crates already use `strum.workspace = true`.
+`strum::FromRepr` is added to one new enum (`linux_errno::SystemErrno`); the
+macro is already pulled in via the existing `IntoStaticStr` derive on the same
+type.
+
+---
+
+## Risk assessment
+
+| Risk | Severity | Mitigation |
+| --- | --- | --- |
+| `strum::FromRepr` codegen differs from hand-rolled `transmute` in release builds | Low | `strum`'s generated `from_repr` is a `match` that LLVM collapses to a range check at -O2/-O3, matching the existing `assert!((1..=N).contains(&n))` + `transmute` codegen shape. No measurable diff in `bun install` microbenchmarks expected. |
+| Replacing the `usize → E` transmute in `linux_errno.rs` regresses a perf-critical syscall path | Negligible | Site is dead code today (no live callers). `from_repr` jump table is identical asm to transmute on hot paths even when it lights up. |
+| `strum::FromRepr` derive on a 134-variant enum produces large macro output | Negligible | Already on the dual-target Windows `E` enum (138 + ~16 UV_* variants); compile-time cost was on the order of 100ms in the original strum addition PR. |
+| A future caller of `SystemErrno::from_raw_unchecked` (renamed) violates the contract anyway | Low | After the rename every call site requires a one-line audit trail; the renamed function is `pub` only inside `bun_errno`, downstream crates use `from_raw` (= the new safe path) or `try_from_raw`. |
+
+---
+
+## PR-landing order
+
+A single thread of PRs, smallest first:
+
+1. **`errno: derive FromRepr on linux SystemErrno`** — pure additive; no
+   callers change. Lights up the safe path on the dead-code site.
+2. **`errno: replace unchecked usize → E transmute with from_repr lookup
+   (pre-existing UB)`** — fixes S-001781. Standalone, ~6 LoC.
+3. **`libuv_sys: use strum::FromRepr for HandleType`** —
+   removes S-004118 unsafe. ~8 LoC, no new dependency.
+4. **`cares_sys: use strum::FromRepr for Error`** — removes
+   S-000952 unsafe. ~10 LoC, no new dependency.
+5. **`bun_css: derive FromRepr on PropertyIdTag`** — removes S-000658
+   unsafe. ~5 LoC in the generator + caller.
+6. **`errno: split from_raw into from_raw_unchecked + try_from_raw`** —
+   API rename + 7 call-site updates. Larger diff (~40 LoC) but no
+   behavioural change.
+7. **`unsafe: harden A-LIFETIME and A-FN-POINTER SAFETY comments`** —
+   doc-only sweep across the 22 remaining sites. Each block gets the
+   common template with the per-site invariant filled in.
+8. **`tests: round-trip rustix::fs::Stat ↔ libc::stat`** — cfg(test)
+   guard against future toolchain drift on S-010408.
+
+Each PR is independently revertable; (1)→(2) is the only ordering
+dependency. (7) and (8) can land in parallel with any of (3)-(6).
+
+---
+
+## What is *not* in this cluster
+
+Three things readers may expect to see and won't, with brief justification:
+
+- **`Box<T>` ↔ `Box<U>` transmutes for repr-equivalence.** None exist in
+  Bun's Rust today — the heap round-trip layer (`bun_core::heap::take` /
+  `destroy` / `into_raw`) consumes these into typed APIs before any
+  caller would reach for a transmute.
+- **`&[u8]` ↔ `&str` transmutes.** Likewise absent — `bun_core::String`
+  and `bun_core::strings` provide the byte-slice surface end-to-end; the
+  WTF-string boundary is the only place encoding crosses, and it uses
+  named conversion fns, never `transmute`.
+- **Cell-mutability transmutes (`&T` → `&mut T`).** Zero in the
+  inventory; the `event_loop` and `runtime/server` crates use
+  `UnsafeCell` / `*mut T` explicitly rather than going through
+  `transmute`. (These would have been the most dangerous class; their
+  absence is the single largest piece of good news from the audit.)

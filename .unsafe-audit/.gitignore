@@ -1,0 +1,55 @@
+# .gitignore for the audit directory.
+# Dropped into <project>/.unsafe-audit/ by scripts/clone-and-bootstrap.sh or the orchestrator on git init.
+
+# Build artifacts (none should live here, but in case a tool produces them)
+target/
+**/Cargo.lock.audit
+
+# Phase 1 — keep the canonical JSON outputs; ignore the heavy intermediates
+# cargo expand can produce 100s of MB on large workspaces
+phase1/*__expand.rs
+phase1/*__expand_full.rs
+
+# Per-crate ast-grep JSON fragments (~2,164 files; consolidated into
+# unsafe-inventory.jsonl one level up). Keep cluster-summary.json only.
+phase1/*__ast_*.json
+phase1/*__geiger*
+phase1/*__expand*
+phase1/*__rustdoc*
+phase1/*__ubs*
+
+# rustdoc JSON is large; keep only the per-crate copy the inventory references
+phase1/target/
+
+# Kani runs (formal verification artifacts) — heavy + machine-specific
+audit/kani-runs/
+**/kani-runs/
+
+# Loom counterexample binaries (large)
+**/loom-counterexamples/
+
+# Fuzz corpora — should be kept WITHIN the project repo, not the audit dir
+# (we re-fuzz on demand; the corpora live with the targets)
+fuzz/corpus/
+
+# Pass-5 scratch fuzz projects/corpora. Keep summary findings, not generated
+# cargo-fuzz workdirs, target dirs, or corpora in the audit artifact PR.
+fuzz-inverse/
+fuzz-lockfile/
+
+# Continuous-mode scratch output. The canonical baseline is
+# unsafe-inventory.jsonl; do not duplicate it under baseline/. Drift runs
+# generate thousands of per-crate intermediate files and belong local-only
+# unless summarized manually.
+baseline/
+drift/
+continuous-mode.toml
+
+# Temp files
+*.tmp
+*.swp
+.DS_Store
+
+# Heavy log tail-cuts that the harness produces for diagnostic purposes
+audit/phase7/verification-log-raw-*.txt
+audit/phase7/miri-stderr-*.txt

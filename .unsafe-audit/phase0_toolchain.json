@@ -1,0 +1,29 @@
+{
+  "checked_at": "2026-05-15T04:14:13Z",
+  "rustc_version": "rustc 1.97.0-nightly (e95e73209 2026-05-05)",
+  "rustc_nightly_version": "rustc 1.97.0-nightly (f53b654a8 2026-04-30)",
+  "tools": [
+    {"name":"ast-grep","installed":true,"version":"ast-grep 0.42.1"}
+,
+    {"name":"cargo-geiger","installed":true,"version":"cargo-geiger 0.13.0"}
+,
+    {"name":"cargo-careful","installed":false,"install_cmd":"cargo +nightly install cargo-careful"}
+,
+    {"name":"cargo-expand","installed":true,"version":"cargo-expand 1.0.121"}
+,
+    {"name":"cargo-fuzz","installed":true,"version":"cargo-fuzz 0.13.1"}
+,
+    {"name":"cargo-mutants","installed":true,"version":"cargo-mutants 27.0.0"}
+,
+    {"name":"cargo-flamegraph","installed":false,"install_cmd":"cargo install flamegraph --locked"}
+,
+    {"name":"hyperfine","installed":true,"version":"hyperfine 1.20.0"}
+,
+    {"name":"miri","installed":true,"version":"miri 0.1.0 (f53b654a88 2026-04-30)"}
+,
+    {"name":"nightly-toolchain","installed":true,"version":"rustup 1.29.0 (28d1352db 2026-03-05)"}
+,
+    {"name":"jq","installed":true,"version":"jq-1.8.1"}
+
+  ]
+}

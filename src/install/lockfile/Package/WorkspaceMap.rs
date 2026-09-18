@@ -232,11 +232,10 @@ fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
     )
 }
 
-/// A path from the workspace root that leaves it: it climbs out (`../sibling`), or it
-/// is absolute, which is how `relative` spells a different Windows drive.
 fn escapes_root(root_relative_dir: &[u8]) -> bool {
     root_relative_dir == b".."
         || root_relative_dir.starts_with(b"../")
+        // `relative` spells a different Windows drive as an absolute path.
         || path::is_absolute(root_relative_dir)
 }
 
@@ -247,10 +246,7 @@ fn real_dir_path<'b>(abs_dir: &[u8], buf: &'b mut path::PathBuffer) -> bun_sys::
     real.map(|real| &*real)
 }
 
-/// The directory of the root package.json. Every workspace member has to lie inside
-/// it: `bun install` creates `<member>/node_modules`, so a member outside the root is
-/// a write into a directory the project does not own. A cloned repository could name
-/// the directories next to it (the user's other projects) as its members.
+/// Every member gets a `node_modules`, so one outside the root is a write outside the project.
 struct WorkspaceRoot<'a> {
     dir: &'a [u8],
     /// `dir` with its symlinks resolved, on first use.
@@ -258,8 +254,6 @@ struct WorkspaceRoot<'a> {
 }
 
 impl WorkspaceRoot<'_> {
-    /// Outside the root by its path alone, so nothing at that path is read: `../sibling`,
-    /// `packages/../../sibling`, an absolute path elsewhere.
     fn rejects_path(
         &self,
         abs_workspace_dir: &[u8],
@@ -287,9 +281,7 @@ impl WorkspaceRoot<'_> {
         true
     }
 
-    /// Inside the root by its path and outside it on disk: `link` when the repository
-    /// ships `link -> ../sibling`, `up/*` when it ships `up -> ..`. The directory has to
-    /// exist. A directory that cannot be resolved is rejected too.
+    /// For a symlink that leaves the root: `link -> ../sibling`, or `up/*` with `up -> ..`.
     fn rejects_real_path(
         &mut self,
         abs_workspace_dir: &[u8],
@@ -683,8 +675,7 @@ impl WorkspaceMap {
                                 source,
                                 *pattern_loc,
                             ) {
-                                // One error names the pattern; the rest of its
-                                // matches would repeat it.
+                                // One error per pattern.
                                 break;
                             }
 

@@ -6,8 +6,8 @@
 // date by every later `bun install`. The rename must also cope with the final
 // path being occupied already, which the hoisted linker does to itself.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { existsSync, readdirSync, readFileSync, rmSync, watch, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Enough files that the kill below lands long before linking finishes, even
@@ -50,29 +50,33 @@ function compareWithExpectedTree(packageDir: string) {
 }
 const completeTree = { entries: expectedTree.size, missing: 0, firstMissing: [], unexpected: [] };
 
-function serveRegistry(tgz: Uint8Array) {
+type RegistryPackage = {
+  tgz: Uint8Array;
+  scripts?: Record<string, string>;
+  // The tarball is not sent before this resolves.
+  release?: Promise<void>;
+};
+
+// Every package is published as version 1.0.0.
+function serveRegistry(packages: Record<string, RegistryPackage>) {
   return Bun.serve({
     port: 0,
-    fetch(request) {
+    async fetch(request) {
       const { origin, pathname } = new URL(request.url);
-      switch (pathname) {
-        case "/many-files":
-          return Response.json({
-            name: "many-files",
-            "dist-tags": { latest: "1.0.0" },
-            versions: {
-              "1.0.0": {
-                name: "many-files",
-                version: "1.0.0",
-                dist: { tarball: `${origin}/many-files-1.0.0.tgz` },
-              },
-            },
-          });
-        case "/many-files-1.0.0.tgz":
-          return new Response(tgz);
-        default:
-          return new Response("not found", { status: 404 });
+      const name = pathname.slice(1).replace(/-1\.0\.0\.tgz$/, "");
+      const pkg = packages[name];
+      if (!pkg) return new Response("not found", { status: 404 });
+      if (pathname.endsWith(".tgz")) {
+        await pkg.release;
+        return new Response(pkg.tgz);
       }
+      return Response.json({
+        name,
+        "dist-tags": { latest: "1.0.0" },
+        versions: {
+          "1.0.0": { name, version: "1.0.0", scripts: pkg.scripts, dist: { tarball: `${origin}/${name}-1.0.0.tgz` } },
+        },
+      });
     },
   });
 }
@@ -131,7 +135,7 @@ const packageDirs = {
 for (const [linker, packageDir] of Object.entries(packageDirs)) {
   test(`${linker} linker: a package whose install was interrupted is installed again`, async () => {
     const tgz = await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes();
-    using registry = serveRegistry(tgz);
+    using registry = serveRegistry({ "many-files": { tgz } });
     using dir = tempDir(`interrupted-install-${linker}`, {
       "package.json": JSON.stringify({ name: "app", dependencies: { "many-files": "1.0.0" } }),
       "bunfig.toml": ({ root }) =>
@@ -162,6 +166,111 @@ for (const [linker, packageDir] of Object.entries(packageDirs)) {
     expect(readdirSync(installedParent).sort()).toEqual(finishedParentListing);
   });
 }
+
+// https://github.com/oven-sh/bun/issues/43256: bun exits as soon as a lifecycle
+// script fails, while the isolated linker's tasks for other packages are still
+// linking on other threads. (The hoisted linker links on the thread that would
+// exit, so it cannot be caught midway like this.) With a lockfile and a cold
+// cache, tarballs are downloaded while packages are being linked, so the
+// registry can hold the large package back until the script runs, and the
+// script fails once something shows up where that package is linked: the exit
+// lands mid-link.
+const failOnceLinkingStarts = [
+  `: > "$STAGING_TEST_SCRIPT_STARTED"`,
+  `until set -- "$STAGING_TEST_LINK_DIR"/* "$STAGING_TEST_LINK_DIR"/.[!.]*; [ -e "$1" ] || [ -e "$2" ]; do :; done`,
+  `exit 1`,
+].join("; ");
+
+// The script is POSIX sh; on Windows lifecycle scripts run in bun's own shell.
+test.skipIf(isWindows)(
+  "isolated linker: a lifecycle script that fails mid-link leaves no partial package",
+  async () => {
+    const scripts = { install: failOnceLinkingStarts };
+    const manyFiles: RegistryPackage = { tgz: await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes() };
+    const failingScript: RegistryPackage = {
+      tgz: await new Bun.Archive(
+        { "package/package.json": JSON.stringify({ name: "failing-script", version: "1.0.0", scripts }) },
+        { compress: "gzip" },
+      ).bytes(),
+      scripts,
+    };
+    using registry = serveRegistry({ "many-files": manyFiles, "failing-script": failingScript });
+
+    const dependencies = { "many-files": "1.0.0" };
+    const rootPackageJson = { name: "app", private: true, workspaces: ["packages/*"] };
+    using dir = tempDir("staging-script-failure", {
+      "package.json": JSON.stringify({ ...rootPackageJson, trustedDependencies: ["failing-script"] }),
+      "packages/a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        dependencies: { ...dependencies, "failing-script": "1.0.0" },
+      }),
+      "packages/b/package.json": JSON.stringify({ name: "pkg-b", version: "1.0.0", dependencies }),
+      "bunfig.toml": ({ root }) =>
+        Bun.TOML.stringify({
+          install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker: "isolated" },
+        }),
+    });
+    const root = String(dir);
+    const installed = packageDirs.isolated(root);
+    const installedParent = join(installed, "..");
+
+    {
+      await using lockfileOnly = Bun.spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd: root,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([
+        lockfileOnly.stdout.text(),
+        lockfileOnly.stderr.text(),
+        lockfileOnly.exited,
+      ]);
+      expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+    }
+
+    const scriptStarted = Promise.withResolvers<void>();
+    manyFiles.release = scriptStarted.promise;
+    const watcher = watch(root, (_, filename) => {
+      if (filename === "script-started") scriptStarted.resolve();
+    });
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: root,
+        env: {
+          ...bunEnv,
+          STAGING_TEST_SCRIPT_STARTED: join(root, "script-started"),
+          STAGING_TEST_LINK_DIR: installedParent,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // An install that ends without running the script must not leave the registry waiting.
+      proc.exited.then(() => scriptStarted.resolve());
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('install script from "failing-script" exited with 1');
+      expect(exitCode).toBe(1);
+    } finally {
+      watcher.close();
+    }
+    // Either the package is not at its final path yet, or all of it is.
+    if (existsSync(installed)) {
+      expect(compareWithExpectedTree(installed)).toEqual(completeTree);
+    }
+
+    // What the reporter did next: take the trust away and install again.
+    writeFileSync(join(root, "package.json"), JSON.stringify(rootPackageJson));
+    const second = await install(root);
+    expect(second.stderr).not.toContain("error");
+    expect(second.exitCode).toBe(0);
+    expect(compareWithExpectedTree(installed)).toEqual(completeTree);
+    expect(readdirSync(installedParent)).toEqual(["many-files"]);
+  },
+);
 
 // A workspace that other packages depend on under a second name is linked into
 // node_modules under both names, and the hoisted linker walks the packages
@@ -270,7 +379,7 @@ describe.skipIf(!isLinux || isMusl || !cc)("a link that runs out of space midway
   for (const [linker, packageDir] of Object.entries(packageDirs)) {
     test(`${linker} linker: leaves nothing at the package's path and the next install succeeds`, async () => {
       const tgz = await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes();
-      using registry = serveRegistry(tgz);
+      using registry = serveRegistry({ "many-files": { tgz } });
       using dir = tempDir(`staging-enospc-${linker}`, {
         "shim.c": failingLinkatShim,
         "package.json": JSON.stringify({ name: "app", dependencies: { "many-files": "1.0.0" } }),

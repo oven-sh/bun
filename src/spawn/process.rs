@@ -1496,7 +1496,10 @@ pub mod waiter_thread_posix {
                     let act = libc::sigaction {
                         sa_sigaction: wakeup as *const () as usize,
                         sa_mask: current_mask,
-                        sa_flags: libc::SA_NOCLDSTOP,
+                        // The handler only writes to the eventfd: a system call it
+                        // lands in, on whichever thread, carries on instead of
+                        // failing with EINTR.
+                        sa_flags: libc::SA_NOCLDSTOP | libc::SA_RESTART,
                         sa_restorer: None,
                     };
                     libc::sigaction(libc::SIGCHLD, &raw const act, core::ptr::null_mut());

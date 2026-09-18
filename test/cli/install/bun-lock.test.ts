@@ -1020,6 +1020,42 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
   expect(lines.filter(line => line.trimStart().startsWith('resolved "http://injected.example'))).toEqual([]);
 });
 
+it("--yarn does not write yarn.lock during --dry-run", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "yarn-lock-dry-run",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  const { exited, stdout, stderr } = spawn({
+    cmd: [bunExe(), "install", "--yarn", "--dry-run"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("yarn.lock");
+  expect(err).not.toContain("error:");
+  expect(out).toContain("no-deps@1.0.0");
+  expect(exitCode).toBe(0);
+
+  expect(
+    await Promise.all([
+      exists(join(packageDir, "yarn.lock")),
+      exists(join(packageDir, "bun.lock")),
+      exists(join(packageDir, "node_modules")),
+    ]),
+  ).toEqual([false, false, false]);
+});
+
 it("prints an actionable error for a lockfile version newer than this build supports", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 

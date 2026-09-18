@@ -1616,6 +1616,65 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       assertManifestsPopulated(join(packageDir, ".bun-cache"), verdaccio.registryUrl());
     });
 
+    test("--dry-run should not run root lifecycle scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: {
+            preinstall: "echo preinstall > preinstall.txt",
+            postinstall: "echo postinstall > postinstall.txt",
+            prepare: "echo prepare > prepare.txt",
+          },
+        }),
+      );
+
+      const scriptsRan = () =>
+        Promise.all([
+          exists(join(packageDir, "preinstall.txt")),
+          exists(join(packageDir, "postinstall.txt")),
+          exists(join(packageDir, "prepare.txt")),
+        ]);
+
+      for (const args of [["--dry-run"], ["--frozen-lockfile", "--dry-run"]]) {
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install", ...args],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+
+        const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+        expect(err).not.toContain("$ echo");
+        expect(err).not.toContain("error:");
+        expect(out).toContain("bun install v1.");
+        expect(exitCode).toBe(0);
+        expect(await scriptsRan()).toEqual([false, false, false]);
+      }
+
+      // The same package.json runs all three scripts on a real install.
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await scriptsRan()).toEqual([true, true, true]);
+    });
+
     test("it should add `node-gyp rebuild` as the `install` script when `install` and `postinstall` don't exist and `binding.gyp` exists in the root of the package", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;

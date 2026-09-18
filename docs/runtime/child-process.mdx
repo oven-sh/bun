@@ -170,7 +170,7 @@ console.log(`CPU time (system): ${usage.cpuTime.system} µs`);
 
 <Note>
   On Linux, `maxRSS` is never lower than the peak RSS of the process that called `Bun.spawn`. The kernel keeps the
-  high-water mark of the address space across `exec`, and `Bun.spawn` uses `vfork` semantics, so the child inherits the
+  high-water mark of the resident set across `exec`, and `Bun.spawn` uses `vfork` semantics, so the child inherits the
   spawner's peak. To measure the peak of the child alone, spawn it from a small process. macOS and Windows report the
   peak of the child only.
 </Note>

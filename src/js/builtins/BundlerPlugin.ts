@@ -463,9 +463,6 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
                 throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
               }
             }
-            if (path.includes("\0")) {
-              throw new TypeError('onResolve plugin "path" must not contain a null byte when the namespace is "file"');
-            }
           }
           if (userNamespace === "dataurl") {
             if (!path.startsWith("data:")) {

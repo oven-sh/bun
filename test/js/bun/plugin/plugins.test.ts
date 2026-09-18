@@ -903,14 +903,14 @@ it.concurrent("an onResolve path with a null byte is not opened as a file", asyn
       import { join, sep } from "node:path";
 
       const root = import.meta.dir;
+      const nullByteInFileName = join(root, "real.ts") + "\\0ignored.ts";
+      const nullByteInDirectoryName = join(root, "sub") + "\\0ignored" + sep + "real.ts";
 
       Bun.plugin({
         name: "null-byte",
         setup(build) {
-          build.onResolve({ filter: /^file-name\\.mod$/ }, () => ({ path: join(root, "real.ts") + "\\0ignored.ts" }));
-          build.onResolve({ filter: /^directory-name\\.mod$/ }, () => ({
-            path: join(root, "sub") + "\\0ignored" + sep + "real.ts",
-          }));
+          build.onResolve({ filter: /^file-name\\.mod$/ }, () => ({ path: nullByteInFileName }));
+          build.onResolve({ filter: /^directory-name\\.mod$/ }, () => ({ path: nullByteInDirectoryName }));
           build.onResolve({ filter: /^addon\\.mod$/ }, () => ({ path: join(root, "addon.node") + "\\0ignored.node" }));
           build.onResolve({ filter: /^namespace-file-name\\.mod$/ }, () => ({
             path: "real.ts\\0ignored.ts",
@@ -920,11 +920,21 @@ it.concurrent("an onResolve path with a null byte is not opened as a file", asyn
             path: "sub\\0ignored/real.ts",
             namespace: "custom",
           }));
+          build.onResolve({ filter: /^namespace-addon\\.mod$/ }, () => ({
+            path: "addon.node\\0ignored.node",
+            namespace: "custom",
+          }));
+
+          // A null byte is valid in a path that an onLoad callback takes. This onResolve callback
+          // also takes the path that it returned, as a Rollup resolveId hook does.
+          build.onResolve({ filter: /helper/ }, () => ({ path: "\\0helper.js" }));
           build.onResolve({ filter: /^virtual\\.mod$/ }, () => ({ path: "\\0virtual", namespace: "custom" }));
-          build.onLoad({ filter: /virtual$/, namespace: "custom" }, ({ path }) => ({
+          const onLoad = ({ path }) => ({
             contents: "export const value = " + JSON.stringify("onLoad:" + path) + ";",
             loader: "js",
-          }));
+          });
+          build.onLoad({ filter: /helper\\.js$/ }, onLoad);
+          build.onLoad({ filter: /virtual$/, namespace: "custom" }, onLoad);
         },
       });
 
@@ -932,22 +942,27 @@ it.concurrent("an onResolve path with a null byte is not opened as a file", asyn
         try {
           return await fn();
         } catch (error) {
-          return "threw: " + error.message;
+          return (
+            "threw: " +
+            (error.code ?? error.message)
+              .replaceAll(nullByteInFileName, "<file name>")
+              .replaceAll(nullByteInDirectoryName, "<directory name>")
+          );
         }
       }
 
       console.log(
         JSON.stringify({
-          importFileName: await attempt(async () => (await import("file-name.mod")).value),
           requireFileName: await attempt(() => require("file-name" + ".mod").value),
           requireDirectoryName: await attempt(() => require("directory-name" + ".mod").value),
           requireAddon: await attempt(() => require("addon" + ".mod")),
-          resolveSync: await attempt(() => Bun.resolveSync("file-name.mod", root)),
           importNamespaceFileName: await attempt(async () => (await import("namespace-file-name.mod")).value),
           requireNamespaceFileName: await attempt(() => require("namespace-file-name" + ".mod").value),
           requireNamespaceDirectoryName: await attempt(() => require("namespace-directory-name" + ".mod").value),
-          // A null byte is valid in a path that an onLoad callback takes.
-          onLoad: await attempt(async () => (await import("virtual.mod")).value),
+          requireNamespaceAddon: await attempt(() => require("namespace-addon" + ".mod")),
+          importFileNamespaceOnLoad: await attempt(async () => (await import("helper.mod")).value),
+          requireFileNamespaceOnLoad: await attempt(() => require("helper" + ".mod").value),
+          importNamespaceOnLoad: await attempt(async () => (await import("virtual.mod")).value),
         }),
       );
     `,
@@ -961,18 +976,18 @@ it.concurrent("an onResolve path with a null byte is not opened as a file", asyn
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const rejected = 'threw: onResolve plugin "path" must not contain a null byte when the namespace is "file"';
   // The fixture catches its own failures, so empty stdout means it crashed.
   expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
-    importFileName: rejected,
-    requireFileName: rejected,
-    requireDirectoryName: rejected,
-    requireAddon: rejected,
-    resolveSync: rejected,
+    requireFileName: 'threw: ENOENT reading "<file name>"',
+    requireDirectoryName: 'threw: ENOENT reading "<directory name>"',
+    requireAddon: "threw: ERR_INVALID_ARG_VALUE",
     importNamespaceFileName: 'threw: ENOENT reading "custom:real.ts\0ignored.ts"',
     requireNamespaceFileName: 'threw: ENOENT reading "custom:real.ts\0ignored.ts"',
     requireNamespaceDirectoryName: 'threw: ENOENT reading "custom:sub\0ignored/real.ts"',
-    onLoad: "onLoad:\0virtual",
+    requireNamespaceAddon: "threw: ERR_INVALID_ARG_VALUE",
+    importFileNamespaceOnLoad: "onLoad:\0helper.js",
+    requireFileNamespaceOnLoad: "onLoad:\0helper.js",
+    importNamespaceOnLoad: "onLoad:\0virtual",
   });
   expect(exitCode).toBe(0);
 });

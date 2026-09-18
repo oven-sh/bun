@@ -1890,9 +1890,14 @@ describe("bundler", () => {
           return { success: result.success, logs: result.logs.map(log => log.message) };
         }
 
+        function onLoad({ path }) {
+          onLoadPaths.push(path);
+          return { contents: "export const value = 1;", loader: "js" };
+        }
+
         console.log(
           JSON.stringify({
-            nullByteInFileName,
+            root,
             fileName: await run(entry, build => {
               build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: nullByteInFileName }));
             }),
@@ -1904,7 +1909,7 @@ describe("bundler", () => {
             }),
             namespaceWithoutOnLoadMatch: await run(entry, build => {
               build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: nullByteInFileName, namespace: "custom" }));
-              build.onLoad({ filter: /never-matches/, namespace: "custom" }, () => ({ contents: "" }));
+              build.onLoad({ filter: /never-matches/, namespace: "custom" }, onLoad);
             }),
             // The resolver takes the directory of the importer as the place to look for "./real.ts".
             namespaceImportsRelativePath: await run(entry, build => {
@@ -1918,12 +1923,13 @@ describe("bundler", () => {
               }));
             }),
             // A null byte is valid in a path that only an onLoad callback reads, and in an external specifier.
+            fileNamespaceWithOnLoadMatch: await run(entry, build => {
+              build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: join(root, "\\0virtual.js") }));
+              build.onLoad({ filter: /virtual\\.js$/ }, onLoad);
+            }),
             namespaceWithOnLoadMatch: await run(entry, build => {
               build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: "\\0virtual", namespace: "custom" }));
-              build.onLoad({ filter: /virtual$/, namespace: "custom" }, args => {
-                onLoadPaths.push(args.path);
-                return { contents: "export const value = 1;", loader: "js" };
-              });
+              build.onLoad({ filter: /virtual$/, namespace: "custom" }, onLoad);
             }),
             external: await run(entry, build => {
               build.onResolve({ filter: /^via-plugin$/ }, () => ({ path: "external\\0module", external: true }));
@@ -1944,23 +1950,19 @@ describe("bundler", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // The fixture prints one line, so empty stdout means it crashed.
-    const { nullByteInFileName, ...results } = stdout.trim() ? JSON.parse(stdout) : { crashed: stderr };
-    const rejected = {
-      success: false,
-      logs: ['onResolve plugin "path" must not contain a null byte when the namespace is "file"'],
-    };
+    const { root, ...results } = stdout.trim() ? JSON.parse(stdout) : { crashed: stderr };
+    const notFound = (path: string) => ({ success: false, logs: [`File not found ${JSON.stringify(path)}`] });
+    const nullByteInFileName = join(root, "real.ts") + "\0ignored.ts";
     expect(results).toEqual({
-      fileName: rejected,
-      directoryName: rejected,
-      entryPoint: rejected,
-      namespaceWithoutOnLoadMatch: {
-        success: false,
-        logs: [`File not found ${JSON.stringify(nullByteInFileName)}`],
-      },
+      fileName: notFound(nullByteInFileName),
+      directoryName: notFound(join(root, "sub") + "\0ignored" + path.sep + "real.ts"),
+      entryPoint: notFound(nullByteInFileName),
+      namespaceWithoutOnLoadMatch: notFound(nullByteInFileName),
       namespaceImportsRelativePath: { success: false, logs: ['Could not resolve: "./real.ts"'] },
+      fileNamespaceWithOnLoadMatch: { success: true, logs: [] },
       namespaceWithOnLoadMatch: { success: true, logs: [] },
       external: { success: true, logs: [] },
-      onLoadPaths: ["\0virtual"],
+      onLoadPaths: [join(root, "\0virtual.js"), "\0virtual"],
     });
     expect(exitCode).toBe(0);
   });

@@ -1262,8 +1262,7 @@ fn stash_nested_node_modules(
     match sys::renameat(Fd::cwd(), nested, Fd::cwd(), stash_path) {
         Ok(()) => Ok(Some(stash_path.as_bytes().to_vec())),
         Err(e) if e.get_errno() == sys::E::ENOENT => Ok(None),
-        // A directory cannot move on some file systems (overlayfs). The copy
-        // still runs, without the packages bun installed under `<pkg>`.
+        // overlayfs cannot rename a lower-layer directory: the copy still runs.
         Err(e) => {
             bun_core::warn!(
                 "failed to keep {} aside, the dependencies installed under it are removed: {}",

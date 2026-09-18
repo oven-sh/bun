@@ -2269,9 +2269,21 @@ describe("css tests", () => {
       rule("margin-left: 1px; margin-left: 1dvh;") + rtl("margin-right: 3px;"),
     );
     compiled("margin-inline-start: 3px; margin-left: 1dvh", rule("margin-left: 1dvh;") + rtl("margin-right: 3px;"));
-    // The 4-side shorthand drops the block value it overrides, unless it is needed as a fallback.
+    // Equal inline values are written into the rule itself, so they serve as a fallback like a
+    // block value does.
+    compiled("margin-inline: 3px; margin-left: 1dvh", rule("margin-left: 3px; margin-right: 3px; margin-left: 1dvh;"));
+    compiled(
+      "margin-inline: 3px; margin-left: var(--x); margin: 1dvh",
+      rule("margin-left: var(--x); margin-right: 3px; margin: 1dvh;"),
+    );
+    // The 4-side shorthand drops the logical values it overrides, unless they are needed as a fallback.
     compiled("margin-block-start: 3px; margin: 0", rule("margin: 0;"));
+    compiled("margin-inline: 3px; margin: 0", rule("margin: 0;"));
     compiled("margin-block-start: 3px; margin: 1dvh", rule("margin-top: 3px; margin: 1dvh;"));
+    compiled("margin-inline: 3px; margin: 1dvh", rule("margin-left: 3px; margin-right: 3px; margin: 1dvh;"));
+    compiled("padding-inline: 3px; padding: 1dvh", rule("padding-left: 3px; padding-right: 3px; padding: 1dvh;"));
+    compiled("inset-inline: 3px; inset: 1dvh", rule("left: 3px; right: 3px; inset: 1dvh;"));
+    compiled("margin-inline-start: 3px; margin-inline-end: 4px; margin: 1dvh", rule("margin: 1dvh;"));
 
     describe("border", () => {
       compiled(
@@ -2370,10 +2382,44 @@ describe("css tests", () => {
         "border-inline-start-width: 3px; border-left-width: 1dvh",
         rule("border-left-width: 1dvh;") + rtl("border-right-width: 3px;"),
       );
+      // Equal inline values are written into the rule itself, so they serve as a fallback.
+      compiled(
+        "border-inline-width: 3px; border-left-width: 1dvh",
+        rule("border-left-width: 3px; border-right-width: 3px; border-left-width: 1dvh;"),
+      );
+      compiled("border-inline-width: 3px; border-width: 1px", rule("border-width: 1px;"));
+      compiled(
+        "border-inline-width: 3px; border-width: 1dvh",
+        rule("border-left-width: 3px; border-right-width: 3px; border-width: 1dvh;"),
+      );
+      compiled(
+        "border-inline-start-width: 3px; border-inline-end-width: 4px; border-width: 1dvh",
+        rule("border-width: 1dvh;"),
+      );
+      compiled(
+        "border-inline-width: 3px; border-style: solid; border-width: 1dvh",
+        rule("border-left-width: 3px; border-right-width: 3px; border-style: solid; border-width: 1dvh;"),
+      );
+      // A fallback for a side other than the first one does not split the shorthand.
+      compiled("border-right-width: 3px; border-width: 1dvh", rule("border-right-width: 3px; border-width: 1dvh;"));
       compiled(
         "border-inline-start: 3px solid red; border-left: 1dvh solid #00f",
         rule("border-left: 1dvh solid #00f;") + rtl("border-right: 3px solid red;"),
       );
+      // The side shorthand keeps a previous value ahead of it the same way.
+      compiled(
+        "border-inline: 3px solid red; border-left: 1dvh solid #00f",
+        rule("border-left: 3px solid red; border-right: 3px solid red; border-left: 1dvh solid #00f;"),
+      );
+      compiled(
+        "border-block-start: 3px solid red; border-top: 1dvh solid #00f",
+        rule("border-top: 3px solid red; border-top: 1dvh solid #00f;"),
+      );
+      compiled(
+        "border-left-width: 3px; border-left: 1dvh solid #00f",
+        rule("border-left-width: 3px; border-left: 1dvh solid #00f;"),
+      );
+      compiled("border-left-width: 3px; border-left: 1px solid #00f", rule("border-left: 1px solid #00f;"));
       compiled(
         "border-inline-start-color: red; border-left-color: lab(40% 56.6 39)",
         rule("border-left-color: #b32323; border-left-color: lab(40% 56.6 39);") + rtl("border-right-color: red;"),

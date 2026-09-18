@@ -1356,16 +1356,32 @@ mod border_handler_body {
 
             // Helper macros.
 
-            // The buffered block side that, compiled, lands on a physical side.
-            macro_rules! compiled_block_side {
-                (border_top) => {
-                    Some(&self.border_block_start)
+            // The buffered logical value that, compiled, lands in this rule on a physical side:
+            // a block value, or an inline pair with equal values (see `flush_overridden_inline`).
+            macro_rules! compiled_side {
+                (border_top, $prop:ident) => {
+                    self.border_block_start.$prop.as_ref()
                 };
-                (border_bottom) => {
-                    Some(&self.border_block_end)
+                (border_bottom, $prop:ident) => {
+                    self.border_block_end.$prop.as_ref()
                 };
-                ($key:ident) => {
-                    None::<&BorderShorthand>
+                (border_left, $prop:ident) => {
+                    compiled_side!(@inline_pair $prop)
+                };
+                (border_right, $prop:ident) => {
+                    compiled_side!(@inline_pair $prop)
+                };
+                (@inline_pair $prop:ident) => {
+                    match (
+                        self.border_inline_start.$prop.as_ref(),
+                        self.border_inline_end.$prop.as_ref(),
+                    ) {
+                        (Some(start), Some(end)) if css::generic::eql(start, end) => Some(start),
+                        _ => None,
+                    }
+                };
+                ($key:ident, $prop:ident) => {
+                    None
                 };
             }
 
@@ -1379,9 +1395,8 @@ mod border_handler_body {
 
                     // The previous value of the property stays ahead of a value some target rejects.
                     let previous = self.$key.$prop.as_ref().or_else(|| {
-                        compiled_block_side!($key)
+                        compiled_side!($key, $prop)
                             .filter(|_| context.should_compile_logical(Feature::LogicalBorders))
-                            .and_then(|side| side.$prop.as_ref())
                     });
                     let needs_fallback = previous.is_some_and(|existing| {
                         !existing.eql($val)
@@ -1404,13 +1419,33 @@ mod border_handler_body {
                 }};
             }
 
+            // A 4-side shorthand: every fallback flush runs before any side is stored, so a
+            // fallback written out for a later side does not split the shorthand.
+            macro_rules! four_sides_helper {
+                ($prop:ident, $val:expr) => {{
+                    flush_helper!(border_top, $prop, &$val.top, Physical);
+                    flush_helper!(border_right, $prop, &$val.right, Physical);
+                    flush_helper!(border_bottom, $prop, &$val.bottom, Physical);
+                    flush_helper!(border_left, $prop, &$val.left, Physical);
+
+                    self.border_top.$prop = Some($val.top.deep_clone(arena));
+                    self.border_right.$prop = Some($val.right.deep_clone(arena));
+                    self.border_bottom.$prop = Some($val.bottom.deep_clone(arena));
+                    self.border_left.$prop = Some($val.left.deep_clone(arena));
+                    self.border_block_start.$prop = None;
+                    self.border_block_end.$prop = None;
+                    self.border_inline_start.$prop = None;
+                    self.border_inline_end.$prop = None;
+                    self.category = Physical;
+                    self.has_any = true;
+                }};
+            }
+
+            // Every line style is supported everywhere, so only width and color can need a fallback.
             macro_rules! set_border_helper {
                 ($key:ident, $val:expr, $category:expr) => {{
-                    if $category != self.category
-                        && !self.keeps_logical_buffered($category, context)
-                    {
-                        self.flush(dest, context);
-                    }
+                    flush_helper!($key, width, &$val.width, $category);
+                    flush_helper!($key, color, &$val.color, $category);
 
                     self.$key.set_border(arena, $val);
                     self.category = $category;
@@ -1533,42 +1568,9 @@ mod border_handler_body {
                     set_border_helper!(border_inline_start, val, Logical);
                     set_border_helper!(border_inline_end, val, Logical);
                 }
-                Property::BorderWidth(val) => {
-                    property_helper!(border_top, width, &val.top, Physical);
-                    property_helper!(border_right, width, &val.right, Physical);
-                    property_helper!(border_bottom, width, &val.bottom, Physical);
-                    property_helper!(border_left, width, &val.left, Physical);
-
-                    self.border_block_start.width = None;
-                    self.border_block_end.width = None;
-                    self.border_inline_start.width = None;
-                    self.border_inline_end.width = None;
-                    self.has_any = true;
-                }
-                Property::BorderStyle(val) => {
-                    property_helper!(border_top, style, &val.top, Physical);
-                    property_helper!(border_right, style, &val.right, Physical);
-                    property_helper!(border_bottom, style, &val.bottom, Physical);
-                    property_helper!(border_left, style, &val.left, Physical);
-
-                    self.border_block_start.style = None;
-                    self.border_block_end.style = None;
-                    self.border_inline_start.style = None;
-                    self.border_inline_end.style = None;
-                    self.has_any = true;
-                }
-                Property::BorderColor(val) => {
-                    property_helper!(border_top, color, &val.top, Physical);
-                    property_helper!(border_right, color, &val.right, Physical);
-                    property_helper!(border_bottom, color, &val.bottom, Physical);
-                    property_helper!(border_left, color, &val.left, Physical);
-
-                    self.border_block_start.color = None;
-                    self.border_block_end.color = None;
-                    self.border_inline_start.color = None;
-                    self.border_inline_end.color = None;
-                    self.has_any = true;
-                }
+                Property::BorderWidth(val) => four_sides_helper!(width, val),
+                Property::BorderStyle(val) => four_sides_helper!(style, val),
+                Property::BorderColor(val) => four_sides_helper!(color, val),
                 Property::Border(val) => {
                     self.border_top.set_border(arena, val);
                     self.border_bottom.set_border(arena, val);

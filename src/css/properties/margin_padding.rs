@@ -449,12 +449,25 @@ impl SizeHandlerImpl {
             PhysicalSlot::Right => self.right.is_some(),
         }
     }
-    /// Whether a block value is buffered that, compiled, lands on this physical side.
-    fn compiled_block_slot_is_some(&self, slot: PhysicalSlot) -> bool {
+    /// Whether a logical value is buffered that, compiled, lands in this rule on this physical
+    /// side: a block value, or an inline pair with equal values (see `flush_compiled_inline`).
+    fn compiled_slot_is_some(&self, spec: &'static SizeSpec, slot: PhysicalSlot) -> bool {
         match slot {
             PhysicalSlot::Top => self.block_start.is_some(),
             PhysicalSlot::Bottom => self.block_end.is_some(),
-            PhysicalSlot::Left | PhysicalSlot::Right => false,
+            PhysicalSlot::Left | PhysicalSlot::Right => {
+                let start = self
+                    .inline_start
+                    .as_ref()
+                    .filter(|p| p.variant_tag() == spec.inline_start)
+                    .map(spec.extract_inline_start);
+                let end = self
+                    .inline_end
+                    .as_ref()
+                    .filter(|p| p.variant_tag() == spec.inline_end)
+                    .map(spec.extract_inline_end);
+                start.is_some() && start == end
+            }
         }
     }
     fn logical_slot(&mut self, slot: LogicalSlot) -> &mut Option<Property> {
@@ -782,7 +795,7 @@ impl SizeHandlerImpl {
         // If the value contains syntax that isn't supported across all targets,
         // preserve the previous value as a fallback.
         let needs_fallback = (self.physical_slot_is_some(field)
-            || (Self::compiles_logical(spec, context) && self.compiled_block_slot_is_some(field)))
+            || (Self::compiles_logical(spec, context) && self.compiled_slot_is_some(spec, field)))
             && context
                 .targets
                 .browsers

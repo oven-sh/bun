@@ -362,12 +362,38 @@ fn offline_tarball_miss(this: &mut PackageManager, task_id: Task::Id, miss: Offl
         this.mark_network_task_failed(task_id);
     }
     if !this.options.runtime_auto_install {
-        this.offline_misses.push(miss);
+        this.offline_install.misses.push(miss);
     } else if first_required_miss {
         // No install phase follows, so nothing would report a recorded miss.
         log_offline_miss(this, miss);
     }
     true
+}
+
+#[derive(Default)]
+pub(crate) struct OfflineInstall {
+    pub(crate) misses: Vec<OfflineMiss>,
+    /// `bit[package_id]`: the install phase installed a folder of the package, or found one in place.
+    pub(crate) present: DynamicBitSet,
+}
+
+impl PackageManager {
+    /// A linker calls this for every package folder that it installs or finds in place.
+    pub(crate) fn note_package_present(&mut self, package_id: PackageID) {
+        if self.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
+            return;
+        }
+        let present = &mut self.offline_install.present;
+        if present.bit_length() <= package_id as usize {
+            present
+                .resize(
+                    self.lockfile.packages.len().max(package_id as usize + 1),
+                    false,
+                )
+                .unwrap_or_oom();
+        }
+        present.set(package_id as usize);
+    }
 }
 
 /// A package that the install phase of an `--offline` install did not find in the cache.
@@ -410,7 +436,7 @@ pub(crate) fn report_offline_misses(
     install_root_dependencies: bool,
     packages_to_install: Option<&[PackageID]>,
 ) -> u32 {
-    let misses = core::mem::take(&mut this.offline_misses);
+    let OfflineInstall { misses, present } = core::mem::take(&mut this.offline_install);
     if misses.is_empty() {
         return 0;
     }
@@ -420,9 +446,14 @@ pub(crate) fn report_offline_misses(
 
     let package_count = lockfile.packages.len();
     let mut missed = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
+    let mut not_installed = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
     let mut slot_is_required = DynamicBitSet::init_empty(package_count).unwrap_or_oom();
     for miss in &misses {
         missed.set(miss.package_id as usize);
+        // A package can have several folders. It requires its dependencies if one of them is in place.
+        if !present.is_set_allow_out_of_bound(miss.package_id as usize, false) {
+            not_installed.set(miss.package_id as usize);
+        }
         if dependencies[miss.dependency_id as usize]
             .behavior
             .is_required()
@@ -442,7 +473,7 @@ pub(crate) fn report_offline_misses(
         )
         .unwrap_or_oom()
     };
-    let installed = walk(Some(&missed));
+    let installed = walk(Some(&not_installed));
     let everything = walk(None);
 
     let mut reported = 0;
@@ -495,7 +526,7 @@ fn offline_git_miss(
         return false;
     }
     if let Some(miss) = installing {
-        this.offline_misses.push(miss);
+        this.offline_install.misses.push(miss);
     }
     if is_required {
         if !this.network_task_has_failed(clone_id) {

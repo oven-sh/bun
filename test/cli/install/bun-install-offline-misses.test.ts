@@ -50,6 +50,11 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       "1.0.0": { peerDependencies: { native: "1.0.0" }, peerDependenciesMeta: { native: { optional: true } } },
     },
     "peer-leaf": { "1.0.0": { peerDependencies: { leaf: "1.0.0" } } },
+    "mid": { "1.0.0": { dependencies: { leaf: "1.0.0" } } },
+    "peer-mid": { "1.0.0": { peerDependencies: { mid: "1.0.0" } } },
+    "dup": { "1.0.0": { dependencies: { leaf: "1.0.0" } }, "2.0.0": {} },
+    "optional-dup-a": { "1.0.0": { optionalDependencies: { dup: "1.0.0" } } },
+    "optional-dup-b": { "1.0.0": { optionalDependencies: { dup: "1.0.0" } } },
     "scanner": { "1.0.0": { main: "index.js" } },
     "leaf": { "1.0.0": {}, "2.0.0": {} },
     "plain": { "1.0.0": {} },
@@ -146,6 +151,8 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       evict?: (cacheEntry: string) => boolean;
       offlineArgs?: string[];
       keepNodeModules?: boolean;
+      /** Folders below node_modules to remove before the --offline install. */
+      removeFolders?: string[];
       /** The `install.security.scanner` of bunfig.toml, for the --offline install only. */
       scanner?: string;
       /** Folders below node_modules to return the installed version of. */
@@ -171,6 +178,9 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       if (project.evict?.(entry)) await rm(join(cache, entry), { recursive: true, force: true });
     }
     if (!project.keepNodeModules) await rm(join(cwd, "node_modules"), { recursive: true, force: true });
+    for (const folder of project.removeFolders ?? []) {
+      await rm(join(cwd, "node_modules", folder), { recursive: true });
+    }
     if (project.scanner) {
       await writeFile(
         join(cwd, "bunfig.toml"),
@@ -278,6 +288,14 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
         missing: "leaf",
       },
       {
+        // The peer dependency of peer-mid installs mid, which is in the cache and requires leaf.
+        title: "below it that a package installed for a peer dependency requires",
+        optionalDependencies: { native: "1.0.0" },
+        dependencies: { "peer-mid": "1.0.0" },
+        evict: ["native", "leaf"],
+        missing: "leaf",
+      },
+      {
         // host is placed first, so the folder of native carries the optional dependency.
         title: "that is optional for one installed package and required by another",
         dependencies: { host: "1.0.0", "uses-native": "1.0.0" },
@@ -335,6 +353,19 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
           ? "error: failed to install security scanner package"
           : "error: no packages were installed during security scanner installation",
       );
+      expect(r.requests).toEqual([]);
+      expect(r.code).toBe(1);
+    });
+
+    // The hoisted linker nests dup@1.0.0 twice, because the root holds dup@2.0.0. One folder stays in place.
+    it.if(linker === "hoisted")("still reports what a package requires if one of its folders is in place", async () => {
+      const r = await installOfflineAfterOnline(linker, {
+        manifest: { dependencies: { dup: "2.0.0", "optional-dup-a": "1.0.0", "optional-dup-b": "1.0.0" } },
+        evict: () => true,
+        keepNodeModules: true,
+        removeFolders: ["optional-dup-b/node_modules/dup", "leaf"],
+      });
+      expect(r.err).toContain('error: --offline: "leaf" is not in the cache');
       expect(r.requests).toEqual([]);
       expect(r.code).toBe(1);
     });

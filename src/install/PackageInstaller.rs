@@ -1908,6 +1908,7 @@ impl<'a> PackageInstaller<'a> {
                     let is_duplicate = self.successfully_installed.is_set(package_id as usize);
                     self.summary.success += (!is_duplicate) as u32;
                     self.successfully_installed.set(package_id as usize);
+                    self.manager_mut().note_package_present(package_id);
 
                     if log_level.show_progress() {
                         self.node.complete_one();
@@ -2214,6 +2215,7 @@ impl<'a> PackageInstaller<'a> {
             }
 
             self.summary.skipped += 1;
+            self.manager_mut().note_package_present(package_id);
 
             if self.bins[package_id as usize].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]

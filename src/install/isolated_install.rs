@@ -2414,7 +2414,7 @@ pub(crate) fn install_isolated_packages(
                     let not_downloaded = if installer.manager().options.offline
                         == crate::package_manager_real::options::OfflineMode::Offline
                     {
-                        installer::CompleteState::Skipped
+                        installer::CompleteState::OfflineMiss
                     } else {
                         installer::CompleteState::Fail
                     };

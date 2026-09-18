@@ -620,7 +620,7 @@ pub(crate) struct PlacedPackages {
     pub(crate) required: DynamicBitSet,
     /// Any placed dependency resolves to the package.
     pub(crate) seen: DynamicBitSet,
-    /// A peer dependency without `Behavior::OPTIONAL` of a walked package resolves to the package.
+    /// A peer dependency without `Behavior::OPTIONAL` of a walked package resolves to the package. The walk goes below it.
     pub(crate) peers: DynamicBitSet,
 }
 
@@ -671,18 +671,21 @@ pub(crate) fn placed_packages(
                 continue;
             }
             let is_optional = behavior.contains(crate::dependency::Behavior::OPTIONAL);
+            let is_not_installed =
+                not_installed.is_some_and(|skipped| skipped.is_set(pkg_id as usize));
             if behavior.is_peer() {
-                // Not followed: a linker can bind a peer to another package than the one it resolves to.
-                if !is_optional {
-                    placed.peers.set(pkg_id as usize);
+                // An optional peer installs nothing. A linker can bind the other kind to another package, so it judges nothing.
+                if is_optional {
+                    continue;
                 }
-                continue;
+                placed.peers.set(pkg_id as usize);
+            } else {
+                placed.seen.set(pkg_id as usize);
+                if !is_optional {
+                    placed.required.set(pkg_id as usize);
+                }
             }
-            placed.seen.set(pkg_id as usize);
-            if !is_optional {
-                placed.required.set(pkg_id as usize);
-            }
-            if is_optional && not_installed.is_some_and(|skipped| skipped.is_set(pkg_id as usize)) {
+            if is_not_installed && (is_optional || behavior.is_peer()) {
                 continue;
             }
             if !queued.is_set(pkg_id as usize) {

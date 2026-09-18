@@ -36,9 +36,10 @@ describe("sliceAnsi invariants", () => {
       const b = a + Math.floor(rng() * (w + 5));
       const out = Bun.sliceAnsi(s, a, b);
       // +1 tolerance: a wide cluster (width 2) whose START is inside the range
-      // is emitted in full even if it extends 1 col past `end`. This matches
-      // upstream slice-ansi semantics (clusters are atomic; a wide char at
-      // the cut boundary either goes in whole or not at all).
+      // is emitted in full even if it extends 1 col past `end`. This is the
+      // slice-ansi <= 8 rule for a plain slice (clusters are atomic; a wide
+      // char at the cut boundary either goes in whole or not at all).
+      // slice-ansi 9 drops that cluster; only the ellipsis path does so here.
       expect(visibleWidth(out)).toBeLessThanOrEqual(Math.max(0, b - a) + 1);
     }
   });
@@ -136,12 +137,32 @@ describe("sliceAnsi invariants", () => {
       const n = Math.floor(rng() * 40) + 1;
       const e = ellipses[Math.floor(rng() * ellipses.length)];
       const out = Bun.sliceAnsi(s, 0, n, e);
-      // +1 tolerance for wide cluster at the cut boundary (same as above).
-      // Also: if ellipsis itself is wider than n (degenerate), it's returned
-      // as-is — output may exceed n by up to ellipsisWidth-1.
+      // The ellipsis is counted against the range: a wide cluster that does
+      // not fit beside it is dropped, so there is no +1 here. An empty
+      // ellipsis is a plain slice and keeps the +1 from above. If the
+      // ellipsis itself is wider than n (degenerate), it's returned as-is.
       const ew = visibleWidth(e);
-      const tolerance = Math.max(1, ew > n ? ew - n : 0);
+      const tolerance = ew === 0 ? 1 : Math.max(0, ew - n);
       expect(visibleWidth(out)).toBeLessThanOrEqual(n + tolerance);
+    }
+  });
+
+  test("ellipsis output width respects budget for any range", () => {
+    const rng = makeRng(0xe112);
+    const ellipses = ["…", "...", ">>", "漢"];
+    for (let i = 0; i < 300; i++) {
+      const s = randomWideString(rng, 2, 24);
+      const w = Bun.stringWidth(s);
+      const e = ellipses[Math.floor(rng() * ellipses.length)];
+      const ew = Bun.stringWidth(e);
+      // A range of at least ew + 1 columns of the string, so the ellipsis fits.
+      if (w < ew + 1) continue;
+      const a = Math.floor(rng() * (w - ew));
+      const b = a + ew + 1 + Math.floor(rng() * (w - a - ew + 1));
+      const budget = Math.min(b, w) - a;
+      expect(Bun.stringWidth(Bun.sliceAnsi(s, a, b, e))).toBeLessThanOrEqual(budget);
+      // Negative indices resolve the same range through the pre-pass.
+      if (b < w) expect(Bun.stringWidth(Bun.sliceAnsi(s, a - w, b - w, e))).toBeLessThanOrEqual(budget);
     }
   });
 });
@@ -475,6 +496,31 @@ function randomAnsiAscii(rng: () => number, minLen: number, maxLen: number): str
   return pieces.join("");
 }
 
+// Dense in wide clusters (CJK, emoji, ZWJ sequence, flag, skin tone, a width-3
+// conjunct) with some ASCII and SGR / OSC 8 codes between them, so most cut
+// columns land inside a cluster. Lengths are in pieces, not columns.
+function randomWideString(rng: () => number, minLen: number, maxLen: number): string {
+  const clusters = [
+    "\u{1F469}\u200D\u{1F4BB}",
+    "\u{1F1FA}\u{1F1F8}",
+    "\u{1F44D}\u{1F3FF}",
+    "\u0915\u094D\u0937\u094D\u092E",
+  ];
+  const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));
+  const pieces: string[] = [];
+  for (let i = 0; i < len; i++) {
+    const r = rng();
+    if (r < 0.3) pieces.push(String.fromCharCode(0x21 + Math.floor(rng() * 94)));
+    else if (r < 0.55) pieces.push(String.fromCodePoint(0x4e00 + Math.floor(rng() * 0x5000)));
+    else if (r < 0.65) pieces.push(String.fromCodePoint(0x1f600 + Math.floor(rng() * 50)));
+    else if (r < 0.8) pieces.push(clusters[Math.floor(rng() * clusters.length)]);
+    else if (r < 0.9) pieces.push(`\x1b[${30 + Math.floor(rng() * 10)}m`);
+    else if (r < 0.95) pieces.push(`\x1b]8;;http://e.x/${Math.floor(rng() * 10)}\x07`);
+    else pieces.push("\x1b]8;;\x07");
+  }
+  return pieces.join("");
+}
+
 // ============================================================================
 // Negative-index / computeTotalWidth property tests
 // ============================================================================
@@ -519,8 +565,8 @@ describe("sliceAnsi negative indices", () => {
       const w = Bun.stringWidth(Bun.stripANSI(s));
       // [0, -5) with ellipsis — cutEnd is KNOWN (negative end forces pre-pass).
       const out = Bun.sliceAnsi(s, 0, -5, "\u2026");
-      // Should be at most w-5+1 cols (+1 for wide-at-boundary).
-      expect(visibleWidth(out)).toBeLessThanOrEqual(Math.max(0, w - 5) + 1);
+      // Should be at most w-5 cols: the ellipsis is counted against the range.
+      expect(visibleWidth(out)).toBeLessThanOrEqual(Math.max(0, w - 5));
     }
   });
 });
@@ -677,8 +723,8 @@ describe("sliceAnsi speculative zone", () => {
 
   test("spec zone fuzz: lazy cutEnd never produces invalid width", () => {
     // Property: for random strings with ellipsis and non-negative indices,
-    // width of output is ALWAYS ≤ budget + 1 (atomic wide cluster). The lazy
-    // cutEnd path must never leak spec-zone content into the result.
+    // width of output is ALWAYS ≤ budget. The lazy cutEnd path must never
+    // leak spec-zone content into the result.
     const rng = makeRng(0x5bec);
     for (let i = 0; i < 300; i++) {
       const s = randomAnsiAscii(rng, 5, 80);
@@ -686,7 +732,7 @@ describe("sliceAnsi speculative zone", () => {
       const e = rng() < 0.5 ? "\u2026" : "...";
       const out = Bun.sliceAnsi(s, 0, n, e);
       const ow = Bun.stringWidth(Bun.stripANSI(out));
-      expect(ow).toBeLessThanOrEqual(n + 1);
+      expect(ow).toBeLessThanOrEqual(n);
       // And the output is well-formed ANSI (stripANSI doesn't throw).
       expect(typeof Bun.stripANSI(out)).toBe("string");
     }

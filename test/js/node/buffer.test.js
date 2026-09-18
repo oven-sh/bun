@@ -4896,6 +4896,57 @@ describe("Buffer.copyBytesFrom", () => {
     const buf = Buffer.copyBytesFrom(view);
     expect([...buf]).toEqual([8, 9, 10, 11, 12, 13, 14, 15]);
   });
+
+  // Node types the parameter as TypedArray only, so a DataView (also a JSArrayBufferView in JSC)
+  // is rejected the same way as any other non-TypedArray argument.
+  const invalidView = received =>
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "view" argument must be an instance of TypedArray. Received ${received}`,
+    });
+
+  it.each([
+    ["whole buffer", ab => [new DataView(ab)]],
+    ["with offset and length", ab => [new DataView(ab), 1, 3]],
+    ["sub-range of the buffer", ab => [new DataView(ab, 2, 4)]],
+    ["zero length", () => [new DataView(new ArrayBuffer(0))]],
+  ])("rejects a DataView (%s)", (_, args) => {
+    const ab = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]).buffer;
+    expect(() => Buffer.copyBytesFrom(...args(ab))).toThrow(invalidView("an instance of DataView"));
+  });
+
+  it.each([
+    ["an ArrayBuffer", new ArrayBuffer(4), "an instance of ArrayBuffer"],
+    ["a string", "nope", "type string ('nope')"],
+    ["undefined", undefined, "undefined"],
+  ])("rejects %s with Node's wording", (_, view, received) => {
+    expect(() => Buffer.copyBytesFrom(view)).toThrow(invalidView(received));
+  });
+
+  it("still accepts every TypedArray kind", () => {
+    const bytes = Array.from({ length: 16 }, (_, i) => i);
+    const ab = new Uint8Array(bytes).buffer;
+    const kinds = [
+      Int8Array,
+      Uint8Array,
+      Uint8ClampedArray,
+      Int16Array,
+      Uint16Array,
+      Int32Array,
+      Uint32Array,
+      Float16Array,
+      Float32Array,
+      Float64Array,
+      BigInt64Array,
+      BigUint64Array,
+    ];
+    for (const Kind of kinds) {
+      expect([...Buffer.copyBytesFrom(new Kind(ab))]).toEqual(bytes);
+    }
+    expect([...Buffer.copyBytesFrom(Buffer.from(ab), 1, 3)]).toEqual([1, 2, 3]);
+    expect([...Buffer.copyBytesFrom(new Uint32Array(ab), 1, 2)]).toEqual([4, 5, 6, 7, 8, 9, 10, 11]);
+  });
 });
 
 describe("Buffer.prototype.toString binary-to-text encodings", () => {

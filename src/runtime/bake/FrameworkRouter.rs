@@ -30,7 +30,7 @@ pub type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
 pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
 pub struct FrameworkRouter {
-    /// Absolute path to root directory of the router.
+    /// Absolute project root. It only labels files in errors. A `Type::abs_root` may be outside it.
     pub(crate) root: Box<[u8]>,
     pub(crate) types: Box<[Type]>,
     pub(crate) routes: Vec<Route>,
@@ -186,7 +186,7 @@ impl FrameworkRouter {
 
         for (type_index, ty) in types.iter_mut().enumerate() {
             ty.abs_root = strings::paths::without_trailing_slash_windows_path(&ty.abs_root).into();
-            debug_assert!(strings::has_prefix(&ty.abs_root, root));
+            debug_assert!(paths::is_absolute(&ty.abs_root));
 
             routes.push(Route {
                 part: Part::Text(b""),
@@ -1581,31 +1581,45 @@ impl FrameworkRouter {
                             }
                         }
 
+                        let t = &self.types[t_index.get() as usize];
+                        let abs_path = fs_ref.abs(&[file.dir, file.base()]);
+
+                        // Pattern path: relative to this type's root, which may be outside `self.root`.
                         let mut rel_path_buf = bun_paths::path_buffer_pool::get();
-                        let full_rel_path_len = {
-                            let full_rel_path = paths::resolve_path::relative_normalized_buf::<
+                        let rel_path_len = 1 + paths::resolve_path::relative_normalized_buf::<
+                            paths::platform::Auto,
+                            true,
+                        >(
+                            &mut rel_path_buf[1..], &t.abs_root, abs_path
+                        )
+                        .len();
+                        rel_path_buf[0] = b'/';
+                        paths::resolve_path::platform_to_posix_in_place(
+                            &mut rel_path_buf[0..rel_path_len],
+                        );
+                        let rel_path: &[u8] = &rel_path_buf[0..rel_path_len];
+
+                        // Outside `self.root`, each root segment becomes "../": the bound of `DevServer::relative_path`.
+                        let in_root = abs_path.len() > self.root.len()
+                            && abs_path.starts_with(&self.root)
+                            && paths::is_sep_native(abs_path[self.root.len()]);
+                        let label_fits =
+                            in_root || abs_path.len() + self.root.len() * 2 < MAX_PATH_BYTES;
+                        let mut full_rel_path_buf = bun_paths::path_buffer_pool::get();
+                        let full_rel_path: &[u8] = if label_fits {
+                            let len = paths::resolve_path::relative_normalized_buf::<
                                 paths::platform::Auto,
                                 true,
                             >(
-                                &mut rel_path_buf[1..],
-                                &self.root,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                &mut full_rel_path_buf[..], &self.root, abs_path
+                            )
+                            .len();
+                            paths::resolve_path::platform_to_posix_in_place(
+                                &mut full_rel_path_buf[0..len],
                             );
-                            full_rel_path.len()
-                        };
-                        rel_path_buf[0] = b'/';
-                        paths::resolve_path::platform_to_posix_in_place(
-                            &mut rel_path_buf[0..full_rel_path_len],
-                        );
-
-                        let t = &self.types[t_index.get() as usize];
-                        let abs_root_len = t.abs_root.len();
-                        let root_len = self.root.len();
-                        let full_rel_path = &rel_path_buf[1..1 + full_rel_path_len];
-                        let rel_path: &[u8] = if abs_root_len == root_len {
-                            &rel_path_buf[0..full_rel_path_len + 1]
+                            &full_rel_path_buf[0..len]
                         } else {
-                            &full_rel_path[abs_root_len - root_len - 1..]
+                            rel_path
                         };
 
                         let mut log = TinyLog::empty();
@@ -1618,9 +1632,23 @@ impl FrameworkRouter {
                                 .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
                         let parsed = match parse_result {
                             Err(_) => {
-                                log.cursor_at +=
-                                    u32::try_from(abs_root_len - root_len).expect("int cast");
-                                ctx.on_router_syntax_error(full_rel_path, log)?;
+                                // `cursor_at` indexes `rel_path`. The label can show it only inside their common suffix.
+                                let common_suffix_len = rel_path
+                                    .iter()
+                                    .rev()
+                                    .zip(full_rel_path.iter().rev())
+                                    .take_while(|(a, b)| a == b)
+                                    .count();
+                                let from_end =
+                                    rel_path.len().saturating_sub(log.cursor_at as usize);
+                                let label = if from_end <= common_suffix_len {
+                                    log.cursor_at = u32::try_from(full_rel_path.len() - from_end)
+                                        .expect("int cast");
+                                    full_rel_path
+                                } else {
+                                    rel_path
+                                };
+                                ctx.on_router_syntax_error(label, log)?;
                                 arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;
                             }

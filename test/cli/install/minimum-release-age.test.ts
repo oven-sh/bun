@@ -706,6 +706,48 @@ describe("minimum-release-age", () => {
           return Response.json(packageData);
         }
 
+        // TEST PACKAGE: non-iso-timestamp-package (publish times in the other
+        // forms `Date.parse` reads: RFC 2822 and `Date.prototype.toString`)
+        if (url.pathname === "/non-iso-timestamp-package") {
+          const packageData = {
+            name: "non-iso-timestamp-package",
+            "dist-tags": { latest: "3.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "non-iso-timestamp-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/non-iso-timestamp-package/-/non-iso-timestamp-package-1.0.0.tgz`,
+                  integrity: "sha512-old==",
+                },
+              },
+              "2.0.0": {
+                name: "non-iso-timestamp-package",
+                version: "2.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/non-iso-timestamp-package/-/non-iso-timestamp-package-2.0.0.tgz`,
+                  integrity: "sha512-rfc2822==",
+                },
+              },
+              "3.0.0": {
+                name: "non-iso-timestamp-package",
+                version: "3.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/non-iso-timestamp-package/-/non-iso-timestamp-package-3.0.0.tgz`,
+                  integrity: "sha512-tostring==",
+                },
+              },
+            },
+            time: {
+              "1.0.0": new Date(currentTime - 10 * DAY_MS).toUTCString(),
+              "2.0.0": new Date(currentTime - 1 * DAY_MS).toUTCString(),
+              "3.0.0": new Date(currentTime - 1 * DAY_MS).toString(),
+            },
+          };
+
+          return Response.json(packageData);
+        }
+
         // TEST PACKAGE 11: exact-threshold-package (exactly at age boundary)
         if (url.pathname === "/exact-threshold-package") {
           const packageData = {
@@ -2234,6 +2276,35 @@ describe("minimum-release-age", () => {
 
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       expect(lockfile).toContain("bad-timestamp-package@1.0.0");
+    });
+
+    test("filters by publish times in RFC 2822 and Date.toString forms", async () => {
+      using dir = tempDir("non-iso-timestamp", {
+        "package.json": JSON.stringify({
+          dependencies: { "non-iso-timestamp-package": "*" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error");
+      expect(stdout).toContain("non-iso-timestamp-package@1.0.0");
+      expect(exitCode).toBe(0);
+
+      // 2.0.0 and 3.0.0 are one day old. Their `time` entries are not ISO 8601,
+      // but `Date.parse` reads them, so the gate must block them like npm does.
+      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+      expect(lockfile).toContain("non-iso-timestamp-package@1.0.0");
+      expect(lockfile).not.toContain("non-iso-timestamp-package@2.0.0");
+      expect(lockfile).not.toContain("non-iso-timestamp-package@3.0.0");
     });
   });
 

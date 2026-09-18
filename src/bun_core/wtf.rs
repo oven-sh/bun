@@ -5,9 +5,9 @@
 //! tier-0 callers declare the C symbol directly — no `bun_jsc` crate
 //! dependency is required to reference it.
 //!
-//! Source of truth: `src/jsc/bindings/wtf-bindings.cpp` (`WTF__parseES5Date`),
-//! which forwards to `WTF::parseES5Date` in
-//! vendor/WebKit `Source/WTF/wtf/DateMath.{h,cpp}`.
+//! Source of truth: `src/jsc/bindings/wtf-bindings.cpp` (`WTF__parseES5Date`,
+//! `WTF__parseDate`), which forward to `WTF::parseES5Date` and
+//! `WTF::parseDate` in vendor/WebKit `Source/WTF/wtf/DateMath.{h,cpp}`.
 //!
 //! Note: WTF's `parseES5Date` sets an `isLocalTime` out-param so the JS
 //! `Date` constructor can later apply the VM's tz offset. The C shim discards
@@ -18,6 +18,8 @@ unsafe extern "C" {
     // src/jsc/bindings/wtf-bindings.cpp:
     //   extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
     fn WTF__parseES5Date(bytes: *const u8, length: usize) -> f64;
+    //   extern "C" double WTF__parseDate(const Latin1Character* string, size_t length)
+    fn WTF__parseDate(bytes: *const u8, length: usize) -> f64;
 }
 
 /// Direct call to `WTF::parseES5Date`. Returns NaN for any input the WTF
@@ -45,6 +47,23 @@ pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {
         return Err(InvalidDate);
     }
     let ms = parse_es5_date_raw(buf);
+    if ms.is_finite() {
+        Ok(ms)
+    } else {
+        Err(InvalidDate)
+    }
+}
+
+/// Every form that JS `Date.parse` accepts: ISO 8601 first, then RFC 2822 and
+/// the `Date.prototype.toString` form. A local-time input is shifted by the
+/// host tz offset, like `Date.parse`. `Err` on empty input or a form the
+/// parser rejects. `s` is treated as Latin-1.
+pub fn parse_date(s: &[u8]) -> Result<f64, InvalidDate> {
+    if s.is_empty() {
+        return Err(InvalidDate);
+    }
+    // SAFETY: s.as_ptr() is valid for s.len() bytes.
+    let ms = unsafe { WTF__parseDate(s.as_ptr(), s.len()) };
     if ms.is_finite() {
         Ok(ms)
     } else {

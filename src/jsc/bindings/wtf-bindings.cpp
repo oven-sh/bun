@@ -243,6 +243,19 @@ extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length
     return WTF::parseES5Date({ string, length }, isLocalTime);
 }
 
+// Same parser order as JSC's `Date.parse`: ES5/ISO 8601 first, then the
+// RFC 2822 and `Date.prototype.toString` forms.
+extern "C" double WTF__parseDate(const Latin1Character* string, size_t length)
+{
+    bool isLocalTime;
+    double value = WTF::parseES5Date({ string, length }, isLocalTime);
+    if (std::isnan(value))
+        value = WTF::parseDate({ string, length }, isLocalTime);
+    if (isLocalTime && std::isfinite(value))
+        value -= WTF::calculateLocalTimeOffset(value, WTF::TimeType::LocalTime).offset;
+    return value;
+}
+
 namespace Bun {
 String base64URLEncodeToString(Vector<uint8_t> data)
 {

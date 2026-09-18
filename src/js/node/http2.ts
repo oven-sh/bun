@@ -2352,7 +2352,7 @@ class Http2Stream extends Duplex {
   }
 
   get sentInfoHeaders() {
-    return this[kInfoHeaders] || [];
+    return this[kInfoHeaders];
   }
 
   get sentTrailers() {

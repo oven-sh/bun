@@ -888,7 +888,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
               ":scheme": "https",
             });
             expect(req.sentTrailers).toBeUndefined();
-            expect(req.sentInfoHeaders.length).toBe(0);
+            expect(req.sentInfoHeaders).toBeUndefined();
             expect(req.scheme).toBe("https");
             let response_headers = null;
             req.on("response", (headers, flags) => {
@@ -1826,6 +1826,69 @@ it("Symbol keys of the headers object are not sent as headers", async () => {
       req.end();
     });
     expect(JSON.parse(await promise)).toEqual(["cookie"]);
+  } finally {
+    server.close();
+    client?.close?.();
+  }
+});
+
+// node's getter returns the slot as is, and only additionalHeaders() creates the array
+// (lib/internal/http2/core.js, Http2Stream#sentInfoHeaders).
+it("stream.sentInfoHeaders is undefined until additionalHeaders() sends a 1xx block", async () => {
+  const server = http2.createServer();
+  let client;
+  try {
+    let serverSeen;
+    let onServerStreamClose;
+    server.on("stream", (stream, headers) => {
+      serverSeen = { beforeRespond: stream.sentInfoHeaders };
+      if (headers[":path"] === "/info") {
+        stream.additionalHeaders({ ":status": 102 });
+        serverSeen.afterAdditionalHeaders = stream.sentInfoHeaders;
+      }
+      stream.respond({ ":status": 200 });
+      serverSeen.afterRespond = stream.sentInfoHeaders;
+      stream.on("close", () => {
+        serverSeen.atClose = stream.sentInfoHeaders;
+        onServerStreamClose();
+      });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    client = http2.connect(`http://localhost:${server.address().port}`);
+    const { promise: sessionFailed, reject: onSessionError } = Promise.withResolvers();
+    client.on("error", onSessionError);
+
+    // Sends one request and resolves once its stream is closed on both sides.
+    async function sentInfoHeadersFor(path) {
+      const serverStreamClosed = new Promise(resolve => (onServerStreamClose = resolve));
+      const { promise: clientStreamClosed, resolve, reject } = Promise.withResolvers();
+      const req = client.request({ ":path": path });
+      const clientSeen = { afterRequest: req.sentInfoHeaders };
+      req.on("error", reject);
+      req.on("close", () => {
+        clientSeen.atClose = req.sentInfoHeaders;
+        resolve();
+      });
+      req.resume();
+      req.end();
+      await Promise.race([Promise.all([clientStreamClosed, serverStreamClosed]), sessionFailed]);
+      return { client: clientSeen, server: serverSeen };
+    }
+
+    expect(await sentInfoHeadersFor("/plain")).toStrictEqual({
+      client: { afterRequest: undefined, atClose: undefined },
+      server: { beforeRespond: undefined, afterRespond: undefined, atClose: undefined },
+    });
+    expect(await sentInfoHeadersFor("/info")).toStrictEqual({
+      client: { afterRequest: undefined, atClose: undefined },
+      server: {
+        beforeRespond: undefined,
+        afterAdditionalHeaders: [{ ":status": 102 }],
+        afterRespond: [{ ":status": 102 }],
+        atClose: [{ ":status": 102 }],
+      },
+    });
   } finally {
     server.close();
     client?.close?.();

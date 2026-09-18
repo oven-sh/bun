@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 // `bun why` reads only bun.lock, so every project here is a package.json plus a
 // static lockfile. Nothing is installed and no registry is contacted. The
@@ -159,8 +159,22 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
   it("should show help when no package is specified", async () => {
     const { stdout, exitCode } = await why(basic);
-    expect(stdout).toStartWith(`bun why v${Bun.version.replace("-debug", "")}`);
-    expect(stdout).toContain("Explain why a package is installed");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun why <version> (<revision>)
+      Explain why a package is installed
+
+      Arguments:
+      <package>     The package name to explain (supports glob patterns like '@org/*')
+
+      Options:
+      --top         Show only the top dependency tree instead of nested ones
+      --depth <NUM> Maximum depth of the dependency tree to display
+
+      Examples:
+      $ bun why react
+      $ bun why "@types/*" --depth 2
+      $ bun why "*-lodash" --top"
+    `);
     expect(exitCode).toBe(1);
   });
 

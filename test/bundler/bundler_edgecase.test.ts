@@ -27,10 +27,7 @@ describe("bundler", () => {
       stdout: "object",
     },
   });
-  // A CommonJS module whose body parses to zero statements (or whose statements
-  // are all hoistable) must still get a valid `require_*` wrapper symbol. The
-  // parser previously skipped allocating one here, and the linker then printed
-  // `__INVALID__REF__` / `__toESM(, 1)` which is not valid JavaScript.
+  // A CommonJS module with no statements, or only hoistable ones, still needs a `require_*` wrapper symbol.
   itBundled("edgecase/StatementlessCommonJSModuleNamedImport", {
     files: {
       "/entry.ts": /* js */ `
@@ -73,8 +70,6 @@ describe("bundler", () => {
       "/b.cjs": `;`,
     },
     onAfterBundle(api) {
-      // Before the fix the printer emitted `var b = ;` here (no initializer)
-      // with exit 0 and no debug assertion.
       api.expectFile("/out.js").not.toContain("__INVALID__REF__");
       api.expectFile("/out.js").not.toMatch(/\bvar b = ;/);
       api.expectFile("/out.js").toContain("require_b");
@@ -92,8 +87,6 @@ describe("bundler", () => {
       "/b.cjs": `// comment only\n`,
     },
     onAfterBundle(api) {
-      // Before the fix this emitted `Promise.resolve()__toESM(, 1)` which is a
-      // SyntaxError, with exit 0 and no debug assertion.
       api.expectFile("/out.js").not.toContain("__INVALID__REF__");
       api.expectFile("/out.js").not.toContain("__toESM(,");
       api.expectFile("/out.js").toContain("require_b");
@@ -134,9 +127,7 @@ describe("bundler", () => {
       stdout: "undefined",
     },
   });
-  // Packages in DEFAULT_UNWRAP_COMMONJS_PACKAGES set FORCE_CJS_TO_ESM at parse
-  // time with exports_kind = Esm; a default import then makes the linker
-  // CJS-wrap them. Same symptom as above if wrapper_ref was never allocated.
+  // DEFAULT_UNWRAP_COMMONJS_PACKAGES parse as Esm with FORCE_CJS_TO_ESM. A default import makes the linker CJS-wrap them.
   itBundled("edgecase/HoistableOnlyUnwrapCommonJSPackage", {
     files: {
       "/entry.js": /* js */ `

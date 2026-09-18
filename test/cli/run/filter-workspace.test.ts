@@ -723,12 +723,13 @@ describe("bun", () => {
     });
     const stdoutval = stdout.toString();
     const count = (needle: string) => stdoutval.split(needle).length - 1;
-    // `pkga` is matched once. `cyc` is matched at `packages/cyc` and once more
-    // through its own `loop` alias, where the cycle is detected and descent
-    // stops instead of recursing until the path length limit.
+    // The walk reaches `cyc` at `packages/cyc` and once more through its own
+    // `loop` alias, where the cycle is detected and descent stops instead of
+    // recursing until the path length limit. Both paths are one package, so
+    // it runs once.
     expect({ scripta: count("scripta"), scriptcyc: count("scriptcyc"), exitCode }).toEqual({
       scripta: 1,
-      scriptcyc: 2,
+      scriptcyc: 1,
       exitCode: 0,
     });
   });
@@ -764,6 +765,20 @@ describe("bun", () => {
   });
 });
 
+// Runs the `build` script. `ran` has one element per script run, so a package
+// that runs twice is listed twice.
+async function runBuild(cwd: string, args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", ...args, "build"],
+    cwd,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { ran: (stdout.match(/ran-\w+/g) ?? []).sort(), stderr, exitCode };
+}
+
 describe.concurrent('"workspaces" entries that match the same package', () => {
   function fixture(workspaces: string[] | { packages: string[] }) {
     return tempDir("filter-workspaces-overlap", {
@@ -775,19 +790,6 @@ describe.concurrent('"workspaces" entries that match the same package', () => {
     });
   }
 
-  // `ran` has one element per script run, so a package that runs twice is listed twice.
-  async function run(cwd: string, args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", ...args, "build"],
-      cwd,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { ran: (stdout.match(/ran-\w+/g) ?? []).sort(), stderr, exitCode };
-  }
-
   test.each([
     ["a glob and a path", ["packages/*", "packages/legacy"]],
     ["two globs", ["packages/*", "packages/l*"]],
@@ -795,7 +797,7 @@ describe.concurrent('"workspaces" entries that match the same package', () => {
     ['the { "packages": [...] } form', { packages: ["packages/*", "packages/legacy"] }],
   ])("%s: each package runs once", async (_, workspaces) => {
     using dir = fixture(workspaces);
-    const { ran, exitCode } = await run(String(dir), ["--filter", "*"]);
+    const { ran, exitCode } = await runBuild(String(dir), ["--filter", "*"]);
     expect({ ran, exitCode }).toEqual({ ran: ["ran-app", "ran-legacy"], exitCode: 0 });
   });
 
@@ -803,7 +805,7 @@ describe.concurrent('"workspaces" entries that match the same package', () => {
     "%j runs each package once",
     async args => {
       using dir = fixture(["packages/*", "packages/legacy"]);
-      const { ran, exitCode } = await run(String(dir), args);
+      const { ran, exitCode } = await runBuild(String(dir), args);
       expect({ ran, exitCode }).toEqual({ ran: ["ran-app", "ran-legacy"], exitCode: 0 });
     },
   );
@@ -811,12 +813,73 @@ describe.concurrent('"workspaces" entries that match the same package', () => {
   test("a package.json that fails to parse is reported once", async () => {
     using dir = fixture(["packages/*", "packages/legacy"]);
     await Bun.write(join(String(dir), "packages", "legacy", "package.json"), "this is { not valid json");
-    const { ran, stderr, exitCode } = await run(String(dir), ["--filter", "*"]);
+    const { ran, stderr, exitCode } = await runBuild(String(dir), ["--filter", "*"]);
     expect({ ran, warnings: stderr.split("skipping this workspace package").length - 1, exitCode }).toEqual({
       ran: ["ran-app"],
       warnings: 1,
       exitCode: 0,
     });
+  });
+});
+
+// #43358: `packages/*` matches `packages/alias` (a link to `packages/real`)
+// and `packages/real`. Both are one package, so it runs once.
+describe.concurrent("a directory symlink to a workspace package", () => {
+  function fixture() {
+    const dir = tempDir("filter-symlink-alias", {
+      packages: {
+        real: {
+          "package.json": JSON.stringify({ name: "real", scripts: { build: "echo ran-real" } }),
+        },
+        other: {
+          "package.json": JSON.stringify({
+            name: "other",
+            dependencies: { real: "workspace:*" },
+            scripts: { build: "echo ran-other" },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+    });
+    // "junction" so the link is creatable on unprivileged Windows; the type
+    // is ignored on POSIX.
+    symlinkSync(join(dir, "packages", "real"), join(dir, "packages", "alias"), "junction");
+    return dir;
+  }
+
+  test.each([
+    [
+      ["--filter", "*"],
+      ["ran-other", "ran-real"],
+    ],
+    [["--workspaces"], ["ran-other", "ran-real"]],
+    [["--filter", "real"], ["ran-real"]],
+    [
+      ["--filter", "other..."],
+      ["ran-other", "ran-real"],
+    ],
+    [["--filter", "./packages/alias"], ["ran-real"]],
+    [["--filter", "./packages/real"], ["ran-real"]],
+    [
+      ["--filter", "./packages/*"],
+      ["ran-other", "ran-real"],
+    ],
+    // A relational path filter finds the dependents through either path.
+    [
+      ["--filter", "...{./packages/real}"],
+      ["ran-other", "ran-real"],
+    ],
+    [
+      ["--filter", "...{./packages/alias}"],
+      ["ran-other", "ran-real"],
+    ],
+    // A negated path filter on either path excludes the package.
+    [["--filter", "*", "--filter", "!./packages/alias"], ["ran-other"]],
+    [["--filter", "*", "--filter", "!./packages/real"], ["ran-other"]],
+  ])("%j runs each package once", async (args, ran) => {
+    using dir = fixture();
+    const result = await runBuild(String(dir), args);
+    expect({ ran: result.ran, exitCode: result.exitCode }).toEqual({ ran, exitCode: 0 });
   });
 });
 

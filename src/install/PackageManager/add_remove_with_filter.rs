@@ -221,6 +221,7 @@ pub(crate) fn select_targets(
             .map(|(target, subject)| Candidate {
                 name: &target.name,
                 abs_posix_dir: subject,
+                alias_posix_dirs: &[],
                 is_root: target.name_hash.is_none(),
             })
             .collect();

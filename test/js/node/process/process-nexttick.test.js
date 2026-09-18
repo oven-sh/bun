@@ -2,9 +2,9 @@
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 const isBun = !!process.versions.bun;
 
 it("a tick that throws goes to uncaughtException and the ticks queued after it still run, in order", async () => {

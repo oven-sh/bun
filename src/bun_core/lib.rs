@@ -2013,6 +2013,22 @@ pub(crate) mod strings_impl {
         }
         i
     }
+    /// `text` starts right after an opening `"""` or `'''`. Returns the offset
+    /// of the closing triple on the same line. Backslash escapes only apply
+    /// inside `"""`, as in the TOML parser.
+    pub(crate) fn find_closing_triple_quote(text: &[u8], q: u8) -> Option<usize> {
+        let mut i = 0usize;
+        while i + 2 < text.len() {
+            match text[i] {
+                b'\n' => return None,
+                b'\\' if q == b'"' => i += 2,
+                c if c == q && text[i + 1] == q && text[i + 2] == q => return Some(i),
+                _ => i += 1,
+            }
+        }
+        None
+    }
+
     fn starts_with_redacted_item(text: &[u8], item: &'static [u8]) -> Option<(usize, usize)> {
         if text.len() < item.len() || &text[..item.len()] != item {
             return None;
@@ -2055,6 +2071,21 @@ pub(crate) mod strings_impl {
         }
 
         match text[end] {
+            // TOML `"""..."""` or `'''...'''` on one line
+            q @ (b'\'' | b'"')
+                if end + 2 < text.len() && text[end + 1] == q && text[end + 2] == q =>
+            {
+                let opening = end + 3;
+                if let Some(close) = find_closing_triple_quote(&text[opening..], q) {
+                    return Some((opening, close));
+                }
+
+                let rest = &text[offset..];
+                Some((
+                    offset,
+                    crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
+                ))
+            }
             q @ (b'\'' | b'"' | b'`') => {
                 // attempt to find closing
                 let opening = end;

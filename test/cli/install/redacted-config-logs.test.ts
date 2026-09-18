@@ -184,6 +184,24 @@ describe.concurrent("redact", async () => {
       expected: "*",
     },
     {
+      title: "multi-line basic string on one line",
+      bunfig: '[install]\ntoken = """SECRETVALUE""" ]',
+      expected: '"""***********"""',
+      secret: "SECRETVALUE",
+    },
+    {
+      title: "multi-line literal string on one line",
+      bunfig: "[install]\ntoken = '''SECRETVALUE''' ]",
+      expected: "'''***********'''",
+      secret: "SECRETVALUE",
+    },
+    {
+      title: "unterminated multi-line basic string",
+      bunfig: '[install]\ntoken = """SECRETVALUE ]',
+      expected: "****************",
+      secret: "SECRETVALUE",
+    },
+    {
       title: "invalid _auth",
       npmrc: "//registry.npmjs.org/:_auth = does-not-decode",
       expected: "****************",
@@ -205,7 +223,7 @@ describe.concurrent("redact", async () => {
     },
   ];
 
-  for (const { title, bunfig, npmrc, expected } of tests) {
+  for (const { title, bunfig, npmrc, expected, secret } of tests) {
     test(title + (bunfig ? " (bunfig)" : " (npmrc)"), async () => {
       const testDir = tmpdirSync();
       await Promise.all([
@@ -226,6 +244,10 @@ describe.concurrent("redact", async () => {
 
       expect(exitCode1).toBe(+!!bunfig);
       expect(err1).toContain(expected || "*");
+      if (secret) {
+        expect(err1).not.toContain(secret);
+        expect(out1).not.toContain(secret);
+      }
 
       // once with color
       await using proc2 = Bun.spawn({
@@ -240,6 +262,10 @@ describe.concurrent("redact", async () => {
 
       expect(exitCode2).toBe(+!!bunfig);
       expect(err2).toContain(expected || "*");
+      if (secret) {
+        expect(err2).not.toContain(secret);
+        expect(out2).not.toContain(secret);
+      }
     });
   }
 });

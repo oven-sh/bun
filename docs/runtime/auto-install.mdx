@@ -68,6 +68,7 @@ import { z } from "zod@^3.20.0"; // semver range
 
 - No Intellisense. TypeScript auto-completion in IDEs relies on type declaration files inside `node_modules`. We are investigating solutions to this.
 - No [patch-package](https://github.com/ds300/patch-package) support
+- No git dependencies. Auto-install loads packages from the npm registry only. It does not fetch a dependency on a git URL. Run `bun install` for those.
 
 ---
 

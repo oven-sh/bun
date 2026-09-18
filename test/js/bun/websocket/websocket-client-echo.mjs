@@ -1,5 +1,6 @@
-import { WebSocket } from "ws";
-
+// Echoes every message, ping and pong back to the server. websocket-server.test.ts spawns ~90 of
+// these per run, so start-up has to stay minimal: it deliberately uses the built-in WebSocket and
+// no module on top of it ("ws" and the modules it pulls in cost ~1.6s per client on a debug build).
 let url;
 try {
   url = new URL(process.argv[2]);
@@ -10,67 +11,37 @@ try {
 const ws = new WebSocket(url, {
   perMessageDeflate: false,
 });
+ws.binaryType = "nodebuffer";
 
-ws.on("open", () => {
+ws.addEventListener("open", () => {
   if (process.send) {
     process.send("connected");
   }
-  console.log(`[${process.versions.bun ? "bun" : "node"}]`, "Connected", ws.url); // read by test script
-  console.error(`[${process.versions.bun ? "bun" : "node"}]`, "Connected", ws.url);
 });
+
 const logMessages = process.env.LOG_MESSAGES === "1";
-ws.on("message", (data, isBinary) => {
+ws.addEventListener("message", ({ data }) => {
   if (logMessages) {
-    if (isBinary) {
-      console.error("Received binary message:", data);
-    } else {
-      console.error("Received text message:", data);
-      data = data.toString();
-    }
+    console.error(typeof data === "string" ? "Received text message:" : "Received binary message:", data);
   }
-  ws.send(data, { binary: !!isBinary });
-
-  if (data === "ping") {
-    console.error("Sending ping");
-    ws.ping();
-  } else if (data === "pong") {
-    console.error("Sending pong");
-    ws.pong();
-  } else if (data === "close") {
-    console.error("Sending close");
-    ws.close();
-  } else if (data === "terminate") {
-    console.error("Sending terminate");
-    ws.terminate();
-  }
+  // data is a string for text frames and a Buffer for binary frames, so send() echoes the same frame type.
+  ws.send(data);
 });
 
-ws.on("ping", data => {
+ws.addEventListener("ping", ({ data }) => {
   console.error("Received ping:", data);
   ws.ping(data);
 });
 
-ws.on("pong", data => {
+ws.addEventListener("pong", ({ data }) => {
   console.error("Received pong:", data);
   ws.pong(data);
 });
 
-ws.on("error", error => {
-  console.error("Received error:", error);
+ws.addEventListener("error", ({ error, message }) => {
+  console.error("Received error:", error ?? message);
 });
 
-ws.on("close", (code, reason, wasClean) => {
-  if (wasClean === true) {
-    console.error("Received abrupt close:", code, reason);
-  } else {
-    console.error("Received close:", code, reason);
-  }
-});
-
-ws.on("redirect", url => {
-  console.error("Received redirect:", url);
-});
-
-ws.on("unexpected-response", (_, response) => {
-  console.error("Received unexpected response:", response.statusCode, { ...response.headers });
+ws.addEventListener("close", ({ code, reason, wasClean }) => {
+  console.error(wasClean ? "Received close:" : "Received abrupt close:", code, reason);
 });

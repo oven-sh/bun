@@ -2,7 +2,7 @@ import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun"
 import { serve, spawn } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, isASAN, isDebug, isWindows, tempDir } from "harness";
 import net, { isIP } from "node:net";
 import path from "node:path";
 
@@ -976,11 +976,13 @@ describe("ServerWebSocket", () => {
       "(benchmark)",
       (done, connect) => {
         const maxClients = 10;
-        const maxMessages = 10_000;
+        // A round trip takes ~75us on a debug+ASAN build (vs <1us on release), so 10_000 runs for ~25s there.
+        const maxMessages = isDebug || isASAN ? 1_000 : 10_000;
         let count = 0;
         return {
           open(ws) {
-            if (ws.data.id < maxClients) {
+            // test() spawned the first client; each client spawns the next until maxClients are connected.
+            if (ws.data.id < maxClients - 1) {
               connect();
             }
             for (let i = 0; i < maxMessages; i++) {

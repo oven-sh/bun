@@ -2,6 +2,7 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -177,6 +178,73 @@ describe("HTTP/3 header encoding", () => {
 
     expect(seen.length).toBe(1);
     expect(Object.keys(seen[0])).not.toContain("authorization");
+  });
+
+  // lsxpack_header asserts that an offset fits 16 bits, and sendHeaders used
+  // offsets into the one joined buffer. A debug build aborted in the sender
+  // once the fields passed 64 KB, so both ends run in a subprocess.
+  test("sends fields that total more than 64 KB", async () => {
+    const fixture = `
+      import { createPrivateKey } from "node:crypto";
+      import { readFileSync } from "node:fs";
+      import { connect, listen } from "node:quic";
+
+      // A digit takes 5 bits in the QPACK Huffman table: 70 KB of fields,
+      // about 44 KB encoded, which fits lsquic's 64 KB header block.
+      const fields = {};
+      for (let i = 0; i < 100; i++) fields["x-digits-" + i] = Buffer.alloc(700, String(i % 10)).toString();
+
+      const server = await listen(
+        async serverSession => {
+          serverSession.onstream = stream => stream.closed.catch(() => {});
+          await serverSession.closed.catch(() => {});
+        },
+        {
+          sni: {
+            "*": {
+              keys: [createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}))],
+              certs: [readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))})],
+            },
+          },
+          transportParams: { maxIdleTimeout: 5 },
+          onheaders() {
+            this.sendHeaders({ ":status": "200", ...fields });
+            this.writer.writeSync(new TextEncoder().encode("body"));
+            this.writer.endSync();
+          },
+        },
+      );
+
+      const client = await connect(server.address, {
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout: 5 },
+        // The defaults (128 pairs, 16 KB) drop the fields past them.
+        application: { maxHeaderPairs: 256, maxHeaderLength: 1024 * 1024 },
+      });
+      await client.opened;
+      let received = {};
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+        onheaders(headers) {
+          received = headers;
+        },
+      });
+      let body = "";
+      for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString();
+
+      const intact = Object.keys(fields).filter(name => received[name] === fields[name]).length;
+      console.log("status %s, %d of 100 fields intact, body %s", received[":status"], intact, body);
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("status 200, 100 of 100 fields intact, body body\n");
+    expect(exitCode).toBe(0);
   });
 });
 

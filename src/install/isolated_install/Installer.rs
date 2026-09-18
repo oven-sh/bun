@@ -468,6 +468,8 @@ impl<'a> Installer<'a> {
     /// Called from main thread. The entry is left out, neither installed nor failed.
     fn on_optional_download_fail(&mut self, entry_id: StoreEntryId) {
         self.missing[entry_id.get() as usize].store(true, Ordering::Relaxed);
+        // The dependents that wait on this entry made their links before they blocked.
+        self.unlink_links_to(entry_id);
         // Release pairs with the Acquire load in `is_task_blocked`.
         self.store.entries.items_step()[entry_id.get() as usize]
             .store(Step::Done as u32, Ordering::Release);
@@ -2370,52 +2372,50 @@ impl<'a> Installer<'a> {
 
     /// Main thread, after every task finished: `symlink_dependencies` runs before a download can fail.
     pub(crate) fn unlink_missing_dependencies(&self) {
-        if !self
-            .missing
-            .iter()
-            .any(|missing| missing.load(Ordering::Relaxed))
-        {
-            return;
+        for (entry, missing) in self.missing.iter().enumerate() {
+            if missing.load(Ordering::Relaxed) {
+                self.unlink_links_to(StoreEntryId::from(entry as u32));
+            }
         }
+    }
 
+    /// Main thread. Removes the links that the dependents outside the global store made to `entry_id`.
+    fn unlink_links_to(&self, entry_id: StoreEntryId) {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let pkg_names = lockfile.packages.items_name();
         let pkg_resolutions = lockfile.packages.items_resolution();
-        let entry_node_ids = self.store.entries.items_node_id();
+        let entries = &self.store.entries;
+        let entry_node_ids = entries.items_node_id();
+        let entry_deps = entries.items_dependencies();
         let node_pkg_ids = self.store.nodes.items_pkg_id();
         let node_dep_ids = self.store.nodes.items_dep_id();
 
-        for (parent, deps) in self.store.entries.items_dependencies().iter().enumerate() {
-            let parent_id = StoreEntryId::from(parent as u32);
+        for &parent_id in entries.items_parents()[entry_id.get() as usize].as_slice() {
             // A global store entry is shared: the link resolves once another install downloads the entry.
-            if self.entry_uses_global_store(parent_id) {
+            if parent_id == StoreEntryId::INVALID || self.entry_uses_global_store(parent_id) {
                 continue;
             }
-            let mut dest: Option<(AutoPath, usize, Option<&[u8]>)> = None;
-            for dep in deps.slice() {
-                if !self.missing[dep.entry_id.get() as usize].load(Ordering::Relaxed) {
+            let node_id = entry_node_ids[parent_id.get() as usize];
+            let pkg_id = node_pkg_ids[node_id.get() as usize];
+            let dep_id = node_dep_ids[node_id.get() as usize];
+            let mut dest = AutoPath::init_top_level_dir();
+            self.append_real_store_node_modules_path(&mut dest, parent_id, Which::Final);
+            let base_len = dest.len();
+            let entry_node_modules_name = self.entry_store_node_modules_package_name(
+                dep_id,
+                pkg_id,
+                &pkg_resolutions[pkg_id as usize],
+                pkg_names,
+            );
+            for dep in entry_deps[parent_id.get() as usize].slice() {
+                if dep.entry_id != entry_id {
                     continue;
                 }
-                let (dest, base_len, entry_node_modules_name) = dest.get_or_insert_with(|| {
-                    let node_id = entry_node_ids[parent];
-                    let pkg_id = node_pkg_ids[node_id.get() as usize];
-                    let dep_id = node_dep_ids[node_id.get() as usize];
-                    let mut dest = AutoPath::init_top_level_dir();
-                    self.append_real_store_node_modules_path(&mut dest, parent_id, Which::Final);
-                    let base_len = dest.len();
-                    let name = self.entry_store_node_modules_package_name(
-                        dep_id,
-                        pkg_id,
-                        &pkg_resolutions[pkg_id as usize],
-                        pkg_names,
-                    );
-                    (dest, base_len, name)
-                });
                 let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
-                dest.set_length(*base_len);
-                append_dependency_link_name(dest, dep_name, *entry_node_modules_name);
+                dest.set_length(base_len);
+                append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
                 symlinker::remove_link(dest.slice_z());
             }
         }

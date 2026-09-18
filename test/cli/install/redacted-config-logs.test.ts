@@ -143,23 +143,24 @@ test("bunfig password value is masked in config error output", async () => {
 
 describe.concurrent("bunfig token value is masked when the error is on a long line", () => {
   // The key is more than 40 bytes before the error and more than 80 bytes
-  // follow it, so the excerpt window would cut `token = ` away.
+  // follow it, so the printed excerpt starts inside the secret.
   const secret = Buffer.alloc(72, "SECRET").toString();
-  const masked = Buffer.alloc(secret.length, "*").toString();
   const cases = [
     {
       title: "toml syntax error",
       bunfig: `[install]\ntoken = "${secret}" ] # ${Buffer.alloc(120, "x").toString()}\n`,
+      excerpt: /^2 \| \*+" \] # x+$/m,
       error: "Expected a newline or end of file after a key/value pair",
     },
     {
       title: "bunfig validation error",
       bunfig: `install = { registry = { token = "${secret}" }, cafile = 1, ca = "${Buffer.alloc(90, "x").toString()}" }\n`,
+      excerpt: /^1 \| \*+" }, cafile = 1, ca = "x+$/m,
       error: "Invalid cafile. Expected a string.",
     },
   ];
 
-  for (const { title, bunfig, error } of cases) {
+  for (const { title, bunfig, excerpt, error } of cases) {
     test(title, async () => {
       using dir = tempDir("redacted-bunfig-long-line", {
         "bunfig.toml": bunfig,
@@ -182,7 +183,7 @@ describe.concurrent("bunfig token value is masked when the error is on a long li
 
         expect(out).not.toContain("SECRET");
         expect(err).not.toContain("SECRET");
-        expect(err).toContain(`"${masked}"`);
+        expect(Bun.stripANSI(err)).toMatch(excerpt);
         expect(err).toContain(error);
         expect(exitCode).toBe(1);
       }

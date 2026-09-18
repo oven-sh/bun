@@ -697,25 +697,6 @@ impl Default for Location {
     }
 }
 
-/// How much of the source line `Location::line_text` keeps.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum LineText {
-    /// About 120 bytes around the error.
-    Windowed,
-    /// The whole line, so the redaction still sees the key before a secret.
-    Whole,
-}
-
-impl LineText {
-    fn for_msg(redact_sensitive_information: bool) -> LineText {
-        if redact_sensitive_information {
-            LineText::Whole
-        } else {
-            LineText::Windowed
-        }
-    }
-}
-
 impl Location {
     pub(crate) fn memory_cost(&self) -> usize {
         let mut cost: usize = 0;
@@ -782,7 +763,7 @@ impl Location {
     }
 
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, None, LineText::Windowed)
+        Self::init_or_null_impl(_source, r, None, false)
     }
 
     /// `init_or_null`, but computing the line/column through a
@@ -792,16 +773,16 @@ impl Location {
         _source: Option<&Source>,
         r: Range,
         tracker: &mut LineColumnTracker,
-        line_text: LineText,
+        redact_sensitive_information: bool,
     ) -> Option<Location> {
-        Self::init_or_null_impl(_source, r, Some(tracker), line_text)
+        Self::init_or_null_impl(_source, r, Some(tracker), redact_sensitive_information)
     }
 
     fn init_or_null_impl(
         _source: Option<&Source>,
         r: Range,
         tracker: Option<&mut LineColumnTracker>,
-        line_text: LineText,
+        redact_sensitive_information: bool,
     ) -> Option<Location> {
         if let Some(source) = _source {
             if r.is_empty() {
@@ -819,14 +800,27 @@ impl Location {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
             };
-            let mut full_line = &source.contents[data.line_start..data.line_end];
+            // Mask secrets before the window below. The masking finds a
+            // secret by the key in front of it, and the window can cut the
+            // key away. `redacted_source` keeps the byte length.
+            let masked: Cow<'_, [u8]> = if redact_sensitive_information {
+                alloc_print(format_args!(
+                    "{}",
+                    bun_core::fmt::redacted_source(
+                        &source.contents[data.line_start..data.line_end]
+                    )
+                ))
+            } else {
+                Cow::Borrowed(&source.contents[data.line_start..data.line_end])
+            };
+            let mut full_line: &[u8] = &masked;
             // Window a long line to ~120 bytes around the error. Bounds are
             // BYTE offsets; the gate keeps the original shape (no left trim for
             // an error in the last 80 bytes) so `write_format`'s caret aligns.
             let offset_in_line = clamp_error_offset(&source.contents, r.loc)
                 .saturating_sub(data.line_start)
                 .min(full_line.len());
-            if line_text == LineText::Windowed && full_line.len() > 80 + offset_in_line {
+            if full_line.len() > 80 + offset_in_line {
                 let mut lo = offset_in_line.saturating_sub(40);
                 let mut hi = (offset_in_line + 80).min(full_line.len());
                 while lo > 0 && !bun_core::strings::is_utf8_char_boundary(full_line[lo]) {
@@ -853,7 +847,9 @@ impl Location {
                 // `source_backing` in `Transpiler::parse_*` is RAII and
                 // drops on the parse-error path *before* `process_fetch_log`
                 // clones the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead of borrowing `source.contents`.
+                // instead of borrowing `source.contents`. `full_line` is
+                // bounded (≤ ~120 bytes) and only materialized on diagnostic
+                // paths.
                 line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });
@@ -1492,7 +1488,7 @@ impl Log {
         r: Range,
         text: impl IntoText,
     ) -> Data {
-        self.tracked_range_data_with(source, r, text, LineText::Windowed)
+        self.tracked_range_data_with(source, r, text, false)
     }
 
     fn tracked_range_data_with(
@@ -1500,14 +1496,14 @@ impl Log {
         source: Option<&Source>,
         r: Range,
         text: impl IntoText,
-        line_text: LineText,
+        redact_sensitive_information: bool,
     ) -> Data {
         let location = if source.is_some() {
             Location::init_or_null_tracked(
                 source,
                 r,
                 self.line_column_tracker.get_or_insert_default(),
-                line_text,
+                redact_sensitive_information,
             )
         } else {
             Location::init_or_null(source, r)
@@ -1661,12 +1657,7 @@ impl Log {
             _ => {}
         }
         let data = self
-            .tracked_range_data_with(
-                source,
-                r,
-                text,
-                LineText::for_msg(redact_sensitive_information),
-            )
+            .tracked_range_data_with(source, r, text, redact_sensitive_information)
             .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind,
@@ -2162,7 +2153,7 @@ impl Log {
                 len: opts.len,
             },
             text,
-            LineText::for_msg(opts.redact_sensitive_information),
+            opts.redact_sensitive_information,
         );
         self.add_msg(Msg {
             kind: Kind::Err,

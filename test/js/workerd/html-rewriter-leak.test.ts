@@ -807,6 +807,104 @@ describe("a handler that reaches its own rewriter does not pin it", () => {
   });
 });
 
+// A transform holds the handlers so that they outlive a collected rewriter. It
+// has to let go of them once its rewrite is over: an output Response that is
+// kept (a cache, a route table) would otherwise retain every handler object
+// and whatever its callbacks close over, for as long as the Response lives.
+describe("an output Response that outlives its rewrite does not keep the handlers", () => {
+  const N = 60;
+  // Made out here: an Error made inside a handler reaches that handler through its stack frames.
+  const failure = new Error("handler failed");
+
+  const streamOf = (html: string) => {
+    let controller!: ReadableStreamDefaultController;
+    const stream = new ReadableStream({ start: c => void (controller = c) });
+    return {
+      stream,
+      send() {
+        controller.enqueue(new TextEncoder().encode(html));
+        controller.close();
+      },
+    };
+  };
+  const marks = {
+    element(el: HTMLRewriterTypes.Element) {
+      el.setAttribute("seen", "1");
+    },
+  };
+
+  // Each returns what script keeps afterwards, and a WeakRef to the handler object it gave to on().
+  const rewrites: Record<string, () => Promise<{ kept: unknown; handler: WeakRef<object> }>> = {
+    "a rewrite that completes inside transform()": async () => {
+      const handler = { ...marks };
+      const response = new HTMLRewriter().on("p", handler).transform(new Response("<p>x</p>"));
+      expect(await response.text()).toBe('<p seen="1">x</p>');
+      return { kept: response, handler: new WeakRef(handler) };
+    },
+    "a rewrite that completes after transform() returned": async () => {
+      const input = streamOf("<p>x</p>");
+      const handler = { ...marks };
+      const response = new HTMLRewriter().on("p", handler).transform(new Response(input.stream));
+      input.send();
+      expect(await response.text()).toBe('<p seen="1">x</p>');
+      return { kept: response, handler: new WeakRef(handler) };
+    },
+    "a rewrite that a handler fails": async () => {
+      const input = streamOf("<p>x</p>");
+      const handler = {
+        element() {
+          throw failure;
+        },
+      };
+      const response = new HTMLRewriter().on("p", handler).transform(new Response(input.stream));
+      input.send();
+      expect(await response.text().catch(error => error)).toBe(failure);
+      return { kept: response, handler: new WeakRef(handler) };
+    },
+    "a rewrite that its reader cancels": async () => {
+      const input = streamOf("<p>x</p>");
+      const handler = { ...marks };
+      const response = new HTMLRewriter().on("p", handler).transform(new Response(input.stream));
+      const reader = response.body!.getReader();
+      await reader.cancel();
+      return { kept: [response, reader], handler: new WeakRef(handler) };
+    },
+    // The cancel lands while lol-html is on the stack, and lol-html still has the second <p> to run the handler for.
+    "a rewrite that a handler cancels": async () => {
+      const input = streamOf("<p>x</p><p>y</p>");
+      const ranAgain = Promise.withResolvers<void>();
+      let calls = 0;
+      const handler = {
+        element() {
+          if (++calls === 1) reader.cancel();
+          else ranAgain.resolve();
+        },
+      };
+      const response = new HTMLRewriter().on("p", handler).transform(new Response(input.stream));
+      const reader = response.body!.getReader();
+      input.send();
+      await ranAgain.promise;
+      expect(calls).toBe(2);
+      return { kept: [response, reader], handler: new WeakRef(handler) };
+    },
+  };
+
+  test.each(Object.entries(rewrites))("%s", async (_, rewrite) => {
+    const kept: unknown[] = [];
+    const handlers: WeakRef<object>[] = [];
+    for (let i = 0; i < N; i++) {
+      const result = await rewrite();
+      kept.push(result.kept);
+      handlers.push(result.handler);
+    }
+    Bun.gc(true);
+
+    // Unfixed: all N, for as long as `kept` is.
+    expect(handlers.filter(handler => handler.deref() !== undefined).length).toBeLessThan(N / 4);
+    expect(kept).toHaveLength(N);
+  });
+});
+
 // The other half of holding the handlers by a visited slot: they have to stay
 // alive for exactly as long as something can still invoke them. These pass
 // before the change too (a protected value cannot die): they guard the slots.

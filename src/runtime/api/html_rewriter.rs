@@ -1556,6 +1556,7 @@ impl RewriterPipe {
         self.detach_output();
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
+        self.release_handlers();
         // The reader's cancel reason does not travel through the output
         // `ByteStream`; the input's `cancel()` gets the same `AbortError` the
         // output hands a native sink wired to it.
@@ -1591,18 +1592,37 @@ impl RewriterPipe {
         // stream's re-entrant drain signal defers as it did per fragment.
         self.flush_output();
         self.driving.set(false);
+        if self.phase.get() == RewritePhase::Done {
+            self.release_handlers();
+        }
         cell.ensure_still_alive();
         res
     }
 
     /// The callbacks and handler objects this rewrite can invoke. `None` when
-    /// the rewriter had no handlers, or once the cell has been swept.
+    /// the rewriter had no handlers, once the rewrite is over, or once the
+    /// cell has been swept.
     fn handler_list(&self) -> Option<HandlerList> {
         let cell = self.cell.get();
         if !cell.is_cell() {
             return None;
         }
         HandlerList::existing(js_HTMLRewriterTransform::handlers_get_cached(cell))
+    }
+
+    /// The rewrite is over, so no handler runs again: an output `Response`
+    /// that outlives it stops keeping them alive. A lol-html call that is
+    /// still on the stack runs the handlers for the rest of its chunk first,
+    /// and `drive_rewriter` calls this again when it returns.
+    fn release_handlers(&self) {
+        debug_assert!(self.phase.get() == RewritePhase::Done);
+        if self.driving.get() {
+            return;
+        }
+        let cell = self.cell.get();
+        if cell.is_cell() {
+            js_HTMLRewriterTransform::handlers_set_cached(cell, &self.global, JSValue::UNDEFINED);
+        }
     }
 
     fn flush_output(&self) {
@@ -1653,6 +1673,7 @@ impl RewriterPipe {
         // retargeted at a heap-parked unit may still be attached there.
         debug_assert!(!self.is_suspended());
         self.rewriter.set(None);
+        self.release_handlers();
         if let Some(out) = self.output.get() {
             out.on_data(StreamResult::Done);
             self.detach_output();
@@ -1833,6 +1854,7 @@ impl RewriterPipe {
         let _pin = self.pin();
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
+        self.release_handlers();
         let src = self.detach_input_source(Some(err.to_js(&self.global)));
         // Settle any `flush(true)`/`write()` promise a direct-stream `pull()`
         // is parked on so the pump promise can settle (mirrors

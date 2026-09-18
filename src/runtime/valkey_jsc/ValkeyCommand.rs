@@ -123,10 +123,14 @@ bitflags::bitflags! {
     }
 }
 
+impl Meta {
+    /// supports_auto_pipelining defaults to true, rest false.
+    pub const DEFAULT: Meta = Meta::SUPPORTS_AUTO_PIPELINING;
+}
+
 impl Default for Meta {
     fn default() -> Self {
-        // supports_auto_pipelining defaults to true, rest false.
-        Meta::SUPPORTS_AUTO_PIPELINING
+        Self::DEFAULT
     }
 }
 

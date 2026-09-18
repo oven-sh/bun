@@ -348,6 +348,257 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/40442
+  // The ssr pass turns `const [state, setState] = useState(init)` into
+  // `const state = init`, which drops the declaration of `setState`. That is
+  // only correct when nothing the render can reach reads the setter, and a
+  // handler that calls a setter has to stay a function for whoever receives it.
+  // Each function below is compiled in ssr mode and called once, then the test
+  // calls the handlers it got back. The fake hooks log their calls, so an
+  // empty log means the compiler inlined the hook.
+  itBundled("react-compiler/SsrKeepsStateHookWhileSetterIsReachable", {
+    files: {
+      "/entry.js": /* js */ `
+        import { log } from "react";
+        import * as forms from "./forms";
+
+        const show = value => JSON.stringify(value, (key, v) => (typeof v === "function" ? "fn" : v));
+        function run(name, fn) {
+          log.length = 0;
+          let result;
+          try {
+            result = show(fn());
+          } catch (e) {
+            result = "threw " + e;
+          }
+          console.log(name + ": " + result + " " + JSON.stringify(log));
+        }
+
+        run("CallsHandlerInRender", () => forms.CallsHandlerInRender({ n: 3 }));
+        run("useToggle", () => {
+          const [on, toggle] = forms.useToggle();
+          toggle();
+          return on;
+        });
+        run("useMemoizedToggle", () => {
+          const toggle = forms.useMemoizedToggle();
+          toggle();
+          return toggle;
+        });
+        run("HandlerAboveHook", () => forms.HandlerAboveHook());
+        run("ArrowAboveHook", () => forms.ArrowAboveHook());
+        run("SetterAsProp", () => {
+          const el = forms.SetterAsProp();
+          el.props.setV(5);
+          return el;
+        });
+        run("useCounter", () => {
+          const [v, setV] = forms.useCounter();
+          setV(2);
+          return v;
+        });
+        run("SetterCalledInRender", () => forms.SetterCalledInRender({ n: 2 }));
+        run("HandlerToComponent", () => {
+          const el = forms.HandlerToComponent();
+          el.props.onPick();
+          return el;
+        });
+        run("DispatchInObject", () => {
+          const el = forms.DispatchInObject();
+          el.props.api.add();
+          return el;
+        });
+        run("HandlerInNestedClosure", () => {
+          const el = forms.HandlerInNestedClosure({ items: ["a", "b"] });
+          for (const item of el.props.children) item.props.onPick();
+          return el;
+        });
+        run("TransitionHandlerToComponent", () => {
+          const el = forms.TransitionHandlerToComponent();
+          el.props.onGo();
+          return el;
+        });
+        run("ReducerInitializerReadsSetter", () => forms.ReducerInitializerReadsSetter({ init: set => typeof set }));
+        run("UnreadReducerInitializerReadsSetter", () =>
+          forms.UnreadReducerInitializerReadsSetter({ init: set => typeof set }),
+        );
+        run("HostHandlerOnly", () => forms.HostHandlerOnly());
+        run("HostReducerOnly", () => forms.HostReducerOnly());
+      `,
+      "/forms.jsx": /* jsx */ `
+        import { useState, useReducer, useEffect, useRef, useMemo, useTransition } from "react";
+
+        function Child() {
+          return null;
+        }
+        function reducer(state) {
+          return state;
+        }
+
+        export function CallsHandlerInRender({ n }) {
+          const [seen, setSeen] = useState(0);
+          const sync = () => {
+            if (seen < n) setSeen(n);
+          };
+          sync();
+          return <b>{seen}</b>;
+        }
+        export function useToggle() {
+          const [on, setOn] = useState(false);
+          const toggle = () => setOn(!on);
+          return [on, toggle];
+        }
+        export function useMemoizedToggle() {
+          const [on, setOn] = useState(false);
+          return useMemo(() => () => setOn(!on), [on]);
+        }
+        export function HandlerAboveHook() {
+          function inc() {
+            setCount(c => c + 1);
+          }
+          const [count, setCount] = useState(0);
+          return <button onClick={inc}>{count}</button>;
+        }
+        export function ArrowAboveHook() {
+          const inc = () => setCount(c => c + 1);
+          const [count, setCount] = useState(0);
+          return <button onClick={inc}>{count}</button>;
+        }
+        export function SetterAsProp() {
+          const [v, setV] = useState(0);
+          return <Child v={v} setV={setV} />;
+        }
+        export function useCounter() {
+          const [v, setV] = useState(0);
+          return [v, setV];
+        }
+        export function SetterCalledInRender({ n }) {
+          const [v, setV] = useState(0);
+          if (v < n) setV(n);
+          return <b>{v}</b>;
+        }
+        export function HandlerToComponent() {
+          const [v, setV] = useState(0);
+          return <Child onPick={() => setV(1)}>{v}</Child>;
+        }
+        export function DispatchInObject() {
+          const [state, dispatch] = useReducer((s, a) => s + a, 1);
+          return <Child api={{ add: () => dispatch(1) }}>{state}</Child>;
+        }
+        export function HandlerInNestedClosure({ items }) {
+          const [picked, setPicked] = useState(null);
+          return (
+            <ul>
+              {items.map(item => (
+                <Child key={item} onPick={() => setPicked(item)} picked={item === picked} />
+              ))}
+            </ul>
+          );
+        }
+        export function TransitionHandlerToComponent() {
+          const [pending, startTransition] = useTransition();
+          const go = () => startTransition(() => {});
+          return <Child onGo={go}>{pending}</Child>;
+        }
+
+        // useReducer(reducer, arg, init) is inlined to init(arg), which reads the
+        // setter, so the useState call has to stay. When nothing reads the reducer
+        // state either, both hooks go and nothing is left to call init.
+        export function ReducerInitializerReadsSetter({ init }) {
+          const [draft, setDraft] = useState("");
+          const [state, dispatch] = useReducer(reducer, setDraft, init);
+          return <input onChange={() => dispatch(draft)} value={state} />;
+        }
+        export function UnreadReducerInitializerReadsSetter({ init }) {
+          const [draft, setDraft] = useState("");
+          const [state, dispatch] = useReducer(reducer, setDraft, init);
+          return <input onChange={() => dispatch(state)} value={draft} />;
+        }
+
+        // Only a host element's event handler, an effect and a host element's
+        // ref read these setters, and the ssr pass removes all three.
+        export function HostHandlerOnly() {
+          const [count, setCount] = useState(0);
+          const ref = useRef(null);
+          useEffect(() => {
+            setCount(1);
+          }, []);
+          return (
+            <button ref={ref} onClick={() => setCount(count + 1)}>
+              {count}
+            </button>
+          );
+        }
+        export function HostReducerOnly() {
+          const [state, dispatch] = useReducer((s, a) => s + a, 1);
+          const add = () => dispatch(1);
+          return <button onClick={add}>{state}</button>;
+        }
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": /* js */ `
+        export const log = [];
+        function set(value) {
+          log.push("set " + (typeof value === "function" ? "fn" : value));
+        }
+        export function useState(initial) {
+          log.push("useState");
+          return [initial, set];
+        }
+        export function useReducer(reducer, initial, init) {
+          log.push("useReducer");
+          return [init ? init(initial) : initial, set];
+        }
+        export function useTransition() {
+          log.push("useTransition");
+          return [false, callback => (log.push("startTransition"), callback())];
+        }
+        export function useRef(current) {
+          log.push("useRef");
+          return { current };
+        }
+        export function useEffect() {
+          log.push("useEffect");
+        }
+        export function useMemo(create) {
+          log.push("useMemo");
+          return create();
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": /* js */ `
+        export const jsx = (type, props) => ({ type: typeof type === "function" ? type.name : type, props });
+        export const jsxs = jsx;
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+        export const jsxDEV = (type, props) => ({ type: typeof type === "function" ? type.name : type, props });
+      `,
+    },
+    reactCompiler: true,
+    reactCompilerOutputMode: "ssr",
+    target: "bun",
+    backend: "api",
+    run: {
+      stdout: `
+        CallsHandlerInRender: {"type":"b","props":{"children":0}} ["useState","set 3"]
+        useToggle: false ["useState","set true"]
+        useMemoizedToggle: "fn" ["useState","set true"]
+        HandlerAboveHook: {"type":"button","props":{"children":0}} ["useState"]
+        ArrowAboveHook: {"type":"button","props":{"children":0}} ["useState"]
+        SetterAsProp: {"type":"Child","props":{"v":0,"setV":"fn"}} ["useState","set 5"]
+        useCounter: 0 ["useState","set 2"]
+        SetterCalledInRender: {"type":"b","props":{"children":0}} ["useState","set 2"]
+        HandlerToComponent: {"type":"Child","props":{"onPick":"fn","children":0}} ["useState","set 1"]
+        DispatchInObject: {"type":"Child","props":{"api":{"add":"fn"},"children":1}} ["useReducer","set 1"]
+        HandlerInNestedClosure: {"type":"ul","props":{"children":[{"type":"Child","props":{"onPick":"fn","picked":false}},{"type":"Child","props":{"onPick":"fn","picked":false}}]}} ["useState","set a","set b"]
+        TransitionHandlerToComponent: {"type":"Child","props":{"onGo":"fn","children":false}} ["useTransition","startTransition"]
+        ReducerInitializerReadsSetter: {"type":"input","props":{"value":"function"}} ["useState"]
+        UnreadReducerInitializerReadsSetter: {"type":"input","props":{"value":""}} []
+        HostHandlerOnly: {"type":"button","props":{"children":0}} []
+        HostReducerOnly: {"type":"button","props":{"children":1}} []
+      `,
+    },
+  });
+
   itBundled("react-compiler/BundledReactPreservesImportRefs", {
     files: {
       "/entry.tsx": /* tsx */ `

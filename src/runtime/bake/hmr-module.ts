@@ -303,6 +303,9 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
         require: mod.require.bind(mod),
       };
       mod.exports = null;
+    } else {
+      // Drop the ESM view of the previous evaluation's `cjs.exports`.
+      mod.exports = null;
     }
     if (importer) {
       mod.importers.add(importer);
@@ -402,6 +405,9 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         exports: {},
         require: mod.require.bind(mod),
       };
+      mod.exports = null;
+    } else {
+      // Drop the ESM view of the previous evaluation's `cjs.exports`.
       mod.exports = null;
     }
     if (importer) {

@@ -20,34 +20,32 @@
 
 #include "config.h"
 #include "JSBufferEncodingType.h"
+#include "BunClientData.h"
 #include "wtf/Forward.h"
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSString.h>
-#include <wtf/NeverDestroyed.h>
 namespace WebCore {
 using namespace JSC;
 
-String convertEnumerationToString(BufferEncodingType enumerationValue)
-{
-
-    static const std::array<NeverDestroyed<String>, 8> values = {
-        MAKE_STATIC_STRING_IMPL("utf8"),
-        MAKE_STATIC_STRING_IMPL("ucs2"),
-        MAKE_STATIC_STRING_IMPL("utf16le"),
-        MAKE_STATIC_STRING_IMPL("latin1"),
-        MAKE_STATIC_STRING_IMPL("ascii"),
-        MAKE_STATIC_STRING_IMPL("base64"),
-        MAKE_STATIC_STRING_IMPL("base64url"),
-        MAKE_STATIC_STRING_IMPL("hex"),
-    };
-    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
-    return values[static_cast<size_t>(enumerationValue)];
-}
-
 template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, BufferEncodingType enumerationValue)
 {
-    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
+    auto& commonStrings = Bun::commonStrings(lexicalGlobalObject.vm());
+    // clang-format off
+    switch (enumerationValue) {
+    case BufferEncodingType::utf8:      return commonStrings.utf8String();
+    case BufferEncodingType::ucs2:      return commonStrings.ucs2String();
+    case BufferEncodingType::utf16le:   return commonStrings.utf16leString();
+    case BufferEncodingType::latin1:    return commonStrings.latin1String();
+    case BufferEncodingType::ascii:     return commonStrings.asciiString();
+    case BufferEncodingType::base64:    return commonStrings.base64String();
+    case BufferEncodingType::base64url: return commonStrings.base64urlString();
+    case BufferEncodingType::hex:       return commonStrings.hexString();
+    case BufferEncodingType::buffer:    return commonStrings.bufferString();
+    }
+    // clang-format on
+    ASSERT_NOT_REACHED();
+    return jsEmptyString(lexicalGlobalObject.vm());
 }
 
 template<bool allowBuffer>

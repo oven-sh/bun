@@ -91,8 +91,7 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
 
     JSValue isDecipherValue = callFrame->argument(0);
     ASSERT(isDecipherValue.isBoolean());
-    CipherKind cipherKind = isDecipherValue.toBoolean(globalObject) ? CipherKind::Decipher : CipherKind::Cipher;
-    RETURN_IF_EXCEPTION(scope, {});
+    CipherKind cipherKind = isDecipherValue.asBoolean() ? CipherKind::Decipher : CipherKind::Cipher;
 
     JSValue cipherValue = callFrame->argument(1);
     JSValue keyValue = callFrame->argument(2);
@@ -222,6 +221,7 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
 
     if (!ctx.init(Cipher(), encrypt, keyData.data(), ivView ? reinterpret_cast<uint8_t*>(ivView->vector()) : nullptr)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to initialize cipher"_s);
+        return {};
     }
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);

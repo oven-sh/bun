@@ -53,6 +53,7 @@ impl PackageManager {
             enable_manifest_cache_control: self.options.enable.manifest_cache_control(),
             cache_directory: enable_manifest_cache.then(|| get_cache_directory(self)),
             timestamp_for_manifest_cache_control: self.timestamp_for_manifest_cache_control,
+            accept_expired: self.options.offline != super::options::OfflineMode::Online,
         }
     }
 
@@ -179,7 +180,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
             }
         };
 
-    let mut tmpbuf = PathBuffer::uninit();
+    let mut tmpbuf = bun_paths::path_buffer_pool::get();
     let tmpname =
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
@@ -279,7 +280,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     if let Some(timer) = timer.as_mut() {
         let elapsed = timer.read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory_fd, &mut path_buf) {
                 Ok(p) => &p[..],
                 Err(_) => b"it",
@@ -292,7 +293,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     }
 
     #[cfg(windows)]
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(&tempdir), &mut buf) {
         Ok(p) => p,
@@ -761,7 +762,7 @@ pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: Resolution
         ResolutionTag::Git => b".bun-tag",
         _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
     };
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
         &mut buf.0,
         &[folder_path.as_bytes(), marker],
@@ -781,7 +782,7 @@ pub fn is_package_in_cache(
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
     manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
-    let mut out_buffer = PathBuffer::uninit();
+    let mut out_buffer = bun_paths::path_buffer_pool::get();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
     let path = FileSystem::instance()
         .dirname_store()
@@ -829,7 +830,7 @@ pub fn global_link_dir(this: &mut PackageManager) -> Fd {
     let link_fd = link_dir.fd();
     this.global_dir = Some(global_dir);
     this.global_link_dir = Some(link_dir);
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let path_ = match sys::get_fd_path(link_fd, &mut buf) {
         Ok(p) => p,
         Err(err) => {
@@ -860,7 +861,7 @@ pub fn path_for_cached_npm_path<'a>(
     package_name: &[u8],
     version: Semver::Version,
 ) -> Result<&'a mut [u8], Error> {
-    let mut cache_path_buf = PathBuffer::uninit();
+    let mut cache_path_buf = bun_paths::path_buffer_pool::get();
 
     let cache_path = cached_npm_package_folder_name_print(
         this,
@@ -881,7 +882,7 @@ pub fn path_for_cached_npm_path<'a>(
     #[cfg(windows)]
     {
         let _ = cache_dir;
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
         let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
             &this.cache_directory_path,
@@ -1090,7 +1091,7 @@ pub fn save_lockfile(
     lockfile_before_install: &Lockfile,
     packages_len_before_install: usize,
     log_level: LogLevel,
-) -> Result<(), AllocError> {
+) -> Result<bool, AllocError> {
     if this.lockfile.is_empty() {
         if !this.options.dry_run {
             'delete: {
@@ -1113,7 +1114,7 @@ pub fn save_lockfile(
                         // we don't care
                         if err.get_errno() == sys::E::ENOENT {
                             if had_any_diffs {
-                                return Ok(());
+                                return Ok(false);
                             }
                             break 'delete;
                         }
@@ -1121,7 +1122,7 @@ pub fn save_lockfile(
                         if log_level != LogLevel::Silent {
                             Output::err(err, "failed to delete empty lockfile", ());
                         }
-                        return Ok(());
+                        return Ok(false);
                     }
                 }
             }
@@ -1139,7 +1140,7 @@ pub fn save_lockfile(
             }
         }
 
-        return Ok(());
+        return Ok(false);
     }
 
     // `Progress::start`
@@ -1157,7 +1158,7 @@ pub fn save_lockfile(
         this.progress.refresh();
     }
 
-    this.lockfile.save_to_disk(load_result, &this.options);
+    let wrote = this.lockfile.save_to_disk(load_result, &this.options);
 
     // delete binary lockfile if saving text lockfile
     if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
@@ -1196,12 +1197,12 @@ pub fn save_lockfile(
         this.progress.refresh();
         this.progress.root.end();
         this.progress = Default::default();
-    } else if log_level != LogLevel::Silent {
+    } else if wrote && log_level != LogLevel::Silent {
         bun_core::pretty_errorln!("Saved lockfile");
         Output::flush();
     }
 
-    Ok(())
+    Ok(wrote)
 }
 
 pub fn update_lockfile_if_needed(

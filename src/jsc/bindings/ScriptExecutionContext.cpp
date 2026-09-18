@@ -11,8 +11,10 @@
 #include "EventLoopTask.h"
 #include "Performance.h"
 #include "ZigGlobalObject.h"
+#include "ModuleGraph.h"
 #include <wtf/SetForScope.h>
 #include <wtf/Threading.h>
+#include <JavaScriptCore/WeakInlines.h>
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
@@ -39,6 +41,11 @@ static ScriptExecutionContextIdentifier initialIdentifier()
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 #endif
 
+// A context is made with its Rust half (`bun_jsc::ScriptExecutionContext`): a global's is its
+// VM's root context, a Bun.ModuleGraph's is its own.
+extern "C" void* Bun__VirtualMachine__rootContext(void* bunVM);
+extern "C" void* Bun__ScriptExecutionContext__create(void* bunVM, ScriptExecutionContext*, ScriptExecutionContextIdentifier);
+
 ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject)
     : m_vm(vm)
     , m_globalObject(globalObject)
@@ -46,8 +53,8 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     , m_vmHandle(WebCore::clientData(*vm)->vmHandle)
     , m_identifier(initialIdentifier())
     , m_contextThreadUID(Thread::currentSingleton().uid())
+    , m_bunContext(Bun__VirtualMachine__rootContext(m_bunVM))
 {
-    relaxAdoptionRequirement();
     addToContextsMap();
 }
 
@@ -58,9 +65,97 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     , m_vmHandle(WebCore::clientData(*vm)->vmHandle)
     , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
     , m_contextThreadUID(Thread::currentSingleton().uid())
+    , m_bunContext(Bun__VirtualMachine__rootContext(m_bunVM))
 {
-    relaxAdoptionRequirement();
     addToContextsMap();
+}
+
+ScriptExecutionContext::ScriptExecutionContext(ScriptExecutionContext& parent)
+    : m_bunVM(parent.m_bunVM)
+    , m_vmHandle(parent.m_vmHandle)
+    , m_identifier(++lastUniqueIdentifier)
+    , m_contextThreadUID(parent.m_contextThreadUID)
+    , m_parent(&parent)
+    , m_bunContext(Bun__ScriptExecutionContext__create(m_bunVM, this, m_identifier))
+{
+    ASSERT(parent.isContextThread());
+    ASSERT(!parent.m_parent);
+    addToContextsMap();
+}
+
+extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
+extern "C" void Bun__ScriptExecutionContext__stop(void* bunVM, void* bunContext);
+extern "C" void Bun__ScriptExecutionContext__release(void* bunVM, void* bunContext);
+
+void ScriptExecutionContext::setModuleGraph(JSC::JSObject* moduleGraph)
+{
+    m_moduleGraph = JSC::Weak<JSC::JSObject>(moduleGraph);
+}
+
+Ref<ScriptExecutionContext> ScriptExecutionContext::createForModuleGraph(ScriptExecutionContext& parent)
+{
+    return adoptRef(*new ScriptExecutionContext(parent));
+}
+
+// VirtualMachine::stop_graph_context, when the realm or the VM goes (dispose() goes through stop()).
+extern "C" void WebCore__ScriptExecutionContext__stopActiveDOMObjects(ScriptExecutionContext* context)
+{
+    context->stopActiveDOMObjects();
+}
+
+void ScriptExecutionContext::stop()
+{
+    ASSERT(m_bunContext);
+    ASSERT(isContextThread());
+    bool alreadyStopped = std::exchange(m_isStopped, true);
+    Bun__ScriptExecutionContext__stop(m_bunVM, m_bunContext);
+    closeSQLiteDatabases();
+    // A graph its script made is disposed with it (its registry too, so a load it had in flight
+    // does not complete into it).
+    for (auto& owned : copyToVectorOf<Ref<ScriptExecutionContext>>(m_ownedGraphContexts))
+        Bun::disposeModuleGraphOfContext(owned.get());
+    if (alreadyStopped)
+        return;
+    // Its objects are stopped (its workers terminated) from the queue, not under whatever script
+    // is disposing; nothing reaches their listeners from here on either way (isJSExecutionForbidden).
+    Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stopActiveDOMObjects(); }));
+}
+
+extern "C" void Bun__closeSQLiteDatabasesOfGraphContext(ScriptExecutionContextIdentifier);
+extern "C" void Bun__closeNodeSqliteDatabasesOfGraphContext(ScriptExecutionContextIdentifier);
+
+void ScriptExecutionContext::closeSQLiteDatabases()
+{
+    Bun__closeSQLiteDatabasesOfGraphContext(m_identifier);
+    Bun__closeNodeSqliteDatabasesOfGraphContext(m_identifier);
+}
+
+ScriptExecutionContextIdentifier ScriptExecutionContext::ownerOfSQLiteDatabase(JSC::JSGlobalObject* globalObject)
+{
+    auto* context = defaultGlobalObject(globalObject)->currentScriptExecutionContext();
+    if (!context->isForModuleGraph())
+        return 0;
+    // Opened by what a disposed graph had queued: closed from the queue, not under its caller.
+    if (context->isStopped())
+        Bun__VM__queueTask(context->m_bunVM, new EventLoopTask([protectedThis = Ref { *context }](ScriptExecutionContext&) { protectedThis->closeSQLiteDatabases(); }));
+    return context->identifier();
+}
+
+void ScriptExecutionContext::ownGraphContext(ScriptExecutionContext& made)
+{
+    ASSERT(isForModuleGraph() && made.isForModuleGraph());
+    m_ownedGraphContexts.add(made);
+    if (isStopped())
+        made.stop();
+}
+
+void ScriptExecutionContext::moduleGraphDestroyed()
+{
+    m_moduleGraph.clear();
+    // Its objects (a WebSocket, a Worker) may be alive and mid-operation: they keep a live
+    // context until they are stopped. At VM teardown they already were (prepareForDestruction).
+    if (!isStopped())
+        Bun__VM__queueTask(m_bunVM, new EventLoopTask([protectedThis = Ref { *this }](ScriptExecutionContext&) { protectedThis->stop(); }));
 }
 
 static Lock allScriptExecutionContextsMapLock;
@@ -82,15 +177,14 @@ ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(Script
 
 JSGlobalObject* ScriptExecutionContext::globalObject()
 {
-    return m_globalObject;
+    return realm().m_globalObject;
 }
 
 JSGlobalObject* ScriptExecutionContext::jsGlobalObject()
 {
-    return m_globalObject;
+    return realm().m_globalObject;
 }
 
-extern "C" void Bun__VM__queueTask(void* bunVM, EventLoopTask*);
 extern "C" void Bun__VM__queueTaskAfterYield(void* bunVM, EventLoopTask*);
 extern "C" void Bun__VmHandle__queueTaskConcurrently(const ::BunVmHandleRef*, EventLoopTask*);
 
@@ -108,6 +202,12 @@ void ScriptExecutionContext::unrefEventLoop()
 ScriptExecutionContext::~ScriptExecutionContext()
 {
     checkConsistency();
+
+    if (isForModuleGraph()) {
+        // Possibly a GC finalizer: the Rust half closes what it still owns from the event loop.
+        removeFromContextsMap();
+        Bun__ScriptExecutionContext__release(m_bunVM, m_bunContext);
+    }
 
 #if ASSERT_ENABLED
     {
@@ -153,6 +253,11 @@ void ScriptExecutionContext::stopActiveDOMObjects()
         activeDOMObject.stop();
         return ShouldContinue::Yes;
     });
+
+    if (isForModuleGraph()) {
+        if (auto* performance = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject())->existingPerformance())
+            performance->disconnectObserversOf(*this);
+    }
 }
 
 void ScriptExecutionContext::suspendActiveDOMObjectIfNeeded(ActiveDOMObject& activeDOMObject)
@@ -178,7 +283,7 @@ void ScriptExecutionContext::willDestroyActiveDOMObject(ActiveDOMObject& activeD
     m_activeDOMObjects.remove(activeDOMObject);
 }
 
-bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task)
+bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identifier, BunLoopKind loopKind, Function<void(ScriptExecutionContext&)>&& task)
 {
     // The map lock covers the lookup only. The context may be destroyed the moment the
     // lock is released, so nothing of it is used afterwards except a count taken on its
@@ -194,7 +299,7 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
             return false;
         retained = Bun__VmHandle__retainRef(context->m_vmHandle);
     }
-    Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)));
+    Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), loopKind);
     return true;
 }
 
@@ -213,7 +318,12 @@ void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionOb
 
 bool ScriptExecutionContext::isJSExecutionForbidden()
 {
-    return !m_vm || m_vm->executionForbidden() || !WebCore::clientData(*m_vm)->scriptAllowed();
+    // A Bun.ModuleGraph that was disposed hears nothing more: no listener, callback or message
+    // of its context is called, as none is once the VM was asked to stop.
+    if (m_parent && m_isStopped)
+        return true;
+    JSC::VM* vm = realm().m_vm;
+    return !vm || WebCore::clientData(*vm)->isStoppingOrStopped(*vm);
 }
 
 void ScriptExecutionContext::prepareForDestruction()
@@ -268,23 +378,11 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
     }
     if (retained) {
         // Off its thread: as postTaskTo(), through the handle, outside the lock.
-        Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)));
+        Bun__VmHandle__postAndRelease(retained, new EventLoopTask(WTF::move(task)), BunLoopKind::Regular);
         return true;
     }
     // On its own thread the context cannot be destroyed under us.
     task(*context);
-    return true;
-}
-
-bool ScriptExecutionContext::ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task)
-{
-    auto* context = ScriptExecutionContext::getMainThreadScriptExecutionContext();
-
-    if (!context) {
-        return false;
-    }
-
-    context->postTaskConcurrently(WTF::move(task));
     return true;
 }
 
@@ -311,6 +409,13 @@ void ScriptExecutionContext::checkConsistency() const
 ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
 {
     return ++lastUniqueIdentifier;
+}
+
+// The identifier of the VM's root context: its first global's, which every global
+// `bun test --isolate` makes afterwards inherits.
+extern "C" ScriptExecutionContextIdentifier Zig__GlobalObject__contextIdentifier(Zig::GlobalObject* globalObject)
+{
+    return globalObject->scriptExecutionContext()->identifier();
 }
 
 void ScriptExecutionContext::regenerateIdentifier()
@@ -344,13 +449,6 @@ void ScriptExecutionContext::markTerminating()
     m_isTerminating.store(true, std::memory_order_release);
 }
 
-ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
-{
-    if (!globalObject || !globalObject->inherits<JSDOMGlobalObject>())
-        return nullptr;
-    return uncheckedDowncast<JSDOMGlobalObject>(globalObject)->scriptExecutionContext();
-}
-
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     Bun__VmHandle__queueTaskConcurrently(m_vmHandle, new EventLoopTask(WTF::move(lambda)));
@@ -372,11 +470,6 @@ void ScriptExecutionContext::postTaskAfterYield(Function<void(ScriptExecutionCon
 }
 
 // Native bindings
-extern "C" ScriptExecutionContextIdentifier ScriptExecutionContextIdentifier__forGlobalObject(JSC::JSGlobalObject* globalObject)
-{
-    return defaultGlobalObject(globalObject)->scriptExecutionContext()->identifier();
-}
-
 extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(ScriptExecutionContextIdentifier id)
 {
     auto* context = ScriptExecutionContext::getScriptExecutionContext(id);

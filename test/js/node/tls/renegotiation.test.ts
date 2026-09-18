@@ -131,6 +131,71 @@ it("allow renegotiation in tls module", async () => {
   expect(body).toBe("Hello World");
 });
 
+it("pauseOnConnect acts on the first handshake only, not on a renegotiation", async () => {
+  // The client reports a renegotiation through a second handshake callback when the
+  // first application data after it arrives ("first", still delivered by that same
+  // read). A client that pauseOnConnect paused again there would never read "second",
+  // which the server only sends once the client acknowledged "first".
+  await using server = Bun.spawn({
+    cmd: [
+      "node",
+      "-e",
+      `
+        const tls = require("tls");
+        const server = tls.createServer(
+          { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+          socket => {
+            socket.on("error", () => {});
+            socket.on("data", () => socket.end("second"));
+            socket.renegotiate({ rejectUnauthorized: false }, err => {
+              if (err) socket.destroy(err);
+              else socket.write("first");
+            });
+          },
+        );
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+      `,
+    ],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+  });
+  const { value } = await server.stdout.getReader().read();
+  const port = Number(new TextDecoder().decode(value).trim());
+
+  const outcome = Promise.withResolvers<{ handshakes: number; received: string }>();
+  let handshakes = 0;
+  let received = "";
+  const socket = await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    tls: { rejectUnauthorized: false },
+    pauseOnConnect: true,
+    socket: {
+      handshake(socket) {
+        if (++handshakes === 1) socket.resume();
+      },
+      data(socket, chunk) {
+        received += chunk.toString();
+        if (received === "first") socket.write("ack");
+        else if (received === "firstsecond") outcome.resolve({ handshakes, received });
+      },
+      error(_socket, error) {
+        outcome.reject(error);
+      },
+      close() {
+        outcome.reject(new Error(`closed after ${handshakes} handshake(s) with ${JSON.stringify(received)}`));
+      },
+    },
+  });
+  try {
+    expect(await outcome.promise).toEqual({ handshakes: 2, received: "firstsecond" });
+  } finally {
+    socket.end();
+  }
+});
+
 it("should not crash when socket is closed inside the renegotiation handshake callback", async () => {
   // When a TLS 1.2 server initiates renegotiation and then sends application data, the
   // client-side SSL_read loop fires the on_handshake callback once the renegotiated

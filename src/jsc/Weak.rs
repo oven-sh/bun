@@ -137,7 +137,8 @@ impl<T> Weak<T> {
         Some(result)
     }
 
-    pub fn clear(&mut self) {
+    /// Clears the C++ slot; `self` keeps the (now empty) handle, so a shared ref suffices.
+    pub fn clear(&self) {
         let Some(r#ref) = self.r#ref else {
             return;
         };

@@ -15,7 +15,7 @@ public:
     static JSC::Structure*
     createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
     static JSConnectionsList* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSSet* allConnectionsSet, JSC::JSSet* activeConnectionsSet)
@@ -30,12 +30,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSConnectionsList, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSConnectionsList.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSConnectionsList = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSConnectionsList.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSConnectionsList = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<JSConnectionsList, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSConnectionsList, m_subspaceForJSConnectionsList));
     }
 
     DECLARE_INFO;

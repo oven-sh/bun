@@ -39,7 +39,7 @@ test.concurrent("only-failures flag should show only failures", async () => {
     24 | 
     25 | test("another failing test", () => {
     26 |   throw new Error("This test fails");
-                                            ^
+                     ^
     error: This test fails
         at <anonymous> (file:NN:NN)
     (fail) another failing test

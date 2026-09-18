@@ -113,6 +113,9 @@ struct ProcessSlot {
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: *const State<'a>,
+    /// The script's `script_groups` slot.
+    #[cfg(unix)]
+    index: usize,
     color_idx: usize,
 
     stdout_reader: PipeReader<'a>,
@@ -185,6 +188,10 @@ impl<'a> ProcessHandle<'a> {
         let stdout_fd = spawned.stdout;
         #[cfg(unix)]
         let stderr_fd = spawned.stderr;
+        #[cfg(unix)]
+        if state.own_process_group {
+            crate::cli::script_groups::set(self.index, spawned.pid);
+        }
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
         self.stdout_reader.handle = std::ptr::from_mut(self);
@@ -312,6 +319,8 @@ impl<'a> ProcessHandle<'a> {
 bun_spawn::link_impl_ProcessExit! {
     MultiRunHandle for ProcessHandle<'static> => |this| {
         on_process_exit(_process, status, _rusage) => {
+            #[cfg(unix)]
+            crate::cli::script_groups::clear((*this).index);
             let slot = (*this).process.as_mut().unwrap();
             slot.status = status;
             slot.end_time = Some(Instant::now());
@@ -346,6 +355,9 @@ struct State<'a> {
     max_label_len: usize,
     shell_bin: &'static bun::ZStr,
     shell_args: &'static [&'static core::ffi::CStr],
+    /// Each script is its own process group (the Bun shell hop on POSIX), so
+    /// an abort reaches the whole script tree with `kill(-pgid)`.
+    own_process_group: bool,
     aborted: bool,
     no_exit_on_error: bool,
     env: *mut DotEnvLoader,
@@ -497,7 +509,7 @@ impl<'a> State<'a> {
         };
 
         if failed && !self.no_exit_on_error {
-            self.abort();
+            self.abort(false);
             return Ok(());
         }
 
@@ -558,11 +570,19 @@ impl<'a> State<'a> {
         }
     }
 
-    fn abort(&mut self) {
+    /// `from_signal`: the runner's SIGINT handler already signaled the
+    /// process groups.
+    fn abort(&mut self, from_signal: bool) {
         if self.aborted {
             return;
         }
         self.aborted = true;
+        #[cfg(unix)]
+        if self.own_process_group && !from_signal {
+            crate::cli::script_groups::signal_all(libc::SIGINT);
+        }
+        #[cfg(not(unix))]
+        let _ = from_signal;
         // Raw ptrs so `self.maybe_finish` can be called while walking (the
         // file-wide State/handle backref pattern).
         let handles: Vec<*mut ProcessHandle<'a>> =
@@ -570,7 +590,7 @@ impl<'a> State<'a> {
         for handle in handles {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
-                if matches!(proc.status, Status::Running) {
+                if matches!(proc.status, Status::Running) && !self.own_process_group {
                     let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
                 }
             }
@@ -608,13 +628,28 @@ struct AbortHandler;
 static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 
 impl AbortHandler {
+    /// The first SIGINT stops the script groups and lets the loop finish
+    /// the run. A second one takes them down with SIGKILL and ends the
+    /// runner as the default disposition would.
     #[cfg(unix)]
     extern "C" fn posix_signal_handler(
-        _sig: i32,
+        sig: i32,
         _info: *const bun_sys::posix::siginfo_t,
         _: *const c_void,
     ) {
-        SHOULD_ABORT.store(true, Ordering::SeqCst);
+        if SHOULD_ABORT.swap(true, Ordering::SeqCst) {
+            crate::cli::script_groups::signal_all(libc::SIGKILL);
+            // SAFETY: SIG_DFL is a valid disposition; `sig` is blocked while we
+            // run, so the re-raise is delivered (fatally) once we return.
+            unsafe {
+                let mut act: libc::sigaction = bun_core::ffi::zeroed();
+                act.sa_sigaction = libc::SIG_DFL;
+                libc::sigaction(sig, &raw const act, core::ptr::null_mut());
+                libc::raise(sig);
+            }
+            return;
+        }
+        crate::cli::script_groups::signal_all(sig);
     }
 
     #[cfg(windows)]
@@ -639,7 +674,7 @@ impl AbortHandler {
                 let mut action: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
                 action.sa_sigaction = Self::posix_signal_handler as *const () as usize;
                 libc::sigemptyset(&raw mut action.sa_mask);
-                action.sa_flags = (libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND) as _;
+                action.sa_flags = (libc::SA_SIGINFO | libc::SA_RESTART) as _;
                 bun_sys::posix::sigaction(libc::SIGINT, &raw const action, core::ptr::null_mut());
             }
         }
@@ -1122,11 +1157,16 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         max_label_len,
         shell_bin,
         shell_args,
+        own_process_group: cfg!(unix) && !ctx.debug.use_system_shell,
         aborted: false,
         no_exit_on_error: ctx.no_exit_on_error,
         env: env_ptr,
         use_colors,
     };
+    #[cfg(unix)]
+    if state.own_process_group {
+        crate::cli::script_groups::init(configs.len());
+    }
 
     // Initialize handles
     let mut handles: Vec<ProcessHandle> = Vec::with_capacity(configs.len());
@@ -1143,6 +1183,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         handles.push(ProcessHandle {
             state: &raw const state,
             config,
+            #[cfg(unix)]
+            index: i,
             color_idx,
             stdout_reader: PipeReader::new(false),
             stderr_reader: PipeReader::new(true),
@@ -1172,6 +1214,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     ..Default::default()
                 },
                 stream: true,
+                new_process_group: state.own_process_group,
                 ..Default::default()
             },
         });
@@ -1233,7 +1276,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     while !state.is_done() {
         if SHOULD_ABORT.load(Ordering::SeqCst) && !state.aborted {
             AbortHandler::uninstall();
-            state.abort();
+            state.abort(true);
             // The abort sweep may have finished the last script; re-check
             // before blocking in a tick no event may ever wake.
             continue;

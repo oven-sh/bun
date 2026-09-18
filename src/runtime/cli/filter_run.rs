@@ -53,6 +53,9 @@ struct ProcessInfo {
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: bun_ptr::BackRef<State<'a>, bun_ptr::Mut>,
+    /// The script's `script_groups` slot.
+    #[cfg(unix)]
+    index: usize,
 
     stdout: BufferedReader,
     stderr: BufferedReader,
@@ -138,6 +141,10 @@ impl<'a> ProcessHandle<'a> {
         let mut spawned = spawned;
         #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
+        #[cfg(unix)]
+        if state.own_process_group {
+            crate::cli::script_groups::set(handle.index, spawned.pid);
+        }
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
@@ -265,6 +272,8 @@ bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
         // The Process is never freed; the program exits when all scripts finish.
         on_process_exit(_process, status, _rusage) => {
+            #[cfg(unix)]
+            crate::cli::script_groups::clear((*this).index);
             let info = (*this).process.as_mut().unwrap();
             info.status = status;
             info.end_time = Some(Instant::now());
@@ -321,6 +330,9 @@ struct State<'a> {
     pretty_output: bool,
     shell_bin: &'static ZStr, // intentionally leaked (process exits)
     shell_args: &'static [&'static core::ffi::CStr],
+    /// Each script is its own process group (the Bun shell hop on POSIX), so
+    /// an abort reaches the whole script tree with `kill(-pgid)`.
+    own_process_group: bool,
     aborted: bool,
     // Raw `*mut` — process-lifetime singleton owned
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
@@ -648,12 +660,20 @@ impl<'a> State<'a> {
         let _ = bun_sys::File::stdout().write_all(&self.draw_buf);
     }
 
-    fn abort(&mut self) {
+    /// `from_signal`: the runner's SIGINT handler already signaled the
+    /// process groups.
+    fn abort(&mut self, from_signal: bool) {
         if self.aborted {
             return;
         }
         // we perform an abort by sending SIGINT to all processes
         self.aborted = true;
+        #[cfg(unix)]
+        if self.own_process_group && !from_signal {
+            crate::cli::script_groups::signal_all(libc::SIGINT);
+        }
+        #[cfg(not(unix))]
+        let _ = from_signal;
         // Raw ptrs so `self.maybe_finish` can be called while walking (the
         // file-wide State/handle backref pattern).
         let handles: Vec<*mut ProcessHandle<'a>> =
@@ -661,8 +681,10 @@ impl<'a> State<'a> {
         for handle in handles {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
-                // if we get an error here we simply ignore it
-                let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
+                if !self.own_process_group {
+                    // if we get an error here we simply ignore it
+                    let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
+                }
             }
             // An already-exited handle may be waiting on pipes a grandchild
             // still holds; with `aborted` set this finishes it now. Killed
@@ -702,15 +724,29 @@ static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 // Atomic because it is set from a signal handler.
 
 impl AbortHandler {
+    /// The first SIGINT stops the script groups and lets the loop finish
+    /// the run. A second one takes them down with SIGKILL and ends the
+    /// runner as the default disposition would.
     #[cfg(unix)]
     extern "C" fn posix_signal_handler(
         sig: i32,
         info: *const bun_sys::posix::siginfo_t,
         _: *const c_void,
     ) {
-        let _ = sig;
         let _ = info;
-        SHOULD_ABORT.store(true, Ordering::SeqCst);
+        if SHOULD_ABORT.swap(true, Ordering::SeqCst) {
+            crate::cli::script_groups::signal_all(libc::SIGKILL);
+            // SAFETY: SIG_DFL is a valid disposition; `sig` is blocked while we
+            // run, so the re-raise is delivered (fatally) once we return.
+            unsafe {
+                let mut act: libc::sigaction = bun_core::ffi::zeroed();
+                act.sa_sigaction = libc::SIG_DFL;
+                libc::sigaction(sig, &raw const act, core::ptr::null_mut());
+                libc::raise(sig);
+            }
+            return;
+        }
+        crate::cli::script_groups::signal_all(sig);
     }
 
     #[cfg(windows)]
@@ -730,7 +766,7 @@ impl AbortHandler {
             // SAFETY: libc::sigaction is #[repr(C)] POD; all-zero is a valid value (fields overwritten below).
             let mut act: libc::sigaction = bun_core::ffi::zeroed();
             act.sa_sigaction = Self::posix_signal_handler as *const () as usize;
-            act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART | libc::SA_RESETHAND;
+            act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
             // SAFETY: sa_mask is a valid out-pointer; act is on the stack.
             unsafe {
                 libc::sigemptyset(&raw mut act.sa_mask);
@@ -752,7 +788,8 @@ impl AbortHandler {
     }
 
     fn uninstall() {
-        // only necessary on Windows, as on posix we pass the SA_RESETHAND flag
+        // only necessary on Windows; the posix handler ends the runner on a
+        // second signal itself
         #[cfg(windows)]
         {
             // (None, FALSE) clears the ignore attribute; it does NOT unregister
@@ -960,9 +997,14 @@ pub(crate) fn run_scripts_with_filter(
         },
         shell_bin,
         shell_args,
+        own_process_group: cfg!(unix) && !ctx.debug.use_system_shell,
         aborted: false,
         env: env_ptr,
     };
+    #[cfg(unix)]
+    if state.own_process_group {
+        crate::cli::script_groups::init(scripts.len());
+    }
 
     // initialize the handles
     // Self-referential — each `state.handles[i].state` points back at
@@ -975,10 +1017,14 @@ pub(crate) fn run_scripts_with_filter(
     let state_ptr: bun_ptr::BackRef<State, bun_ptr::Mut> =
         unsafe { bun_ptr::BackRef::from_raw_mut(core::ptr::addr_of_mut!(state)) };
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
-    for script in scripts.iter() {
+    let own_process_group = state.own_process_group;
+    #[cfg_attr(not(unix), allow(unused_variables))]
+    for (index, script) in scripts.iter().enumerate() {
         handles_vec.push(ProcessHandle {
             state: state_ptr,
             config: script,
+            #[cfg(unix)]
+            index,
             stdout: BufferedReader::init::<ProcessHandle>(),
             stderr: BufferedReader::init::<ProcessHandle>(),
             buffer: Vec::new(),
@@ -1009,6 +1055,7 @@ pub(crate) fn run_scripts_with_filter(
                     ..Default::default()
                 },
                 stream: true,
+                new_process_group: own_process_group,
                 ..Default::default()
             },
             remaining_dependencies: 0,
@@ -1096,7 +1143,7 @@ pub(crate) fn run_scripts_with_filter(
             // the process is aborted immediately and doesn't wait for the event loop to tick.
             // This can be useful if one of the processes is stuck and doesn't react to SIGINT.
             AbortHandler::uninstall();
-            state.abort();
+            state.abort(true);
             // The abort sweep may have finished the last script; re-check
             // before blocking in a tick no event may ever wake.
             continue;

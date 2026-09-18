@@ -346,6 +346,9 @@ pub mod filter_run;
 pub mod link_command;
 #[path = "multi_run.rs"]
 pub mod multi_run;
+#[cfg(unix)]
+#[path = "script_groups.rs"]
+pub(crate) mod script_groups;
 #[path = "outdated_command.rs"]
 pub mod outdated_command;
 #[path = "pack_command.rs"]

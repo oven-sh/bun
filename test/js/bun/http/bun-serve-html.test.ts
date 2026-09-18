@@ -1606,3 +1606,59 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+// https://github.com/oven-sh/bun/issues/40479
+describe.concurrent("bunfig [define] applies to HTML bundles", () => {
+  // Serves an HTML import, fetches its script chunk, and returns the JS text.
+  async function run(development: string, bunfig: string): Promise<string> {
+    using dir = tempDir("html-define", {
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./app.ts"></script></head><body></body></html>`,
+      "app.ts": `console.log("MARKER", BUILD_FLAG);`,
+      "bunfig.toml": bunfig,
+      "serve.ts": `
+        import app from "./index.html";
+        const server = Bun.serve({
+          port: 0,
+          development: ${development},
+          routes: { "/": app },
+          fetch: () => new Response("fallback"),
+        });
+        const html = await (await fetch(server.url)).text();
+        const src = html.match(/<script[^>]*src="([^"]+)"/)![1];
+        const js = await (await fetch(new URL(src, server.url))).text();
+        console.log(JSON.stringify({ js }));
+        await server.stop(true);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+    return (JSON.parse(stdout) as { js: string }).js;
+  }
+
+  describe.each(["true", "false"])("development: %s", development => {
+    test("[define] replaces the identifier in the chunk", async () => {
+      const js = await run(development, `[define]\nBUILD_FLAG = '"from-define"'`);
+      expect(js).toContain("MARKER");
+      expect(js).toContain('"from-define"');
+      expect(js).not.toContain("BUILD_FLAG");
+    });
+
+    test("[serve.static] define wins over [define]", async () => {
+      const js = await run(
+        development,
+        `[define]\nBUILD_FLAG = '"from-define"'\n\n[serve.static.define]\nBUILD_FLAG = '"from-serve"'`,
+      );
+      expect(js).toContain("MARKER");
+      expect(js).toContain('"from-serve"');
+      expect(js).not.toContain('"from-define"');
+      expect(js).not.toContain("BUILD_FLAG");
+    });
+  });
+});

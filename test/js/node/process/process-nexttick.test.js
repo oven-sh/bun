@@ -1121,6 +1121,10 @@ describe.concurrent("process.nextTick and the entry point", () => {
 
   // An ES module entry point runs inside a microtask, so what it queues with process.nextTick waits
   // for the microtask queue.
+  it.each(esModule)("%s", async (_, files, args) => {
+    expect(await run(files, args)).toEqual({ stdout: microtasksFirst + "\n", stderr: "", exitCode: 0 });
+  });
+
   it.each(esModule)("%s, after a preload that uses process.nextTick", async (_, files, args) => {
     const result = await run({ ...files, ...preload }, ["--preload", "./preload.cjs", ...args]);
     expect(result).toEqual({ stdout: microtasksFirst + "\n", stderr: "", exitCode: 0 });
@@ -1152,6 +1156,35 @@ describe.concurrent("process.nextTick and the entry point", () => {
     );
     expect(result).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
   });
+
+  const fromMicrotask = `
+    Promise.resolve().then(() => {
+      console.log("promise 1");
+      process.nextTick(() => console.log("nextTick from promise 1"));
+    });
+    Promise.resolve().then(() => console.log("promise 2"));
+    queueMicrotask(() => console.log("queueMicrotask"));
+  `;
+  it.each([
+    ["is the first use of process.nextTick", "entry.cjs", fromMicrotask, ""],
+    [
+      "comes after a use in the entry point",
+      "entry.cjs",
+      `process.nextTick(() => console.log("nextTick"));` + fromMicrotask,
+      "nextTick\n",
+    ],
+    ["is the first use of process.nextTick, ES module", "entry.mjs", fromMicrotask, ""],
+    ["is the first use of process.nextTick, from a timer", "entry.mjs", `setTimeout(() => {${fromMicrotask}}, 1);`, ""],
+  ])(
+    "what a microtask queues with process.nextTick waits for the microtask queue when it %s",
+    async (_, entry, source, first) => {
+      expect(await run({ [entry]: source }, [entry])).toEqual({
+        stdout: first + "promise 1\npromise 2\nqueueMicrotask\nnextTick from promise 1\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   it('the entry point is module "." after a CommonJS preload, and what it throws is an uncaughtException', async () => {
     const describeModule = name =>

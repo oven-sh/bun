@@ -363,7 +363,6 @@ public:
     RefPtr<WebCore::MessagePort> m_nodeParentPort;
     bool m_nodeWorkerEntrySettled { false };
 
-    void resetOnEachMicrotaskTick();
     void drainNextTickQueueAfterEntryPoint();
 
     enum class PromiseFunctions : uint8_t {

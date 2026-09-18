@@ -403,15 +403,6 @@ extern "C" JSC::EncodedJSValue BunObject__createBunStdin(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStderr(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue BunObject__createBunStdout(JSC::JSGlobalObject*);
 
-static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
-{
-    auto* globalObject = defaultGlobalObject();
-    if (auto queue = globalObject->m_nextTickQueue.get()) {
-        globalObject->resetOnEachMicrotaskTick();
-        queue->drain(vm, globalObject);
-    }
-}
-
 GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
 {
     GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, &globalObjectMethodTable());
@@ -447,23 +438,21 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
     return structure;
 }
 
-void Zig::GlobalObject::resetOnEachMicrotaskTick()
+static void drainNextTickQueueAtEndOfEntryPointMicrotask(JSC::VM& vm)
 {
-    auto& vm = this->vm();
-    if (this->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(nullptr);
-    } else {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-    }
+    vm.setOnEachMicrotaskTick(nullptr);
+    auto* globalObject = defaultGlobalObject();
+    if (auto* queue = globalObject->m_nextTickQueue.get())
+        queue->drain(vm, globalObject);
 }
 
 // Node runs a CommonJS entry point synchronously and then the process.nextTick queue, before any
 // microtask the entry point queued. Here the entry point runs inside a module loader microtask, so
-// the queue runs when that microtask ends. The check armed at startup does that only until the
-// queue exists, and a module that loads before the entry point (a preload) can make it exist.
+// the queue runs when that one microtask ends. Everything else a microtask queues waits for the
+// microtask queue to empty (GlobalObject::drainMicrotasks), as in Node.
 void Zig::GlobalObject::drainNextTickQueueAfterEntryPoint()
 {
-    vm().setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
+    vm().setOnEachMicrotaskTick(&drainNextTickQueueAtEndOfEntryPointMicrotask);
 }
 
 extern "C" size_t Bun__reported_memory_size;
@@ -568,15 +557,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.setOnComputeErrorInfo(computeErrorInfoWrapperToString);
     vm.setOnComputeErrorInfoJSValue(computeErrorInfoWrapperToJSValue);
     vm.setComputeLineColumnWithSourcemap(computeLineColumnWithSourcemap);
-    vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
-        // if you process.nextTick on a microtask we need this
-        auto* globalObject = defaultGlobalObject();
-        if (auto queue = globalObject->m_nextTickQueue.get()) {
-            globalObject->resetOnEachMicrotaskTick();
-            queue->drain(vm, globalObject);
-            return;
-        }
-    });
 
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::WorkerMessagingProxy& worker) -> void {
@@ -3129,17 +3109,25 @@ uint8_t GlobalObject::drainMicrotasks()
     if (!vm.entryScope)
         m_asyncContextData.get()->putInternalField(vm, 0, m_moduleGraphs ? Bun::moduleGraphAsyncContextAtEventLoop(this) : jsUndefined());
 
-    if (auto nextTickQueue = this->m_nextTickQueue.get()) {
-        nextTickQueue->drain(vm, this);
-        if (auto* exception = scope.exception()) {
-            if (vm.isTerminationException(exception)) {
-                Bun__VM__takeTerminationOutsideScript(this);
-                return 1;
-            }
-            (void)scope.tryClearException();
-            this->reportUncaughtExceptionAtEventLoop(this, exception);
-            return 0;
+    // The value to return when the queue left an exception, which ends this checkpoint.
+    const auto drainNextTickQueue = [&](Bun::JSNextTickQueue* queue) -> std::optional<uint8_t> {
+        queue->drain(vm, this);
+        auto* exception = scope.exception();
+        if (!exception)
+            return std::nullopt;
+        if (vm.isTerminationException(exception)) {
+            Bun__VM__takeTerminationOutsideScript(this);
+            return 1;
         }
+        (void)scope.tryClearException();
+        this->reportUncaughtExceptionAtEventLoop(this, exception);
+        return 0;
+    };
+
+    auto* nextTickQueue = this->m_nextTickQueue.get();
+    if (nextTickQueue) {
+        if (auto result = drainNextTickQueue(nextTickQueue))
+            return *result;
     }
     vm.drainMicrotasks();
     if (auto* exception = scope.exception()) {
@@ -3149,6 +3137,16 @@ uint8_t GlobalObject::drainMicrotasks()
         }
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
+    }
+
+    // process.nextTick makes its queue on first use. A first use in one of the microtasks above
+    // came after the check before them, and what a microtask queues runs once the microtask queue
+    // is empty: now.
+    if (!nextTickQueue) {
+        if (auto* createdQueue = this->m_nextTickQueue.get()) {
+            if (auto result = drainNextTickQueue(createdQueue))
+                return *result;
+        }
     }
 
     return 0;

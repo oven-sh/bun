@@ -1599,6 +1599,7 @@ impl Writer {
 
     pub(crate) fn pwrite(&mut self, data: &[u8], index: usize) -> Result<(), AnyPostgresError> {
         self.connection.write_buffer.with_mut(|b| {
+            let index = b.head as usize + index;
             b.byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
         });
         Ok(())
@@ -1606,6 +1607,13 @@ impl Writer {
 
     pub(crate) fn offset(self) -> usize {
         self.connection.write_buffer.get().len() as usize
+    }
+
+    pub(crate) fn truncate(&mut self, offset: usize) {
+        self.connection.write_buffer.with_mut(|b| {
+            let len = b.head as usize + offset;
+            b.byte_list.truncate(len);
+        });
     }
 }
 
@@ -1621,6 +1629,10 @@ impl protocol::WriterContext for Writer {
     #[inline]
     fn pwrite(mut self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> {
         Writer::pwrite(&mut self, bytes, i)
+    }
+    #[inline]
+    fn truncate(mut self, offset: usize) {
+        Writer::truncate(&mut self, offset)
     }
 }
 

@@ -63,6 +63,32 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
   }, 30_000);
 
+  // A runtime flag ahead of the subcommand, typed (`bun --smol init`) or
+  // spliced into argv by BUN_OPTIONS, moves "init" out of argv[1]. init used to
+  // take its arguments from a fixed offset, so the shifted "init" keyword became
+  // the target folder and the project landed in ./init/ (#20347, #39377).
+  test.each([
+    ["BUN_OPTIONS", [], { BUN_OPTIONS: "--smol" }],
+    ["a flag typed before the subcommand", ["--smol"], {}],
+  ])(
+    "bun init initializes the cwd with %s",
+    async (_, flagsBeforeSubcommand, extraEnv) => {
+      await using temp = tempDir("bun-init-shifted-argv", {});
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...flagsBeforeSubcommand, "init", "-y"],
+        cwd: temp,
+        stdio: ["ignore", "ignore", "ignore"],
+        env: { ...initEnv, ...extraEnv },
+      });
+
+      expect(await proc.exited).toBe(0);
+      expect(fs.existsSync(path.join(temp, "init"))).toBe(false);
+      expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
+    },
+    30_000,
+  );
+
   test("bun init falls back to --yes when stdin is not a TTY", async () => {
     await using temp = tempDir("bun-init-no-tty", {});
 

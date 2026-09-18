@@ -249,7 +249,14 @@ impl TrustCommand {
         );
         Output::flush();
 
-        if args.len() == 2 {
+        // `get_subcommand` left `positionals[0]` as the `trust` keyword; flags
+        // never reach the positionals, so the rest are the package names.
+        let positionals: &[&[u8]] = pm.options.positionals;
+        let packages_to_trust: &[&[u8]] = &positionals[1.min(positionals.len())..];
+        let trust_all =
+            strings::left_has_any_in_right(args, &[b"-a".as_slice(), b"--all".as_slice()]);
+
+        if !trust_all && packages_to_trust.is_empty() {
             Self::error_expected_args();
         }
 
@@ -271,19 +278,6 @@ impl TrustCommand {
             for meta in slice.items_meta_mut() {
                 meta.set_has_install_script(false);
             }
-        }
-
-        let mut packages_to_trust: Vec<&[u8]> = Vec::with_capacity(args[2..].len());
-        for arg in &args[2..] {
-            if !arg.is_empty() && arg[0] != b'-' {
-                packages_to_trust.push(arg);
-            }
-        }
-        let trust_all =
-            strings::left_has_any_in_right(args, &[b"-a".as_slice(), b"--all".as_slice()]);
-
-        if !trust_all && packages_to_trust.is_empty() {
-            Self::error_expected_args();
         }
 
         // SAFETY: `pm_raw` is the singleton; `pm.log` set at init, non-null.
@@ -324,7 +318,7 @@ impl TrustCommand {
         }
 
         if untrusted_dep_ids.count() == 0 {
-            Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
+            Self::print_error_zero_untrusted_dependencies_found(trust_all, packages_to_trust);
             Global::crash();
         }
 
@@ -397,7 +391,7 @@ impl TrustCommand {
                             break 'brk false;
                         }
 
-                        for package_name_from_cli in &packages_to_trust {
+                        for package_name_from_cli in packages_to_trust {
                             if strings::eql_long(package_name_from_cli, alias, true)
                                 && !lockfile.has_trusted_dependency(
                                     alias,
@@ -435,7 +429,7 @@ impl TrustCommand {
         }
 
         if scripts_at_depth.count() == 0 || package_names_to_add.count() == 0 {
-            Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
+            Self::print_error_zero_untrusted_dependencies_found(trust_all, packages_to_trust);
             Global::crash();
         }
 

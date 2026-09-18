@@ -1470,11 +1470,11 @@ static bool isSkippedInSQLiteQuery(const char c)
 }
 
 // sqlite3_changes64() persists across statements, so only a statement that can have set it reports it (#43306).
-static sqlite3_int64 directChangesSince(sqlite3_stmt* stmt, int totalChangesBefore)
+static sqlite3_int64 directChangesSince(sqlite3_stmt* stmt, sqlite3_int64 totalChangesBefore)
 {
     sqlite3* db = sqlite3_db_handle(stmt);
     // COMMIT, SAVEPOINT and RELEASE are read-only but can flush FTS5, which moves sqlite3_total_changes().
-    if (sqlite3_stmt_readonly(stmt) || sqlite3_total_changes(db) == totalChangesBefore)
+    if (sqlite3_stmt_readonly(stmt) || sqlite3_total_changes64(db) == totalChangesBefore)
         return 0;
     return sqlite3_changes64(db);
 }
@@ -1609,7 +1609,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
             didSetBindings = true;
         }
 
-        const int total_changes_before = sqlite3_total_changes(db);
+        const sqlite3_int64 total_changes_before = sqlite3_total_changes64(db);
 
         do {
             rc = sqlite3_step(sql.stmt);
@@ -2643,7 +2643,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     }
 
     auto* db = sqlite3_db_handle(stmt);
-    int total_changes_before = sqlite3_total_changes(db);
+    const sqlite3_int64 total_changes_before = sqlite3_total_changes64(db);
 
     int status = sqlite3_step(stmt);
     if (!sqlite3_stmt_readonly(stmt)) {

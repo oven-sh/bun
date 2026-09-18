@@ -4342,10 +4342,12 @@ test("ModuleGraph isolation: a multipart S3 upload is its graph's from the first
   });
   // No later part and no completion is sent. The upload is rolled back, so that the store keeps
   // no orphaned parts (which are billed until they expire): that request is not the script's.
-  await until(() => requests[ofDisposed.tag].includes("abort"));
+  // The part in flight can still land after that, so it is rolled back once more when that
+  // part has reported back.
+  await until(() => requests[ofDisposed.tag].filter(request => request === "abort").length === 2);
   expect({ settled: ofDisposed.settled, requests: requests[ofDisposed.tag] }).toEqual({
     settled: undefined,
-    requests: ["create", "part 1", "part 2", "abort"],
+    requests: ["create", "part 1", "part 2", "abort", "abort"],
   });
   // Disposed while the completion was on its way: whether the store got it is not known, so it is
   // rolled back too (a store that did complete it has nothing left to drop).

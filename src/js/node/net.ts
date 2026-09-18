@@ -3151,6 +3151,8 @@ function internalConnect(self, options, address, port, addressType, localAddress
 
   $debug("connect: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
+  // A listener may destroy() the socket; doConnect(null) would open a handle nothing owns.
+  if (!self.connecting) return;
 
   if (addressType === 6 || addressType === 4) {
     if (self.blockList?.check(address, `ipv${addressType}`)) {
@@ -3302,6 +3304,8 @@ function internalConnectMultiple(context, canceled?) {
 
   $debug("connect/multiple: attempting to connect to %s:%d (addressType: %d)", address, port, addressType);
   self.emit("connectionAttempt", address, port, addressType);
+  // Same as internalConnect: a listener may destroy() the socket.
+  if (!self.connecting) return;
 
   // const req = new TCPConnectWrap();
   const req = {};
@@ -3329,9 +3333,7 @@ function internalConnectMultiple(context, canceled?) {
     return;
   }
 
-  // The if(err) above covers sync failure; this catches a sync open or a
-  // destroy() from a 'connectionAttempt' listener. Arming the timer now
-  // would capture a stale handle and overwrite the next attempt's kTimeout.
+  // A sync open already moved on; arming the timer now would overwrite the next attempt's kTimeout.
   if (!self.connecting || context.current !== current + 1) {
     return;
   }

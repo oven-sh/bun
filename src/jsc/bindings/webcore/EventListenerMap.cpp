@@ -165,12 +165,12 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
                 listeners.removeLast();
                 --entry.emptySlotCount;
             }
-            entry.searchStart = listeners.size() - 1;
+            entry.searchStart = static_cast<unsigned>(listeners.size() - 1);
             return true;
         }
 
         listeners[index] = nullptr;
-        entry.searchStart = index + 1;
+        entry.searchStart = static_cast<unsigned>(index + 1);
         // Closing the slots only when they are as many as the listeners keeps a removal O(1), amortized.
         if (++entry.emptySlotCount >= listeners.size() - entry.emptySlotCount)
             entry.closeEmptySlots();

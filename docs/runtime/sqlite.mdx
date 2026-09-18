@@ -180,7 +180,7 @@ const query = db.query(`select "Hello world" as message`);
 <Note>
 **What does "cached" mean?**
 
-The caching refers to the **compiled prepared statement** (the SQL bytecode), not the query results. When you call `db.query()` with the same SQL string multiple times, Bun returns the same cached `Statement` object instead of recompiling the SQL. The cache holds the `Database.MAX_QUERY_CACHE_SIZE` (default 20) most recently used SQL strings. Evicted statements keep working, but a later `db.query()` with the same string compiles a new one.
+The caching refers to the **compiled prepared statement** (the SQL bytecode), not the query results. When you call `db.query()` with the same SQL string multiple times, Bun returns the same cached `Statement` object instead of recompiling the SQL. The cache holds the `Database.MAX_QUERY_CACHE_SIZE` (default 20) most recently used SQL strings, subject to a `Database.MAX_QUERY_CACHE_BYTES` (default 2 MB) budget on the total cached SQL text. A single query whose SQL text exceeds `Database.MAX_QUERY_CACHE_ENTRY_BYTES` (default 64 KB) is never cached. Evicted statements keep working, but a later `db.query()` with the same string compiles a new one.
 
 It is safe to reuse a cached statement with different parameter values:
 

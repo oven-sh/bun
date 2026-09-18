@@ -369,6 +369,7 @@ describe("bun", () => {
       ["test", "--rerun-each", "Re-run each test file <NUMBER> times"],
       ["test", "--bail", "Exit the test suite after <NUMBER> failures"],
       ["build", "--allow-unresolved", "Use '<empty>' for opaque specifiers"],
+      ["build", "--no-module-preload", "don't emit <link rel=modulepreload> for the chunks"],
       ["add", "-F, --filter", "Add the package(s) to the matching workspaces instead of the current package"],
       ["add", "--catalog", 'depend on it as "catalog:" (use --catalog=NAME for a named catalog)'],
       ["remove", "-F, --filter", "Remove the package(s) from the matching workspaces instead of the current package"],
@@ -399,6 +400,21 @@ describe("bun", () => {
       expect(out).toContain("\x1b[34m<package>\x1b[0m");
       // raw tag markup must not leak through
       expect(out).not.toContain("<blue>");
+      expect(exitCode).toBe(0);
+    });
+
+    // With colors on, a flag description goes through the runtime markup pass, not the build-time one.
+    test("bun build --help keeps <link rel=modulepreload> with FORCE_COLOR=1", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--help"],
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const line = (stdout + stderr).split(/\r?\n/).find(l => l.includes("--no-module-preload")) ?? "";
+      // The cyan flag name proves that colors are on, so the runtime pass wrote this line.
+      expect(line).toContain("\x1b[36m--no-module-preload\x1b[0m");
+      expect(line).toContain("don't emit <link rel=modulepreload> for the chunks");
       expect(exitCode).toBe(0);
     });
   });

@@ -246,7 +246,9 @@ describe("WebSocket upgrade split across reads", () => {
   // in a single read, and a head exactly at the cap must open.
   const MAX_HEAD = 16384; // default max_http_header_size
 
-  function serve101(headSize: number) {
+  // With `splitAt`, the head goes out in two writes so the client reads an
+  // incomplete head of `splitAt` bytes first.
+  function serve101(headSize: number, splitAt?: number) {
     return Bun.listen<{ buf: string; done: boolean }>({
       hostname: "127.0.0.1",
       port: 0,
@@ -274,8 +276,17 @@ describe("WebSocket upgrade split across reads", () => {
           const padLen = headSize - fixed.length - "\r\n\r\n".length;
           const head = fixed + Buffer.alloc(padLen, "a").toString() + "\r\n\r\n";
           expect(head.length).toBe(headSize);
-          socket.write(head);
+          if (splitAt === undefined) {
+            socket.write(head);
+            socket.flush();
+            return;
+          }
+          socket.write(head.slice(0, splitAt));
           socket.flush();
+          setTimeout(() => {
+            socket.write(head.slice(splitAt));
+            socket.flush();
+          }, 50);
         },
       },
     });
@@ -300,6 +311,13 @@ describe("WebSocket upgrade split across reads", () => {
 
   test("101 head one byte over the cap in one write is rejected", async () => {
     using server = serve101(MAX_HEAD + 1);
+    expect(await connect(server.port)).toContain("Invalid response");
+  });
+
+  test("101 head over the cap is rejected when the first read stays under the cap", async () => {
+    // The first read is an incomplete head under the cap, so the short-read
+    // check passes. The completed head is over the cap and must still fail.
+    using server = serve101(21000, 16000);
     expect(await connect(server.port)).toContain("Invalid response");
   });
 });

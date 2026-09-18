@@ -784,8 +784,7 @@ impl CopyFile {
                 return;
             }
 
-            // The destination is opened without O_TRUNC: when it is the
-            // source's own inode, O_TRUNC would empty the file before the read.
+            // No O_TRUNC at open: it would empty a destination that is also the source.
             if matches!(
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Path(_)
@@ -800,8 +799,7 @@ impl CopyFile {
                 };
                 if bun_sys::S::ISREG(dest_stat.st_mode as _) {
                     if dest_stat.st_dev == stat.st_dev && dest_stat.st_ino == stat.st_ino {
-                        // `max_length` can be a size that was cached before the
-                        // file grew, so a copy onto itself never cuts the file.
+                        // `max_length` may be a stale cached size: never cut the file here.
                         self.read_len = SizeType::try_from(dest_stat.st_size).expect("int cast");
                         self.do_close();
                         return;

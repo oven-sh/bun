@@ -748,7 +748,7 @@ describe("bunshell", () => {
         const env: Record<string, string | undefined> = { ...bunEnv };
         delete env.HOME;
         await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", `console.log((await Bun.$\`echo ~ a ~/x ~""\`.text()).trim())`],
+          cmd: [bunExe(), "-e", `console.log((await Bun.$\`echo ~ a ~/x ~"" ~$UNSET_VARIABLE\`.text()).trim())`],
           env,
           uid,
           gid: uid,
@@ -756,7 +756,7 @@ describe("bunshell", () => {
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
-        expect(stdout).toBe("~ a ~/x ~\n");
+        expect(stdout).toBe("~ a ~/x ~ ~\n");
         expect(exitCode).toBe(0);
       },
     );

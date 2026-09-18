@@ -1628,6 +1628,12 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
+// Lazily cached: this module can be loaded before the TestRunner exists.
+const readTestOnly = $newRustFunction("jest.rs", "jsNodeTestOnly", 0);
+let testOnlyFlag: boolean | undefined;
+function testOnlyEnabled(): boolean {
+  return (testOnlyFlag ??= readTestOnly());
+}
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -2559,7 +2565,7 @@ function addTest(
   arg1: unknown,
   arg2: unknown,
   executionParent: TestNode | undefined,
-  mode?: "skip" | "todo",
+  mode?: "skip" | "todo" | "only",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
   const { ownTags } = validateTestOptions(options);
@@ -2599,18 +2605,22 @@ function addTest(
   // Node merges .todo()/.skip() into the options and checks skip first, so
   // test.todo(name, { skip: true }, fn) is a skip.
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
+  // Under --test-only, `only` is independent of skip/todo: an only-marked
+  // skip/todo stays in the filter, so bun:test's chained .only carries both.
+  const isOnly = (mode === "only" || options.only) && testOnlyEnabled();
 
   if (effectiveMode === "todo" || effectiveMode === "skip") {
     // Under a run() child, register skip as an ordinary test so its directive
     // event fires in execution order (not at collection time).
     if (runChildReporterEnabled && effectiveMode === "skip") {
+      const register = isOnly ? test.only : test;
       const runner = function (done: (err?: unknown) => void) {
         reportDirectiveOnlyNode(node, "skip");
         markCurrentResult(false, done);
         done(undefined);
       };
-      if (passOptions !== undefined) test(name, runner, passOptions);
-      else test(name, runner);
+      if (passOptions !== undefined) register(name, runner, passOptions);
+      else register(name, runner);
       return Promise.resolve(undefined);
     }
     // Node runs a todo body, so `t.skip()` inside one still changes the
@@ -2621,12 +2631,14 @@ function addTest(
       // The test.todo() spelling carries the directive in `mode`, not in the
       // options, so the node has to be marked for the runner to report it.
       node.todoFlag = true;
+      const register = isOnly ? test.only : test;
       const runner = createTopLevelTestRunner(node, fn);
-      if (passOptions !== undefined) test(name, runner, passOptions);
-      else test(name, runner);
+      if (passOptions !== undefined) register(name, runner, passOptions);
+      else register(name, runner);
       return Promise.resolve(undefined);
     }
-    const register = effectiveMode === "todo" ? test.todo : test.skip;
+    const base = effectiveMode === "todo" ? test.todo : test.skip;
+    const register = isOnly ? base.only : base;
     // Node runs todo bodies; bun:test only does so under --todo.
     const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;
     if (passOptions !== undefined) {
@@ -2637,14 +2649,12 @@ function addTest(
     return Promise.resolve(undefined);
   }
 
-  // Node's `only` (the option and the test.only()/describe.only() spellings)
-  // is a no-op unless --test-only is passed, so it registers an ordinary
-  // test/suite; bun:test's only() would skip siblings and is rejected in CI.
+  const register = isOnly ? test.only : test;
   const runner = createTopLevelTestRunner(node, fn);
   if (passOptions !== undefined) {
-    test(name, runner, passOptions);
+    register(name, runner, passOptions);
   } else {
-    test(name, runner);
+    register(name, runner);
   }
 
   // Resolved eagerly rather than when the runner settles: bun:test never invokes
@@ -2659,7 +2669,7 @@ function addSuite(
   arg1: unknown,
   arg2: unknown,
   executionParent?: TestNode,
-  mode?: "skip" | "todo",
+  mode?: "skip" | "todo" | "only",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
   const { ownTags } = validateTestOptions(options);
@@ -2717,6 +2727,7 @@ function addSuite(
   // Node merges .todo()/.skip() into the options and checks skip first, so
   // describe.todo(name, { skip: true }, fn) is a skip.
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
+  const isOnly = (mode === "only" || options.only) && testOnlyEnabled();
 
   // Node never invokes a skipped suite's callback (it does run a todo one), so
   // the children are never declared and side effects in the body never happen.
@@ -2735,6 +2746,7 @@ function addSuite(
     suiteNode.todoFlag = true;
     register = runChildReporterEnabled ? describe : describe.todo;
   }
+  if (isOnly) register = register.only;
   if (effectiveMode !== undefined) reportDirectiveOnlyNode(suiteNode, effectiveMode);
 
   if (passOptions !== undefined) {
@@ -2762,7 +2774,7 @@ test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addTest(arg0, arg1, arg2, undefined);
+  return addTest(arg0, arg1, arg2, undefined, "only");
 };
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -2778,7 +2790,7 @@ describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addSuite(arg0, arg1, arg2, undefined);
+  return addSuite(arg0, arg1, arg2, undefined, "only");
 };
 
 function hookOwner(): TestNode {

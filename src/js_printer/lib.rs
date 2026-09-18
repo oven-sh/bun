@@ -3623,10 +3623,19 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b"(");
-                    self.print_string_literal_utf8(
-                        self.import_record(e.import_record_index as usize).path.text,
-                        true,
-                    );
+                    let record = self.import_record(e.import_record_index as usize);
+                    // The bundler overwrites `path` of a bundled record with the resolved
+                    // absolute path, but only for the record that discovers the file first.
+                    // `hmr.requireResolve` returns its argument, so it needs the resolved path.
+                    let specifier = if record.source_index.is_valid()
+                        && !record.original_path.is_empty()
+                        && self.options.module_type != bundle_opts::Format::InternalBakeDev
+                    {
+                        record.original_path
+                    } else {
+                        record.path.text
+                    };
+                    self.print_string_literal_utf8(specifier, true);
                     self.print(b")");
 
                     if wrap {

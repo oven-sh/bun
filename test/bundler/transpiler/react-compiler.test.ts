@@ -460,7 +460,11 @@ describe("bundler", () => {
       expect(out).toMatch(/\b_c\(\d+\)/);
       expect(out).toContain("BUNDLED_OTHER_SENTINEL");
       expect(out).not.toMatch(/require\(["']\.\/other["']\)/);
-      expect(out).not.toMatch(/require\.resolve\(["']\.\/other["']\)/);
+      // A preserved ERequireResolveString prints through the hoisted `__require`
+      // with the specifier as written. A call lowered to a plain global would
+      // print a bare `require.resolve(`.
+      expect(out).toMatch(/__require\.resolve\(["']\.\/other["']\)/);
+      expect(out).not.toMatch(/(?<![.\w])require\.resolve\(/);
     },
   });
 

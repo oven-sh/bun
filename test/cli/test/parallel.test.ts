@@ -1400,7 +1400,13 @@ test.skipIf(isWindows)(
     // answer kill(pid, 0). It records its own termination instead. A shell
     // keeps its startup out of the timing; the trap is armed before the pid
     // is logged.
-    const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; echo grandchild=$$ >> "$PIDS"; while :; do sleep 60; done`;
+    //
+    // The shell must not block on a foreground child: the trap would wait for
+    // the child to exit. A `sleep` forked just before the group SIGTERM lands
+    // still has the shell's handler installed and swallows the signal, then
+    // runs for its full duration. `wait` returns as soon as a trapped signal
+    // arrives, and SIGKILL is the one signal that child cannot swallow.
+    const grandchild = `trap 'kill -9 $! 2>/dev/null; echo terminated=$$ >> "$PIDS"; exit 0' TERM; echo grandchild=$$ >> "$PIDS"; sleep 60 & wait`;
     const crasher = (how: string) => `
     import { test } from "bun:test";
     test("spawn then die", async () => {

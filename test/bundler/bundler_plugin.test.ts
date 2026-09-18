@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync } from "node:fs";
+import { chmodSync, symlinkSync } from "node:fs";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -2119,40 +2119,40 @@ describe("bundler", () => {
 
   // The resolver parses a tsconfig.json once per process. When the bundler asks it about a path that onResolve
   // named and that read is the first one, the parse error is reported then: a later read would not repeat it.
-  test.concurrent("plugin/onResolve path reports a tsconfig.json that does not parse", async () => {
-    using dir = tempDir("plugin-resolved-file-logs", {
-      "entry.js": `import "alias/leaf";`,
-      "same-bytes/tsconfig.json": `{ "compilerOptions": `,
-      "same-bytes/leaf.js": `console.log("leaf ran");`,
-      "doubled-separator/tsconfig.json": `{ "compilerOptions": `,
-      "doubled-separator/leaf.js": `console.log("leaf ran");`,
-    });
-    const root = String(dir);
+  // A path through a symlinked directory is not the path the resolver prints, so the module does not take the
+  // resolver's result, but the resolver still read the directory.
+  for (const spelling of ["the resolver's path", "a path through a symlinked directory"] as const) {
+    test.skipIf(isWindows && spelling !== "the resolver's path")(
+      `plugin/onResolve with ${spelling} reports a tsconfig.json that does not parse`,
+      async () => {
+        using dir = tempDir("plugin-resolved-file-logs", {
+          "entry.js": `import "alias/leaf";`,
+          "broken/tsconfig.json": `{ "compilerOptions": `,
+          "broken/leaf.js": `console.log("leaf ran");`,
+        });
+        const root = String(dir);
+        if (spelling !== "the resolver's path") symlinkSync(join(root, "broken"), join(root, "link"), "dir");
+        const leaf = join(root, spelling === "the resolver's path" ? "broken" : "link", "leaf.js");
 
-    async function build(leaf: string) {
-      const result = await Bun.build({
-        entrypoints: [join(root, "entry.js")],
-        throw: false,
-        plugins: [
-          {
-            name: "alias",
-            setup(build) {
-              build.onResolve({ filter: /^alias\/leaf$/ }, () => ({ path: leaf }));
+        const result = await Bun.build({
+          entrypoints: [join(root, "entry.js")],
+          throw: false,
+          plugins: [
+            {
+              name: "alias",
+              setup(build) {
+                build.onResolve({ filter: /^alias\/leaf$/ }, () => ({ path: leaf }));
+              },
             },
-          },
-        ],
-      });
-      return { success: result.success, logs: result.logs.map(log => log.message) };
-    }
-
-    expect({
-      sameBytes: await build(join(root, "same-bytes", "leaf.js")),
-      doubledSeparator: await build(join(root, "doubled-separator") + path.sep + path.sep + "leaf.js"),
-    }).toEqual({
-      sameBytes: { success: false, logs: ["Unexpected end of file"] },
-      doubledSeparator: { success: false, logs: ["Unexpected end of file"] },
-    });
-  });
+          ],
+        });
+        expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+          success: false,
+          logs: ["Unexpected end of file"],
+        });
+      },
+    );
+  }
 
   // A directory that the user may traverse but not list: the file in it can be read, and that is all a module
   // needs. The resolver cannot list the directory and logs an error. Without the plugin path nothing asks the

@@ -3285,8 +3285,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   return this;
 };
 
-// The write() callbacks that backpressure parked run first, then 'finish' and the end() callback.
-// Next tick: the dispatcher sets kDispatcherDetached after a sync handler returns, and 'finish' reads it.
+// 'finish' waits a tick: the dispatcher sets kDispatcherDetached after a sync handler returns, and 'finish' reads it.
 function queueResponseFinished(res, callback) {
   res._callPendingCallbacks();
   process.nextTick(emitResponseFinished, res, callback);

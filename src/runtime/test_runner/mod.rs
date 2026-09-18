@@ -226,6 +226,7 @@ pub mod expect {
                 add_newline: false,
                 flush: false,
                 quote_strings: true,
+                can_throw_stack_overflow: true,
             };
             JestPrettyFormat::format(
                 MessageLevel::Debug,

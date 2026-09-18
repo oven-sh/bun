@@ -1,6 +1,6 @@
 import { color } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, withoutAggressiveGC } from "harness";
 
 const namedColors = ["red", "green", "blue", "yellow", "purple", "orange", "pink", "brown", "gray"];
 
@@ -572,6 +572,45 @@ describe("input forms", () => {
     expect(color("#gg0000", "hex")).toBeNull();
   });
 
+  // A CSS escape or a NUL byte makes the tokenizer copy the token into the
+  // arena, which is reused between calls.
+  const escaped: [string, string | null, string | null, number | null][] = [
+    ["\\72 ed", "red", "#ff0000", 0xff0000],
+    ["\\72\\65\\64", "red", "#ff0000", 0xff0000],
+    ["r\\65 d", "red", "#ff0000", 0xff0000],
+    ["#ff\\38 800", "#f80", "#ff8800", 0xff8800],
+    ["re\0d", null, null, null],
+    ["\0", null, null, null],
+    ["\\", null, null, null],
+    ["r\\", null, null, null],
+  ];
+
+  test.each(escaped)("escaped input %j", (input, css, hex, number) => {
+    expect({ css: color(input, "css"), hex: color(input, "hex"), number: color(input, "number") }).toEqual({
+      css,
+      hex,
+      number,
+    });
+  });
+
+  test("escaped and plain inputs give the same answers when interleaved", () => {
+    const plain: [string, string | null][] = [
+      ["red", "red"],
+      ["#ff8800", "#f80"],
+      ["hsl(120, 100%, 50%)", "#0f0"],
+      ["rgb(255, 0, 0)", "red"],
+      ["notacolor", null],
+    ];
+    const inputs = [...plain, ...escaped.map(([input, css]): [string, string | null] => [input, css])];
+    const wrong: string[] = [];
+    for (let i = 0; i < 2000; i++) {
+      const [input, expected] = inputs[(i * 7) % inputs.length];
+      const actual = color(input, "css");
+      if (actual !== expected) wrong.push(`${i}: color(${JSON.stringify(input)}) = ${JSON.stringify(actual)}`);
+    }
+    expect(wrong).toEqual([]);
+  });
+
   test("alpha survives the object and array forms", () => {
     expect(color("#f00", "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
     expect(color("#f00", "[rgba]")).toEqual([255, 0, 0, 255]);
@@ -762,5 +801,78 @@ describe("conversions between color spaces", () => {
       [0, 1, 2].map(i => red[i] + g * green[i] + b * blue[i]),
       4,
     );
+  });
+});
+
+// The CSS parser and printer take an arena. Bun.color reuses one mimalloc heap
+// per VM for it; creating and destroying a heap costs more than the conversion.
+describe.concurrent("mimalloc heaps", () => {
+  test("a string to css conversion does not create a heap per call", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { heapStats } from "bun:jsc";
+          const seqs = () => heapStats({ dump: true }).mimallocDump.heaps.map(h => h.seq);
+          // Heaps are numbered in creation order, and a live Bun.Transpiler owns one,
+          // so a new Transpiler shows how many heaps the process has created so far.
+          const keep = [];
+          const newestHeap = () => {
+            const before = new Set(seqs());
+            const transpiler = new Bun.Transpiler();
+            transpiler.transformSync("1");
+            keep.push(transpiler);
+            return Math.max(...seqs().filter(seq => !before.has(seq)));
+          };
+          Bun.color("red", "css");
+          const a = newestHeap();
+          // Nothing runs between these two, so the difference is what the probe itself creates.
+          const b = newestHeap();
+          for (let i = 0; i < 1000; i++) Bun.color("#ff8800", "css");
+          const c = newestHeap();
+          console.log(JSON.stringify({ observed: b > a, heapsPerThousandCalls: c - b - (b - a) }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ observed: true, heapsPerThousandCalls: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a Worker that called Bun.color leaves no heap behind when it exits", async () => {
+    using dir = tempDir("color-worker-heap", {
+      "color-worker-heap-fixture.js": `
+        import { heapStats } from "bun:jsc";
+        import { Worker, isMainThread } from "node:worker_threads";
+        if (!isMainThread) {
+          for (const input of ["red", "#ff8800", "hsl(120, 50%, 50%)", "\\\\72 ed"]) Bun.color(input, "css");
+        } else {
+          const liveHeaps = () => heapStats({ dump: true }).mimallocDump.heaps.length;
+          const runWorker = () =>
+            new Promise((resolve, reject) => {
+              const worker = new Worker(import.meta.filename);
+              worker.on("error", reject);
+              worker.on("exit", code => (code === 0 ? resolve() : reject(new Error("worker exited with " + code))));
+            });
+          const before = liveHeaps();
+          await runWorker();
+          console.log(JSON.stringify({ leaked: liveHeaps() - before }));
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "color-worker-heap-fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ leaked: 0 });
+    expect(exitCode).toBe(0);
   });
 });

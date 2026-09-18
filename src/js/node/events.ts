@@ -635,7 +635,7 @@ function on(emitter, event, options = kEmptyObject) {
           const value = unconsumedEvents.shift();
           size--;
           if (paused && size < lowWatermark) {
-            emitter.resume();
+            emitter.resume(); // Can not be finished yet
             paused = false;
           }
           return Promise.$resolve(createIterResult(value, false));
@@ -742,6 +742,7 @@ function on(emitter, event, options = kEmptyObject) {
     abortListenerDisposable?.[Symbol.dispose]();
     removeAll();
     finished = true;
+    paused = false;
     const doneResult = createIterResult(undefined, true);
     while (!unconsumedPromises.isEmpty()) {
       unconsumedPromises.shift().resolve(doneResult);

@@ -1,4 +1,5 @@
 #include "InspectorLifecycleAgent.h"
+#include "BunModuleRegistry.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
@@ -144,10 +145,9 @@ Protocol::ErrorStringOr<ModuleGraph> InspectorLifecycleAgent::getModuleGraph()
     Ref<JSON::ArrayOf<String>> esm = JSON::ArrayOf<String>::create();
     {
         Vector<String> keys;
-        for (auto& [key, entry] : global->moduleLoader()->moduleMap()) {
-            if (key.first)
-                keys.append(String { key.first });
-        }
+        Bun::forEachModuleRegistrySpecifier(global->moduleLoader(), [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry*) {
+            keys.append(String { specifier });
+        });
         // ModuleMap is hash-ordered; sort so the inspector output is stable.
         std::sort(keys.begin(), keys.end(), WTF::codePointCompareLessThan);
         for (auto& k : keys)

@@ -5,6 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
+const { domainToASCII } = require("internal/url");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
@@ -396,6 +397,9 @@ function check(hostParts, pattern, wildcards) {
 
   const { 0: prefix, 1: suffix } = patternSubdomainParts;
 
+  // Node lets "*" match the empty label of ".example.com", the IDNA form of "。example.com".
+  if (hostSubdomain === "") return false;
+
   if (prefix.length + suffix.length > hostSubdomain.length) return false;
 
   if (!StringPrototypeStartsWith.$call(hostSubdomain, prefix)) return false;
@@ -450,6 +454,12 @@ function checkServerIdentity(hostname, cert) {
   const ips = [];
 
   hostname = "" + hostname;
+  // CVE-2026-48618, https://github.com/nodejs/node/commit/1efb4ff51a: IDNA maps "。" to ".".
+  const hostnameASCII = domainToASCII(hostname);
+
+  // Remove trailing dots for error messages and matching.
+  hostname = unfqdn(hostname);
+  const hostnameASCIIWithoutFQDN = unfqdn(hostnameASCII);
 
   if (altNames) {
     const splitAltNames = StringPrototypeIncludes.$call(altNames, '"')
@@ -467,14 +477,14 @@ function checkServerIdentity(hostname, cert) {
   let valid = false;
   let reason = "Unknown reason";
 
-  hostname = unfqdn(hostname); // Remove trailing dot for error messages.
+  // https://github.com/nodejs/node/commit/1d87a24050: domainToASCII("::1") is "", so IP hosts stay as typed.
   if (net.isIP(hostname)) {
     valid = ArrayPrototypeIncludes.$call(ips, canonicalizeIP(hostname));
     if (!valid) reason = `IP: ${hostname} is not in the cert's list: ` + ArrayPrototypeJoin.$call(ips, ", ");
   } else {
     const hasDnsNames = dnsNames.length > 0;
     if (hasDnsNames || subject?.CN) {
-      const hostParts = splitHost(hostname);
+      const hostParts = splitHost(hostnameASCIIWithoutFQDN);
       const wildcard = pattern => check(hostParts, pattern, true);
 
       if (hasDnsNames) {

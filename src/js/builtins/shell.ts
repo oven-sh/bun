@@ -131,7 +131,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
             res(out);
           }
         };
-        // Only for a failure to build the output buffers; exit codes go through `resolve`.
+        // Only for a JS error raised by the interpreter itself; exit codes go through `resolve`.
         reject = error => {
           potentialError = undefined;
           rej(error);
@@ -341,7 +341,8 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       return new ShellPromise(parsed_shell_script, throws);
     };
 
-    Object.setPrototypeOf(Shell, ShellPrototype.prototype);
+    const prototype = new.target.prototype;
+    Object.setPrototypeOf(Shell, $isObject(prototype) ? prototype : ShellPrototype.prototype);
     Object.defineProperty(Shell, "name", { value: "Shell", configurable: true, enumerable: true });
 
     Shell[cwdSymbol] = defaultCwd;

@@ -110,12 +110,13 @@ public:
     }
 
     // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES call(JSC::JSGlobalObject*, JSC::CallFrame*);
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
     DECLARE_EXPORT_INFO;
 
 private:
-    JSStringDecoderConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
-        : Base(vm, structure, nativeFunction, nativeFunction)
+    JSStringDecoderConstructor(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure, call, construct)
     {
     }
 

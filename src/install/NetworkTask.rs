@@ -414,8 +414,8 @@ fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) 
 fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
     let authority_start = strings::index_of(url, b"://")? + b"://".len();
     let rest = &url[authority_start..];
-    let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
-    let at = strings::last_index_of_char(authority, b'@')?;
+    // npm reads a tarball URL with `new URL()`, so the authority ends where that ends.
+    let at = URL::parse(url).userinfo_end(rest, bun_url::AuthorityEnd::LikeNewURL)?;
 
     let mut without_userinfo = Vec::with_capacity(url.len() - (at + 1));
     without_userinfo.extend_from_slice(&url[..authority_start]);

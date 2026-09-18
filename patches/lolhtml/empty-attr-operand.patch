@@ -1,0 +1,52 @@
+--- a/src/selectors_vm/attribute_matcher.rs
++++ b/src/selectors_vm/attribute_matcher.rs
+@@ -123,6 +123,10 @@
+ 
+     #[inline]
+     pub fn matches_splitted_by_whitespace(&self, operand: &AttrExprOperands) -> bool {
++        if operand.value.is_empty() {
++            return false;
++        }
++
+         self.value_matches(&operand.name, |actual_value| {
+             let case_sensitivity = to_unconditional(operand.case_sensitivity, self.is_html_element);
+ 
+@@ -134,13 +138,16 @@
+ 
+     #[inline]
+     pub fn has_attr_with_prefix(&self, operand: &AttrExprOperands) -> bool {
++        if operand.value.is_empty() {
++            return false;
++        }
++
+         self.value_matches(&operand.name, |actual_value| {
+             let case_sensitivity = to_unconditional(operand.case_sensitivity, self.is_html_element);
+ 
+             let prefix_len = operand.value.len();
+ 
+-            !actual_value.is_empty()
+-                && actual_value.len() >= prefix_len
++            actual_value.len() >= prefix_len
+                 && actual_value
+                     .get(..prefix_len)
+                     .is_some_and(|prefix| case_sensitivity.eq(prefix, &operand.value))
+@@ -167,14 +174,17 @@
+ 
+     #[inline]
+     pub fn has_attr_with_suffix(&self, operand: &AttrExprOperands) -> bool {
++        if operand.value.is_empty() {
++            return false;
++        }
++
+         self.value_matches(&operand.name, |actual_value| {
+             let case_sensitivity = to_unconditional(operand.case_sensitivity, self.is_html_element);
+ 
+             let suffix_len = operand.value.len();
+             let value_len = actual_value.len();
+ 
+-            !actual_value.is_empty()
+-                && value_len >= suffix_len
++            value_len >= suffix_len
+                 && actual_value
+                     .get(value_len - suffix_len..)
+                     .is_some_and(|prefix| case_sensitivity.eq(prefix, &operand.value))

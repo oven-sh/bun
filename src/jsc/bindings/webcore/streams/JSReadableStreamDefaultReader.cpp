@@ -9,6 +9,7 @@
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMPromiseDeferred.h"
 #include "JSDOMWrapperCache.h"
 #include "JSDirectStreamController.h"
 #include "JSReadRequest.h"
@@ -693,7 +694,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderPrototypeGetter_closed, (J
 {
     const auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(JSValue::decode(thisValue));
     if (!reader) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'closed' getter can only be used on a ReadableStreamDefaultReader"_s)));
+        return createRejectedPromiseWithTypeError(*lexicalGlobalObject, "The 'closed' getter can only be used on a ReadableStreamDefaultReader"_s, RejectedPromiseWithTypeErrorCause::NativeGetter);
     return JSValue::encode(reader->m_closedPromise.get());
 }
 

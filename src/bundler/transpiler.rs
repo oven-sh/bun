@@ -2059,9 +2059,7 @@ fn parse_data_loader<'a>(
                 decls.truncate(count);
                 symbols.truncate(count);
 
-                // A `var` with no declaration cannot be printed. A file where
-                // no key gets a named export (`{"default": 1}`) is only the
-                // `export default` below.
+                // `print_decls` aborts on a `var` with no declarations (`{"default": 1}`).
                 if count > 0 {
                     let stmt0 = bun_ast::Stmt::alloc(
                         bun_ast::S::Local {

@@ -57,7 +57,9 @@ fn message_at(text: String, source: &str, location: Option<naga::SourceLocation>
     };
     let start = (loc.offset as usize).min(source.len());
     let end = (start + loc.length as usize).min(source.len());
-    let line_start = start.saturating_sub(loc.line_position.saturating_sub(1) as usize);
+    // From the source, not from `loc.line_position`: this does not depend on the unit naga counts columns in.
+    let line_start = bun_core::strings::last_index_of_char(&source.as_bytes()[..start], b'\n')
+        .map_or(0, |at| at + 1);
     let (Some(before), Some(on_line), Some(span)) = (
         source.get(..start),
         source.get(line_start..start),

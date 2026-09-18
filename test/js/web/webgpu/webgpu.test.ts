@@ -533,6 +533,15 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(message.linePos).toBeGreaterThan(1);
     expect(message.message).toBeString();
 
+    // Positions are in UTF-16 units, whatever the source has before the error.
+    const code = "/* 😀 größe */ const π = 1;\nconst ü = 2; /* 😀 */ const wrong: u32 = 1.0;";
+    device.pushErrorScope("validation");
+    const typed = device.createShaderModule({ code });
+    expect(await device.popErrorScope()).toBeInstanceOf(GPUValidationError);
+    const [{ lineNum, linePos, offset, length }] = (await typed.getCompilationInfo()).messages;
+    expect(code.slice(offset, offset + length)).toBe("wrong");
+    expect({ lineNum, linePos }).toEqual({ lineNum: 2, linePos: code.split("\n")[1].indexOf("wrong") + 1 });
+
     const module = device.createShaderModule({ code: doubleShader });
     const pipeline = await device.createComputePipelineAsync({ layout: "auto", compute: { module } });
     expect(pipeline).toBeInstanceOf(GPUComputePipeline);

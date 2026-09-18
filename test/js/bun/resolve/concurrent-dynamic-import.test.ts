@@ -32,8 +32,11 @@ test("concurrent dynamic imports of the same module both resolve", async () => {
 });
 
 // Work pool threads transpile the static imports of a module. A worker keeps its parse arena (one mimalloc heap)
-// while it has more modules to transpile, and frees it when it runs out of tasks.
-test("a burst of imports creates no allocator heap per module, and no heap outlives the burst", async () => {
+// while it has more modules to transpile, and frees it when it runs out of tasks. --smol gives every module a fresh heap.
+test.concurrent.each([
+  { smol: false, name: "a burst of imports creates no allocator heap per module, and no heap outlives the burst" },
+  { smol: true, name: "--smol: a burst of imports creates a heap per module, and no heap outlives the burst" },
+])("$name", async ({ smol }) => {
   const count = 100;
   const files: Record<string, string> = {
     "entry.ts": Array.from({ length: count }, (_, i) => `import "./m${i}.ts";`).join("\n"),
@@ -56,7 +59,7 @@ test("a burst of imports creates no allocator heap per module, and no heap outli
   using dir = tempDir("import-burst-heaps", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.mjs"],
+    cmd: [bunExe(), ...(smol ? ["--smol"] : []), "main.mjs"],
     cwd: String(dir),
     // With two workers the queue stays full for the whole burst, so a worker runs out of tasks only at the end.
     env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
@@ -65,8 +68,9 @@ test("a burst of imports creates no allocator heap per module, and no heap outli
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const { created, alive } = JSON.parse(stdout);
-  // One heap per module would be count + 1.
-  expect(created).toBeLessThan(count / 2);
+  // One heap per module is count + 1.
+  if (smol) expect(created).toBeGreaterThan(count);
+  else expect(created).toBeLessThan(count / 2);
   expect(alive).toBe(0);
   expect(exitCode).toBe(0);
 });

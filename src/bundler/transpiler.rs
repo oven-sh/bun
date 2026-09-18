@@ -1470,10 +1470,10 @@ impl<'a> Transpiler<'a> {
             }
 
             // Thread
-            // `this_parse.arena` (the per-call `MimallocArena` from
+            // `this_parse.arena` (the worker's `MimallocArena` from
             // `RuntimeTranspilerStore`) so the source bytes land in the
-            // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
-            // return — not the worker thread's default mimalloc heap.
+            // heap that `TranspilerJob::run` recycles — not the worker
+            // thread's default mimalloc heap.
             let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
                 self.fs_mut(),
                 path.text,

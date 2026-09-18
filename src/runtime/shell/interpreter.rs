@@ -2160,7 +2160,7 @@ impl ShellExecEnv {
 
     /// Looks up `$HOME` (`$USERPROFILE` on Windows) in `shell_env` first, then
     /// `export_env`.
-    pub(crate) fn get_home_env(&self) -> Option<crate::shell::env_str::EnvStr> {
+    fn home_env(&self) -> Option<crate::shell::env_str::EnvStr> {
         use crate::shell::env_str::EnvStr;
         let key = if cfg!(windows) {
             EnvStr::init_slice(b"USERPROFILE")
@@ -2170,23 +2170,38 @@ impl ShellExecEnv {
         self.shell_env.get(key).or_else(|| self.export_env.get(key))
     }
 
-    /// The home directory for `~` expansion: [`Self::get_home_env`], then the
-    /// passwd entry (what `os.homedir()` does). Falls back to `""` (or
-    /// `/data/local/tmp` on Android) so expansion never sees a null.
+    /// Where `cd` with no args goes: [`Self::home_env`], else `""` (or
+    /// `/data/local/tmp` on Android).
     pub(crate) fn get_homedir(&self) -> crate::shell::env_str::EnvStr {
         use crate::shell::env_str::EnvStr;
-        if let Some(home) = self.get_home_env() {
-            return home;
+        self.home_env().unwrap_or_else(|| {
+            EnvStr::init_slice(if bun_core::env::IS_ANDROID {
+                b"/data/local/tmp"
+            } else {
+                b""
+            })
+        })
+    }
+
+    /// The value of `~`: [`Self::home_env`], else the passwd entry (what bash
+    /// and `os.homedir()` use). `None` means no home is known and the `~`
+    /// stays. Android keeps `/data/local/tmp`: bionic synthesizes a passwd
+    /// entry with `/` or `/data` for every uid.
+    pub(crate) fn get_tilde_home(&self) -> Option<crate::shell::env_str::EnvStr> {
+        use crate::shell::env_str::EnvStr;
+        if let Some(home) = self.home_env() {
+            return Some(home);
+        }
+        if bun_core::env::IS_ANDROID {
+            return Some(EnvStr::init_slice(b"/data/local/tmp"));
         }
         #[cfg(unix)]
-        if let Ok(Some(dir)) = bun_sys::os::passwd_home_dir() {
-            return EnvStr::init_ref_counted(dir.into_boxed_slice());
+        if let Ok(Some(dir)) = bun_sys::os::passwd_home_dir()
+            && !dir.is_empty()
+        {
+            return Some(EnvStr::init_ref_counted(dir.into_boxed_slice()));
         }
-        EnvStr::init_slice(if bun_core::env::IS_ANDROID {
-            b"/data/local/tmp"
-        } else {
-            b""
-        })
+        None
     }
 }
 

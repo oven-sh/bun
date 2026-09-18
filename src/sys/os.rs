@@ -1,6 +1,6 @@
 //! `node:os` platform queries.
 
-#[allow(unused_imports)]
+#[cfg(unix)]
 use core::ffi::{c_char, c_int};
 
 /// The effective user's home directory from the passwd database

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "child_process";
 import { chmodSync, mkdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
 describe.concurrent("run-shell", () => {
@@ -80,3 +81,86 @@ test.skipIf(isWindows)(
     expect(exitCode).toBe(0);
   },
 );
+
+// A FROM-scratch or distroless image has no /bin/sh. `--shell=bun` must not need one. hide-paths.c
+// makes every path that the shell lookup probes look absent, and PATH points at an empty directory.
+describe.skipIf(!isLinux)("bun run on a system with no shell", () => {
+  const shellPaths = [
+    "/bin/bash",
+    "/usr/bin/bash",
+    "/usr/local/bin/bash",
+    "/bin/sh",
+    "/usr/bin/sh",
+    "/usr/bin/zsh",
+    "/usr/local/bin/zsh",
+    "/system/bin/sh",
+  ];
+
+  // The helper binary, or null when this host cannot build it (no cc, no kernel headers).
+  const helper = (() => {
+    if (!isLinux) return null;
+    const bin = join(tmpdirSync(), "hide-paths");
+    const compile = spawnSync("cc", ["-O0", "-o", bin, join(import.meta.dir, "hide-paths.c")], { stdio: "pipe" });
+    if ((compile.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return null;
+    if (compile.status !== 0) {
+      const stderr = compile.stderr?.toString() ?? "";
+      if (/linux\/(seccomp|filter|audit)\.h|sys\/prctl\.h/.test(stderr)) return null;
+      throw new Error("failed to compile hide-paths.c:\n" + stderr);
+    }
+    return bin;
+  })();
+
+  // Runs `bun run ...args` with no shell visible. Returns null when the test must skip.
+  async function runWithoutShells(files: Record<string, string>, args: string[]) {
+    if (helper == null) {
+      // bun:test has no runtime skip. Say so, to tell this apart from a pass.
+      console.warn("SKIP bun run with no shell: cc or the kernel headers are not available");
+      return null;
+    }
+    using dir = tempDir("run-no-shell", {
+      "package.json": JSON.stringify({
+        name: "no-shell-fixture",
+        version: "1.0.0",
+        scripts: { prestart: "echo pre", start: "echo started", poststart: "echo post" },
+      }),
+      "empty-path/.keep": "",
+      ...files,
+    });
+    await using proc = Bun.spawn({
+      cmd: [helper, ...shellPaths, "--", bunExe(), "run", ...args],
+      env: { ...bunEnv, PATH: join(String(dir), "empty-path") },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode === 77) {
+      console.warn("SKIP bun run with no shell: seccomp user notification is not permitted here");
+      return null;
+    }
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("--shell=bun runs the pre, main and post scripts", async () => {
+    const result = await runWithoutShells({}, ["--shell=bun", "start"]);
+    if (result == null) return;
+    expect(result.stdout).toBe("pre\nstarted\npost\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.concurrent('bunfig [run] shell = "bun" runs the scripts', async () => {
+    const result = await runWithoutShells({ "bunfig.toml": '[run]\nshell = "bun"\n' }, ["start"]);
+    if (result == null) return;
+    expect(result.stdout).toBe("pre\nstarted\npost\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.concurrent("the system shell reports what is missing and how to continue", async () => {
+    const result = await runWithoutShells({}, ["start"]);
+    if (result == null) return;
+    expect(result.stderr).toContain("error: Bun could not find a system shell (bash, sh, or zsh) to run this script");
+    expect(result.stderr).toContain("--shell=bun");
+    expect(result.stdout).toBe("");
+    expect(result.exitCode).toBe(1);
+  });
+});

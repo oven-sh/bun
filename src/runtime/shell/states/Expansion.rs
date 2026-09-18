@@ -225,17 +225,18 @@ impl Expansion {
 
             // All sub-atoms expanded — post-process leading tilde then finish.
             if leading_tilde {
-                let home = me.base.shell().get_homedir();
+                let home = me.base.shell().get_tilde_home();
+                let home_bytes: &[u8] = home.as_ref().map_or(b"~", |home| home.slice());
                 let len_before = me.current_out.len();
                 match me.current_out.first() {
                     Some(b'/') | Some(b'\\') => {
-                        me.current_out.splice(0..0, home.slice().iter().copied());
+                        me.current_out.splice(0..0, home_bytes.iter().copied());
                     }
                     Some(_) => me.current_out.insert(0, b'~'),
                     // `~""` expands to $HOME,
                     // but `~$unset` expands to nothing (word is dropped).
                     None if me.has_quoted_empty => {
-                        me.current_out.extend_from_slice(home.slice());
+                        me.current_out.extend_from_slice(home_bytes);
                     }
                     None => {}
                 }
@@ -250,7 +251,9 @@ impl Expansion {
                         *off += prepended;
                     }
                 }
-                home.deref();
+                if let Some(home) = home {
+                    home.deref();
+                }
             }
             // Brace expansion
             // first, then glob, else flush as a single word.
@@ -518,12 +521,16 @@ impl Expansion {
                 out.push(b',');
             }
             ast::SimpleAtom::Tilde => {
-                if expand_tilde {
-                    let home = shell.get_homedir();
-                    out.extend_from_slice(home.slice());
-                    home.deref();
+                match if expand_tilde {
+                    shell.get_tilde_home()
                 } else {
-                    out.push(b'~');
+                    None
+                } {
+                    Some(home) => {
+                        out.extend_from_slice(home.slice());
+                        home.deref();
+                    }
+                    None => out.push(b'~'),
                 }
             }
             ast::SimpleAtom::CmdSubst(_) => return true,

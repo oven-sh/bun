@@ -84,6 +84,15 @@ fn block_comment_end(source: &[u8], from: usize) -> usize {
     source.len()
 }
 
+/// Whether the word at `at` is `else`, and not a part of a longer one such as `elsewhere`. Only ASCII counts as a part of a word here: a byte of another character can be a blank, and the count has to err on the high side.
+fn is_else(source: &[u8], at: usize) -> bool {
+    let in_word =
+        |byte: Option<&u8>| byte.is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_');
+    source[at..].starts_with(b"else")
+        && !in_word(at.checked_sub(1).and_then(|before| source.get(before)))
+        && !in_word(source.get(at + 4))
+}
+
 /// Whether the next token from `at` on is `else`. What separates two tokens is blankspace and comments.
 fn else_follows(source: &[u8], mut at: usize) -> bool {
     loop {
@@ -94,7 +103,7 @@ fn else_follows(source: &[u8], mut at: usize) -> bool {
             [0xE2, 0x80, 0x8E | 0x8F | 0xA8 | 0xA9, ..] => at + 3,
             [b'/', b'/', ..] => line_comment_end(source, at + 2),
             [b'/', b'*', ..] => block_comment_end(source, at + 2),
-            _ => return rest.starts_with(b"else"),
+            _ => return is_else(source, at),
         };
     }
 }
@@ -128,7 +137,7 @@ fn nesting(source: &[u8]) -> [usize; 3] {
                 deepest = deepest.max(levels);
                 levels = 0;
             }
-            (b'e', _) if source[at..].starts_with(b"lse") => {
+            (b'e', _) if is_else(source, at - 1) => {
                 if let Some(chain) = chains.last_mut() {
                     *chain += 1;
                 }

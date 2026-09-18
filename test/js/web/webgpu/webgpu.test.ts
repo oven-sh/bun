@@ -76,22 +76,24 @@ describe("surface", () => {
     expect([...gpu.wgslLanguageFeatures]).toEqual([]);
   });
 
-  test("navigator.gpu is the same object however its first read goes", async () => {
+  test("the first read of navigator.gpu runs no script", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-          // Script that runs while the first read is under way reads it too.
-          const freeze = Object.freeze;
-          let inner;
-          Object.freeze = object => {
-            inner ??= navigator.gpu;
-            return freeze(object);
-          };
-          const outer = navigator.gpu;
-          void GPUDevice;
-          console.log(inner === undefined || inner === outer, navigator.gpu === outer);
+          // Script that ran during the first read could read navigator.gpu again, and get another object.
+          let calls = 0;
+          for (const name of ["freeze", "defineProperty", "defineProperties", "create", "setPrototypeOf"]) {
+            const real = Object[name];
+            Object[name] = function (...args) {
+              calls++;
+              return real.apply(this, args);
+            };
+          }
+          const gpu = navigator.gpu;
+          const during = calls;
+          console.log(during, navigator.gpu === gpu);
         `,
       ],
       env: bunEnv,
@@ -99,7 +101,7 @@ describe("surface", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe("true true\n");
+    expect(stdout).toBe("0 true\n");
     expect(exitCode).toBe(0);
   });
 
@@ -1253,6 +1255,13 @@ describe.skipIf(!hasAdapter)("with a device", () => {
       device.createComputePipeline({ layout: "auto", compute: { module } });
       expect(await device.popErrorScope()).toBeNull();
     }
+    // A name that contains "else" is no link of a chain, however often a block uses it.
+    const names = `var elsewhere = 1; var or_else = 2; ${"elsewhere = or_else; ".repeat(1100)}`;
+    expect(
+      await validationError(device, () => {
+        device.createShaderModule({ code: `@compute @workgroup_size(1) fn main() { ${names} }` });
+      }),
+    ).toBeNull();
     // naga keeps the module, and dropping an `if` chain recurses once per `else`, on whatever
     // thread holds the last reference. So a chain has a limit (1024 links; Chrome's is 127).
     const chain = `var a = 1; if (a == 0) {} ${"else if (a == 1) {} ".repeat(1025)}`;

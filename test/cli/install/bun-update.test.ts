@@ -2931,16 +2931,20 @@ describe("bun update <name> semantics", () => {
       },
     );
 
-    // Both name a package and reach the installer with no update request.
+    // Both name a package and reach the installer with no update request. The run installs bin-change-dir again.
     it.concurrent.each([[["add", "--only-missing", "map-bin"]], [["patch", "map-bin"]]])(
       "bun %p -g links no other global package",
       async args => {
-        const { globalBinDir, runGlobal } = await globalRepo(BINS_PINNED, BINS_PINNED);
-        await Promise.all(binFiles("bin-change-dir").map(name => rm(join(globalBinDir, name))));
+        const { globalDir, globalBinDir, runGlobal } = await globalRepo(BINS_PINNED, BINS_PINNED);
+        await Promise.all([
+          rm(join(globalDir, "node_modules", "bin-change-dir"), { recursive: true, force: true }),
+          ...binFiles("bin-change-dir").map(name => rm(join(globalBinDir, name))),
+        ]);
 
         const { stderr, exitCode } = await runGlobal(...args);
         expect(stderr).not.toContain("error:");
         expect(exitCode).toBe(0);
+        expect(await installedVersion(globalDir, "bin-change-dir")).toBe("1.0.0");
         expect(await readdirSorted(globalBinDir)).toEqual([]);
       },
     );

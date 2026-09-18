@@ -1733,9 +1733,7 @@ impl BaseScope {
         }
     }
 
-    /// Puts the file in only-mode if a `.only` covers this scope: marks every ancestor of the
-    /// innermost `.only` scope at or above it. `describe.only` does not call this for itself, so
-    /// a `.only` that selects nothing that can run does not drop the rest of the file.
+    /// Focus comes from tests, not from `describe.only`: marks the ancestors of the innermost `.only` at or above this scope.
     pub(crate) fn mark_focus(&self) {
         if self.mode.is_disabled() {
             return;
@@ -1846,8 +1844,7 @@ impl DescribeScope {
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
         let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
-        // Decided before `-t` applies, as in Jest: the filter narrows a focused file and never
-        // changes which tests focus it.
+        // Decided before `-t` applies, as in Jest: the filter never changes which tests focus a file.
         if callback.is_some() {
             entry.base.mark_focus();
         }

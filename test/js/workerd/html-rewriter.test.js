@@ -1815,7 +1815,7 @@ describe("HTMLRewriter", () => {
     );
   });
 
-  it("nested :not() selectors", () => {
+  describe(":not()", () => {
     const matchedIds = selector => {
       const ids = [];
       new HTMLRewriter()
@@ -1829,32 +1829,66 @@ describe("HTMLRewriter", () => {
         );
       return ids;
     };
-    const selectors = [
-      ":not(div)",
-      ":not(:not(div))",
-      ":not(:not(:not(div)))",
-      "div:not(:not(span))",
-      "span:not(:not(.a))",
-      ":not(:not(span.a))",
-      ":not(:not(div), :not(.a))",
-    ];
-    expect(Object.fromEntries(selectors.map(selector => [selector, matchedIds(selector)]))).toEqual({
-      ":not(div)": ["main", "span", "plain"],
-      ":not(:not(div))": ["div"],
-      ":not(:not(:not(div)))": ["main", "span", "plain"],
-      "div:not(:not(span))": [],
-      "span:not(:not(.a))": ["span"],
-      ":not(:not(span.a))": ["span"],
-      ":not(:not(div), :not(.a))": ["div"],
-    });
-  });
+    const matchesOf = selectors => Object.fromEntries(selectors.map(selector => [selector, matchedIds(selector)]));
 
-  it("rejects a combinator inside :not()", () => {
-    for (const selector of [":not(div span)", ":not(div > span)", ":not(:not(div span))"]) {
-      expect(() => new HTMLRewriter().on(selector, {})).toThrow(
-        "Unsupported pseudo-class or pseudo-element in selector.",
-      );
-    }
+    it("nested", () => {
+      expect(
+        matchesOf([
+          ":not(div)",
+          ":not(:not(div))",
+          ":not(:not(:not(div)))",
+          "div:not(:not(span))",
+          "span:not(:not(.a))",
+          ":not(:not(span.a))",
+          ":not(:not(div), :not(.a))",
+        ]),
+      ).toEqual({
+        ":not(div)": ["main", "span", "plain"],
+        ":not(:not(div))": ["div"],
+        ":not(:not(:not(div)))": ["main", "span", "plain"],
+        "div:not(:not(span))": [],
+        "span:not(:not(.a))": ["span"],
+        ":not(:not(span.a))": ["span"],
+        ":not(:not(div), :not(.a))": ["div"],
+      });
+    });
+
+    // Each of these is an OR of simple selectors once the negations are applied:
+    // `:not(span.a)` is "not a span, or not .a". `#main` is both, and its handler runs once.
+    it("of a compound selector, and nested around a selector list", () => {
+      expect(
+        matchesOf([
+          ":not(span.a)",
+          "main > :not(span.a)",
+          ":not(:not(div, span))",
+          ":not(:not(div):not(span))",
+          ":not(span:not(.a))",
+          "span:not(.a:not(div))",
+        ]),
+      ).toEqual({
+        ":not(span.a)": ["main", "div", "plain"],
+        "main > :not(span.a)": ["div", "plain"],
+        ":not(:not(div, span))": ["div", "span", "plain"],
+        ":not(:not(div):not(span))": ["div", "span", "plain"],
+        ":not(span:not(.a))": ["main", "div", "span"],
+        "span:not(.a:not(div))": ["plain"],
+      });
+    });
+
+    it("that expands to more than 256 alternatives is rejected", () => {
+      // `:not(a.b)` is "not a, or not b", and each one more doubles the combinations.
+      const selector = count => Buffer.alloc(count * 9, ":not(a.b)").toString();
+      expect(matchedIds(selector(8))).toEqual(["main", "div", "span", "plain"]);
+      expect(() => new HTMLRewriter().on(selector(9), {})).toThrow("Unsupported syntax in selector.");
+    });
+
+    it("with a combinator inside is rejected", () => {
+      for (const selector of [":not(div span)", ":not(div > span)", ":not(:not(div span))"]) {
+        expect(() => new HTMLRewriter().on(selector, {})).toThrow(
+          "Unsupported pseudo-class or pseudo-element in selector.",
+        );
+      }
+    });
   });
 
   it("attribute selectors match the attribute name case-insensitively", () => {

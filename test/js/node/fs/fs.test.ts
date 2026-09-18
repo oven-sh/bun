@@ -3633,6 +3633,85 @@ describe("rm", () => {
   );
 });
 
+// The empty path names nothing, so node reports ENOENT for every operation on
+// it. On Windows, Bun resolves relative paths against a directory handle with
+// NtCreateFile, which resolves an empty name to that directory itself, so
+// readdir("") listed the cwd, writeFile("") opened it and recursive rm("")
+// deleted everything inside it. The cases therefore run in a child process
+// that gives each one a throwaway cwd and reports what was left of it.
+describe("operations on the empty path", () => {
+  const enoent = { code: "ENOENT" };
+  const ok = { ok: true };
+  const cases: [expression: string, expected: object][] = [
+    [`fs.readdirSync("")`, enoent],
+    [`fs.readdirSync("", { withFileTypes: true })`, enoent],
+    [`fs.readdirSync("", { recursive: true })`, enoent],
+    [`promisify(fs.readdir)("")`, enoent],
+    [`fs.promises.readdir("")`, enoent],
+    [`fs.promises.readdir("", { recursive: true })`, enoent],
+    [`fs.writeFileSync("", "data")`, enoent],
+    [`promisify(fs.writeFile)("", "data")`, enoent],
+    [`fs.promises.writeFile("", "data")`, enoent],
+    [`fs.rmSync("", { recursive: true })`, enoent],
+    [`promisify(fs.rm)("", { recursive: true })`, enoent],
+    [`fs.promises.rm("", { recursive: true })`, enoent],
+    [`fs.rmSync("", { recursive: true, force: true })`, ok],
+    [`fs.promises.rm("", { recursive: true, force: true })`, ok],
+  ];
+  const untouched = ["keep.txt", "sub", "sub/inner.txt"];
+
+  const script = `
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const { promisify } = require("node:util");
+    const root = process.cwd();
+    const report = {};
+    let n = 0;
+    async function run(expression, operation) {
+      const cwd = path.join(root, String(n++));
+      fs.mkdirSync(path.join(cwd, "sub"), { recursive: true });
+      fs.writeFileSync(path.join(cwd, "keep.txt"), "keep");
+      fs.writeFileSync(path.join(cwd, "sub", "inner.txt"), "keep");
+      process.chdir(cwd);
+      let result;
+      try {
+        await operation();
+        result = { ok: true };
+      } catch (err) {
+        result = { code: err.code };
+      }
+      process.chdir(root);
+      const left = fs.readdirSync(cwd, { recursive: true }).map(entry => entry.replaceAll("\\\\", "/")).sort();
+      report[expression] = { result, left };
+    }
+    ${cases.map(([expression]) => `await run(${JSON.stringify(expression)}, () => ${expression});`).join("\n")}
+    console.log(JSON.stringify(report));
+  `;
+
+  it("every operation reports ENOENT (or is ignored by force) and leaves the cwd alone", async () => {
+    using dir = tempDir("fs-empty-path", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // If the child died before printing its report, the comparison below shows
+    // whatever it did print.
+    let report: unknown = stdout;
+    try {
+      report = JSON.parse(stdout);
+    } catch {}
+    expect({ report, stderr, exitCode }).toEqual({
+      report: Object.fromEntries(cases.map(([expression, result]) => [expression, { result, left: untouched }])),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("rmdir", () => {
   it("does not remove a file", done => {
     const path = `${tmpdir()}/${Date.now()}.rm.txt`;

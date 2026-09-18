@@ -586,7 +586,13 @@ bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNode
     bool hasMoreQueued = false;
     {
         Locker locker { m_pipelinedResponsesLock };
-        m_pipelinedResponses.removeFirstMatching([&](auto& entry) { return entry.get() == response; });
+        // Responses leave in request order. Another one first means JS never
+        // queued it (its dispatch threw before that), and its turn cannot be
+        // given to this one: the client would read this as the answer to that.
+        if (m_pipelinedResponses.isEmpty() || m_pipelinedResponses.first().get() != response) {
+            return false;
+        }
+        m_pipelinedResponses.removeAt(0);
         hasMoreQueued = !m_pipelinedResponses.isEmpty();
     }
 

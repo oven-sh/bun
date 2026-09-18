@@ -2892,6 +2892,103 @@ it("pipelined responses buffered past the high water mark pause reads on the con
   }
 });
 
+// The native dispatch tail answers a throw by ending the connection's current response. For a
+// pipelined request that was the response ahead of it: the client got "first" of a 10-byte body,
+// then the close. The throw is an uncaught exception, so each scenario runs in a child process.
+describe("a dispatch that throws while an earlier response on the connection is pending", () => {
+  async function run(mode: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "node-http-pipelined-throw-fixture.js")],
+      env: { ...bunEnv, MODE: mode },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { result: stdout ? JSON.parse(stdout) : undefined, exitCode };
+  }
+
+  // node v26.3.0 gives the same result for the tests in these three loops.
+  for (const emitted of ["request", "checkContinue", "checkExpectation"]) {
+    it.concurrent(`'${emitted}' listener: the response ahead still completes`, async () => {
+      expect(await run(emitted)).toEqual({
+        result: {
+          events: ["request /first", `${emitted} /second`, `uncaught: ${emitted} threw`],
+          bodies: ["first-done"],
+          closed: false,
+        },
+        exitCode: 0,
+      });
+    });
+  }
+  // The response ahead has ended, and most of its 8 MB are still in the send buffer when the
+  // connection is reset at the turn of the response behind it. A destroyed queued response
+  // resets the connection in the same way, with no throw.
+  for (const [mode, events] of [
+    ["large", ["request /first", "request /second", "uncaught: request threw"]],
+    ["large-destroyed", ["request /first", "request /second"]],
+  ] as const) {
+    it.concurrent(`a large response ahead arrives in full before the connection is reset (${mode})`, async () => {
+      expect(await run(mode)).toEqual({
+        result: { events, firstBodyBytes: 8 * 1024 * 1024, closed: false },
+        exitCode: 0,
+      });
+    });
+  }
+  for (const mode of ["ended", "ended-later"]) {
+    it.concurrent(`a response that is complete when its turn comes is sent (${mode})`, async () => {
+      expect(await run(mode)).toEqual({
+        result: {
+          events: ["request /first", "request /second", "uncaught: request threw"],
+          bodies: ["first-done", "second"],
+          closed: false,
+        },
+        exitCode: 0,
+      });
+    });
+  }
+
+  // The tests below wait for a close. Node never makes it: it answers nothing and keeps the
+  // connection, which then waits forever. Bun answers a throw with a close. For a queued response
+  // that happens when its turn comes, after the responses ahead of it. The requests behind it are
+  // aborted with the connection.
+  it.concurrent("a response that is not complete resets the connection when its turn comes", async () => {
+    expect(await run("unfinished")).toEqual({
+      result: {
+        events: ["request /first", "request /third", "uncaught: request threw"],
+        bodies: ["first-done", "second"],
+        closed: true,
+        serverSideCloses: ["/fourth", "/fourth", "/second", "/second", "/third", "/third"],
+      },
+      exitCode: 0,
+    });
+  });
+
+  // The throw comes before node:http queued a response, so nothing holds the turn of /second.
+  // A later response must not go out in its place.
+  it.concurrent("a throw from the ServerResponse constructor does not let a later response take the turn", async () => {
+    expect(await run("constructor")).toEqual({
+      result: {
+        events: ["request /first", "constructor /second", "uncaught: constructor threw", "request /third"],
+        bodies: ["first-done"],
+        closed: true,
+      },
+      exitCode: 0,
+    });
+  });
+
+  // Unchanged: with no response ahead, the throwing request is the current one and is answered at once.
+  it.concurrent("a request that is not pipelined is still answered with a close", async () => {
+    expect(await run("not-pipelined")).toEqual({
+      result: {
+        events: ["request /first", "request /second", "uncaught: request threw"],
+        bodies: ["first-done"],
+        closed: true,
+      },
+      exitCode: 0,
+    });
+  });
+});
+
 it("requireHostHeader still rejects Upgrade-carrying requests that dispatch as normal requests", async () => {
   // The native parser exempts Upgrade requests from the Host check so genuine
   // upgrades can reach the 'upgrade' event, but a request that falls through

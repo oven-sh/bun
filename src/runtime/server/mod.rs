@@ -1464,7 +1464,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // SAFETY: see `nhr` above.
                     let nhr = unsafe { &*node_http_response };
                     let nhr_flags = nhr.flags.get();
-                    if !nhr_flags.contains(NhrFlags::UPGRADED) {
+                    // A pipelined dispatch: the pending response that
+                    // `raw_response` reports is the one ahead of this one.
+                    let is_queued = nhr.is_queued_behind_current_response();
+                    if !nhr_flags.contains(NhrFlags::UPGRADED) && !is_queued {
                         if let Some(raw) = nhr.raw_response.get() {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
@@ -1478,15 +1481,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             }
                         }
                     }
-                    // The handler threw before `res.end()`; we just ended (or
-                    // will never end) the raw response above. Mark ENDED so
-                    // `on_request_complete()` → `mark_request_as_done()` runs
-                    // and releases the `IS_REQUEST_PENDING` ref (one of the
-                    // initial 3). Without this the box leaks: the later
-                    // `on_abort` socket-close path early-returns once
-                    // `REQUEST_HAS_COMPLETED` is set and never balances it.
-                    nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
-                    nhr.on_request_complete();
+                    if is_queued {
+                        // Nothing was ended, so this response stays queued
+                        // like any other one.
+                        nhr.flags
+                            .set(nhr.flags.get() | NhrFlags::DISPATCH_THREW_WHILE_QUEUED);
+                    } else {
+                        // The handler threw before `res.end()`; we just ended (or
+                        // will never end) the raw response above. Mark ENDED so
+                        // `on_request_complete()` → `mark_request_as_done()` runs
+                        // and releases the `IS_REQUEST_PENDING` ref (one of the
+                        // initial 3). Without this the box leaks: the later
+                        // `on_abort` socket-close path early-returns once
+                        // `REQUEST_HAS_COMPLETED` is set and never balances it.
+                        nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
+                        nhr.on_request_complete();
+                    }
                 }
             }
             HttpResult::Success | HttpResult::Pending => {}

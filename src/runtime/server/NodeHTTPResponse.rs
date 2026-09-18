@@ -95,6 +95,10 @@ bitflags! {
         /// node:http handed this connection to a raw 'upgrade'/'connect'
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
         const TUNNELED                            = 1 << 8;
+        /// The dispatch of this request threw while the response was queued
+        /// behind another one. Nothing ended it natively: node:http closes the
+        /// connection at its turn unless JS ended it (advanceResponsePipeline).
+        const DISPATCH_THREW_WHILE_QUEUED         = 1 << 9;
     }
 }
 
@@ -440,6 +444,15 @@ impl NodeHTTPResponse {
             return JSValue::ZERO;
         }
         Bun__getNodeHTTPResponseThisValue(any_response_is_ssl(&raw), raw.socket().cast())
+    }
+
+    /// Pipelining: the connection has another current response, and this one
+    /// waits for its turn. Until then the state of `raw_response` (one per
+    /// connection) describes that other response.
+    pub(crate) fn is_queued_behind_current_response(&self) -> bool {
+        self.get_this_value()
+            .as_class_ref::<Self>()
+            .is_some_and(|current| !ptr::eq(current, self))
     }
 
     fn get_server_socket_value(&self) -> JSValue {

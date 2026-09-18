@@ -97,7 +97,8 @@ public:
     /* Make a previously queued pipelined response the connection's current
      * response: reset the per-response uWS state (the part the request handler
      * normally resets per parsed request) and, when the queue drained, resume
-     * socket reads. Returns false when the connection is already gone. */
+     * socket reads. Returns false when the connection is already gone, or when
+     * the response is not the next one in the queue. */
     bool startPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response, bool isAncient, bool connectionClose);
     /* Stop parsing further HTTP requests on this connection (Node frees the
      * parser when 'close' is emitted on the socket). */

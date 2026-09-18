@@ -2551,6 +2551,20 @@ function abortQueuedPipelinedResponses(socket) {
   }
 }
 
+// The response at the head of the queue can never be sent, and an HTTP/1.1
+// connection cannot skip its turn, so the response that just finished was the
+// last one. A native socket ends like one whose response must close the
+// connection (onResponseFinishHandleSocket): uWS closes it once the bytes still
+// buffered for that response have left, where destroy() would discard them.
+// The close path then aborts what is queued.
+function closeAfterLastSendableResponse(socket) {
+  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) {
+    socket.end();
+  } else if (!socket.destroyed) {
+    socket.destroy();
+  }
+}
+
 function advanceResponsePipeline(server, socket) {
   // The previous response on this connection closed it (Connection: close,
   // HTTP/1.0, maxRequestsPerSocket): like Node.js's resOnFinish, advancing
@@ -2566,9 +2580,25 @@ function advanceResponsePipeline(server, socket) {
   }
   const res = queue.shift();
   const queued = res[kPipelinedQueuedState];
+  const handle = res[kHandle];
+
+  if (
+    !queued.ended &&
+    !res.destroyed &&
+    handle &&
+    (handle.flags & NodeHTTPResponseFlags.dispatch_threw_while_queued) !== 0
+  ) {
+    // The dispatch of this request threw and nothing ended the response since.
+    // For the connection's current response the native dispatch tail answers
+    // and closes at once; a queued one gets the same at its turn. It goes back
+    // in the queue so the close path aborts it, and its request, with the rest.
+    queue.unshift(res);
+    closeAfterLastSendableResponse(socket);
+    return;
+  }
+
   res[kPipelinedQueuedState] = undefined;
   releasePipelineOutgoingData(socket, queued.bytes);
-  const handle = res[kHandle];
 
   if (res.destroyed || !handle) {
     // The queued response was destroyed before it could be sent; the
@@ -2576,9 +2606,7 @@ function advanceResponsePipeline(server, socket) {
     // Deliberate divergence from Node v26, which assigns the destroyed
     // message and wedges the connection until requestTimeout: an HTTP/1.1
     // connection cannot skip a response slot, so reset it instead.
-    if (!socket.destroyed) {
-      socket.destroy();
-    }
+    closeAfterLastSendableResponse(socket);
     return;
   }
 
@@ -2589,11 +2617,20 @@ function advanceResponsePipeline(server, socket) {
       socket.destroyed ||
       !socketHandle.startPipelinedResponse(handle, !!queued.isAncient, !requestShouldKeepAlive(res.req))
     ) {
-      // The connection is already gone; the socket close path destroys queued
-      // responses, but make sure this (already dequeued) one is not skipped.
-      if (!res.destroyed) {
-        res.destroy();
+      if (socket.destroyed) {
+        // The close path may have run already: do not skip this (dequeued) one.
+        if (!res.destroyed) {
+          res.destroy();
+        }
+        return;
       }
+      // The connection is closing, or this response is not the next one
+      // natively: a dispatch ahead of it threw before it queued a response
+      // here, and that turn cannot be skipped. Back in the queue, the close
+      // path aborts it, and its request, with the rest.
+      res[kPipelinedQueuedState] = queued;
+      queue.unshift(res);
+      closeAfterLastSendableResponse(socket);
       return;
     }
 

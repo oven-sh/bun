@@ -30,6 +30,7 @@ unsafe extern "C" {
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM, full: bool);
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
+    safe fn JSC__VM__sanitizeStack(vm: &VM);
     safe fn JSC__VM__shrinkFootprintNow(vm: &VM) -> bool;
     safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
@@ -100,6 +101,13 @@ impl VM {
     /// Request a concurrent collection; JSC picks the scope unless `full`.
     pub(crate) fn collect_async(&self, full: bool) {
         JSC__VM__collectAsync(self, full)
+    }
+
+    /// Zero the stack that earlier callbacks used below the caller's frame. For the event loop, with no JavaScript on
+    /// the stack, before it enters native frames that stay live while callbacks run: what those frames never write
+    /// would otherwise keep showing the conservative scan a cell of an earlier callback.
+    pub fn sanitize_stack(&self) {
+        JSC__VM__sanitizeStack(self)
     }
 
     /// A full collection tagged as the embedder's idle collection, in which JSC may also let idle optimized code go.

@@ -3167,6 +3167,15 @@ void JSC__VM__collectAsyncIdle(JSC::VM* vm)
     vm->heap.collectAsync(request);
 }
 
+// Zeroes the stack JavaScript and its callers used below the caller's frame and no longer do (from the VM's last such
+// point to here). The event loop calls it with no JavaScript on the stack, before it goes back into native frames that
+// stay live while callbacks run: a slot such a frame never writes would otherwise still hold a cell of an earlier
+// callback's frames, and the conservative scan would keep that cell alive for as long as the loop re-enters that frame.
+void JSC__VM__sanitizeStack(JSC::VM* vm)
+{
+    JSC::sanitizeStackForVM(*vm);
+}
+
 bool JSC__VM__shrinkFootprintNow(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);

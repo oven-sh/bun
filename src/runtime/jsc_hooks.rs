@@ -993,6 +993,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                 Some(ild.quic_next_tick_us)
             }
         };
+        // No JavaScript is on the stack here, and the loop is about to go back into frames that
+        // stay live while callbacks run (on Windows timers fire from inside `uv_run`).
+        // SAFETY: per fn contract — `vm` is the live per-thread VM.
+        unsafe { &*vm }.jsc_vm().sanitize_stack();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
@@ -1130,6 +1134,10 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                 Some(ild.quic_next_tick_us)
             }
         };
+        // No JavaScript is on the stack here, and the loop is about to go back into frames that
+        // stay live while callbacks run (on Windows timers fire from inside `uv_run`).
+        // SAFETY: per fn contract — `vm` is the live per-thread VM.
+        unsafe { &*vm }.jsc_vm().sanitize_stack();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {

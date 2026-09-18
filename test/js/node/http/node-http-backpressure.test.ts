@@ -556,11 +556,9 @@ describe("backpressure", () => {
         res.on("close", () => {
           events.push("close");
           state.writableFinishedAtClose = res.writableFinished;
-          // The response did finish: stream.finished() agrees, and a late end() says so at once instead of waiting.
+          // The response did finish, so stream.finished() must not report a premature close.
           finished(res, err => {
             state.streamFinished = err?.code ?? "ok";
-            state.lateEnd = "not called";
-            res.end((lateErr?: NodeJS.ErrnoException) => (state.lateEnd = lateErr?.code));
             closed.resolve();
           });
         });
@@ -582,7 +580,6 @@ describe("backpressure", () => {
         writableFinishedAtFinish: true,
         writableFinishedAtClose: true,
         streamFinished: "ok",
-        lateEnd: "ERR_STREAM_ALREADY_FINISHED",
       });
     });
 

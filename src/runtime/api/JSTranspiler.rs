@@ -1339,6 +1339,108 @@ impl JSTranspiler {
         )
     }
 
+    /// `Bun.Transpiler.prototype.unstable_parse` — see `js_transpiler_ast.rs`.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn unstable_parse(
+        &self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        jsc::mark_binding();
+        let vm = global.bun_vm();
+        let mut args = ArgumentsSlice::init(vm, callframe.arguments());
+        let Some(code_arg) = args.next() else {
+            return Err(global.throw_invalid_argument_type(
+                "unstable_parse",
+                "code",
+                "string or Uint8Array",
+            ));
+        };
+
+        args.eat();
+
+        let loader: Option<Loader> = 'brk: {
+            if let Some(arg) = args.next() {
+                args.eat();
+                if arg.is_object() {
+                    if let Some(l) = arg.get_truthy(global, "loader")? {
+                        break 'brk loader_from_js(global, l)?;
+                    }
+                    break 'brk None;
+                }
+                break 'brk loader_from_js(global, arg)?;
+            }
+            break 'brk None;
+        };
+
+        if global.has_exception() {
+            return Ok(JSValue::ZERO);
+        }
+
+        // Borrow after every options `[[Get]]` so a getter cannot detach the input buffer under us.
+        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                "unstable_parse",
+                "code",
+                "string or Uint8Array",
+            ));
+        };
+        let code = code_holder.slice();
+
+        let arena = Arena::new();
+        let mut log = bun_ast::Log::init();
+        // SAFETY: same lifetime contract as `scan()` above.
+        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+        let prev_arena = self.transpiler.with_mut(|t| {
+            let prev = t.arena;
+            t.set_arena(arena_ref);
+            t.set_log(&raw mut log);
+            prev
+        });
+        let _restore = TranspilerStateGuard {
+            transpiler: self.transpiler.as_ptr(),
+            prev_arena,
+            restore_log: self.config_log_ptr(),
+            prev_macro_context: None,
+        };
+
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+        let _ast_scope = ast_memory_allocator.enter();
+
+        let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
+        let log_ref = self.transpiler.get().log_mut();
+        let Some(parse_result) = parse_result else {
+            if (log_ref.warnings + log_ref.errors) > 0 {
+                return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+            }
+            return Err(global.throw(format_args!("Failed to parse")));
+        };
+
+        if (log_ref.warnings + log_ref.errors) > 0 {
+            return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
+        }
+
+        use crate::api::js_transpiler_ast::SerializeError;
+        let mut tape = Vec::<u8>::new();
+        if let Err(e) = crate::api::js_transpiler_ast::ast_to_tape(&parse_result.ast, &mut tape) {
+            return Err(match e {
+                SerializeError::StackOverflow => global.throw_stack_overflow(),
+                SerializeError::TapeTooLarge => {
+                    global.throw_value(global.create_range_error_instance(format_args!(
+                        "unstable_parse: AST tape exceeds 4 GiB"
+                    )))
+                }
+            });
+        }
+        tape.shrink_to_fit();
+        let ab =
+            jsc::ArrayBuffer::from_owned_bytes(tape.into_boxed_slice(), jsc::JSType::ArrayBuffer)
+                .to_js_unchecked(global)?;
+        let obj = JSValue::create_empty_object(global, 1);
+        obj.put(global, "buffer", ab);
+        Ok(obj)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn transform(
         &self,

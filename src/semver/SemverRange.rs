@@ -253,8 +253,7 @@ impl Comparator {
         }
     }
 
-    /// `>= {major+1}.0.0`, how node-semver reads `>{major}`. With `include_prerelease` or on
-    /// overflow: `> {major}.MAX.MAX` (`u64::MAX`), the same versions as `>= {major+1}.0.0-0`.
+    /// node-semver's `>{major}`: `>={major+1}.0.0`, or `>={major+1}.0.0-0` with `includePrerelease`.
     pub(crate) fn gte_next_major(major: u64, include_prerelease: bool) -> Comparator {
         match major.checked_add(1) {
             Some(m) if !include_prerelease => Comparator {
@@ -276,8 +275,7 @@ impl Comparator {
         }
     }
 
-    /// `>= {major}.{minor+1}.0`, how node-semver reads `>{major}.{minor}`. With
-    /// `include_prerelease`: `> {major}.{minor}.MAX`. On overflow, `gte_next_major`.
+    /// `gte_next_major` for `>{major}.{minor}`: `>={major}.{minor+1}.0`, on overflow the next major.
     pub(crate) fn gte_next_minor(major: u64, minor: u64, include_prerelease: bool) -> Comparator {
         match minor.checked_add(1) {
             Some(m) if !include_prerelease => Comparator {

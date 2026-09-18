@@ -1,5 +1,6 @@
 use bun_core::strings;
 use bun_paths;
+use bun_paths::path_options::AssumeOk as _;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
 pub(crate) struct Symlinker {
@@ -29,6 +30,29 @@ impl Symlinker {
         {
             return bun_sys::symlink(self.target.slice_z(), self.dest.slice_z());
         }
+    }
+
+    /// The directory moves aside before the link is written, and is deleted after. `dest` holds
+    /// all of the directory or the link at every point, so a failure leaves no partly deleted
+    /// copy for the next `bun patch --commit` to diff.
+    fn replace_directory(&mut self) -> bun_sys::Result<()> {
+        let mut aside =
+            bun_paths::Path::<u8>::from(self.dest.dirname().unwrap_or(b".")).assume_ok();
+        aside
+            .append_fmt(format_args!(
+                ".{}.old-{:x}",
+                bstr::BStr::new(self.dest.basename()),
+                bun_core::fast_random(),
+            ))
+            .assume_ok();
+
+        bun_sys::renameat(Fd::cwd(), self.dest.slice_z(), Fd::cwd(), aside.slice_z())?;
+        if let Err(err) = self.symlink() {
+            let _ = bun_sys::renameat(Fd::cwd(), aside.slice_z(), Fd::cwd(), self.dest.slice_z());
+            return Err(err);
+        }
+        let _ = Fd::cwd().delete_tree(aside.slice_z());
+        Ok(())
     }
 
     // Ok(true) when a link was written.
@@ -101,10 +125,13 @@ impl Symlinker {
                                     } else {
                                         false
                                     };
-                                    if is_dir && !matches!(strategy, Strategy::ReplaceDirectory) {
-                                        return Ok(false);
+                                    if is_dir {
+                                        if !matches!(strategy, Strategy::ReplaceDirectory) {
+                                            return Ok(false);
+                                        }
+                                        return self.replace_directory().map(|()| true);
                                     }
-                                    let _ = Fd::cwd().delete_tree(self.dest.slice_z());
+                                    let _ = bun_sys::unlink(self.dest.slice_z());
                                     return self.symlink().map(|()| true);
                                 }
                             };

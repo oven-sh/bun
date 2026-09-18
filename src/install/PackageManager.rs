@@ -461,8 +461,8 @@ pub struct PackageManager {
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
 
-    // bun patch --commit: the package whose patch was just written; the isolated linker puts its links back.
-    pub(crate) committed_patch: Option<PackageNameAndVersionHash>,
+    // bun patch --commit: the folder that was diffed; the isolated linker puts its link back.
+    pub(crate) committed_patch: Option<patch_package::CommittedPatch>,
 
     pub(crate) active_lifecycle_scripts: crate::lifecycle_script_runner::List<'static>,
     pub(crate) last_reported_slow_lifecycle_script_at: u64,

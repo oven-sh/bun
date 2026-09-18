@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, lstatSync, readFileSync, symlinkSync } from "fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -182,7 +182,7 @@ describe("packages whose label is longer than 1024 bytes", () => {
 // detached copy of the package, and a copy in a real directory cannot reach those siblings.
 describe("bun patch --commit with the isolated linker", () => {
   const isLink = (path: string) => lstatSync(path).isSymbolicLink();
-  const NOT_PREPARED = "is not a folder that bun patch prepared.";
+  const NOT_PREPARED = "is not a folder that bun patch prepared\n";
 
   async function install(globalStore: boolean, files: Record<string, unknown>) {
     const { packageDir } = await registry.createTestDir({
@@ -248,10 +248,12 @@ describe("bun patch --commit with the isolated linker", () => {
         committed: isLink(committed),
         uncommitted: isLink(uncommitted),
         edit: await Bun.file(join(uncommitted, "edit.js")).text(),
+        nodeModules: readdirSync(join(packageDir, "node_modules")).sort(),
       }).toEqual({
         committed: true,
         uncommitted: false,
         edit: "module.exports = 'in progress';\n",
+        nodeModules: [".bin", ".bun", "a-dep", "has-bin-entries"],
       });
 
       const loaded = await load(packageDir);
@@ -280,7 +282,7 @@ describe("bun patch --commit with the isolated linker", () => {
 
     for (const arg of ["has-bin-entries", "node_modules/has-bin-entries"]) {
       const commit = await runBun(packageDir, "patch", "--commit", arg);
-      expect(commit.stderr).toContain(`${NOT_PREPARED} Run \`bun patch ${arg}\` first.`);
+      expect(commit.stderr).toContain(`${NOT_PREPARED}note: Run \`bun patch ${arg}\` first\n`);
       expect(commit.exitCode).toBe(1);
     }
 
@@ -288,6 +290,62 @@ describe("bun patch --commit with the isolated linker", () => {
       patches: existsSync(join(packageDir, "patches")),
       packageJson: await Bun.file(join(packageDir, "package.json")).text(),
     }).toEqual({ patches: false, packageJson });
+  });
+
+  test.concurrent("links the folder again when --commit finds no changes", async () => {
+    const packageDir = await install(false, rootOnly);
+    const packageJson = await Bun.file(join(packageDir, "package.json")).json();
+    const copy = await patch(packageDir, "has-bin-entries", "node_modules/has-bin-entries");
+
+    const commit = await runBun(packageDir, "patch", "--commit", "has-bin-entries");
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.stdout).toContain("No changes detected");
+    expect(commit.exitCode).toBe(0);
+
+    expect({
+      copy: isLink(copy),
+      patches: existsSync(join(packageDir, "patches")),
+      packageJson: await Bun.file(join(packageDir, "package.json")).json(),
+    }).toEqual({ copy: true, patches: false, packageJson });
+    const loaded = await load(packageDir);
+    expect(loaded.stderr).toBe("");
+    expect(loaded.stdout).toBe("1.0.0 undefined 1.0.0\n");
+    expect(loaded.exitCode).toBe(0);
+  });
+
+  // One patch exists per name@version, but the edits in the second copy were never diffed.
+  test.concurrent("keeps a second copy of the same package that was not committed", async () => {
+    const packageDir = await install(false, {
+      "package.json": JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: { "has-bin-entries": "1.0.0" },
+      }),
+      packages: {
+        w: {
+          "package.json": JSON.stringify({ name: "w", version: "1.0.0", dependencies: { "has-bin-entries": "1.0.0" } }),
+        },
+      },
+    });
+    const committed = await patch(packageDir, "has-bin-entries", "node_modules/has-bin-entries");
+    const other = "packages/w/node_modules/has-bin-entries";
+    const uncommitted = await patch(packageDir, other, other);
+    await addPatchedExport(committed);
+    await Bun.write(join(uncommitted, "edit.js"), "module.exports = 'in progress';\n");
+
+    const commit = await runBun(packageDir, "patch", "--commit", "has-bin-entries");
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+
+    expect({
+      committed: isLink(committed),
+      uncommitted: isLink(uncommitted),
+      edit: await Bun.file(join(uncommitted, "edit.js")).text(),
+    }).toEqual({
+      committed: true,
+      uncommitted: false,
+      edit: "module.exports = 'in progress';\n",
+    });
   });
 
   test.concurrent("links the dependency of a workspace package again", async () => {

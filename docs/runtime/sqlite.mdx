@@ -498,7 +498,9 @@ Bun v1.4.2 and earlier bound a safe integer as `REAL` when it was 2^51 or more, 
 
 ```sql
 UPDATE users SET id = CAST(CAST(id AS REAL) AS INTEGER)
-WHERE id LIKE '%.0' AND abs(CAST(id AS REAL)) BETWEEN 2251799813685248 AND 9007199254740991;
+WHERE id LIKE '%.0'
+  AND rtrim(substr(id, 1, length(id) - 2), '0123456789') IN ('', '-')
+  AND abs(CAST(id AS REAL)) BETWEEN 2251799813685248 AND 9007199254740991;
 ```
 
 SQLite 3.51 and earlier stored 15 significant digits in that case, for example `'4.5035996273705e+15'`. Those rows do not hold the exact value.

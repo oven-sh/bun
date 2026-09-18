@@ -26,6 +26,7 @@ use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_s
 pub mod js_bundler {
     use super::*;
     use bun_core::Utf8Bytes;
+    use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
     use bun_sys::FdExt;
 
@@ -1602,7 +1603,10 @@ pub mod js_bundler {
                         }
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
-                        bun_event_loop::MiniEventLoop::MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
+                        MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<
+                            Load,
+                            BundleV2<'static>,
+                        >(
                             &raw const **mini,
                             std::ptr::from_mut::<Load>(self),
                             on_notify_defer_mini_wrap,

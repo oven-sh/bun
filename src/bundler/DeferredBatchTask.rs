@@ -8,6 +8,7 @@ use crate::BundleV2;
 // Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
 // runtime owns the match-loop. See PORTING.md §Dispatch.
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_event_loop::{Task, task_tag};
 
 #[derive(Default)]
@@ -72,7 +73,7 @@ impl DeferredBatchTask {
                 // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
                 // the bundle thread runs this.
                 unsafe {
-                    bun_event_loop::MiniEventLoop::MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
+                    MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
                         &raw const **mini,
                         this,
                         |_, bv2| (*bv2).decrement_scan_counter(),

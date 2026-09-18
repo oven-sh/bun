@@ -9,6 +9,8 @@ use crate::shell::states::r#if::If;
 use crate::shell::states::pipeline::Pipeline;
 use crate::shell::yield_::Yield;
 
+use bun_event_loop::MiniEventLoop::MiniEventLoop;
+
 pub struct Async {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Expr>,
@@ -167,7 +169,7 @@ impl Async {
                 );
                 // SAFETY: the shell's own mini loop, on its thread.
                 unsafe {
-                    bun_jsc::MiniEventLoop::MiniEventLoop::enqueue_task_concurrent(
+                    MiniEventLoop::enqueue_task_concurrent(
                         mini.as_const_ptr(),
                         core::ptr::NonNull::new(any).expect("heap task"),
                     )

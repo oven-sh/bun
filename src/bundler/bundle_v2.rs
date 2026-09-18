@@ -345,6 +345,7 @@ pub mod bv2_impl {
     use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
+    use bun_event_loop::MiniEventLoop::MiniEventLoop;
     use bun_resolver::DataURL;
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};
@@ -4529,7 +4530,10 @@ pub mod bv2_impl {
                     // SAFETY: `load` is a valid &mut for the duration of the enqueue;
                     // the mini loop dispatches `on_load_mini` on the bundler thread.
                     unsafe {
-                        bun_event_loop::MiniEventLoop::MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
+                        MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<
+                            jsc_api::JSBundler::Load,
+                            BundleV2<'static>,
+                        >(
                             &raw const **mini,
                             std::ptr::from_mut(load),
                             on_load_mini,
@@ -4564,7 +4568,10 @@ pub mod bv2_impl {
                     // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
                     // the mini loop dispatches `on_resolve_mini` on the bundler thread.
                     unsafe {
-                        bun_event_loop::MiniEventLoop::MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
+                        MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<
+                            jsc_api::JSBundler::Resolve,
+                            BundleV2<'static>,
+                        >(
                             &raw const **mini,
                             std::ptr::from_mut(resolve),
                             on_resolve_mini,

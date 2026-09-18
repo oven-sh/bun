@@ -403,79 +403,110 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
 
   var promiseResult: any = (async (inputPath, inputNamespace, importer, kind) => {
     var { onResolve, onLoad } = this;
-    var results = onResolve.$get(inputNamespace);
-    if (!results) {
-      this.onResolveAsync(internalID, null, null, null);
+
+    const tryNamespace = async (matchNamespace: string, matchPath: string) => {
+      var results = onResolve.$get(matchNamespace);
+      if (!results) {
+        return false;
+      }
+
+      for (let [filter, callback] of results) {
+        if (filter.test(matchPath)) {
+          var result = callback({
+            path: matchPath,
+            importer,
+            namespace: matchNamespace,
+            resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : undefined,
+            kind,
+            // pluginData
+          });
+
+          while (result && $isPromise(result) && $peekPromiseStatus(result) === 1) {
+            result = $peekPromiseSettledValue(result);
+          }
+
+          if (result && $isPromise(result)) {
+            result = await result;
+          }
+
+          if (!result || !$isObject(result)) {
+            continue;
+          }
+
+          var { path, namespace: userNamespace = inputNamespace, external } = result;
+          if (path !== undefined && typeof path !== "string") {
+            throw new TypeError("onResolve plugins 'path' field must be a string if provided");
+          }
+
+          if (result.namespace !== undefined && typeof result.namespace !== "string") {
+            throw new TypeError("onResolve plugins 'namespace' field must be a string if provided");
+          }
+
+          if (!path) {
+            continue;
+          }
+
+          if (!userNamespace) {
+            userNamespace = inputNamespace;
+          }
+          if (typeof external !== "boolean" && !$isUndefinedOrNull(external)) {
+            throw new TypeError('onResolve plugins "external" field must be boolean or unspecified');
+          }
+
+          if (!external) {
+            if (userNamespace === "file") {
+              if (process.platform !== "win32") {
+                if (path[0] !== "/" || path.includes("..")) {
+                  throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
+                }
+              } else {
+                if (require("node:path").isAbsolute(path) === false || path.includes("..")) {
+                  throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
+                }
+              }
+            }
+            if (userNamespace === "dataurl") {
+              if (!path.startsWith("data:")) {
+                throw new TypeError('onResolve plugin "path" must start with "data:" when the namespace is "dataurl"');
+              }
+            }
+
+            if (userNamespace && userNamespace !== "file" && (!onLoad || !onLoad.$has(userNamespace))) {
+              throw new TypeError(`Expected onLoad plugin for namespace ${userNamespace} to exist`);
+            }
+          }
+          this.onResolveAsync(internalID, path, userNamespace, external);
+          return true;
+        }
+      }
+
+      return false;
+    };
+
+    // Peek before awaiting so a synchronous callback stays on the synchronous path.
+    var matched = tryNamespace(inputNamespace, inputPath);
+    if ($peekPromiseStatus(matched) === 1 ? $peekPromiseSettledValue(matched) : await matched) {
       return null;
     }
 
-    for (let [filter, callback] of results) {
-      if (filter.test(inputPath)) {
-        var result = callback({
-          path: inputPath,
-          importer,
-          namespace: inputNamespace,
-          resolveDir: inputNamespace === "file" ? require("node:path").dirname(importer) : undefined,
-          kind,
-          // pluginData
-        });
-
-        while (result && $isPromise(result) && $peekPromiseStatus(result) === 1) {
-          result = $peekPromiseSettledValue(result);
-        }
-
-        if (result && $isPromise(result)) {
-          result = await result;
-        }
-
-        if (!result || !$isObject(result)) {
-          continue;
-        }
-
-        var { path, namespace: userNamespace = inputNamespace, external } = result;
-        if (path !== undefined && typeof path !== "string") {
-          throw new TypeError("onResolve plugins 'path' field must be a string if provided");
-        }
-
-        if (result.namespace !== undefined && typeof result.namespace !== "string") {
-          throw new TypeError("onResolve plugins 'namespace' field must be a string if provided");
-        }
-
-        if (!path) {
-          continue;
-        }
-
-        if (!userNamespace) {
-          userNamespace = inputNamespace;
-        }
-        if (typeof external !== "boolean" && !$isUndefinedOrNull(external)) {
-          throw new TypeError('onResolve plugins "external" field must be boolean or unspecified');
-        }
-
-        if (!external) {
-          if (userNamespace === "file") {
-            if (process.platform !== "win32") {
-              if (path[0] !== "/" || path.includes("..")) {
-                throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
-              }
-            } else {
-              if (require("node:path").isAbsolute(path) === false || path.includes("..")) {
-                throw new TypeError('onResolve plugin "path" must be absolute when the namespace is "file"');
-              }
-            }
-          }
-          if (userNamespace === "dataurl") {
-            if (!path.startsWith("data:")) {
-              throw new TypeError('onResolve plugin "path" must start with "data:" when the namespace is "dataurl"');
-            }
-          }
-
-          if (userNamespace && userNamespace !== "file" && (!onLoad || !onLoad.$has(userNamespace))) {
-            throw new TypeError(`Expected onLoad plugin for namespace ${userNamespace} to exist`);
+    // Also offer "ns:rest" to onResolve({ namespace: "ns" }) with the stripped path.
+    if (inputNamespace === "file") {
+      var colon = inputPath.indexOf(":");
+      if (colon > 0) {
+        var prefix = inputPath.slice(0, colon);
+        var isDriveLetter =
+          process.platform === "win32" &&
+          colon === 1 &&
+          inputPath.length > 2 &&
+          (inputPath.charCodeAt(0) | 0x20) >= 97 &&
+          (inputPath.charCodeAt(0) | 0x20) <= 122 &&
+          (inputPath.charCodeAt(2) === 47 || inputPath.charCodeAt(2) === 92);
+        if (!isDriveLetter && prefix !== "file") {
+          matched = tryNamespace(prefix, inputPath.slice(colon + 1));
+          if ($peekPromiseStatus(matched) === 1 ? $peekPromiseSettledValue(matched) : await matched) {
+            return null;
           }
         }
-        this.onResolveAsync(internalID, path, userNamespace, external);
-        return null;
       }
     }
 

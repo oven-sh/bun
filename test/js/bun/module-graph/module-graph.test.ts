@@ -88,7 +88,10 @@ async function until(condition: () => boolean) {
 
 /** True once the object `make` registers (via the callback it is given), or returns, has been
  *  garbage-collected: full GC, then an event-loop turn for the FinalizationRegistry callback,
- *  repeated a bounded number of times. */
+ *  repeated a bounded number of times. The GC runs from a timer callback, as `collect()` in
+ *  module-graph-gc.test.ts does, not from this function's own continuation: that is a microtask
+ *  job, and it runs under the frame of JSC's microtask drain, where a stale stack word can keep
+ *  one unreferenced object marked at every collection made there. */
 async function collected(
   make: (register: (o: object) => void) => Promise<object | void> | object | void,
 ): Promise<boolean> {
@@ -102,8 +105,12 @@ async function collected(
     if (r && typeof r === "object") register(r);
   })();
   for (let i = 0; i < 100 && !done; i++) {
-    Bun.gc(true);
-    await new Promise<void>(r => setTimeout(r, 0));
+    await new Promise<void>(resolve =>
+      setTimeout(() => {
+        Bun.gc(true);
+        setTimeout(resolve, 0);
+      }, 0),
+    );
   }
   return done;
 }

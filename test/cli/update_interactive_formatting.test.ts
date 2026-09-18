@@ -21,9 +21,9 @@ function bunfig() {
   return `[install]\ncache = false\nregistry = "${registryUrl}"\n`;
 }
 
-async function install(dir: string) {
+async function install(dir: string, args: string[] = []) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install"],
+    cmd: [bunExe(), "install", ...args],
     cwd: String(dir),
     env: bunEnv,
     stdout: "pipe",
@@ -52,6 +52,65 @@ async function updateInteractive(
   proc.stdin.end();
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+// Verdaccio has no package with a name that is not ASCII. This registry has versions 1.0.0 and
+// 2.0.0 of every name, or the versions listed for a name. It serves no tarballs, so the tests
+// that use it install with --lockfile-only and update with --dry-run.
+function manifestRegistry(versionsOf: Record<string, string[]> = {}) {
+  return Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { origin, pathname } = new URL(req.url);
+      const name = decodeURIComponent(pathname.slice(1));
+      const versions = versionsOf[name] ?? ["1.0.0", "2.0.0"];
+      return Response.json({
+        name,
+        "dist-tags": { latest: versions.at(-1) },
+        versions: Object.fromEntries(
+          versions.map(version => [version, { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` } }]),
+        ),
+      });
+    },
+  });
+}
+
+// Runs `bun update -i` on a pty that is `cols` wide and confirms with Enter.
+async function updateInteractiveOnPty(dir: string, cols: number, args: string[]) {
+  const decoder = new TextDecoder();
+  let output = "";
+  const drawn = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  await using terminal = new Bun.Terminal({
+    cols,
+    rows: 24,
+    data(_, chunk: Uint8Array) {
+      output += decoder.decode(chunk, { stream: true });
+      if (output.includes("Latest")) drawn.resolve();
+      if (output.includes("No packages selected")) done.resolve();
+    },
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "update", "-i", ...args],
+    cwd: dir,
+    env: bunEnv,
+    terminal,
+  });
+  proc.exited.then(code => drawn.reject(new Error(`bun update -i exited before the table (code ${code}):\n${output}`)));
+
+  await drawn.promise;
+  terminal.write("\r");
+  const exitCode = await proc.exited;
+  // The last bytes of the pty can arrive after `exited` resolves.
+  if (exitCode === 0) await done.promise;
+  return { output, exitCode };
+}
+
+// The header line and the package lines of the table, without escape sequences.
+function tableLines(output: string) {
+  return Bun.stripANSI(output)
+    .split(/\r?\n/)
+    .filter(line => line.includes("Current") || line.includes("□"));
 }
 
 // Each test owns its own tempDir and subprocesses; the registry is read-only after beforeAll.
@@ -232,6 +291,131 @@ describe.concurrent("bun update --interactive", () => {
         closeSync(master);
       } catch {}
     }
+  });
+
+  // The table measures text in terminal columns. A CJK character or an emoji takes two columns
+  // and three or four bytes. "é" takes one column and two bytes.
+  it("should align the columns after a package name that is not ASCII", async () => {
+    await using server = manifestRegistry();
+    await using dir = tempDir("update-interactive-wide-name", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "dep": "1.0.0", "café": "1.0.0", "日本語パッケージ": "1.0.0", "😀-emoji": "1.0.0" },
+      }),
+    });
+
+    await install(dir, ["--lockfile-only"]);
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
+
+    expect(tableLines(stdout)).toEqual([
+      "  dependencies          Current  Target  Latest",
+      "  ❯ □ café              1.0.0    1.0.0   2.0.0",
+      "    □ dep               1.0.0    1.0.0   2.0.0",
+      "    □ 日本語パッケージ  1.0.0    1.0.0   2.0.0",
+      "    □ 😀-emoji          1.0.0    1.0.0   2.0.0",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Piped stdout counts as 80 columns, which limits a name to 35 columns: 17 on each side of the
+  // ellipsis. Eight wide characters fit in 17 columns, and the padding takes the two columns that
+  // are left. A combining accent takes no column and stays with its letter.
+  it("should truncate a package name on a character boundary", async () => {
+    // "e" and a combining acute accent: 3 bytes and 1 column each time.
+    const accentedLetters = (count: number) => Buffer.alloc(count * 3, "e\u0301").toString();
+    await using server = manifestRegistry();
+    await using dir = tempDir("update-interactive-wide-name-truncated", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: {
+          "a-long-ascii-package-name-that-needs-an-ellipsis": "1.0.0",
+          [accentedLetters(40)]: "1.0.0",
+          "日本語パッケージ名前テスト長い名前のパッケージです": "1.0.0",
+        },
+      }),
+    });
+
+    await install(dir, ["--lockfile-only"]);
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
+
+    expect(tableLines(stdout)).toEqual([
+      "  dependencies                             Current  Target  Latest",
+      "  ❯ □ a-long-ascii-pack…needs-an-ellipsis  1.0.0    1.0.0   2.0.0",
+      `    □ ${accentedLetters(17)}…${accentedLetters(17)}  1.0.0    1.0.0   2.0.0`,
+      "    □ 日本語パッケージ…のパッケージです    1.0.0    1.0.0   2.0.0",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Piped stdout limits a version to 15 columns. These two versions are one and two columns over.
+  it("should truncate a version that is one column wider than its cell", async () => {
+    await using server = manifestRegistry({ "long-version": ["1.0.0-canary.123", "2.0.0-canary.4567"] });
+    await using dir = tempDir("update-interactive-version-truncated", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "dep": "1.0.0", "long-version": "1.0.0-canary.123" },
+      }),
+    });
+
+    await install(dir, ["--lockfile-only"]);
+    const { stdout, exitCode } = await updateInteractive(dir, { args: ["--latest", "--dry-run"], input: "\n" });
+
+    expect(tableLines(stdout)).toEqual([
+      "  dependencies      Current          Target           Latest",
+      "  ❯ □ dep           1.0.0            1.0.0            2.0.0",
+      "    □ long-version  1.0.0-c…ary.123  1.0.0-c…ary.123  2.0.0-c…ry.4567",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The Workspace column shows on a terminal wider than 100 columns. Below 120 columns it limits
+  // a workspace name to 15 columns. The first wide name takes 14 columns and 21 bytes, so it fits.
+  // Not on Windows: ConPTY redraws the screen with its own escape sequences, so the bytes that
+  // the pty delivers are not the bytes that bun wrote.
+  it.skipIf(isWindows)("should size and truncate the Workspace column in terminal columns", async () => {
+    await using server = manifestRegistry();
+    await using dir = tempDir("update-interactive-wide-workspace", {
+      "bunfig.toml": `[install]\ncache = false\nregistry = "${server.url}"\n`,
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        catalog: { "dep-cat": "1.0.0" },
+      }),
+      "packages/a/package.json": JSON.stringify({
+        name: "plain",
+        version: "1.0.0",
+        dependencies: { "dep-a": "1.0.0" },
+      }),
+      "packages/b/package.json": JSON.stringify({
+        name: "工作区-文档-😀",
+        version: "1.0.0",
+        dependencies: { "dep-b": "1.0.0", "dep-cat": "catalog:" },
+      }),
+      "packages/c/package.json": JSON.stringify({
+        name: "工作区-文档-文档-文档",
+        version: "1.0.0",
+        dependencies: { "dep-c": "1.0.0", "dep-cat": "catalog:" },
+      }),
+    });
+
+    await install(dir, ["--lockfile-only"]);
+    const { output, exitCode } = await updateInteractiveOnPty(dir, 110, ["-r", "--latest", "--dry-run"]);
+
+    expect(tableLines(output)).toEqual([
+      "  dependencies Current  Target  Latest  Workspace",
+      "  ❯ □ dep-a    1.0.0    1.0.0   2.0.0   plain",
+      "    □ dep-b    1.0.0    1.0.0   2.0.0   工作区-文档-😀",
+      "    □ dep-c    1.0.0    1.0.0   2.0.0   工作区-文档-文…",
+      "    □ dep-cat  1.0.0    1.0.0   2.0.0   catalog (工作…",
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   it("should update packages when 'a' (select all) is used", async () => {

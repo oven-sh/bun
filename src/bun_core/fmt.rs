@@ -2071,8 +2071,14 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                                 // TOML quoted key: `"token" = "..."`
                                 if RedactedKeywords::has(inner.trim_ascii()) {
-                                    should_redact_value = true;
-                                    break 'try_redact;
+                                    let mut sep = i;
+                                    while sep < text.len() && text[sep].is_ascii_whitespace() {
+                                        sep += 1;
+                                    }
+                                    if sep < text.len() && matches!(text[sep], b'=' | b':') {
+                                        should_redact_value = true;
+                                        break 'try_redact;
+                                    }
                                 }
 
                                 if inner.len() == 36 && strings::is_uuid(inner) {

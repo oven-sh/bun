@@ -238,6 +238,11 @@ describe.concurrent("redact", async () => {
       secret: "SECRETVALUE",
     },
     {
+      title: "quoted sensitive word that is not a key",
+      bunfig: '[install]\nx = ["token", "public"] ]',
+      expected: '"public"',
+    },
+    {
       title: "quoted key with whitespace inside the quotes",
       bunfig: '[install]\n"token " = "SECRETVALUE" ]',
       expected: '"***********"',

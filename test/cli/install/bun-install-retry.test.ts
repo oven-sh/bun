@@ -1,5 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { lstatSync } from "fs";
 import { access, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join } from "path";
@@ -14,6 +15,16 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
+
+/** Whether `path` exists, as a directory, a file, or a link (even a dangling one). */
+function entryExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -474,9 +485,9 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
         optionalDependencies: { BaR: "0.0.2" },
       }),
     );
-    async function install() {
+    async function install(...args: string[]) {
       await using proc = spawn({
-        cmd: [bunExe(), "install", "--no-progress", "--ignore-scripts"],
+        cmd: [bunExe(), ...args, "--no-progress", "--ignore-scripts"],
         cwd: package_dir,
         stdout: "pipe",
         stdin: "pipe",
@@ -488,26 +499,27 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
         warnLines: err.split("\n").filter(l => l.startsWith("warn:")),
         errorLines: err.split("\n").filter(l => l.startsWith("error:")),
         failed: out.includes("Failed to install"),
+        // The package is left out. No dangling link to it either.
+        linked: entryExists(join(package_dir, "node_modules", "BaR")),
         exitCode,
       };
     }
-
-    // The first install resolves BaR and saves the lockfile. Its tarball fails while resolving.
-    expect(await install()).toEqual({
+    const warned = {
       warnLines: [`warn: GET ${root_url}/BaR-0.0.2.tgz - 404`],
       errorLines: [],
       failed: false,
-      exitCode: 0,
-    });
+      linked: false,
+    };
+
+    // The first install resolves BaR and saves the lockfile. Its tarball fails while resolving.
+    expect(await install("install")).toEqual({ ...warned, exitCode: 0 });
     await access(join(package_dir, "bun.lock"));
 
     urls.length = 0;
-    expect(await install()).toEqual({
-      warnLines: [`warn: GET ${root_url}/BaR-0.0.2.tgz - 404`],
-      errorLines: [],
-      failed: false,
-      exitCode: 0,
-    });
+    expect(await install("install")).toEqual({ ...warned, exitCode: 0 });
     expect(urls).toEqual(["/BaR-0.0.2.tgz"]);
+
+    // A package that the user asked for fails the command, optional or not.
+    expect(await install("add", "--optional", "BaR@0.0.2")).toEqual({ ...warned, exitCode: 1 });
   });
 });

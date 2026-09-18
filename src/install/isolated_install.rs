@@ -2042,6 +2042,10 @@ pub(crate) fn install_isolated_packages(
             manager: manager_ptr,
             command_ctx,
             installed,
+            missing: (0..store.entries.len())
+                .map(|_| std::sync::atomic::AtomicBool::new(false))
+                .collect(),
+            required_entries: None,
             install_node: if show_progress {
                 Some(&mut install_node)
             } else {
@@ -2410,7 +2414,6 @@ pub(crate) fn install_isolated_packages(
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
                     let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
-                    let is_required = dep.behavior.is_required();
 
                     match pkg_res_tag {
                         ResolutionTag::Npm => {
@@ -2431,7 +2434,7 @@ pub(crate) fn install_isolated_packages(
                                     crate::network_task::ForTarballError::AlreadyFailed
                                     | crate::network_task::ForTarballError::Offline,
                                 ) => {
-                                    installer.on_download_not_queued(entry_id, is_required);
+                                    installer.on_download_not_queued(entry_id);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2468,7 +2471,7 @@ pub(crate) fn install_isolated_packages(
                             ) == crate::package_manager::GitEnqueueResult::OfflineMiss
                             {
                                 // --offline and not cached: nothing was queued
-                                installer.on_download_not_queued(entry_id, is_required);
+                                installer.on_download_not_queued(entry_id);
                                 continue;
                             }
                         }
@@ -2493,7 +2496,7 @@ pub(crate) fn install_isolated_packages(
                                     crate::network_task::ForTarballError::AlreadyFailed
                                     | crate::network_task::ForTarballError::Offline,
                                 ) => {
-                                    installer.on_download_not_queued(entry_id, is_required);
+                                    installer.on_download_not_queued(entry_id);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2544,7 +2547,7 @@ pub(crate) fn install_isolated_packages(
                                     crate::network_task::ForTarballError::AlreadyFailed
                                     | crate::network_task::ForTarballError::Offline,
                                 ) => {
-                                    installer.on_download_not_queued(entry_id, is_required);
+                                    installer.on_download_not_queued(entry_id);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2661,6 +2664,8 @@ pub(crate) fn install_isolated_packages(
 
             debug_assert!(done);
         }
+
+        installer.unlink_missing_dependencies();
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));

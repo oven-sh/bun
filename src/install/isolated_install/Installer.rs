@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::io::Write as _;
 
 use bun_ast::Log;
@@ -75,6 +75,14 @@ pub struct Installer<'a> {
 
     pub(crate) summary: InstallSummary,
     pub(crate) installed: Bitset,
+    /// Set for an entry whose download failed and that only optional
+    /// dependencies need. Its store directory does not exist, so the entries
+    /// that depend on it do not link it. Set on the main thread before the
+    /// entry reaches `Step::Done`, read by the dependents' tasks.
+    pub(crate) missing: Box<[AtomicBool]>,
+    /// Main thread only. Set for an entry that a dependency without
+    /// `Behavior::OPTIONAL` resolves to. Built on the first failed download.
+    pub(crate) required_entries: Option<Bitset>,
     pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
 
@@ -277,8 +285,8 @@ impl<'a> Installer<'a> {
             let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx else {
                 continue;
             };
-            entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
-            if is_required {
+            if is_required || self.entry_is_required(entry_id) {
+                entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
                 self.on_task_fail(
                     entry_id,
                     &TaskError::Download(DownloadError {
@@ -456,11 +464,11 @@ impl<'a> Installer<'a> {
     /// Called from main thread when the download for `entry_id` was not
     /// queued: it already failed, or `--offline` has no cached copy. Both
     /// were reported when they happened.
-    pub(crate) fn on_download_not_queued(&mut self, entry_id: StoreEntryId, is_required: bool) {
-        // .monotonic is okay because the task isn't running on another thread.
-        self.store.entries.items_step()[entry_id.get() as usize]
-            .store(Step::Done as u32, Ordering::Relaxed);
-        if is_required {
+    pub(crate) fn on_download_not_queued(&mut self, entry_id: StoreEntryId) {
+        if self.entry_is_required(entry_id) {
+            // .monotonic is okay because the task isn't running on another thread.
+            self.store.entries.items_step()[entry_id.get() as usize]
+                .store(Step::Done as u32, Ordering::Relaxed);
             self.on_task_complete(entry_id, CompleteState::Fail);
         } else {
             self.on_optional_download_fail(entry_id);
@@ -470,13 +478,40 @@ impl<'a> Installer<'a> {
     /// Called from main thread when the download for an entry that only
     /// optional dependencies need fails. The entry is left out. It counts
     /// neither as installed nor as failed, as in the hoisted linker.
-    pub(crate) fn on_optional_download_fail(&mut self, entry_id: StoreEntryId) {
+    fn on_optional_download_fail(&mut self, entry_id: StoreEntryId) {
+        self.missing[entry_id.get() as usize].store(true, Ordering::Relaxed);
+        // Release orders the `missing` store before the dependents' tasks, which
+        // load the step with Acquire in `is_task_blocked`.
+        self.store.entries.items_step()[entry_id.get() as usize]
+            .store(Step::Done as u32, Ordering::Release);
         self.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
 
         if let Some(node) = self.install_node.as_mut() {
             node.complete_one();
         }
+    }
+
+    /// Main thread only. Whether a dependency without `Behavior::OPTIONAL`
+    /// resolves to `entry_id`. The network task's `is_required` only knows the
+    /// one dependency that asked for the download. Several dependencies can
+    /// share one store entry, and the first one to reach it can be optional.
+    fn entry_is_required(&mut self, entry_id: StoreEntryId) -> bool {
+        if self.required_entries.is_none() {
+            let dependencies = self.lockfile().buffers.dependencies.as_slice();
+            let mut required = bun_core::handle_oom(Bitset::init_empty(self.store.entries.len()));
+            for deps in self.store.entries.items_dependencies() {
+                for dep in deps.slice() {
+                    if dependencies[dep.dep_id as usize].behavior.is_required() {
+                        required.set(dep.entry_id.get() as usize);
+                    }
+                }
+            }
+            self.required_entries = Some(required);
+        }
+        self.required_entries
+            .as_ref()
+            .is_some_and(|required| required.is_set(entry_id.get() as usize))
     }
 
     pub(crate) fn decrement_pending_tasks(&mut self) {
@@ -662,6 +697,22 @@ pub enum Relink {
     Pending,
     Unchanged,
     Changed,
+}
+
+/// Appends the `node_modules` entry name of a dependency link. A dependency
+/// with the same name as the entry itself nests one `node_modules` deeper to
+/// avoid the collision.
+fn append_dependency_link_name(
+    dest: &mut AutoPath,
+    dep_name: &[u8],
+    entry_node_modules_name: Option<&[u8]>,
+) {
+    // OOM/capacity: fire-and-forget
+    let _ = dest.append(dep_name);
+    if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
+        let _ = dest.append(b"node_modules");
+        let _ = dest.append(dep_name);
+    }
 }
 
 fn download_error_reason(e: crate::Error) -> &'static [u8] {
@@ -2296,15 +2347,13 @@ impl<'a> Installer<'a> {
 
         let mut changed = false;
         for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
+            if self.missing[dep.entry_id.get() as usize].load(Ordering::Relaxed) {
+                continue;
+            }
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
 
             dest.set_length(base_len);
-            let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-            if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
-                // same name as the entry itself: nest one node_modules deeper to avoid the collision
-                let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
-                let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-            }
+            append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
 
             let mut dep_store_path = AutoAbsPath::init_top_level_dir();
             if uses_global_store {
@@ -2331,6 +2380,62 @@ impl<'a> Installer<'a> {
         }
 
         Ok(changed)
+    }
+
+    /// Main thread, after every task finished. Removes the links to the
+    /// entries in `missing`. `symlink_dependencies` runs before the entry's
+    /// download can fail, so the dependents created them. A dependent in the
+    /// global store keeps its link: that directory is shared, and the link
+    /// resolves once another install downloads the entry.
+    pub(crate) fn unlink_missing_dependencies(&self) {
+        if !self
+            .missing
+            .iter()
+            .any(|missing| missing.load(Ordering::Relaxed))
+        {
+            return;
+        }
+
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let pkg_names = lockfile.packages.items_name();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let entry_node_ids = self.store.entries.items_node_id();
+        let node_pkg_ids = self.store.nodes.items_pkg_id();
+        let node_dep_ids = self.store.nodes.items_dep_id();
+
+        for (parent, deps) in self.store.entries.items_dependencies().iter().enumerate() {
+            let parent_id = StoreEntryId::from(parent as u32);
+            if self.entry_uses_global_store(parent_id) {
+                continue;
+            }
+            let mut dest: Option<(AutoPath, usize, Option<&[u8]>)> = None;
+            for dep in deps.slice() {
+                if !self.missing[dep.entry_id.get() as usize].load(Ordering::Relaxed) {
+                    continue;
+                }
+                let (dest, base_len, entry_node_modules_name) = dest.get_or_insert_with(|| {
+                    let node_id = entry_node_ids[parent];
+                    let pkg_id = node_pkg_ids[node_id.get() as usize];
+                    let dep_id = node_dep_ids[node_id.get() as usize];
+                    let mut dest = AutoPath::init_top_level_dir();
+                    self.append_real_store_node_modules_path(&mut dest, parent_id, Which::Final);
+                    let base_len = dest.len();
+                    let name = self.entry_store_node_modules_package_name(
+                        dep_id,
+                        pkg_id,
+                        &pkg_resolutions[pkg_id as usize],
+                        pkg_names,
+                    );
+                    (dest, base_len, name)
+                });
+                let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
+                dest.set_length(*base_len);
+                append_dependency_link_name(dest, dep_name, *entry_node_modules_name);
+                symlinker::remove_link(dest.slice_z());
+            }
+        }
     }
 
     pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {
@@ -2369,6 +2474,9 @@ impl<'a> Installer<'a> {
         );
 
         for dep in entry_deps[parent_entry_id.get() as usize].slice() {
+            if self.missing[dep.entry_id.get() as usize].load(Ordering::Relaxed) {
+                continue;
+            }
             let node_id = entry_node_ids[dep.entry_id.get() as usize];
             let dep_id = node_dep_ids[node_id.get() as usize];
             let pkg_id = node_pkg_ids[node_id.get() as usize];

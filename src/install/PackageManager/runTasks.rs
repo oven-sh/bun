@@ -818,6 +818,13 @@ fn run_tasks_erased(
                         );
                     }
 
+                    fail_update_requests(
+                        manager,
+                        task.task_id,
+                        extract.name.slice(),
+                        Some(extract.dependency_id),
+                    );
+
                     if cb.has_on_package_download_error {
                         if cb.is_store_installer {
                             (cb.on_package_download_error_store)(
@@ -858,12 +865,6 @@ fn run_tasks_erased(
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                         );
                     }
-                    fail_update_requests(
-                        manager,
-                        task.task_id,
-                        extract.name.slice(),
-                        Some(extract.dependency_id),
-                    );
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -893,6 +894,13 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
+
+                    fail_update_requests(
+                        manager,
+                        task.task_id,
+                        extract.name.slice(),
+                        Some(extract.dependency_id),
+                    );
 
                     if cb.has_on_package_download_error {
                         let err = match response.status_code {
@@ -941,12 +949,6 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    fail_update_requests(
-                        manager,
-                        task.task_id,
-                        extract.name.slice(),
-                        Some(extract.dependency_id),
-                    );
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);

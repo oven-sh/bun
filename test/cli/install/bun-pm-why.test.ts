@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -266,8 +266,8 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       ["pkg-*@>=1.0.0 <2", ["pkg-a"]],
       ["pkg-*@2.0.0", ["pkg-b"]],
       ["pkg-*@*", ["pkg-a", "pkg-b"]],
-      // Not a range: compared with the printed resolution, as before.
-      ["pkg-*@workspace:packages/pkg-a", ["pkg-a"]],
+      // Not a range: compared with the printed resolution, which uses the platform separator.
+      [`pkg-*@workspace:packages${isWindows ? "\\" : "/"}pkg-a`, ["pkg-a"]],
     ])("matches the workspace version for %s", async (query, expected) => {
       using dir = tempDir(`why-workspace-version-${i++}`, files);
       const { stdout, stderr, exitCode } = await why(String(dir), query);

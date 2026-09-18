@@ -800,11 +800,16 @@ impl CopyFile {
                 };
                 if bun_sys::S::ISREG(dest_stat.st_mode as _) {
                     if dest_stat.st_dev == stat.st_dev && dest_stat.st_ino == stat.st_ino {
-                        self.read_len = SizeType::try_from(stat.st_size).expect("int cast");
+                        // `max_length` can be a size that was cached before the
+                        // file grew, so a copy onto itself never cuts the file.
+                        self.read_len = SizeType::try_from(dest_stat.st_size).expect("int cast");
                         self.do_close();
                         return;
                     }
-                    if let bun_sys::Result::Err(err) = bun_sys::ftruncate(self.destination_fd, 0) {
+                    if dest_stat.st_size != 0
+                        && let bun_sys::Result::Err(err) =
+                            bun_sys::ftruncate(self.destination_fd, 0)
+                    {
                         self.system_error = Some(err.to_system_error());
                         self.do_close();
                         return;

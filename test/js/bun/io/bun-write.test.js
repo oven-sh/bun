@@ -348,6 +348,21 @@ const IS_UV_FS_COPYFILE_DISABLED =
       });
     });
 
+    // Windows still cuts the file to the size the destination BunFile cached.
+    it.todoIf(isWindows)("a destination that cached its size before the file grew does not cut the file", async () => {
+      using dir = tempDir("bun-write-same-file-stale-size", { "file.txt": "0123456789" });
+      const file = join(String(dir), "file.txt");
+      const destination = Bun.file(file);
+      expect(destination.size).toBe(10);
+      fs.appendFileSync(file, "ABCDEFGHIJ");
+
+      const written = await Bun.write(destination, Bun.file(file));
+      expect({ written, content: fs.readFileSync(file, "utf8") }).toEqual({
+        written: 20,
+        content: "0123456789ABCDEFGHIJ",
+      });
+    });
+
     it("a longer existing destination is still replaced", async () => {
       using dir = tempDir("bun-write-shorter-source", { "src.txt": "short", "dest.txt": content });
       const dest = join(String(dir), "dest.txt");

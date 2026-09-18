@@ -156,8 +156,10 @@ When spawning, Bun passes a minimal flag set:
 --no-default-browser-check --disable-gpu --disable-extensions
 --disable-background-networking --disable-background-timer-throttling
 --disable-backgrounding-occluded-windows --disable-renderer-backgrounding
---disable-ipc-flooding-protection --no-startup-window
+--disable-ipc-flooding-protection --no-startup-window --do-not-de-elevate
 ```
+
+`--do-not-de-elevate` stops Chrome on Windows from relaunching itself de-elevated when Bun runs as Administrator. The relaunched process would not inherit the debugging pipe. Other platforms ignore the switch.
 
 Append your own with `argv` — Chrome resolves duplicate switches last-wins, so you can override any default:
 

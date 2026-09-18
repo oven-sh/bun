@@ -1935,7 +1935,37 @@ describe("HTMLRewriter", () => {
     expect(removed).toBe("<div>a");
   });
 
-  it("onEndTag: callback fires only for elements whose end tag appears", async () => {
+  it("onEndTag: before/after escape the content unless html is true", async () => {
+    const rewrite = (method, ...options) =>
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.onEndTag(end => {
+              end[method]("<b>Y</b>", ...options);
+            });
+          },
+        })
+        .transform(new Response("<div>a</div>z"))
+        .text();
+
+    expect({
+      "before, html: true": await rewrite("before", { html: true }),
+      "before, html: false": await rewrite("before", { html: false }),
+      "before, no options": await rewrite("before"),
+      "after, html: true": await rewrite("after", { html: true }),
+      "after, html: false": await rewrite("after", { html: false }),
+      "after, no options": await rewrite("after"),
+    }).toEqual({
+      "before, html: true": "<div>a<b>Y</b></div>z",
+      "before, html: false": "<div>a&lt;b&gt;Y&lt;/b&gt;</div>z",
+      "before, no options": "<div>a&lt;b&gt;Y&lt;/b&gt;</div>z",
+      "after, html: true": "<div>a</div><b>Y</b>z",
+      "after, html: false": "<div>a</div>&lt;b&gt;Y&lt;/b&gt;z",
+      "after, no options": "<div>a</div>&lt;b&gt;Y&lt;/b&gt;z",
+    });
+  });
+
+  it("onEndTag: callback does not fire when the input ends before the element is closed", async () => {
     let calls = 0;
     const output = await new HTMLRewriter()
       .on("div", {
@@ -1949,6 +1979,22 @@ describe("HTMLRewriter", () => {
       .text();
     expect(output).toBe("<div>a</div><div>b<span>c</span>");
     expect(calls).toBe(1);
+  });
+
+  it("onEndTag: callback fires with the parent's end tag when that tag closes the element", async () => {
+    const endTagNames = [];
+    const output = await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.onEndTag(end => {
+            endTagNames.push(end.name);
+          });
+        },
+      })
+      .transform(new Response("<section><div>b</section>"))
+      .text();
+    expect(output).toBe("<section><div>b</section>");
+    expect(endTagNames).toEqual(["section"]);
   });
 
   it("onEndTag: throws on void elements", async () => {
@@ -1966,7 +2012,11 @@ describe("HTMLRewriter", () => {
       .transform(new Response("<br>"))
       .text();
     expect(output).toBe("<br>");
-    expect(error?.message).toBe("No end tag.");
+    expect(error).toBeInstanceOf(Error);
+    expect({ name: error.name, message: error.message }).toEqual({
+      name: "HTMLRewriterError",
+      message: "No end tag.",
+    });
   });
 });
 

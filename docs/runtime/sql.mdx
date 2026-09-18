@@ -1002,6 +1002,8 @@ try {
 } // Automatically released
 ```
 
+Await each query before you release the connection. A query is lazy and runs when it is awaited. A query that first runs after `release()` rejects with `ERR_POSTGRES_CONNECTION_CLOSED` (or the MySQL equivalent), because the connection can already belong to another caller. `return reserved\`SELECT 1\``without`await` from a block that releases the handle is such a query.
+
 When every connection is busy, `reserve()` waits until one frees up. Pass an `AbortSignal` to stop waiting: the promise rejects with `signal.reason` and no connection is taken from the pool. Aborting after the promise resolved has no effect, so a connection you received must still be released.
 
 ```ts

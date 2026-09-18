@@ -10451,6 +10451,77 @@ it("refuses to install an escaping file: dependency that a registry package's ow
   });
 });
 
+describe.concurrent('a registry package\'s file: dependency that hides ".." behind a NUL', () => {
+  // The OS ends a path at a NUL. For a check that only splits on separators,
+  // "..\0not-a-parent" is one ordinary component, but the directory that gets
+  // opened is "..".
+  const target = "..\u0000not-a-parent";
+
+  it("is refused by the resolver", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, { "0.0.3": { dependencies: { loot: "file:" + target } } }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "my-app", version: "1.0.0", dependencies: { baz: "0.0.3" } }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(err).toContain("Could not find package.json");
+      expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  it("is refused by the hoisted installer when the lockfile carries it", async () => {
+    await withContext(defaultOpts, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "my-app", version: "1.0.0", dependencies: { baz: "0.0.3" } }),
+      );
+      await writeFile(
+        join(ctx.package_dir, "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "my-app", dependencies: { baz: "0.0.3" } } },
+          packages: {
+            "baz": ["baz@0.0.3", `${ctx.registry_url}baz-0.0.3.tgz`, { dependencies: { loot: "file:" + target } }, ""],
+            "baz/loot": ["loot@file:" + target, {}],
+          },
+        }),
+      );
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(err).toContain("refusing to install dependency loot with unsafe folder path");
+      expect(await exists(join(ctx.package_dir, "node_modules", "baz", "node_modules", "loot"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  });
+});
+
 it("installs transitive file: dependencies of a local file: package that point outside the project", async () => {
   // A file: package referenced by the root package.json lives outside the
   // project and declares its own relative folder dependencies that also land
@@ -10521,6 +10592,315 @@ it("installs transitive file: dependencies of a local file: package that point o
   expect(
     await exists(join(projectDir, "node_modules", "plugin", "node_modules", "shared-dev-lib", "package.json")),
   ).toBe(true);
+});
+
+describe.concurrent("isolated linker: file: dependencies that point outside the project", () => {
+  // The isolated linker opens every folder path relative to the project, so the
+  // project is one level below the temp directory and "../<name>" is a sibling
+  // that the test owns.
+  const bunfig = (ctx: TestContext) =>
+    Bun.TOML.stringify({ install: { cache: false, registry: ctx.registry_url, linker: "isolated" } });
+
+  async function install(projectDir: string, ...flags: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...flags],
+      cwd: projectDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    return { err, out, exitCode };
+  }
+
+  // The first install resolves (enqueue path), the second one starts from the
+  // saved lockfile with an empty node_modules (installer path).
+  async function installTwice(projectDir: string) {
+    for (let i = 0; i < 2; i++) {
+      if (i === 1) {
+        await rm(join(projectDir, "node_modules"), { recursive: true, force: true });
+      }
+      const { err, exitCode } = await install(projectDir);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+  }
+
+  // The resolver does not record these dependencies, but a lockfile from an
+  // older bun (or a migrated or edited one) can carry the rows. Registry content
+  // is not written by the user, so the installer must refuse the path that
+  // leaves the project, the way the hoisted linker does.
+  const refusedRows: Record<string, (tarball: string, secretDir: string) => object> = {
+    "a registry package declares with a relative path": tarball => ({
+      "baz": ["baz@0.0.3", tarball, { dependencies: { loot: "file:../secret" } }, ""],
+      "baz/loot": ["loot@file:../secret", {}],
+    }),
+    "a registry package declares with an absolute path": (tarball, secretDir) => ({
+      "baz": ["baz@0.0.3", tarball, { dependencies: { loot: "file:" + secretDir } }, ""],
+      "baz/loot": ["loot@file:" + secretDir, {}],
+    }),
+    // The OS ends a path at a NUL, so this row opens "..".
+    'a registry package declares with ".." hidden behind a NUL': tarball => ({
+      "baz": ["baz@0.0.3", tarball, { dependencies: { loot: "file:..\u0000not-a-parent" } }, ""],
+      "baz/loot": ["loot@file:..\u0000not-a-parent", {}],
+    }),
+    // Trust for a folder parent is anchored at the root or a workspace.
+    "the folder of a registry package declares": tarball => ({
+      "baz": ["baz@0.0.3", tarball, { dependencies: { inner: "file:vendor/inner" } }, ""],
+      "baz/inner": ["inner@file:vendor/inner", { dependencies: { loot: "file:../secret" } }],
+      "baz/inner/loot": ["loot@file:../secret", {}],
+    }),
+  };
+
+  for (const [title, packages] of Object.entries(refusedRows)) {
+    it(`refuses one that ${title} in the lockfile`, async () => {
+      await withContext(undefined, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": {} }));
+        using dir = tempDir("isolated-registry-file-dep-lockfile", {
+          "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+          "secret/credentials.txt": "do-not-link-me",
+          "project/bunfig.toml": bunfig(ctx),
+          "project/package.json": JSON.stringify({
+            name: "my-app",
+            version: "1.0.0",
+            dependencies: { baz: "0.0.3" },
+          }),
+          "project/vendor/inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
+        });
+        const projectDir = join(String(dir), "project");
+        await write(
+          join(projectDir, "bun.lock"),
+          JSON.stringify({
+            lockfileVersion: 1,
+            workspaces: { "": { name: "my-app", dependencies: { baz: "0.0.3" } } },
+            packages: packages(`${ctx.registry_url}baz-0.0.3.tgz`, join(String(dir), "secret").replaceAll("\\", "/")),
+          }),
+        );
+
+        const { err, exitCode } = await install(projectDir);
+
+        expect(err).toContain("refusing to install dependency loot with unsafe folder path");
+        // Nothing in the store is made from the outside directory.
+        const store = await readdirSorted(join(projectDir, "node_modules", ".bun"));
+        expect(store.filter(name => name.startsWith("loot@"))).toEqual([]);
+        expect(exitCode).toBe(1);
+      });
+    });
+  }
+
+  it("links one that the root declares when a registry package peer-depends on it", async () => {
+    // `baz` is visited before `shared`, so the first dependency that reaches the
+    // folder package is the peer dependency of a registry package. The folder is
+    // still the one the root package.json names.
+    await withContext(undefined, async ctx => {
+      const urls: string[] = [];
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, urls, {
+          "0.0.3": {
+            peerDependencies: { shared: "*" },
+            peerDependenciesMeta: { shared: { optional: true } },
+          },
+        }),
+      );
+      using dir = tempDir("isolated-root-file-dep-peer", {
+        "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+        "shared/index.js": "module.exports = 'shared';",
+        "project/bunfig.toml": bunfig(ctx),
+        "project/package.json": JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: { baz: "0.0.3", shared: "file:../shared" },
+        }),
+      });
+      const projectDir = join(String(dir), "project");
+
+      await installTwice(projectDir);
+
+      const store = join(projectDir, "node_modules", ".bun");
+      const bazEntry = (await readdirSorted(store)).find(name => name.startsWith("baz@"))!;
+      expect(
+        await Promise.all([
+          file(join(projectDir, "node_modules", "shared", "index.js")).text(),
+          file(join(store, bazEntry, "node_modules", "shared", "index.js")).text(),
+        ]),
+      ).toEqual(["module.exports = 'shared';", "module.exports = 'shared';"]);
+    });
+  });
+
+  // These flags leave the root's own dependency on the folder out of the
+  // install. The peer dependency of the registry package still reaches it, and
+  // the path is still the one the root package.json names.
+  for (const flags of [["--production"], ["--omit", "dev"], ["--frozen-lockfile", "--production"], ["--filter", "b"]]) {
+    it(`links one that the root declares when ${flags.join(" ")} leaves only a registry package's peer dependency on it`, async () => {
+      await withContext(undefined, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, urls, {
+            "0.0.3": {
+              peerDependencies: { shared: "*" },
+              peerDependenciesMeta: { shared: { optional: true } },
+            },
+          }),
+        );
+        using dir = tempDir("isolated-root-file-dep-flags", {
+          "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+          "shared/index.js": "module.exports = 'shared';",
+          "project/bunfig.toml": bunfig(ctx),
+          ...(flags[0] === "--filter"
+            ? {
+                "project/package.json": JSON.stringify({
+                  name: "my-app",
+                  version: "1.0.0",
+                  workspaces: ["packages/*"],
+                  dependencies: { shared: "file:../shared" },
+                }),
+                "project/packages/b/package.json": JSON.stringify({
+                  name: "b",
+                  version: "1.0.0",
+                  dependencies: { baz: "0.0.3" },
+                }),
+              }
+            : {
+                "project/package.json": JSON.stringify({
+                  name: "my-app",
+                  version: "1.0.0",
+                  dependencies: { baz: "0.0.3" },
+                  devDependencies: { shared: "file:../shared" },
+                }),
+              }),
+        });
+        const projectDir = join(String(dir), "project");
+
+        // A full install writes the lockfile.
+        const full = await install(projectDir);
+        expect(full.err).not.toContain("error:");
+        expect(full.exitCode).toBe(0);
+        await Promise.all([
+          rm(join(projectDir, "node_modules"), { recursive: true, force: true }),
+          rm(join(projectDir, "packages", "b", "node_modules"), { recursive: true, force: true }),
+        ]);
+
+        const { err, exitCode } = await install(projectDir, ...flags);
+
+        expect(err).not.toContain("error:");
+        const store = join(projectDir, "node_modules", ".bun");
+        const bazEntry = (await readdirSorted(store)).find(name => name.startsWith("baz@"))!;
+        expect(await file(join(store, bazEntry, "node_modules", "shared", "index.js")).text()).toBe(
+          "module.exports = 'shared';",
+        );
+        expect(exitCode).toBe(0);
+      });
+    });
+  }
+
+  it("links the ones that a local file: package declares", async () => {
+    using dir = tempDir("isolated-local-file-dep-outside", {
+      "packages/plugin/package.json": JSON.stringify({
+        name: "plugin",
+        version: "1.0.0",
+        dependencies: { "shared-lib": "../shared-lib" },
+        devDependencies: { "shared-dev-lib": "file:../shared-dev-lib" },
+      }),
+      "packages/plugin/index.js": `module.exports = [require("shared-lib/package.json").name, require("shared-dev-lib/package.json").name];`,
+      "packages/shared-lib/package.json": JSON.stringify({ name: "shared-lib", version: "1.0.0" }),
+      "packages/shared-dev-lib/package.json": JSON.stringify({ name: "shared-dev-lib", version: "1.0.0" }),
+      "project/bunfig.toml": Bun.TOML.stringify({ install: { cache: false, linker: "isolated" } }),
+      "project/package.json": JSON.stringify({
+        name: "my-app",
+        version: "1.0.0",
+        dependencies: { plugin: "file:../packages/plugin" },
+      }),
+    });
+    const projectDir = join(String(dir), "project");
+
+    await installTwice(projectDir);
+
+    await using run = spawn({
+      cmd: [bunExe(), "-e", `console.log(JSON.stringify(require("plugin")))`],
+      cwd: projectDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [runErr, runOut, runExit] = await Promise.all([run.stderr.text(), run.stdout.text(), run.exited]);
+    expect(runErr).toBe("");
+    expect(runOut.trim()).toBe(`["shared-lib","shared-dev-lib"]`);
+    expect(runExit).toBe(0);
+  });
+
+  for (const field of ["resolutions", "overrides"]) {
+    it(`links one that root "${field}" applies to a registry package's dependency`, async () => {
+      await withContext(undefined, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.3": { dependencies: { shared: "1.0.0" } } }));
+        using dir = tempDir(`isolated-${field}-registry-file-dep`, {
+          "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+          "shared/index.js": "module.exports = 'shared';",
+          "project/bunfig.toml": bunfig(ctx),
+          "project/package.json": JSON.stringify({
+            name: "my-app",
+            version: "1.0.0",
+            dependencies: { baz: "0.0.3" },
+            [field]: { shared: "file:../shared" },
+          }),
+        });
+        const projectDir = join(String(dir), "project");
+
+        await installTwice(projectDir);
+
+        // No registry request was made for `shared`, and `baz` gets the folder.
+        expect(urls.filter(url => url.includes("shared"))).toEqual([]);
+        expect(
+          await file(
+            join(projectDir, "node_modules", ".bun", "baz@0.0.3", "node_modules", "shared", "index.js"),
+          ).text(),
+        ).toBe("module.exports = 'shared';");
+      });
+    });
+
+    it(`links one that a nested root "${field}" rule gives to a local file: package's dependency`, async () => {
+      // The only dependency that resolves to the folder is `"shared": "1.0.0"` of
+      // `pkg-a`. The trust checks consult only plain rules, so the trust comes
+      // from the package that declares the dependency, not from its version.
+      using dir = tempDir(`isolated-nested-${field}-local-file-dep`, {
+        "shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+        "shared/index.js": "module.exports = 'shared';",
+        "project/bunfig.toml": Bun.TOML.stringify({ install: { cache: false, linker: "isolated" } }),
+        "project/package.json": JSON.stringify({
+          name: "my-app",
+          version: "1.0.0",
+          dependencies: { "pkg-a": "file:./pkg-a" },
+          [field]:
+            field === "overrides" ? { "pkg-a": { shared: "file:../shared" } } : { "pkg-a/shared": "file:../shared" },
+        }),
+        "project/pkg-a/package.json": JSON.stringify({
+          name: "pkg-a",
+          version: "1.0.0",
+          dependencies: { shared: "1.0.0" },
+        }),
+        "project/pkg-a/index.js": "module.exports = require('shared');",
+      });
+      const projectDir = join(String(dir), "project");
+
+      await installTwice(projectDir);
+
+      await using run = spawn({
+        cmd: [bunExe(), "-e", `console.log(require("pkg-a"))`],
+        cwd: projectDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [runErr, runOut, runExit] = await Promise.all([run.stderr.text(), run.stdout.text(), run.exited]);
+      expect(runErr).toBe("");
+      expect(runOut).toBe("shared\n");
+      expect(runExit).toBe(0);
+    });
+  }
 });
 
 it("does not install transitive file: dependencies with overlong folder targets", async () => {

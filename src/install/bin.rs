@@ -755,6 +755,10 @@ pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     if path::is_absolute(target) {
         return true;
     }
+    // The OS ends a path at a NUL, so `..\0x` is one component below but opens `..`.
+    if strings::contains_char(target, 0) {
+        return true;
+    }
     // Windows drive-relative paths (`C:foo`, `C:..\evil`) are not "absolute"
     // (no separator after the colon) and their `C:..` component is not a bare
     // `..`, so they would slip past the depth walk below while still resolving

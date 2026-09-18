@@ -905,6 +905,20 @@ impl Lockfile {
             .contains_name(dep.name_hash, dep.name.slice(buf), buf)
     }
 
+    /// Does a trusted dependency, installed or filtered out, resolve to folder package `id`?
+    pub(crate) fn is_trusted_folder_package(&self, id: PackageID) -> bool {
+        self.buffers
+            .resolutions
+            .iter()
+            .enumerate()
+            .any(|(dep_id, &pkg_id)| {
+                pkg_id == id
+                    && self.is_trusted_folder_dependency(
+                        DependencyID::try_from(dep_id).expect("int cast"),
+                    )
+            })
+    }
+
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {

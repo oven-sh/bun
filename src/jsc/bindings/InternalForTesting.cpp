@@ -268,9 +268,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_suspendThreadAndSignalForTesting, (JSC::JSGl
     RETURN_IF_EXCEPTION(scope, {});
     bool threadDirected = callFrame->argument(3).toBoolean(globalObject);
 
-    // The caller keeps `state` alive until slots[2] is set.
-    int32_t* slots = state->typedVector();
-    WTF::Thread::create("SuspendForTesting"_s, [thread = Ref { WTF::Thread::currentSingleton() }, handle = pthread_self(), slots, signalNumber, holdMilliseconds, threadDirected] {
+    // The helper thread holds its own ref on the SharedArrayBuffer's storage, so the JS side may drop `state` at any time.
+    JSC::ArrayBufferContents storage;
+    if (!state->possiblySharedBuffer()->shareWith(storage)) {
+        throwTypeError(globalObject, scope, "could not share the state buffer"_s);
+        return {};
+    }
+    size_t byteOffset = state->byteOffset();
+    WTF::Thread::create("SuspendForTesting"_s, [thread = Ref { WTF::Thread::currentSingleton() }, handle = pthread_self(), storage = WTF::move(storage), byteOffset, signalNumber, holdMilliseconds, threadDirected] {
+        int32_t* slots = reinterpret_cast<int32_t*>(static_cast<uint8_t*>(storage.data()) + byteOffset);
         // slots[1]: 0 held, 1 the thread ran while suspended, 2 suspend failed, 3 the send failed.
         int32_t result = 2;
         {
@@ -282,8 +288,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_suspendThreadAndSignalForTesting, (JSC::JSGl
                 usleep(static_cast<useconds_t>(holdMilliseconds) * 1000);
                 bool moved = WTF::atomicLoad(&slots[0]) != before;
                 thread->resume(locker);
-                result = sendError ? 3 : moved ? 1
-                                               : 0;
+                if (sendError)
+                    result = 3;
+                else
+                    result = moved ? 1 : 0;
             }
         }
         WTF::atomicStore(&slots[1], result);

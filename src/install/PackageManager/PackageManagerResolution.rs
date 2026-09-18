@@ -501,6 +501,12 @@ fn workspace_containment<'b>(
     {
         return Containment::Refused("names a drive");
     }
+    // A `\` is a name byte here and a separator in `AutoPath`, so the linkers would open
+    // components this check never saw.
+    #[cfg(not(windows))]
+    if strings::contains_char(workspace_path, b'\\') {
+        return Containment::Refused("has a backslash");
+    }
     // The installer creates these itself. Caseless: macOS and Windows open either name.
     for component in strings::split_any(workspace_path, b"/\\") {
         if component.eq_ignore_ascii_case(b"node_modules") {
@@ -552,7 +558,7 @@ fn write_absolute_path(buf: &mut [u8], root: &[u8], mut path: &[u8]) -> Option<u
     let absolute = bun_paths::is_absolute(path);
     // A trailing separator makes `lstat` follow the last component, except on a bare root.
     while let [rest @ .., last] = path {
-        if !bun_paths::is_sep_any(*last) || rest.is_empty() || rest.last() == Some(&b':') {
+        if !bun_paths::is_sep_native(*last) || rest.is_empty() || is_drive(rest) {
             break;
         }
         path = rest;
@@ -624,12 +630,20 @@ fn is_symlink(path: &bun_core::ZStr) -> bool {
     }
 }
 
+/// `C:` on Windows, where a trailing separator is part of the drive root's own name.
+fn is_drive(_path: &[u8]) -> bool {
+    #[cfg(windows)]
+    return matches!(_path, [letter, b':'] if bun_paths::is_drive_letter(*letter));
+    #[cfg(not(windows))]
+    return false;
+}
+
 /// Exact: both come from the same `realpath`, and a volume can be case-sensitive.
 fn is_inside(root: &[u8], dir: &[u8]) -> bool {
     // `/` and `C:\` keep a separator of their own, which every path below them repeats.
     let mut root = root;
     while let [rest @ .., last] = root {
-        if !bun_paths::is_sep_any(*last) {
+        if !bun_paths::is_sep_native(*last) {
             break;
         }
         root = rest;
@@ -637,5 +651,5 @@ fn is_inside(root: &[u8], dir: &[u8]) -> bool {
     if !dir.starts_with(root) {
         return false;
     }
-    dir.len() == root.len() || bun_paths::is_sep_any(dir[root.len()])
+    dir.len() == root.len() || bun_paths::is_sep_native(dir[root.len()])
 }

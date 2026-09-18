@@ -502,3 +502,81 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
   });
 });
+
+// A scaffold file that cannot be written (full disk) must fail `bun init`
+// instead of being left behind empty with exit code 0. bun ignores SIGXFSZ,
+// so under `ulimit -f N` a write past the limit fails with EFBIG, which takes
+// the same path as ENOSPC. N is in 512-byte blocks, or KiB with macOS /bin/sh.
+describe.skipIf(isWindows)("bun init when a file cannot be written", () => {
+  // The Cursor rule (.cursor/rules/*.mdc, > 2 KiB) is the one template file
+  // larger than 1 KiB, so it is the file that `ulimit -f 1` stops everywhere.
+  const env = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "0", CLAUDE_CODE_AGENT_RULE_DISABLED: "1", CURSOR_TRACE_ID: "1" };
+  const rule = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc";
+
+  async function init(cwd: string, fileSizeLimitBlocks?: number) {
+    const cmd =
+      fileSizeLimitBlocks === undefined
+        ? [bunExe(), "init", "-y"]
+        : ["sh", "-c", `ulimit -f ${fileSizeLimitBlocks} && exec "$@"`, "sh", bunExe(), "init", "-y"];
+    await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  /** Every file below `dir` with its size (directories themselves are left out). */
+  function files(dir: string) {
+    return Object.fromEntries(
+      readdirSync(dir, { recursive: true, encoding: "utf8" })
+        .map(name => [name, fs.statSync(path.join(dir, name))] as const)
+        .filter(([, stat]) => stat.isFile())
+        .map(([name, stat]) => [name, stat.size]),
+    );
+  }
+
+  test.concurrent("package.json: reports the error, removes the empty file, exits 1", async () => {
+    using dir = tempDir("bun-init-enospc-package-json", {});
+    // No file may grow past 0 bytes: the very first write fails.
+    const { stderr, exitCode } = await init(String(dir), 0);
+    expect(stderr).toContain("EFBIG");
+    expect(stderr).toContain("failed to write package.json");
+    expect(files(String(dir))).toEqual({});
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent(
+    "template file: reports the error, removes the partial file, exits 1, and a rerun completes the scaffold",
+    async () => {
+      using dir = tempDir("bun-init-enospc-template", {});
+      // package.json and .gitignore fit under the limit and are written first;
+      // the rule comes next and does not fit.
+      {
+        const { stdout, stderr, exitCode } = await init(String(dir), 1);
+        expect(stderr).toContain("EFBIG");
+        expect(stderr).toContain("failed to write " + rule);
+        expect(stdout).not.toContain(rule);
+        const written = files(String(dir));
+        expect(written).toEqual({ ".gitignore": expect.any(Number), "package.json": expect.any(Number) });
+        expect(Object.values(written)).not.toContain(0);
+        expect(exitCode).toBe(1);
+      }
+      // With space available again the missing files are created. package.json
+      // already lists the dependencies, so no `bun install` runs.
+      {
+        const { stdout, stderr, exitCode } = await init(String(dir));
+        expect(stderr).not.toContain("failed to write");
+        for (const name of [rule, "index.ts", "tsconfig.json", "README.md"]) {
+          expect(stdout).toContain("+ " + name);
+        }
+        const written = files(String(dir));
+        expect(written).toMatchObject({
+          [rule]: expect.any(Number),
+          "index.ts": expect.any(Number),
+          "tsconfig.json": expect.any(Number),
+          "README.md": expect.any(Number),
+        });
+        expect(Object.values(written)).not.toContain(0);
+        expect(exitCode).toBe(0);
+      }
+    },
+  );
+});

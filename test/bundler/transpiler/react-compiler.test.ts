@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, runCommandMaxRSS, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
@@ -3095,6 +3095,8 @@ test("react-compiler memory does not grow with the square of the size of a compo
   const peakMB = async (entry: string) => {
     const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
       cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+      env: withoutAsanQuarantine(bunEnv),
       cwd: String(dir),
     });
     expect(stderr).toBe("");

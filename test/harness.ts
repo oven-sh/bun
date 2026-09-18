@@ -319,7 +319,7 @@ export async function expectMaxObjectTypeCount(
 }
 
 // ASAN's quarantine pins freed blocks and keeps RSS at peak.
-function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {
+export function withoutAsanQuarantine(env: NodeJS.Dict<string>): NodeJS.Dict<string> {
   return {
     ...env,
     ASAN_OPTIONS: [env.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
@@ -347,13 +347,13 @@ const maxRSSSpawner = /* js */ `
  * `setmax_mm_hiwater_rss`), so the number is max(test runner peak, child
  * peak). Here the spawner is a small bun process. The inherited mark is then
  * a fixed floor (~30 MB release, ~320 MB debug+ASAN), not whatever the test
- * runner allocated so far. Under ASAN `cmd` runs with the quarantine disabled.
+ * runner allocated so far.
  */
 export async function runCommandMaxRSS(options: { cmd: string[]; cwd?: string; env?: NodeJS.Dict<string> }) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", maxRSSSpawner, JSON.stringify(options.cmd)],
     cwd: options.cwd,
-    env: withoutAsanQuarantine(options.env ?? bunEnv),
+    env: options.env ?? bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -381,7 +381,12 @@ export async function runCommandMaxRSS(options: { cmd: string[]; cwd?: string; e
  * the assertion is about the payload, not the runtime's fixed footprint.
  */
 export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
-  const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({ cmd: [bunExe(), "-e", fixture] });
+  const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+    cmd: [bunExe(), "-e", fixture],
+    // With the quarantine on, the delta of a fixture that moves 128 MB is the
+    // size of the quarantine (256 MB), whatever the fixture holds.
+    env: withoutAsanQuarantine(bunEnv),
+  });
   expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual(expected);
   expect(exitCode).toBe(0);
@@ -412,7 +417,10 @@ export async function expectRssDeltaBelow(
 
 let emptyBunMaxRSS: Promise<number> | undefined;
 export function emptyProcessMaxRSS() {
-  return (emptyBunMaxRSS ??= runCommandMaxRSS({ cmd: [bunExe(), "-e", ""] }).then(({ maxRSS }) => maxRSS));
+  return (emptyBunMaxRSS ??= runCommandMaxRSS({
+    cmd: [bunExe(), "-e", ""],
+    env: withoutAsanQuarantine(bunEnv),
+  }).then(({ maxRSS }) => maxRSS));
 }
 
 // we must ensure that finalizers are run

@@ -45,6 +45,7 @@
 import assert from "assert";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
+import { checkPreprocessedSource } from "./builtin-output-check";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
@@ -244,6 +245,12 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
 
       const { result, rest } = sliceSourceCode(remaining.slice(paramMatch[0].length - 1), true, x =>
         globalThis.requireTransformer(x, SRC_DIR + "/" + basename),
+      );
+      const bodyOffset = originalContents.length - remaining.length + paramMatch[0].length - 1;
+      checkPreprocessedSource(
+        `src/js/builtins/${basename}.ts`,
+        `${async ? "async " : ""}function ${name}(${params.join(",")})${result}`,
+        originalContents.slice(0, bodyOffset).split("\n").length,
       );
 
       const source = result.trim().slice(2, -1);

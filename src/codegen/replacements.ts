@@ -179,7 +179,8 @@ const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("
 export function applyReplacements(src: string, length: number) {
   let slice = src.slice(0, length);
   let rest = src.slice(length);
-  slice = slice.replace(/([^a-zA-Z0-9_\$])\$([a-zA-Z0-9_]+\b)/gm, `$1__intrinsic__$2`);
+  // `^`: a slice starts after a token that ends the one before, so `$name` at its start is a whole name.
+  slice = slice.replace(/(^|[^a-zA-Z0-9_\$])\$([a-zA-Z0-9_]+\b)/gm, `$1__intrinsic__$2`);
   for (const replacement of replacements) {
     slice = slice.replace(
       replacement.from,

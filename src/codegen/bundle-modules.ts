@@ -13,6 +13,7 @@ import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
+import { checkPreprocessedSource } from "./builtin-output-check";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
@@ -141,15 +142,14 @@ for (let i = 0; i < nativeStartIndex; i++) {
       true,
       x => requireTransformer(x, moduleList[i]),
     );
-    // Guard rail: builtin-parser.ts's regex-position heuristic only recognises
-    // `/` as regex-start after `[(,=;:{]|return|=>`; a regex whose body has `)`
-    // or `}` in any other position silently truncates. Fail loudly here.
+    // builtin-parser.ts reads a regex literal after `)` or `}` as code, and a bracket in that literal ends the slice.
     if (processed.rest.trim() !== "") {
       throw new Error(
         `sliceSourceCode truncated ${moduleList[i]} — likely a regex literal in a position builtin-parser.ts doesn't recognise. ` +
           `Leftover starts: ${processed.rest.slice(0, 80)}`,
       );
     }
+    checkPreprocessedSource(`src/js/${moduleList[i]}`, processed.result.slice(1));
     let fileToTranspile = `// GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from src/js/${moduleList[i]}
 ${importStatements.join("\n")}

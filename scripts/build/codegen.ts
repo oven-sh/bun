@@ -816,6 +816,8 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     outputs,
     rule: "codegen_bun",
     inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    // builtin-output-check.ts imports typescript from the root install.
+    implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,

@@ -99,6 +99,8 @@ The `$` for private names is actually a lie, and in JSC it actually uses `@`; th
 
 The preprocessor is smart enough to not replace `$` in strings, comments, regex, etc. However, it is not a real JS parser and instead a recursive regex-based nightmare, so may hit some edge cases. Yell at Chloe if it breaks.
 
+One edge case is known: a regex literal right after `)` or `}` is read as code. The build parses the preprocessed text with the TypeScript parser (`src/codegen/builtin-output-check.ts`) and fails with the file and line when a `$` inside a literal was replaced, or a `$name` in code was not. The fix is to move the regex literal, for example to `const re = /.../;`.
+
 The module is then printed like:
 
 ```ts

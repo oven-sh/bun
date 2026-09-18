@@ -1031,7 +1031,12 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 7541 §4.2)", () => {
     options: http2.ServerOptions = {},
   ) {
     const h2server = http2.createServer(options);
-    h2server.on("stream", onStream);
+    h2server.on("stream", (stream, headers) => {
+      // The raw client goes away as soon as it has the frames it checks. On Windows that resets
+      // a stream that is still open.
+      stream.on("error", () => {});
+      onStream(stream, headers);
+    });
     h2server.listen(0, "127.0.0.1");
     await once(h2server, "listening");
     return { h2server, h2port: (h2server.address() as net.AddressInfo).port };
@@ -1160,6 +1165,8 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 7541 §4.2)", () => {
       const { h2server, h2port } = await listen(stream => {
         stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
           if (err) throw err;
+          // Not a 'stream' event of the server, so `listen` does not cover it.
+          pushed.on("error", () => {});
           pushed.respond({ ":status": 200 });
           pushed.end("pushed");
         });
@@ -1174,6 +1181,10 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 7541 §4.2)", () => {
           await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1),
           await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 2),
         ];
+        // Let both responses finish, so the teardown below does not cut one off.
+        for (const streamId of [1, 2]) {
+          await c.waitFor(f => f.type === FrameType.DATA && f.streamId === streamId && (f.flags & 0x1) !== 0);
+        }
         expect([promise, ...responses].map(headerBlock)).toEqual([
           { sizeUpdates: [0], dynamicIndexes: [] },
           { sizeUpdates: [], dynamicIndexes: [] },
@@ -1303,6 +1314,59 @@ describe("SETTINGS_HEADER_TABLE_SIZE (RFC 7541 §4.2)", () => {
       try {
         c.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([sizeUpdate(4096), requestHeaderBlock("GET")]));
         expect(goawayErrorCode(await c.waitForGoaway())).toBe(ErrorCode.COMPRESSION_ERROR);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    // An encoder with a pending size update puts it at the start of its next block, and that
+    // block can be empty trailers. The peers this change makes correct send such blocks.
+    test.each([
+      ["within the limit is a valid block with no field", 4096, "trailers {}"],
+      ["above the limit is a COMPRESSION_ERROR", 8192, "GOAWAY 9"],
+    ])("a trailers block that holds only a size update %s", async (_, size, expected) => {
+      const trailers = Promise.withResolvers<string>();
+      const { h2server, h2port } = await listen(stream => {
+        stream.on("trailers", t => trailers.resolve(`trailers ${JSON.stringify(t)}`));
+        stream.resume();
+      });
+      const c = await rawClient(h2port);
+      try {
+        c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("POST"));
+        c.sendFrame(FrameType.DATA, 0, 1, Buffer.from("body"));
+        c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM|END_HEADERS */, 1, sizeUpdate(size));
+        const goaway = c.waitForGoaway().then(f => `GOAWAY ${goawayErrorCode(f)}`);
+        goaway.catch(() => {});
+        expect(await Promise.race([trailers.promise, goaway])).toBe(expected);
+      } finally {
+        c.destroy();
+        h2server.close();
+      }
+    });
+
+    test("session.state reports the size of each table, not the local setting", async () => {
+      const states: http2.SessionState[] = [];
+      const { h2server, h2port } = await listen(
+        stream => {
+          states.push(stream.session!.state);
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        },
+        { settings: { headerTableSize: 65536 } },
+      );
+      const c = await RawH2.connect(h2port);
+      try {
+        c.sendPreface();
+        c.sendFrame(FrameType.SETTINGS, 0, 0, headerTableSizes(1024));
+        // Request 1 arrives before this peer ACKs the server's 65536. Request 3 arrives after.
+        await responseBlock(c, 1);
+        c.sendSettingsAck();
+        await responseBlock(c, 3);
+        expect(states.map(s => [s.deflateDynamicTableSize, s.inflateDynamicTableSize])).toEqual([
+          [1024, 4096],
+          [1024, 65536],
+        ]);
       } finally {
         c.destroy();
         h2server.close();

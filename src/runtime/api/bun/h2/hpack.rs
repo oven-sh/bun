@@ -59,6 +59,11 @@ impl Coder {
         self.dec_capacity = size;
     }
 
+    /// Capacity of the encoder's dynamic table: the peer's value, capped.
+    pub fn encoder_capacity(&self) -> u32 {
+        self.enc_capacity
+    }
+
     /// One SETTINGS_HEADER_TABLE_SIZE entry from the peer; call it for every entry, in wire
     /// order. Evicts right away, like the peer's decoder did when it sent the value.
     pub fn set_peer_header_table_size(&mut self, size: u32) {
@@ -77,11 +82,17 @@ impl Coder {
     /// Call at the start of every outbound header block, before its first field: appends the
     /// §6.3 size update(s) the peer's decoder still has to see. They stay pending until
     /// [`Self::size_update_sent`], so a block that is built but never sent does not lose them.
-    pub fn write_pending_size_update(&self, block: &mut Vec<u8>) {
+    ///
+    /// More than one block can carry them: a block opened while another one is still being built,
+    /// or the block after a dropped one. An update to the minimum makes the peer evict down to
+    /// it each time it arrives, so the encoder evicts the same way each time it writes one.
+    pub fn write_pending_size_update(&mut self, block: &mut Vec<u8>) {
         let Some(min) = self.unannounced_min else {
             return;
         };
         if min < self.enc_capacity {
+            self.hpack.set_encoder_max_capacity(min);
+            self.hpack.set_encoder_max_capacity(self.enc_capacity);
             write_table_size_update(block, min);
         }
         write_table_size_update(block, self.enc_capacity);
@@ -109,6 +120,46 @@ impl Coder {
     #[inline]
     pub fn decode(&mut self, src: &[u8]) -> Result<DecodeResult, HpackError> {
         self.hpack.decode(src)
+    }
+
+    /// True when `block` holds §6.3 size updates and nothing else, all within the acknowledged
+    /// limit. Such a block is valid and has no fields. lshpack applies the updates and then
+    /// fails [`Self::decode`] because no field follows, so a caller asks this after that failure.
+    /// Every other failure of `decode` makes this false.
+    pub fn is_size_update_only(&self, block: &[u8]) -> bool {
+        let mut rest = block;
+        if rest.is_empty() {
+            return false;
+        }
+        while let Some((&first, tail)) = rest.split_first() {
+            if first & 0xe0 != 0x20 {
+                return false;
+            }
+            rest = tail;
+            let mut value = u64::from(first & 0x1f);
+            if value == 0x1f {
+                // Up to 4 continuation bytes: the range lshpack accepts without further checks.
+                let mut shift = 0;
+                loop {
+                    let Some((&byte, tail)) = rest.split_first() else {
+                        return false;
+                    };
+                    rest = tail;
+                    if shift > 21 {
+                        return false;
+                    }
+                    value += u64::from(byte & 0x7f) << shift;
+                    shift += 7;
+                    if byte & 0x80 == 0 {
+                        break;
+                    }
+                }
+            }
+            if value > u64::from(self.dec_capacity) {
+                return false;
+            }
+        }
+        true
     }
 }
 

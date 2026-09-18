@@ -1068,6 +1068,9 @@ pub struct H2FrameParser {
     /// a header block already in flight when the limit is lowered must not be rejected; the
     /// engine raises/lowers its own limit as ACKs arrive).
     enforced_max_header_list_size: Cell<u32>,
+    /// The engine decoder's table limit: our SETTINGS_HEADER_TABLE_SIZE that the peer ACKed last.
+    /// Mirrored here so `state` never needs the engine borrow.
+    acked_header_table_size: Cell<u32>,
     // only available after receiving settings or ACK
     remote_settings: Cell<Option<FullSettingsPayload>>,
 
@@ -3790,6 +3793,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // legacy settings() host fn doesn't hit MAX_PENDING_SETTINGS_ACK.
         self.outstanding_settings
             .set(self.outstanding_settings.get().saturating_sub(1));
+        self.acked_header_table_size.set(settings.header_table_size);
         let g = self.global();
         let js = rewrite_settings_to_js(settings, g);
         // node exposes the custom settings this side submitted on localSettings.customSettings.
@@ -4680,7 +4684,10 @@ impl H2FrameParser {
         let settings = this.remote_settings.get().unwrap_or_default();
         let remote_iws = settings.initial_window_size;
         let local_iws = this.local_settings.get().initial_window_size;
-        let local_hts = this.local_settings.get().header_table_size;
+        let encoder_table_size = match this.hpack.get() {
+            Some(hpack) => hpack.encoder_capacity(),
+            None => crate::api::h2::hpack::DEFAULT_HEADER_TABLE_SIZE,
+        };
         result.put(
             global_object,
             b"remoteWindowSize",
@@ -4694,12 +4701,12 @@ impl H2FrameParser {
         result.put(
             global_object,
             b"deflateDynamicTableSize",
-            JSValue::js_number(local_hts as f64),
+            JSValue::js_number(encoder_table_size as f64),
         );
         result.put(
             global_object,
             b"inflateDynamicTableSize",
-            JSValue::js_number(local_hts as f64),
+            JSValue::js_number(this.acked_header_table_size.get() as f64),
         );
         result.put(
             global_object,
@@ -7471,6 +7478,7 @@ impl H2FrameParser {
             wire_custom_settings: JsCell::new(Vec::new()),
             remote_custom_settings_filter: JsCell::new(Vec::new()),
             remote_custom_settings: JsCell::new(Vec::new()),
+            acked_header_table_size: Cell::new(crate::api::h2::hpack::DEFAULT_HEADER_TABLE_SIZE),
             enforced_max_header_list_size: Cell::new(
                 FullSettingsPayload::default().max_header_list_size,
             ),

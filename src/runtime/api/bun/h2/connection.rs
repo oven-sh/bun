@@ -1217,6 +1217,9 @@ impl Connection {
                     }
                     sink.on_header(target, h.name, h.value, h.never_index);
                 }
+                // A block of size updates and no field, for example empty trailers right after
+                // a table size change. The decoder has applied the updates.
+                Err(_) if off == 0 && self.hpack.is_size_update_only(&block) => break,
                 Err(_) => {
                     // §4.3: a header-block decoding error is a connection COMPRESSION_ERROR.
                     self.send_go_away(sink, ErrorCode::CompressionError, b"HPACK decode error");

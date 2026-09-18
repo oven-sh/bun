@@ -758,10 +758,7 @@ describe("stringify", () => {
   });
 
   test("escapes unpaired surrogates as \\uHHHH, like JSON.stringify", () => {
-    // An unpaired surrogate is not a Unicode character. Written as is, it
-    // becomes U+FFFD at the next string to UTF-8 boundary (a file, stdout,
-    // or `JSON5.parse` itself). A surrogate pair is a character and is
-    // written as is.
+    // UTF-8 cannot encode an unpaired surrogate. A pair is a character and stays as is.
     expect(JSON5.stringify("\uD800")).toBe("'\\ud800'");
     expect(JSON5.stringify("\uDC00")).toBe("'\\udc00'");
     expect(JSON5.stringify("x\uDBFFy")).toBe("'x\\udbffy'");
@@ -799,11 +796,8 @@ describe("stringify", () => {
   });
 
   test("round-trips every surrogate code unit", () => {
-    let all = "";
-    for (let cp = 0xd800; cp <= 0xdfff; cp++) {
-      // Separated so that no lead is followed by a trail.
-      all += String.fromCharCode(cp) + "|";
-    }
+    // "|" between the code units so that no lead is followed by a trail.
+    const all = Array.from({ length: 0x800 }, (_, k) => String.fromCharCode(0xd800 + k)).join("|");
     const back = JSON5.parse(JSON5.stringify(all));
     expect(typeof back).toBe("string");
     expect(back.length).toBe(all.length);

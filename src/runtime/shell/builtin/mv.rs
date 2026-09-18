@@ -575,7 +575,8 @@ impl ShellMvBatchedTask {
                 Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z)?;
             }
             #[cfg(unix)]
-            let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);
+            Self::copy_owner_and_mode(dd.fd(), &st);
+            #[cfg(windows)]
             let _ = bun_sys::fchmod(dd.fd(), mode & 0o7777);
             drop((sd, dd));
             return bun_sys::rmdirat(src_dir, src);
@@ -613,13 +614,21 @@ impl ShellMvBatchedTask {
             return Err(e);
         }
         #[cfg(unix)]
-        {
-            // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
-            let _ = bun_sys::fchown(out.fd(), st.st_uid as _, st.st_gid as _);
-            let _ = bun_sys::fchmod(out.fd(), mode & 0o7777);
-        }
+        Self::copy_owner_and_mode(out.fd(), &st);
         drop((in_, out));
         bun_sys::unlinkat(src_dir, src)
+    }
+
+    /// Gives `fd` the owner and mode of `st`. Without the owner, set-uid and
+    /// set-gid would act for a different user, so they are dropped (POSIX `mv`).
+    #[cfg(unix)]
+    fn copy_owner_and_mode(fd: bun_sys::Fd, st: &bun_sys::Stat) {
+        let mut mode = st.st_mode as bun_core::Mode & 0o7777;
+        // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
+        if bun_sys::fchown(fd, st.st_uid as _, st.st_gid as _).is_err() {
+            mode &= !(bun_sys::S::ISUID | bun_sys::S::ISGID);
+        }
+        let _ = bun_sys::fchmod(fd, mode);
     }
 
     /// `renameat(cwd, src, target_fd, basename(src))`. A free fn over the

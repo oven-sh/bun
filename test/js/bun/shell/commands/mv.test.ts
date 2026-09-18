@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { bunEnv, bunExe, isPosix } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -8,6 +8,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   rmSync,
@@ -87,10 +88,10 @@ describe("mv", async () => {
     const other = findCrossDeviceDir();
     const skip = other === undefined;
 
-    function crossDevicePair(name: string): [src: string, dst: string] {
+    function crossDevicePair(name: string, roots: [string, string] = [tmp, other!]): [src: string, dst: string] {
       const base = `bun-mv-xdev-${process.pid}-${name}`;
-      const a = join(tmp, base);
-      const b = join(other!, base);
+      const a = join(roots[0], base);
+      const b = join(roots[1], base);
       for (const d of [a, b]) {
         rmSync(d, { recursive: true, force: true });
         mkdirSync(d, { recursive: true });
@@ -233,5 +234,87 @@ describe("mv", async () => {
         rmSync(dst, { recursive: true, force: true });
       }
     });
+
+    // Needs root: only root can create a file that another user owns. The move
+    // runs as `nobody`, who cannot enter the harness TMPDIR (mode 0700), so both
+    // ends are world-writable mounts.
+    const nobody = 65534;
+    const publicRoots: [string, string] = ["/tmp", "/dev/shm"];
+    const publicRootsDiffer = (() => {
+      try {
+        return statSync(publicRoots[0]).dev !== statSync(publicRoots[1]).dev;
+      } catch {
+        return false;
+      }
+    })();
+
+    function ownerAndMode(root: string, names: string[]) {
+      return Object.fromEntries(
+        names.map(name => {
+          const { uid, mode } = statSync(join(root, name));
+          return [name, `${(mode & 0o7777).toString(8)} uid=${uid}`];
+        }),
+      );
+    }
+
+    test.skipIf(!isRoot || !publicRootsDiffer)(
+      "set-uid and set-gid are dropped across devices when the owner cannot be kept",
+      async () => {
+        const [src, dst] = crossDevicePair("setid", publicRoots);
+        try {
+          writeFileSync(join(src, "suid"), "suid");
+          chmodSync(join(src, "suid"), 0o4755);
+          writeFileSync(join(src, "sgid"), "sgid");
+          chmodSync(join(src, "sgid"), 0o2755);
+          mkdirSync(join(src, "dir"));
+          writeFileSync(join(src, "dir", "suid"), "dir/suid");
+          chmodSync(join(src, "dir", "suid"), 0o4755);
+          // `nobody` removes the sources and creates the copies, so it needs write access.
+          chmodSync(join(src, "dir"), 0o2777);
+          chmodSync(src, 0o777);
+          chmodSync(dst, 0o777);
+          expect(ownerAndMode(src, ["suid", "sgid", "dir", "dir/suid"])).toEqual({
+            "suid": "4755 uid=0",
+            "sgid": "2755 uid=0",
+            "dir": "2777 uid=0",
+            "dir/suid": "4755 uid=0",
+          });
+
+          // `own` belongs to the mover, so its owner is kept and its bits must be too.
+          const script = `
+            import { $ } from "bun";
+            import { chmodSync, writeFileSync } from "node:fs";
+            const [src, dst] = ${JSON.stringify([src, dst])};
+            writeFileSync(src + "/own", "own");
+            chmodSync(src + "/own", 0o6755);
+            const r = await $\`mv \${src}/suid \${src}/sgid \${src}/own \${src}/dir \${dst}\`.nothrow();
+            process.exit(r.exitCode);
+          `;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", script],
+            env: bunEnv,
+            cwd: "/",
+            uid: nobody,
+            gid: nobody,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+
+          expect(ownerAndMode(dst, ["suid", "sgid", "dir", "dir/suid", "own"])).toEqual({
+            "suid": `755 uid=${nobody}`,
+            "sgid": `755 uid=${nobody}`,
+            "dir": `777 uid=${nobody}`,
+            "dir/suid": `755 uid=${nobody}`,
+            "own": `6755 uid=${nobody}`,
+          });
+          expect(readdirSync(src)).toEqual([]);
+        } finally {
+          rmSync(src, { recursive: true, force: true });
+          rmSync(dst, { recursive: true, force: true });
+        }
+      },
+    );
   });
 });

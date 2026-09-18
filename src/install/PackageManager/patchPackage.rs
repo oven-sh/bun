@@ -341,12 +341,17 @@ pub fn do_patch_commit(
             };
             // A folder or workspace source has its own installs in `node_modules`, not bundled ones.
             let cache_nested = if source_is_cache_entry {
-                Dir::cwd()
-                    .open_dir(
-                        resolve_path::join::<platform::Auto>(&[old_folder, b"node_modules"]),
-                        sys::OpenDirOptions::default(),
-                    )
-                    .ok()
+                match Dir::cwd().open_dir(
+                    resolve_path::join::<platform::Auto>(&[old_folder, b"node_modules"]),
+                    sys::OpenDirOptions::default(),
+                ) {
+                    Ok(d) => Some(d),
+                    Err(e) if e.get_errno() == sys::E::ENOENT => None,
+                    Err(e) => {
+                        Output::err(e, "failed to read from cache", ());
+                        Global::crash();
+                    }
+                }
             } else {
                 None
             };
@@ -355,19 +360,25 @@ pub fn do_patch_commit(
             {
                 Ok(d) => d,
                 Err(e) => {
-                    bun_core::warn!(
-                        "failed to create a temporary folder for the nested node_modules, this may cause issues: {}",
-                        e
-                    );
-                    break 'has_nested_node_modules false;
+                    Output::err(e, "failed to make tempdir", ());
+                    Global::crash();
                 }
             };
             if let Err(e) = move_entries_absent_from(&nested, cache_nested.as_ref(), &tempdir, true)
             {
-                bun_core::warn!(
-                    "failed moving the nested node_modules folder aside, this may cause issues: {}",
-                    e
-                );
+                drop((nested, cache_nested, tempdir));
+                if let Err(e) = restore_nested_from_tempdir(
+                    &root_node_modules,
+                    random_tempdir.as_bytes(),
+                    &new_folder_handle,
+                ) {
+                    bun_core::warn!(
+                        "failed restoring nested node_modules folder, this may cause issues: {}",
+                        e
+                    );
+                }
+                Output::err(e, "failed moving the nested node_modules folder aside", ());
+                Global::crash();
             }
 
             break 'has_nested_node_modules true;
@@ -445,14 +456,7 @@ pub fn do_patch_commit(
                 };
 
                 if has_nested_node_modules {
-                    let restored = root_node_modules
-                        .open_dir(random_tempdir.as_bytes(), ITERATE)
-                        .and_then(|tempdir| {
-                            let nested = new_folder_handle.make_open_path(b"node_modules", sys::OpenDirOptions::default())?;
-                            move_entries_absent_from(&tempdir, Some(&nested), &nested, true)
-                        })
-                        .and_then(|()| root_node_modules.delete_tree(random_tempdir.as_bytes()));
-                    if let Err(e) = restored {
+                    if let Err(e) = restore_nested_from_tempdir(&root_node_modules, random_tempdir.as_bytes(), &new_folder_handle) {
                         bun_core::warn!("failed restoring nested node_modules folder, this may cause issues: {}", e);
                     }
                 }
@@ -1223,6 +1227,20 @@ fn move_entries_absent_from(
     Ok(())
 }
 
+/// Moves the packages `bun patch --commit` set aside back under `<pkg>/node_modules`.
+fn restore_nested_from_tempdir(
+    root_node_modules: &Dir,
+    tempdir_name: &[u8],
+    new_folder_handle: &Dir,
+) -> sys::Result<()> {
+    let tempdir = root_node_modules.open_dir(tempdir_name, ITERATE)?;
+    let nested =
+        new_folder_handle.make_open_path(b"node_modules", sys::OpenDirOptions::default())?;
+    move_entries_absent_from(&tempdir, Some(&nested), &nested, true)?;
+    drop((tempdir, nested));
+    root_node_modules.delete_tree(tempdir_name)
+}
+
 /// Moves `<pkg>/node_modules` to a sibling of `<pkg>`. `None` when absent.
 fn stash_nested_node_modules(
     node_modules_folder_path: &[u8],
@@ -1301,7 +1319,7 @@ fn overwrite_package_in_node_modules_folder(
             let nested =
                 resolve_path::join::<platform::Auto>(&[node_modules_folder_path, b"node_modules"]);
             let _ = Fd::cwd().make_path(node_modules_folder_path);
-            let _ = sys::renameat_concurrently_a(
+            if let Err(e) = sys::renameat_concurrently_a(
                 Fd::cwd(),
                 &stash_path,
                 Fd::cwd(),
@@ -1309,7 +1327,14 @@ fn overwrite_package_in_node_modules_folder(
                 sys::RenameOptions {
                     move_fallback: true,
                 },
-            );
+            ) {
+                bun_core::warn!(
+                    "failed moving {} back to {}, this may cause issues: {}",
+                    bstr::BStr::new(&stash_path),
+                    bstr::BStr::new(nested),
+                    e
+                );
+            }
             Err(e)
         }
     }

@@ -1929,6 +1929,51 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(a.equals(b)).toBe(false);
       });
 
+      describe("Buffer.compare/equals rejects non-Uint8Array views", () => {
+        const buf = Buffer.from([1, 2, 3, 4]);
+        const invalidArgType = { code: "ERR_INVALID_ARG_TYPE", name: "TypeError" };
+        const mustBe = arg =>
+          expect.objectContaining({
+            ...invalidArgType,
+            message: expect.stringContaining(`"${arg}" argument must be an instance of Buffer or Uint8Array`),
+          });
+
+        it.each([
+          ["Uint8ClampedArray", new Uint8ClampedArray([1, 2, 3, 4])],
+          ["Uint16Array", new Uint16Array([1, 2])],
+          ["Uint32Array", new Uint32Array([1])],
+          ["Int8Array", new Int8Array([1, 2, 3, 4])],
+          ["Int16Array", new Int16Array([1, 2])],
+          ["Int32Array", new Int32Array([1])],
+          ["Float16Array", new Float16Array([1, 2])],
+          ["Float32Array", new Float32Array([1])],
+          ["Float64Array", new Float64Array(1)],
+          ["BigInt64Array", new BigInt64Array(1)],
+          ["BigUint64Array", new BigUint64Array(1)],
+          ["DataView", new DataView(new ArrayBuffer(4))],
+        ])("%s", (_, other) => {
+          expect(() => buf.equals(other)).toThrow(mustBe("otherBuffer"));
+          expect(() => Buffer.compare(buf, other)).toThrow(mustBe("buf2"));
+          expect(() => Buffer.compare(other, buf)).toThrow(mustBe("buf1"));
+          expect(() => buf.compare(other)).toThrow(mustBe("target"));
+        });
+
+        it("buf.equals() with no argument throws ERR_INVALID_ARG_TYPE", () => {
+          expect(() => buf.equals()).toThrow(
+            expect.objectContaining({
+              ...invalidArgType,
+              message: 'The "otherBuffer" argument must be an instance of Buffer or Uint8Array. Received undefined',
+            }),
+          );
+        });
+
+        it("Uint8Array is accepted", () => {
+          expect(buf.equals(new Uint8Array([1, 2, 3, 4]))).toBe(true);
+          expect(Buffer.compare(buf, new Uint8Array([1, 2, 3, 4]))).toBe(0);
+          expect(Buffer.compare(new Uint8Array([1, 2, 3, 4]), buf)).toBe(0);
+        });
+      });
+
       it("Buffer.compare", () => {
         var a = new Uint8Array(10);
         a[2] = 1;

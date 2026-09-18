@@ -121,6 +121,21 @@ const testCases: TestCase[] = [
     expectedStatus: [[200, 299]],
   },
   {
+    request: "\r\nGET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Leading empty line before request-line (RFC 9112 2.2)",
+    expectedStatus: [[200, 299]],
+  },
+  {
+    request: "\r\n\r\nGET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Multiple leading empty lines before request-line",
+    expectedStatus: [[200, 299]],
+  },
+  {
+    request: "\nGET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    description: "Leading bare LF before request-line",
+    expectedStatus: [[200, 299]],
+  },
+  {
     request: "GET / HTTP/1.0\r\nHost: example.com\r\n\r\n",
     description: "Valid GET request with HTTP/1.0",
     expectedStatus: [[200, 299]],

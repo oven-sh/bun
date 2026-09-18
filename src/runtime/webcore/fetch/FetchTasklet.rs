@@ -119,6 +119,8 @@ pub struct FetchTasklet {
     pub(crate) scheduled_response_buffer: MutableString,
     /// `HTTPClientResult::held_body`, from when `on_progress_update` has it. JS thread only.
     held_body: JsCell<HeldBodyState>,
+    /// What `heap::into_raw` returned for this tasklet, for work that outlives a `&self` caller.
+    allocation: *mut FetchTasklet,
     /// A held body arrived: the HTTP thread is done with this fetch, the response body is not.
     pub(crate) is_transport_done: bool,
     /// response weak ref we need this to track the response JS lifetime
@@ -1841,7 +1843,7 @@ impl FetchTasklet {
                 out: Vec::new(),
                 ended: Ok(false),
             },
-            HeldBodyPassOwner(std::ptr::from_ref(self).cast_mut()),
+            HeldBodyPassOwner(self.allocation),
         );
     }
 
@@ -1853,7 +1855,7 @@ impl FetchTasklet {
     /// Queues the end of the body. This task runs in a stopped context too: the body gets settled.
     fn end_unread_held_body(&self) {
         self.held_body.set(HeldBodyState::Unread);
-        let task = Task::init(std::ptr::from_ref(self).cast_mut());
+        let task = Task::init(self.allocation);
         // SAFETY: JS thread; the loop is this VM's.
         unsafe { (*self.global_this.bun_vm().event_loop()).enqueue_task(task) };
     }
@@ -1878,13 +1880,13 @@ impl FetchTasklet {
                 } else {
                     HeldBodyState::AtRest(pass.held)
                 });
-                let scheduled = &mut self.scheduled_response_buffer.list;
-                if scheduled.is_empty() {
-                    *scheduled = pass.out;
+                let scheduled = &mut self.scheduled_response_buffer;
+                if scheduled.list.is_empty() {
+                    scheduled.list = pass.out;
                 } else {
-                    scheduled.extend_from_slice(&pass.out);
+                    bun_core::handle_oom(scheduled.write(&pass.out));
                 }
-                if !ended && scheduled.len() >= BODY_HIGH_WATER_MARK {
+                if !ended && scheduled.list.len() >= BODY_HIGH_WATER_MARK {
                     self.signal_store.pause_receive();
                 }
             }
@@ -2060,6 +2062,7 @@ impl FetchTasklet {
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
             held_body: JsCell::new(HeldBodyState::None),
+            allocation: core::ptr::null_mut(),
             is_transport_done: false,
             response: jsc::Weak::default(),
             native_response: JsCell::new(None),
@@ -2150,6 +2153,7 @@ impl FetchTasklet {
         let fetch_tasklet_ptr = bun_core::heap::into_raw(fetch_tasklet);
         // SAFETY: just allocated; exclusive access until returned
         let fetch_tasklet = unsafe { &mut *fetch_tasklet_ptr };
+        fetch_tasklet.allocation = fetch_tasklet_ptr;
 
         // This task gets queued on the HTTP thread.
         // `AsyncHTTP::init` takes several `&'static [u8]` borrows

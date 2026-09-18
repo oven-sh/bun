@@ -623,11 +623,7 @@ impl TrustCommand {
                     .trusted_dependencies
                     .as_mut()
                     .unwrap()
-                    .put(
-                        bun_semver::string::Builder::string_hash(name)
-                            as install::TruncatedPackageNameHash,
-                        Box::<[u8]>::from(&**name),
-                    )?;
+                    .insert(name)?;
             }
         }
 

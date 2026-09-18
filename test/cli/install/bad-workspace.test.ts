@@ -74,6 +74,47 @@ test("non-string workspaces entry prints the error without literal markup", asyn
   expect(exitCode).toBe(1);
 });
 
+// https://github.com/oven-sh/bun/issues/36386
+// Wyhash11 of these two names agrees in the low 32 bits, so they land in the
+// same bucket of any map keyed on the truncated package name hash.
+const collidingA = "@demo/app-03511";
+const collidingB = "@demo/app-13215";
+
+async function installWorkspaceNames(names: string[]) {
+  const files: Record<string, string> = {
+    "package.json": JSON.stringify({ name: "r", private: true, workspaces: ["packages/*"] }),
+  };
+  names.forEach((name, i) => {
+    files[`packages/p${i}/package.json`] = JSON.stringify({ name, version: "0.0.0" });
+  });
+  using dir = tempDir("workspace-name-hash-collision", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stderr, exitCode };
+}
+
+test.concurrent("distinct workspace names with colliding truncated name hashes are not duplicates", async () => {
+  const { stderr, exitCode } = await installWorkspaceNames([collidingA, collidingB]);
+  expect(stderr).not.toContain("already exists");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent.each([
+  [collidingA, collidingB],
+  [collidingB, collidingA],
+])("a true duplicate of %s is still reported when %s shares its truncated hash", async (duplicated, other) => {
+  const { stderr, exitCode } = await installWorkspaceNames([collidingA, collidingB, duplicated]);
+  expect(stderr).toContain(`Workspace name "${duplicated}" already exists`);
+  expect(stderr).not.toContain(`Workspace name "${other}" already exists`);
+  expect(exitCode).toBe(1);
+});
+
 test("workspace with ./ should not crash", () => {
   writeFileSync(
     `${cwd}/package.json`,

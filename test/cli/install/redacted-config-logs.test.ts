@@ -220,6 +220,12 @@ describe.concurrent("redact", async () => {
       secret: "SECRETVALUE",
     },
     {
+      title: "multi-line basic string with no separator",
+      bunfig: '[install]\ntoken """SECRETVALUE"""',
+      expected: '"""***********"""',
+      secret: "SECRETVALUE",
+    },
+    {
       title: "quoted key",
       bunfig: '[install]\n"token" = "SECRETVALUE" ]',
       expected: "***********",

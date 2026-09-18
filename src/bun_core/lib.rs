@@ -2063,7 +2063,10 @@ pub(crate) mod strings_impl {
                 crate::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len()),
             ));
         }
-        offset += 1;
+        // skip the separator, or the closing quote of a quoted key
+        if !whitespace || text[offset] == b'=' || text[offset] == b':' {
+            offset += 1;
+        }
 
         let mut end = offset;
         while end < text.len() && text[end].is_ascii_whitespace() {

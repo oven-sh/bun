@@ -253,22 +253,23 @@ impl Comparator {
         }
     }
 
-    /// `>= {major+1}.0.0`, how node-semver reads `>{major}` and `>{major}.x`. On overflow,
-    /// `> u64::MAX.u64::MAX.u64::MAX`, which no version satisfies. With `includePrerelease`
-    /// node-semver starts at `{major+1}.0.0-0`: see `Group::satisfies_including_prerelease`.
-    pub(crate) fn gte_next_major(major: u64) -> Comparator {
+    /// `>= {major+1}.0.0`, how node-semver reads `>{major}` and `>{major}.x`. With its
+    /// `includePrerelease` option it reads them as `>= {major+1}.0.0-0`, which admits the same
+    /// versions as `> {major}.u64::MAX.u64::MAX`. That form is also the overflow case, where
+    /// no version satisfies it.
+    pub(crate) fn gte_next_major(major: u64, include_prerelease: bool) -> Comparator {
         match major.checked_add(1) {
-            Some(m) => Comparator {
+            Some(m) if !include_prerelease => Comparator {
                 op: Op::Gte,
                 version: Version {
                     major: m,
                     ..Default::default()
                 },
             },
-            None => Comparator {
+            _ => Comparator {
                 op: Op::Gt,
                 version: Version {
-                    major: u64::MAX,
+                    major,
                     minor: u64::MAX,
                     patch: u64::MAX,
                     ..Default::default()
@@ -278,10 +279,11 @@ impl Comparator {
     }
 
     /// `>= {major}.{minor+1}.0`, how node-semver reads `>{major}.{minor}` and
-    /// `>{major}.{minor}.x`. On overflow, the next major.
-    pub(crate) fn gte_next_minor(major: u64, minor: u64) -> Comparator {
+    /// `>{major}.{minor}.x`, or `> {major}.{minor}.u64::MAX` with `include_prerelease` (see
+    /// `gte_next_major`). On overflow, the next major.
+    pub(crate) fn gte_next_minor(major: u64, minor: u64, include_prerelease: bool) -> Comparator {
         match minor.checked_add(1) {
-            Some(m) => Comparator {
+            Some(m) if !include_prerelease => Comparator {
                 op: Op::Gte,
                 version: Version {
                     major,
@@ -289,7 +291,16 @@ impl Comparator {
                     ..Default::default()
                 },
             },
-            None => Comparator::gte_next_major(major),
+            Some(_) => Comparator {
+                op: Op::Gt,
+                version: Version {
+                    major,
+                    minor,
+                    patch: u64::MAX,
+                    ..Default::default()
+                },
+            },
+            None => Comparator::gte_next_major(major, include_prerelease),
         }
     }
 

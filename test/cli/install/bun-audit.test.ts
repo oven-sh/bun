@@ -2025,29 +2025,33 @@ describe("`bun audit fix`", () => {
     },
   );
 
-  test.concurrent("an advisory for an installed prerelease is matched and the pin is rewritten", async () => {
-    const bulkHits = { count: 0 };
-    await using server = startRegistry(
-      {},
-      { bulkResponses: [{ "no-deps-backward-tags": [adv("<1.1.0")] }, {}], bulkHits },
-    );
-    using dir = await setup(server, { name: "foo", dependencies: { "no-deps-backward-tags": "1.0.0-rc.1" } });
-    expect(await lock(dir)).toContain('"no-deps-backward-tags@1.0.0-rc.1"');
+  // npm matches advisories with node-semver's `includePrerelease`, where `>0` starts at `1.0.0-0`.
+  test.concurrent.each(["<1.1.0", ">0 <1.1.0"])(
+    "an advisory %s for an installed prerelease is matched and the pin is rewritten",
+    async range => {
+      const bulkHits = { count: 0 };
+      await using server = startRegistry(
+        {},
+        { bulkResponses: [{ "no-deps-backward-tags": [adv(range)] }, {}], bulkHits },
+      );
+      using dir = await setup(server, { name: "foo", dependencies: { "no-deps-backward-tags": "1.0.0-rc.1" } });
+      expect(await lock(dir)).toContain('"no-deps-backward-tags@1.0.0-rc.1"');
 
-    const { stdout, exitCode } = await auditFix(dir);
-    expect(stdout).toContain("  ^ no-deps-backward-tags 1.0.0-rc.1 -> 1.1.0");
-    expect(stdout).toContain("package.json: 1.0.0-rc.1 -> 1.1.0");
-    expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
-    expect(exitCode).toBe(0);
-    expect(bulkHits.count).toBe(2);
+      const { stdout, exitCode } = await auditFix(dir);
+      expect(stdout).toContain("  ^ no-deps-backward-tags 1.0.0-rc.1 -> 1.1.0");
+      expect(stdout).toContain("package.json: 1.0.0-rc.1 -> 1.1.0");
+      expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+      expect(exitCode).toBe(0);
+      expect(bulkHits.count).toBe(2);
 
-    expect((await pkgJson(dir)).dependencies["no-deps-backward-tags"]).toBe("1.1.0");
-    const lockfile = await lock(dir);
-    expect(lockfile).toContain('"no-deps-backward-tags@1.1.0"');
-    expect(lockfile).not.toContain("1.0.0-rc.1");
+      expect((await pkgJson(dir)).dependencies["no-deps-backward-tags"]).toBe("1.1.0");
+      const lockfile = await lock(dir);
+      expect(lockfile).toContain('"no-deps-backward-tags@1.1.0"');
+      expect(lockfile).not.toContain("1.0.0-rc.1");
 
-    await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
-  });
+      await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+    },
+  );
 
   test.concurrent("advisories that match no installed version are listed, not just counted", async () => {
     await using server = startRegistry(

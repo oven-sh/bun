@@ -568,10 +568,9 @@ impl Group {
             && !self.head.head.range.has_left()
     }
 
-    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators. The parser has
-    /// no such mode. There node-semver also puts `-0` on a lower bound it derives (`>1` is
-    /// `>=2.0.0-0`, `1.x` starts at `>=1.0.0-0`), so it admits a prerelease of that bound
-    /// (`2.0.0-rc.1`). This does not.
+    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators. The option
+    /// also changes how node-semver desugars a range, so parse the range with
+    /// `parse_including_prerelease`.
     #[inline]
     pub fn satisfies_including_prerelease(
         &self,
@@ -612,7 +611,11 @@ pub enum Wildcard {
 }
 
 impl Token {
-    pub(crate) fn to_range(self, version: &version::Partial<u64>) -> Range {
+    pub(crate) fn to_range(
+        self,
+        version: &version::Partial<u64>,
+        include_prerelease: bool,
+    ) -> Range {
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -737,7 +740,10 @@ impl Token {
                     ..Default::default()
                 },
                 TokenTag::Gt => Range {
-                    left: Comparator::gte_next_major(version.major.unwrap_or(0)),
+                    left: Comparator::gte_next_major(
+                        version.major.unwrap_or(0),
+                        include_prerelease,
+                    ),
                     ..Default::default()
                 },
                 TokenTag::Gte => Range {
@@ -783,6 +789,7 @@ impl Token {
                     left: Comparator::gte_next_minor(
                         version.major.unwrap_or(0),
                         version.minor.unwrap_or(0),
+                        include_prerelease,
                     ),
                     ..Default::default()
                 },
@@ -818,6 +825,22 @@ impl Token {
 }
 
 pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
+    parse_with(input, sliced, false)
+}
+
+/// `parse` under node-semver's `includePrerelease` option, for a range that
+/// `Group::satisfies_including_prerelease` evaluates. There `>1` starts at `2.0.0-0`, so a
+/// prerelease of 2.0.0 satisfies it. The other lower bounds that node-semver derives with a `-0`
+/// in this mode (`1.x`, `>=1`, `^1`) parse as in `parse`.
+pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
+    parse_with(input, sliced, true)
+}
+
+fn parse_with(
+    input: &[u8],
+    sliced: SlicedString,
+    include_prerelease: bool,
+) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
         input: std::ptr::from_ref::<[u8]>(input),
@@ -1087,15 +1110,15 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         list.or_version(version)?;
                     }
                     _ => {
-                        list.or_range(&token.to_range(&parse_result.version))?;
+                        list.or_range(&token.to_range(&parse_result.version, include_prerelease))?;
                     }
                 }
             } else if count == 0 {
-                list.and_range(&token.to_range(&parse_result.version))?;
+                list.and_range(&token.to_range(&parse_result.version, include_prerelease))?;
             } else if is_or {
-                list.or_range(&token.to_range(&parse_result.version))?;
+                list.or_range(&token.to_range(&parse_result.version, include_prerelease))?;
             } else {
-                list.and_range(&token.to_range(&parse_result.version))?;
+                list.and_range(&token.to_range(&parse_result.version, include_prerelease))?;
             }
 
             is_or = false;

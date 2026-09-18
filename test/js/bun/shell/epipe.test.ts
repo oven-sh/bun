@@ -105,46 +105,14 @@ describe("pipeline stage whose reader exits without reading", () => {
 });
 
 // The shell echoes command output to the process's stdout. Once nothing reads
-// that stdout anymore, every chunk of output a command queues fails with
-// EPIPE, and the command still has to finish so that the awaited `$` settles.
-// A command with several chunks queued at that point used to be told about the
-// failure once and then wait forever for the rest of them.
+// that stdout, every chunk of output a command queues fails with EPIPE, and the
+// command still has to finish so that the awaited `$` settles.
 describe.if(isPosix)("command output after the stdout reader went away", () => {
   const names = Array.from({ length: 16 }, (_, i) => `entry${i}`);
-  const args = names.join(" ");
 
-  // The fixture keeps writing to its own stdout until that fails with EPIPE,
-  // so the command only runs once the test has really closed the read end.
-  //
-  // The output is produced in the background (by one thread pool task per
-  // argument, or by the subprocess). Blocking the main thread right after
-  // starting the command lets all of it pile up, so that it is queued, and
-  // fails, in one batch: the situation that used to hang. The fixed command
-  // has to settle however the output ends up being batched, so nothing below
-  // depends on the length of that pause.
-  function fixture(command: string): string {
-    return `
-import { $ } from "bun";
-import { writeSync } from "node:fs";
-while (true) {
-  try {
-    writeSync(1, "still has a reader\\n");
-  } catch (e) {
-    if (e.code === "EPIPE") break;
-    if (e.code !== "EAGAIN") throw e;
-  }
-  await Bun.sleep(1);
-}
-const running = $\`${command}\`.nothrow().run();
-Bun.sleepSync(100);
-await running;
-console.error("settled");
-`;
-  }
-
-  async function expectFixtureToSettle(dir: string) {
+  async function expectFixtureToSettle(command: string, dir: string) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.ts"],
+      cmd: [bunExe(), join(import.meta.dir, "epipe-fixture.ts"), command, ...names],
       cwd: dir,
       env: bunEnv,
       stdout: "pipe",
@@ -152,39 +120,34 @@ console.error("settled");
     });
     await proc.stdout.cancel();
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("settled\n");
-    expect(exitCode).toBe(0);
+    expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "settled\n",
+      exitCode: 0,
+      signalCode: null,
+    });
   }
 
   test.concurrent("ls with several arguments", async () => {
-    using dir = tempDir("shell-epipe-ls", {
-      "fixture.ts": fixture(`ls -d ${args}`),
-      ...Object.fromEntries(names.map(name => [name, {}])),
-    });
-    await expectFixtureToSettle(String(dir));
+    using dir = tempDir("shell-epipe-ls", Object.fromEntries(names.map(name => [name, {}])));
+    await expectFixtureToSettle("ls", String(dir));
   });
 
   test.concurrent("mkdir -v with several arguments", async () => {
-    using dir = tempDir("shell-epipe-mkdir", { "fixture.ts": fixture(`mkdir -v ${args}`) });
-    await expectFixtureToSettle(String(dir));
+    using dir = tempDir("shell-epipe-mkdir", {});
+    await expectFixtureToSettle("mkdir", String(dir));
     expect(existing(String(dir), names)).toEqual(names);
   });
 
   test.concurrent("rm -v with several arguments", async () => {
-    using dir = tempDir("shell-epipe-rm", {
-      "fixture.ts": fixture(`rm -v ${args}`),
-      ...Object.fromEntries(names.map(name => [name, ""])),
-    });
-    await expectFixtureToSettle(String(dir));
+    using dir = tempDir("shell-epipe-rm", {});
+    await expectFixtureToSettle("rm", String(dir));
     expect(existing(String(dir), names)).toEqual([]);
   });
 
-  // A subprocess's output is relayed to stdout through the same writer, one
-  // chunk per read. The relay gives up at its first failed chunk and can be
-  // freed along with the subprocess's pipe right there, so the chunks it still
-  // had queued must not be reported to it afterwards.
+  // The relay of a subprocess's output stops at its first failed chunk and can
+  // be freed right there, so its other queued chunks must not reach it.
   test.concurrent("relayed subprocess output", async () => {
-    using dir = tempDir("shell-epipe-subprocess", { "fixture.ts": fixture("head -c 1048576 /dev/zero") });
-    await expectFixtureToSettle(String(dir));
+    using dir = tempDir("shell-epipe-subprocess", {});
+    await expectFixtureToSettle("subprocess", String(dir));
   });
 });

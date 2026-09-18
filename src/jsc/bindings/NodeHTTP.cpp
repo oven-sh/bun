@@ -55,9 +55,10 @@ static bool svEqualsIgnoreCase(std::string_view a, std::string_view lower)
     return true;
 }
 
-// `1#token` list scan (RFC 9110): does `value` contain `lowerToken` at
-// non-alphanumeric boundaries, ASCII-case-insensitively? Mirrors the
-// /(?:^|\W)tok(?:$|\W)/i checks node:http uses for Connection/Expect values.
+// Does `value` contain `lowerToken` at non-alphanumeric boundaries,
+// ASCII-case-insensitively? Mirrors the /(?:^|\W)100-continue(?:$|\W)/i check
+// node:http applies to the Expect value. Not a list-item match ("x-100-continue"
+// counts). The Connection verdicts come from HttpRequest::hasConnectionToken.
 static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
 {
     const size_t n = value.length(), m = lowerToken.length();
@@ -104,7 +105,14 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     // Deliberate: the bitfield scans every header the parser accepted, like
     // the parser's own Host/Expect handling, while req.rawHeaders/req.headers
     // still apply the server.maxHeadersCount truncation on materialization.
+    // The Connection bits follow llhttp (F_CONNECTION_CLOSE, F_CONNECTION_UPGRADE):
+    // the word must be a whole item of the list, so "close-x" and "foo upgrade"
+    // do not count. The Upgrade bit follows F_UPGRADE: a non-empty value.
     uint32_t bits = 0;
+    if (request->hasConnectionClose())
+        bits |= kDispatchConnClose;
+    if (request->hasConnectionToken("upgrade"))
+        bits |= kDispatchConnUpgrade;
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
         const std::string_view name = pair.first;
@@ -125,7 +133,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(name.data()), name.length() });
         flatHeaders.append(std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(value.data()), value.length() });
 
-        // Duplicate headers OR their token bits (the lazy header build joins
+        // Duplicate headers OR their bits (the lazy header build joins
         // duplicates with ", ", and a token match on the joined value is a
         // token match on one of the parts).
         switch (name.length()) {
@@ -141,16 +149,8 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             }
             break;
         case 7:
-            if (svEqualsIgnoreCase(name, "upgrade"))
+            if (!value.empty() && svEqualsIgnoreCase(name, "upgrade"))
                 bits |= kDispatchHasUpgrade;
-            break;
-        case 10:
-            if (svEqualsIgnoreCase(name, "connection")) {
-                if (svValueHasToken(value, "close"))
-                    bits |= kDispatchConnClose;
-                if (svValueHasToken(value, "upgrade"))
-                    bits |= kDispatchConnUpgrade;
-            }
             break;
         case 14:
             if (svEqualsIgnoreCase(name, "content-length"))

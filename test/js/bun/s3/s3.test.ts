@@ -2133,6 +2133,225 @@ describe("s3 upload stream body error", () => {
   });
 });
 
+// The upload behind writer() can fail while the caller holds no flush()/end()
+// promise. The failure must reach the next flush()/end(), not vanish.
+describe.concurrent("s3 writer() upload failure with no pending promise", () => {
+  // A stub that answers 403 to every part, and to CreateMultipartUpload for the
+  // key "create-denied". `aborted` resolves when the client sends
+  // AbortMultipartUpload, which it does only after the upload has failed.
+  const prelude = `
+    // The percent-encoded key is over the 1024 byte limit, so no request can be
+    // signed: the upload fails inside the call that starts it, before that call
+    // has made its promise. The key itself is under every platform's path limit
+    // (1024 bytes on macOS), which file() checks.
+    const unsignableKey = Buffer.alloc(512, "+").toString();
+    const settle = p =>
+      Promise.resolve(p).then(
+        v => "resolved " + v,
+        e => ({ name: e.name, code: e.code, message: e.message, path: e.path === unsignableKey ? "unsignableKey" : e.path }),
+      );
+    const denied = () =>
+      new Response("<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>", { status: 403 });
+    const aborted = Promise.withResolvers();
+    const createDenied = Promise.withResolvers();
+    const requests = [];
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        await req.arrayBuffer();
+        if (req.method === "DELETE") {
+          aborted.resolve();
+          return new Response(null, { status: 204 });
+        }
+        if (req.method === "POST" && url.searchParams.has("uploads")) {
+          requests.push("create");
+          if (url.pathname.endsWith("/create-denied")) {
+            // Resolves after this tick, when the 403 is on the wire.
+            setImmediate(createDenied.resolve);
+            return denied();
+          }
+          return new Response(
+            "<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>",
+          );
+        }
+        if (req.method === "PUT" && url.searchParams.has("partNumber")) {
+          requests.push("part");
+          return denied();
+        }
+        requests.push(req.method);
+        return new Response(undefined, { status: 200, headers: { ETag: '"etag"' } });
+      },
+    });
+    const client = new Bun.S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      region: "eu-west-3",
+      bucket: "my_bucket",
+      endpoint: \`http://127.0.0.1:\${server.port}\`,
+      virtualHostedStyle: false,
+    });
+    const partSize = 5 * 1024 * 1024;
+  `;
+  // One full part starts the multipart upload. The caller keeps no promise.
+  const partUploadFailed = `
+    const writer = client.file("obj").writer({ partSize, retry: 0 });
+    writer.write(new Uint8Array(partSize));
+    await aborted.promise;
+  `;
+  // No request follows a denied CreateMultipartUpload. The client handles
+  // responses in the order they arrive, so the upload has failed when a
+  // request made after the 403 was sent completes.
+  const createWasDenied = `
+    const writer = client.file("create-denied").writer({ partSize, retry: 0 });
+    writer.write(new Uint8Array(partSize));
+    await createDenied.promise;
+    await client.file("barrier").exists();
+  `;
+  const accessDenied = { name: "S3Error", code: "AccessDenied", message: "Access Denied" };
+  const invalidPath = {
+    name: "S3Error",
+    code: "ERR_S3_INVALID_PATH",
+    message: "Invalid S3 bucket, key combination",
+    path: "unsignableKey",
+  };
+  const missingCredentials = {
+    name: "S3Error",
+    code: "ERR_S3_MISSING_CREDENTIALS",
+    message: "Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required",
+    path: "obj",
+  };
+
+  it.each([
+    [
+      // The second end() sees an ended writer. close() after that is cleanup, as in a finally block.
+      "end() after a part upload failed",
+      `${partUploadFailed}
+       const write = writer.write("hello");
+       const end = await settle(writer.end());
+       const secondEnd = await settle(writer.end());
+       const close = String(writer.close());`,
+      {
+        write: 0,
+        end: { ...accessDenied, path: "obj" },
+        secondEnd: "resolved 0",
+        close: "undefined",
+        requests: ["create", "part"],
+      },
+    ],
+    [
+      "flush() after a part upload failed",
+      `${partUploadFailed}
+       const flush = await settle(writer.flush());
+       const end = await settle(writer.end());`,
+      { flush: { ...accessDenied, path: "obj" }, end: "resolved 0", requests: ["create", "part"] },
+    ],
+    [
+      // The same calls with flush() made before the failure: the caller must see no difference.
+      "flush() pending when a part upload fails",
+      `const writer = client.file("obj").writer({ partSize, retry: 0 });
+       writer.write(new Uint8Array(partSize));
+       const flush = await settle(writer.flush());
+       const end = await settle(writer.end());
+       await aborted.promise;`,
+      { flush: { ...accessDenied, path: "obj" }, end: "resolved 0", requests: ["create", "part"] },
+    ],
+    [
+      // Both pending promises carry the failure. Later calls see an ended writer.
+      "flush() and end() pending when a part upload fails",
+      `const writer = client.file("obj").writer({ partSize, retry: 0 });
+       writer.write(new Uint8Array(partSize));
+       const [flush, end] = await Promise.all([settle(writer.flush()), settle(writer.end())]);
+       await aborted.promise;
+       const write = writer.write("hello");
+       const secondEnd = await settle(writer.end());
+       const close = String(writer.close());`,
+      {
+        flush: { ...accessDenied, path: "obj" },
+        end: { ...accessDenied, path: "obj" },
+        write: 0,
+        secondEnd: "resolved 0",
+        close: "undefined",
+        requests: ["create", "part"],
+      },
+    ],
+    [
+      // close() reports no outcome of the upload, so it drops the failure.
+      "close() after a part upload failed",
+      `${partUploadFailed}
+       const close = String(writer.close());`,
+      { close: "undefined", requests: ["create", "part"] },
+    ],
+    [
+      "end() after CreateMultipartUpload was denied",
+      `${createWasDenied}
+       const write = writer.write("hello");
+       const end = await settle(writer.end());`,
+      { write: 0, end: { ...accessDenied, path: "create-denied" }, requests: ["create", "HEAD"] },
+    ],
+    [
+      "end() when the single PUT cannot be signed",
+      `const writer = client.file(unsignableKey).writer();
+       const write = writer.write("hello");
+       const end = await settle(writer.end());`,
+      { write: 5, end: invalidPath, requests: [] },
+    ],
+    [
+      "end() when the client has no credentials",
+      `const writer = new Bun.S3Client({ bucket: "my_bucket" }).file("obj").writer();
+       const write = writer.write("hello");
+       const end = await settle(writer.end());`,
+      { write: 5, end: missingCredentials, requests: [] },
+    ],
+    [
+      // The write() that starts the upload took the bytes before the upload failed inside it.
+      "end() when CreateMultipartUpload cannot be signed",
+      `const writer = client.file(unsignableKey).writer({ partSize });
+       const firstWrite = writer.write(new Uint8Array(partSize));
+       const write = writer.write("hello");
+       const end = await settle(writer.end());`,
+      { firstWrite: 5 * 1024 * 1024, write: 0, end: invalidPath, requests: [] },
+    ],
+    [
+      "flush() when CreateMultipartUpload cannot be signed",
+      `const writer = client.file(unsignableKey).writer({ partSize });
+       writer.write(new Uint8Array(partSize));
+       const flush = await settle(writer.flush());
+       const end = await settle(writer.end());`,
+      { flush: invalidPath, end: "resolved 0", requests: [] },
+    ],
+  ])("%s", async (_, body, expected) => {
+    const results = Object.keys(expected).join(", ");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${prelude} ${body} server.stop(true); console.log(JSON.stringify({ ${results} }));`],
+      env: {
+        ...bunEnv,
+        // The S3 client honors the proxy environment; the stub is on loopback.
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        ALL_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+        all_proxy: undefined,
+        // A client with no credentials in its options reads them from the environment.
+        S3_ACCESS_KEY_ID: undefined,
+        S3_SECRET_ACCESS_KEY: undefined,
+        AWS_ACCESS_KEY_ID: undefined,
+        AWS_SECRET_ACCESS_KEY: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("presigned url signature", () => {
   function verifyPresignedUrl(presigned: string, credentials: { secretAccessKey: string; region: string }) {
     const url = new URL(presigned);

@@ -8143,7 +8143,7 @@ describe("css tests", () => {
     );
 
     prefix_test(
-      ".a { color: red } .b { color: red; border-start-start-radius: 2px }",
+      ".a { color: red } .b { color: red; border-start-start-radius: 2px; inset-inline: 1px 2px }",
       indoc`
         .a, .b {
           color: red;
@@ -8151,10 +8151,54 @@ describe("css tests", () => {
 
         .b:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
           border-top-left-radius: 2px;
+          left: 1px;
+          right: 2px;
         }
 
         .b:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
           border-top-right-radius: 2px;
+          left: 2px;
+          right: 1px;
+        }
+      `,
+      { safari: 14 << 16 },
+    );
+
+    // `:focus-visible` needs Safari 15.4, so `.y:focus-visible` gets a rule of its
+    // own and `.b` moves into the `.a` rule. Both keep the same declarations.
+    prefix_test(
+      ".a { color: red } .b, .y:focus-visible { color: red; border-start-start-radius: 2px; inset-inline: 1px 2px }",
+      indoc`
+        .a, .b {
+          color: red;
+        }
+
+        .b:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+          border-top-left-radius: 2px;
+          left: 1px;
+          right: 2px;
+        }
+
+        .b:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+          border-top-right-radius: 2px;
+          left: 2px;
+          right: 1px;
+        }
+
+        .y:focus-visible {
+          color: red;
+        }
+
+        .y:focus-visible:not(:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)) {
+          border-top-left-radius: 2px;
+          left: 1px;
+          right: 2px;
+        }
+
+        .y:focus-visible:lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi) {
+          border-top-right-radius: 2px;
+          left: 2px;
+          right: 1px;
         }
       `,
       { safari: 14 << 16 },

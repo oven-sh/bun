@@ -1519,6 +1519,107 @@ test("lazy error-info materialization does not store an empty stack value when t
   expect(exitCode).toBe(0);
 });
 
+// Bun creates "stack", "line", "column" and "sourceURL" on the first touch of any of them, so each of these
+// operations calls Error.prepareStackTrace. Node calls it only for a read of "stack". JSC stores the properties
+// even when the callback throws, and the lookup that started it must still report "not found" along with the
+// exception. JSObject::getOwnPropertyDescriptor asserts that in a debug build.
+test.concurrent(
+  "asking for a descriptor of a lazy error property propagates a throw from Error.prepareStackTrace",
+  async () => {
+    const src = `
+    const operations = {
+      "Object.getOwnPropertyDescriptor stack": e => Object.getOwnPropertyDescriptor(e, "stack"),
+      // The step that creates "stack" also creates "line" and "column", so they call the callback too.
+      "Object.getOwnPropertyDescriptor line": e => Object.getOwnPropertyDescriptor(e, "line"),
+      "Object.getOwnPropertyDescriptor column": e => Object.getOwnPropertyDescriptor(e, "column"),
+      "Reflect.getOwnPropertyDescriptor": e => Reflect.getOwnPropertyDescriptor(e, "stack"),
+      "propertyIsEnumerable": e => Object.prototype.propertyIsEnumerable.call(e, "stack"),
+      "through a Proxy": e => Object.getOwnPropertyDescriptor(new Proxy(e, {}), "stack"),
+    };
+    const results = {};
+    for (const [name, operation] of Object.entries(operations)) {
+      Error.prepareStackTrace = () => { throw new Error("hook-throw"); };
+      const e = new Error("x");
+      results[name] = "no-throw";
+      try { operation(e); } catch (err) { results[name] = err.message; }
+      Error.prepareStackTrace = undefined;
+    }
+    console.log(JSON.stringify(results));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({
+        "Object.getOwnPropertyDescriptor stack": "hook-throw",
+        "Object.getOwnPropertyDescriptor line": "hook-throw",
+        "Object.getOwnPropertyDescriptor column": "hook-throw",
+        "Reflect.getOwnPropertyDescriptor": "hook-throw",
+        "propertyIsEnumerable": "hook-throw",
+        "through a Proxy": "hook-throw",
+      }),
+      signalCode: null,
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// worker.terminate() is the same case with an exception that JS cannot catch. It lands while the callback runs.
+test.concurrent(
+  "terminating a worker that is inside Error.prepareStackTrace for a descriptor lookup exits cleanly",
+  async () => {
+    const workerSource = `
+    const { parentPort } = require("node:worker_threads");
+    Error.prepareStackTrace = () => {
+      parentPort.postMessage("in-callback");
+      for (;;) {}
+    };
+    Object.getOwnPropertyDescriptor(new Error("x"), "stack");
+    parentPort.postMessage("unreachable");
+  `;
+    const src = `
+    const { Worker } = require("node:worker_threads");
+    const worker = new Worker(${JSON.stringify(workerSource)}, { eval: true });
+    const messages = [];
+    worker.on("message", message => {
+      messages.push(message);
+      worker.terminate();
+    });
+    worker.on("exit", () => console.log(JSON.stringify(messages)));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify(["in-callback"]),
+      signalCode: null,
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Node does not call Error.prepareStackTrace for a delete. Bun does, and a delete that throws must not delete.
+test.each([
+  ["delete", e => delete e.stack],
+  ["Reflect.deleteProperty", e => Reflect.deleteProperty(e, "stack")],
+])("%s of error.stack that throws from Error.prepareStackTrace does not delete the property", (_, deleteStack) => {
+  Error.prepareStackTrace = () => {
+    throw new Error("hook-throw");
+  };
+  const e = new Error("x");
+  expect(() => deleteStack(e)).toThrow("hook-throw");
+  Error.prepareStackTrace = origPrepareStackTrace;
+  expect(Object.hasOwn(e, "stack")).toBe(true);
+});
+
 // An error holds the functions in its trace weakly. These functions are strict, so the call sites do
 // not retain them either, and they are garbage by the time `.stack` is first read. The `finally`
 // blocks keep each `return` out of tail position, so every frame stays in the trace.

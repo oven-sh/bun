@@ -1554,24 +1554,37 @@ where
 
         let seconds = arguments[1];
 
+        if !seconds.is_any_int() {
+            return Err(self.global().throw_invalid_arguments(format_args!(
+                "timeout() expects an integer number of seconds",
+            )));
+        }
+        let seconds_i64 = seconds.to_int64();
+        // The per-socket idle timer is a u8, the same limit `idleTimeout` has.
+        if !(0..=255).contains(&seconds_i64) {
+            return Err(global.throw_range_error(
+                seconds_i64,
+                bun_fmt::OutOfRangeOptions {
+                    field_name: b"seconds",
+                    min: 0,
+                    max: 255,
+                    ..Default::default()
+                },
+            ));
+        }
+        let value = seconds_i64 as u8;
+
         if matches!(self.config.address, server_config::Address::Unix(_)) {
             return Ok(JSValue::NULL);
         }
 
-        if !seconds.is_number() {
-            return Err(self
-                .global()
-                .throw(format_args!("timeout() requires a number")));
-        }
-        let value = seconds.to_u32();
-
         if let Some(request) = <Request as bun_jsc::JsClass>::from_js(arguments[0]) {
             // SAFETY: from_js returns a live *mut Request; shared access only.
-            let _ = unsafe { (*request).request_context.set_timeout(value) };
+            let _ = unsafe { (*request).request_context.set_timeout(u32::from(value)) };
         } else if let Some(response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(arguments[0])
         {
             // SAFETY: from_js returns a live *mut NodeHTTPResponse
-            unsafe { (*response).set_timeout((value % 255) as u8) };
+            unsafe { (*response).set_timeout(value) };
         } else {
             return Err(self
                 .global()

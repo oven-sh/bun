@@ -441,15 +441,17 @@ export function runOnResolvePlugins(this: BundlerPlugin, specifier, inputNamespa
           throw new TypeError("onResolve plugins 'namespace' field must be a string if provided");
         }
 
+        if (typeof external !== "boolean" && !$isUndefinedOrNull(external)) {
+          throw new TypeError('onResolve plugins "external" field must be boolean or unspecified');
+        }
+
         if (!path) {
-          continue;
+          if (external) path = inputPath;
+          else continue;
         }
 
         if (!userNamespace) {
           userNamespace = inputNamespace;
-        }
-        if (typeof external !== "boolean" && !$isUndefinedOrNull(external)) {
-          throw new TypeError('onResolve plugins "external" field must be boolean or unspecified');
         }
 
         if (!external) {

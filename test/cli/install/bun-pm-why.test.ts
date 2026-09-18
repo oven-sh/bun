@@ -267,7 +267,8 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     expect(stderr).toBe("");
     // The implicit workspace-root entry under pkg-b is hidden, so app-a is
     // the last visible dependent and closes the branch.
-    expect(stdout).toBe(
+    // The header prints the workspace path with the native separator.
+    expect(stdout.replaceAll("\\", "/")).toBe(
       [
         "pkg-a@workspace:packages/pkg-a",
         "  ├─ pkg-b@workspace (requires workspace:*)",

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, symlinkSync } from "node:fs";
+import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
@@ -1428,9 +1428,13 @@ describe("--shell and [run] shell pick the interpreter for --filter", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
+    // The file exists before its content is written, so poll for the pid itself.
     const deadline = Date.now() + 10000;
-    while (!existsSync(pidFile) && Date.now() < deadline) await Bun.sleep(20);
-    const pid = Number(await Bun.file(pidFile).text());
+    let pid = 0;
+    while (!pid && Date.now() < deadline) {
+      pid = existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : 0;
+      if (!pid) await Bun.sleep(20);
+    }
     expect(pid).toBeGreaterThan(0);
     proc.kill("SIGINT");
     await proc.exited;

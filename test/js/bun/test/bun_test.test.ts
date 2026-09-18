@@ -401,3 +401,149 @@ test("no --only flag with multiple files", async () => {
   `);
   expect(exitCode).toBe(0);
 });
+
+// The runner calls some test callbacks from outside an event loop task: the first tests of a
+// file, and the test after one that timed out. A promise reaction must not run inside a
+// native call that such a test makes. Here an HTMLRewriter handler calls reader.cancel(),
+// which settles the pending read of the stream in native code. A jest timer control and a
+// matcher that waits for a promise are the exceptions that suites rely on: there they run the
+// reactions of each callback before the next callback, but a control does not run them inside
+// a control that one of those reactions calls.
+test.concurrent("a promise reaction does not run inside a native call that a test makes", async () => {
+  using dir = tempDir("bun-test-run-to-completion", {
+    "order.ts": `
+      export async function cancelInsideHandler(label: string) {
+        let controller!: ReadableStreamDefaultController;
+        const input = new ReadableStream({ start: c => void (controller = c) });
+        const order: string[] = [];
+        const response = new HTMLRewriter()
+          .on("p", {
+            element() {
+              order.push("handler start");
+              reader.cancel();
+              order.push("handler end");
+            },
+          })
+          .transform(new Response(input));
+        const reader = response.body!.getReader();
+        const closed = reader.closed.then(() => order.push("reader.closed"));
+        controller.enqueue(new TextEncoder().encode("<p>x</p>"));
+        controller.close();
+        await closed;
+        console.log(JSON.stringify({ label, order }));
+      }
+    `,
+    "first.test.ts": `
+      import { test } from "bun:test";
+      import { cancelInsideHandler } from "./order";
+      test("first", () => cancelInsideHandler("first test of a file"));
+    `,
+    "after-timeout.test.ts": `
+      import { test } from "bun:test";
+      import { cancelInsideHandler } from "./order";
+      test("times out", () => new Promise(() => {}), 1);
+      test("next", () => cancelInsideHandler("test after a timed out test"));
+    `,
+    "after-async.test.ts": `
+      import { test } from "bun:test";
+      import { cancelInsideHandler } from "./order";
+      test("async", () => new Promise(resolve => setImmediate(resolve)));
+      test("next", () => cancelInsideHandler("test after an async test"));
+    `,
+    "timer-control.test.ts": `
+      import { jest, test } from "bun:test";
+      test("first", () => {
+        jest.useFakeTimers();
+        const order: string[] = [];
+        new Promise(resolve => setTimeout(resolve, 10)).then(() => {
+          setTimeout(() => {
+            order.push("inner timer");
+            Promise.resolve().then(() => order.push("inner timer reaction"));
+          }, 5);
+          jest.advanceTimersByTime(5);
+          order.push("inner control returned");
+        });
+        setTimeout(() => order.push("second timer"), 20);
+        jest.advanceTimersByTime(20);
+        order.push("control returned");
+        jest.useRealTimers();
+        console.log(JSON.stringify({ label: "timer control in the first test of a file", order }));
+      });
+    `,
+    "matcher-wait.test.ts": `
+      import { expect, test } from "bun:test";
+      expect.extend({
+        async toSettle(received: Promise<unknown>) {
+          await received;
+          return { pass: true, message: () => "" };
+        },
+      });
+      test("first", async () => {
+        for (const matcher of [".resolves", ".rejects", "toThrow of an async function", "async custom matcher"]) {
+          const order: string[] = [];
+          const fulfills = matcher === ".resolves" || matcher === "async custom matcher";
+          const settled = new Promise<void>((resolve, reject) => {
+            setImmediate(() => {
+              order.push("first immediate");
+              Promise.resolve().then(() => order.push("first immediate reaction"));
+            });
+            setImmediate(() => {
+              order.push("second immediate");
+              fulfills ? resolve() : reject(new Error("rejected"));
+            });
+          });
+          if (matcher === ".resolves") await expect(settled).resolves.toBeUndefined();
+          else if (matcher === ".rejects") await expect(settled).rejects.toThrow("rejected");
+          else if (matcher === "toThrow of an async function") expect(() => settled).toThrow("rejected");
+          // @ts-expect-error
+          else await expect(settled).toSettle();
+          console.log(JSON.stringify({ label: matcher + " in the first test of a file", order }));
+        }
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      "./first.test.ts",
+      "./after-timeout.test.ts",
+      "./after-async.test.ts",
+      "./timer-control.test.ts",
+      "./matcher-wait.test.ts",
+    ],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const orders = Object.fromEntries(
+    stdout
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line))
+      .map(({ label, order }) => [label, order]),
+  );
+  const order = ["handler start", "handler end", "reader.closed"];
+  const waitOrder = ["first immediate", "first immediate reaction", "second immediate"];
+  expect(orders).toEqual({
+    "first test of a file": order,
+    "test after a timed out test": order,
+    "test after an async test": order,
+    "timer control in the first test of a file": [
+      "inner timer",
+      "inner control returned",
+      "inner timer reaction",
+      "second timer",
+      "control returned",
+    ],
+    ".resolves in the first test of a file": waitOrder,
+    ".rejects in the first test of a file": waitOrder,
+    "toThrow of an async function in the first test of a file": waitOrder,
+    "async custom matcher in the first test of a file": waitOrder,
+  });
+  // The one failure is the test that times out.
+  const count = (what: string) => Number(stderr.match(new RegExp(`^\\s*(\\d+) ${what}$`, "m"))?.[1]);
+  expect({ pass: count("pass"), fail: count("fail"), exitCode }).toEqual({ pass: 6, fail: 1, exitCode: 1 });
+});

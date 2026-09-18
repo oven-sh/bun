@@ -40,7 +40,7 @@ let nodeFsForIter; // lazy value for require("node:fs") (sync read/write/close f
 
 let Interface; // lazy value for require("node:readline").Interface.
 
-function watch(
+async function* watch(
   filename: string | Buffer | URL,
   options: {
     encoding?: BufferEncoding;
@@ -61,7 +61,6 @@ function watch(
   } else if (typeof filename !== "string") {
     throw $ERR_INVALID_ARG_TYPE("filename", ["string", "Buffer", "URL"], filename);
   }
-  let nextEventResolve: Function | null = null;
   if (typeof options === "string") {
     options = { encoding: options };
   }
@@ -72,28 +71,15 @@ function watch(
   function makeAbortError() {
     return $makeAbortError(undefined, { cause: signal!.reason });
   }
+  if (signal?.aborted) throw makeAbortError();
 
-  // node never creates the native handle when the signal is already
-  // aborted (its async generator throws on first next() before opening
-  // it); creating one here would leak it, since the "abort" event never
-  // fires for a pre-aborted signal.
-  if (signal?.aborted) {
-    return {
-      [Symbol.asyncIterator]() {
-        let closed = false;
-        return {
-          async next() {
-            if (closed) return { value: undefined, done: true };
-            closed = true;
-            throw makeAbortError();
-          },
-          return() {
-            closed = true;
-            return { value: undefined, done: true };
-          },
-        };
-      },
-    };
+  let pendingResolve: Function | null = null;
+  function wake() {
+    const resolve = pendingResolve;
+    if (resolve !== null) {
+      pendingResolve = null;
+      resolve();
+    }
   }
 
   const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
@@ -101,76 +87,48 @@ function watch(
       return;
     }
     queue.push({ __proto__: null, eventType, filename });
-    if (nextEventResolve) {
-      const resolve = nextEventResolve;
-      nextEventResolve = null;
-      resolve();
-    }
+    wake();
   });
 
-  function onAbort() {
-    watcher.close();
-    if (nextEventResolve) {
-      const resolve = nextEventResolve;
-      nextEventResolve = null;
-      resolve();
+  let watcherClosed = false;
+  function closeWatcher() {
+    if (!watcherClosed) {
+      watcherClosed = true;
+      watcher.close();
     }
   }
-  signal?.addEventListener("abort", onAbort, { once: true });
-  // {once: true} only auto-removes when the event fires; detach explicitly on
-  // the other exit paths so a long-lived signal doesn't retain this closure.
-  function removeAbortListener() {
-    signal?.removeEventListener("abort", onAbort);
+  function onAbort() {
+    closeWatcher();
+    wake();
   }
+  signal?.addEventListener("abort", onAbort, { once: true });
 
-  return {
-    [Symbol.asyncIterator]() {
-      let closed = false;
-      return {
-        async next() {
-          while (!closed) {
-            if (signal?.aborted) {
-              closed = true;
-              throw makeAbortError();
-            }
-            let event: Event;
-            while ((event = queue.shift() as Event)) {
-              if (event.eventType === "close") {
-                closed = true;
-                removeAbortListener();
-                return { value: undefined, done: true };
-              }
-              if (event.eventType === "error") {
-                closed = true;
-                watcher.close();
-                removeAbortListener();
-                throw event.filename;
-              }
-              return { value: event, done: false };
-            }
-            const { promise, resolve } = Promise.withResolvers();
-            nextEventResolve = resolve;
-            await promise;
-          }
-          return { value: undefined, done: true };
-        },
-
-        return() {
-          if (!closed) {
-            watcher.close();
-            closed = true;
-            removeAbortListener();
-            if (nextEventResolve) {
-              const resolve = nextEventResolve;
-              nextEventResolve = null;
-              resolve();
-            }
-          }
-          return { value: undefined, done: true };
-        },
-      };
-    },
-  };
+  try {
+    while (true) {
+      // Checked between every yield: abort may fire while suspended there.
+      if (signal?.aborted) {
+        throw makeAbortError();
+      }
+      const event = queue.shift() as Event | undefined;
+      if (event !== undefined) {
+        if (event.eventType === "close") {
+          return;
+        }
+        if (event.eventType === "error") {
+          throw event.filename;
+        }
+        yield event;
+        continue;
+      }
+      const { promise, resolve } = Promise.withResolvers();
+      pendingResolve = resolve;
+      await promise;
+    }
+  } finally {
+    // {once: true} doesn't detach on the non-abort exit paths.
+    signal?.removeEventListener("abort", onAbort);
+    closeWatcher();
+  }
 }
 
 // attempt to use the native code version if possible

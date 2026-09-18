@@ -923,8 +923,6 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
         switch (impl->kind) {
         case JSMockImplementation::Kind::Call:
         case JSMockImplementation::Kind::ResolvedValue: {
-            // mockResolvedValue(value) is mockImplementation(() => Promise.resolve(value)). Promise.resolve reads
-            // "constructor" from a promise and "then" from an object, so it runs user code and can throw.
             const bool isCall = impl->kind == JSMockImplementation::Kind::Call;
             JSValue underlyingValue = impl->underlyingValue.get();
             JSC::CallData callData;
@@ -941,6 +939,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
 
             auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+            // Promise.resolve(value) reads "constructor" or "then", so like a call it can run user code and throw.
             JSValue returnValue = isCall
                 ? Bun::call(globalObject, underlyingValue, callData, thisValue, args)
                 : JSValue(JSC::JSPromise::resolvedPromise(globalObject, underlyingValue));

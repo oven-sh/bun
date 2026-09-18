@@ -1,6 +1,6 @@
 import { Subprocess, spawn, write } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir } from "harness";
 import { join } from "node:path";
 import { InspectorSession, connect } from "./junit-reporter";
 import { SocketFramer } from "./socket-framer";
@@ -168,6 +168,9 @@ class TestReporterSession extends InspectorSession {
 describe.if(isPosix)("TestReporter inspector protocol", () => {
   let proc: Subprocess | undefined;
   let socket: ReturnType<typeof connect> extends Promise<infer T> ? T : never;
+  // The drain test below spawns several subprocesses in parallel; force-kill
+  // any that are still alive if the test times out or fails partway through.
+  const spawnedProcs = new Set<Subprocess>();
 
   afterEach(() => {
     proc?.kill();
@@ -175,6 +178,8 @@ describe.if(isPosix)("TestReporter inspector protocol", () => {
     // @ts-ignore - close the socket if it exists
     socket?.end?.();
     socket = undefined as any;
+    for (const p of spawnedProcs) p.kill("SIGKILL");
+    spawnedProcs.clear();
   });
 
   test("retroactively reports tests when TestReporter.enable is called after tests are discovered", async () => {
@@ -455,4 +460,115 @@ afterAll(async () => {
     }
     expect(exitCode).toBe(0);
   });
+
+  test(
+    "flushes pending inspector messages to the frontend before process exit",
+    async () => {
+      // Regression for the exit-race fixed by Bun__debugger__drain: the main
+      // thread queues the final TestReporter events for the detached debugger
+      // thread, then falls through to exit() which can kill that thread
+      // mid-delivery.
+      //
+      // Fast SYNCHRONOUS fixture tests on purpose: they let the runner reach
+      // exit() in the same tick as the last `end` event. A lone run on an idle
+      // machine may pass even without the fix; parallel spawns supply the CPU
+      // contention that makes the race bite reliably.
+      //
+      // Uses --inspect-wait=unix:... (SocketFramer path), not ws:, so this
+      // exercises the main->debugger-thread drain, not WebSocket backpressure.
+      const testCount = 5;
+      const body = Array.from(
+        { length: testCount },
+        (_, i) => `test("t${i}", () => { expect(${i}).toBe(${i}); });`,
+      ).join("\n");
+
+      using dir = tempDir("test-reporter-drain", {
+        "drain.test.ts": `
+import { test, expect } from "bun:test";
+${body}
+`,
+      });
+
+      async function once() {
+        const socketPath = join(String(dir), `inspector-${Math.random().toString(36).substring(2)}.sock`);
+
+        const session = new TestReporterSession();
+        const framer = new SocketFramer((message: string) => {
+          session.onMessage(message);
+        });
+
+        let localSocket: Awaited<ReturnType<typeof connect>>;
+        const socketClosed = Promise.withResolvers<void>();
+        const socketPromise = connect(`unix://${socketPath}`, () => socketClosed.resolve()).then(s => {
+          localSocket = s;
+          session.socket = s;
+          session.framer = framer;
+          s.data = {
+            onData: framer.onData.bind(framer),
+          };
+          return s;
+        });
+
+        const localProc = spawn({
+          cmd: [bunExe(), `--inspect-wait=unix:${socketPath}`, "test", "drain.test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          // "ignore" (not "pipe") for stdout: we only read stderr below, and an
+          // undrained "pipe" can deadlock the child once the OS pipe buffer fills.
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        spawnedProcs.add(localProc);
+
+        await socketPromise;
+
+        // Enable TestReporter before Inspector.initialized so every test is
+        // reported via the normal live-collection path, not retroactively.
+        session.enableInspector();
+        session.enableTestReporter();
+        session.initialize();
+
+        const [stderr, exitCode] = await Promise.all([localProc.stderr.text(), localProc.exited]);
+        spawnedProcs.delete(localProc);
+
+        // Wait for the socket's FIN, not just process exit: FIN is ordered
+        // after data, so once `close` fires every byte the subprocess wrote has
+        // been delivered. Process exit alone wouldn't guarantee this.
+        // @ts-ignore - close the socket if it exists
+        localSocket?.end?.();
+        await socketClosed.promise;
+
+        return {
+          stderr,
+          exitCode,
+          found: session.getFoundTests(),
+          started: session.getStartedTests(),
+          ended: session.getEndedTests(),
+        };
+      }
+
+      // Parallel batch for contention (see above). ASAN/debug subprocess
+      // startup is slow enough that a smaller batch still fits the timeout.
+      const slow = isASAN || isDebug;
+      const width = slow ? 4 : 8;
+      const rounds = slow ? 1 : 2;
+
+      const results: Awaited<ReturnType<typeof once>>[] = [];
+      for (let round = 0; round < rounds; round++) {
+        results.push(...(await Promise.all(Array.from({ length: width }, () => once()))));
+      }
+
+      for (const { stderr, exitCode, found, started, ended } of results) {
+        expect(stderr).toContain(`${testCount} pass`);
+        // Zero trailing loss at any of the three reporting stages.
+        expect(found.size).toBe(testCount);
+        expect(started.size).toBe(testCount);
+        expect(ended.size).toBe(testCount);
+        expect([...ended.values()].map(e => e.status)).toEqual(Array(testCount).fill("pass"));
+        expect(exitCode).toBe(0);
+      }
+    },
+    // Spawns a batch of --inspect-wait subprocesses; ASAN/debug startup is slow.
+    (isASAN || isDebug ? 120 : 60) * 1000,
+  );
 });

@@ -78,6 +78,9 @@ pub(crate) extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // `leak:uws_create_app` silently stops matching and CI reports the
     // suppressed allocations as leaks. If local debug crashes feel slow to
     // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
+    if bun_core::Environment::ENABLE_FUZZILLI {
+        return c"detect_stack_use_after_return=0:detect_leaks=0:abort_on_error=1:handle_abort=1:handle_sigill=1:handle_sigtrap=1".as_ptr();
+    }
     c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
 }
 

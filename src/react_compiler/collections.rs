@@ -81,6 +81,13 @@ impl<K, V> IndexMap<K, V> {
         self.0.retain(f);
     }
 
+    /// Drop the entries past the first `len` in insertion order. O(n - len).
+    pub(crate) fn truncate(&mut self, len: usize) {
+        while self.0.len() > len {
+            self.0.pop();
+        }
+    }
+
     /// Remove every entry, yielding `(K, V)` in insertion order.
     pub(crate) fn drain(&mut self, range: core::ops::RangeFull) -> IntoIter<K, V> {
         let _ = range;
@@ -399,6 +406,11 @@ impl<K: Copy + Into<u32>, V> IdMap<K, V> {
     #[inline]
     pub(crate) fn values(&self) -> slice::Iter<'_, V> {
         self.0.values()
+    }
+    /// Drop the entries past the first `len` in insertion order.
+    #[inline]
+    pub(crate) fn truncate(&mut self, len: usize) {
+        self.0.truncate(len);
     }
 }
 

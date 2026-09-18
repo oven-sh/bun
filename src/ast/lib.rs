@@ -978,11 +978,19 @@ impl Data {
 
         if let Some(location) = &self.location {
             if let Some(line_text_) = location.line_text.as_deref() {
-                let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
-                let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
-                if location.column > 0 && !line_text.is_empty() {
-                    let mut line_offset_for_second_line: usize =
-                        usize::try_from(location.column - 1).expect("int cast");
+                let line_text = bun_core::trim_left(line_text_, b"\n\r");
+                if location.column > 0 && !bun_core::trim_right(line_text, b" \r\n\t").is_empty() {
+                    let (line_text, caret_column) = excerpt_around_column(
+                        line_text,
+                        usize::try_from(location.column - 1).expect("int cast"),
+                        // A cut can drop the key that marks a secret, so a redacted line prints whole.
+                        if redact_sensitive_information {
+                            usize::MAX
+                        } else {
+                            MAX_EXCERPT_LEN
+                        },
+                    );
+                    let mut line_offset_for_second_line: usize = caret_column;
 
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
@@ -1069,6 +1077,49 @@ fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
         to.write_char(b as char)?;
     }
     Ok(())
+}
+
+/// `Data::write_format` cuts a line longer than this many bytes, unless it redacts the line.
+const MAX_EXCERPT_LEN: usize = 120;
+/// The excerpt starts this many bytes before the caret, or earlier when the line ends first.
+const EXCERPT_LEN_BEFORE_CARET: usize = 40;
+
+/// Walks `text` for up to `columns` UTF-16 code units. Returns the bytes and the code units walked.
+fn advance_utf16_columns(text: &[u8], columns: usize) -> (usize, usize) {
+    use bun_core::strings::{CodepointIterator, Cursor};
+    let iter = CodepointIterator::init(text);
+    let mut cursor = Cursor::default();
+    let mut walked: usize = 0;
+    while walked < columns && iter.next(&mut cursor) {
+        walked += 1 + (cursor.c > 0xFFFF) as usize;
+    }
+    (cursor.i as usize + cursor.width as usize, walked)
+}
+
+/// The part of `line_text` to print for a caret at the 0-based `column`, and the caret's column in it.
+fn excerpt_around_column(line_text: &[u8], column: usize, max_len: usize) -> (&[u8], usize) {
+    debug_assert!(max_len >= EXCERPT_LEN_BEFORE_CARET);
+    let (caret, caret_column) = advance_utf16_columns(line_text, column);
+    let visible = bun_core::trim_right(line_text, b" \r\n\t");
+    if line_text.len() <= max_len {
+        return (visible, caret_column);
+    }
+    let caret = caret.min(visible.len());
+    let mut hi = (caret.saturating_sub(EXCERPT_LEN_BEFORE_CARET) + max_len).min(visible.len());
+    let mut lo = hi.saturating_sub(max_len);
+    // A UTF-8 sequence has at most 3 continuation bytes.
+    for _ in 0..3 {
+        if !bun_core::strings::is_on_char_boundary(visible, lo) {
+            lo -= 1;
+        }
+        if !bun_core::strings::is_on_char_boundary(visible, hi) {
+            hi += 1;
+        }
+    }
+    (
+        bun_core::trim_right(&visible[lo..hi], b" \r\n\t"),
+        advance_utf16_columns(&visible[lo..caret], usize::MAX).1,
+    )
 }
 
 // ───────────────────────────────────────────────────────────────────────────

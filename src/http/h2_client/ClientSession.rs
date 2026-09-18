@@ -670,37 +670,36 @@ impl ClientSession {
     /// sibling re-arming, or strip the safety net from one that wants it),
     /// so the session disarms only when *every* attached client opted out.
     fn rearm_timeout(&mut self) {
+        // The socket is shared by every stream on the session, so arm the
+        // longest effective idle timeout among them (0 = every client's
+        // effective deadline is "none", or no clients are attached).
+        let mut want: core::ffi::c_uint = 0;
+        let mut any_unbounded = false;
+        let mut holds_body = false;
+        let mut fold = |eff: core::ffi::c_uint| {
+            any_unbounded |= eff == 0;
+            want = want.max(eff);
+        };
+        for &s in self.streams.values() {
+            let s = stream_ref(s);
+            holds_body |= s.awaiting_continue.is_some();
+            if let Some(c) = s.client_ref() {
+                fold(c.effective_idle_timeout_seconds());
+            }
+        }
+        for &c in &self.pending_attach {
+            fold(pending_client_mut(c).effective_idle_timeout_seconds());
+        }
         // RFC 9110 §10.1.1: a client SHOULD NOT wait indefinitely for
         // `100 Continue`. The socket timer is this thread's only clock, so
         // while a request body is held it is armed for its next tick (at most
         // one 4 s wheel period away) and its firing runs `release_held_bodies`
         // instead of failing the session. Re-arming within a period does not
         // move that tick, so traffic on sibling streams cannot postpone it.
-        self.continue_timer_armed = self
-            .streams
-            .values()
-            .iter()
-            .any(|&s| stream_ref(s).awaiting_continue.is_some());
-        if self.continue_timer_armed {
+        self.continue_timer_armed = holds_body;
+        if holds_body {
             self.socket.set_timeout(1);
             return;
-        }
-        // The socket is shared by every stream on the session, so arm the
-        // longest effective idle timeout among them (0 = every client's
-        // effective deadline is "none", or no clients are attached).
-        let mut want: core::ffi::c_uint = 0;
-        let mut any_unbounded = false;
-        let mut fold = |eff: core::ffi::c_uint| {
-            any_unbounded |= eff == 0;
-            want = want.max(eff);
-        };
-        for &s in self.streams.values() {
-            if let Some(c) = stream_ref(s).client_ref() {
-                fold(c.effective_idle_timeout_seconds());
-            }
-        }
-        for &c in &self.pending_attach {
-            fold(pending_client_mut(c).effective_idle_timeout_seconds());
         }
         // A client whose effective deadline is 0 ("no timeout": explicit
         // `{timeout:false}`, or no override under global=0) contributes 0 to

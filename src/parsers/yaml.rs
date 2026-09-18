@@ -412,7 +412,7 @@ pub trait Encoding: Copy + 'static {
     /// route through this
     /// method — identity for `u8` encodings, byte-reinterpret (`len * 2`) for
     /// `Utf16`. Byte-reinterpret preserves key uniqueness; do **not** use this
-    /// for text (see `NodeScalar::to_expr` for the encoding-aware string path).
+    /// for text (see `YamlString::to_expr` for the encoding-aware string path).
     fn key_bytes(s: &[Self::Unit]) -> &[u8];
 
     /// Construct a Unit from a `u16` code unit. Only meaningful for `Utf16`
@@ -775,6 +775,25 @@ impl<Enc: Encoding> YamlString<Enc> {
             YamlString::List(list) => list.len(),
         }
     }
+
+    pub(crate) fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
+        // A `List` is freed with the token, so the Expr gets a copy that lives in the arena.
+        let s: &[Enc::Unit] = match self {
+            YamlString::Range(range) => range.slice(input),
+            YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
+        };
+        let estring = match Enc::KIND {
+            EncodingKind::Utf16 => {
+                // SAFETY: `Enc::Unit == u16` when `KIND == Utf16`; reinterpret
+                // with the same element count for `E::String::init_utf16`
+                // (which sets `is_utf16`).
+                let s16 = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<u16>(), s.len()) };
+                E::String::init_utf16(s16)
+            }
+            _ => E::String::init(Enc::key_bytes(s)),
+        };
+        Expr::init(estring, pos.loc())
+    }
 }
 
 // Plain-scalar string builder. `whitespace_buf` is taken from the parser by
@@ -927,52 +946,36 @@ pub(crate) struct ScalarResolverCtx<'i, Enc: Encoding> {
     pub(crate) str_builder: StringBuilder<'i, Enc>,
 
     pub(crate) resolved: bool,
-    pub(crate) scalar: Option<NodeScalar<Enc>>,
-    pub(crate) tag: NodeTag,
+    pub(crate) scalar: Option<NodeScalar>,
 
     pub(crate) resolved_scalar_len: usize,
 
     pub(crate) start: Pos,
     pub(crate) line: Line,
     pub(crate) line_indent: Indent,
-    pub(crate) multiline: bool,
 }
 
 impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
     pub(crate) fn done(self, parser: &mut Parser<'i, Enc>) -> Token<Enc> {
-        let multiline = self.multiline;
         let start = self.start;
         let line_indent = self.line_indent;
         let line = self.line;
         let resolved_scalar_len = self.resolved_scalar_len;
-        let scalar_opt = self.scalar;
-
-        let scalar: TokenScalar<Enc> = 'scalar: {
-            let scalar_str = self.str_builder.done(parser);
-
-            if let Some(scalar) = scalar_opt {
-                if scalar_str.len() == resolved_scalar_len {
-                    drop(scalar_str);
-                    break 'scalar TokenScalar {
-                        style: ScalarStyle::Plain { multiline },
-                        data: scalar,
-                    };
-                }
-                // the first characters resolved to something
-                // but there were more characters afterwards
-            }
-
-            break 'scalar TokenScalar {
-                style: ScalarStyle::Plain { multiline },
-                data: NodeScalar::String(scalar_str),
-            };
-        };
+        // A resolved prefix that more text followed (`true_story`) is a string.
+        let resolved = self
+            .scalar
+            .filter(|_| self.str_builder.len() == resolved_scalar_len);
+        let text = self.str_builder.done(parser);
 
         Token::scalar(ScalarInit {
             start,
             indent: line_indent,
             line,
-            resolved: scalar,
+            scalar: TokenScalar {
+                text,
+                resolved,
+                style: ScalarStyle::Plain,
+            },
         })
     }
 
@@ -980,8 +983,6 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         if self.str_builder.len() == 0 {
             self.line_indent = parser.line_indent;
             self.line = parser.line;
-        } else if self.line != parser.line {
-            self.multiline = true;
         }
     }
 
@@ -1043,7 +1044,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
     pub(crate) fn resolve(
         &mut self,
-        scalar: NodeScalar<Enc>,
+        scalar: NodeScalar,
         off: Pos,
         text: impl AsRef<[Enc::Unit]>,
     ) -> Result<(), AllocError> {
@@ -1052,46 +1053,8 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             .append_expected_source_slice(off, off.add(text.len()), text)?;
 
         self.resolved = true;
-
-        match self.tag {
-            NodeTag::None => {
-                self.resolved_scalar_len = self.str_builder.len();
-                self.scalar = Some(scalar);
-            }
-            NodeTag::NonSpecific => {
-                // always becomes string
-            }
-            NodeTag::Bool => {
-                if matches!(scalar, NodeScalar::Boolean(_)) {
-                    self.resolved_scalar_len = self.str_builder.len();
-                    self.scalar = Some(scalar);
-                }
-            }
-            NodeTag::Int => {
-                if matches!(scalar, NodeScalar::Number(_)) {
-                    self.resolved_scalar_len = self.str_builder.len();
-                    self.scalar = Some(scalar);
-                }
-            }
-            NodeTag::Float => {
-                if matches!(scalar, NodeScalar::Number(_)) {
-                    self.resolved_scalar_len = self.str_builder.len();
-                    self.scalar = Some(scalar);
-                }
-            }
-            NodeTag::Null => {
-                if matches!(scalar, NodeScalar::Null) {
-                    self.resolved_scalar_len = self.str_builder.len();
-                    self.scalar = Some(scalar);
-                }
-            }
-            NodeTag::Str => {
-                // always becomes string
-            }
-            NodeTag::Verbatim(_) | NodeTag::Unknown(_) => {
-                // also always becomes a string
-            }
-        }
+        self.resolved_scalar_len = self.str_builder.len();
+        self.scalar = Some(scalar);
         Ok(())
     }
 
@@ -1386,13 +1349,13 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
         }
 
         let lexed = parser.slice(start, end);
-        let mut scalar: NodeScalar<Enc> = 'scalar: {
+        let mut number: f64 = 'number: {
             if x || o || hex {
                 let unsigned = match parse_unsigned_radix0::<Enc>(lexed) {
                     Ok(v) => v,
                     Err(_) => return Ok(()),
                 };
-                break 'scalar NodeScalar::Number(unsigned as f64);
+                break 'number unsigned as f64;
             }
             // [10.2.1.4] Core schema float/int regex. The lexer loop above is
             // permissive (accepts `+`/`-`/`e`/`.` at any position) and
@@ -1401,28 +1364,18 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             if !is_core_schema_number::<Enc>(lexed, first_char) {
                 return Ok(());
             }
-            let float = match parse_double_generic::<Enc>(lexed) {
+            match parse_double_generic::<Enc>(lexed) {
                 Ok(v) => v,
                 Err(_) => return Ok(()),
-            };
-
-            break 'scalar NodeScalar::Number(float);
+            }
         };
+        if first_char == FirstChar::Negative {
+            number = -number;
+        }
 
         self.resolved = true;
-
-        match self.tag {
-            NodeTag::None | NodeTag::Float | NodeTag::Int => {
-                self.resolved_scalar_len = self.str_builder.len();
-                if first_char == FirstChar::Negative {
-                    if let NodeScalar::Number(n) = &mut scalar {
-                        *n = -*n;
-                    }
-                }
-                self.scalar = Some(scalar);
-            }
-            _ => {}
-        }
+        self.resolved_scalar_len = self.str_builder.len();
+        self.scalar = Some(NodeScalar::Number(number));
         Ok(())
     }
 }
@@ -1558,49 +1511,35 @@ impl NodeTag {
             NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::default(), loc),
         }
     }
+
+    /// Whether a plain scalar resolving to `scalar` keeps it under this tag; otherwise it is its text.
+    pub(crate) fn keeps(self, scalar: NodeScalar) -> bool {
+        match self {
+            NodeTag::None => true,
+            NodeTag::Null => matches!(scalar, NodeScalar::Null),
+            NodeTag::Bool => matches!(scalar, NodeScalar::Boolean(_)),
+            NodeTag::Int | NodeTag::Float => matches!(scalar, NodeScalar::Number(_)),
+            NodeTag::NonSpecific | NodeTag::Str | NodeTag::Verbatim(_) | NodeTag::Unknown(_) => {
+                false
+            }
+        }
+    }
 }
 
-#[derive(Clone)]
-pub enum NodeScalar<Enc: Encoding> {
+/// [10.2.1.2] Core-schema value of a plain scalar that is not a string.
+#[derive(Clone, Copy)]
+pub enum NodeScalar {
     Null,
     Boolean(bool),
     Number(f64),
-    String(YamlString<Enc>),
 }
 
-impl<Enc: Encoding> NodeScalar<Enc> {
-    pub(crate) fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &bun_alloc::Arena) -> Expr {
+impl NodeScalar {
+    pub(crate) fn to_expr(self, pos: Pos) -> Expr {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
-            NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
-            NodeScalar::Number(value) => Expr::init(E::Number::new(*value), pos.loc()),
-            NodeScalar::String(value) => {
-                // For `Utf16` we route through `E::String::init_utf16`.
-                //
-                // LIFETIME: `YamlString::List` is a global-alloc `Vec` that is
-                // dropped with the local `scalar` immediately after this
-                // returns — the resulting `EString.data` would dangle. Dupe
-                // the list bytes into the bump arena; `.range` already borrows
-                // `input` (source text) which outlives the Expr → JS
-                // conversion.
-                let s: &[Enc::Unit] = match value {
-                    YamlString::Range(range) => range.slice(input),
-                    YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
-                };
-                let estring = match Enc::KIND {
-                    EncodingKind::Utf16 => {
-                        // SAFETY: `Enc::Unit == u16` when `KIND == Utf16`;
-                        // reinterpret with the same element count for
-                        // `E::String::init_utf16` (which sets `is_utf16`).
-                        let s16 = unsafe {
-                            core::slice::from_raw_parts(s.as_ptr().cast::<u16>(), s.len())
-                        };
-                        E::String::init_utf16(s16)
-                    }
-                    _ => E::String::init(Enc::key_bytes(s)),
-                };
-                Expr::init(estring, pos.loc())
-            }
+            NodeScalar::Boolean(value) => Expr::init(E::Boolean { value }, pos.loc()),
+            NodeScalar::Number(value) => Expr::init(E::Number::new(value), pos.loc()),
         }
     }
 }
@@ -1736,19 +1675,33 @@ pub enum TokenData<Enc: Encoding> {
 
 #[derive(Clone)]
 pub struct TokenScalar<Enc: Encoding> {
-    pub(crate) data: NodeScalar<Enc>,
+    pub(crate) text: YamlString<Enc>,
+    /// Core-schema value of a plain `text`; only the parser knows the tag that picks between them.
+    pub(crate) resolved: Option<NodeScalar>,
     pub(crate) style: ScalarStyle,
 }
 
-/// How a scalar token was written in the source. Only `Plain` carries
-/// `multiline`: the sole reader (`parse_block_indented`'s tag-neutral
-/// rewind) cares exclusively about plain single-line scalars, and the
-/// value has no well-defined meaning for quoted or block styles.
+impl<Enc: Encoding> TokenScalar<Enc> {
+    /// The scalar as the node carrying `tag` (`NodeTag::None` when untagged).
+    pub(crate) fn to_expr(
+        &self,
+        tag: NodeTag,
+        pos: Pos,
+        input: &[Enc::Unit],
+        bump: &bun_alloc::Arena,
+    ) -> Expr {
+        match self.resolved {
+            Some(resolved) if tag.keeps(resolved) => resolved.to_expr(pos),
+            _ => self.text.to_expr(pos, input, bump),
+        }
+    }
+}
+
+/// How a scalar token was written in the source.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ScalarStyle {
-    /// [131] ns-plain. `multiline` = source text spans more than one line,
-    /// tracked by `ScalarResolverCtx::check_append`.
-    Plain { multiline: bool },
+    /// [131] ns-plain.
+    Plain,
     /// [170] `|` literal or [174] `>` folded.
     Block,
     /// [120] single-quoted or [109] double-quoted.
@@ -1777,7 +1730,7 @@ pub(crate) struct ScalarInit<Enc: Encoding> {
     pub(crate) start: Pos,
     pub(crate) indent: Indent,
     pub(crate) line: Line,
-    pub(crate) resolved: TokenScalar<Enc>,
+    pub(crate) scalar: TokenScalar<Enc>,
 }
 
 impl<Enc: Encoding> Token<Enc> {
@@ -1914,7 +1867,7 @@ impl<Enc: Encoding> Token<Enc> {
             start: init.start,
             indent: init.indent,
             line: init.line,
-            data: TokenData::Scalar(init.resolved),
+            data: TokenData::Scalar(init.scalar),
         }
     }
 }
@@ -2115,7 +2068,7 @@ pub struct Parser<'i, Enc: Encoding> {
     /// Growable buffers use the global
     /// allocator (and `Drop`); the arena is threaded for the few places that
     /// must hand a borrowed slice into the long-lived `Expr` tree (see
-    /// `NodeScalar::to_expr`).
+    /// `YamlString::to_expr`).
     pub(crate) bump: &'i bun_alloc::Arena,
 
     pub(crate) context: ContextStack,
@@ -2486,17 +2439,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
                 _ => break,
             }
-            let tag = match &scanned_tag {
-                Some(Token {
-                    data: TokenData::Tag(t),
-                    ..
-                }) => *t,
-                _ => NodeTag::None,
-            };
-            self.scan(ScanOptions {
-                tag,
-                ..Default::default()
-            })?;
+            self.scan(ScanOptions::default())?;
             if matches!(
                 self.token.data,
                 TokenData::MappingValue
@@ -3564,27 +3507,14 @@ impl<Enc: Encoding> Default for ParseNodeOptions<Enc> {
 // ScanOptions
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct ScanOptions {
     /// Used by compact sequences. We need to add the parent indentation
     pub(crate) additional_parent_indent: Option<Indent>,
-    /// If a scalar is scanned, this tag might be used.
-    pub(crate) tag: NodeTag,
     /// The scanner only counts indentation after a newline (or in compact
     /// collections). First scan needs to count indentation.
     pub(crate) first_scan: bool,
     pub(crate) outside_context: bool,
-}
-
-impl Default for ScanOptions {
-    fn default() -> Self {
-        Self {
-            additional_parent_indent: None,
-            tag: NodeTag::None,
-            first_scan: false,
-            outside_context: false,
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3661,34 +3591,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token.indent.is_less_than_or_equal(n)
                 };
                 if belongs_to_parent {
-                    // The post-property re-scan baked `value_tag` into a plain
-                    // scalar's resolution (`ScanOptions.tag`); if that scalar
-                    // is now abandoned to the parent, rewind to its start and
-                    // re-scan tag-neutral so the sibling key resolves under
-                    // the default schema. Only plain single-line scalars are
-                    // tag-resolved at scan time; quoted/block scalars ignore
-                    // ScanOptions.tag (and their token.start is past the
-                    // opening indicator, so rewind would be wrong); multiline
-                    // plain scalars may have advanced parser state across
-                    // lines that a positional rewind cannot fully restore.
-                    if value_tag.is_some()
-                        && matches!(
-                            &self.token.data,
-                            TokenData::Scalar(TokenScalar {
-                                style: ScalarStyle::Plain { multiline: false },
-                                ..
-                            })
-                        )
-                    {
-                        self.pos = self.token.start;
-                        self.line = self.token.line;
-                        self.line_indent = self.token.indent;
-                        // tab_after_indent is preserved: the original scan
-                        // recorded it for this token's leading whitespace,
-                        // and the re-scan (in_indent_position=false) won't
-                        // re-detect it since pos is already past the tab.
-                        self.scan(ScanOptions::default())?;
-                    }
                     return self.props_to_e_node(&value_tag, value_anchor, indicator_start.loc());
                 }
             }
@@ -3740,17 +3642,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
 
             // recorded a property — re-dispatch on what follows
-            let tag = match &value_tag {
-                Some(Token {
-                    data: TokenData::Tag(t),
-                    ..
-                }) => *t,
-                _ => NodeTag::None,
-            };
-            self.scan(ScanOptions {
-                tag,
-                ..Default::default()
-            })?;
+            self.scan(ScanOptions::default())?;
         }
     }
 
@@ -3866,20 +3758,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                 TokenData::Anchor(name) => {
                     node_props.set_anchor(PendingAnchor::new(&self.token, *name))?;
-                    self.scan(ScanOptions {
-                        tag: node_props.tag(),
-                        ..Default::default()
-                    })?;
+                    self.scan(ScanOptions::default())?;
                     continue;
                 }
 
-                TokenData::Tag(tag) => {
-                    let tag = *tag;
+                TokenData::Tag(_) => {
                     node_props.set_tag(self.token.clone())?;
-                    self.scan(ScanOptions {
-                        tag,
-                        ..Default::default()
-                    })?;
+                    self.scan(ScanOptions::default())?;
                     continue;
                 }
 
@@ -4209,13 +4094,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         _ => unreachable!("token.data was Scalar at match guard"),
                     };
 
+                    let tag = node_props.tag();
+
                     let json_key = if scalar.style == ScalarStyle::Quoted {
                         self.maybe_set_json_key(opts.flow_pair_allowed)?
                     } else {
                         false
                     };
                     let r = self.scan(ScanOptions {
-                        tag: node_props.tag(),
                         outside_context: true,
                         ..Default::default()
                     });
@@ -4232,7 +4118,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             // `:` belongs to an outer construct (e.g. the
                             // explicit-value indicator after `? - a` or
                             // `? sky\n: blue`). This scalar is not a key.
-                            break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
+                            break 'node scalar.to_expr(tag, scalar_start, self.input, self.bump);
                         }
                         // [192] ns-l-block-map-implicit-entry: the key is at
                         // s-indent(n) (spaces only). A tab between s-indent
@@ -4247,7 +4133,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         if let Some(current_mapping_indent) = opts.current_mapping_indent {
                             if current_mapping_indent == scalar_indent {
                                 // 3
-                                break 'node scalar.data.to_expr(
+                                break 'node scalar.to_expr(
+                                    tag,
                                     scalar_start,
                                     self.input,
                                     self.bump,
@@ -4258,7 +4145,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         match self.context.get() {
                             Context::FlowKey => {
                                 // 1
-                                break 'node scalar.data.to_expr(
+                                break 'node scalar.to_expr(
+                                    tag,
                                     scalar_start,
                                     self.input,
                                     self.bump,
@@ -4278,10 +4166,17 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         // covers the multiline-property case where they
                         // diverge.
                         if self.context.get() == Context::FlowIn && !opts.flow_pair_allowed {
-                            break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
+                            break 'node scalar.to_expr(tag, scalar_start, self.input, self.bump);
                         }
 
-                        let implicit_key = scalar.data.to_expr(scalar_start, self.input, self.bump);
+                        // [200] A tag on an earlier line is the mapping's, like the anchors below.
+                        let key_tag = if node_props.tag_line() == Some(scalar_line) {
+                            tag
+                        } else {
+                            NodeTag::None
+                        };
+                        let implicit_key =
+                            scalar.to_expr(key_tag, scalar_start, self.input, self.bump);
 
                         let anchors = node_props.take_implicit_key_anchors(scalar_line)?;
                         if let Some(key_anchor) = anchors.key_anchor {
@@ -4300,7 +4195,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         return Ok(mapping);
                     }
 
-                    break 'node scalar.data.to_expr(scalar_start, self.input, self.bump);
+                    break 'node scalar.to_expr(tag, scalar_start, self.input, self.bump);
                 }
 
                 TokenData::Directive => return Err(Self::unexpected_token()),
@@ -4412,17 +4307,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // This is the largest function in the file: a labeled-switch state machine
     // with an inner `ScalarResolverCtx`.
 
-    fn scan_plain_scalar(&mut self, opts: ScanOptions) -> Result<Token<Enc>, ParseError> {
+    fn scan_plain_scalar(&mut self) -> Result<Token<Enc>, ParseError> {
         let mut ctx = ScalarResolverCtx::<Enc> {
             str_builder: self.string_builder(),
             resolved: false,
             scalar: None,
-            tag: opts.tag,
             resolved_scalar_len: 0,
             start: self.pos,
             line: self.line,
             line_indent: self.line_indent,
-            multiline: false,
         };
 
         // labeled-switch loop
@@ -4924,8 +4817,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     start: self.start,
                     indent: self.content_indent,
                     line: self.line,
-                    resolved: TokenScalar {
-                        data: NodeScalar::String(YamlString::List(self.text)),
+                    scalar: TokenScalar {
+                        text: YamlString::List(self.text),
+                        resolved: None,
                         style: ScalarStyle::Block,
                     },
                 }))
@@ -5306,9 +5200,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         start,
                         indent: scalar_indent,
                         line: scalar_line,
-                        resolved: TokenScalar {
+                        scalar: TokenScalar {
+                            text: YamlString::List(text),
+                            resolved: None,
                             style: ScalarStyle::Quoted,
-                            data: NodeScalar::String(YamlString::List(text)),
                         },
                     }));
                 }
@@ -5382,9 +5277,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         start,
                         indent: scalar_indent,
                         line: scalar_line,
-                        resolved: TokenScalar {
+                        scalar: TokenScalar {
+                            text: YamlString::List(text),
+                            resolved: None,
                             style: ScalarStyle::Quoted,
-                            data: NodeScalar::String(YamlString::List(text)),
                         },
                     }));
                 }
@@ -5748,7 +5644,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             // scanPlainScalar
                         }
                     }
-                    break 'next self.scan_plain_scalar(opts)?;
+                    break 'next self.scan_plain_scalar()?;
                 }
                 0x2E /* '.' */ => {
                     let start = self.pos;
@@ -5760,7 +5656,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         self.inc(3);
                         break 'next Token::document_end(self.token_init(start));
                     }
-                    break 'next self.scan_plain_scalar(opts)?;
+                    break 'next self.scan_plain_scalar()?;
                 }
                 0x3F /* '?' */ => {
                     let start = self.pos;
@@ -5778,7 +5674,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         },
                         _ => {}
                     }
-                    break 'next self.scan_plain_scalar(opts)?;
+                    break 'next self.scan_plain_scalar()?;
                 }
                 0x3A /* ':' */ => {
                     let start = self.pos;
@@ -5802,7 +5698,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             }
                         },
                     }
-                    break 'next self.scan_plain_scalar(opts)?;
+                    break 'next self.scan_plain_scalar()?;
                 }
                 0x2C /* ',' */ => {
                     let start = self.pos;
@@ -5813,7 +5709,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                         Context::BlockIn | Context::BlockOut => {}
                     }
-                    break 'next self.scan_plain_scalar(opts)?;
+                    break 'next self.scan_plain_scalar()?;
                 }
                 0x5B /* '[' */ => {
                     let start = self.pos;
@@ -6013,7 +5909,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     continue;
                 }
                 _ => {
-                    break 'next self.scan_plain_scalar(opts)?;
+                    break 'next self.scan_plain_scalar()?;
                 }
             }
         };

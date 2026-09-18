@@ -1391,8 +1391,13 @@ mod border_handler_body {
                     {
                         self.flush(dest, context);
                     }
+                    fallback_helper!($key, $prop, $val);
+                }};
+            }
 
-                    // The previous value of the property stays ahead of a value some target rejects.
+            // The previous value of the property stays ahead of a value some target rejects.
+            macro_rules! fallback_helper {
+                ($key:ident, $prop:ident, $val:expr) => {{
                     let previous = self.$key.$prop.as_ref().or_else(|| {
                         compiled_side!($key, $prop)
                             .filter(|_| context.should_compile_logical(Feature::LogicalBorders))
@@ -1579,14 +1584,15 @@ mod border_handler_body {
                 Property::BorderStyle(val) => four_sides_helper!(style, val),
                 Property::BorderColor(val) => four_sides_helper!(color, val),
                 Property::Border(val) => {
-                    flush_helper!(border_top, width, &val.width, Physical);
-                    flush_helper!(border_top, color, &val.color, Physical);
-                    flush_helper!(border_right, width, &val.width, Physical);
-                    flush_helper!(border_right, color, &val.color, Physical);
-                    flush_helper!(border_bottom, width, &val.width, Physical);
-                    flush_helper!(border_bottom, color, &val.color, Physical);
-                    flush_helper!(border_left, width, &val.width, Physical);
-                    flush_helper!(border_left, color, &val.color, Physical);
+                    // `border` resets every logical side, so a category change needs no flush.
+                    fallback_helper!(border_top, width, &val.width);
+                    fallback_helper!(border_top, color, &val.color);
+                    fallback_helper!(border_right, width, &val.width);
+                    fallback_helper!(border_right, color, &val.color);
+                    fallback_helper!(border_bottom, width, &val.width);
+                    fallback_helper!(border_bottom, color, &val.color);
+                    fallback_helper!(border_left, width, &val.width);
+                    fallback_helper!(border_left, color, &val.color);
 
                     self.border_top.set_border(arena, val);
                     self.border_bottom.set_border(arena, val);

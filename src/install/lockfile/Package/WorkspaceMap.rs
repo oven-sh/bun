@@ -7,6 +7,7 @@ use bun_glob as glob;
 use bun_paths as path;
 use bun_paths::resolve_path;
 use bun_paths::{MAX_PATH_BYTES, SEP_STR};
+use bun_sys::FdExt as _;
 
 use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
@@ -231,17 +232,118 @@ fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
     )
 }
 
-/// True when a `workspaces` entry resolves outside the workspace root: a path
-/// that climbs out of it (`../sibling`), an absolute path elsewhere on disk, or
-/// a different Windows drive (which `relative` spells as an absolute path).
-///
-/// `bun install` creates `<member>/node_modules` for every member, so without
-/// this check a cloned repository could name its sibling directories (the
-/// user's other projects) as members and write into them.
+/// A path from the workspace root that leaves it: it climbs out (`../sibling`), or it
+/// is absolute, which is how `relative` spells a different Windows drive.
 fn escapes_root(root_relative_dir: &[u8]) -> bool {
     root_relative_dir == b".."
         || root_relative_dir.starts_with(b"../")
         || path::is_absolute(root_relative_dir)
+}
+
+fn real_dir_path<'b>(abs_dir: &[u8], buf: &'b mut path::PathBuffer) -> bun_sys::Maybe<&'b [u8]> {
+    let fd = bun_sys::open_dir_absolute(abs_dir)?;
+    let real = bun_sys::get_fd_path(fd, buf);
+    fd.close();
+    real.map(|real| &*real)
+}
+
+/// The directory of the root package.json. Every workspace member has to lie inside
+/// it: `bun install` creates `<member>/node_modules`, so a member outside the root is
+/// a write into a directory the project does not own. A cloned repository could name
+/// the directories next to it (the user's other projects) as its members.
+struct WorkspaceRoot<'a> {
+    dir: &'a [u8],
+    /// `dir` with its symlinks resolved, on first use.
+    real_dir: Option<Box<[u8]>>,
+}
+
+impl WorkspaceRoot<'_> {
+    /// Outside the root by its path alone, so nothing at that path is read: `../sibling`,
+    /// `packages/../../sibling`, an absolute path elsewhere.
+    fn rejects_path(
+        &self,
+        abs_workspace_dir: &[u8],
+        entry: &[u8],
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        loc: bun_ast::Loc,
+    ) -> bool {
+        let mut rel_path_buf = path::path_buffer_pool::get();
+        if !escapes_root(relative_workspace_path(
+            &mut rel_path_buf.0,
+            self.dir,
+            abs_workspace_dir,
+        )) {
+            return false;
+        }
+        log.add_error_fmt(
+            Some(source),
+            loc,
+            format_args!(
+                "Workspace \"{}\" is outside the workspace root",
+                BStr::new(entry)
+            ),
+        );
+        true
+    }
+
+    /// Inside the root by its path and outside it on disk: `link` when the repository
+    /// ships `link -> ../sibling`, `up/*` when it ships `up -> ..`. The directory has to
+    /// exist. A directory that cannot be resolved is rejected too.
+    fn rejects_real_path(
+        &mut self,
+        abs_workspace_dir: &[u8],
+        entry: &[u8],
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        loc: bun_ast::Loc,
+    ) -> bool {
+        let mut real_dir_buf = path::path_buffer_pool::get();
+        let resolved = real_dir_path(abs_workspace_dir, &mut real_dir_buf).and_then(|real_dir| {
+            let real_root = match &self.real_dir {
+                Some(real_root) => real_root,
+                None => {
+                    let mut real_root_buf = path::path_buffer_pool::get();
+                    let real_root = real_dir_path(self.dir, &mut real_root_buf)?;
+                    self.real_dir.insert(Box::from(real_root))
+                }
+            };
+            Ok((real_root, real_dir))
+        });
+        let (real_root, real_dir) = match resolved {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                log.add_error_fmt(
+                    Some(source),
+                    loc,
+                    format_args!(
+                        "{} resolving the directory of workspace package \"{}\"",
+                        crate::Error::from(err).name(),
+                        BStr::new(entry),
+                    ),
+                );
+                return true;
+            }
+        };
+        let mut rel_path_buf = path::path_buffer_pool::get();
+        if !escapes_root(relative_workspace_path(
+            &mut rel_path_buf.0,
+            real_root,
+            real_dir,
+        )) {
+            return false;
+        }
+        log.add_error_fmt(
+            Some(source),
+            loc,
+            format_args!(
+                "Workspace \"{}\" is outside the workspace root: it resolves to \"{}\"",
+                BStr::new(entry),
+                BStr::new(real_dir),
+            ),
+        );
+        true
+    }
 }
 
 fn relative_workspace_path<'b>(
@@ -283,6 +385,13 @@ impl WorkspaceMap {
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
         let mut rel_path_buf = path::path_buffer_pool::get();
         let root_dir: &[u8] = source.path.name().dir;
+        let mut root = WorkspaceRoot {
+            // Not `root_dir`: that is empty for a package.json at the filesystem root.
+            dir: path::dirname(source.path.text)
+                .filter(|dir| !dir.is_empty())
+                .unwrap_or_else(|| bun_resolver::fs::FileSystem::instance().top_level_dir()),
+            real_dir: None,
+        };
 
         let scratch = Arena::new();
 
@@ -326,19 +435,13 @@ impl WorkspaceMap {
                         continue;
                     }
 
-                    if escapes_root(relative_workspace_path(
-                        &mut rel_path_buf.0,
-                        root_dir,
+                    if root.rejects_path(
                         workspace_dir_of(abs_package_json_path),
-                    )) {
-                        log.add_error_fmt(
-                            Some(source),
-                            arr.item_loc(source, i),
-                            format_args!(
-                                "Workspace \"{}\" is outside the workspace root",
-                                BStr::new(input_path)
-                            ),
-                        );
+                        input_path,
+                        log,
+                        source,
+                        arr.item_loc(source, i),
+                    ) {
                         continue;
                     }
 
@@ -408,6 +511,16 @@ impl WorkspaceMap {
             };
 
             if workspace_entry.name.len() == 0 {
+                continue;
+            }
+
+            if root.rejects_real_path(
+                workspace_dir_of(abs_package_json_path),
+                input_path,
+                log,
+                source,
+                arr.item_loc(source, i),
+            ) {
                 continue;
             }
 
@@ -563,19 +676,13 @@ impl WorkspaceMap {
                         cwd, filepath_buf, &[entry_dir, b"package.json"]
                     ) {
                         Some(abs_package_json_path) => {
-                            if escapes_root(relative_workspace_path(
-                                &mut rel_path_buf.0,
-                                root_dir,
+                            if root.rejects_path(
                                 workspace_dir_of(abs_package_json_path),
-                            )) {
-                                log.add_error_fmt(
-                                    Some(source),
-                                    *pattern_loc,
-                                    format_args!(
-                                        "Workspace \"{}\" is outside the workspace root",
-                                        BStr::new(entry_dir)
-                                    ),
-                                );
+                                entry_dir,
+                                log,
+                                source,
+                                *pattern_loc,
+                            ) {
                                 // One error names the pattern; the rest of its
                                 // matches would repeat it.
                                 break;
@@ -623,6 +730,16 @@ impl WorkspaceMap {
 
                     if workspace_entry.name.len() == 0 {
                         continue;
+                    }
+
+                    if root.rejects_real_path(
+                        workspace_dir_of(abs_package_json_path),
+                        entry_dir,
+                        log,
+                        source,
+                        *pattern_loc,
+                    ) {
+                        break;
                     }
 
                     let workspace_path: &[u8] = relative_workspace_path(

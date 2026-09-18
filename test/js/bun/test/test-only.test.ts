@@ -156,10 +156,14 @@ describe.concurrent("a .only with no test that can run does not focus the file",
     expect(exitCode).toBe(0);
   });
 
-  test("--todo runs a todo test.only, so it focuses the file", async () => {
+  // The "<file>:" headers, the "(pass) name" lines and the counts, without the error blocks.
+  const resultLines = (stderr: string) =>
+    stderr.split("\n").filter(line => /^(\S+\.test\.ts:|\((pass|fail|skip|todo)\) .+| \d+ [a-z ]+)$/.test(line));
+
+  test("--todo: a todo test with a body can run, one without a body cannot", async () => {
     const { stderr, exitCode } = await run(
       {
-        "only-in-describe-todo.test.ts": `
+        "todo-only-with-a-body.test.ts": `
           test("plain", () => {});
           describe.todo("todo group", () => {
             test.only("only", () => {
@@ -167,12 +171,87 @@ describe.concurrent("a .only with no test that can run does not focus the file",
             });
           });
         `,
+        "todo-only-without-a-body.test.ts": `
+          test("plain", () => {});
+          test.todo.only("todo.only");
+          describe.only("focused", () => {
+            test.todo("todo");
+          });
+        `,
       },
       "--todo",
     );
-    expect(stderr.split("\n").filter(line => /^\((pass|fail|skip|todo)\) /.test(line))).toEqual([
+    expect(resultLines(stderr)).toEqual([
+      "todo-only-with-a-body.test.ts:",
       "(todo) todo group > only",
+      "todo-only-without-a-body.test.ts:",
+      "(pass) plain",
+      "(todo) todo.only",
+      "(todo) focused > todo",
+      " 1 pass",
+      " 3 todo",
+      " 0 fail",
     ]);
     expect(exitCode).toBe(0);
+  });
+
+  test("-t narrows a focused file and does not change what focuses it", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        // "other" still focuses the file, as in Jest, so "plain" does not run
+        "only-filtered-out.test.ts": `
+          test("plain", () => {});
+          test.only("other", () => {});
+        `,
+        "skipped-only-filtered-out.test.ts": `
+          test("plain", () => {});
+          test.skip.only("skip.only", () => {});
+          describe.only("focused", () => {
+            test.skip("skipped", () => {});
+          });
+        `,
+      },
+      "-t",
+      "plain",
+    );
+    expect(stderr).toMatchInlineSnapshot(`
+      "only-filtered-out.test.ts:
+
+      skipped-only-filtered-out.test.ts:
+      (pass) plain
+
+       1 pass
+       3 filtered out
+       0 fail
+      Ran 1 test across 2 files."
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a describe.only that throws keeps the file focused", async () => {
+    const { stderr, exitCode } = await run({
+      "throws.test.ts": `
+        describe.only("focused", () => {
+          throw new Error("boom");
+        });
+        test("outside", () => {});
+      `,
+      "nested-throws.test.ts": `
+        describe.only("focused", () => {
+          describe("inner", () => {
+            throw new Error("boom");
+          });
+        });
+        test("outside", () => {});
+      `,
+    });
+    expect(resultLines(stderr)).toEqual([
+      "throws.test.ts:",
+      "nested-throws.test.ts:",
+      " 0 pass",
+      " 0 fail",
+      " 2 errors",
+    ]);
+    expect(exitCode).toBe(1);
   });
 });

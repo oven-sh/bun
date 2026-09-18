@@ -1647,7 +1647,6 @@ impl ScopeMode {
     }
 
     /// `.skip`, or `.todo` without `--todo`: the test file says this scope does not run.
-    /// Not `FilteredOut`: a `.only` that `-t` filters out still focuses the file, as in Jest.
     pub(crate) fn is_disabled(self) -> bool {
         match self {
             Self::Skip => true,
@@ -1705,11 +1704,7 @@ impl BaseScope {
                 ConcurrentMode::No => false,
                 ConcurrentMode::Inherit => parent_base.is_some_and(|p| p.concurrent),
             },
-            mode: if let Some(p) = parent_base {
-                if p.mode != ScopeMode::Normal { p.mode } else { cfg.self_mode }
-            } else {
-                cfg.self_mode
-            },
+            mode: Self::inherited_mode(parent_base, cfg.self_mode),
             only: if cfg.self_only { Only::Yes } else { Only::No },
             has_callback,
             test_id_for_debugger: cfg.test_id_for_debugger,
@@ -1717,13 +1712,16 @@ impl BaseScope {
         }
     }
 
-    /// Called for each appended test. Focus comes from tests, not from `describe.only` itself:
-    /// a `.only` that selects no test that can run must not drop the rest of the file.
+    /// A scope inside a skip or todo describe takes that mode.
+    fn inherited_mode(parent: Option<&BaseScope>, own: ScopeMode) -> ScopeMode {
+        match parent {
+            Some(p) if p.mode != ScopeMode::Normal => p.mode,
+            _ => own,
+        }
+    }
+
     pub(crate) fn propagate(&mut self, has_callback: bool) {
         self.has_callback = has_callback;
-        if !self.mode.is_disabled() {
-            self.mark_focus();
-        }
         if let Some(parent) = self.parent {
             // SAFETY: parent backref valid; tree is single-threaded and parent
             // outlives child. Borrows are scoped to each call.
@@ -1735,8 +1733,13 @@ impl BaseScope {
         }
     }
 
-    /// Marks every ancestor of the innermost `.only` scope: this test, or a describe around it.
-    fn mark_focus(&self) {
+    /// Puts the file in only-mode if a `.only` covers this scope: marks every ancestor of the
+    /// innermost `.only` scope at or above it. `describe.only` does not call this for itself, so
+    /// a `.only` that selects nothing that can run does not drop the rest of the file.
+    pub(crate) fn mark_focus(&self) {
+        if self.mode.is_disabled() {
+            return;
+        }
         let mut scope: &BaseScope = self;
         loop {
             match scope.only {
@@ -1843,6 +1846,14 @@ impl DescribeScope {
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
         let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        // Decided before `-t` applies, as in Jest: the filter narrows a focused file and never
+        // changes which tests focus it.
+        if callback.is_some() {
+            entry.base.mark_focus();
+        }
+        if cfg.filtered_out {
+            entry.base.mode = BaseScope::inherited_mode(Some(&self.base), ScopeMode::FilteredOut);
+        }
         let has_cb = entry.callback.is_some();
         entry.base.propagate(has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
@@ -1895,6 +1906,8 @@ pub struct ExecutionEntryCfg {
     pub(crate) retry_count: u32,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub(crate) repeat_count: u32,
+    /// The `-t` filter does not match this test.
+    pub(crate) filtered_out: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1947,7 +1960,7 @@ impl ExecutionEntry {
         });
 
         if let Some(c) = cb {
-            if !entry.base.mode.is_disabled() {
+            if !cfg.filtered_out && !entry.base.mode.is_disabled() {
                 entry.callback = Some(strong_create(c));
             }
         }

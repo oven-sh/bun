@@ -494,8 +494,7 @@ fn workspace_containment<'b>(
     workspace_path: &[u8],
     real_dir_buf: &'b mut bun_paths::PathBuffer,
 ) -> Containment<'b> {
-    // The installer creates these itself, so the path resolves elsewhere mid-install. The
-    // compare is caseless because macOS and Windows open either spelling.
+    // The installer creates these itself. Caseless: macOS and Windows open either spelling.
     for component in strings::split_any(workspace_path, b"/\\") {
         if component.eq_ignore_ascii_case(b"node_modules") {
             return Containment::Refused("is inside node_modules");
@@ -530,8 +529,7 @@ fn workspace_containment<'b>(
 
     if resolve_path::is_parent_or_equal(real_root, real_dir) != resolve_path::ParentEqual::Unrelated
     {
-        // The `..` applies to a directory that does not exist yet, so where the path lands
-        // is whatever the install creates there.
+        // The `..` applies to a directory the install has yet to create, not to a known one.
         if dropped_dotdot {
             return Containment::Refused(
                 "has a \"..\" component below a directory that does not exist",
@@ -542,8 +540,7 @@ fn workspace_containment<'b>(
     Containment::Outside(real_dir)
 }
 
-/// Writes `<root>/<path>` and a NUL. Not normalized: on POSIX a `..` applies to the target
-/// of the symlink before it, so only the OS can resolve the path the linker opens.
+/// `<root>/<path>` and a NUL, not normalized: only the OS resolves a `..` after a symlink.
 fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize> {
     let root: &[u8] = if bun_paths::is_absolute(path) {
         b""
@@ -564,8 +561,7 @@ fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize
     Some(len)
 }
 
-/// `bun.lock` can list a missing workspace, so the nearest existing directory stands in. The
-/// flag says whether a `..` was among the components dropped to reach it.
+/// The nearest existing directory, and whether a `..` was dropped to reach it.
 fn real_path_of_nearest_existing_dir<'b>(
     buf: &mut [u8],
     len: usize,

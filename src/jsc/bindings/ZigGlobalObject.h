@@ -67,6 +67,7 @@ struct node_module;
 #include "headers-handwritten.h"
 #include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
+#include "RejectedPromiseQueue.h"
 #include <js_native_api.h>
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
@@ -829,54 +830,18 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
-public:
     // Promises rejected while they had no handler, awaiting handleRejectedPromises()
     // after the microtask drain, each with whose rejection it is as decided when it
     // happened: a Bun.ModuleGraph, or null for the global object's own code.
     // Guarded by cellLock() (visited on the GC thread).
-    class RejectedPromiseQueue {
-    public:
-        void append(JSC::VM&, JSC::JSCell* owner, JSC::JSPromise*, JSC::JSObject* rejectionOwner);
-        bool remove(JSC::JSCell* owner, JSC::JSPromise*);
-        // Move every entry out (index-aligned; jsNull() owner for the global object's) and clear.
-        void drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners);
-        template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
-        bool isEmpty() const { return m_entries.isEmpty(); }
+    Bun::RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
 
-    private:
-        struct Entry {
-            JSC::WriteBarrier<JSC::Unknown> promise; // JSPromise
-            JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph or null
-        };
-        // In rejection order. remove() leaves a hole (an empty promise) unless the entry is the last.
-        WTF::Vector<Entry> m_entries;
-        unsigned m_holes { 0 };
-        // promise -> index for m_entries[0..m_indexed), extended by remove() only to search a long queue.
-        WTF::HashMap<JSC::JSPromise*, unsigned> m_indices;
-        unsigned m_indexed { 0 };
-    };
-
-private:
-    RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
-
-public:
     // While handleRejectedPromises() is iterating its drained snapshot, this
     // points at the not-yet-processed tail so promiseRejectionTracker(Handle)
     // can suppress a spurious 'rejectionHandled' for a promise whose
     // 'unhandledRejection' has not fired yet. Linked through `outer` to handle
     // re-entrant handleRejectedPromises() calls.
-    struct InFlightRejections {
-        JSC::MarkedArgumentBuffer* buffer;
-        size_t index;
-        InFlightRejections* outer;
-        // promise -> position in `buffer`, built by the first tailContains() of a long tail.
-        WTF::HashMap<JSC::JSPromise*, unsigned> positions {};
-
-        bool tailContains(JSC::JSPromise*);
-    };
-
-private:
-    InFlightRejections* m_rejectedPromisesBeingProcessed { nullptr };
+    Bun::InFlightRejections* m_rejectedPromisesBeingProcessed { nullptr };
 };
 
 class EvalGlobalObject : public GlobalObject {

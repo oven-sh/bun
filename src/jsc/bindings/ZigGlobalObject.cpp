@@ -3352,120 +3352,6 @@ RefPtr<Performance> GlobalObject::performance()
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise, JSC::EncodedJSValue rejectionOwner);
 
-// Up to this many promises are cheaper to scan than to hash.
-static constexpr unsigned rejectedPromiseScanLimit = 16;
-
-void GlobalObject::RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
-{
-    WTF::Locker locker { owner->cellLock() };
-    // Full and at least half holes: compact instead of growing, for the same amortized cost.
-    if (m_holes && m_entries.size() == m_entries.capacity() && m_holes >= m_entries.size() / 2) {
-        m_entries.removeAllMatching([](Entry& entry) { return !entry.promise; });
-        m_holes = 0;
-        m_indices.clear();
-        m_indexed = 0;
-    }
-    m_entries.append({});
-    m_entries.last().promise.set(vm, owner, promise);
-    m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSValue(rejectionOwner) : jsNull());
-}
-
-bool GlobalObject::RejectedPromiseQueue::remove(JSC::JSCell* owner, JSC::JSPromise* promise)
-{
-    WTF::Locker locker { owner->cellLock() };
-    // Newest first: the newest rejection is the usual one to be handled.
-    unsigned size = m_entries.size();
-    unsigned scanFrom = size <= rejectedPromiseScanLimit ? 0 : size - 1;
-    unsigned index = size;
-    for (unsigned i = size; i-- > scanFrom;) {
-        if (m_entries[i].promise.get().asCell() == promise) {
-            index = i;
-            break;
-        }
-    }
-    if (index < size) {
-        if (index < m_indexed)
-            m_indices.remove(promise);
-    } else {
-        if (!scanFrom)
-            return false;
-        for (; m_indexed < size; ++m_indexed) {
-            JSValue queued = m_entries[m_indexed].promise.get();
-            if (!queued)
-                continue;
-            auto result = m_indices.add(static_cast<JSC::JSPromise*>(queued.asCell()), m_indexed);
-            ASSERT_UNUSED(result, result.isNewEntry);
-        }
-        auto it = m_indices.find(promise);
-        if (it == m_indices.end())
-            return false;
-        index = it->value;
-        m_indices.remove(it);
-        ASSERT(index + 1 < size);
-    }
-
-    if (index + 1 < size) {
-        m_entries[index].promise.clear();
-        m_entries[index].rejectionOwner.clear();
-        ++m_holes;
-        return true;
-    }
-    // The last entry is never a hole, so a reject-then-handle loop reuses one slot.
-    m_entries.removeLast();
-    while (!m_entries.isEmpty() && !m_entries.last().promise) {
-        m_entries.removeLast();
-        --m_holes;
-    }
-    m_indexed = std::min<unsigned>(m_indexed, m_entries.size());
-    return true;
-}
-
-void GlobalObject::RejectedPromiseQueue::drainTo(JSC::JSCell* owner, JSC::MarkedArgumentBuffer& promises, JSC::MarkedArgumentBuffer& rejectionOwners)
-{
-    WTF::Locker locker { owner->cellLock() };
-    size_t count = m_entries.size() - m_holes;
-    promises.ensureCapacity(promises.size() + count);
-    rejectionOwners.ensureCapacity(rejectionOwners.size() + count);
-    for (Entry& entry : m_entries) {
-        if (!entry.promise)
-            continue;
-        promises.append(entry.promise.get());
-        rejectionOwners.append(entry.rejectionOwner.get());
-    }
-    m_entries.clear();
-    m_holes = 0;
-    m_indices.clear();
-    m_indexed = 0;
-}
-
-template<typename Visitor>
-void GlobalObject::RejectedPromiseQueue::visit(JSC::JSCell* owner, Visitor& visitor)
-{
-    WTF::Locker locker { owner->cellLock() };
-    for (auto& entry : m_entries) {
-        visitor.append(entry.promise);
-        visitor.append(entry.rejectionOwner);
-    }
-}
-
-bool GlobalObject::InFlightRejections::tailContains(JSC::JSPromise* promise)
-{
-    size_t size = buffer->size();
-    if (size - index <= rejectedPromiseScanLimit) {
-        for (size_t i = index; i < size; ++i) {
-            if (buffer->at(i).asCell() == promise)
-                return true;
-        }
-        return false;
-    }
-    if (positions.isEmpty()) {
-        for (size_t i = index; i < size; ++i)
-            positions.add(static_cast<JSC::JSPromise*>(buffer->at(i).asCell()), i);
-    }
-    auto it = positions.find(promise);
-    return it != positions.end() && it->value >= index;
-}
-
 void GlobalObject::handleRejectedPromises()
 {
     if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
@@ -3485,7 +3371,7 @@ void GlobalObject::handleRejectedPromises()
         // can tell "still pending" apart from "already notified". Linked as a
         // stack so a re-entrant handleRejectedPromises() (a handler that ticks
         // the event loop) restores the outer frame instead of nulling it.
-        InFlightRejections inflight { &promises, 0, m_rejectedPromisesBeingProcessed };
+        Bun::InFlightRejections inflight { &promises, 0, m_rejectedPromisesBeingProcessed };
         WTF::SetForScope inflightScope(m_rejectedPromisesBeingProcessed, &inflight);
         for (size_t i = 0, size = promises.size(); i < size; ++i) {
             auto* promise = static_cast<JSC::JSPromise*>(promises.at(i).asCell());

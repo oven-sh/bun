@@ -1672,7 +1672,12 @@ impl BlobExt for Blob {
                     let mut file_path = bun_paths::path_buffer_pool::get();
                     match bun_sys::open(
                         p.slice_z(&mut file_path),
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
+                        // O::TRUNC matches the POSIX FileSink open: a fresh
+                        // writer replaces the destination file's contents.
+                        bun_sys::O::WRONLY
+                            | bun_sys::O::CREAT
+                            | bun_sys::O::NONBLOCK
+                            | bun_sys::O::TRUNC,
                         WRITE_PERMISSIONS,
                     ) {
                         bun_sys::Result::Ok(result) => result,
@@ -1771,6 +1776,7 @@ impl BlobExt for Blob {
                 })
             };
             if let streams::Start::FileSink(ref mut opts) = stream_start {
+                opts.truncate = matches!(input_path, webcore::PathOrFileDescriptor::Path(_));
                 opts.input_path = input_path;
             }
 

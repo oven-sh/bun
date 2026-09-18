@@ -773,9 +773,7 @@ fn enable_ansi_colors(_global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     JSValue::from(Output::enable_ansi_colors_stdout() || Output::enable_ansi_colors_stderr())
 }
 
-/// `vm.main()` with its symlinks resolved, resolved once: what `Bun.main` is, and the path the
-/// entry point's module is keyed by. `None` for `[eval]` / `[stdin]` and for a path that cannot be
-/// opened.
+/// `vm.main()` with its symlinks resolved, cached: `Bun.main`. `None` when it cannot be opened.
 pub(crate) fn resolved_main_path(vm: &mut VirtualMachine) -> Option<&BunString> {
     if vm.main_resolved_path.is_empty() {
         // If it's from eval, don't try to resolve it.

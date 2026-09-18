@@ -145,8 +145,7 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
-/// Exported as `Bun__VM__specifierIsEntryPoint`: `specifier` is the path of the entry point.
-/// JSCommonJSModule.cpp asks once for each CommonJS module the ES module loader makes.
+/// Exported as `Bun__VM__specifierIsEntryPoint`.
 // HOST_EXPORT(Bun__VM__specifierIsEntryPoint, c)
 pub fn specifier_is_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
     if this.main().is_empty() {
@@ -160,8 +159,7 @@ pub fn specifier_is_entry_point(this: &mut VirtualMachine, specifier: JSValue) -
     if specifier_str.eql_utf8(this.main()) {
         return true;
     }
-    // The module is keyed by its real path, and `main()` is a symlink for a bin that the `node`
-    // shim starts.
+    // Under the `node` shim `main()` is a symlink, and the module is keyed by its real path.
     crate::api::bun_object::resolved_main_path(this)
         .is_some_and(|resolved| specifier_str.eql(resolved))
 }

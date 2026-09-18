@@ -343,9 +343,7 @@ impl PackageManager {
         self.index_of_update_request(name_hash, name).is_some()
     }
 
-    /// Whether a package in the root `node_modules` of a global install links its bins into the
-    /// global bin dir. A whole-tree command links only what it `installed`: two global packages
-    /// can share a bin name, and a link it has no reason to touch stays with its owner.
+    /// Whether a root package of a global install links its bins into the global bin dir.
     pub(crate) fn links_bins_globally(&self, package_id: PackageID, installed: bool) -> bool {
         if !self.options.global {
             return false;
@@ -366,6 +364,7 @@ impl PackageManager {
                 .iter()
                 .any(|request| request.package_id == package_id);
         }
+        // Only what this run installed: a bin name that two global packages share keeps its owner.
         installed
             && self
                 .lockfile

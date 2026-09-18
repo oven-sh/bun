@@ -4733,16 +4733,22 @@ impl NodeFS {
         Ok(())
     }
 
-    /// Gives a copied file the mode of its source. A FIFO or a device that was already at the
-    /// destination path is not a copy, so it keeps its mode. The FICLONE paths call `fchmod`
+    /// Cuts the old tail of a copy destination at `wrote`, then gives it the mode of the source.
+    /// A FIFO or a device that was already at the destination path is not a copy, so it keeps
+    /// its mode. Linux refuses to truncate anything but a regular file, so a successful
+    /// `ftruncate` answers the question there at no cost. POSIX leaves the result unspecified
+    /// for other file types, so the other kernels ask `fstat`. The FICLONE paths call `fchmod`
     /// directly: the kernel clones only into a regular file.
     ///
     /// Node differs: libuv's `uv__fs_copyfile` runs `ftruncate(dstfd, 0)` first, which fails with
-    /// EINVAL on such a destination, so it throws and unlinks the path. Bun writes through and
-    /// leaves the node in place, which keeps `copyFile(x, "/dev/stdout")` working.
+    /// EINVAL on such a destination, so it throws and unlinks the path. Bun writes the data to
+    /// it (`copyFile(x, "/dev/stdout")` works, on Linux since v1.3.5) and does not unlink it.
     #[cfg(not(windows))]
-    fn copy_mode_to_regular_dest(dest_fd: FD, mode: Mode) {
-        if matches!(Syscall::fstat(dest_fd), Ok(st) if sys::S::ISREG(st.st_mode as u32)) {
+    fn truncate_and_copy_mode(dest_fd: FD, wrote: u64, mode: Mode) {
+        let truncated = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64).is_ok();
+        let is_regular = (cfg!(any(target_os = "linux", target_os = "android")) && truncated)
+            || matches!(Syscall::fstat(dest_fd), Ok(st) if sys::S::ISREG(st.st_mode as u32));
+        if is_regular {
             let _ = Syscall::fchmod(dest_fd, mode);
         }
     }
@@ -4844,8 +4850,7 @@ impl NodeFS {
                         stat_.st_size.max(0) as usize,
                         &mut wrote,
                     );
-                    let _ = Syscall::ftruncate(dest_fd, (wrote & ((1u64 << 63) - 1)) as i64);
-                    Self::copy_mode_to_regular_dest(dest_fd, stat_.st_mode as Mode);
+                    Self::truncate_and_copy_mode(dest_fd, wrote, stat_.st_mode as Mode);
                     dest_fd.close();
                     return result;
                 }
@@ -4912,7 +4917,8 @@ impl NodeFS {
             // Don't O_TRUNC at open: if src and dest resolve to the same
             // inode, that would zero the file before the first read. Match
             // Node by checking inodes after both are open and refusing.
-            if let Ok(dst_stat) = Syscall::fstat(dest_fd) {
+            let dst_stat = Syscall::fstat(dest_fd);
+            if let Ok(dst_stat) = &dst_stat {
                 if stat_.st_ino == dst_stat.st_ino && stat_.st_dev == dst_stat.st_dev {
                     return Err(sys::Error {
                         errno: SystemErrno::EINVAL as _,
@@ -4922,6 +4928,9 @@ impl NodeFS {
                     });
                 }
             }
+            // See `truncate_and_copy_mode`: only a regular destination takes the source's mode.
+            let dest_is_regular =
+                matches!(&dst_stat, Ok(dst_stat) if sys::S::ISREG(dst_stat.st_mode as u32));
             let _ = Syscall::ftruncate(dest_fd, 0);
 
             // FreeBSD 13+ has copy_file_range(2). Try the kernel-side copy
@@ -4945,7 +4954,9 @@ impl NodeFS {
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
                         if rc == 0 {
-                            Self::copy_mode_to_regular_dest(dest_fd, stat_.st_mode as Mode);
+                            if dest_is_regular {
+                                let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
+                            }
                             return Ok(());
                         }
                     }
@@ -4974,7 +4985,9 @@ impl NodeFS {
                 let _ = sys::unlink(dest);
                 return Err(err);
             }
-            Self::copy_mode_to_regular_dest(dest_fd, stat_.st_mode as Mode);
+            if dest_is_regular {
+                let _ = Syscall::fchmod(dest_fd, stat_.st_mode as Mode);
+            }
             return Ok(());
         }
 
@@ -5046,8 +5059,7 @@ impl NodeFS {
 
             let _close_dest =
                 scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    Self::copy_mode_to_regular_dest(fd, m as Mode);
+                    Self::truncate_and_copy_mode(fd, wrote.get(), m as Mode);
                     fd.close();
                 });
 
@@ -8387,8 +8399,7 @@ impl NodeFS {
                     Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
                 let _close_dest =
                     scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
-                        let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                        Self::copy_mode_to_regular_dest(fd, m as Mode);
+                        Self::truncate_and_copy_mode(fd, wrote.get(), m as Mode);
                         fd.close();
                     });
 
@@ -8494,8 +8505,7 @@ impl NodeFS {
             let _close_dest = scopeguard::guard(
                 (dest_fd, stat_.st_mode as Mode, &wrote),
                 |(fd, m, wrote)| {
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    Self::copy_mode_to_regular_dest(fd, m);
+                    Self::truncate_and_copy_mode(fd, wrote.get(), m);
                     fd.close();
                 },
             );
@@ -8672,8 +8682,7 @@ impl NodeFS {
             let _close_dest = scopeguard::guard(
                 (dest_fd, stat_.st_mode as Mode, &wrote),
                 |(fd, m, wrote)| {
-                    let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
-                    Self::copy_mode_to_regular_dest(fd, m);
+                    Self::truncate_and_copy_mode(fd, wrote.get(), m);
                     fd.close();
                 },
             );

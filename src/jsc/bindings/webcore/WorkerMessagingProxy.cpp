@@ -540,6 +540,21 @@ void WorkerMessagingProxy::releaseWorkerThread()
     deref();
 }
 
+void WorkerMessagingProxy::dropUndeliveredWorkerMessages()
+{
+    // Entry resolution can fail before workerData ports are entangled. Closing
+    // those endpoints also closes ports queued on the public parentPort.
+    auto droppedDataPorts = std::exchange(m_options.dataMessagePorts, {});
+    Deque<MessageWithMessagePorts> droppedMessages;
+    {
+        Locker locker { m_toWorker.lock };
+        droppedMessages = std::exchange(m_toWorker.queue, {});
+        m_toWorker.drainScheduled = false;
+    }
+    // Destroy transferred ports outside the inbox lock. Their destructors close
+    // orphaned endpoints and notify each entangled peer.
+}
+
 void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, bool stoppedByParent)
 {
     ASSERT(m_scriptExecutionContext && m_scriptExecutionContext->isContextThread());
@@ -558,6 +573,7 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, 
         m_state.store(State::Closing);
         m_pendingTasks.clear();
     }
+    dropUndeliveredWorkerMessages();
     rejectAllCrossVMRequests();
 
     // Everything the worker posted before it exited is delivered before 'close' (Node: before
@@ -592,6 +608,9 @@ void WorkerMessagingProxy::parentContextWillDestroy()
         m_pendingCrossVMRequests.clear();
     }
     releaseWorkerThread();
+    // The worker can move workerData ports during startup. Join it before
+    // reclaiming ports that never reached the worker global scope.
+    dropUndeliveredWorkerMessages();
     m_scriptExecutionContext = nullptr;
 }
 

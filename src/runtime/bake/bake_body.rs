@@ -508,11 +508,16 @@ impl Framework {
     ///     react-refresh so that it still works.
     /// - If any file system router types are provided, configure using
     ///   the above react configuration.
+    ///
+    /// Packages resolve from the top-level directory and from each directory
+    /// in `extra_resolve_dirs` (the HTML entry directories, where the
+    /// isolated install linker puts a workspace package's dependencies).
     /// The provided allocator is not stored.
     pub fn auto(
         arena: &Arena,
         resolver: &mut bun_resolver::Resolver,
         file_system_router_types: Vec<FileSystemRouterType>,
+        extra_resolve_dirs: &[&[u8]],
     ) -> crate::Result<Framework> {
         let mut fw: Framework = Framework::none();
 
@@ -521,9 +526,9 @@ impl Framework {
             fw.file_system_router_types = file_system_router_types;
         }
 
-        if let Some(rfr) = resolve_or_null(resolver, b"react-refresh/runtime") {
+        if let Some(rfr) = resolve_or_null(resolver, extra_resolve_dirs, b"react-refresh/runtime") {
             fw.react_fast_refresh = Some(ReactFastRefresh { import_source: rfr });
-        } else if resolve_or_null(resolver, b"react").is_some() {
+        } else if resolve_or_null(resolver, extra_resolve_dirs, b"react").is_some() {
             fw.react_fast_refresh = Some(ReactFastRefresh {
                 import_source: b"react-refresh/runtime/index.js",
             });
@@ -1294,17 +1299,25 @@ impl Default for ReactFastRefresh {
 }
 
 #[inline]
-fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<&'static [u8]> {
+fn resolve_or_null(
+    r: &mut bun_resolver::Resolver,
+    extra_dirs: &[&[u8]],
+    path: &[u8],
+) -> Option<&'static [u8]> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-    match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
-        // `path_const().text` is `&'static [u8]` already (`FilenameStore`-
-        // backed; see note in `resolve_helper` above and `bun_ptr::Interned`).
-        Ok(res) => Some(res.path_const().unwrap().text),
-        Err(_) => {
-            r.log_mut().reset();
-            None
-        }
-    }
+    core::iter::once(top_level_dir)
+        .chain(extra_dirs.iter().copied())
+        .find_map(
+            |dir| match r.resolve(dir, path, bun_ast::ImportKind::Stmt) {
+                // `path_const().text` is `&'static [u8]` already (`FilenameStore`-
+                // backed; see note in `resolve_helper` above and `bun_ptr::Interned`).
+                Ok(res) => Some(res.path_const().unwrap().text),
+                Err(_) => {
+                    r.log_mut().reset();
+                    None
+                }
+            },
+        )
 }
 
 /// Thin forwarding shim — the real impl lives on

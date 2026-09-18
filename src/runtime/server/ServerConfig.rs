@@ -959,11 +959,32 @@ impl ServerConfig {
                             .map(|t| convert_file_system_router_type(&arena, t))
                             .collect();
 
+                    // HTML entry directories. `Framework::auto` resolves react
+                    // from these too: the isolated install linker puts a
+                    // workspace package's react outside the top-level dir.
+                    let mut html_entry_dirs: Vec<&[u8]> = Vec::new();
+                    for &bundle in init_ctx.dedupe_html_bundle_map.keys() {
+                        // SAFETY: each key's bundle is kept alive by an
+                        // `AnyRoute::Html(RefPtr<Route>)` in `args.static_routes`
+                        // (`Route.bundle` is a `RefPtr<HTMLBundle>`), and
+                        // `static_routes` is not mutated before this loop.
+                        let path = unsafe { &(*bundle).path };
+                        if let Some(dir) = bun_paths::dirname(path) {
+                            if !html_entry_dirs.iter().any(|d| strings::eql(d, dir)) {
+                                html_entry_dirs.push(dir);
+                            }
+                        }
+                    }
+                    // Sort for determinism: map iteration order follows
+                    // pointer addresses, which vary across runs.
+                    html_entry_dirs.sort_unstable_by(|a, b| strings::order(a, b));
+
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-                    let framework = bb::Framework::auto(&arena, resolver, router_types)
-                        .map_err(|e| global.throw_error(e, "Framework::auto"))?;
+                    let framework =
+                        bb::Framework::auto(&arena, resolver, router_types, &html_entry_dirs)
+                            .map_err(|e| global.throw_error(e, "Framework::auto"))?;
 
                     let mut user_options = crate::bake::UserOptions {
                         arena,

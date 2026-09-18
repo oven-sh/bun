@@ -336,9 +336,14 @@ pub fn do_patch_commit(
             let Ok(nested) = new_folder_handle.open_dir(b"node_modules", ITERATE) else {
                 break 'has_nested_node_modules false;
             };
+            // `old_folder` borrows the thread-local `join` buffer, so join into another one.
+            let mut cache_nested_buf = bun_paths::path_buffer_pool::get();
             let cache_nested = Dir::cwd()
                 .open_dir(
-                    resolve_path::join::<platform::Auto>(&[old_folder, b"node_modules"]),
+                    resolve_path::join_string_buf::<platform::Auto>(
+                        &mut cache_nested_buf[..],
+                        &[old_folder, b"node_modules"],
+                    ),
                     sys::OpenDirOptions::default(),
                 )
                 .ok();

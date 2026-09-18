@@ -1186,29 +1186,34 @@ describe.concurrent("process.nextTick and a CommonJS entry point", () => {
     expect(result).toEqual({ stdout: microtasksFirst + "\n", stderr: "", exitCode: 0 });
   });
 
-  // Node runs `eval: true` as CommonJS and a data: URL as an ES module.
-  it.each([
-    ["worker .cjs", `"./worker.cjs"`, nextTickFirst],
-    ["worker eval: true", `${JSON.stringify(commonJS)}, { eval: true }`, nextTickFirst],
-    ["worker .mjs", `"./worker.mjs"`, microtasksFirst],
-    [
-      "worker data: URL",
-      `new URL("data:text/javascript," + encodeURIComponent(${JSON.stringify(order())}))`,
-      microtasksFirst,
-    ],
-  ])("%s", async (_, workerArguments, expected) => {
-    const result = await run(
+  // Node runs `eval: true` as CommonJS and a data: URL as an ES module. One process starts the four
+  // workers, with no other test beside it: a debug build takes seconds to start them.
+  it.serial("node:worker_threads entry points", async () => {
+    const labelled = label => order(`(order => console.log(${JSON.stringify(label)}, order))`);
+    const { stdout, stderr, exitCode } = await run(
       {
-        "worker.cjs": order(),
-        "worker.mjs": order(),
+        "worker.cjs": labelled(".cjs"),
+        "worker.mjs": labelled(".mjs"),
         "main.mjs": `
           import { Worker } from "node:worker_threads";
-          new Worker(${workerArguments});
+          new Worker("./worker.cjs");
+          new Worker("./worker.mjs");
+          new Worker(${JSON.stringify(`require("node:os");` + labelled("eval: true"))}, { eval: true });
+          new Worker(new URL("data:text/javascript," + encodeURIComponent(${JSON.stringify(labelled("data:"))})));
         `,
       },
       [bunExe(), "main.mjs"],
     );
-    expect(result).toEqual({ stdout: expected + "\n", stderr: "", exitCode: 0 });
+    expect({ lines: stdout.trim().split("\n").sort(), stderr, exitCode }).toEqual({
+      lines: [
+        `.cjs ${nextTickFirst}`,
+        `.mjs ${microtasksFirst}`,
+        `data: ${microtasksFirst}`,
+        `eval: true ${nextTickFirst}`,
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // Every test file is an entry point in turn.

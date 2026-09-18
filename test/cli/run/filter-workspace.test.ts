@@ -1383,4 +1383,26 @@ describe("--shell and [run] shell pick the interpreter for --filter", () => {
     }
     expect(r.exitCode).toBe(0);
   });
+
+  // The runner's env is the whole environment the script gets. The Bun shell
+  // hop must not load the package directory's .env on top of it.
+  test.each([["--shell=bun"], ["--shell=system"]])("%s does not load the package .env", shell => {
+    using dir = tempDir("filter-shell-dotenv", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: {
+        dep0: {
+          ".env": "FROM_PACKAGE_DOTENV=leaked\n",
+          "package.json": JSON.stringify({
+            name: "dep0",
+            scripts: {
+              env: `${bunExe()} --no-env-file -e "console.log('[' + (process.env.FROM_PACKAGE_DOTENV ?? '') + ']')"`,
+            },
+          }),
+        },
+      },
+    });
+    const r = run(String(dir), ["run", shell, "--filter", "dep0", "env"]);
+    expect(r.stdout).toContain("dep0 env: []");
+    expect(r.exitCode).toBe(0);
+  });
 });

@@ -2256,4 +2256,20 @@ describe.concurrent("--shell and [run] shell pick the interpreter", () => {
     }
     expect(r.exitCode).toBe(0);
   });
+
+  // The runner's env is the whole environment the script gets. The Bun shell
+  // hop must not load the package directory's .env on top of it.
+  test.each([["--shell=bun"], ["--shell=system"]])("%s does not load the package .env", async shell => {
+    using dir = tempDir("mr-shell-dotenv", {
+      ".env": "FROM_PACKAGE_DOTENV=leaked\n",
+      "package.json": JSON.stringify({
+        scripts: {
+          env: `${bunExe()} --no-env-file -e "console.log('[' + (process.env.FROM_PACKAGE_DOTENV ?? '') + ']')"`,
+        },
+      }),
+    });
+    const r = await runMulti(["run", shell, "--parallel", "env"], String(dir));
+    expectPrefixed(r.stdout, "env", "[]");
+    expect(r.exitCode).toBe(0);
+  });
 });

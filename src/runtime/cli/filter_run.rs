@@ -89,12 +89,11 @@ impl<'a> ProcessHandle<'a> {
         state.remaining_scripts += 1;
         let handle = self;
 
-        let argv: [*const c_char; 4] = [
-            state.shell_bin.as_ptr().cast(),
-            state.shell_flag.as_ptr(),
-            handle.config.combined.as_ptr().cast(),
-            core::ptr::null(),
-        ];
+        let mut argv: Vec<*const c_char> = Vec::with_capacity(state.shell_args.len() + 3);
+        argv.push(state.shell_bin.as_ptr().cast());
+        argv.extend(state.shell_args.iter().map(|arg| arg.as_ptr()));
+        argv.push(handle.config.combined.as_ptr().cast());
+        argv.push(core::ptr::null());
         let start_time = Instant::now();
         let spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
@@ -321,8 +320,9 @@ struct State<'a> {
     last_lines_written: usize,
     pretty_output: bool,
     shell_bin: &'static ZStr, // intentionally leaked (process exits)
-    /// `-c`, `/c` or `exec`: argv[1] that goes with `shell_bin`.
-    shell_flag: &'static core::ffi::CStr,
+    /// The arguments between `shell_bin` and the script: `-c`, `/c`, or
+    /// `exec --no-env-file`.
+    shell_args: &'static [&'static core::ffi::CStr],
     aborted: bool,
     // Raw `*mut` — process-lifetime singleton owned
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
@@ -943,7 +943,7 @@ pub(crate) fn run_scripts_with_filter(
     bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
         &mut *event_loop
     }));
-    let (shell_bin, shell_flag) = RunCommand::script_shell_argv(
+    let (shell_bin, shell_args) = RunCommand::script_shell_argv(
         ctx.debug.use_system_shell,
         // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
         unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
@@ -972,7 +972,7 @@ pub(crate) fn run_scripts_with_filter(
             }
         },
         shell_bin,
-        shell_flag,
+        shell_args,
         aborted: false,
         env: env_ptr,
     };

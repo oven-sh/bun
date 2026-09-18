@@ -142,12 +142,11 @@ impl<'a> ProcessHandle<'a> {
         state.remaining_scripts += 1;
 
         // Null-terminated argv array, as required by spawnProcess.
-        let argv: [*const c_char; 4] = [
-            state.shell_bin.as_ptr().cast::<c_char>(),
-            state.shell_flag.as_ptr(),
-            self.config.command.as_ptr().cast::<c_char>(),
-            ptr::null(),
-        ];
+        let mut argv: Vec<*const c_char> = Vec::with_capacity(state.shell_args.len() + 3);
+        argv.push(state.shell_bin.as_ptr().cast::<c_char>());
+        argv.extend(state.shell_args.iter().map(|arg| arg.as_ptr()));
+        argv.push(self.config.command.as_ptr().cast::<c_char>());
+        argv.push(ptr::null());
 
         let start_time = Instant::now();
         let envp;
@@ -346,8 +345,9 @@ struct State<'a> {
     remaining_scripts: usize,
     max_label_len: usize,
     shell_bin: &'static bun::ZStr,
-    /// `-c`, `/c` or `exec`: argv[1] that goes with `shell_bin`.
-    shell_flag: &'static core::ffi::CStr,
+    /// The arguments between `shell_bin` and the script: `-c`, `/c`, or
+    /// `exec --no-env-file`.
+    shell_args: &'static [&'static core::ffi::CStr],
     aborted: bool,
     no_exit_on_error: bool,
     env: *mut DotEnvLoader,
@@ -903,7 +903,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
         EventLoopHandle::init_mini(event_loop),
     ));
-    let (shell_bin, shell_flag) = RunCommand::script_shell_argv(
+    let (shell_bin, shell_args) = RunCommand::script_shell_argv(
         ctx.debug.use_system_shell,
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to
         // init_global above has been released, so this read does not alias a live &mut.
@@ -1123,7 +1123,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         remaining_scripts: 0,
         max_label_len,
         shell_bin,
-        shell_flag,
+        shell_args,
         aborted: false,
         no_exit_on_error: ctx.no_exit_on_error,
         env: env_ptr,

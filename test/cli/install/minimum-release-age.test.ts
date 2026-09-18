@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 
 // These tests drive real `bun install` runs against a mock registry, which is
 // slow under the debug/ASAN build — give them the same generous timeout the
@@ -2344,7 +2344,8 @@ describe("minimum-release-age", () => {
       expect(lockfile).not.toContain("non-iso-timestamp-package@3.0.0");
     });
 
-    test("reads a publish time with no zone as local time", async () => {
+    // On Windows, ICU reads the system zone and `bun install` does not apply `TZ`.
+    test.skipIf(isWindows)("reads a publish time with no zone as local time", async () => {
       using dir = tempDir("local-time-timestamp", {
         "package.json": JSON.stringify({
           dependencies: { "local-time-timestamp-package": "*" },

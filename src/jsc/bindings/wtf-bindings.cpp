@@ -243,8 +243,11 @@ extern "C" double Bun__parseDateString(const unsigned char* string, size_t lengt
 {
     bool isLocalTime = false;
     double value = v8::ParseDateTimeString(string, length, isLocalTime);
-    if (isLocalTime && std::isfinite(value))
-        value -= WTF::calculateLocalTimeOffset(value, WTF::TimeType::LocalTime).offset;
+    if (isLocalTime) {
+        // Same ICU zone source as `vm.dateCache`, usable on a thread with no VM.
+        static thread_local JSC::DateCache dateCache;
+        value = dateCache.localTimeToMS(value, WTF::TimeType::LocalTime);
+    }
     return v8::TimeClip(value);
 }
 

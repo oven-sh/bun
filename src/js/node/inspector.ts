@@ -581,6 +581,8 @@ class Session extends EventEmitter {
         const interval = (params as any)?.interval;
         if (typeof interval !== "number" || interval <= 0)
           return $ERR_INSPECTOR_COMMAND("-32602: interval must be a positive number");
+        if (!Number.isInteger(interval) || interval > 2147483647)
+          return $ERR_INSPECTOR_COMMAND("-32602: Invalid parameters");
         setCPUSamplingInterval(interval);
         return {};
       }

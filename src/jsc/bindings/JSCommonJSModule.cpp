@@ -322,7 +322,8 @@ void JSCommonJSModule::addChild(JSC::VM& vm, JSC::JSCell* child)
             return;
     }
     WTF::Locker locker { cellLock() };
-    m_children.append(WriteBarrier<Unknown>(vm, this, child));
+    m_children.append(WriteBarrier<Unknown>());
+    m_children.last().set(vm, this, child);
 }
 
 bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)

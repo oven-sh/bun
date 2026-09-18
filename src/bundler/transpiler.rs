@@ -1588,6 +1588,7 @@ impl<'a> Transpiler<'a> {
                     features: js_ast::RuntimeFeatures::default(),
                     tree_shaking: self.options.tree_shaking,
                     bundle: false,
+                    top_level_var: true,
                     code_splitting: false,
                     package_version: b"",
                     macro_context: None,

@@ -4310,5 +4310,226 @@ for (const backend of ["api", "cli"] as const) {
         ARBITRARY: "secret environment stuff!",
       },
     });
+
+    // An import cycle entered from the side whose back-edge is only used lazily. ESM evaluates
+    // filesystem before search, so filesystem's eager read of `searchNode` is a TDZ read.
+    // Unbundled this throws. The bundle lowers top-level const to var by default and reads
+    // `undefined`; `topLevelVar: false` keeps the const and the ReferenceError.
+    const tdzAcrossCycleFiles = {
+      "/entry.ts": /* ts */ `
+        import "./search";
+        import { fileSystemNode } from "./filesystem";
+        console.log("deps[1] =", fileSystemNode.deps[1]);
+      `,
+      "/filesystem.ts": /* ts */ `
+        export * as FileSystem from "./filesystem";
+        import { Search } from "./search";
+        export const Entry = { make: (v: string) => ({ v }) };
+        export const fileSystemNode = { name: "FileSystem", deps: ["fsutil", Search.searchNode] };
+      `,
+      "/search.ts": /* ts */ `
+        export * as Search from "./search";
+        import { FileSystem } from "./filesystem";
+        export const find = () => FileSystem.Entry.make("hit");
+        export const searchNode = { name: "Search", deps: ["ripgrep"] };
+      `,
+    };
+    itBundled("edgecase/TopLevelVarDefaultLosesTDZAcrossCycle", {
+      files: tdzAcrossCycleFiles,
+      backend,
+      target: "bun",
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("var searchNode = ");
+      },
+      run: { stdout: "deps[1] = undefined" },
+    });
+    itBundled("edgecase/TopLevelVarOffKeepsTDZAcrossCycle", {
+      files: tdzAcrossCycleFiles,
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("const searchNode = ");
+      },
+      run: {
+        error: "ReferenceError: Cannot access 'searchNode' before initialization.",
+        validate({ stderr }) {
+          expect(stderr).toContain("ReferenceError: Cannot access 'searchNode' before initialization.");
+        },
+      },
+    });
+    // The kept const gives the same ReferenceError under Node.
+    itBundled("edgecase/TopLevelVarOffKeepsTDZAcrossCycleNode", {
+      files: tdzAcrossCycleFiles,
+      backend,
+      target: "node",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("const searchNode = ");
+      },
+      run: {
+        runtime: "node",
+        error: "ReferenceError: Cannot access 'searchNode' before initialization",
+        validate({ stderr }) {
+          expect(stderr).toContain("ReferenceError: Cannot access 'searchNode' before initialization");
+        },
+      },
+    });
+    // A top-level `using` on a target that lowers it moves the module body into a try block. The
+    // parser keeps emitting var for that module, so the option does not reach it.
+    itBundled("edgecase/TopLevelVarOffUsingLoweredStillVar", {
+      files: {
+        ...tdzAcrossCycleFiles,
+        "/search.ts": /* ts */ `
+          export * as Search from "./search";
+          import { FileSystem } from "./filesystem";
+          using guard = { [Symbol.dispose]() {} };
+          export const find = () => FileSystem.Entry.make("hit");
+          export const searchNode = { name: "Search", deps: ["ripgrep"] };
+        `,
+      },
+      backend,
+      target: "node",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("var searchNode");
+        api.expectFile("/out.js").toContain("const fileSystemNode = ");
+      },
+      run: { stdout: "deps[1] = undefined" },
+    });
+    // With the option off and minifySyntax on, const still becomes let (shorter) and keeps the TDZ.
+    itBundled("edgecase/TopLevelVarOffMinifySyntaxKeepsTDZ", {
+      files: tdzAcrossCycleFiles,
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      minifySyntax: true,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("let searchNode = ");
+      },
+      run: {
+        error: "ReferenceError: Cannot access 'searchNode' before initialization.",
+        validate({ stderr }) {
+          expect(stderr).toContain("ReferenceError: Cannot access 'searchNode' before initialization.");
+        },
+      },
+    });
+    // With code splitting the chunk keeps the const bindings and exports the ones another chunk
+    // imports with `export { }`. The TDZ read in the chunk still throws.
+    itBundled("edgecase/TopLevelVarOffSplittingKeepsTDZ", {
+      files: {
+        ...tdzAcrossCycleFiles,
+        "/entry.ts": /* ts */ `
+          import "./search";
+          import { fileSystemNode } from "./filesystem";
+          export const tag = fileSystemNode.name;
+          console.log("deps[1] =", fileSystemNode.deps[1]);
+          await import("./lazy");
+        `,
+        "/lazy.ts": /* ts */ `
+          import { tag } from "./entry";
+          console.log(tag);
+        `,
+      },
+      outdir: "/out",
+      splitting: true,
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        // entry.js re-exports from the shared chunk that holds the cycle and `tag`
+        const shared = "/out/" + readdirSync(api.outdir).find(f => /^entry-.*\.js$/.test(f))!;
+        api.expectFile(shared).toContain("const searchNode = ");
+        api.expectFile(shared).toMatch(/const tag\d* = fileSystemNode\.name/);
+        api.expectFile(shared).toMatch(/export \{\s*tag\d*\s*\}/);
+      },
+      run: {
+        file: "/out/entry.js",
+        error: "ReferenceError: Cannot access 'searchNode' before initialization.",
+        validate({ stderr }) {
+          expect(stderr).toContain("ReferenceError: Cannot access 'searchNode' before initialization.");
+        },
+      },
+    });
+    // The binding the linker makes for `export default <expr>` follows the option too.
+    itBundled("edgecase/TopLevelVarOffExportDefaultExprIsConst", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import "./late";
+          import early from "./early";
+          console.log(early.name);
+        `,
+        "/early.ts": /* ts */ `
+          import late from "./late";
+          export default { name: "early", dep: late };
+        `,
+        "/late.ts": /* ts */ `
+          import early from "./early";
+          export const peek = () => early.name;
+          export default { name: "late" };
+        `,
+      },
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toMatch(/const late_default = /);
+        api.expectFile("/out.js").toMatch(/const early_default = /);
+      },
+      run: {
+        error: "ReferenceError: Cannot access 'late_default' before initialization.",
+        validate({ stderr }) {
+          expect(stderr).toContain("ReferenceError: Cannot access 'late_default' before initialization.");
+        },
+      },
+    });
+    // A CommonJS module keeps the declared kind inside its __commonJS wrapper. Nothing is hoisted.
+    itBundled("edgecase/TopLevelVarOffCommonJSWrapperKeepsKind", {
+      files: {
+        "/entry.ts": /* ts */ `
+          import a from "./a.cjs";
+          console.log(a.helper(), a.n);
+        `,
+        "/a.cjs": /* js */ `
+          const b = require("./b.cjs");
+          const helper = () => "h" + b.v;
+          let n = 0;
+          n++;
+          module.exports = { helper, n };
+        `,
+        "/b.cjs": /* js */ `
+          exports.v = "v";
+        `,
+      },
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api
+          .expectFile("/out.js")
+          .toMatch(/__commonJS\(function\(exports, module\) \{\n\s*const b = require_b\(\);\n\s*const helper = /);
+        api.expectFile("/out.js").toContain("let n = 0;");
+      },
+      run: { stdout: "hv 1" },
+    });
+    // An ES module the linker wraps in an __esm closure (here: reached through import() without
+    // code splitting) hoists its declarations out of the closure as var. The option does not reach it.
+    itBundled("edgecase/TopLevelVarOffWrappedModuleStillVar", {
+      files: {
+        ...tdzAcrossCycleFiles,
+        "/entry.ts": /* ts */ `
+          await import("./search");
+          const { fileSystemNode } = await import("./filesystem");
+          console.log("deps[1] =", fileSystemNode.deps[1]);
+        `,
+      },
+      backend,
+      target: "bun",
+      topLevelVar: false,
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("const searchNode");
+      },
+      run: { stdout: "deps[1] = undefined" },
+    });
   });
 }

@@ -78,6 +78,8 @@ pub struct Options<'a> {
 
     pub tree_shaking: bool,
     pub bundle: bool,
+    /// With `bundle`, emit top-level `const`/`let` as `var` (default). `false` keeps the kind (TDZ stays).
+    pub top_level_var: bool,
     pub code_splitting: bool,
     pub package_version: &'a [u8],
 
@@ -132,6 +134,7 @@ impl<'a> Default for Options<'a> {
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
+            top_level_var: true,
             code_splitting: false,
             package_version: b"",
             macro_context: None,
@@ -218,6 +221,7 @@ impl<'a> Options<'a> {
             },
             tree_shaking: self.tree_shaking,
             bundle: self.bundle,
+            top_level_var: self.top_level_var,
             code_splitting: self.code_splitting,
             package_version: self.package_version,
             macro_context: None,
@@ -288,6 +292,7 @@ impl<'a> Options<'a> {
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
+            top_level_var: true,
             code_splitting: false,
             package_version: b"",
             // Materializing an invalid `&mut T` is immediate UB regardless of

@@ -144,6 +144,11 @@ bun build <entry points>
   default in a future release
 </ParamField>
 
+<ParamField path="--no-top-level-var" type="boolean">
+  Keep top-level <code>const</code> and <code>let</code> in the bundle instead of lowering them to <code>var</code>, so
+  a read before initialization throws a <code>ReferenceError</code>
+</ParamField>
+
 <ParamField path="--minify" type="boolean">
   Enable all minification options
 </ParamField>

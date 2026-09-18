@@ -2,6 +2,7 @@ import { SQL } from "bun";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { unlinkSync } from "js/node/fs/export-star-from";
+import util from "node:util";
 
 declare module "bun" {
   namespace SQL {
@@ -767,6 +768,47 @@ describe("SQL adapter environment variable precedence", () => {
         expect(options.options.password).toBe("urlpass"); // URL password (not env)
         expect(options.options.database).toBe("urldb"); // URL database should remain
       });
+    });
+  });
+
+  describe("inspecting options redacts the password", () => {
+    test.each([
+      ["postgres URL", () => new SQL("postgres://app:sekret-password@127.0.0.1:5432/db")],
+      ["mysql URL", () => new SQL("mysql://app:sekret-password@127.0.0.1:3306/db")],
+      [
+        "postgres options",
+        () => new SQL({ adapter: "postgres", hostname: "127.0.0.1", username: "app", password: "sekret-password" }),
+      ],
+    ])("%s", (_, make) => {
+      const sql = make();
+      expect(sql.options.password).toBe("sekret-password");
+      expect(Bun.inspect(sql.options)).toContain('password: "[REDACTED]"');
+      expect(Bun.inspect(sql.options)).not.toContain("sekret-password");
+      expect(util.inspect(sql)).not.toContain("sekret-password");
+      expect(util.inspect(sql.options)).not.toContain("sekret-password");
+
+      // The password is still a plain property: the options round-trip.
+      const derived = new SQL(sql.options);
+      expect(derived.options.password).toBe("sekret-password");
+      expect(Bun.inspect(derived.options)).not.toContain("sekret-password");
+    });
+
+    test("tls key and passphrase", () => {
+      const sql = new SQL({
+        adapter: "postgres",
+        hostname: "127.0.0.1",
+        username: "app",
+        password: "sekret-password",
+        tls: { key: Buffer.from("sekret-key"), passphrase: "sekret-passphrase" },
+      });
+      expect((sql.options.tls as Bun.TLSOptions).passphrase).toBe("sekret-passphrase");
+      for (const printed of [Bun.inspect(sql.options), util.inspect(sql.options, { depth: 4 })]) {
+        expect(printed).toMatch(/passphrase: ["']\[REDACTED\]["']/);
+        expect(printed).toMatch(/key: ["']\[REDACTED\]["']/);
+        expect(printed).not.toContain("sekret-passphrase");
+        expect(printed).not.toContain("sekret-password");
+        expect(printed).not.toContain(Bun.inspect(Buffer.from("sekret-key")));
+      }
     });
   });
 });

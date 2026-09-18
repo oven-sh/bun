@@ -32,16 +32,15 @@ fn cross_chunk_refs(chunks: &[Chunk]) -> Vec<Ref> {
 }
 
 /// Names no chunk may use for a cross-chunk binding: keywords and the like,
-/// every unbound or must-not-be-renamed name in any module scope of the
-/// bundle, and the entry points' own export names. A per-chunk renamer only
-/// avoids its own chunk's; a bundle-wide name has to avoid all of them.
+/// plus every unbound or must-not-be-renamed name in any module scope of the
+/// bundle. A per-chunk renamer only avoids its own chunk's; a bundle-wide
+/// name has to avoid all of them.
 fn reserved_names(
     c: &LinkerContext,
     chunks: &[Chunk],
 ) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
     let mut reserved = renamer::compute_initial_reserved_names(c.options.output_format)?;
     let scopes = c.graph.ast.items_module_scope();
-    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks {
         if let Content::Javascript(js) = &chunk.content {
             for &source_index in js.files_in_chunk_order.iter() {
@@ -50,13 +49,6 @@ fn reserved_names(
                     &c.graph.symbols,
                     &mut reserved,
                 );
-            }
-        }
-        // An entry point's own `export {}` names share its export namespace
-        // with the cross-chunk exports it may carry.
-        if chunk.entry_point.is_entry_point() {
-            for alias in export_aliases[chunk.entry_point.source_index() as usize].iter() {
-                reserved.put(alias, 1)?;
             }
         }
     }
@@ -136,16 +128,10 @@ pub(crate) fn assign_minified(
     // Every chunk's renamer already reserved the keywords plus its own module
     // scopes' unbound / pinned names; a bundle-wide name avoids all of them.
     let mut reserved = StringHashMap::<u32>::default();
-    let export_aliases = c.graph.meta.items_sorted_and_filtered_export_aliases();
     for chunk in chunks.iter() {
         if let ChunkRenamer::Minify(r) = &chunk.renamer {
             for (name, _) in r.reserved_names().iter() {
                 reserved.put(name, 1)?;
-            }
-        }
-        if chunk.entry_point.is_entry_point() {
-            for alias in export_aliases[chunk.entry_point.source_index() as usize].iter() {
-                reserved.put(alias, 1)?;
             }
         }
     }
@@ -234,10 +220,14 @@ pub(crate) fn assign_minified(
 }
 
 /// Writes the names into the cross-chunk `export {}` / `import {}` clause items.
-pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
+pub(crate) fn apply_to_clauses(
+    c: &LinkerContext,
+    chunks: &mut [Chunk],
+) -> Result<(), bun_alloc::AllocError> {
     if c.cross_chunk_names.is_empty() {
-        return;
+        return Ok(());
     }
+    let export_aliases = export_aliases_beside_entry_exports(c, chunks)?;
     for chunk in chunks.iter_mut() {
         let Content::Javascript(js) = &mut chunk.content else {
             continue;
@@ -253,9 +243,113 @@ pub(crate) fn apply_to_clauses(c: &LinkerContext, chunks: &mut [Chunk]) {
                 _ => continue,
             };
             for item in items {
-                item.alias =
-                    bun_ast::StoreStr::new(*c.cross_chunk_names.get(&item.name.ref_).unwrap());
+                let ref_ = item.name.ref_;
+                let alias = export_aliases
+                    .get(&ref_)
+                    .unwrap_or_else(|| c.cross_chunk_names.get(&ref_).unwrap());
+                item.alias = bun_ast::StoreStr::new(*alias);
             }
         }
     }
+    Ok(())
+}
+
+/// Aliases for the bindings an ESM entry chunk exports to other chunks under
+/// the name of one of its entry point's exports: `export { helper as helper2 }`,
+/// `import { helper2 as helper }`. An item the entry point already exports is dropped.
+fn export_aliases_beside_entry_exports(
+    c: &LinkerContext,
+    chunks: &mut [Chunk],
+) -> Result<bun_collections::HashMap<Ref, &'static [u8]>, bun_alloc::AllocError> {
+    let mut aliases: bun_collections::HashMap<Ref, &'static [u8]> = Default::default();
+    let entry_export_names = c.graph.meta.items_sorted_and_filtered_export_aliases();
+    let mut buf: Vec<u8> = Vec::new();
+    for chunk in chunks.iter_mut() {
+        if !chunk.entry_point.is_entry_point() {
+            continue;
+        }
+        let source_index = chunk.entry_point.source_index() as usize;
+        // A CommonJS entry point prints `export default require_x()` only.
+        if entry_export_names[source_index].is_empty()
+            || c.graph.meta.items_flags()[source_index].wrap == crate::WrapKind::Cjs
+        {
+            continue;
+        }
+        let Content::Javascript(js) = &mut chunk.content else {
+            continue;
+        };
+        let [stmt] = js.cross_chunk_suffix_stmts.as_mut_slice() else {
+            continue;
+        };
+        let bun_ast::StmtData::SExportClause(clause) = &mut stmt.data else {
+            continue;
+        };
+        let items = clause.items.slice_mut();
+
+        let mut taken = StringHashMap::<()>::default();
+        for name in entry_export_names[source_index].iter() {
+            taken.put(name, ())?;
+        }
+        // Cross-chunk names are unique, so a hit here is an entry export name.
+        let mut colliding: Vec<usize> = Vec::new();
+        for (i, item) in items.iter().enumerate() {
+            let name = *c.cross_chunk_names.get(&item.name.ref_).unwrap();
+            if taken.contains_key(name) {
+                colliding.push(i);
+            } else {
+                taken.put(name, ())?;
+            }
+        }
+
+        let mut dropped: Vec<usize> = Vec::new();
+        for i in colliding {
+            let ref_ = items[i].name.ref_;
+            let name = *c.cross_chunk_names.get(&ref_).unwrap();
+            if entry_export_binding(c, source_index, name).is_some_and(|exported| {
+                c.graph.symbols.follow(exported) == c.graph.symbols.follow(ref_)
+            }) {
+                dropped.push(i);
+                continue;
+            }
+            let mut tries = 1u32;
+            loop {
+                tries += 1;
+                buf.clear();
+                buf.extend_from_slice(name);
+                write!(&mut buf, "{tries}").expect("Vec<u8> write");
+                if !taken.contains_key(buf.as_slice()) {
+                    break;
+                }
+            }
+            taken.put(&buf, ())?;
+            aliases.insert(ref_, intern(c, &buf));
+        }
+        if !dropped.is_empty() {
+            let mut kept = 0;
+            let mut next_dropped = 0;
+            for i in 0..items.len() {
+                if dropped.get(next_dropped) == Some(&i) {
+                    next_dropped += 1;
+                } else {
+                    items.swap(kept, i);
+                    kept += 1;
+                }
+            }
+            clause.items.truncate(kept);
+        }
+    }
+    Ok(aliases)
+}
+
+/// The binding `generate_entry_point_tail_js` exports as `name`; `None` for a copy of a CommonJS property.
+fn entry_export_binding(c: &LinkerContext, source_index: usize, name: &[u8]) -> Option<Ref> {
+    let export = c.graph.meta.items_resolved_exports()[source_index].get(name)?;
+    let mut ref_ = export.data.import_ref;
+    if let Some(import) = c.graph.meta.items_imports_to_bind()[source_index].get(&ref_) {
+        ref_ = import.data.import_ref;
+    }
+    if c.graph.symbols.get_const(ref_)?.namespace_alias.is_some() {
+        return None;
+    }
+    Some(ref_)
 }

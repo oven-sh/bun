@@ -679,6 +679,174 @@ describe("bundler", () => {
     ],
   });
 
+  // An entry point's export names are not bindings. A binding shared across
+  // chunks keeps its name when an entry point exports something under that
+  // name: the same binding (index.js) or one of its own (other.js).
+  itBundled("splitting/CrossChunkNameMatchesEntryExportName", {
+    files: {
+      "/index.js": /* js */ `
+        export { ValidationError } from './errors.js'
+      `,
+      "/cli.js": /* js */ `
+        import { ValidationError, helper } from './errors.js'
+        console.log(new ValidationError('x').constructor.name, helper.name, helper())
+      `,
+      "/other.js": /* js */ `
+        export function helper() { return 'own' }
+      `,
+      "/errors.js": /* js */ `
+        export class ValidationError extends Error {}
+        export function helper() { return 'shared' }
+      `,
+      "/run.js": /* js */ `
+        const index = await import('./out/index.js')
+        const other = await import('./out/other.js')
+        console.log(Object.keys(index).join(), index.ValidationError.name)
+        console.log(Object.keys(other).join(), other.helper.name, other.helper())
+      `,
+    },
+    entryPoints: ["/index.js", "/cli.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const shared = api.readFile(
+        "/out/" + jsFilesIn(api).find(f => api.readFile("/out/" + f).includes("extends Error"))!,
+      );
+      expect(shared).toContain("class ValidationError extends Error");
+      expect(shared).toContain("function helper()");
+      for (const f of jsFilesIn(api)) {
+        const out = api.readFile("/out/" + f);
+        for (const clause of out.match(/(?:import|export)\s*\{[^}]*\}/g) ?? []) expect(clause).not.toContain(" as ");
+      }
+    },
+    run: [
+      { file: "/out/cli.js", stdout: "ValidationError helper shared" },
+      { file: "/run.js", stdout: "ValidationError ValidationError\nhelper helper own" },
+    ],
+  });
+
+  // Same under --minify-identifiers. index.js exports every one-letter name
+  // (listed in module namespace key order); the two shared bindings still get
+  // one-letter names, and each export of index.js is the function it names.
+  const oneLetterNames = [..."$ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"];
+  itBundled("splitting/CrossChunkNameMatchesEntryExportNameMinified", {
+    files: {
+      "/index.js": `export { ${oneLetterNames.map((name, i) => `${i % 2 ? "second" : "first"} as ${name}`).join(", ")} } from './lib.js'`,
+      "/cli.js": /* js */ `
+        import { first, second } from './lib.js'
+        console.log(first(), second())
+      `,
+      "/lib.js": /* js */ `
+        export function first() { return 'first' }
+        export function second() { return 'second' }
+      `,
+      "/run.js": /* js */ `
+        const index = await import('./out/index.js')
+        console.log(Object.keys(index).join(''))
+        console.log(Object.values(index).map(fn => fn()[0]).join(''))
+      `,
+    },
+    entryPoints: ["/index.js", "/cli.js"],
+    splitting: true,
+    minifyIdentifiers: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const shared = jsFilesIn(api).find(f => api.readFile("/out/" + f).includes('"first"'))!;
+      api.expectFile("/out/" + shared).toMatch(/export\s*\{\s*[\w$],\s*[\w$]\s*\}/);
+    },
+    run: [
+      { file: "/out/cli.js", stdout: "first second" },
+      { file: "/run.js", stdout: oneLetterNames.join("") + "\n" + oneLetterNames.map((_, i) => "fs"[i % 2]).join("") },
+    ],
+  });
+
+  // One chunk can list both kinds of name in its `export {}` clause: d.js is in
+  // the chunk of a.js today (#18008), and b.js reads `foo` off the exports
+  // object of d.js. Where a binding and an export name collide there, the
+  // binding keeps its name and is exported under an alias.
+  for (const minifyIdentifiers of [false, true]) {
+    itBundled(`splitting/CrossChunkBindingKeepsNameBesideEntryExportName${minifyIdentifiers ? "Minified" : ""}`, {
+      files: {
+        "/a.js": /* js */ `
+          import * as ns from './pkg/d.js'
+          const own = ns
+          export { own as exports_d, own as helper, ${oneLetterNames.map(name => `own as ${name}`).join(", ")} }
+        `,
+        "/b.js": /* js */ `
+          import { foo } from './pkg/d.js'
+          import { helper } from './shared.js'
+          console.log(foo, helper()${minifyIdentifiers ? "" : ", helper.name"})
+        `,
+        "/c.js": /* js */ `
+          import { helper } from './shared.js'
+          console.log(helper())
+        `,
+        "/shared.js": `export function helper() { return 'shared' }`,
+        "/pkg/d.js": `export * from './c.cjs'`,
+        "/pkg/c.cjs": `module.exports['f' + 'oo'] = 123`,
+        "/pkg/package.json": `{ "name": "pkg", "sideEffects": false }`,
+        "/run.js": /* js */ `
+          const a = await import('./out/a.js')
+          console.log(a.exports_d.foo, a.helper.foo, a.s.foo, a.$.foo)
+        `,
+      },
+      entryPoints: ["/a.js", "/b.js", "/c.js"],
+      splitting: true,
+      minifyIdentifiers,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        if (minifyIdentifiers) return;
+        const all = jsFilesIn(api)
+          .map(f => api.readFile("/out/" + f))
+          .join("\n");
+        expect(all).toContain("var exports_d = {}");
+        expect(all).toContain("function helper()");
+        expect(all).not.toMatch(/\b(?:exports_d|helper)\d+\s*[=(]/);
+        api.expectFile("/out/a.js").toMatch(/\bexports_d as exports_d2\b/);
+        api.expectFile("/out/b.js").toMatch(/\bexports_d2 as exports_d\b/);
+      },
+      run: [
+        { file: "/out/b.js", stdout: minifyIdentifiers ? "123 shared" : "123 shared helper" },
+        { file: "/out/c.js", stdout: "shared" },
+        { file: "/run.js", stdout: "123 123 123 123" },
+      ],
+    });
+
+    // The same, but every export of a.js is that one binding: no second item,
+    // b.js imports the export a.js already has.
+    itBundled(`splitting/CrossChunkImportUsesEntryExportOfSameBinding${minifyIdentifiers ? "Minified" : ""}`, {
+      files: {
+        "/a.js": /* js */ `
+          import * as ns from './pkg/d.js'
+          export { ns as exports_d, ${oneLetterNames.map(name => `ns as ${name}`).join(", ")} }
+        `,
+        "/b.js": /* js */ `
+          import { foo } from './pkg/d.js'
+          console.log(foo)
+        `,
+        "/pkg/d.js": `export * from './c.cjs'`,
+        "/pkg/c.cjs": `module.exports['f' + 'oo'] = 123`,
+        "/pkg/package.json": `{ "name": "pkg", "sideEffects": false }`,
+        "/run.js": /* js */ `
+          const a = await import('./out/a.js')
+          console.log(Object.keys(a).join(), a.exports_d.foo, a.s.foo)
+        `,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      splitting: true,
+      minifyIdentifiers,
+      outdir: "/out",
+      format: "esm",
+      run: [
+        { file: "/out/b.js", stdout: "123" },
+        { file: "/run.js", stdout: [...oneLetterNames, "exports_d"].sort().join() + " 123 123" },
+      ],
+    });
+  }
+
   // Direct eval keeps every name in its scope chain as written — including a
   // CommonJS-wrapped file's top level — so the bundle-wide namer must route
   // around those names, and the shared bindings such a file declares fall

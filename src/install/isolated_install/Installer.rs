@@ -486,7 +486,8 @@ impl<'a> Installer<'a> {
             let mut required = bun_core::handle_oom(Bitset::init_empty(self.store.entries.len()));
             for deps in self.store.entries.items_dependencies() {
                 for dep in deps.slice() {
-                    if dependencies[dep.dep_id as usize].behavior.is_required() {
+                    let behavior = dependencies[dep.dep_id as usize].behavior;
+                    if !behavior.is_optional() && !behavior.is_optional_peer() {
                         required.set(dep.entry_id.get() as usize);
                     }
                 }
@@ -2329,7 +2330,10 @@ impl<'a> Installer<'a> {
 
         let mut changed = false;
         for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
-            if self.missing[dep.entry_id.get() as usize].load(Ordering::Relaxed) {
+            // A global store entry is shared: the link resolves once another install downloads the entry.
+            if !uses_global_store
+                && self.missing[dep.entry_id.get() as usize].load(Ordering::Relaxed)
+            {
                 continue;
             }
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
@@ -2453,9 +2457,6 @@ impl<'a> Installer<'a> {
         );
 
         for dep in entry_deps[parent_entry_id.get() as usize].slice() {
-            if self.missing[dep.entry_id.get() as usize].load(Ordering::Relaxed) {
-                continue;
-            }
             let node_id = entry_node_ids[dep.entry_id.get() as usize];
             let dep_id = node_dep_ids[node_id.get() as usize];
             let pkg_id = node_pkg_ids[node_id.get() as usize];

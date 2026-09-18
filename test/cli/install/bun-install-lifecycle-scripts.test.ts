@@ -239,7 +239,8 @@ for (const linker of ["hoisted", "isolated"] as const) {
         stderr: "pipe",
         env,
       });
-      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(out).toContain("bun install v1.");
       expect(splitErrLines(err).filter(line => line.startsWith("error:"))).toEqual([
         'error: install script from "no-deps-scripted-to-fail" exited with 1',
       ]);
@@ -270,8 +271,9 @@ for (const linker of ["hoisted", "isolated"] as const) {
       stderr: "pipe",
       env,
     });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("error:");
+    expect(out).not.toContain("Blocked");
     expect(exitCode).toBe(0);
     expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBeTrue();
     expect(await exists(join(packageDir, "node_modules", "no-deps-scripted-to-fail"))).toBeFalse();
@@ -302,8 +304,9 @@ test.concurrent(
         stderr: "pipe",
         env,
       });
-      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(err).not.toContain("error:");
+      expect(out).toContain("Blocked 1 postinstall");
       expect(exitCode).toBe(0);
     }
 
@@ -316,7 +319,8 @@ test.concurrent(
       stderr: "pipe",
       env,
     });
-    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(out).toContain("bun install v1.");
     expect(splitErrLines(err).filter(line => line.startsWith("error:"))).toEqual([
       'error: install script from "no-deps-scripted-to-fail" exited with 1',
     ]);

@@ -432,6 +432,53 @@ describe.concurrent("workspaces entries outside the workspace root", () => {
     );
   });
 
+  // The root directory is the resolved path of the manifest, so an absolute entry spelled
+  // through a symlinked ancestor names a directory inside the root, not an escape. It is
+  // recorded under the path relative to the root as written, which is what bun did before
+  // this check existed.
+  test("an absolute path inside the root through a symlinked ancestor is still a workspace", async () => {
+    using dir = tempDir("bad-workspace-absolute-through-symlink", SIBLING_PROJECTS);
+    // <dir>/link/clone/packages/inner is <dir>/clone/packages/inner through <dir>/link.
+    symlinkSync(String(dir), join(String(dir), "link"), "junction");
+    writeFileSync(
+      join(String(dir), "clone", "package.json"),
+      rootPackageJson([join(String(dir), "link", "clone", "packages", "inner")]),
+    );
+
+    const { stderr, exitCode } = await runInstall(join(String(dir), "clone"));
+
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(Object.values(install_test_helpers.parseLockfile(join(String(dir), "clone")).workspace_paths)).toEqual([
+      "../link/clone/packages/inner",
+    ]);
+  });
+
+  // One rejected match of a glob must not hide the pattern's other matches: an install that
+  // runs in one of them still has to find its own root. `../*/packages/*` matches a
+  // directory in each sibling project and `packages/inner` in the clone itself.
+  test("a glob reports one error and keeps its other matches", async () => {
+    using dir = tempDir("bad-workspace-glob-keeps-matches", {
+      "victimA/packages/a/package.json": JSON.stringify({ name: "victim-a-pkg" }),
+      "victimB/packages/b/package.json": JSON.stringify({ name: "victim-b-pkg" }),
+      "clone/package.json": rootPackageJson(["../*/packages/*"]),
+      "clone/packages/inner/package.json": JSON.stringify({ name: "inner", version: "1.0.0" }),
+    });
+
+    const { stderr, exitCode } = await runInstall(join(String(dir), "clone", "packages", "inner"));
+
+    // One error, whichever sibling the walker reports first.
+    expect(stderr.match(/is outside the workspace root/g)).toHaveLength(1);
+    expect(stderr).toMatch(
+      /error: Workspace "\.\.[\\/]victim[AB][\\/]packages[\\/][ab]" is outside the workspace root/,
+    );
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "clone", "packages", "inner", "bun.lock"))).toBe(false);
+    expect(existsSync(join(String(dir), "clone", "bun.lock"))).toBe(false);
+    expect(existsSync(join(String(dir), "victimA", "node_modules"))).toBe(false);
+    expect(existsSync(join(String(dir), "victimB", "node_modules"))).toBe(false);
+  });
+
   test("a symlink to a directory inside the root is still a workspace", async () => {
     using dir = tempDir("bad-workspace-symlink-inside", {
       ...SIBLING_PROJECTS,

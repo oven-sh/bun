@@ -1086,6 +1086,12 @@ describe("copyFileSync", () => {
       // which is the source.
       if (isLinux) copyFileSync(file, dest, fs.constants.COPYFILE_FICLONE_FORCE);
       expect(readFileSync(file, "utf8")).toBe("hello world");
+      // The destination is still the same name for the same file.
+      expect({
+        content: readFileSync(dest, "utf8"),
+        sameInode: statSync(dest).ino === statSync(file).ino,
+        isSymlink: lstatSync(dest).isSymbolicLink(),
+      }).toEqual({ content: "hello world", sameInode: true, isSymlink: dest === symlink });
     }
   });
 

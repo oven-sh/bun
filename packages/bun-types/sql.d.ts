@@ -7,9 +7,15 @@ declare module "bun" {
    */
   interface ReservedSQL extends SQL, Disposable {
     /**
-     * Releases the client back to the connection pool
+     * Releases the client back to the connection pool.
+     *
+     * The handle closes at once: new queries and `begin()` calls reject. If a
+     * transaction started with `begin()` or `beginDistributed()` on this handle
+     * is still running, the connection goes back to the pool after that
+     * transaction commits or rolls back. The returned promise resolves when
+     * the pool has the connection back.
      */
-    release(): void;
+    release(): Promise<void>;
   }
 
   type ArrayType =

@@ -1149,7 +1149,7 @@ describe.skipIf(!isWindows).each([
             GenerateConsoleCtrlEvent: { args: [FFIType.u32, FFIType.u32], returns: FFIType.i32 },
           }).symbols;
           const isAlive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
-          const result = { parentExited: false, leafDead: false, error: "" };
+          const result = { parentExited: false, parentExitCode: null, leafDead: false, error: "" };
           let parent, leafPid = 0;
           try {
             k32.FreeConsole();
@@ -1182,6 +1182,7 @@ describe.skipIf(!isWindows).each([
               new Promise(resolve => { timer = setTimeout(() => resolve(false), 5000); }),
             ]);
             clearTimeout(timer);
+            result.parentExitCode = parent.exitCode;
             const leafDeadline = Date.now() + 5000;
             while (isAlive(leafPid) && Date.now() < leafDeadline) await sleep(25);
             result.leafDead = !isAlive(leafPid);
@@ -1214,7 +1215,12 @@ describe.skipIf(!isWindows).each([
       const [stderr, exitCode] = await Promise.all([helper.stderr.text(), helper.exited]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
-      expect(await Bun.file(env.RESULTFILE!).json()).toEqual({ parentExited: true, leafDead: true, error: "" });
+      expect(await Bun.file(env.RESULTFILE!).json()).toEqual({
+        parentExited: true,
+        parentExitCode: 130,
+        leafDead: true,
+        error: "",
+      });
     },
     // When the run does not end, the helper needs up to 20 s to report and to
     // kill the runner and the leaf it started.
@@ -1422,7 +1428,7 @@ describe("auto-discovered bunfig.toml [run] section", () => {
 });
 
 // proc.kill() is TerminateProcess on Windows; it never reaches the console control handler.
-describe.skipIf(isWindows)("signals", () => {
+describe.concurrent.skipIf(isWindows)("signals", () => {
   // Each package runs a script that reports the signal it receives and exits 0.
   // The sleep is long enough that a runner which only reacts once its children
   // exit on their own shows up as the wrong exit code, not as a slow pass.

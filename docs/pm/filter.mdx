@@ -171,7 +171,9 @@ Bun respects package dependency order when running scripts. Say you have a packa
 
 ### Signals
 
-When `bun run --filter`, `--parallel`, or `--sequential` receives `SIGINT`, `SIGTERM`, or `SIGHUP`, Bun sends the same signal to every script that is still running. Bun starts no more scripts. When the scripts exit, Bun ends itself with that signal, even if every script exited with 0. A shell reports this as exit code `128 + signal` (130, 143, or 129). When Bun is PID 1 in a container, Bun exits with that code instead, because PID 1 does not die of such a signal.
+When `bun run --filter`, `--parallel`, or `--sequential` receives `SIGINT`, `SIGTERM`, or `SIGHUP`, Bun sends the same signal to every script that is still running. After that, Bun starts no more scripts. When the scripts exit, Bun ends itself with that signal, even if every script exited with 0. A shell reports this as exit code `128 + signal` (130, 143, or 129). When Bun is PID 1 in a Linux container, Bun exits with that code instead, because PID 1 does not die of such a signal.
+
+On Windows, `Ctrl+C` does the same, and Bun exits with code 130.
 
 Bun waits for the scripts without a time limit. A script that ignores the signal keeps the run alive. A second signal ends Bun at once and leaves that script running.
 

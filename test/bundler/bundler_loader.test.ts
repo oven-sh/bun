@@ -1,4 +1,5 @@
 import { fileURLToPath, Loader } from "bun";
+import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
@@ -240,6 +241,77 @@ describe("bundler", async () => {
       "/data.jsonc": `// jsonc\n{"__proto__": {"x": 1}, "a": 2,}`,
     },
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
+  });
+
+  // `--loader .ext:name` and `Bun.build({ loader: { ".ext": name } })` must
+  // select the named loader. "jsonc" used to degrade to the strict "json"
+  // loader and "sqlite_embedded" to the non-embedding "sqlite" loader on both
+  // surfaces, and `Bun.build` rejected "napi" and "sqlite_embedded" outright.
+  describe("loader map", () => {
+    const sqliteFixture = (() => {
+      const db = new Database(":memory:");
+      db.run("CREATE TABLE t (v INTEGER)");
+      db.run("INSERT INTO t VALUES (1)");
+      return db.serialize();
+    })();
+
+    for (const backend of ["api", "cli"] as const) {
+      itBundled(`bun/loader-map-jsonc-${backend}`, {
+        backend,
+        target: "bun",
+        loader: { ".cfg": "jsonc" },
+        files: {
+          "/entry.ts": /* js */ `
+            import config from './app.cfg';
+            console.write(JSON.stringify(config));
+          `,
+          "/app.cfg": `// comment\n{"a": 1, "b": 2,}\n`,
+        },
+        run: { stdout: '{"a":1,"b":2}' },
+      });
+
+      itBundled(`bun/loader-map-sqlite-embedded-${backend}`, {
+        backend,
+        target: "bun",
+        outdir: "/out",
+        loader: { ".db": "sqlite_embedded" },
+        files: {
+          "/entry.ts": /* js */ `
+            import db from './data.db';
+            console.write(JSON.stringify(db.query("SELECT v FROM t").all()));
+          `,
+          "/data.db": sqliteFixture,
+        },
+        onAfterBundle(api) {
+          // Embedding copies the database next to the bundle and references the
+          // copy. The plain "sqlite" loader copies nothing and references the
+          // source file by absolute path.
+          const asset = readdirSync(api.outdir).find(name => /^data-\w+\.db$/.test(name));
+          expect(asset).toBeDefined();
+          api.expectFile("/out/entry.js").toContain(`"./${asset}"`);
+        },
+        run: { stdout: '[{"v":1}]' },
+      });
+
+      itBundled(`bun/loader-map-napi-${backend}`, {
+        backend,
+        target: "bun",
+        outdir: "/out",
+        loader: { ".cfg": "napi" },
+        files: {
+          "/entry.ts": /* js */ `
+            import addon from './addon.cfg';
+            export { addon };
+          `,
+          "/addon.cfg": "not really a native addon",
+        },
+        onAfterBundle(api) {
+          const asset = readdirSync(api.outdir).find(name => /^addon-\w+\.cfg$/.test(name));
+          expect(asset).toBeDefined();
+          api.expectFile("/out/entry.js").toContain(`"./${asset}"`);
+        },
+      });
+    }
   });
 
   itBundled("bun/loader-json5-proto-key-is-own-property", {

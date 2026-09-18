@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { readlinkSync } from "fs";
+import { readlinkSync, realpathSync } from "fs";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -1649,63 +1649,66 @@ it("an optional peer is rebound when another version of its package takes the sl
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
 });
 
+type Manifests = Record<string, Record<string, Record<string, unknown>>>;
+
+// A registry that serves `manifests` and records the path of every request.
+async function serveRegistry(manifests: Manifests) {
+  const tarballs = new Map<string, Uint8Array>();
+  for (const [name, versions] of Object.entries(manifests)) {
+    for (const [version, extra] of Object.entries(versions)) {
+      const archive = new Bun.Archive(
+        { "package/package.json": JSON.stringify({ name, version, ...extra }) },
+        { compress: "gzip" },
+      );
+      tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
+    }
+  }
+  const requests: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const { origin, pathname } = new URL(request.url);
+      requests.push(pathname);
+      const tarball = tarballs.get(pathname);
+      if (tarball) return new Response(tarball);
+      const name = pathname.slice(1);
+      const entry = manifests[name];
+      if (!entry) return new Response("not found", { status: 404 });
+      const versions: Record<string, unknown> = {};
+      for (const [version, extra] of Object.entries(entry)) {
+        versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
+      }
+      return Response.json(
+        { name, versions, "dist-tags": { latest: Object.keys(entry).at(-1) } },
+        // Like registry.npmjs.org. Within this window bun resolves from the
+        // manifest cache without going back to the registry.
+        { headers: { "cache-control": "public, max-age=300" } },
+      );
+    },
+  });
+  return {
+    url: server.url.href,
+    origin: server.url.origin,
+    requests,
+    [Symbol.dispose]() {
+      server.stop(true);
+    },
+  };
+}
+
 // https://github.com/oven-sh/bun/issues/26046
 // A required peer that nothing in the tree provides and that no published
 // version satisfies stays unresolved. The bun.lock written afterwards has to
 // load back, and resolving it again with every manifest already in the cache
 // has to finish (it used to retry the cached manifest forever).
 describe.each(["hoisted", "isolated"] as const)("peer no published version satisfies (%s linker)", linker => {
-  const manifests: Record<string, Record<string, Record<string, unknown>>> = {
+  const manifests: Manifests = {
     "has-unmet-peer": { "1.0.0": { peerDependencies: { "peer-target": "^1.0.1" } } },
     "peer-target": { "2.0.1": {} },
   };
 
   const unmetPeerWarning =
     'warn: No version matching "^1.0.1" found for peer dependency "peer-target" (but package exists)';
-
-  async function serveRegistry() {
-    const tarballs = new Map<string, Uint8Array>();
-    for (const [name, versions] of Object.entries(manifests)) {
-      for (const [version, extra] of Object.entries(versions)) {
-        const archive = new Bun.Archive(
-          { "package/package.json": JSON.stringify({ name, version, ...extra }) },
-          { compress: "gzip" },
-        );
-        tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
-      }
-    }
-    const requests: string[] = [];
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const { origin, pathname } = new URL(request.url);
-        requests.push(pathname);
-        const tarball = tarballs.get(pathname);
-        if (tarball) return new Response(tarball);
-        const name = pathname.slice(1);
-        const entry = manifests[name];
-        if (!entry) return new Response("not found", { status: 404 });
-        const versions: Record<string, unknown> = {};
-        for (const [version, extra] of Object.entries(entry)) {
-          versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
-        }
-        return Response.json(
-          { name, versions, "dist-tags": { latest: Object.keys(entry).at(-1) } },
-          // Like registry.npmjs.org. Within this window bun resolves from the
-          // manifest cache without going back to the registry.
-          { headers: { "cache-control": "public, max-age=300" } },
-        );
-      },
-    });
-    return {
-      url: server.url.href,
-      origin: server.url.origin,
-      requests,
-      [Symbol.dispose]() {
-        server.stop(true);
-      },
-    };
-  }
 
   function createProject(registryUrl: string, files: Record<string, string>) {
     return tempDir("unmet-peer-", {
@@ -1733,7 +1736,7 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
   }
 
   it.concurrent("declared by a registry package", async () => {
-    using registry = await serveRegistry();
+    using registry = await serveRegistry(manifests);
     using dir = createProject(registry.url, {
       "package.json": JSON.stringify({ name: "app", dependencies: { "has-unmet-peer": "1.0.0" } }),
     });
@@ -1780,7 +1783,7 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
   });
 
   it.concurrent("declared by the root package and a workspace", async () => {
-    using registry = await serveRegistry();
+    using registry = await serveRegistry(manifests);
     using dir = createProject(registry.url, {
       "package.json": JSON.stringify({
         name: "app",
@@ -1824,5 +1827,267 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     ({ err } = await install(String(dir), "--frozen-lockfile"));
     expect(err).not.toContain("Ignoring lockfile");
     expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+});
+
+// bun.lock lists where each package is placed, not which package each dependency
+// resolves to: loading it binds a dependency to the nearest placement of its name.
+// `git merge` joins the lockfiles of two branches line by line. The result can parse,
+// match package.json, and still bind a dependency to a package it does not accept: one
+// branch moves the hoisted copy to another major, the other adds a dependent that the
+// old hoisted copy satisfied, so neither branch wrote a nested copy for it.
+describe.concurrent("a dependency that bun.lock binds to a package it does not accept", () => {
+  const manifests: Manifests = {
+    "aauser": { "1.0.0": { dependencies: { shared: "^1.0.0" } } },
+    "has-peer": { "1.0.0": { peerDependencies: { shared: "^1.0.0" } } },
+    "plain": { "1.0.0": {} },
+    "shared": { "1.0.0": {}, "1.5.0": {}, "2.0.0": {} },
+  };
+
+  type Linker = "hoisted" | "isolated";
+
+  function createProject(registryUrl: string, linker: Linker, packageJsons: Record<string, object>) {
+    return tempDir("bun-lock-unaccepted-", {
+      ...Object.fromEntries(Object.entries(packageJsons).map(([path, json]) => [path, JSON.stringify(json)])),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registryUrl, linker } }),
+    });
+  }
+
+  const cacheDir = (cwd: string) => join(cwd, ".bun-cache");
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      // The environment's cache dir takes precedence over bunfig.
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir(cwd) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  // `name@version` of the package that code in `from` gets for `request`.
+  async function seenFrom(from: string, request: string) {
+    const { name, version } = await file(Bun.resolveSync(`${request}/package.json`, realpathSync(from))).json();
+    return `${name}@${version}`;
+  }
+
+  // An installed tree from the consistent lockfile hides the difference: the hoisted linker reports "no changes".
+  const dropNodeModules = (cwd: string) =>
+    Promise.all(
+      ["node_modules", "packages/lib/node_modules"].map(path => rm(join(cwd, path), { recursive: true, force: true })),
+    );
+
+  const withoutEntry = (key: string) => (lockfile: string) =>
+    lockfile.replace(new RegExp(`\n\n    "${key}": \\[.*\\],`), "");
+
+  const entryPointedAt = (key: string, name: string, version: string) => (lockfile: string) =>
+    lockfile.replace(
+      new RegExp(`^(    "${key}": \\[")[^"]+(", "[^"]*/)[^"/]+(\\.tgz")`, "m"),
+      `$1${name}@${version}$2${name}-${version}$3`,
+    );
+
+  type Shape = {
+    packageJsons: Record<string, object>;
+    breakLockfile: (lockfile: string) => string;
+    // [directory, request, the package a consistent lockfile gives it]
+    seen: [from: string, request: string, expected: string][];
+  };
+
+  const aauserNextToShared2 = { "package.json": { name: "app", dependencies: { aauser: "1.0.0", shared: "2.0.0" } } };
+
+  const shapes: Record<string, Shape> = {
+    // ours: `bun add shared@2.0.0`. theirs: `bun add aauser`, which the hoisted shared@1.5.0 satisfied.
+    "a package's dependency with no nested entry": {
+      packageJsons: aauserNextToShared2,
+      breakLockfile: withoutEntry("aauser/shared"),
+      seen: [
+        ["node_modules/aauser", "shared", "shared@1.5.0"],
+        [".", "shared", "shared@2.0.0"],
+      ],
+    },
+    "a package's dependency with a nested entry outside its range": {
+      packageJsons: aauserNextToShared2,
+      breakLockfile: entryPointedAt("aauser/shared", "shared", "2.0.0"),
+      seen: [
+        ["node_modules/aauser", "shared", "shared@1.5.0"],
+        [".", "shared", "shared@2.0.0"],
+      ],
+    },
+    // ours: the root moves to shared 2. theirs: a workspace starts to depend on shared ^1.
+    "a workspace's dependency with no nested entry": {
+      packageJsons: {
+        "package.json": { name: "app", workspaces: ["packages/*"], dependencies: { shared: "2.0.0" } },
+        "packages/lib/package.json": { name: "lib", version: "1.0.0", dependencies: { shared: "^1.0.0" } },
+      },
+      breakLockfile: withoutEntry("lib/shared"),
+      seen: [
+        ["packages/lib", "shared", "shared@1.5.0"],
+        [".", "shared", "shared@2.0.0"],
+      ],
+    },
+    "a root dependency above its range": {
+      packageJsons: { "package.json": { name: "app", dependencies: { shared: "^1.0.0" } } },
+      breakLockfile: entryPointedAt("shared", "shared", "2.0.0"),
+      seen: [[".", "shared", "shared@1.5.0"]],
+    },
+    "a root dependency below its range": {
+      packageJsons: { "package.json": { name: "app", dependencies: { shared: "^2.0.0" } } },
+      breakLockfile: entryPointedAt("shared", "shared", "1.5.0"),
+      seen: [[".", "shared", "shared@2.0.0"]],
+    },
+    "the one copy that two dependencies share": {
+      packageJsons: { "package.json": { name: "app", dependencies: { aauser: "1.0.0", shared: "^1.0.0" } } },
+      breakLockfile: entryPointedAt("shared", "shared", "2.0.0"),
+      seen: [
+        ["node_modules/aauser", "shared", "shared@1.5.0"],
+        [".", "shared", "shared@1.5.0"],
+      ],
+    },
+    // The override is the range that counts, and ^1.0.0 alone would accept 1.5.0.
+    "a dependency outside the override that replaces its range": {
+      packageJsons: {
+        "package.json": { name: "app", dependencies: { aauser: "1.0.0" }, overrides: { shared: "1.0.0" } },
+      },
+      breakLockfile: entryPointedAt("shared", "shared", "1.5.0"),
+      seen: [["node_modules/aauser", "shared", "shared@1.0.0"]],
+    },
+    // Another package whose version is inside the range.
+    "an npm: alias bound to another package": {
+      packageJsons: { "package.json": { name: "app", dependencies: { myalias: "npm:shared@^1.0.0" } } },
+      breakLockfile: entryPointedAt("myalias", "plain", "1.0.0"),
+      seen: [[".", "myalias", "shared@1.5.0"]],
+    },
+  };
+
+  // Whether the manifest of `shared` is in the cache decides if the dependency resolves at once or after a request.
+  const variants = Object.keys(shapes).flatMap(shape =>
+    (shape === "a package's dependency with no nested entry"
+      ? ([
+          ["hoisted", "cached"],
+          ["hoisted", "not cached"],
+          ["isolated", "cached"],
+          ["isolated", "not cached"],
+        ] as const)
+      : ([["hoisted", "not cached"]] as const)
+    ).map(([linker, manifest]) => [shape, linker, manifest] as const),
+  );
+
+  it.each(variants)("%s is resolved again (%s linker, manifest %s)", async (shape, linker, manifest) => {
+    const { packageJsons, breakLockfile, seen } = shapes[shape];
+    using registry = await serveRegistry(manifests);
+    using dir = createProject(registry.url, linker, packageJsons);
+    const cwd = String(dir);
+    const lockfilePath = join(cwd, "bun.lock");
+    const dropInstallState = async () => {
+      await dropNodeModules(cwd);
+      if (manifest === "not cached") await rm(cacheDir(cwd), { recursive: true, force: true });
+    };
+
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    const consistent = await file(lockfilePath).text();
+    const broken = breakLockfile(consistent);
+    expect(broken).not.toBe(consistent);
+
+    await write(lockfilePath, broken);
+    await dropInstallState();
+    expect(await install(cwd, "--frozen-lockfile")).toMatchObject({
+      err: expect.stringContaining("error: lockfile had changes, but lockfile is frozen"),
+      exitCode: 1,
+    });
+    expect(await file(lockfilePath).text()).toBe(broken);
+
+    await dropInstallState();
+    expect(await install(cwd)).toMatchObject({ err: expect.stringContaining("Saved lockfile"), exitCode: 0 });
+    expect(await file(lockfilePath).text()).toBe(consistent);
+    expect(await Promise.all(seen.map(([from, request]) => seenFrom(join(cwd, from), request)))).toEqual(
+      seen.map(([, , expected]) => expected),
+    );
+  });
+
+  const accepted: Record<string, Shape> = {
+    // A teammate's downgrade inside the range.
+    "a root dependency moved inside its range": {
+      packageJsons: { "package.json": { name: "app", dependencies: { shared: "^1.0.0" } } },
+      breakLockfile: entryPointedAt("shared", "shared", "1.0.0"),
+      seen: [[".", "shared", "shared@1.0.0"]],
+    },
+    "a nested entry moved inside its range": {
+      packageJsons: aauserNextToShared2,
+      breakLockfile: entryPointedAt("aauser/shared", "shared", "1.0.0"),
+      seen: [
+        ["node_modules/aauser", "shared", "shared@1.0.0"],
+        [".", "shared", "shared@2.0.0"],
+      ],
+    },
+    // A peer binds to the highest copy when none satisfies it.
+    "a peer bound outside its range": {
+      packageJsons: { "package.json": { name: "app", dependencies: { "has-peer": "1.0.0", shared: "2.0.0" } } },
+      breakLockfile: lockfile => lockfile,
+      seen: [["node_modules/has-peer", "shared", "shared@2.0.0"]],
+    },
+    // The override replaces the declared ^1.0.0.
+    "a dependency that an override binds outside its declared range": {
+      packageJsons: {
+        "package.json": { name: "app", dependencies: { aauser: "1.0.0" }, overrides: { shared: "2.0.0" } },
+      },
+      breakLockfile: lockfile => lockfile,
+      seen: [["node_modules/aauser", "shared", "shared@2.0.0"]],
+    },
+    // The plain ^1.0.0 of aauser follows the root's alias of the same name, to the range of the alias.
+    "a dependency that follows an npm: alias of its name": {
+      packageJsons: {
+        "package.json": { name: "app", dependencies: { aauser: "1.0.0", shared: "npm:shared@>=1.0.0" } },
+      },
+      breakLockfile: lockfile => lockfile,
+      seen: [["node_modules/aauser", "shared", "shared@2.0.0"]],
+    },
+    // Two rows, one folder: the devDependencies row gets it.
+    "the second row of a name that a workspace lists in two groups": {
+      packageJsons: {
+        "package.json": { name: "app", workspaces: ["packages/*"] },
+        "packages/lib/package.json": {
+          name: "lib",
+          version: "1.0.0",
+          dependencies: { shared: "2.0.0" },
+          devDependencies: { shared: "1.0.0" },
+        },
+      },
+      breakLockfile: lockfile => lockfile,
+      seen: [["packages/lib", "shared", "shared@1.0.0"]],
+    },
+  };
+
+  // With no manifest in the cache, resolving any dependency again would ask the registry for it.
+  it.each(Object.keys(accepted))("%s stays where bun.lock puts it", async shape => {
+    const { packageJsons, breakLockfile, seen } = accepted[shape];
+    using registry = await serveRegistry(manifests);
+    using dir = createProject(registry.url, "hoisted", packageJsons);
+    const cwd = String(dir);
+    const lockfilePath = join(cwd, "bun.lock");
+
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    const lockfile = breakLockfile(await file(lockfilePath).text());
+    await write(lockfilePath, lockfile);
+
+    for (const args of [["--frozen-lockfile"], []]) {
+      await dropNodeModules(cwd);
+      await rm(cacheDir(cwd), { recursive: true, force: true });
+      registry.requests.length = 0;
+      expect(await install(cwd, ...args)).toMatchObject({
+        err: expect.not.stringContaining("incorrect peer dependency"),
+        exitCode: 0,
+      });
+      expect({ args, manifests: registry.requests.filter(path => !path.endsWith(".tgz")) }).toEqual({
+        args,
+        manifests: [],
+      });
+      expect(await file(lockfilePath).text()).toBe(lockfile);
+    }
+    expect(await Promise.all(seen.map(([from, request]) => seenFrom(join(cwd, from), request)))).toEqual(
+      seen.map(([, , expected]) => expected),
+    );
   });
 });

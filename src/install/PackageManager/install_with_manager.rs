@@ -41,8 +41,9 @@ use bun_install_types::NodeLinker::NodeLinker;
 // to avoid one giant `impl PackageManager` block.
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
-    UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
-    save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
+    NpmAliasMap, UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main,
+    enqueue_patch_task_pre, save_lockfile, setup_global_dir, update_lockfile_if_needed,
+    write_yarn_lock,
 };
 
 use super::security_scanner;
@@ -603,6 +604,10 @@ pub fn install_with_manager(
     let named_update = manager.to_update && !manager.update_requests.is_empty();
     let mut named = NamedUpdates::default();
     if !needs_new_lockfile {
+        let unsatisfied = unsatisfied_rows(&manager.lockfile, &manager.known_npm_aliases);
+        if !unsatisfied.is_empty() {
+            enqueue_unsatisfied_rows(manager, &unsatisfied);
+        }
         if named_update {
             named = enqueue_named_updates(
                 manager,
@@ -1553,6 +1558,123 @@ fn enqueue_transitive(
         return Ok(DynamicBitSet::default());
     }
     transitive.enqueue_tracked(manager)
+}
+
+/// Rows bound to an npm package that the row does not accept: another package, or a version outside its range.
+/// bun.lock records where each package is placed, not which package each row chose, so loading binds a row to the
+/// nearest placement of its name. When two branches merge, or bun.lock is edited by hand, that placement can hold
+/// what another row put there.
+fn unsatisfied_rows(lockfile: &Lockfile, known_npm_aliases: &NpmAliasMap) -> Vec<DependencyID> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let pkg_names = lockfile.packages.items_name();
+    let pkg_name_hashes = lockfile.packages.items_name_hash();
+    let pkg_resolutions = lockfile.packages.items_resolution();
+    let has_overrides = !lockfile.overrides.is_empty();
+    let mut alias_names: Option<Vec<PackageNameHash>> = None;
+    let mut rows = Vec::new();
+    // Walked by owner: the rows the differ replaced still sit in the buffers, owned by nothing.
+    for slice in lockfile.packages.items_dependencies() {
+        for dep_id in slice.begin()..slice.end() {
+            let target = resolutions[dep_id as usize] as usize;
+            let Some(resolution) = pkg_resolutions.get(target) else {
+                continue;
+            };
+            if resolution.tag != ResolutionTag::Npm {
+                continue;
+            }
+            let dep = &dependencies[dep_id as usize];
+            // A peer binds to the highest version present when none satisfies it. A bundled copy ships in its parent's tarball.
+            if dep.behavior.is_peer() || dep.behavior.is_bundled() {
+                continue;
+            }
+
+            // What the resolver asks the registry for: an override or a catalog entry stands in for the declared range.
+            let replaced;
+            let (requested, asks_for_own_name) = if dep.version.tag == DependencyVersionTag::Catalog
+                || (has_overrides && lockfile.overrides.has_rule_for_name(dep.name_hash))
+            {
+                let Some(version) = crate::dedupe::effective_npm_range(lockfile, dep_id, dep)
+                else {
+                    continue;
+                };
+                replaced = version;
+                (replaced.npm(), false)
+            } else if dep.version.tag == DependencyVersionTag::Npm {
+                let requested = dep.version.npm();
+                (requested, !requested.is_alias)
+            } else {
+                continue;
+            };
+            // The common row compares two hashes and never reads the string buffer.
+            let same_package = if asks_for_own_name {
+                dep.name_hash == pkg_name_hashes[target]
+            } else {
+                requested.name.slice(buf) == pkg_names[target].slice(buf)
+            };
+            if same_package
+                && requested
+                    .version
+                    .satisfies(resolution.npm().version, buf, buf)
+            {
+                continue;
+            }
+
+            // One owner can list a name in two groups. Both rows share one folder, and the hoister gives it to the row
+            // it sorts first.
+            let shares_a_folder = (slice.begin()..slice.end()).any(|sibling_id| {
+                let sibling = &dependencies[sibling_id as usize];
+                sibling.name_hash == dep.name_hash
+                    && (resolutions[sibling_id as usize] as usize) < pkg_resolutions.len()
+                    && sibling.behavior.cmp(dep.behavior) == core::cmp::Ordering::Less
+            });
+            if shares_a_folder {
+                continue;
+            }
+
+            // A plain row follows an `npm:` alias that another row, an override or a catalog entry gives its name, to
+            // the package and the range of the alias. Which alias it met depends on the order of that install.
+            if dep.version.tag == DependencyVersionTag::Npm && !dep.version.npm().is_alias {
+                let alias_names = alias_names.get_or_insert_with(|| {
+                    let mut names: Vec<PackageNameHash> = dependencies
+                        .iter()
+                        .filter(|row| {
+                            row.version.tag == DependencyVersionTag::Npm
+                                && row.version.npm().is_alias
+                        })
+                        .map(|row| row.name_hash)
+                        .collect();
+                    index_sort::sort_slice_unstable_by(&mut names, |a, b| a.cmp(b));
+                    names
+                });
+                if known_npm_aliases.contains_key(&dep.name_hash)
+                    || alias_names.binary_search(&dep.name_hash).is_ok()
+                {
+                    continue;
+                }
+            }
+            rows.push(dep_id);
+        }
+    }
+    rows
+}
+
+/// Resolves each row again, the way the differ does for a row whose range changed in package.json.
+#[cold]
+#[inline(never)]
+fn enqueue_unsatisfied_rows(manager: &mut PackageManager, rows: &[DependencyID]) {
+    let _ = manager.get_cache_directory();
+    let _ = manager.get_temporary_directory();
+    for &dep_id in rows {
+        let dependency = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
+        manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
+        if let Err(err) =
+            enqueue_dependency_with_main(manager, dep_id, &dependency, invalid_package_id, false)
+        {
+            add_dependency_error(manager, &dependency, err);
+        }
+    }
 }
 
 #[derive(Default)]

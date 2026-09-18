@@ -1469,8 +1469,7 @@ static bool isSkippedInSQLiteQuery(const char c)
     return c == ' ' || c == ';' || (c >= '\t' && c <= '\r');
 }
 
-// sqlite3_changes64() persists across statements: report it only when this statement can have set it. Not exact
-// for DDL during which a virtual table writes, see https://github.com/oven-sh/bun/pull/43306.
+// sqlite3_changes64() persists across statements, so only a statement that can have set it reports it (#43306).
 static sqlite3_int64 directChangesSince(sqlite3_stmt* stmt, int totalChangesBefore)
 {
     sqlite3* db = sqlite3_db_handle(stmt);

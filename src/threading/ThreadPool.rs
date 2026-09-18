@@ -758,14 +758,28 @@ impl ThreadPool {
                     // Dropping JoinHandle detaches the thread.
                 }
                 Err(_) => {
+                    // Nothing is queued yet, so a smaller pool is fine here. A
+                    // later `notify_slow` retries the spawn and reports the
+                    // failure if no worker exists by then.
                     // SAFETY: `&self` keeps the pool live; `null` thread makes
                     // `unregister` return right after undoing the `spawned`
                     // increment CAS'd above (no per-thread wait past notify).
-                    return unsafe { Self::unregister(self, ptr::null_mut()) };
+                    unsafe { Self::unregister(self, ptr::null_mut()) };
+                    return;
                 }
             }
             sync = new_sync;
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exit_no_worker(err: &std::io::Error) -> ! {
+        bun_core::pretty_errorln!("<r><red>error<r>: Failed to spawn a worker thread: {}", err);
+        bun_core::note!(
+            "the process may have reached a thread limit (ulimit -u, or pids.max of its cgroup)"
+        );
+        bun_core::Global::exit(1);
     }
 
     #[inline(never)]
@@ -820,11 +834,18 @@ impl ThreadPool {
                                 Ok(_handle) => {
                                     // detach by dropping
                                 }
-                                Err(_) => {
+                                Err(err) => {
                                     // SAFETY: `&self` keeps the pool live; `null` thread makes
                                     // `unregister` return right after undoing the `spawned`
                                     // increment CAS'd above (no per-thread wait past notify).
-                                    return unsafe { Self::unregister(self, ptr::null_mut()) };
+                                    let prev = unsafe { Self::unregister(self, ptr::null_mut()) };
+                                    // The tasks pushed before this notify sit in the run
+                                    // queue. A live worker picks them up when it consumes
+                                    // the notification. With no worker they never run and
+                                    // the caller waits forever, so fail loudly instead.
+                                    if prev.spawned() == 1 && prev.state() != SyncState::Shutdown {
+                                        Self::exit_no_worker(&err);
+                                    }
                                 }
                             }
                             return;
@@ -960,7 +981,9 @@ impl ThreadPool {
     /// the joiner may return and the pool may be **deallocated**, so this fn
     /// takes `*const Self` (no `&self` protector) and never touches `pool`
     /// past that point — the shutdown chain follows worker-stack `.next` links.
-    unsafe fn unregister(pool: *const Self, maybe_thread: *mut Thread) {
+    ///
+    /// Returns the `Sync` state from before the `spawned` decrement.
+    unsafe fn unregister(pool: *const Self, maybe_thread: *mut Thread) -> Sync {
         // Un-spawn one thread, either due to a failed OS thread spawning or the thread is exiting.
         let one_spawned = {
             let mut s = Sync::zero();
@@ -983,7 +1006,7 @@ impl ThreadPool {
 
         // If this is a thread pool thread, wait for a shutdown signal by the thread pool join()er.
         let Some(thread) = NonNull::new(maybe_thread) else {
-            return;
+            return sync;
         };
         // `maybe_thread` is the calling worker's own stack-local `Thread`
         // (set in `ThreadRegistration::new`); it lives on this OS thread's
@@ -997,12 +1020,13 @@ impl ThreadPool {
         // We have to do that without touching the thread pool itself since its memory is invalidated by now.
         // So just follow our .next link.
         let Some(next_thread) = NonNull::new(thread.next) else {
-            return;
+            return sync;
         };
         // `next_thread` is a registered worker still blocked in
         // `join_event.wait()`; the BackRef invariant (pointee outlives holder)
         // holds for the duration of this `notify()` call.
         bun_ptr::BackRef::from(next_thread).join_event.notify();
+        sync
     }
 
     fn join(&self) {

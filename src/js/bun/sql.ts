@@ -525,10 +525,7 @@ const SQL: typeof Bun.SQL = function SQL(
       state.connectionState |= ReservedConnectionState.closed;
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       if (reservedTransaction.size > 0) {
-        // A reserved.begin() still owns the connection. The next holder from the
-        // pool must not share it until that transaction has committed or rolled back.
-        // The caller is not made to wait: its own transaction callback may be the
-        // one that calls release().
+        // Not awaited: the caller may be the transaction callback itself.
         Promise.all(Array.from(reservedTransaction)).then(releaseToPool);
       } else {
         releaseToPool();

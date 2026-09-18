@@ -46,7 +46,8 @@ RUN apt-get update -qq \
       --retry 5 \
     && gpg --batch --verify --output SHASUMS256.txt SHASUMS256.txt.asc \
       || (echo "error: failed to verify: $tag" && exit 1) \
-    && grep " bun-linux-$build.zip\$" SHASUMS256.txt | sha256sum -c - \
+    && line="$(grep -E "[ *]bun-linux-$build.zip\$" SHASUMS256.txt)" \
+    && printf '%s\n' "$line" | sha256sum -c - \
       || (echo "error: failed to verify: $tag" && exit 1) \
     && unzip "bun-linux-$build.zip" \
     && mv "bun-linux-$build/bun" /usr/local/bin/bun \

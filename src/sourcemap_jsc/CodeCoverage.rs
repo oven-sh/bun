@@ -269,30 +269,21 @@ pub struct MergedReport {
     /// Every report's ranges with their executed bit; deduplicated in `finish`.
     functions: Vec<(ByteRange, bool)>,
     stmts: Vec<(ByteRange, bool)>,
-    /// The first report's function ranges, sorted, for `shift_of`.
-    first_functions: Vec<ByteRange>,
+    /// The start of the first report's first function, for `shift_of`.
+    first_function_start: Option<u32>,
 }
 
 impl MergedReport {
-    /// The constant by which `report`'s functions are moved from the first
+    /// The constant by which `report`'s ranges are moved from the first
     /// report's, or zero. `bun test` prints a module that uses a jest global
     /// unbound with a `bun:test` import in front on the main thread only.
+    /// The first function of a module is top-level, so every report has it.
     fn shift_of(&self, report: &Report<'_>) -> i64 {
-        let first = &self.first_functions;
-        if first.is_empty() || first.len() != report.functions.len() {
-            return 0;
+        let start = report.functions.iter().map(|r| r.start).min();
+        match (self.first_function_start, start) {
+            (Some(first), Some(start)) => i64::from(first) - i64::from(start),
+            _ => 0,
         }
-        let mut incoming = report.functions.clone();
-        incoming.sort_unstable();
-        let delta = i64::from(first[0].start) - i64::from(incoming[0].start);
-        if delta == 0 {
-            return 0;
-        }
-        let moved_by_delta = first.iter().zip(&incoming).all(|(a, b)| {
-            i64::from(a.start) - i64::from(b.start) == delta
-                && i64::from(a.end) - i64::from(b.end) == delta
-        });
-        if moved_by_delta { delta } else { 0 }
     }
 
     pub fn add(&mut self, report: &Report<'_>) -> Result<(), bun_alloc::AllocError> {
@@ -304,8 +295,7 @@ impl MergedReport {
             self.executable_in_all = report.executable_lines.clone()?;
             self.executed_in_any = report.lines_which_have_executed.clone()?;
             self.line_hits.clone_from(&report.line_hits);
-            self.first_functions.clone_from(&report.functions);
-            self.first_functions.sort_unstable();
+            self.first_function_start = report.functions.iter().map(|r| r.start).min();
             shift = 0;
         } else {
             shift = self.shift_of(report);

@@ -739,6 +739,16 @@ export function double(n: number) {
   "worker4.ts": `import { double } from "./helpers.ts";
 postMessage(double(21));
 `,
+  "nested.ts": `export function inNestedWorker() {
+  return "nested";
+}
+`,
+  "worker5.ts": `const inner = new Worker(new URL("./worker6.ts", import.meta.url).href);
+inner.onmessage = e => postMessage(e.data);
+`,
+  "worker6.ts": `import { inNestedWorker } from "./nested.ts";
+postMessage(inNestedWorker());
+`,
   "worker.test.ts": `import { test, expect } from "bun:test";
 import { Worker as NodeWorker } from "node:worker_threads";
 import { covered } from "./lib.ts";
@@ -773,6 +783,10 @@ test("a module the main thread loads with injected jest globals", async () => {
   expect(await runWorker("./worker4.ts")).toBe(42);
 });
 
+test("a Worker started by a Worker", async () => {
+  expect(await runWorker("./worker5.ts")).toBe("nested");
+});
+
 test("an eval Worker has no file to report", async () => {
   const worker = new NodeWorker("require('node:worker_threads').parentPort.postMessage(1 + 1)", { eval: true });
   const { promise, resolve, reject } = Promise.withResolvers<unknown>();
@@ -784,10 +798,22 @@ test("an eval Worker has no file to report", async () => {
 `,
 };
 
-const coveredFiles = ["lib", "worker", "worker-only", "worker2", "alive", "worker3", "helpers", "worker4"];
+const coveredFiles = [
+  "lib",
+  "worker",
+  "worker-only",
+  "worker2",
+  "alive",
+  "worker3",
+  "helpers",
+  "worker4",
+  "nested",
+  "worker5",
+  "worker6",
+];
 
 function expectWorkerCoverage(stderr: string, lcov: string) {
-  expect(stderr).toContain("5 pass");
+  expect(stderr).toContain("6 pass");
   for (const file of coveredFiles) {
     expect(stderr).toMatch(new RegExp(` ${file}\\.ts +\\| +100\\.00 +\\| +100\\.00 +\\| +\n`));
   }

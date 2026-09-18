@@ -1077,6 +1077,9 @@ impl WebWorker {
             if vm.transpiler.options.code_coverage
                 && let Some(hooks) = runtime_hooks()
             {
+                // This worker's own children first, so that theirs is in by
+                // the time the parent sees this worker's signal.
+                wait_for_child_workers_coverage(vm, true);
                 // SAFETY: this thread's live VM; the API lock is held.
                 unsafe { (hooks.collect_worker_coverage)(core::ptr::from_mut(vm)) };
             }

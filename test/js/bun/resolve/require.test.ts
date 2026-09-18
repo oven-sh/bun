@@ -47,11 +47,12 @@ describe("require(specifier)", () => {
 
   // Like Node, a module that throws while it is being evaluated is dropped from
   // the cache, and the next require() of it runs the file again. The fixtures
-  // below have no CommonJS or ES module syntax on purpose: Bun loads such files
-  // through the ES module registry, which also holds CommonJS files that were
-  // first reached via import() and modules provided by plugins. A failed entry
+  // below have no CommonJS or ES module syntax on purpose: Node runs such files
+  // as CommonJS, Bun loads them through the ES module registry, which also
+  // holds CommonJS files that were first reached via import(). A failed entry
   // in that registry used to make every later require() rethrow the stored
-  // error without running the module again.
+  // error without running the module again. A file with ES module syntax keeps
+  // its error, in Node too.
   describe.concurrent("when the module throws while being evaluated", () => {
     // Throws the first `failures` times it is evaluated and succeeds afterwards.
     const flakyModule = (failures: number) => /* js */ `
@@ -95,6 +96,27 @@ describe("require(specifier)", () => {
         ],
         evaluations: 3,
       });
+    });
+
+    it("the next require() runs the file as it is on disk now", async () => {
+      const result = await runEntry({
+        "fixed-later.js": `throw new Error("v1");`,
+        "entry.js": /* js */ `
+          const path = require.resolve("./fixed-later.js");
+          const attempt = () => {
+            try {
+              require(path);
+              return "ok, version " + globalThis.version;
+            } catch (e) {
+              return e.message;
+            }
+          };
+          const before = attempt();
+          require("node:fs").writeFileSync(path, "globalThis.version = 2;");
+          console.log(JSON.stringify({ before, after: attempt() }));
+        `,
+      });
+      expect(result).toEqual({ before: "v1", after: "ok, version 2" });
     });
 
     it("require() evaluates a CommonJS module again after import() of it failed", async () => {
@@ -155,14 +177,15 @@ describe("require(specifier)", () => {
             setup(build) {
               build.module("virtual:flaky", () => ({
                 loader: "js",
-                contents: ${JSON.stringify(flakyModule(1) + `export const attempt = globalThis.evaluations;`)},
+                contents: ${JSON.stringify(flakyModule(1))},
               }));
             },
           });
           const attempts = [];
           for (let i = 0; i < 2; i++) {
             try {
-              attempts.push(require("virtual:flaky").attempt);
+              require("virtual:flaky");
+              attempts.push("ok");
             } catch (e) {
               attempts.push(e.message);
             }
@@ -170,7 +193,7 @@ describe("require(specifier)", () => {
           console.log(JSON.stringify({ attempts, evaluations: globalThis.evaluations }));
         `,
       });
-      expect(result).toEqual({ attempts: ["fail 1", 2], evaluations: 2 });
+      expect(result).toEqual({ attempts: ["fail 1", "ok"], evaluations: 2 });
     });
 
     it("calling require.extensions['.js'] directly evaluates it again", async () => {
@@ -196,9 +219,41 @@ describe("require(specifier)", () => {
       expect(result).toEqual({ attempts: ["fail 1", "ok"], evaluations: 2 });
     });
 
-    // Only require() retries. An ES module that failed stays failed for
-    // import(), which rejects with the error the module threw, as in Node.
-    it("import() of an ES module that failed under require() still rejects with the original error", async () => {
+    // Only require() retries, and only what Node runs as CommonJS. A file with
+    // ES module syntax that threw is not evaluated again: as in Node, every
+    // later require() and import() of it gets the error it threw.
+    it("an ES module is not evaluated again", async () => {
+      const result = await runEntry({
+        "bad.mjs": flakyModule(1) + `export const attempt = globalThis.evaluations;`,
+        "entry.js": /* js */ `
+          (async () => {
+            const errors = [];
+            for (let i = 0; i < 2; i++) {
+              try {
+                require("./bad.mjs");
+              } catch (e) {
+                errors.push(e);
+              }
+            }
+            try {
+              await import("./bad.mjs");
+            } catch (e) {
+              errors.push(e);
+            }
+            console.log(JSON.stringify({
+              messages: errors.map(e => e.message),
+              sameError: errors.every(e => e === errors[0]),
+              evaluations: globalThis.evaluations,
+            }));
+          })();
+        `,
+      });
+      expect(result).toEqual({ messages: ["fail 1", "fail 1", "fail 1"], sameError: true, evaluations: 1 });
+    });
+
+    // import() never retries: it rejects with the error the module threw under
+    // require(), also for a file that the next require() would run again.
+    it("import() of a module that failed under require() rejects with the original error", async () => {
       const result = await runEntry({
         "bad.mjs": flakyModule(Infinity),
         "entry.js": /* js */ `

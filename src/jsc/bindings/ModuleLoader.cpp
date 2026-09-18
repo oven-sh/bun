@@ -29,7 +29,7 @@
 
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
-#include <JavaScriptCore/CyclicModuleRecord.h>
+#include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -643,44 +643,49 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-static bool moduleRegistryEntryFailed(JSC::ModuleRegistryEntry* entry)
+// import, export, top-level await or import.meta: the syntax that makes Node
+// run a file as an ES module when its extension and package.json do not say.
+static bool hasESModuleSyntax(JSC::AbstractModuleRecord* record)
 {
-    switch (entry->status()) {
-    case JSC::ModuleRegistryEntry::Status::FetchFailed:
-    case JSC::ModuleRegistryEntry::Status::InstantiationFailed:
-    case JSC::ModuleRegistryEntry::Status::EvaluationFailed:
-        return true;
-    default:
-        break;
-    }
-    // A module that threw while being evaluated as a dependency of some other
-    // module's graph keeps Status::Fetched; the error is recorded on its record.
-    auto* record = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
-    return record && record->evaluationError();
+    auto* module = dynamicDowncast<JSC::JSModuleRecord>(record);
+    if (!module)
+        return false;
+    return !module->requestedModules().isEmpty() || !module->exportEntries().isEmpty() || module->hasTLA() || (module->features() & JSC::ImportMetaFeature);
+}
+
+// Whether the next require() has to run the module of `entry` again: it threw
+// while it was evaluated, and Node would have run it as CommonJS. That is a
+// file with no ES module syntax (the transpiler defaults it to ESM), or a
+// CommonJS module that import() loaded first (its entry has no JSModuleRecord).
+// An ES module that threw keeps its error for every later load, as in Node. A
+// failed fetch is not handled here: the loader drops that entry itself.
+static bool shouldRequireEvaluateAgain(JSC::ModuleRegistryEntry* entry)
+{
+    auto* record = entry->record();
+    bool threw = entry->status() == JSC::ModuleRegistryEntry::Status::EvaluationFailed;
+    // A module that threw as a dependency of some other module's graph keeps
+    // Status::Fetched; the error is recorded on its record.
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
+        threw = threw || cyclic->evaluationError();
+    return threw && !hasESModuleSyntax(record);
 }
 
 // A require() that throws removes the module from the require map
 // (finishRequireWithError, the catch blocks in CommonJS.ts) so that, as in Node,
 // the next require() runs the file again. If that load went through the module
-// registry (a file the transpiler classified as ESM, a CommonJS file first
-// reached via import(), a plugin module), the registry still holds the entry
-// with the error stored on it, and JSModuleLoader::loadModule settles every
-// later load of that key with the stored error without running anything. Only
-// failed entries are dropped: an entry that is still loading or loaded fine may
-// belong to an in-flight import(), and dropping it would evaluate that module
-// twice.
-void evictFailedModuleRegistryEntry(Zig::GlobalObject* globalObject, const WTF::String& specifier)
+// registry, the registry still holds the entry with the error stored on it, and
+// JSModuleLoader::loadModule settles every later load of that key with the
+// stored error without running anything. No other entry is dropped: one that is
+// still loading or loaded fine may belong to an in-flight import(), and dropping
+// it would evaluate that module twice. `loader` is the one the load goes
+// through: the requiring module's Bun.ModuleGraph's, or the global object's.
+static void evictFailedModuleRegistryEntry(JSC::VM& vm, JSC::JSModuleLoader* loader, const WTF::String& specifier)
 {
-    auto* moduleLoader = globalObject->moduleLoader();
-    auto key = JSC::Identifier::fromString(globalObject->vm(), specifier);
-    auto* entry = moduleLoader->registryEntry(key);
-    if (!entry || !moduleRegistryEntryFailed(entry))
+    auto key = JSC::Identifier::fromString(vm, specifier);
+    auto* entry = loader->registryEntry(key);
+    if (!entry || !shouldRequireEvaluateAgain(entry))
         return;
-
-    // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
-    // under cellLock(); take the same lock so the removal can't race it.
-    WTF::Locker locker { moduleLoader->cellLock() };
-    moduleLoader->removeEntry(key);
+    loader->removeEntry(key); // takes the loader's cellLock itself
 }
 
 JSValue fetchCommonJSModule(
@@ -702,7 +707,7 @@ JSValue fetchCommonJSModule(
 
     BunString specifier = Bun::toString(specifierWtfString);
 
-    evictFailedModuleRegistryEntry(globalObject, specifierWtfString);
+    evictFailedModuleRegistryEntry(vm, loader, specifierWtfString);
 
     bool wasModuleMock = false;
 
@@ -872,6 +877,10 @@ JSValue fetchCommonJSModuleNonBuiltin(
 {
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
+    // A direct Module._extensions[ext](module, filename) call does not pass
+    // through fetchCommonJSModule.
+    if constexpr (isExtension)
+        evictFailedModuleRegistryEntry(vm, loader, specifierWtfString);
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {

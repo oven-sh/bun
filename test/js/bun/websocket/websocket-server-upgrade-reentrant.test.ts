@@ -171,3 +171,92 @@ for (const via of ["data", "headers"] as const) {
     expect(exitCode).toBe(0);
   });
 }
+
+// uws marks the connection its parser is currently working on as "upgraded"
+// when server.upgrade() runs inside a request dispatch. That mark used to be
+// set for ANY upgrade performed during the dispatch, including one for a
+// request that arrived on a different connection (parked by fetch() and
+// upgraded later from another request's handler, or from a microtask drained
+// during it). The connection actually being parsed was then treated as gone:
+// the rest of its read buffer (pipelined requests) was dropped and its
+// post-parse bookkeeping skipped.
+test("server.upgrade() of a request parked by another connection leaves the connection being parsed intact", async () => {
+  let parked: { request: Request; resolve: (response: Response | undefined) => void } | undefined;
+  const requestParked = Promise.withResolvers<void>();
+  const websocketOpened = Promise.withResolvers<void>();
+
+  using server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch(request, server) {
+      const { pathname } = new URL(request.url);
+      switch (pathname) {
+        case "/ws":
+          return new Promise<Response | undefined>(resolve => {
+            parked = { request, resolve };
+            requestParked.resolve();
+          });
+        case "/approve": {
+          const upgraded = server.upgrade(parked!.request);
+          parked!.resolve(undefined);
+          return new Response(upgraded ? "approved" : "upgrade failed");
+        }
+        default:
+          return new Response(pathname);
+      }
+    },
+    websocket: {
+      open() {
+        websocketOpened.resolve();
+      },
+      message() {},
+    },
+  });
+
+  const ws = new WebSocket(new URL("/ws", server.url).href.replace("http", "ws"));
+  const websocketFailed = (event: Event) => {
+    const error = new Error(`client WebSocket ${event.type}`);
+    requestParked.reject(error);
+    websocketOpened.reject(error);
+  };
+  ws.addEventListener("error", websocketFailed);
+  ws.addEventListener("close", websocketFailed);
+  await requestParked.promise;
+
+  // Both requests in one write so the parser sees the second one in the same
+  // read as the one whose handler performs the upgrade. `Connection: close`
+  // on the second makes the server close the connection once it has been
+  // answered; a dropped second request leaves the connection open instead.
+  const received: Buffer[] = [];
+  const connectionClosed = Promise.withResolvers<void>();
+  await Bun.connect({
+    hostname: server.hostname,
+    port: server.port,
+    socket: {
+      open(socket) {
+        socket.write(
+          "GET /approve HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" +
+            "GET /second HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+        );
+      },
+      data(_socket, data) {
+        received.push(Buffer.from(data));
+      },
+      close() {
+        connectionClosed.resolve();
+      },
+      error(_socket, error) {
+        connectionClosed.reject(error);
+      },
+    },
+  });
+
+  await Promise.all([connectionClosed.promise, websocketOpened.promise]);
+  const responses = Buffer.concat(received).toString();
+  expect(responses.match(/HTTP\/1\.1 200 OK\r\n/g)).toHaveLength(2);
+  expect(responses).toEndWith("\r\n\r\n/second");
+  expect(responses).toContain("\r\n\r\napproved");
+
+  ws.removeEventListener("close", websocketFailed);
+  ws.close();
+});

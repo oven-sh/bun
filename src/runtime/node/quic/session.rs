@@ -614,6 +614,9 @@ impl QuicSession {
     pub(super) fn is_server(&self) -> bool {
         self.is_server.get()
     }
+    pub(super) fn internal_error_code(&self) -> u64 {
+        self.with_state(|s| s.internal_error_code)
+    }
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
     }

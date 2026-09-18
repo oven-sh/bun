@@ -249,9 +249,8 @@ pub mod wire {
     }
 }
 
-/// Folds several VMs' `Report`s for one source file into one: the workers of
-/// `bun test --parallel`, and the main thread plus the `Worker` threads of
-/// one process, each of which loaded the file.
+/// Folds several VMs' `Report`s for one source file into one (the workers of
+/// `bun test --parallel`, or the main thread and the `Worker` threads).
 ///
 /// Hits and executed lines/functions/blocks union across reports. Executable
 /// lines do not: a process that never ran a function marks the function's
@@ -270,18 +269,14 @@ pub struct MergedReport {
     /// Every report's ranges with their executed bit; deduplicated in `finish`.
     functions: Vec<(ByteRange, bool)>,
     stmts: Vec<(ByteRange, bool)>,
-    /// The first report's function ranges, sorted: what `shift_of` compares
-    /// the others against.
+    /// The first report's function ranges, sorted, for `shift_of`.
     first_functions: Vec<ByteRange>,
 }
 
 impl MergedReport {
-    /// The main thread of `bun test` prints a module that uses a jest global
-    /// unbound with a `bun:test` import in front, a `Worker` thread does not.
-    /// JSC then reports the same functions at offsets moved by the import's
-    /// length. When `report` has the first report's functions exactly, each
-    /// moved by one constant, that constant is returned so the ranges line up
-    /// again. Zero otherwise.
+    /// The constant by which `report`'s functions are moved from the first
+    /// report's, or zero. `bun test` prints a module that uses a jest global
+    /// unbound with a `bun:test` import in front on the main thread only.
     fn shift_of(&self, report: &Report<'_>) -> i64 {
         let first = &self.first_functions;
         if first.is_empty() || first.len() != report.functions.len() {
@@ -1168,8 +1163,7 @@ impl ByteRange {
         }
     }
 
-    /// This range moved by `delta` bytes. A range that would start before
-    /// the file is left as it is.
+    /// This range moved by `delta` bytes, or unchanged if that underflows.
     fn shifted(self, delta: i64) -> ByteRange {
         let start = i64::from(self.start) + delta;
         let end = i64::from(self.end) + delta;

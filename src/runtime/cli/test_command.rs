@@ -1471,9 +1471,7 @@ impl CommandLineReporter {
         let Some(map) = ByteRangeMapping::map() else {
             return;
         };
-        // SAFETY: the map is `thread_local!`, so this thread owns it, and the
-        // one report loop per thread (the main thread's at the end of the
-        // run, a Worker's in its `shutdown()`) is the only borrow.
+        // SAFETY: the map is `thread_local!`; this loop is its only borrow.
         let map = unsafe { &mut *map.as_ptr() };
         let relative_dir = FileSystem::get().top_level_dir;
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
@@ -1493,14 +1491,9 @@ impl CommandLineReporter {
         }
     }
 
-    /// This process's coverage: the main thread's reports, each folded with
-    /// the reports of every Worker thread that loaded the same file (see
-    /// [`collect_worker_coverage`]). Sorted by path.
-    ///
-    /// A Worker still running is stopped first: the run is over, and its
-    /// coverage exists only once its VM shuts down. Not under `--watch`,
-    /// where the process lives on: there such a Worker keeps running and is
-    /// left out of the report.
+    /// This process's coverage: the main thread's reports folded with those
+    /// of every Worker thread. Sorted by path. A Worker still running is
+    /// stopped first, except under `--watch`.
     pub(crate) fn coverage_reports(
         vm: &mut VirtualMachine,
         opts: &CodeCoverageOptions,
@@ -1557,22 +1550,17 @@ impl CommandLineReporter {
     }
 }
 
-/// The `--coverage` options of this run, set once on the main thread before
-/// the first source loads with coverage on. Worker threads read it too
-/// (`BunTest__shouldGenerateCodeCoverage`, [`collect_worker_coverage`]), so
-/// it lives here and not behind the JS-thread-only `Jest::RUNNER`.
+/// The `--coverage` options of this run. Worker threads read it too, so it
+/// is not behind the JS-thread-only `Jest::RUNNER`.
 static COVERAGE_OPTIONS: std::sync::OnceLock<&'static CodeCoverageOptions> =
     std::sync::OnceLock::new();
 
-/// Coverage of every Worker VM that has shut down, one `wire`-encoded
-/// `Report` per file the worker loaded. Filled by [`collect_worker_coverage`]
-/// on the worker's thread, drained by [`CommandLineReporter::coverage_reports`].
+/// One `wire`-encoded `Report` per file a Worker VM loaded, from every Worker
+/// that has shut down.
 static WORKER_COVERAGE_REPORTS: bun_threading::Guarded<Vec<Vec<u8>>> =
     bun_threading::Guarded::new(Vec::new());
 
-/// `RuntimeHooks::collect_worker_coverage`: a Worker VM is about to be
-/// destroyed. Generate its reports now, while its control flow profiler and
-/// its thread-local `ByteRangeMapping`s still exist.
+/// `RuntimeHooks::collect_worker_coverage`.
 ///
 /// # Safety
 /// `vm` is the live worker VM on its own thread; its JSC VM is alive.
@@ -1780,8 +1768,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
         return false;
     }
 
-    // A `blob:` or `data:` module (a Worker made with `eval: true`) is not a
-    // file the report could name.
+    // Not a file (a Worker made with `eval: true`).
     if strings::has_prefix_comptime(slice, b"blob:")
         || strings::has_prefix_comptime(slice, b"data:")
     {
@@ -1789,8 +1776,6 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     }
 
     let ext = bun_path::extension(slice);
-    // `VirtualMachine::get()` is the calling thread's VM: the main VM, or a
-    // Worker's when it loads a source with coverage on.
     let loader_by_ext = VirtualMachine::get()
         .as_mut()
         .transpiler

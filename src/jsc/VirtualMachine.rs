@@ -2861,14 +2861,11 @@ pub struct RuntimeHooks {
     /// # Safety
     /// JS thread; `runtime_state` installed.
     pub close_timer_loop_handles_after_vm_destroyed: unsafe fn(vm: *mut VirtualMachine),
-    /// `bun test --coverage`: hand a Worker VM's coverage (its thread-local
-    /// `ByteRangeMapping`s and its control flow profiler) to the test runner
-    /// before the VM is destroyed. The runner merges it into the main
-    /// thread's report. No-op outside `bun test --coverage`.
+    /// `bun test --coverage`: hand a Worker VM's coverage to the test runner
+    /// before the VM is destroyed.
     ///
     /// # Safety
-    /// `vm` is the live worker VM on its own thread, with its JSC VM still
-    /// alive and the API lock held.
+    /// `vm` is the live worker VM on its own thread; its JSC VM is alive.
     pub collect_worker_coverage: unsafe fn(vm: *mut VirtualMachine),
 }
 

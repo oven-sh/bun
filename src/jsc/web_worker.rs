@@ -96,9 +96,7 @@ pub struct WebWorker {
     /// ancestor) asks it to terminate. `None` before `start_vm()` publishes it
     /// and after `shutdown()` unpublishes it.
     vm_handle: bun_threading::Guarded<Option<crate::VmHandle>>,
-    /// Set by `shutdown()` once the VM's coverage has been handed to the test
-    /// runner (or once it is clear none will be). `bun test --coverage` waits
-    /// on it before it reports.
+    /// Set by `shutdown()` once its coverage is with the test runner.
     coverage_handed_over: bun_threading::ResetEvent,
 
     // ---- Parent-thread only ---------------------------------------------------
@@ -134,8 +132,7 @@ struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
-    /// The parent runs under `bun test --coverage`: the worker VM records
-    /// coverage too, and hands it to the test runner when it shuts down.
+    /// The parent's `transpiler.options.code_coverage`.
     code_coverage: bool,
 }
 
@@ -204,21 +201,10 @@ pub fn join_child_workers(parent: &mut VirtualMachine) {
     }
 }
 
-/// `bun test --coverage` is about to report: wait until every child of the
-/// calling thread that is stopping has handed its coverage to the test
-/// runner (`shutdown()` does that before it tears the VM down). With
-/// `stop_running`, a child still running is asked to stop first: the run is
-/// over. Without it (`--watch`), such a child keeps running and is not
-/// reported.
-///
-/// The wait is bounded by `COVERAGE_HANDOVER_TIMEOUT_NS` for all children
-/// together. Termination interrupts script, not a native call a child is
-/// blocked in (`Atomics.wait`, a sync read), and such a child must not hang
-/// the run: it is reported without its coverage, as before.
-///
-/// Parent thread only: `child_workers` is touched on no other thread. The
-/// threads are not joined here. The child's `workerGlobalScopeDestroyed`
-/// task releases and joins it on this thread's loop, as always.
+/// `bun test --coverage` is about to report: wait until every stopping child
+/// has handed its coverage to the test runner. With `stop_running`, a child
+/// still running is asked to stop first. The wait is bounded: termination
+/// does not interrupt a native call a child is blocked in. Parent thread.
 pub fn wait_for_child_workers_coverage(parent: &VirtualMachine, stop_running: bool) {
     const COVERAGE_HANDOVER_TIMEOUT_NS: u64 = 10_000_000_000;
     debug_assert!(core::ptr::eq(parent, VirtualMachine::get()));
@@ -227,8 +213,7 @@ pub fn wait_for_child_workers_coverage(parent: &VirtualMachine, stop_running: bo
         if stop_running {
             WebWorker::request_termination(child);
         }
-        // SAFETY: registered children are live until the parent releases
-        // them (the proxy's ref), which happens on this thread, later.
+        // SAFETY: a registered child is live until this thread releases it.
         let child = unsafe { &*child };
         if !child.has_requested_terminate() {
             continue;
@@ -792,8 +777,7 @@ impl WebWorker {
                 (hooks.apply_standalone_runtime_flags)(b, graph);
             }
 
-            // Same setup as the main VM in `TestCommand` so the worker's
-            // sources keep their lines and JSC records their basic blocks.
+            // As `TestCommand` sets up the main VM.
             if code_coverage {
                 b.options.code_coverage = true;
                 b.options.minify_syntax = false;
@@ -1093,12 +1077,9 @@ impl WebWorker {
             if vm.transpiler.options.code_coverage
                 && let Some(hooks) = runtime_hooks()
             {
-                // SAFETY: this thread's live VM, JSC VM alive, API lock held
-                // since `thread_main`.
+                // SAFETY: this thread's live VM; the API lock is held.
                 unsafe { (hooks.collect_worker_coverage)(core::ptr::from_mut(vm)) };
             }
-            // Before the teardown below: that can take a while, and the
-            // parent's report needs nothing past this point.
             self.coverage_handed_over.set();
 
             // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy ----------
@@ -1127,7 +1108,6 @@ impl WebWorker {
                 );
             }
         } else {
-            // No VM ever ran: nothing to hand over.
             self.coverage_handed_over.set();
         }
         log!(

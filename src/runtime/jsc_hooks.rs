@@ -1640,8 +1640,6 @@ unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) 
     }
 }
 
-/// `RuntimeHooks::collect_worker_coverage`.
-///
 /// # Safety
 /// `vm` is the live worker VM on its own thread; its JSC VM is alive.
 unsafe fn collect_worker_coverage(vm: *mut VirtualMachine) {

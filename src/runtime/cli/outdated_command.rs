@@ -64,8 +64,7 @@ impl<'a> FilterType<'a> {
     // *NOTE*: name and path are not allocated → no Drop impl needed.
 }
 
-/// Patterns combine like `--filter` values: a dependency is selected when a pattern matches its
-/// name, or when every pattern is negated. A negated pattern that rejects the name removes it.
+/// Combines the patterns like `--filter` values (`workspace_selection::select`).
 fn package_patterns_select(patterns: &[FilterType<'_>], dep_name: &[u8]) -> bool {
     let mut has_positive = false;
     let mut selected = false;

@@ -55,10 +55,7 @@ static bool svEqualsIgnoreCase(std::string_view a, std::string_view lower)
     return true;
 }
 
-// Does `value` contain `lowerToken` at non-alphanumeric boundaries,
-// ASCII-case-insensitively? Mirrors the /(?:^|\W)100-continue(?:$|\W)/i check
-// node:http applies to the Expect value. Not a list-item match ("x-100-continue"
-// counts). The Connection verdicts come from HttpRequest::hasConnectionToken.
+// Mirrors node:http's /(?:^|\W)100-continue(?:$|\W)/i check on the Expect value.
 static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
 {
     const size_t n = value.length(), m = lowerToken.length();
@@ -105,10 +102,8 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     // Deliberate: the bitfield scans every header the parser accepted, like
     // the parser's own Host/Expect handling, while req.rawHeaders/req.headers
     // still apply the server.maxHeadersCount truncation on materialization.
-    // The Connection bits follow llhttp (F_CONNECTION_CLOSE, F_CONNECTION_UPGRADE):
-    // the word must be a whole item of the list, so "close-x" and "foo upgrade"
-    // do not count. The Upgrade bit follows F_UPGRADE: a non-empty value.
     uint32_t bits = 0;
+    // llhttp's F_CONNECTION_CLOSE / F_CONNECTION_UPGRADE: a whole list item.
     if (request->hasConnectionClose())
         bits |= kDispatchConnClose;
     if (request->hasConnectionToken("upgrade"))
@@ -149,6 +144,7 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             }
             break;
         case 7:
+            // llhttp's F_UPGRADE needs a non-empty value.
             if (!value.empty() && svEqualsIgnoreCase(name, "upgrade"))
                 bits |= kDispatchHasUpgrade;
             break;

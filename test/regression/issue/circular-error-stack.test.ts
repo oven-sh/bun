@@ -82,3 +82,63 @@ test("error with circular reference in cause chain", async () => {
   expect(stdout).not.toContain("Maximum call stack");
   expect(stderr).not.toContain("Maximum call stack");
 });
+
+test.concurrent("uncaught error that is its own cause and its own errors entry", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `const e = new Error('cyc'); e.cause = e; e.errors = [e]; throw e;`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("error: cyc");
+  expect(stderr).toContain("[Circular]");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("console.log of error that is its own cause and its own errors entry", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const e = new Error('cyc'); e.cause = e; e.errors = [e]; console.log(e); console.log('after error print');`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("[Circular]");
+  expect(stdout).toContain("after error print");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("worker uncaught cyclic error reaches the parent error event intact", async () => {
+  using dir = tempDir("worker-cyclic-error", {
+    "index.js": `
+      const { Worker } = require("node:worker_threads");
+      const src = "const e = new Error('cyc'); e.cause = e; e.errors = [e]; throw e";
+      const w = new Worker(src, { eval: true });
+      w.on("error", e => console.log("error-event", e.name, JSON.stringify(e.message)));
+      w.on("exit", c => console.log("worker-exit", c));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain('error-event Error "cyc"');
+  expect(stdout).toContain("worker-exit 1");
+  expect(exitCode).toBe(0);
+});

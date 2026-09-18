@@ -889,4 +889,38 @@ describe.concurrent("hoisted linker: a failed download of a package that a peer 
       exitCode: 0,
     });
   });
+
+  // The root's optional entry owns the slot, so both of the workspace's entries
+  // are deduplicated onto it. The workspace's own optional entry still decides.
+  it("is a warning when a workspace lists the peer in optionalDependencies and the root owns the slot", async () => {
+    using t = await registry([{ name: "baz", version: "1.0.0" }]);
+    await writeFile(
+      join(t.dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        workspaces: ["packages/*"],
+        optionalDependencies: { baz: "1.0.0" },
+      }),
+    );
+    await mkdir(join(t.dir, "packages", "w"), { recursive: true });
+    await writeFile(
+      join(t.dir, "packages", "w", "package.json"),
+      JSON.stringify({
+        name: "w",
+        version: "0.0.1",
+        optionalDependencies: { baz: "1.0.0" },
+        peerDependencies: { baz: "1.0.0" },
+      }),
+    );
+    expect(await install(t.dir)).toEqual({ warnLines: [], errorLines: [], exitCode: 0 });
+
+    await rm(join(t.dir, "node_modules"), { recursive: true, force: true });
+    t.fail("baz", "1.0.0");
+    expect(await install(t.dir)).toEqual({
+      warnLines: [`warn: GET ${t.tarball("baz", "1.0.0")} - 404`],
+      errorLines: [],
+      exitCode: 0,
+    });
+  });
 });

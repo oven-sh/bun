@@ -125,8 +125,6 @@ enum HoistDependencyResult {
     DependencyLoop,
     /// Deduplicated onto a placed dependency on this package.
     Hoisted(PackageID),
-    /// Deduplicated onto the same parent's entry of the same name, whose group decides.
-    HoistedOntoSibling,
     Resolve(PackageID),
     ResolveReplace(ResolveReplace),
     ResolveLater,
@@ -493,16 +491,30 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         self.lockfile().buffers.string_bytes.as_slice()
     }
 
-    /// `dependency` is linked, bound to `pkg_id`.
-    fn mark_required(&mut self, dependency: &Dependency, pkg_id: PackageID) {
-        if METHOD == BuilderMethod::Filter
-            && !dependency
+    /// `dependency`, one of `parent_range`, is linked, bound to `pkg_id`.
+    fn mark_required(
+        &mut self,
+        dependency: &Dependency,
+        parent_range: DependencyIDSlice,
+        pkg_id: PackageID,
+    ) {
+        if METHOD != BuilderMethod::Filter
+            || dependency
                 .behavior
                 .contains(crate::dependency::Behavior::OPTIONAL)
-            && (pkg_id as usize) < self.required_packages.bit_length()
+            || (pkg_id as usize) >= self.required_packages.bit_length()
         {
-            self.required_packages.set(pkg_id as usize);
+            return;
         }
+        // A peer whose parent also lists the name in `optionalDependencies` is an optional peer.
+        if dependency.behavior.is_peer()
+            && self.dependencies[parent_range.begin() as usize..parent_range.end() as usize]
+                .iter()
+                .any(|dep| dep.name_hash == dependency.name_hash && dep.behavior.is_optional())
+        {
+            return;
+        }
+        self.required_packages.set(pkg_id as usize);
     }
 
     /// Flatten the multi-dimensional ArrayList of package IDs into a single easily serializable array
@@ -946,11 +958,7 @@ impl Tree {
                             resolution_list,
                             builder,
                         );
-                        if matches!(
-                            hoisted,
-                            HoistDependencyResult::Hoisted(_)
-                                | HoistDependencyResult::HoistedOntoSibling
-                        ) {
+                        if matches!(hoisted, HoistDependencyResult::Hoisted(_)) {
                             break 'hoisted hoisted;
                         }
                     }
@@ -986,10 +994,9 @@ impl Tree {
             };
 
             match hoisted {
-                HoistDependencyResult::DependencyLoop
-                | HoistDependencyResult::HoistedOntoSibling => continue,
+                HoistDependencyResult::DependencyLoop => continue,
                 HoistDependencyResult::Hoisted(bound_pkg_id) => {
-                    builder.mark_required(dependency, bound_pkg_id);
+                    builder.mark_required(dependency, resolution_list, bound_pkg_id);
                     continue;
                 }
 
@@ -1022,7 +1029,7 @@ impl Tree {
                 }
                 HoistDependencyResult::ResolveReplace(replace) => {
                     debug_assert!(pkg_id != invalid_package_id);
-                    builder.mark_required(dependency, pkg_id);
+                    builder.mark_required(dependency, resolution_list, pkg_id);
                     builder.late_bound_optional_peer = true;
                     builder.resolutions[replace.dep_id as usize] = pkg_id;
                     if let Some(entry) = builder
@@ -1077,7 +1084,7 @@ impl Tree {
                     entry.value_ptr.put(dep_id, ())?;
                 }
                 HoistDependencyResult::Placement(dest) => {
-                    builder.mark_required(dependency, pkg_id);
+                    builder.mark_required(dependency, resolution_list, pkg_id);
                     {
                         // Go through ListExt
                         // accessors sequentially so the &mut borrows do not overlap.
@@ -1174,13 +1181,13 @@ impl Tree {
                 return HoistDependencyResult::Resolve(res_id); // 1
             }
 
-            if input_dep_range.contains(dep_id) {
-                // same package lists this name in another dependency group
-                return HoistDependencyResult::HoistedOntoSibling; // 1
-            }
-
             if res_id == package_id {
                 // this dependency is the same package as the other, hoist
+                return HoistDependencyResult::Hoisted(res_id); // 1
+            }
+
+            if input_dep_range.contains(dep_id) {
+                // same package lists this name in another dependency group
                 return HoistDependencyResult::Hoisted(res_id); // 1
             }
 

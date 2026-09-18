@@ -243,6 +243,40 @@ describe("clear", () => {
   });
 });
 
+describe("_idleTimeout", () => {
+  const idleTimeoutOf = (timer: object) => (timer as { _idleTimeout: number })._idleTimeout;
+
+  // node's unenroll() sets _idleTimeout to -1 on every explicit cancel path.
+  it.each([
+    ["clearTimeout", (t: NodeJS.Timeout) => void clearTimeout(t)],
+    ["clearInterval", (t: NodeJS.Timeout) => void clearInterval(t)],
+    ["close()", (t: NodeJS.Timeout) => void t.close()],
+    ["Symbol.dispose", (t: NodeJS.Timeout) => t[Symbol.dispose]()],
+  ])("%s sets it to -1", (_, cancel) => {
+    const timeout = setTimeout(() => {
+      throw new Error("timeout not cleared");
+    }, 1000);
+    expect(idleTimeoutOf(timeout)).toBe(1000);
+    cancel(timeout);
+    expect(idleTimeoutOf(timeout)).toBe(-1);
+  });
+
+  it("a timer that fired keeps its duration", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const timeout = setTimeout(resolve, 1);
+    await promise;
+    expect(idleTimeoutOf(timeout)).toBe(1);
+  });
+
+  it("an immediate has none, and disposing it does not add one", () => {
+    const immediate = setImmediate(() => {
+      throw new Error("immediate not cleared");
+    });
+    immediate[Symbol.dispose]();
+    expect("_idleTimeout" in immediate).toBe(false);
+  });
+});
+
 describe("_idleStart", () => {
   // https://github.com/oven-sh/bun/issues/26508
   // Next.js 16 Cache Components writes `t2._idleStart = t1._idleStart` so two

@@ -556,13 +556,12 @@ describe("backpressure", () => {
         res.on("close", () => {
           events.push("close");
           state.writableFinishedAtClose = res.writableFinished;
-          // The response did finish: stream.finished() agrees, and a late end() says so instead of waiting.
+          // The response did finish: stream.finished() agrees, and a late end() says so at once instead of waiting.
           finished(res, err => {
             state.streamFinished = err?.code ?? "ok";
-            res.end((lateErr?: NodeJS.ErrnoException) => {
-              state.lateEnd = lateErr?.code;
-              closed.resolve();
-            });
+            state.lateEnd = "not called";
+            res.end((lateErr?: NodeJS.ErrnoException) => (state.lateEnd = lateErr?.code));
+            closed.resolve();
           });
         });
         writeBodyInChunks(

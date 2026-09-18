@@ -155,8 +155,9 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
         resolution: &Resolution,
         err: crate::Error,
         url: &[u8],
+        is_required: bool,
     ) {
-        ctx.on_package_download_error(id, name, resolution, err, url);
+        ctx.on_package_download_error(id, name, resolution, err, url, is_required);
     }
 }
 
@@ -2409,6 +2410,7 @@ pub(crate) fn install_isolated_packages(
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
                     let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
+                    let is_required = dep.behavior.is_required();
 
                     match pkg_res_tag {
                         ResolutionTag::Npm => {
@@ -2429,12 +2431,7 @@ pub(crate) fn install_isolated_packages(
                                     crate::network_task::ForTarballError::AlreadyFailed
                                     | crate::network_task::ForTarballError::Offline,
                                 ) => {
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    installer.on_download_not_queued(entry_id, is_required);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2471,10 +2468,7 @@ pub(crate) fn install_isolated_packages(
                             ) == crate::package_manager::GitEnqueueResult::OfflineMiss
                             {
                                 // --offline and not cached: nothing was queued
-                                entry_steps[entry_id.get() as usize]
-                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                installer
-                                    .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                installer.on_download_not_queued(entry_id, is_required);
                                 continue;
                             }
                         }
@@ -2499,12 +2493,7 @@ pub(crate) fn install_isolated_packages(
                                     crate::network_task::ForTarballError::AlreadyFailed
                                     | crate::network_task::ForTarballError::Offline,
                                 ) => {
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    installer.on_download_not_queued(entry_id, is_required);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2555,12 +2544,7 @@ pub(crate) fn install_isolated_packages(
                                     crate::network_task::ForTarballError::AlreadyFailed
                                     | crate::network_task::ForTarballError::Offline,
                                 ) => {
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    installer.on_download_not_queued(entry_id, is_required);
                                     continue;
                                 }
                                 Err(err) => {

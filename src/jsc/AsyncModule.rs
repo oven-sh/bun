@@ -262,6 +262,7 @@ impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbac
         resolution: &Resolution,
         err: bun_install::Error,
         url: &[u8],
+        _is_required: bool,
     ) {
         ctx.on_package_download_error(package_id, name, resolution, err.name(), url)
     }

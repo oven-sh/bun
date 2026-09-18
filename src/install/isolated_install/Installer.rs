@@ -240,6 +240,10 @@ impl<'a> Installer<'a> {
     /// Without this, the upfront pending-task slot for each waiting entry is
     /// never released and the install loop blocks forever on
     /// `pendingTaskCount() == 0`.
+    ///
+    /// `run_tasks` has already reported a download that only optional
+    /// dependencies need (`is_required == false`) as a warning. The waiting
+    /// entries are left out and the install does not fail.
     pub(crate) fn on_package_download_error(
         &mut self,
         task_id: crate::package_manager_task::Id,
@@ -247,18 +251,34 @@ impl<'a> Installer<'a> {
         resolution: &Resolution,
         err: crate::Error,
         url: &[u8],
+        is_required: bool,
     ) {
-        if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
-            let callbacks = removed;
+        let Some(callbacks) = self.manager_mut().task_queue.remove(&task_id) else {
+            if is_required {
+                // No waiting entry — still surface the error so it isn't lost.
+                let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+                Output::err_generic(
+                    "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
+                    (
+                        bstr::BStr::new(name),
+                        resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        bstr::BStr::new(download_error_reason(err)),
+                        bstr::BStr::new(url),
+                    ),
+                );
+                Output::flush();
+            }
+            return;
+        };
 
-            let entry_steps = self.store.entries.items_step();
-            for install_ctx in callbacks.as_slice() {
-                // `TaskCallbackContext` is an enum, so destructure.
-                let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx
-                else {
-                    continue;
-                };
-                entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
+        let entry_steps = self.store.entries.items_step();
+        for install_ctx in callbacks.as_slice() {
+            // `TaskCallbackContext` is an enum, so destructure.
+            let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx else {
+                continue;
+            };
+            entry_steps[entry_id.get() as usize].store(Step::Done as u32, Ordering::Relaxed);
+            if is_required {
                 self.on_task_fail(
                     entry_id,
                     &TaskError::Download(DownloadError {
@@ -266,22 +286,11 @@ impl<'a> Installer<'a> {
                         url: url.into(),
                     }),
                 );
+            } else {
+                self.on_optional_download_fail(entry_id);
             }
-            // callbacks dropped here
-        } else {
-            // No waiting entry — still surface the error so it isn't lost.
-            let string_buf = self.lockfile().buffers.string_bytes.as_slice();
-            Output::err_generic(
-                "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
-                (
-                    bstr::BStr::new(name),
-                    resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                    bstr::BStr::new(download_error_reason(err)),
-                    bstr::BStr::new(url),
-                ),
-            );
-            Output::flush();
         }
+        // callbacks dropped here
     }
 
     pub(crate) fn apply_package_patch(
@@ -442,6 +451,32 @@ impl<'a> Installer<'a> {
 
         self.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
+    }
+
+    /// Called from main thread when the download for `entry_id` was not
+    /// queued: it already failed, or `--offline` has no cached copy. Both
+    /// were reported when they happened.
+    pub(crate) fn on_download_not_queued(&mut self, entry_id: StoreEntryId, is_required: bool) {
+        // .monotonic is okay because the task isn't running on another thread.
+        self.store.entries.items_step()[entry_id.get() as usize]
+            .store(Step::Done as u32, Ordering::Relaxed);
+        if is_required {
+            self.on_task_complete(entry_id, CompleteState::Fail);
+        } else {
+            self.on_optional_download_fail(entry_id);
+        }
+    }
+
+    /// Called from main thread when the download for an entry that only
+    /// optional dependencies need fails. The entry is left out. It counts
+    /// neither as installed nor as failed, as in the hoisted linker.
+    pub(crate) fn on_optional_download_fail(&mut self, entry_id: StoreEntryId) {
+        self.decrement_pending_tasks();
+        self.resume_unblocked_tasks(entry_id);
+
+        if let Some(node) = self.install_node.as_mut() {
+            node.complete_one();
+        }
     }
 
     pub(crate) fn decrement_pending_tasks(&mut self) {

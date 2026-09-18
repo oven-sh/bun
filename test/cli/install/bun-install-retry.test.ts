@@ -433,9 +433,81 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
       name: "baz",
       version: "0.0.3",
     });
-    if (linker === "hoisted") {
-      expect(out).not.toContain("Failed to install");
-      expect(exitCode).toBe(0);
+    expect(out).not.toContain("Failed to install");
+    expect(exitCode).toBe(0);
+  });
+
+  // From a lockfile the install phase asks for the tarball first, so the
+  // failure reaches the linker instead of the resolver.
+  it("warns and exits 0 when an optional dependency's tarball fails to download from a lockfile", async () => {
+    const urls: string[] = [];
+    setHandler(async request => {
+      const { pathname } = new URL(request.url);
+      urls.push(pathname);
+      if (pathname === "/BaR") {
+        return Response.json({
+          name: "BaR",
+          "dist-tags": { latest: "0.0.2" },
+          versions: {
+            "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${root_url}/BaR-0.0.2.tgz` } },
+          },
+        });
+      }
+      if (pathname === "/BaR-0.0.2.tgz") return new Response("no", { status: 404 });
+      return new Response("unexpected", { status: 404 });
+    });
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: `${root_url}/`,
+          linker,
+        },
+      }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        optionalDependencies: { BaR: "0.0.2" },
+      }),
+    );
+    async function install() {
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--no-progress", "--ignore-scripts"],
+        cwd: package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      return {
+        warnLines: err.split("\n").filter(l => l.startsWith("warn:")),
+        errorLines: err.split("\n").filter(l => l.startsWith("error:")),
+        failed: out.includes("Failed to install"),
+        exitCode,
+      };
     }
+
+    // The first install resolves BaR and saves the lockfile. Its tarball fails while resolving.
+    expect(await install()).toEqual({
+      warnLines: [`warn: GET ${root_url}/BaR-0.0.2.tgz - 404`],
+      errorLines: [],
+      failed: false,
+      exitCode: 0,
+    });
+    await access(join(package_dir, "bun.lock"));
+
+    urls.length = 0;
+    expect(await install()).toEqual({
+      warnLines: [`warn: GET ${root_url}/BaR-0.0.2.tgz - 404`],
+      errorLines: [],
+      failed: false,
+      exitCode: 0,
+    });
+    expect(urls).toEqual(["/BaR-0.0.2.tgz"]);
   });
 });

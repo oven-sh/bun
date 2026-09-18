@@ -1055,25 +1055,22 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
     }
     let mut depth: usize = 0;
     while depth < components {
-        let is_symlink: bool = {
+        // A missing component (a package that is not installed at this path
+        // yet) is skipped, so a symlink ancestor above it is still found.
+        let is_symlink: Option<bool> = {
             #[cfg(windows)]
             {
-                match sys::get_file_attributes(p.slice_z()) {
-                    Some(attrs) => attrs.is_reparse_point,
-                    None => return,
-                }
+                sys::get_file_attributes(p.slice_z()).map(|attrs| attrs.is_reparse_point)
             }
             #[cfg(not(windows))]
             {
-                if let Ok(st) = sys::lstat(p.slice_z()) {
-                    // `mode_t` is `u16` on darwin/freebsd, `u32` on linux.
-                    sys::posix::s_islnk(st.st_mode as u32)
-                } else {
-                    return;
-                }
+                // `mode_t` is `u16` on darwin/freebsd, `u32` on linux.
+                sys::lstat(p.slice_z())
+                    .ok()
+                    .map(|st| sys::posix::s_islnk(st.st_mode as u32))
             }
         };
-        if is_symlink {
+        if is_symlink == Some(true) {
             // Windows directory symlinks/junctions are removed with rmdir,
             // file symlinks with unlink; on POSIX unlink covers both. If
             // removal fails the symlink is still live, and the caller's
@@ -1135,6 +1132,7 @@ fn overwrite_package_in_node_modules_folder(
 ) -> Result<(), crate::Error> {
     // Copy into a sibling staging folder, then swap it in. Detach the parent
     // first so the staging folder is not written into the shared global store.
+    let node_modules_folder_path = strings::without_trailing_slash(node_modules_folder_path);
     let parent = resolve_path::dirname::<platform::Auto>(node_modules_folder_path);
     if !parent.is_empty() {
         detach_module_folder_from_shared_store(parent);
@@ -1233,6 +1231,15 @@ fn overwrite_package_in_node_modules_folder(
     let has_old = match sys::renameat(Fd::cwd(), dest_z.slice_z(), Fd::cwd(), old_z.slice_z()) {
         Ok(()) => true,
         Err(e) if e.get_errno() == sys::E::ENOENT => false,
+        // overlayfs (Docker) refuses to rename a directory from a lower
+        // layer. The copy is complete, so delete the old package instead.
+        Err(e) if e.get_errno() == sys::E::EXDEV => {
+            if let Err(e) = Fd::cwd().delete_tree(node_modules_folder_path) {
+                let _ = Fd::cwd().delete_tree(staging_path);
+                return Err(e.into());
+            }
+            false
+        }
         Err(e) => {
             let _ = Fd::cwd().delete_tree(staging_path);
             return Err(e.into());
@@ -1248,7 +1255,13 @@ fn overwrite_package_in_node_modules_folder(
     }
 
     if has_old {
-        let _ = Fd::cwd().delete_tree(old_path);
+        if let Err(e) = Fd::cwd().delete_tree(old_path) {
+            bun_core::warn!(
+                "failed to delete the previous package folder {}: {}",
+                bstr::BStr::new(old_path),
+                e
+            );
+        }
     }
     Ok(())
 }

@@ -93,12 +93,11 @@ pub struct Execution {
     /// around `run_test_callback` so code re-entered from a test body (e.g.
     /// spawnSync's wait loop) can read the calling entry's own deadline.
     pub(crate) on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
-    /// The (group_index, sequence_index, entry, repeat) for `on_stack_entry`,
-    /// set/restored alongside it. `get_current_state_data()` can't name a
-    /// sequence inside a concurrent group; this can, for code re-entered from
-    /// the microtask drain inside `run_test_callback` (node:test's runtime
-    /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
-    /// stamped).
+    /// The (sequence_index, entry, repeat) for `on_stack_entry`, set/restored
+    /// alongside it. `get_current_state_data()` reads this first, which is how
+    /// it names a sequence inside a concurrent group (hooks like
+    /// `onTestFinished()`, and node:test's runtime `t.skip()`/`t.todo()` mark
+    /// from the microtask drain inside `run_test_callback`).
     pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
 }
 

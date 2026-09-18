@@ -169,8 +169,7 @@ impl<'a> GlobPattern<'a> {
                 result.version_pattern = version_pattern;
 
                 let sliced = semver::SlicedString::init(version_pattern, version_pattern);
-                // Text that is not a range (`workspace:packages/a`, `beta`) parses to an
-                // empty group, and an empty group satisfies every version.
+                // An empty group (`workspace:packages/a`, `beta`) satisfies every version.
                 result.version_query = semver::query::parse(version_pattern, sliced)
                     .ok()
                     .filter(|group| !group.is_empty());
@@ -250,10 +249,7 @@ impl<'a> GlobPattern<'a> {
         }
     }
 
-    /// `version` is the semver version of the package when it has one (an npm
-    /// resolution, or a workspace with a version in its package.json). Its
-    /// slices point into `string_bytes`. `resolution` is the printed resolution
-    /// (`1.2.3`, `workspace:packages/a`, `github:user/repo#sha`).
+    /// `version` slices into `string_bytes`. `resolution` is the printed resolution.
     fn matches_version(
         &self,
         version: Option<semver::Version>,

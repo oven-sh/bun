@@ -1,8 +1,9 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstatSync, readFileSync } from "fs";
+import { realpath } from "fs/promises";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
-import { isAbsolute, join, sep } from "path";
+import { isAbsolute, join, relative, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
@@ -1239,6 +1240,8 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
 // not install it on its own:
 // - bundled-1@1.0.0 bundles no-deps@1.0.0.
 // - bundled-file@1.0.0 bundles "bundled-file-dep": "file:vendor/bundled-file-dep".
+// - npm-1@10.9.2 bundles depend-on-debug-1@1.0.0, which depends on debug-1@4.4.0. Its
+//   tarball ships both in its node_modules.
 // The lockfile still resolves the dependency to the registry's package of that name, and
 // `bun patch` used to delete the bundled copy and put the registry's package in its place.
 describe("a bundled dependency as the target", () => {
@@ -1253,8 +1256,7 @@ describe("a bundled dependency as the target", () => {
   });
 
   const bundledError = (name: string, bundler: string) =>
-    `error: cannot patch ${name}: it is a bundled dependency of ${bundler}, which ships it in its own tarball\n` +
-    `note: to change it, run bun patch ${bundler} and edit its copy in the node_modules folder of that package\n`;
+    `error: cannot patch ${name}: it is a bundled dependency of ${bundler}, which ships it in its own tarball\n`;
 
   // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`.
   async function spawnBun(cwd: string, cacheDir: string, args: string[]) {
@@ -1353,6 +1355,72 @@ describe("a bundled dependency as the target", () => {
         expect(exitCode).toBe(1);
       },
     );
+
+    test.concurrent.each(["debug-1", "debug-1@4.4.0", "node_modules/npm-1/node_modules/debug-1"])(
+      "bun patch %s is refused for a dependency of a bundled dependency",
+      async arg => {
+        const { packageDir } = await installedProject(linker, { "npm-1": "10.9.2" });
+        const marker = Bun.file(
+          join(packageDir, "node_modules", "npm-1", "node_modules", "debug-1", "only-in-the-bundled-copy.txt"),
+        );
+        await Bun.write(marker, "bundled");
+
+        const { stderr, exitCode } = await runBun(packageDir, "patch", arg);
+        expect(stderr).toEndWith(bundledError(arg.startsWith("node_modules") ? "debug-1" : arg, "npm-1"));
+        expect(await marker.exists()).toBe(true);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    // The lockfile tree places debug-1@4.4.0 twice: under the alias `z`, which bun installs,
+    // and inside npm-1, where the tarball ships it. npm-1 comes first in the tree. The root
+    // alias `debug-1` keeps both below the root.
+    test.concurrent("bun patch skips the placement inside the package that bundles", async () => {
+      const { packageDir } = await installedProject(linker, {
+        "npm-1": "10.9.2",
+        "z": "npm:depend-on-debug-1@1.0.0",
+        "debug-1": "npm:no-deps@2.0.0",
+      });
+      const marker = Bun.file(
+        join(packageDir, "node_modules", "npm-1", "node_modules", "debug-1", "only-in-the-bundled-copy.txt"),
+      );
+      await Bun.write(marker, "bundled");
+
+      const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "debug-1@4.4.0");
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain(
+        "To patch debug-1, edit the following folder:\n\n  node_modules/z/node_modules/debug-1\n",
+      );
+      expect(await marker.exists()).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+
+    // No package is named `my-alias`, so the path does not show what bundles no-deps. It is
+    // still refused, because nothing installs no-deps on its own.
+    test.concurrent("bun patch <path> is refused under an aliased package that bundles", async () => {
+      const { packageDir } = await installedProject(linker, { "my-alias": "npm:bundled-1@1.0.0" });
+      const marker = Bun.file(
+        join(packageDir, "node_modules", "my-alias", "node_modules", "no-deps", "only-in-the-bundled-copy.txt"),
+      );
+      await Bun.write(marker, "bundled");
+
+      const { stderr, exitCode } = await runBun(packageDir, "patch", "node_modules/my-alias/node_modules/no-deps");
+      expect(stderr).toEndWith(bundledError("no-deps", "bundled-1"));
+      expect(await marker.exists()).toBe(true);
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent.skipIf(linker !== "isolated")("bun patch <path in node_modules/.bun> is refused", async () => {
+      const { packageDir } = await installedProject(linker, { "bundled-1": "1.0.0", "no-deps": "1.0.0" });
+      const marker = await markBundledCopy(packageDir);
+      const bundler = relative(packageDir, await realpath(join(packageDir, "node_modules", "bundled-1")));
+      expect(bundler.replaceAll(sep, "/")).toStartWith("node_modules/.bun/");
+
+      const { stderr, exitCode } = await runBun(packageDir, "patch", join(bundler, "node_modules", "no-deps"));
+      expect(stderr).toEndWith(bundledError("no-deps", "bundled-1"));
+      expect(await marker.exists()).toBe(true);
+      expect(exitCode).toBe(1);
+    });
 
     // The workspace also installs no-deps@1.0.0 on its own, so only the path tells that the
     // target is the bundled copy. The root alias takes the name `bundled-1`, so the hoisted

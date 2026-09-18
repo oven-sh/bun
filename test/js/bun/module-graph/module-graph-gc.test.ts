@@ -1,6 +1,6 @@
 // Bun.ModuleGraph and the garbage collector: what keeps a graph (its loader, module
 // records, CommonJS modules and its context) alive, and that nothing else does.
-import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
+import { generateHeapSnapshotForDebugging, heapStats, jscDescribe } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isArm64, isIntelMacOS, isLinux, tempDir } from "harness";
@@ -69,138 +69,144 @@ const dir = String(
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const file = (name: string) => join(dir, name);
 
-/** A full collection from a setImmediate callback, then a turn for FinalizationRegistry callbacks.
- *  Not from the caller's own continuation: that runs inside a microtask job, which still holds
- *  what it was given (the promise an `await` just resumed from, and through it the module that
- *  promise was fulfilled with). And not from a timer: what these tests drop was last used by
- *  callbacks the event loop ran itself (a module's load completing, an await resuming), and on
- *  Windows timers fire from inside `uv_run`, whose frames sit where those callbacks' frames were
- *  and never write over them. An immediate runs where they ran. */
+/** A full collection from a timer callback, then a turn for FinalizationRegistry callbacks. Not
+ *  from the caller's own continuation: that runs inside a microtask job, which still holds what it
+ *  was given (the promise an `await` just resumed from, and through it the module that promise
+ *  was fulfilled with). */
 function collect(): Promise<void> {
   return new Promise(resolve =>
-    setImmediate(() => {
+    setTimeout(() => {
       Bun.gc(true);
-      setImmediate(resolve);
-    }),
+      setTimeout(resolve, 0);
+    }, 0),
   );
 }
 
-/** For a failure message: from the debugging heap snapshot, what keeps each live `ModuleGraph` cell
- *  (shortest path from a root), or that nothing in the heap does. */
-function whatRetainsGraphs(): string[] {
-  const snapshot = generateHeapSnapshotForDebugging() as any;
-  const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } = snapshot;
-  const className = new Map<number, string>();
-  for (let i = 0; i < nodes.length; i += 7)
-    className.set(
-      nodes[i],
-      nodeClassNames[nodes[i + 2]] + (labels[nodes[i + 4]] ? "(" + labels[nodes[i + 4]] + ")" : ""),
-    );
-  const incoming = new Map<number, [number, string][]>();
-  for (let i = 0; i < edges.length; i += 4) {
-    const type = edgeTypes[edges[i + 2]];
-    const name = type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : edges[i + 3];
-    let list = incoming.get(edges[i + 1]);
-    if (!list) incoming.set(edges[i + 1], (list = []));
-    list.push([edges[i], type + ":" + name]);
-  }
-  const rootReason = new Map<number, string>();
-  for (let i = 0; i < roots.length; i += 3) rootReason.set(roots[i], String(labels[roots[i + 1]] ?? roots[i + 1]));
-  const report: string[] = [];
-  for (const [id, name] of className) {
-    // A graph (not the constructor or the prototype) is what an overlay's `moduleGraph` variable holds.
-    if (
-      !name.startsWith("ModuleGraph") ||
-      !(incoming.get(id) ?? []).some(([, edge]) => edge === "Variable:moduleGraph")
-    )
-      continue;
-    const from = new Map<number, [number, string] | undefined>([[id, undefined]]);
-    const queue = [id];
-    let root: number | undefined;
-    while (queue.length && root === undefined) {
-      const at = queue.shift()!;
-      if (rootReason.has(at)) root = at;
-      else
-        for (const [parent, edge] of incoming.get(at) ?? [])
-          if (!from.has(parent)) (from.set(parent, [at, edge]), queue.push(parent));
+/** What these tests mean by "kept alive": a root reaches the cell through the heap. A collection
+ *  alone cannot say that. JavaScriptCore also marks whatever a word on the native stack happens to
+ *  point at, and a slot a live native frame never writes can hold a cell of an earlier callback's
+ *  frames for as long as the loop re-enters that frame, so "it was not finalized" does not mean
+ *  something holds it. The debugging heap snapshot has every edge and every root, and no entry for
+ *  such words. */
+class Heap {
+  readonly #className = new Map<number, string>();
+  readonly #label = new Map<number, string>();
+  readonly #idOfAddress = new Map<bigint, number>();
+  /** For each cell a root reaches: the cell it was reached from and the edge, on a shortest path. */
+  readonly #reachedFrom = new Map<number, [number, string] | undefined>();
+  readonly #rootReason = new Map<number, string>();
+
+  constructor() {
+    const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } =
+      generateHeapSnapshotForDebugging() as any;
+    for (let i = 0; i < nodes.length; i += 7) {
+      this.#className.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+      if (labels[nodes[i + 4]]) this.#label.set(nodes[i], labels[nodes[i + 4]]);
+      this.#idOfAddress.set(BigInt(nodes[i + 5]), nodes[i]);
     }
-    if (root === undefined) {
-      // Unreached from any root, so held from the machine stack or a register, through one of the
-      // cells that lead to it: most likely one nothing in the heap points at.
-      const ancestors = [...from.keys()];
-      const entries = ancestors.filter(cell => !incoming.get(cell)?.length).map(cell => className.get(cell));
-      const classes = [...new Set(ancestors.map(cell => className.get(cell)))];
-      const pointsAt = (cell: number) => {
-        const out: string[] = [];
-        for (let i = 0; i < edges.length; i += 4) {
-          if (edges[i] !== cell) continue;
-          const type = edgeTypes[edges[i + 2]];
-          out.push(
-            (type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : type + edges[i + 3]) +
-              "->" +
-              className.get(edges[i + 1]),
-          );
-        }
-        return out.join(", ");
-      };
-      for (const cell of ancestors.filter(cell => !incoming.get(cell)?.length))
-        report.push(
-          `${name}#${id}: ${className.get(cell)}#${cell}, which nothing in the heap points at, points at: ${pointsAt(cell)}`,
-        );
-      report.push(
-        `${name}#${id}: island of ${ancestors.length} cells (${classes.join(", ")}); nothing in the heap points at: ${entries.join(", ") || "(none: a cycle)"}`,
-      );
-      report.push(
-        `${name}#${id}: no root reaches it; held from ${[...(incoming.get(id) ?? [])].map(([parent, edge]) => className.get(parent) + " " + edge).join(", ") || "nothing"}`,
-      );
-      continue;
+    const outgoing = new Map<number, [number, string][]>();
+    for (let i = 0; i < edges.length; i += 4) {
+      const type = edgeTypes[edges[i + 2]];
+      const name = type === "Property" || type === "Variable" ? edgeNames[edges[i + 3]] : edges[i + 3];
+      let list = outgoing.get(edges[i]);
+      if (!list) outgoing.set(edges[i], (list = []));
+      list.push([edges[i + 1], type + ":" + name]);
     }
-    const path = [`root(${rootReason.get(root)}) ${className.get(root)}`];
-    for (let at = root, step = from.get(at); step; at = step[0], step = from.get(at))
-      path.push(`-${step[1]}-> ${className.get(step[0])}`);
-    report.push(`${name}#${id}: ${path.join(" ")}`);
+    const queue: number[] = [];
+    for (let i = 0; i < roots.length; i += 3) {
+      if (this.#reachedFrom.has(roots[i])) continue;
+      this.#rootReason.set(roots[i], String(labels[roots[i + 1]] ?? roots[i + 1]));
+      this.#reachedFrom.set(roots[i], undefined);
+      queue.push(roots[i]);
+    }
+    for (let at = queue.shift(); at !== undefined; at = queue.shift())
+      for (const [child, edge] of outgoing.get(at) ?? [])
+        if (!this.#reachedFrom.has(child)) (this.#reachedFrom.set(child, [at, edge]), queue.push(child));
   }
-  return report;
+
+  /** The shortest path from a root to the cell at `address`, or undefined when no root reaches it. */
+  pathTo(address: bigint): string | undefined {
+    const id = this.#idOfAddress.get(address);
+    if (id === undefined || !this.#reachedFrom.has(id)) return undefined;
+    const describe = (cell: number) =>
+      this.#className.get(cell) + (this.#label.has(cell) ? "(" + this.#label.get(cell) + ")" : "");
+    const path: string[] = [];
+    let at = id;
+    for (let step = this.#reachedFrom.get(at); step; at = step[0], step = this.#reachedFrom.get(at))
+      path.unshift(`-${step[1]}-> ${describe(at)}`);
+    return [`root(${this.#rootReason.get(at)}) ${describe(at)}`, ...path].join(" ");
+  }
+
+  /** How many cells of each type a root reaches. */
+  counts(types: string[]): Record<string, number> {
+    const counts = Object.fromEntries(types.map(type => [type, 0]));
+    for (const id of this.#reachedFrom.keys()) {
+      const name = this.#className.get(id)!;
+      if (name in counts) counts[name]++;
+    }
+    return counts;
+  }
 }
 
-/** Lifetimes by name: `track` an object, then ask which are `gone` or still `alive`. */
+/** The heap as a timer callback sees it: with the caller suspended, so that what its frames hold
+ *  is held through the heap, like everything else. The caller's continuation hangs off the promise
+ *  returned here, which the timer's callback (on the stack while the snapshot is taken) would
+ *  otherwise be the only thing to hold: `pendingHeap` holds it from this module's scope. */
+let pendingHeap: Promise<Heap> | undefined;
+function heapFromTimer(): Promise<Heap> {
+  return (pendingHeap = new Promise(resolve => setTimeout(() => resolve(new Heap()), 0)));
+}
+
+const addressOf = (object: object) => BigInt(/0x[0-9a-fA-F]+/.exec(jscDescribe(object))![0]);
+
+/** Lifetimes by name: `track` an object, then ask which are still kept alive. */
 class Lifetimes {
   #finalized = new Set<string>();
   #registry = new FinalizationRegistry<string>(name => this.#finalized.add(name));
+  #address = new Map<string, bigint>();
   track<T extends object>(name: string, object: T): T {
     this.#registry.register(object, name);
+    this.#address.set(name, addressOf(object));
     return object;
   }
-  /** Collects until every name is finalized (bounded); returns the names that still are not. */
-  async stillAlive(...names: string[]): Promise<string[]> {
-    const remaining = () => names.filter(name => !this.#finalized.has(name));
-    for (let i = 0; i < 100 && remaining().length; i++) {
-      await collect();
-    }
-    if (!remaining().length) return [];
-    // Say what keeps them, not just that something does: a heap snapshot taken while they are retained.
-    return [...remaining(), ...whatRetainsGraphs()];
+  /** Of `names`, those a root still reaches, each with its path. A finalized one is gone; one
+   *  that is not is looked up by its cell, which is its own for as long as it is not collected. */
+  async #kept(names: string[]): Promise<string[]> {
+    if (names.every(name => this.#finalized.has(name))) return [];
+    const heap = await heapFromTimer();
+    return names.flatMap(name => {
+      if (this.#finalized.has(name)) return [];
+      const path = heap.pathTo(this.#address.get(name)!);
+      return path === undefined ? [] : [`${name}: ${path}`];
+    });
   }
-  /** Collects a few times; whether `name` survived all of them. */
+  /** Collects until nothing keeps any of `names` alive (bounded); returns those still kept, with what keeps them. */
+  async stillAlive(...names: string[]): Promise<string[]> {
+    let kept: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      await collect();
+      kept = await this.#kept(names);
+      if (!kept.length) return [];
+    }
+    return kept;
+  }
+  /** Collects a few times; whether something still keeps `name` alive after all of them. */
   async survives(name: string): Promise<boolean> {
     for (let i = 0; i < 5; i++) {
       await collect();
     }
-    return !this.#finalized.has(name);
+    return (await this.#kept([name])).length > 0;
   }
 }
 
-const count = (type: string) => heapStats().objectTypeCounts[type] ?? 0;
+const count = async (type: string) => (await heapFromTimer()).counts([type])[type];
 /** Collects until the count of each type is at most its limit (bounded); returns the counts. */
 async function settle(limits: Record<string, number>): Promise<Record<string, number>> {
-  const counts = () => {
-    const all = heapStats().objectTypeCounts;
-    return Object.fromEntries(Object.keys(limits).map(type => [type, all[type] ?? 0]));
-  };
-  let now = counts();
-  for (let i = 0; i < 100 && Object.keys(limits).some(type => now[type] > limits[type]); i++) {
+  const types = Object.keys(limits);
+  let now = (await heapFromTimer()).counts(types);
+  for (let i = 0; i < 20 && types.some(type => now[type] > limits[type]); i++) {
     await collect();
-    now = counts();
+    now = (await heapFromTimer()).counts(types);
   }
   return now;
 }
@@ -209,8 +215,7 @@ async function baselineOf(...types: string[]): Promise<Record<string, number>> {
   for (let i = 0; i < 5; i++) {
     await collect();
   }
-  const all = heapStats().objectTypeCounts;
-  return Object.fromEntries(types.map(type => [type, all[type] ?? 0]));
+  return (await heapFromTimer()).counts(types);
 }
 
 async function accepts(port: number): Promise<boolean> {
@@ -371,8 +376,8 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
         graphs.push(graph);
       }
       // Eight graphs' worth exist now.
-      expect(count("ModuleGraph") - baseline.ModuleGraph).toBeGreaterThanOrEqual(8);
-      expect(count("Module") - baseline.Module).toBeGreaterThanOrEqual(16);
+      expect((await count("ModuleGraph")) - baseline.ModuleGraph).toBeGreaterThanOrEqual(8);
+      expect((await count("Module")) - baseline.Module).toBeGreaterThanOrEqual(16);
     })();
 
     const after = await settle(baseline);

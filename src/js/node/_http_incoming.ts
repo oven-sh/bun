@@ -367,13 +367,12 @@ IncomingMessage.prototype._read = function _read(_n) {
   const socket = this.socket;
   if (socket && socket.readable) {
     if (this.upgrade || socket[kHandoffResponse] !== undefined) {
-      // Upgrade request with a body (Node 26 semantics), or a request whose
-      // response was still pending when a CONNECT behind it took the socket
-      // over (res.end() dumps it after the handoff): reading the request
+      // Upgrade request with a body (Node 26 semantics): reading the request
       // must not flip the raw socket into flowing mode - tunnel bytes pushed
-      // to the socket before the listener attaches its own 'data' handler
-      // would be discarded by a flowing stream with no readers.
+      // to the socket before the 'upgrade' listener attaches its own 'data'
+      // handler would be discarded by a flowing stream with no readers.
       // Resume the native body source directly instead.
+      // Same for a request ahead of a pipelined CONNECT: res.end() dumps it after the handoff.
       onIncomingMessageResumeNodeHTTPResponse.$call(this);
     } else {
       socket.resume();

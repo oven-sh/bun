@@ -736,10 +736,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         socketParser[kParserOnTimeout] = serverParserShimOnTimeout;
 
         const isPipelined = !!isPipelinedDispatch;
-        // Not gated on isPipelined: the native parser is in tunnel mode from
-        // this request on, and like Node.js's onParserExecuteCommon the
-        // CONNECT takes the connection over while earlier responses are
-        // still in flight.
+        // Pipelined or not, like Node.js: the native parser is in tunnel mode from this request on.
         if (method === "CONNECT") {
           // Handle CONNECT method for HTTP tunneling/proxy
           if (server.listenerCount("connect") > 0) {
@@ -750,8 +747,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // The connection already parses as a CONNECT tunnel natively; this
             // additionally marks it half-open-capable so a client FIN ends the
             // readable side without tearing the tunnel down (allowHalfOpen).
-            // A pipelined CONNECT is not the socket's current response, so
-            // the call names the response that leaves HTTP.
             socketHandle.upgradeToTunnel(false, handle);
             socket[kHandoffResponse] = handle;
             // The parser is detached: the socket is handed over with only
@@ -767,13 +762,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             try {
               server.emit("connect", http_req, socket, head);
             } catch (err) {
-              // Like the 'upgrade' emit below. Native answers a throw from
-              // this dispatch by ending the connection's pending response,
-              // which for a pipelined CONNECT is the one ahead of it.
+              // Like 'upgrade' below. Native would end the pending response, here the one ahead.
               process.nextTick(rethrowUncaught, err);
             }
-            // Native settles a returned promise against the socket's current
-            // response, which for a pipelined dispatch is the one in flight.
+            // Native would tie a returned promise to the socket's current response, the one in flight.
             if (isPipelined) return;
             // Attach the internal close listener after the user's "connect"
             // handler ran: Node.js hands the socket over with no listeners and
@@ -891,9 +883,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // token; the server then consults shouldUpgradeCallback (default: an
         // 'upgrade' listener is installed) and otherwise dispatches the
         // request normally.
-        // A pipelined Upgrade stays a normal request. Native is still in HTTP
-        // for it (unlike a CONNECT), and the builtin ws answers the handshake
-        // through the socket's current response, which is the one in flight.
+        // Not when pipelined: the builtin ws answers through the socket's current response, the one in flight.
         let is_upgrade = false;
         if (
           !isPipelined &&
@@ -1607,8 +1597,8 @@ function getNodeHTTPServerSocket() {
           // connection stays writable (allowHalfOpen), but - like Node, where the
           // detached socket stops reading and no longer keeps the process alive -
           // the never-used response for this request must not keep the event loop
-          // alive either. Not handle.response: behind a pipelined CONNECT that is
-          // the response in flight, which still needs the loop.
+          // alive either.
+          // Not handle.response: behind a pipelined CONNECT that is the response in flight.
           this[kHandoffResponse]?.unref();
         }
 

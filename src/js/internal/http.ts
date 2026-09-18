@@ -39,8 +39,7 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
-// On a server socket that was handed to a 'connect' or 'upgrade' listener: the native response
-// of the request that was handed off.
+// Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
 const kHandoffResponse = Symbol("kHandoffResponse");
 const kCloseCallback = Symbol("closeCallback");
 

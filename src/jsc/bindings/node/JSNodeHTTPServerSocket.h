@@ -112,8 +112,7 @@ public:
      * Upgrade: subsequent bytes bypass the HTTP parser and stream to the
      * ondata callback as opaque data. With afterBody, the switch is deferred
      * until the request body has been fully parsed (Upgrade requests with a
-     * body deliver it through the request first, like Node 26). response is
-     * the request that leaves HTTP. */
+     * body deliver it through the request first, like Node 26). */
     void upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response);
 
     /* Trailer fields received after the current request's chunked body, as a

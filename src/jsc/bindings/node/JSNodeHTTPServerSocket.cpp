@@ -119,10 +119,7 @@ static void upgradeToTunnelModeImpl(us_socket_t* socket, bool afterBody)
         return;
     }
     httpResponseData->isConnectRequest = true;
-    /* pause() and resume() on a response do nothing once the connection is a
-     * tunnel (NodeHTTPResponse.rs checks is_connect_request()). Reads that a
-     * request still in flight paused before this point (req.pause(), flood
-     * prevention) would stay paused for good, so lift them here. */
+    /* resume() on a response does nothing in tunnel mode: lift what paused reads before it (req.pause(), flood prevention). */
     onNodeHttpReadsResumable<SSL>(socket);
 }
 
@@ -145,9 +142,7 @@ void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody, WebCore::JSNode
     }
     /* The exchange leaves HTTP here: let the response release the server's
      * pending-request accounting (see Flags::TUNNELED in NodeHTTPResponse.rs).
-     * The caller names the response: a request that was dispatched while an
-     * earlier response was still in flight is queued in m_pipelinedResponses
-     * and is not currentResponseObject. */
+     * Not currentResponseObject: a pipelined request is queued instead. */
     if (response != nullptr && response->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_markTunneled(response->m_ctx);
     }
@@ -432,10 +427,8 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
-/* Queued pipelined responses hold raw reads so that more requests cannot pile up behind them. A CONNECT
- * dispatched behind an in-flight response stays queued for the life of the connection: the tunnel never
- * becomes the current response, which also keeps markDone() from classifying the connection as idle.
- * No request follows a CONNECT, so it has no reads to hold. */
+/* A pipelined CONNECT stays queued for good, which keeps markDone() from marking the connection idle.
+ * No request follows it, so it holds no reads. */
 template<bool SSL>
 static bool queuedResponsesHoldReads(uWS::NodeHttpResponseData<SSL>* httpResponseData)
 {

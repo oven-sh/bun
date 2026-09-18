@@ -279,7 +279,7 @@ static bool encodeInternalModule(const String& text, const String& moduleName, c
 }
 
 // bun build --compile: bytecode for this executable's internal JS module `id` (an index below
-// BUN_NATIVE_MODULE_START_INDEX), generated the way generateInternalModule() will consume it. The caller owns *handle and
+// bun_internal_modules_header.moduleCount), generated the way generateInternalModule() will consume it. The caller owns *handle and
 // releases it with CachedBytecode__deref. `depth`: how many levels of nested functions get code blocks too
 // (UINT32_MAX = all; 0 = only the module wrapper's own).
 extern "C" bool Bun__generateInternalModuleBytecode(uint32_t id, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)

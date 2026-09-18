@@ -298,7 +298,6 @@ enum LoadState {
 const AsyncSourceLines = ({
   highlight = -1,
   highlightColumnStart = 0,
-  highlightColumnEnd = Infinity,
   children,
   buildURL,
   sourceLines,
@@ -306,7 +305,6 @@ const AsyncSourceLines = ({
 }: {
   highlight: number;
   highlightColumnStart: number;
-  highlightColumnEnd?: number;
   children?: any;
   buildURL: (line?: number, column?: number) => string;
   sourceLines: SourceLine[];
@@ -396,7 +394,6 @@ const AsyncSourceLines = ({
         <SourceLines
           highlight={highlight}
           highlightColumnStart={highlightColumnStart}
-          highlightColumnEnd={highlightColumnEnd}
           buildURL={buildURL}
           sourceLines={sourceLines}
         >
@@ -414,21 +411,18 @@ const SourceLines = ({
   sourceLines,
   highlight = -1,
   highlightColumnStart = 0,
-  highlightColumnEnd = Infinity,
   children,
   buildURL,
 }: {
   sourceLines: SourceLine[];
   highlight: number;
   highlightColumnStart: number;
-  highlightColumnEnd?: number;
   children?: any;
   buildURL: (line?: number, column?: number) => string;
 }) => {
   let start = sourceLines.length;
   let end = 0;
   let dedent = Infinity;
-  let _i = 0;
   var minLineNumber = sourceLines.length + highlight + 1;
   var maxLineNumber = 0;
   for (let i = 0; i < sourceLines.length; i++) {
@@ -504,15 +498,7 @@ const BuildErrorSourceLines = ({ location, filename }: { location: Location; fil
   const { line, line_text, column } = location;
   const sourceLines: SourceLine[] = [{ line, text: line_text }];
   const buildURL = useCallback((line, column) => srcFileURL(filename, line, column), [filename]);
-  return (
-    <SourceLines
-      sourceLines={sourceLines}
-      highlight={line}
-      buildURL={buildURL}
-      highlightColumnStart={column}
-      highlightColumnEnd={column}
-    />
-  );
+  return <SourceLines sourceLines={sourceLines} highlight={line} buildURL={buildURL} highlightColumnStart={column} />;
 };
 
 const BuildErrorStackTrace = ({ location }: { location: Location }) => {
@@ -687,7 +673,6 @@ const NativeStackTrace = ({
           sourceLines={sourceLines}
           highlightColumnStart={position.column}
           buildURL={buildURL}
-          highlightColumnEnd={position.column_stop}
         >
           {children}
         </SourceLines>
@@ -699,7 +684,6 @@ const NativeStackTrace = ({
           setSourceLines={setSourceLines}
           highlightColumnStart={position.column}
           buildURL={buildURL}
-          highlightColumnEnd={position.column_stop}
         >
           {children}
         </AsyncSourceLines>

@@ -20,7 +20,7 @@ async function run() {
   write("index.d.ts", `// GENERATED - DO NOT EDIT\n${types}`);
 }
 
-function formatProtocol(protocol: Protocol, extraTs?: string): string {
+function formatProtocol(protocol: Protocol): string {
   const { definitions } = protocol;
   const requestMap = new Map();
   const responseMap = new Map();
@@ -86,9 +86,6 @@ function formatProtocol(protocol: Protocol, extraTs?: string): string {
   body += formatMapType("RequestMap", requestMap);
   body += formatMapType("ResponseMap", responseMap);
   body += formatMapType("EventMap", eventMap);
-  if (extraTs) {
-    body += extraTs;
-  }
   return body + "};";
 }
 

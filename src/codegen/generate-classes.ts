@@ -1111,7 +1111,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         static constexpr unsigned StructureFlags = Base::StructureFlags;
         static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
         ${obj.valuesArray ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray);` : ""}
-        ${obj.valuesArray && obj.values && obj.values.length > 0 ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.values.map(v => `, JSC::JSValue ${v}`).join("")});` : ""}
         ${obj.valuesArray && obj.values && obj.values.length > 0 ? `static ${name}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray${obj.values.map(v => `, JSC::JSValue ${v}`).join("")});` : ""}
 
         DECLARE_EXPORT_INFO;
@@ -1153,10 +1152,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         }
 
         static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-        // constexpr: the extern "C" <Type>__ptrOffset constants initialized from
-        // this are then constant-initialized in every build mode (no static
-        // initializer at -O0; the link-time initializer audit relies on it).
-        static constexpr ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
 
         /**
          * Estimated size of the object from Zig including the JS wrapper.
@@ -1175,17 +1170,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         {
             m_ctx = sinkPtr;
             ${weakInit.trim()}
-        }
-
-        ${
-          obj.valuesArray && obj.values && obj.values.length > 0
-            ? `${name}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr${obj.values.map(v => `, JSC::JSValue ${v}`).join("")})
-            : Base(vm, structure)${obj.values.map(v => `\n            , m_${v}(${v}, JSC::WriteBarrierEarlyInit)`).join("")}
-        {
-            m_ctx = sinkPtr;
-            ${weakInit.trim()}
-        }`
-            : ""
         }
 
         ${
@@ -1413,16 +1397,6 @@ ${
 
 ${
   obj.valuesArray && obj.values && obj.values.length > 0
-    ? `${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx${obj.values.map(v => `, JSC::JSValue ${v}`).join("")}) {
-  ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx${obj.values.map(v => `, ${v}`).join("")});
-  ptr->finishCreation(vm);
-  return ptr;
-}`
-    : ""
-}
-
-${
-  obj.valuesArray && obj.values && obj.values.length > 0
     ? `${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx, WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>>&& jsvalueArray${obj.values.map(v => `, JSC::JSValue ${v}`).join("")}) {
   ${name}* ptr = new (NotNull, JSC::allocateCell<${name}>(vm)) ${name}(vm, structure, ctx, WTF::move(jsvalueArray)${obj.values.map(v => `, ${v}`).join("")});
   ptr->finishCreation(vm);
@@ -1472,8 +1446,6 @@ extern JSC_CALLCONV bool JSC_HOST_CALL_ATTRIBUTES ${typeName}__dangerouslySetPtr
   object->m_ctx = ptr;
   return true;
 }
-
-extern "C" const size_t ${typeName}__ptrOffset = ${className(typeName)}::offsetOfWrapped();
 
 void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
@@ -1551,47 +1523,6 @@ ${
     jsvalueArray[i].setWithoutWriteBarrier(args->at(i));
   }
   ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTF::move(jsvalueArray));
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
-  return JSValue::encode(instance);
-}`
-    : ""
-}
-
-${
-  obj.valuesArray && obj.values && obj.values.length > 0
-    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithInitialValues(Zig::GlobalObject* globalObject, void* ptr${obj.values.map(v => `, JSC::EncodedJSValue ${v}`).join("")}) {
-  auto &vm = globalObject->vm();
-  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
-  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
-  ${
-    obj.estimatedSize
-      ? `
-      auto size = ${symbolName(typeName, "estimatedSize")}(ptr);
-      vm.heap.reportExtraMemoryAllocated(instance, size);`
-      : ""
-  }
-  return JSValue::encode(instance);
-}`
-    : ""
-}
-
-${
-  obj.valuesArray && obj.values && obj.values.length > 0
-    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithValuesAndInitialValues(Zig::GlobalObject* globalObject, void* ptr, void* markedArgumentBuffer${obj.values.map(v => `, JSC::EncodedJSValue ${v}`).join("")}) {
-  auto &vm = globalObject->vm();
-  JSC::Structure* structure = globalObject->${className(typeName)}Structure();
-  auto* args = static_cast<JSC::MarkedArgumentBuffer*>(markedArgumentBuffer);
-  WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray(args->size());
-  for (size_t i = 0; i < args->size(); ++i) {
-    jsvalueArray[i].setWithoutWriteBarrier(args->at(i));
-  }
-  ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr, WTF::move(jsvalueArray)${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
   ${
     obj.estimatedSize
       ? `
@@ -1807,10 +1738,6 @@ const rustModuleResolver = (() => {
       // Out-of-crate (e.g. src/jsc/*.classes.ts → bun_jsc) — `api.rs` already
       // `pub use bun_jsc::{BuildMessage, ResolveMessage};` so route there.
       return `crate::api::${name}`;
-    },
-    /** Resolve an absolute `.rs` file path to its `crate::…` module path. */
-    resolveFile(absRs: string): string | null {
-      return fileToMod.get(path.resolve(absRs)) ?? null;
     },
     has(name: string): boolean {
       return structToPath.has(name);
@@ -2120,13 +2047,6 @@ function generateRust(
       `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
       `    ${T}::on_structured_clone_serialize(this, global, ctx, write_bytes)`,
     );
-    if (typeof structuredClone === "object" && structuredClone.transferable) {
-      thunk(
-        symbolName(typeName, "onStructuredCloneTransfer"),
-        `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
-        `    ${T}::on_structured_clone_transfer(this, global, ctx, write_bytes)`,
-      );
-    }
     thunk(
       symbolName(typeName, "onStructuredCloneDeserialize"),
       `(global: &JSGlobalObject, ptr: *mut *mut u8, end: *const u8) -> JSValue`,

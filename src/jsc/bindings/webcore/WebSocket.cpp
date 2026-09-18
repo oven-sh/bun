@@ -370,14 +370,6 @@ static String resourceName(const URL& url)
     return result;
 }
 
-static String hostName(const URL& url, bool secure)
-{
-    // ASSERT(url.protocolIs("wss"_s) == secure);
-    if (url.port() && ((!secure && url.port().value() != 80) || (secure && url.port().value() != 443)))
-        return makeString(asASCIILowercase(url.host()), ':', url.port().value());
-    return url.host().convertToASCIILowercase();
-}
-
 ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit)
 {
     return connect(url, protocols, WTF::move(headersInit), std::nullopt);

@@ -31,7 +31,6 @@ export function formatElapsed(ms: number): string {
 /**
  * Hash a name to a stable 256-color. Same name → same color across runs,
  * so `[tinycc]` in stream output and `tinycc` in the done line match.
- * zig overridden to brand orange.
  *
  * `color` defaults to this module's stderr-TTY check. stream.ts passes
  * its own — it writes to FD 3 (a terminal when set up by build.ts) while
@@ -39,14 +38,13 @@ export function formatElapsed(ms: number): string {
  */
 export function nameColor(name: string, text: string = name, color: boolean = useColor): string {
   if (!color) return text;
-  const overrides: Record<string, number> = { zig: 214 };
   const palette = [220, 184, 154, 120, 114, 86, 87, 81, 111, 147, 141, 183];
   let h = 2166136261;
   for (let i = 0; i < name.length; i++) {
     h ^= name.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  const c = overrides[name] ?? palette[(h >>> 0) % palette.length];
+  const c = palette[(h >>> 0) % palette.length];
   return `\x1b[38;5;${c}m${text}\x1b[39m`;
 }
 

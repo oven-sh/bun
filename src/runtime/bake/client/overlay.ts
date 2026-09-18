@@ -107,8 +107,6 @@ interface RuntimeError {
   message: string;
   /** error.stack after remapping */
   trace: RemappedFrame[];
-  /** When the `fetch` request fails or takes too long */
-  remapped: boolean;
   /** Promise rejection */
   async: boolean;
 
@@ -311,7 +309,6 @@ export async function onRuntimeError(err: any, fatal = false, async = false) {
         name,
         message,
         trace,
-        remapped: true,
         async,
         code,
       });
@@ -321,7 +318,6 @@ export async function onRuntimeError(err: any, fatal = false, async = false) {
         name,
         message,
         trace: parsed,
-        remapped: false,
         async,
       });
     }

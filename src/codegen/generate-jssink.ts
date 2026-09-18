@@ -31,7 +31,6 @@ function header() {
         public:                                                                                                                                                                     
             using Base = JSC::InternalFunction;                                                                                                                                     
             static ${constructor}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* prototype); 
-            static constexpr SinkID Sink = SinkID::${name};
                                                                                                                                                                                     
             static constexpr unsigned StructureFlags = Base::StructureFlags;                                                                                                        
             static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;                                                                                                                         
@@ -83,8 +82,6 @@ function header() {
             {                                                                                                                                                                       
                 return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());                                                 
             }                       
-            
-            static JSObject* createPrototype(VM& vm, JSDOMGlobalObject& globalObject);
                                                                                                                                                                                     
             ~${className}();                                                                                                                                                       
                                                                                                                                                                                     
@@ -124,7 +121,6 @@ function header() {
             public:
                 using Base = JSReadableSinkControllerBase;
                 static ${controller}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy);
-                static constexpr SinkID Sink = SinkID::${name};
 
                 DECLARE_EXPORT_INFO;
                 template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -178,8 +174,6 @@ JSC_DECLARE_CUSTOM_GETTER(function${name}__getter);
 #include <wtf/NeverDestroyed.h>
 
 #include "Sink.h"
-
-extern "C" bool JSSink_isSink(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 namespace WebCore {
 using namespace JSC;
@@ -287,7 +281,6 @@ async function implementation() {
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
-// #include "JSBlob.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
@@ -314,12 +307,7 @@ async function implementation() {
 
 #include "JSBufferEncodingType.h"
 #include <JavaScriptCore/JSBase.h>
-#if ENABLE(MEDIA_SOURCE)
-#include "BufferMediaSource.h"
-#include "JSMediaSource.h"
-#endif
 
-// #include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/JSArrayBufferViewInlines.h>
 
 #include "BunClientData.h"
@@ -695,11 +683,6 @@ ${controller}::~${controller}()
     }
 }
 
-JSObject* ${className}::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return ${prototypeName}::create(vm, &globalObject, ${prototypeName}::createStructure(vm, &globalObject, globalObject.objectPrototype()));
-}
-
 JSObject* JS${controllerName}::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
     return ${controllerPrototypeName}::create(vm, &globalObject, ${controllerPrototypeName}::createStructure(vm, &globalObject, globalObject.objectPrototype()));
@@ -817,8 +800,6 @@ void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = uncheckedDowncast<${className}>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
-        // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
     
 }
@@ -829,8 +810,6 @@ void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = uncheckedDowncast<${controller}>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
-        // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
 
     auto& vm = cell->vm();

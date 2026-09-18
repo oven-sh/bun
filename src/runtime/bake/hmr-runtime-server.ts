@@ -14,7 +14,6 @@ export type RequestContext = {
   responseOptions: ResponseInit;
   streaming: boolean;
   streamingStarted?: boolean;
-  renderAbort?: (path: string, params: Record<string, any> | null) => never;
 };
 
 // Create the AsyncLocalStorage instance for propagating response options

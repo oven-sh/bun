@@ -2,9 +2,6 @@
  * In practice, these strings are the relative file path to the module. */
 type Id = string;
 
-/** Index with same usage as `IncrementalGraph(.client).Index` */
-type FileIndex = number;
-
 interface Config {
   // Server + Client
   main: Id;
@@ -21,11 +18,6 @@ interface Config {
   version: string;
   /** If available, this is the Id of `react-refresh/runtime` */
   refresh?: Id;
-  /**
-   * A list of "roots" that the client is aware of. This includes
-   * the framework entry point, as well as every client component.
-   */
-  roots: FileIndex[];
   /**
    * If true, the client will receive console logs from the server.
    */
@@ -56,11 +48,6 @@ declare type UnloadedCommonJS = (
   module: import("./hmr-module").HMRModule["cjs"],
   exports: unknown,
 ) => unknown;
-declare type CommonJSModule = {
-  id: Id;
-  exports: any;
-  require: (id: Id) => unknown;
-};
 
 declare const config: Config;
 

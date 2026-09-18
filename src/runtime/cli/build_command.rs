@@ -375,6 +375,24 @@ impl BuildCommand {
                     Global::exit(1);
                 }
             }
+
+            // Output keeps the entry's name, so the next-to-the-entry fallback would overwrite a .js entry.
+            if output_to_stdout
+                && this_transpiler.options.source_map == options::SourceMapOption::Linked
+            {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> cannot use a linked source map without --outdir or --outfile"
+                );
+                Global::exit(1);
+            }
+
+            // As when bundling: name the output after --outfile so its `.map` lands next to it.
+            if ctx.bundler_options.outdir.is_empty() && !outfile.is_empty() {
+                this_transpiler.options.entry_naming =
+                    strings::concat(&[b"./", bun_paths::basename(outfile)]);
+                this_transpiler.options.output_dir =
+                    bun_core::dirname(outfile).unwrap_or(b".").into();
+            }
         }
 
         if ctx.bundler_options.outdir.is_empty()

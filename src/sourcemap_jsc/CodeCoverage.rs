@@ -249,8 +249,9 @@ pub mod wire {
     }
 }
 
-/// Folds several processes' `Report`s for one source file into one, for
-/// `bun test --parallel` where each worker that loaded the file reports it.
+/// Folds several VMs' `Report`s for one source file into one: the workers of
+/// `bun test --parallel`, and the main thread plus the `Worker` threads of
+/// one process, each of which loaded the file.
 ///
 /// Hits and executed lines/functions/blocks union across reports. Executable
 /// lines do not: a process that never ran a function marks the function's
@@ -269,18 +270,50 @@ pub struct MergedReport {
     /// Every report's ranges with their executed bit; deduplicated in `finish`.
     functions: Vec<(ByteRange, bool)>,
     stmts: Vec<(ByteRange, bool)>,
+    /// The first report's function ranges, sorted: what `shift_of` compares
+    /// the others against.
+    first_functions: Vec<ByteRange>,
 }
 
 impl MergedReport {
+    /// The main thread of `bun test` prints a module that uses a jest global
+    /// unbound with a `bun:test` import in front, a `Worker` thread does not.
+    /// JSC then reports the same functions at offsets moved by the import's
+    /// length. When `report` has the first report's functions exactly, each
+    /// moved by one constant, that constant is returned so the ranges line up
+    /// again. Zero otherwise.
+    fn shift_of(&self, report: &Report<'_>) -> i64 {
+        let first = &self.first_functions;
+        if first.is_empty() || first.len() != report.functions.len() {
+            return 0;
+        }
+        let mut incoming = report.functions.clone();
+        incoming.sort_unstable();
+        let delta = i64::from(first[0].start) - i64::from(incoming[0].start);
+        if delta == 0 {
+            return 0;
+        }
+        let moved_by_delta = first.iter().zip(&incoming).all(|(a, b)| {
+            i64::from(a.start) - i64::from(b.start) == delta
+                && i64::from(a.end) - i64::from(b.end) == delta
+        });
+        if moved_by_delta { delta } else { 0 }
+    }
+
     pub fn add(&mut self, report: &Report<'_>) -> Result<(), bun_alloc::AllocError> {
         let n = report.line_hits.len();
         self.reports += 1;
+        let shift: i64;
         if self.reports == 1 {
             self.source_url = report.source_url.to_vec();
             self.executable_in_all = report.executable_lines.clone()?;
             self.executed_in_any = report.lines_which_have_executed.clone()?;
             self.line_hits.clone_from(&report.line_hits);
+            self.first_functions.clone_from(&report.functions);
+            self.first_functions.sort_unstable();
+            shift = 0;
         } else {
+            shift = self.shift_of(report);
             if n != self.line_hits.len() {
                 // Same path, different contents between workers. Keep the
                 // longer view; lines past the shorter one's end count only
@@ -301,12 +334,14 @@ impl MergedReport {
             }
         }
         for (i, &r) in report.functions.iter().enumerate() {
-            self.functions
-                .push((r, report.functions_which_have_executed.is_set(i)));
+            self.functions.push((
+                r.shifted(shift),
+                report.functions_which_have_executed.is_set(i),
+            ));
         }
         for (i, &r) in report.stmts.iter().enumerate() {
             self.stmts
-                .push((r, report.stmts_which_have_executed.is_set(i)));
+                .push((r.shifted(shift), report.stmts_which_have_executed.is_set(i)));
         }
         Ok(())
     }
@@ -1130,6 +1165,17 @@ impl ByteRange {
         ByteRange {
             start: u32::try_from(min).expect("int cast"),
             end: u32::try_from(max).expect("int cast"),
+        }
+    }
+
+    /// This range moved by `delta` bytes. A range that would start before
+    /// the file is left as it is.
+    fn shifted(self, delta: i64) -> ByteRange {
+        let start = i64::from(self.start) + delta;
+        let end = i64::from(self.end) + delta;
+        match (u32::try_from(start), u32::try_from(end)) {
+            (Ok(start), Ok(end)) => ByteRange { start, end },
+            _ => self,
         }
     }
 }

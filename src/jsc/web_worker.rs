@@ -43,6 +43,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use bun_core::{EncodedSlice, String as BunString, WTFStringImpl};
 use bun_io::KeepAlive;
@@ -95,6 +96,10 @@ pub struct WebWorker {
     /// ancestor) asks it to terminate. `None` before `start_vm()` publishes it
     /// and after `shutdown()` unpublishes it.
     vm_handle: bun_threading::Guarded<Option<crate::VmHandle>>,
+    /// Set by `shutdown()` once the VM's coverage has been handed to the test
+    /// runner (or once it is clear none will be). `bun test --coverage` waits
+    /// on it before it reports.
+    coverage_handed_over: bun_threading::ResetEvent,
 
     // ---- Parent-thread only ---------------------------------------------------
     /// Keep-alive on the parent's event loop: taken in `create()`, toggled by
@@ -199,21 +204,46 @@ pub fn join_child_workers(parent: &mut VirtualMachine) {
     }
 }
 
-/// `bun test --coverage` is about to report: stop every child of the calling
-/// thread and wait for each to finish, so that each child's `shutdown()` has
-/// handed its coverage to the test runner. The child's
-/// `workerGlobalScopeDestroyed` task still runs on this thread's loop later
-/// and finds no thread left to join. `worker.terminate()` asks the same of
-/// a child, so a child a test already stopped is only waited for here.
+/// `bun test --coverage` is about to report: wait until every child of the
+/// calling thread that is stopping has handed its coverage to the test
+/// runner (`shutdown()` does that before it tears the VM down). With
+/// `stop_running`, a child still running is asked to stop first: the run is
+/// over. Without it (`--watch`), such a child keeps running and is not
+/// reported.
 ///
-/// Parent thread only: `child_workers` is touched on no other thread. As
-/// with `join()`, a child blocked in a native call is waited for as long as
-/// that call takes.
-pub fn terminate_and_join_child_workers(parent: &VirtualMachine) {
+/// The wait is bounded by `COVERAGE_HANDOVER_TIMEOUT_NS` for all children
+/// together. Termination interrupts script, not a native call a child is
+/// blocked in (`Atomics.wait`, a sync read), and such a child must not hang
+/// the run: it is reported without its coverage, as before.
+///
+/// Parent thread only: `child_workers` is touched on no other thread. The
+/// threads are not joined here. The child's `workerGlobalScopeDestroyed`
+/// task releases and joins it on this thread's loop, as always.
+pub fn wait_for_child_workers_coverage(parent: &VirtualMachine, stop_running: bool) {
+    const COVERAGE_HANDOVER_TIMEOUT_NS: u64 = 10_000_000_000;
     debug_assert!(core::ptr::eq(parent, VirtualMachine::get()));
+    let deadline = Instant::now() + Duration::from_nanos(COVERAGE_HANDOVER_TIMEOUT_NS);
     for &child in &parent.child_workers {
-        WebWorker::request_termination(child);
-        WebWorker::join(child);
+        if stop_running {
+            WebWorker::request_termination(child);
+        }
+        // SAFETY: registered children are live until the parent releases
+        // them (the proxy's ref), which happens on this thread, later.
+        let child = unsafe { &*child };
+        if !child.has_requested_terminate() {
+            continue;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if child
+            .coverage_handed_over
+            .timed_wait(u64::try_from(remaining.as_nanos()).unwrap_or(u64::MAX))
+            .is_err()
+        {
+            log!(
+                "[{}] coverage: timed out waiting for the worker to stop",
+                child.execution_context_id
+            );
+        }
     }
 }
 
@@ -441,6 +471,7 @@ impl WebWorker {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             requested_terminate: AtomicBool::new(false),
             vm_handle: bun_threading::Guarded::new(None),
+            coverage_handed_over: bun_threading::ResetEvent::new(),
             vm: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
@@ -1066,6 +1097,9 @@ impl WebWorker {
                 // since `thread_main`.
                 unsafe { (hooks.collect_worker_coverage)(core::ptr::from_mut(vm)) };
             }
+            // Before the teardown below: that can take a while, and the
+            // parent's report needs nothing past this point.
+            self.coverage_handed_over.set();
 
             // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy ----------
             // SAFETY: this thread's VM; sole owner.
@@ -1092,6 +1126,9 @@ impl WebWorker {
                     core::alloc::Layout::new::<VirtualMachine>(),
                 );
             }
+        } else {
+            // No VM ever ran: nothing to hand over.
+            self.coverage_handed_over.set();
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",

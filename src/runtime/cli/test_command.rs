@@ -25,7 +25,7 @@ bun_output::declare_scope!(bun_test, hidden);
 
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, MergedReport, Report as CodeCoverageReport, lcov, text,
+        ByteRangeMapping, Fraction, MergedReport, Report as CodeCoverageReport, lcov, text, wire,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -1471,8 +1471,9 @@ impl CommandLineReporter {
         let Some(map) = ByteRangeMapping::map() else {
             return;
         };
-        // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
-        // collection loop below (single-threaded CLI report path).
+        // SAFETY: the map is `thread_local!`, so this thread owns it, and the
+        // one report loop per thread (the main thread's at the end of the
+        // run, a Worker's in its `shutdown()`) is the only borrow.
         let map = unsafe { &mut *map.as_ptr() };
         let relative_dir = FileSystem::get().top_level_dir;
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
@@ -1497,12 +1498,17 @@ impl CommandLineReporter {
     /// [`collect_worker_coverage`]). Sorted by path.
     ///
     /// A Worker still running is stopped first: the run is over, and its
-    /// coverage exists only once its VM shuts down.
+    /// coverage exists only once its VM shuts down. Not under `--watch`,
+    /// where the process lives on: there such a Worker keeps running and is
+    /// left out of the report.
     pub(crate) fn coverage_reports(
         vm: &mut VirtualMachine,
         opts: &CodeCoverageOptions,
     ) -> Vec<CodeCoverageReport<'static>> {
-        jsc::web_worker::terminate_and_join_child_workers(vm);
+        jsc::web_worker::wait_for_child_workers_coverage(
+            vm,
+            vm.hot_reload != jsc::virtual_machine::HotReload::Watch,
+        );
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
         let from_workers = core::mem::take(&mut *WORKER_COVERAGE_REPORTS.lock());
@@ -1512,6 +1518,10 @@ impl CommandLineReporter {
 
         let mut by_path: bun_collections::StringArrayHashMap<coverage::MergedReport> =
             Default::default();
+        let from_workers: Vec<CodeCoverageReport<'static>> = from_workers
+            .iter()
+            .filter_map(|bytes| coverage::wire::decode(bytes))
+            .collect();
         for report in reports.iter().chain(&from_workers) {
             let merged = bun_core::handle_oom(by_path.get_or_put(&report.source_url));
             bun_core::handle_oom(merged.value_ptr.add(report));
@@ -1547,10 +1557,17 @@ impl CommandLineReporter {
     }
 }
 
-/// Coverage of every Worker VM that has shut down, one `Report` per file the
-/// worker loaded. Filled by [`collect_worker_coverage`] on the worker's
-/// thread, drained by [`CommandLineReporter::coverage_reports`].
-static WORKER_COVERAGE_REPORTS: bun_threading::Guarded<Vec<CodeCoverageReport<'static>>> =
+/// The `--coverage` options of this run, set once on the main thread before
+/// the first source loads with coverage on. Worker threads read it too
+/// (`BunTest__shouldGenerateCodeCoverage`, [`collect_worker_coverage`]), so
+/// it lives here and not behind the JS-thread-only `Jest::RUNNER`.
+static COVERAGE_OPTIONS: std::sync::OnceLock<&'static CodeCoverageOptions> =
+    std::sync::OnceLock::new();
+
+/// Coverage of every Worker VM that has shut down, one `wire`-encoded
+/// `Report` per file the worker loaded. Filled by [`collect_worker_coverage`]
+/// on the worker's thread, drained by [`CommandLineReporter::coverage_reports`].
+static WORKER_COVERAGE_REPORTS: bun_threading::Guarded<Vec<Vec<u8>>> =
     bun_threading::Guarded::new(Vec::new());
 
 /// `RuntimeHooks::collect_worker_coverage`: a Worker VM is about to be
@@ -1560,25 +1577,16 @@ static WORKER_COVERAGE_REPORTS: bun_threading::Guarded<Vec<CodeCoverageReport<'s
 /// # Safety
 /// `vm` is the live worker VM on its own thread; its JSC VM is alive.
 pub(crate) unsafe fn collect_worker_coverage(vm: *mut VirtualMachine) {
-    let Some(runner) = jest::Jest::runner_ptr() else {
+    let Some(opts) = COVERAGE_OPTIONS.get() else {
         return;
     };
-    // `test_options` is a shared borrow of the CLI's options, set once
-    // before any test runs. Read through a raw pointer from this (worker)
-    // thread, as `BunTest__shouldGenerateCodeCoverage` does, so no `&mut
-    // TestRunner` aliases the main thread's.
-    // SAFETY: the runner outlives the test run, and `RUNNER` is cleared
-    // before the main thread tears down, so a worker that shuts down after
-    // that reads `None` above.
-    let opts: &CodeCoverageOptions = unsafe { &(*runner.as_ptr()).test_options.coverage };
-    if !opts.enabled {
-        return;
-    }
     // SAFETY: fn contract.
     let vm = unsafe { &mut *vm };
     let mut reports = WORKER_COVERAGE_REPORTS.lock();
     CommandLineReporter::for_each_coverage_report(vm, opts, |report| {
-        reports.push(report.into_owned());
+        let mut encoded: Vec<u8> = Vec::new();
+        coverage::wire::encode(&report, &mut encoded);
+        reports.push(encoded);
     });
 }
 
@@ -1772,9 +1780,17 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
         return false;
     }
 
+    // A `blob:` or `data:` module (a Worker made with `eval: true`) is not a
+    // file the report could name.
+    if strings::has_prefix_comptime(slice, b"blob:")
+        || strings::has_prefix_comptime(slice, b"data:")
+    {
+        return false;
+    }
+
     let ext = bun_path::extension(slice);
-    // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
-    // called from the JS thread once a VM exists.
+    // `VirtualMachine::get()` is the calling thread's VM: the main VM, or a
+    // Worker's when it loads a source with coverage on.
     let loader_by_ext = VirtualMachine::get()
         .as_mut()
         .transpiler
@@ -1786,8 +1802,8 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
         return false;
     }
 
-    if let Some(runner) = jest::Jest::runner() {
-        if runner.test_options.coverage.skip_test_files {
+    if let Some(opts) = COVERAGE_OPTIONS.get() {
+        if opts.skip_test_files {
             let name_without_extension = &slice[0..slice.len() - ext.len()];
             for suffix in scanner::TEST_NAME_SUFFIXES {
                 if strings::ends_with(name_without_extension, suffix) {
@@ -2039,6 +2055,7 @@ impl TestCommand {
         }
 
         if ctx.test_options.coverage.enabled {
+            let _ = COVERAGE_OPTIONS.set(&reporter.jest.test_options.coverage);
             vm.transpiler.options.code_coverage = true;
             vm.transpiler.options.minify_syntax = false;
             vm.transpiler.options.minify_identifiers = false;

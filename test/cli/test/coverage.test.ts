@@ -700,35 +700,49 @@ test("calls second", () => {
 
 // https://github.com/oven-sh/bun/issues/43275
 // A Worker has a VM of its own. Code it runs must count toward the report.
-test("coverage counts code that runs in a Worker", async () => {
-  using dir = tempDir("cov-worker", {
-    "lib.ts": `export function covered(n: number): number {
+const workerCoverageFixture = {
+  "lib.ts": `export function covered(n: number): number {
   if (n > 5) {
     return n * 2;
   }
   return n + 1;
 }
 `,
-    "worker.ts": `import { covered } from "./lib.ts";
+  "worker.ts": `import { covered } from "./lib.ts";
 postMessage(covered(10));
 `,
-    "worker-only.ts": `export function onlyInWorker() {
+  "worker-only.ts": `export function onlyInWorker() {
   return "worker";
 }
 `,
-    "worker2.ts": `import { onlyInWorker } from "./worker-only.ts";
+  "worker2.ts": `import { onlyInWorker } from "./worker-only.ts";
 postMessage(onlyInWorker());
 `,
-    "alive.ts": `export function keptAlive() {
+  "alive.ts": `export function keptAlive() {
   return "alive";
 }
 `,
-    "worker3.ts": `import { keptAlive } from "./alive.ts";
+  "worker3.ts": `import { keptAlive } from "./alive.ts";
 setInterval(keptAlive, 1000);
 postMessage(keptAlive());
 `,
-    "worker.test.ts": `import { test, expect } from "bun:test";
+  // `expect` is a jest global here, so the main thread loads this module with a
+  // `bun:test` import injected in front of it and the worker does not. The
+  // functions are the same.
+  "helpers.ts": `export function assertPositive(n: number) {
+  expect(n).toBeGreaterThan(0);
+}
+export function double(n: number) {
+  return n * 2;
+}
+`,
+  "worker4.ts": `import { double } from "./helpers.ts";
+postMessage(double(21));
+`,
+  "worker.test.ts": `import { test, expect } from "bun:test";
+import { Worker as NodeWorker } from "node:worker_threads";
 import { covered } from "./lib.ts";
+import { assertPositive, double } from "./helpers.ts";
 
 async function runWorker(file: string, terminate = true) {
   const worker = new Worker(new URL(file, import.meta.url).href);
@@ -752,8 +766,43 @@ test("only a Worker imports the module", async () => {
 test("a Worker that is still running when the run ends", async () => {
   expect(await runWorker("./worker3.ts", false)).toBe("alive");
 });
+
+test("a module the main thread loads with injected jest globals", async () => {
+  assertPositive(1);
+  expect(double(2)).toBe(4);
+  expect(await runWorker("./worker4.ts")).toBe(42);
+});
+
+test("an eval Worker has no file to report", async () => {
+  const worker = new NodeWorker("require('node:worker_threads').parentPort.postMessage(1 + 1)", { eval: true });
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  worker.on("message", resolve);
+  worker.on("error", reject);
+  expect(await promise).toBe(2);
+  await worker.terminate();
+});
 `,
-  });
+};
+
+const coveredFiles = ["lib", "worker", "worker-only", "worker2", "alive", "worker3", "helpers", "worker4"];
+
+function expectWorkerCoverage(stderr: string, lcov: string) {
+  expect(stderr).toContain("5 pass");
+  for (const file of coveredFiles) {
+    expect(stderr).toMatch(new RegExp(` ${file}\\.ts +\\| +100\\.00 +\\| +100\\.00 +\\| +\n`));
+  }
+  expect(stderr).not.toContain("blob:");
+  expect(lcov).not.toContain("blob:");
+  const records = lcov.split("end_of_record");
+  const lib = records.find(r => r.includes("SF:lib.ts"));
+  expect(lib).toMatch(/FNF:1\nFNH:1\n/);
+  expect(lib).toMatch(/LF:5\nLH:5\n/);
+  const helpers = records.find(r => r.includes("SF:helpers.ts"));
+  expect(helpers).toMatch(/FNF:2\nFNH:2\n/);
+}
+
+test.concurrent("coverage counts code that runs in a Worker", async () => {
+  using dir = tempDir("cov-worker", workerCoverageFixture);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "./worker.test.ts"],
     env: bunEnv,
@@ -762,14 +811,28 @@ test("a Worker that is still running when the run ends", async () => {
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expectWorkerCoverage(stderr, readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8"));
+  expect(exitCode).toBe(0);
+});
 
-  expect(stderr).toContain("3 pass");
-  for (const file of ["lib", "worker", "worker-only", "worker2", "alive", "worker3"]) {
-    expect(stderr).toMatch(new RegExp(` ${file}\\.ts +\\| +100\\.00 +\\| +100\\.00 +\\| +\n`));
-  }
-  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
-  const record = lcov.split("end_of_record").find(r => r.includes("SF:lib.ts"));
-  expect(record).toMatch(/FNF:1\nFNH:1\n/);
-  expect(record).toMatch(/LF:5\nLH:5\n/);
+test.concurrent("--parallel: coverage counts code that runs in a Worker", async () => {
+  using dir = tempDir("cov-worker-parallel", workerCoverageFixture);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "test",
+      "--coverage",
+      "--coverage-reporter=text",
+      "--coverage-reporter=lcov",
+      "--parallel=2",
+      "./worker.test.ts",
+    ],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expectWorkerCoverage(stderr, readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8"));
   expect(exitCode).toBe(0);
 });

@@ -3498,7 +3498,9 @@ it("'upgrade' fires only when llhttp would flag the request as an upgrade", asyn
     res.end(`request (req.upgrade=${req.upgrade})`);
   });
   server.on("upgrade", (req, socket) => {
-    socket.end(`HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\nupgrade (req.upgrade=${req.upgrade})`);
+    socket.end(
+      `HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\nupgrade (req.upgrade=${req.upgrade})`,
+    );
   });
   try {
     server.listen(0, "127.0.0.1");

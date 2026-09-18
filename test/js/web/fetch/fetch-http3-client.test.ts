@@ -840,6 +840,39 @@ describe("interim responses ahead of the final response", () => {
   });
 });
 
+// QPACK carries a field value verbatim, so a server can send the optional
+// whitespace that the HTTP/1.1 parser strips (RFC 9110 section 5.5). The
+// client decodes through the same header-set callback as the server listener.
+test("strips leading and trailing whitespace from a response field value", async () => {
+  const origin = await listen(
+    async (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      onheaders(this: any) {
+        this.sendHeaders(
+          { ":status": "204", "x-ws": " \tv\t ", "x-only-ws": " \t ", "x-inner": "a \t b" },
+          { terminal: true },
+        );
+      },
+    },
+  );
+  try {
+    const { headers } = await fetch(`https://127.0.0.1:${origin.address.port}/`, h3);
+    expect({
+      ws: headers.get("x-ws"),
+      onlyWs: headers.get("x-only-ws"),
+      inner: headers.get("x-inner"),
+    }).toEqual({ ws: "v", onlyWs: "", inner: "a \t b" });
+  } finally {
+    // Not close(): it waits for the session that fetch() keeps in its pool.
+    await origin.destroy();
+  }
+});
+
 // Stale-session retry: a request bound on session A when A's conn closes
 // (GOAWAY/CONNECTION_CLOSE) must transparently retry on a fresh session
 // instead of surfacing HTTP3StreamReset. reusePort lets B bind the same

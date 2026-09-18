@@ -1470,14 +1470,15 @@ describe.skipIf(isWindows)("signals", () => {
     // Signal the runner alone, not the children.
     proc.kill(signal);
     const [, stderr, exitCode] = await Promise.all([stdoutDone, proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
   test("SIGINT to the runner is forwarded to every package at once and exits 130", async () => {
     const r = await runFilterAndSignal("SIGINT");
     expect(r.stdout).toContain("pkga wait: got SIGINT");
     expect(r.stdout).toContain("pkgb wait: got SIGINT");
-    expect(r.exitCode).toBe(130);
+    // The runner ends by the signal, so a shell or systemd sees a signal death.
+    expect({ exitCode: r.exitCode, signalCode: r.signalCode }).toEqual({ exitCode: 130, signalCode: "SIGINT" });
   });
 
   test("SIGTERM to the runner is forwarded to every package and exits 143", async () => {
@@ -1511,8 +1512,7 @@ describe.skipIf(isWindows)("signals", () => {
     for (const name of names) {
       expect(stdout).toContain(`${name} go: Signaled with code SIGTERM`);
     }
-    // The runner exits with 143; it is not killed by the signal itself.
-    expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 143, signalCode: null });
+    expect(exitCode).toBe(143);
   });
 
   // With --no-orphans the packages get SIGKILL when the runner dies. The

@@ -2249,7 +2249,7 @@ async function runAndSignal(
   dir: string,
   signal: "SIGINT" | "SIGTERM",
   readyCount: number,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+): Promise<{ stdout: string; stderr: string; exitCode: number; signalCode: string | null }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "run", ...args],
     env: { ...bunEnv, NO_COLOR: "1" },
@@ -2265,7 +2265,7 @@ async function runAndSignal(
   await ready.promise;
   proc.kill(signal);
   const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
 function trapPackage(signal: string, extraArg = "") {
@@ -2287,7 +2287,8 @@ describe.concurrent.skipIf(isWindows)("signals", () => {
     const r = await runAndSignal(["--parallel", "a", "b"], String(dir), "SIGINT", 2);
     expectPrefixed(r.stdout, "a", "got SIGINT");
     expectPrefixed(r.stdout, "b", "got SIGINT");
-    expect(r.exitCode).toBe(130);
+    // The runner ends by the signal, so a shell or systemd sees a signal death.
+    expect({ exitCode: r.exitCode, signalCode: r.signalCode }).toEqual({ exitCode: 130, signalCode: "SIGINT" });
   });
 
   test("SIGTERM to the runner is forwarded to every script and exits 143", async () => {
@@ -2295,7 +2296,7 @@ describe.concurrent.skipIf(isWindows)("signals", () => {
     const r = await runAndSignal(["--parallel", "a", "b"], String(dir), "SIGTERM", 2);
     expectPrefixed(r.stdout, "a", "got SIGTERM");
     expectPrefixed(r.stdout, "b", "got SIGTERM");
-    expect(r.exitCode).toBe(143);
+    expect({ exitCode: r.exitCode, signalCode: r.signalCode }).toEqual({ exitCode: 143, signalCode: "SIGTERM" });
   });
 
   test("a SIGINT the runner inherited as ignored still stops the run", async () => {
@@ -2422,8 +2423,7 @@ describe.concurrent.skipIf(isWindows)("signals", () => {
     for (const name of names) {
       expect(stderr).toMatch(new RegExp(`^${name}\\s+\\| Signaled: SIGTERM`, "m"));
     }
-    // The runner exits with 143; it is not killed by the signal itself.
-    expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 143, signalCode: null });
+    expect(exitCode).toBe(143);
   });
 
   test("sequential: SIGINT stops the chain and exits 130 even though the script exited 0", async () => {

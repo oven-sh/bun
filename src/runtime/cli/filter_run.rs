@@ -1061,11 +1061,11 @@ pub(crate) fn run_scripts_with_filter(
     // A signal from here on ends the process through its default disposition.
     run_abort::uninstall();
     let status = state.finalize();
-    // Exit 128 + signal even when every started script exited 0 before the abort.
-    let status = match run_abort::pending() {
-        Some(signal) => signal.to_exit_code().unwrap_or(1),
-        None => status,
-    };
+    // An aborted run ends by the signal, as it did before the signal was
+    // hooked, even when every started script exited 0.
+    if let Some(signal) = run_abort::pending() {
+        Global::exit_by_signal(signal.0.into());
+    }
 
     Global::exit(status as u32);
 }

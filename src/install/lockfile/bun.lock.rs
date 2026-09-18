@@ -3691,9 +3691,10 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     // A listed name that is in no dependency group has no range: the lockfile it was migrated from records none.
     for &(name_hash, name_str) in &bundled_without_entry {
-        if lockfile.buffers.dependencies[off..]
-            .iter()
-            .any(|dep| dep.name_hash == name_hash)
+        if !dependency::is_safe_install_folder_name(name_str)
+            || lockfile.buffers.dependencies[off..]
+                .iter()
+                .any(|dep| dep.name_hash == name_hash)
         {
             continue;
         }

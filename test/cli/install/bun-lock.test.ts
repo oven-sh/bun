@@ -1325,6 +1325,20 @@ describe.concurrent("hand-edited bun.lock bundledDependencies", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A migrated pnpm-lock.yaml has no range for a bundled name, so bun.lock lists the name in no dependency group.
+  it("loads a listed name that is in no dependency group, and ignores one that is not a folder name", async () => {
+    const { out, err, exitCode } = await installWithBundledDependencies(["unpublished-dep", "no-range", "../x"]);
+    expect(err).toMatchInlineSnapshot(`""`);
+    expect(out).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      + bundled-unpublished@1.0.0
+
+      1 package installed"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
   it("rejects a value that is not an array", async () => {
     const { out, err, exitCode } = await installWithBundledDependencies("unpublished-dep");
     expect(err).toMatchInlineSnapshot(`

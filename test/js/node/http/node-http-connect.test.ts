@@ -650,7 +650,7 @@ describe("HTTP server CONNECT", () => {
 // The dispatcher answered it like a request: the client got a 200 OK for a tunnel that did not
 // exist, the bytes it sent next reached no listener, and the server kept the socket after the
 // client was gone. No issue reports this, it was found in the dispatcher's code. Node v26.3.0
-// gives the same result in every test here.
+// gives the same result in every test here, except in the one that says so.
 describe("CONNECT pipelined behind a pending response", () => {
   const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: example.com\r\n\r\n`;
   const CONNECT = "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n";
@@ -669,7 +669,7 @@ describe("CONNECT pipelined behind a pending response", () => {
   }) {
     const events: string[] = [];
     let first: http.ServerResponse | undefined;
-    const { promise: firstFinished, resolve: onFirstFinished } = Promise.withResolvers<void>();
+    const { promise: firstFinished, resolve: onFirstFinished, reject: onFailure } = Promise.withResolvers<void>();
     await using server = http.createServer((req, res) => {
       events.push(`request ${req.method} ${req.url}`);
       if (req.method === "CONNECT") {
@@ -682,6 +682,7 @@ describe("CONNECT pipelined behind a pending response", () => {
       first ??= res.on("finish", onFirstFinished);
       options.respond(req, res);
     });
+    server.on("clientError", onFailure);
     server.on("connect", (req, socket, head) => {
       events.push(`connect ${req.url} upgrade=${req.upgrade}`);
       let tunneled = head.toString();
@@ -695,6 +696,8 @@ describe("CONNECT pipelined behind a pending response", () => {
     try {
       const received: Buffer[] = [];
       client.on("data", chunk => received.push(chunk));
+      client.on("error", onFailure);
+      client.on("close", () => onFailure(new Error(`closed before the first response finished: ${events}`)));
       client.write(options.written);
       await firstFinished;
       expect(events).toEqual(options.events);
@@ -762,56 +765,185 @@ describe("CONNECT pipelined behind a pending response", () => {
     expect(withoutResponseHeads(received)).toBe(`5\r\nfirst\r\n0\r\n\r\n${ESTABLISHED}tunneled:later`);
   });
 
-  test("should deliver the response ahead of it when the 'connect' listener throws", async () => {
+  // A second connection does a whole exchange. When it is over, the server has also read what
+  // the first connection sent before it.
+  async function barrier(port: number) {
+    const socket = net.connect(port, "127.0.0.1");
+    socket.resume();
+    socket.end(`GET /barrier HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n`);
+    await once(socket, "close");
+  }
+
+  test("should keep the bytes that arrive before the 'connect' listener reads the socket", async () => {
+    // The response ahead ends after the handoff, and its request is dumped then. That must not
+    // make the socket flow: a socket that flows without a reader discards what it receives.
+    let first: http.ServerResponse | undefined;
+    const { promise: handedOff, resolve: onHandoff, reject: onFailure } = Promise.withResolvers<net.Socket>();
+    await using server = http.createServer((req, res) => {
+      if (req.url === "/first") return void (first = res);
+      res.end();
+      if (req.method === "CONNECT") {
+        first!.end();
+        onFailure(new Error("the CONNECT was dispatched as a request"));
+      }
+    });
+    server.on("connect", (req, socket) => {
+      first!.end("first");
+      onHandoff(socket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", onFailure);
+      client.resume();
+      client.write(get("/first") + CONNECT);
+      const tunnel = await handedOff;
+      client.write("early,");
+      await barrier(port);
+      let tunneled = "";
+      tunnel.on("data", chunk => (tunneled += chunk));
+      const tunnelEnded = once(tunnel, "end");
+      client.end("late");
+      await tunnelEnded;
+      tunnel.end();
+      expect(tunneled).toBe("early,late");
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The throw becomes an uncaught exception, and the handoff stands: the tunnel still echoes, and
+  // a response ahead of the CONNECT still completes.
+  for (const pipelined of [true, false]) {
+    test.concurrent(
+      `should keep the tunnel when the 'connect' listener throws (${pipelined ? "pipelined" : "first request"})`,
+      async () => {
+        const fixture = /* js */ `
+        const http = require("node:http");
+        const net = require("node:net");
+        const pipelined = process.env.PIPELINED === "1";
+        let client;
+        process.on("uncaughtException", err => {
+          console.log("uncaught:", err.message);
+          client.write("ping");
+        });
+        let first;
+        const server = http.createServer((req, res) => {
+          if (req.method === "CONNECT") {
+            console.log("the CONNECT was dispatched as a request");
+            process.exit(0);
+          }
+          first = res;
+          res.writeHead(200, { "Content-Length": 10 });
+          res.write("first");
+        });
+        server.on("connect", (req, socket) => {
+          socket.on("data", chunk => {
+            first?.end("-done");
+            socket.end("echo:" + chunk);
+          });
+          throw new Error("listener threw");
+        });
+        server.listen(0, "127.0.0.1", () => {
+          client = net.connect(server.address().port, "127.0.0.1");
+          let received = "";
+          client.on("data", chunk => (received += chunk));
+          client.on("close", () => {
+            console.log(JSON.stringify({ first: received.includes("first-done"), echo: received.includes("echo:ping") }));
+            process.exit(0);
+          });
+          client.write(
+            (pipelined ? "GET /first HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n" : "") +
+              "CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n",
+          );
+        });
+      `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: { ...bunEnv, PIPELINED: pipelined ? "1" : "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: `uncaught: listener threw\n${JSON.stringify({ first: pipelined, echo: true })}\n`,
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+  }
+
+  test.concurrent("should not let the end of the tunnel release the response ahead of it", async () => {
+    // Not Node's result: there only the socket keeps this process alive, and it stops when the
+    // tunnel ends. Here a pending response keeps the process alive, and after server.unref()
+    // nothing else does, so the process must stay until the response ahead is complete.
     const fixture = /* js */ `
       const http = require("node:http");
-      const net = require("node:net");
-      process.on("uncaughtException", err => console.log("uncaught:", err.message));
       let first;
       const server = http.createServer((req, res) => {
-        if (req.method === "CONNECT") {
-          // The CONNECT was not dispatched as 'connect'.
-          res.end("not a tunnel");
-          first.end("-done");
-          return;
+        console.log("request " + req.method + " " + req.url);
+        if (req.url === "/first") {
+          server.unref();
+          return void (first = res);
         }
-        first = res;
-        res.writeHead(200, { "Content-Length": 10 });
-        res.write("first");
+        first.end("first");
+        res.end("released");
       });
-      server.on("connect", () => {
-        setImmediate(() => first.end("-done"));
-        throw new Error("listener threw");
-      });
-      server.listen(0, "127.0.0.1", () => {
-        const client = net.connect(server.address().port, "127.0.0.1");
-        let received = "";
-        client.on("data", chunk => {
-          received += chunk;
-          if (received.includes("first-done")) client.destroy();
+      server.on("connect", (req, socket) => {
+        socket.on("end", () => {
+          console.log("tunnel end");
+          // An unref'd timer runs only while something else keeps the process alive.
+          setTimeout(() => console.log("still alive"), 50).unref();
         });
-        client.on("close", () => {
-          console.log(JSON.stringify(received.slice(received.indexOf("\\r\\n\\r\\n") + 4)));
-          process.exit(0);
-        });
-        client.write(
-          "GET /first HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n" +
-            "CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n",
-        );
+        socket.resume();
       });
+      server.listen(0, "127.0.0.1", () => console.log("port " + server.address().port));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: 'uncaught: listener threw\n"first-done"\n',
-      stderr: "",
-      exitCode: 0,
-    });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    // The first `count` lines of the server's output, as soon as it has printed them.
+    async function lines(count: number) {
+      while (stdout.split("\n").length <= count) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`the server exited after ${JSON.stringify(stdout)}`);
+        stdout += decoder.decode(value, { stream: true });
+      }
+      return stdout.split("\n").slice(0, count);
+    }
+
+    const port = Number((await lines(1))[0].slice("port ".length));
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      const { promise: gotFirst, resolve: onFirst, reject: onFailure } = Promise.withResolvers<void>();
+      // Awaited last. An earlier failure must not leave its rejection unhandled.
+      gotFirst.catch(() => {});
+      let received = "";
+      client.on("data", chunk => {
+        received += chunk;
+        if (received.endsWith("first")) onFirst();
+      });
+      client.on("error", onFailure);
+      client.on("close", () => onFailure(new Error(`closed after ${JSON.stringify(received)}`)));
+      client.write(get("/first") + CONNECT);
+      client.end();
+      expect((await lines(4)).slice(1)).toEqual(["request GET /first", "tunnel end", "still alive"]);
+
+      const released = await fetch(`http://127.0.0.1:${port}/release`);
+      expect(await released.text()).toBe("released");
+      await gotFirst;
+    } finally {
+      client.destroy();
+    }
   });
 
   test("should close the connection when the server has no 'connect' listener", async () => {

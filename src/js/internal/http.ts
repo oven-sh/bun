@@ -39,6 +39,9 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+// On a server socket that was handed to a 'connect' or 'upgrade' listener: the native response
+// of the request that was handed off.
+const kHandoffResponse = Symbol("kHandoffResponse");
 const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -521,6 +524,7 @@ export {
   kAbortController,
   kCloseCallback,
   kHandle,
+  kHandoffResponse,
   kInternalSocketData,
   kNeedDrain,
   kOutHeaders,

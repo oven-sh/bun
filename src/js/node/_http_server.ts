@@ -32,6 +32,7 @@ const {
   kInternalSocketData,
   serverSymbol,
   kHandle,
+  kHandoffResponse,
   kRealListen,
   tlsSymbol,
   optionsSymbol,
@@ -752,10 +753,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // A pipelined CONNECT is not the socket's current response, so
             // the call names the response that leaves HTTP.
             socketHandle.upgradeToTunnel(false, handle);
+            socket[kHandoffResponse] = handle;
             // The parser is detached: the socket is handed over with only
             // net.Socket's 'end' listener left, like Node.js.
             detachSocketListenersForHandoff(socket);
-            const promise = $newPromise();
             // Pass the pipelined data (head buffer) if any was received with the CONNECT request
             const head = connectHead ? connectHead : kEmptyBuffer;
             // Node.js's parserOnIncoming: req.upgrade is true for CONNECT
@@ -777,6 +778,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // Attach the internal close listener after the user's "connect"
             // handler ran: Node.js hands the socket over with no listeners and
             // tests assert socket.listenerCount("close") === 0 there.
+            const promise = $newPromise();
             socket.once("close", resolveHandoffPromise.bind(undefined, promise));
             return promise;
           } else {
@@ -982,6 +984,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // message completes, so the upgradeHead is empty and everything after
           // the end of the message reaches the socket as raw data.
           socketHandle.upgradeToTunnel(hasBody, handle);
+          socket[kHandoffResponse] = handle;
           socket[kEnableStreaming](true);
           detachSocketListenersForHandoff(socket);
           // Node frees the parser before emitting 'upgrade' (socket.parser === null there).
@@ -1504,6 +1507,7 @@ function getNodeHTTPServerSocket() {
     [kBytesWritten] = 0;
     [kHandle];
     [kUpgradeIncoming] = undefined;
+    [kHandoffResponse] = undefined;
     server: Server;
     _httpMessage;
     _secureEstablished = false;
@@ -1603,8 +1607,9 @@ function getNodeHTTPServerSocket() {
           // connection stays writable (allowHalfOpen), but - like Node, where the
           // detached socket stops reading and no longer keeps the process alive -
           // the never-used response for this request must not keep the event loop
-          // alive either.
-          handle.response?.unref();
+          // alive either. Not handle.response: behind a pipelined CONNECT that is
+          // the response in flight, which still needs the loop.
+          this[kHandoffResponse]?.unref();
         }
 
         this.push(null);

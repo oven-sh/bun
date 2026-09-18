@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, symlinkSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
@@ -365,6 +365,57 @@ export default function Docs() {
       .env(bunEnv)
       .throws(false);
     expect(stderr.toString()).toContain("Multiple pages matching the same route pattern is ambiguous");
+  });
+
+  // Two routes can name one file through a symlink. The bundler builds that file
+  // once, and each page still has to be prerendered from its own module.
+  test.each([
+    ["a directory", "pages"],
+    ["a symlink", "real-pages"],
+  ])("pages reached through symlinks are prerendered when pages is %s", async (_, pagesDir) => {
+    const page = (name: string) => `export default function Page() { return <p>page:${name}</p>; }`;
+    const dir = await tempDirWithBakeDeps("bake-production-symlink", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      [`${pagesDir}/index.tsx`]: page("index"),
+      [`${pagesDir}/one.tsx`]: page("one"),
+      [`${pagesDir}/two.tsx`]: page("two"),
+      [`${pagesDir}/three.tsx`]: page("three"),
+      [`${pagesDir}/four.tsx`]: page("four"),
+      [`${pagesDir}/real/a.tsx`]: page("real-a"),
+      [`${pagesDir}/real/b.tsx`]: page("real-b"),
+      [`${pagesDir}/with-client.tsx`]: `import Client from "../components/Client";
+export default function Page() { return <p>page:with-client<Client /></p>; }`,
+      "components/Client.tsx": `"use client";
+export default function Client() { return <i>client</i>; }`,
+    });
+    symlinkSync("one.tsx", path.join(dir, pagesDir, "alias.tsx"));
+    symlinkSync(path.join(dir, pagesDir, "real"), path.join(dir, pagesDir, "linked"), "junction");
+    if (pagesDir !== "pages") symlinkSync(path.join(dir, pagesDir), path.join(dir, "pages"), "junction");
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+
+    const built: Record<string, string | undefined> = {};
+    for (const file of new Bun.Glob("dist/**/index.html").scanSync(dir)) {
+      const route = "/" + normalizePath(path.dirname(file)).slice("dist/".length);
+      built[route] = (await Bun.file(path.join(dir, file)).text()).match(/page:([\w-]+)/)?.[1];
+    }
+    expect(built, stderr.toString()).toEqual({
+      "/": "index",
+      "/one": "one",
+      "/alias": "one",
+      "/two": "two",
+      "/three": "three",
+      "/four": "four",
+      "/real/a": "real-a",
+      "/real/b": "real-b",
+      "/linked/a": "real-a",
+      "/linked/b": "real-b",
+      "/with-client": "with-client",
+    });
+    expect(exitCode).toBe(0);
   });
 
   test("handles build with no pages directory without crashing", async () => {

@@ -401,14 +401,13 @@ impl Framework {
         had_errors: &mut bool,
         desc: &[u8],
     ) {
-        if let Some(module) = built_in_modules.get(path) {
-            if let BuiltInModule::Import(p) = module {
-                *path = Cow::Owned(p.to_vec());
-            }
-            return;
-        }
+        let specifier: &[u8] = match built_in_modules.get(path) {
+            Some(BuiltInModule::Code(_)) => return,
+            Some(BuiltInModule::Import(p)) => p,
+            None => path,
+        };
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        match r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt) {
+        match r.resolve(top_level_dir, specifier, bun_ast::ImportKind::Stmt) {
             Ok(mut result) => {
                 let p = result.path().expect("just resolved");
                 *path = Cow::Owned(p.text.to_vec());

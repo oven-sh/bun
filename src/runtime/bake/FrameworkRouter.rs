@@ -16,7 +16,7 @@ use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
 use bun_paths::{self as paths, MAX_PATH_BYTES};
-use bun_resolver::{DirInfo, Resolver};
+use bun_resolver::{DirInfo, RealPath, Resolver};
 
 use bun_wyhash;
 
@@ -1668,6 +1668,13 @@ impl FrameworkRouter {
                             }
                         };
 
+                        // Same key as the bundler: the resolver's path, with symlinks resolved.
+                        let abs_path: &[u8] = match r.real_path_of(dir_info, file) {
+                            RealPath::Whole(real_path) => real_path,
+                            RealPath::Dir(real_dir) => fs_ref.abs(&[real_dir, base]),
+                            RealPath::Same => fs_ref.abs(&[file.dir, base]),
+                        };
+
                         let result = if param_count > 0 {
                             let pattern = EncodedPattern::init_from_parts(
                                 parsed.parts,
@@ -1677,7 +1684,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Dynamic(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -1708,7 +1715,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Static(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )

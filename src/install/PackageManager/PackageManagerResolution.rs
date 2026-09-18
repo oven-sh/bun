@@ -406,14 +406,12 @@ impl PackageManager {
         }
     }
 
-    /// Every workspace path receives a `node_modules` from the linkers, and `bun prune`
-    /// deletes inside it, so one outside the root is a write outside the project.
+    /// A path outside the root receives writes from the linkers and from `bun prune`.
     pub(crate) fn verify_workspaces_inside_root(&mut self, log_level: LogLevel) {
         let lockfile = &self.lockfile;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
 
-        // The isolated linker iterates `workspace_paths`, which keeps a path whose package
-        // never resolved.
+        // The isolated linker iterates `workspace_paths`, even a path that never resolved.
         let mut paths: Vec<&[u8]> =
             Vec::with_capacity(lockfile.workspace_paths.count() + lockfile.packages.len());
         for path in lockfile.workspace_paths.values() {
@@ -491,8 +489,7 @@ fn workspace_containment<'b>(
     workspace_path: &[u8],
     real_dir_buf: &'b mut bun_paths::PathBuffer,
 ) -> Containment<'b> {
-    // The installer creates the directories under `node_modules` itself, so such a path
-    // resolves elsewhere once the install starts.
+    // The installer creates these itself, so the path resolves elsewhere mid-install.
     for component in strings::split_any(workspace_path, b"/\\") {
         if component == b"node_modules" {
             return Containment::Refused("is inside node_modules");
@@ -532,8 +529,7 @@ fn workspace_containment<'b>(
     Containment::Outside(real_dir)
 }
 
-/// `<root>/<path>` and a NUL, not normalized, because the OS applies a `..` to the target
-/// of the symlink before it. Returns the length without the NUL.
+/// Writes `<root>/<path>` and a NUL, not normalized: the OS applies `..` to a symlink target.
 fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize> {
     let root: &[u8] = if bun_paths::is_absolute(path) {
         b""
@@ -554,8 +550,7 @@ fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize
     Some(len)
 }
 
-/// `bun.lock` can list a workspace that is missing, so the nearest existing directory of
-/// the NUL-terminated `buf[..len]` stands in for it.
+/// `bun.lock` can list a missing workspace, so the nearest existing directory stands in.
 fn real_path_of_nearest_existing_dir<'b>(
     buf: &mut [u8],
     len: usize,

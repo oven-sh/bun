@@ -497,7 +497,8 @@ impl GPURenderPassEncoder {
             label: JsCell::new(label),
         }
         .to_js(global);
-        Ok((pass, invalid))
+        let set_device = crate::generated_classes::js_GPURenderPassEncoder::device_set_cached;
+        Ok((device.adopt(global, pass, set_device), invalid))
     }
 
     pub(crate) fn set_viewport(
@@ -744,13 +745,15 @@ impl GPURenderBundleEncoder {
             instance().device_create_render_bundle_encoder_with_id(device.id(), &desc, None);
         let raw = bun_webgpu::RenderBundleEncoder::new(id);
         device.check(global, err)?;
-        Ok(GPURenderBundleEncoder {
+        let encoder = GPURenderBundleEncoder {
             device: Rc::clone(device),
             raw,
             label: JsCell::new(label),
             held: JsCell::new(Held::default()),
         }
-        .to_js(global))
+        .to_js(global);
+        let set_device = crate::generated_classes::js_GPURenderBundleEncoder::device_set_cached;
+        Ok(device.adopt(global, encoder, set_device))
     }
 
     pub(crate) fn push_debug_group(

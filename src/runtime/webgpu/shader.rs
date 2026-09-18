@@ -17,8 +17,8 @@ use super::js_module;
 /// Compiled in place of a source that got no compile thread: invalid WGSL, so the module is invalid.
 const NOT_COMPILED: &str = "not compiled";
 
-/// What script is told then. The thread's stack is sized from the source, so a huge source is the likely reason.
-const NO_COMPILE_THREAD: &str = "createShaderModule: could not create the thread that compiles the shader (its stack is sized from the source length)";
+/// What script is told then. The thread's stack is sized for how deep the source can nest, and a source that asks for too much gets no thread.
+const NO_COMPILE_THREAD: &str = "createShaderModule: no thread could be created to compile the shader. Its stack is sized for how deep the source can nest, so the source may nest too deep";
 
 /// One `GPUCompilationMessage`. naga reports UTF-8 byte offsets; the spec wants UTF-16 units.
 struct Message {
@@ -34,8 +34,8 @@ pub struct GPUShaderModule {
     raw: Rc<bun_webgpu::ShaderModule>,
     label: JsCell<bun_core::String>,
     messages: Vec<Message>,
-    /// What the pipeline calls that use this module have to size their stack for.
-    source_len: usize,
+    /// The stack a compile of the source needs: the pipeline calls that use this module need it too.
+    compile_stack: usize,
 }
 
 super::gpu_object!(GPUShaderModule, label);
@@ -96,8 +96,8 @@ fn compilation_messages(err: &CreateShaderModuleError, source: &str) -> Vec<Mess
 }
 
 impl GPUShaderModule {
-    pub(crate) fn source_len(&self) -> usize {
-        self.source_len
+    pub(crate) fn compile_stack(&self) -> usize {
+        self.compile_stack
     }
 
     pub(crate) fn create(
@@ -117,7 +117,8 @@ impl GPUShaderModule {
             runtime_checks: wgt::ShaderRuntimeChecks::checked(),
         };
         let device_id = device.id();
-        let compiled = bun_webgpu::compile(code.len(), || {
+        let compile_stack = bun_webgpu::compile_stack(code.as_bytes());
+        let compiled = bun_webgpu::compile(compile_stack, || {
             instance().device_create_shader_module(
                 device_id,
                 &desc,
@@ -138,7 +139,7 @@ impl GPUShaderModule {
                 raw: Rc::new(bun_webgpu::ShaderModule::new(id)),
                 label: JsCell::new(label),
                 messages: vec![message_at(String::from(NO_COMPILE_THREAD), &code, None)],
-                source_len: code.len(),
+                compile_stack,
             }
             .to_js(global));
         };
@@ -151,7 +152,7 @@ impl GPUShaderModule {
             raw,
             label: JsCell::new(label),
             messages,
-            source_len: code.len(),
+            compile_stack,
         }
         .to_js(global))
     }

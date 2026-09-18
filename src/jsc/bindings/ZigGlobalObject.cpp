@@ -2016,7 +2016,6 @@ extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* global
 }
 
 extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
-extern "C" JSC::EncodedJSValue Bun__WebGPU__createGPU(JSGlobalObject*);
 JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, PropertyName))
 {
     JSValue thisValue = JSValue::decode(encodedThisValue);
@@ -2540,9 +2539,6 @@ void GlobalObject::finishCreation(VM& vm)
                  jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
              init.set(obj);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_gpuObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             init.set(JSValue::decode(Bun__WebGPU__createGPU(init.owner)).getObject());
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_bunObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(Bun::createBunObject(init.vm, init.owner));

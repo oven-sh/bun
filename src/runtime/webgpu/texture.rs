@@ -93,7 +93,7 @@ impl GPUTexture {
             device.check(global, err)?;
             (raw, invalid)
         };
-        Ok(GPUTexture {
+        let texture = GPUTexture {
             device: Rc::clone(device),
             raw: Rc::new(raw),
             label: JsCell::new(label),
@@ -106,7 +106,9 @@ impl GPUTexture {
             destroyed: Cell::new(false),
             invalid,
         }
-        .to_js(global))
+        .to_js(global);
+        let set_device = crate::generated_classes::js_GPUTexture::device_set_cached;
+        Ok(device.adopt(global, texture, set_device))
     }
 
     pub(crate) fn create_view(

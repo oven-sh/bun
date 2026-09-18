@@ -5,8 +5,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSType, JSValue, JsCell, JsClass, JsResult,
-    JsThread, StringJsc as _, Strong,
+    ArrayBuffer, CallFrame, ContextId, JSGlobalObject, JSPromise, JSType, JSValue, JsCell, JsClass,
+    JsResult, JsThread, StringJsc as _, Strong,
 };
 use bun_webgpu::wgc::device::HostMap;
 use bun_webgpu::wgc::resource::{BufferAccessError, BufferMapOperation};
@@ -71,6 +71,8 @@ struct MapRequest {
     write: bool,
     offset: u64,
     size: u64,
+    /// The script context of the caller: the request is issued and settled in it, whichever wait it had to queue behind.
+    context: ContextId,
 }
 
 struct MapWaitJs {
@@ -147,12 +149,24 @@ impl Waiter for MapWait {
             let device = &buffer.device.raw;
             let _ = device.exclusive(|| instance().buffer_unmap(buffer.raw.id()));
         }
-        if let Some(queued) = buffer.queued.take() {
-            if buffer.is_current(&queued) {
-                buffer.issue(cx, this_value, queued)?;
+        buffer.issue_queued(cx, this_value)
+    }
+
+    fn stopped(js: &MapWaitJs, global: &JSGlobalObject) -> bool {
+        let this_value = js.buffer.get();
+        if let Some(buffer) = this_value.as_class_ref::<GPUBuffer>() {
+            if buffer.is_current(&js.request) {
+                buffer.forget_pending(global, this_value);
             }
         }
-        Ok(())
+        // wgpu-core still has the request.
+        true
+    }
+
+    fn abandon(result: Option<MapResult>, js: MapWaitJs, cx: &JsThread<'_>) -> JsResult<()> {
+        Self::stopped(&js, cx.global());
+        // Not current now: the rest is what `settle` does for a request that `unmap()` gave up on.
+        Self::settle(result, js, cx)
     }
 }
 
@@ -239,7 +253,7 @@ impl GPUBuffer {
             destroyed: Cell::new(false),
             invalid,
         };
-        let value = this.to_js(global);
+        let value = device.adopt(global, this.to_js(global), js::device_set_cached);
         if mapped {
             device.track_mapped(global, value);
         }
@@ -320,11 +334,13 @@ impl GPUBuffer {
 
         let generation = self.map_generation.get().wrapping_add(1);
         self.map_generation.set(generation);
+        let cx = global.js_thread_of_caller(callframe);
         let request = MapRequest {
             generation,
             write: mode == MAP_WRITE,
             offset,
             size,
+            context: cx.context().id(),
         };
 
         let promise = JSPromise::create(global).as_value(global);
@@ -335,7 +351,7 @@ impl GPUBuffer {
         if self.in_flight.get() {
             self.queued.set(Some(request));
         } else {
-            self.issue(&global.js_thread_of_caller(callframe), this_value, request)?;
+            self.issue(&cx, this_value, request)?;
         }
         Ok(promise)
     }
@@ -367,7 +383,34 @@ impl GPUBuffer {
         }
     }
 
-    /// Hands `request` to wgpu-core. Only called with nothing in flight.
+    /// Ends a pending `mapAsync()` whose caller has stopped (a disposed `Bun.ModuleGraph`). Like `unmap()`, but the promise stays pending, as every promise of that context does.
+    fn forget_pending(&self, global: &JSGlobalObject, this_value: JSValue) {
+        self.map_generation
+            .set(self.map_generation.get().wrapping_add(1));
+        self.map.set(MapState::Unmapped);
+        self.device.untrack_mapped(this_value);
+        js::pending_map_set_cached(this_value, global, JSValue::UNDEFINED);
+    }
+
+    /// Issues the `mapAsync()` that had to wait for the one in flight, in the context of its own caller.
+    fn issue_queued(&self, cx: &JsThread<'_>, this_value: JSValue) -> JsResult<()> {
+        let Some(queued) = self.queued.take() else {
+            return Ok(());
+        };
+        if !self.is_current(&queued) {
+            return Ok(());
+        }
+        let vm = cx.vm();
+        if !vm.is_context_live(queued.context) {
+            self.forget_pending(cx.global(), this_value);
+            return Ok(());
+        }
+        let _scope = vm.enter_context(queued.context);
+        let cx = cx.global().js_thread(vm.context_of(queued.context));
+        self.issue(&cx, this_value, queued)
+    }
+
+    /// Hands `request` to wgpu-core, for the context `cx` is in. Only called with nothing in flight.
     fn issue(&self, cx: &JsThread<'_>, this_value: JSValue, request: MapRequest) -> JsResult<()> {
         let global = cx.global();
         debug_assert!(!self.in_flight.get());

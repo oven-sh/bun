@@ -58,12 +58,17 @@ impl GPUComputePassEncoder {
         drop(held);
         let raw = bun_webgpu::ComputePassEncoder::new(id);
         device.check(global, err)?;
-        Ok(GPUComputePassEncoder {
+        let pass = GPUComputePassEncoder {
             device: Rc::clone(device),
             raw,
             label: JsCell::new(label),
         }
-        .to_js(global))
+        .to_js(global);
+        Ok(device.adopt(
+            global,
+            pass,
+            crate::generated_classes::js_GPUComputePassEncoder::device_set_cached,
+        ))
     }
 
     pub(crate) fn set_pipeline(

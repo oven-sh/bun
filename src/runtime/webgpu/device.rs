@@ -158,6 +158,19 @@ impl DeviceState {
         unsafe { &mut *promise }.resolve(global, info)
     }
 
+    /// Points `wrapper`'s `device` slot at the device's JS object, so that the `GPUDevice` lives as long as what it made: that object is where errors and the loss are reported. Returns `wrapper`.
+    pub(crate) fn adopt(
+        &self,
+        global: &JSGlobalObject,
+        wrapper: JSValue,
+        set_device: fn(JSValue, &JSGlobalObject, JSValue),
+    ) -> JSValue {
+        if let Some(handle) = self.handle.get().get() {
+            set_device(wrapper, global, handle);
+        }
+        wrapper
+    }
+
     pub(crate) fn track_mapped(&self, global: &JSGlobalObject, buffer: JSValue) {
         self.mapped_buffers.with_mut(|list| {
             list.retain(|w| w.get().is_some_and(|v| v != buffer));

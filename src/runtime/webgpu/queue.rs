@@ -39,11 +39,13 @@ impl GPUQueue {
         device: &DeviceRef,
         label: bun_core::String,
     ) -> JSValue {
-        GPUQueue {
+        let queue = GPUQueue {
             device: Rc::clone(device),
             label: JsCell::new(label),
         }
-        .to_js(global)
+        .to_js(global);
+        let set_device = crate::generated_classes::js_GPUQueue::device_set_cached;
+        device.adopt(global, queue, set_device)
     }
 
     pub(crate) fn submit(

@@ -32,6 +32,9 @@ const renderCommands: Proto = {
   drawIndexedIndirect: fn("drawIndexedIndirect", 2),
 };
 
+// For a class that reports errors: its `device` slot keeps the GPUDevice alive, which is where they are reported.
+const ofDevice = { values: ["device"] };
+
 // Every class is a global whose constructor throws: instances only come from WebGPU calls.
 function gpu(name: string, proto: Proto, extra: Partial<ClassDefinition> = {}) {
   return define({
@@ -93,13 +96,17 @@ export default [
     { values: ["errorHandler"] },
   ),
 
-  gpu("GPUQueue", {
-    ...label,
-    submit: fn("submit", 1),
-    onSubmittedWorkDone: { fn: "onSubmittedWorkDone", length: 0 },
-    writeBuffer: fn("writeBuffer", 3),
-    writeTexture: fn("writeTexture", 4),
-  }),
+  gpu(
+    "GPUQueue",
+    {
+      ...label,
+      submit: fn("submit", 1),
+      onSubmittedWorkDone: { fn: "onSubmittedWorkDone", length: 0 },
+      writeBuffer: fn("writeBuffer", 3),
+      writeTexture: fn("writeTexture", 4),
+    },
+    ofDevice,
+  ),
 
   gpu(
     "GPUBuffer",
@@ -114,7 +121,7 @@ export default [
       destroy: { fn: "destroy", length: 0, passThis: true },
     },
     // The GPU allocation is invisible to the collector: report it so dropped wrappers get collected.
-    { values: ["mappedRanges", "pendingMap"], estimatedSize: true },
+    { values: ["device", "mappedRanges", "pendingMap"], estimatedSize: true },
   ),
 
   gpu(
@@ -132,7 +139,7 @@ export default [
       format: get("getFormat"),
       usage: get("getUsage"),
     },
-    { estimatedSize: true },
+    { ...ofDevice, estimatedSize: true },
   ),
 
   gpu("GPUTextureView", { ...label }),
@@ -146,64 +153,74 @@ export default [
     getCompilationInfo: fn("getCompilationInfo", 0),
   }),
 
-  gpu("GPUComputePipeline", {
-    ...label,
-    getBindGroupLayout: fn("getBindGroupLayout", 1),
-  }),
+  gpu("GPUComputePipeline", { ...label, getBindGroupLayout: fn("getBindGroupLayout", 1) }, ofDevice),
 
-  gpu("GPURenderPipeline", {
-    ...label,
-    getBindGroupLayout: fn("getBindGroupLayout", 1),
-  }),
+  gpu("GPURenderPipeline", { ...label, getBindGroupLayout: fn("getBindGroupLayout", 1) }, ofDevice),
 
-  gpu("GPUCommandEncoder", {
-    ...label,
-    ...debugCommands,
-    beginRenderPass: fn("beginRenderPass", 1),
-    beginComputePass: fn("beginComputePass", 0),
-    copyBufferToBuffer: fn("copyBufferToBuffer", 2),
-    copyBufferToTexture: fn("copyBufferToTexture", 3),
-    copyTextureToBuffer: fn("copyTextureToBuffer", 3),
-    copyTextureToTexture: fn("copyTextureToTexture", 3),
-    clearBuffer: fn("clearBuffer", 1),
-    resolveQuerySet: fn("resolveQuerySet", 5),
-    finish: fn("finish", 0),
-  }),
+  gpu(
+    "GPUCommandEncoder",
+    {
+      ...label,
+      ...debugCommands,
+      beginRenderPass: fn("beginRenderPass", 1),
+      beginComputePass: fn("beginComputePass", 0),
+      copyBufferToBuffer: fn("copyBufferToBuffer", 2),
+      copyBufferToTexture: fn("copyBufferToTexture", 3),
+      copyTextureToBuffer: fn("copyTextureToBuffer", 3),
+      copyTextureToTexture: fn("copyTextureToTexture", 3),
+      clearBuffer: fn("clearBuffer", 1),
+      resolveQuerySet: fn("resolveQuerySet", 5),
+      finish: fn("finish", 0),
+    },
+    ofDevice,
+  ),
 
   gpu("GPUCommandBuffer", { ...label }),
 
-  gpu("GPUComputePassEncoder", {
-    ...label,
-    ...debugCommands,
-    ...bindingCommands,
-    setPipeline: fn("setPipeline", 1),
-    dispatchWorkgroups: fn("dispatchWorkgroups", 1),
-    dispatchWorkgroupsIndirect: fn("dispatchWorkgroupsIndirect", 2),
-    end: fn("end", 0),
-  }),
+  gpu(
+    "GPUComputePassEncoder",
+    {
+      ...label,
+      ...debugCommands,
+      ...bindingCommands,
+      setPipeline: fn("setPipeline", 1),
+      dispatchWorkgroups: fn("dispatchWorkgroups", 1),
+      dispatchWorkgroupsIndirect: fn("dispatchWorkgroupsIndirect", 2),
+      end: fn("end", 0),
+    },
+    ofDevice,
+  ),
 
-  gpu("GPURenderPassEncoder", {
-    ...label,
-    ...debugCommands,
-    ...bindingCommands,
-    ...renderCommands,
-    setViewport: fn("setViewport", 6),
-    setScissorRect: fn("setScissorRect", 4),
-    setBlendConstant: fn("setBlendConstant", 1),
-    setStencilReference: fn("setStencilReference", 1),
-    beginOcclusionQuery: fn("beginOcclusionQuery", 1),
-    endOcclusionQuery: fn("endOcclusionQuery", 0),
-    executeBundles: fn("executeBundles", 1),
-    end: fn("end", 0),
-  }),
+  gpu(
+    "GPURenderPassEncoder",
+    {
+      ...label,
+      ...debugCommands,
+      ...bindingCommands,
+      ...renderCommands,
+      setViewport: fn("setViewport", 6),
+      setScissorRect: fn("setScissorRect", 4),
+      setBlendConstant: fn("setBlendConstant", 1),
+      setStencilReference: fn("setStencilReference", 1),
+      beginOcclusionQuery: fn("beginOcclusionQuery", 1),
+      endOcclusionQuery: fn("endOcclusionQuery", 0),
+      executeBundles: fn("executeBundles", 1),
+      end: fn("end", 0),
+    },
+    ofDevice,
+  ),
 
-  gpu("GPURenderBundleEncoder", {
-    ...label,
-    ...debugCommands,
-    ...bindingCommands,
-    ...renderCommands,
-    finish: fn("finish", 0),
-  }),
+  gpu(
+    "GPURenderBundleEncoder",
+    {
+      ...label,
+      ...debugCommands,
+      ...bindingCommands,
+      ...renderCommands,
+      finish: fn("finish", 0),
+    },
+    ofDevice,
+  ),
 
   gpu("GPURenderBundle", { ...label }),
 

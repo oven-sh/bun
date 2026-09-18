@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "BunWebGPU.h"
+#include "BunBuiltinNames.h"
 #include "InternalModuleRegistry.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
@@ -8,6 +9,8 @@
 namespace Bun {
 
 using namespace JSC;
+
+extern "C" JSC::EncodedJSValue Bun__WebGPU__createGPU(JSC::JSGlobalObject*);
 
 static JSValue internalWebGPUModule(VM& vm, Zig::GlobalObject* globalObject)
 {
@@ -46,10 +49,20 @@ JSC_DEFINE_CUSTOM_SETTER(setJSWebGPUGlobal, (JSGlobalObject * lexicalGlobalObjec
     return true;
 }
 
+// [SameObject]. The GPU is kept on the navigator object under a private name, which script cannot reach.
 JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetGPU, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
 {
+    auto& vm = getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    return JSValue::encode(globalObject->m_gpuObject.getInitializedOnMainThread(globalObject));
+    JSObject* navigator = globalObject->m_navigatorObject.getInitializedOnMainThread(globalObject);
+    const auto& name = Bun::builtinNames(vm).dataPrivateName();
+    if (JSValue gpu = navigator->getDirect(vm, name))
+        return JSValue::encode(gpu);
+    JSValue gpu = JSValue::decode(Bun__WebGPU__createGPU(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    navigator->putDirect(vm, name, gpu, 0);
+    return JSValue::encode(gpu);
 }
 
 } // namespace Bun

@@ -4,9 +4,10 @@
 #![recursion_limit = "256"]
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Once, OnceLock};
+use std::sync::{Arc, Once, OnceLock};
 use std::time::{Duration, Instant};
 
+use bun_core::strings;
 use bun_threading::Guarded;
 
 pub use wgpu_core as wgc;
@@ -36,19 +37,141 @@ pub fn instance() -> &'static Global {
     })
 }
 
-/// Runs a shader or pipeline compile on a thread with a stack sized for `source_len`. `None` if the thread could not be created. naga's WGSL lowering, its validator and its SPIR-V writer recurse once per nesting level of the shader, with no depth limit, and its parser does not, so its own recursion limits never fire: a chain of unary operators costs about 0.6 KB of stack per byte of source in a release build, and about 9 KB in a debug build, which overflows the JS thread's stack for an ordinary generated shader.
-pub fn compile<R: Send>(source_len: usize, f: impl FnOnce() -> R + Send) -> Option<R> {
-    // The worst construct measured with naga 30.0.1 is `!!!!...` (one byte of source per level), with margin.
-    const PER_SOURCE_BYTE: usize = if cfg!(debug_assertions) {
-        32 * 1024
-    } else {
-        6 * 1024
-    };
-    const BASE: usize = 8 * 1024 * 1024;
-    let stack = BASE.saturating_add(source_len.saturating_mul(PER_SOURCE_BYTE));
+/// Stack per level of each kind of recursion: an operator of an expression, a link of an `else if` chain, a module-scope declaration that an earlier one uses. Measured with naga 30.0.1 through each of its back ends (SPIR-V, MSL, HLSL), then padded three to five times: 0.9 KB, 1.2 KB and 0.2 KB at opt-level "s", and about 36 KB, 57 KB and 3 KB in a debug build with ASAN.
+const STACK_PER_LEVEL: [usize; 3] = if cfg!(debug_assertions) {
+    [96 << 10, 192 << 10, 12 << 10]
+} else {
+    [4 << 10, 6 << 10, 1 << 10]
+};
+
+/// Where the WGSL line comment whose text starts at `from` ends: at the next line break.
+fn line_comment_end(source: &[u8], from: usize) -> usize {
+    let mut at = from;
+    while let Some(hit) = strings::index_of_any_pos(source, b"\n\x0B\x0C\r\xC2\xE2", at) {
+        let rest = &source[hit..];
+        let is_break = rest[0].is_ascii()
+            || rest.starts_with("\u{85}".as_bytes())
+            || rest.starts_with("\u{2028}".as_bytes())
+            || rest.starts_with("\u{2029}".as_bytes());
+        if is_break {
+            return hit;
+        }
+        at = hit + 1;
+    }
+    source.len()
+}
+
+/// Where the WGSL block comment whose text starts at `from` ends. Block comments nest.
+fn block_comment_end(source: &[u8], from: usize) -> usize {
+    let (mut depth, mut at) = (1usize, from);
+    while let Some(hit) = strings::index_of_any_pos(source, b"/*", at) {
+        at = hit + 1;
+        match (source[hit], source.get(at)) {
+            (b'/', Some(b'*')) => {
+                depth += 1;
+                at += 1;
+            }
+            (b'*', Some(b'/')) => {
+                depth -= 1;
+                at += 1;
+                if depth == 0 {
+                    return at;
+                }
+            }
+            _ => {}
+        }
+    }
+    source.len()
+}
+
+/// Whether the next token from `at` on is `else`. What separates two tokens is blankspace and comments.
+fn else_follows(source: &[u8], mut at: usize) -> bool {
+    loop {
+        let rest = &source[at..];
+        at = match rest {
+            [b' ' | b'\t'..=b'\r', ..] => at + 1,
+            [0xC2, 0x85, ..] => at + 2,
+            [0xE2, 0x80, 0x8E | 0x8F | 0xA8 | 0xA9, ..] => at + 3,
+            [b'/', b'/', ..] => line_comment_end(source, at + 2),
+            [b'/', b'*', ..] => block_comment_end(source, at + 2),
+            _ => return rest.starts_with(b"else"),
+        };
+    }
+}
+
+/// Upper bounds of how deep `source` (WGSL) can nest, in the order of [`STACK_PER_LEVEL`]. An expression is no deeper than the count of its statement's bytes that can add a level to a tree: every ASCII byte but a letter, a digit, `_`, a blank, `,` and the `.` of a number. An `if` nests one level per `else` of its chain, inside the chains of the blocks around it. A chain of declarations that use each other is no longer than the count of module-scope declarations. A statement ends at a `;`, `{` or `}` outside of a comment, so the comments have to be exactly the grammar's: one that ends earlier or later than naga's hides a `;` from naga, and the two halves of one expression count as two.
+fn nesting(source: &[u8]) -> [usize; 3] {
+    let (mut deepest, mut levels, mut declarations) = (0usize, 0usize, 0usize);
+    // The `else` count of the `if` chain that is open at each brace depth, and their sum.
+    let (mut chains, mut links, mut most_links) = (vec![0usize], 0usize, 0usize);
+    let mut at = 0usize;
+    while let Some(&byte) = source.get(at) {
+        at += 1;
+        match (byte, source.get(at)) {
+            (b'/', Some(b'/')) => at = line_comment_end(source, at + 1),
+            (b'/', Some(b'*')) => at = block_comment_end(source, at + 1),
+            (b';' | b'{' | b'}', _) => {
+                if byte == b'{' {
+                    chains.push(0);
+                } else if byte == b'}' {
+                    if chains.len() > 1 {
+                        links -= chains.pop().unwrap_or(0);
+                    }
+                    // An `if` chain goes on only with an `else` right after the `}`.
+                    if let Some(chain) = chains.last_mut().filter(|_| !else_follows(source, at)) {
+                        links -= core::mem::take(chain);
+                    }
+                }
+                if chains.len() == 1 {
+                    declarations += 1;
+                }
+                deepest = deepest.max(levels);
+                levels = 0;
+            }
+            (b'e', _) if source[at..].starts_with(b"lse") => {
+                if let Some(chain) = chains.last_mut() {
+                    *chain += 1;
+                }
+                links += 1;
+                most_links = most_links.max(links);
+            }
+            (b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b',', _) => {}
+            (b' ' | b'\t'..=b'\r' | 0x80.., _) => {}
+            // A number: the name of a member does not start with a digit.
+            (b'.', Some(b'0'..=b'9')) => {}
+            _ => levels += 1,
+        }
+    }
+    [deepest.max(levels), most_links, declarations]
+}
+
+/// The longest chain of `else if` a shader can have. The back ends keep naga's IR, where each link nests in the one before, and the thread that releases the last reference to a module drops it link by link, recursively: the JS thread inside a finalizer, at worst with only the stack JSC reserves for native code. Chrome's compiler stops at 127.
+const MAX_ELSE_CHAIN: usize = 1024;
+
+/// The stack a compile of `source` (WGSL) needs. naga recurses once per nesting level with no limit of its own, and its parser builds some deep trees in a loop, where its own limits do not apply: `!!!!x`, `a + a + a`, `v.xyzw.xyzw`, a chain of `else if`, declarations that use each other. More than [`MAX_COMPILE_STACK`] for a source that no thread compiles.
+pub fn compile_stack(source: &[u8]) -> usize {
+    // The JS thread's stack, plus the nesting the parser does limit.
+    const BASE: usize = (8 << 20) + 256 * STACK_PER_LEVEL[1];
+    let nesting = nesting(source);
+    if nesting[1] > MAX_ELSE_CHAIN {
+        return usize::MAX;
+    }
+    nesting
+        .iter()
+        .zip(STACK_PER_LEVEL)
+        .fold(BASE, |stack, (levels, per_level)| {
+            stack.saturating_add(levels.saturating_mul(per_level))
+        })
+}
+
+/// The largest stack [`compile`] asks for. No shader nests that deep, and past it the answer would depend on the machine: Linux refuses a mapping larger than its memory and swap.
+const MAX_COMPILE_STACK: usize = 16 << 30;
+
+/// Runs a shader or pipeline compile on a thread with `stack` bytes of stack (see [`compile_stack`]). `None` if `stack` is more than [`MAX_COMPILE_STACK`], the thread could not be created, or the process is exiting.
+pub fn compile<R: Send>(stack: usize, f: impl FnOnce() -> R + Send) -> Option<R> {
     // Counted before the check, so the exit either sees this compile or this sees the exit.
     COMPILING.fetch_add(1, Ordering::AcqRel);
-    let compiled = if exiting() {
+    let compiled = if exiting() || stack > MAX_COMPILE_STACK {
         None
     } else {
         std::thread::scope(|scope| {
@@ -141,6 +264,8 @@ owned_id!(
 /// A device that exists, for [`wait_for_idle_at_exit`].
 struct LiveDevice {
     id: id::DeviceId,
+    /// The device's [`Device::exclusive`] lock: a poll frees every mapping when it finds the device lost.
+    poll_lock: Arc<Guarded<()>>,
     /// [`release_device`] is waiting for its queue on its own thread.
     releasing: bool,
 }
@@ -174,11 +299,14 @@ fn drain_devices() {
     loop {
         let busy = COMPILING.load(Ordering::Acquire) != 0
             || DEVICES.lock().iter().any(|device| {
-                !device.releasing
-                    && matches!(
-                        instance().device_poll(device.id, wgt::PollType::Poll),
-                        Ok(status) if !status.is_queue_empty()
-                    )
+                if device.releasing {
+                    return false;
+                }
+                let _exclusive = device.poll_lock.lock();
+                matches!(
+                    instance().device_poll(device.id, wgt::PollType::Poll),
+                    Ok(status) if !status.is_queue_empty()
+                )
             });
         if !busy || Instant::now() >= deadline {
             break;
@@ -221,21 +349,26 @@ pub struct Device {
     device: id::DeviceId,
     queue: id::QueueId,
     /// Held by [`poll`](Self::poll) on the pool thread and by [`exclusive`](Self::exclusive) on the JS thread.
-    poll_lock: Guarded<()>,
+    poll_lock: Arc<Guarded<()>>,
 }
 
 impl Device {
     pub fn new(device: id::DeviceId, queue: id::QueueId) -> Self {
         static AT_EXIT: Once = Once::new();
-        AT_EXIT.call_once(|| bun_core::add_exit_callback(wait_for_idle_at_exit));
+        // Only where `bun_core::Global::exit` leaves through a path that runs the exit handlers of libraries: libc's `exit()` (macOS, ASAN builds) and `ExitProcess`. `quick_exit` runs none, so there is nothing to wait for.
+        if cfg!(any(target_os = "macos", windows)) || bun_core::env::ENABLE_ASAN {
+            AT_EXIT.call_once(|| bun_core::add_exit_callback(wait_for_idle_at_exit));
+        }
+        let poll_lock = Arc::new(Guarded::new(()));
         DEVICES.lock().push(LiveDevice {
             id: device,
+            poll_lock: Arc::clone(&poll_lock),
             releasing: false,
         });
         Self {
             device,
             queue,
-            poll_lock: Guarded::new(()),
+            poll_lock,
         }
     }
     #[inline]

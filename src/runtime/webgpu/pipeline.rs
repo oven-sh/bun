@@ -12,10 +12,10 @@ use super::args::{self, Dict, Held};
 use super::device::DeviceRef;
 use super::{GPUBindGroupLayout, GPUPipelineLayout, GPUShaderModule};
 
-/// A pipeline that got no compile thread. The thread's stack is sized from the shader source, so a huge source is the likely reason.
+/// A pipeline that got no compile thread. The thread's stack is sized for how deep the shader source can nest, and a source that asks for too much gets no thread.
 fn no_compile_thread() -> GpuError {
     GpuError::validation(String::from(
-        "could not create the thread that compiles the pipeline (its stack is sized from the shader source length)",
+        "no thread could be created to compile the pipeline. Its stack is sized for how deep the shader source can nest, so the source may nest too deep",
     ))
 }
 
@@ -49,17 +49,17 @@ fn parse_layout(d: &Dict<'_>, held: &mut Held) -> JsResult<Option<wgc::id::Pipel
 fn parse_stage(
     d: &Dict<'_>,
     held: &mut Held,
-    source_len: &mut usize,
+    compile_stack: &mut usize,
 ) -> JsResult<pl::ProgrammableStageDescriptor<'static>> {
-    let (module, len) = held
-        .try_read::<GPUShaderModule, _>(d.require("module")?, GPUShaderModule::source_len)
+    let (module, stack) = held
+        .try_read::<GPUShaderModule, _>(d.require("module")?, GPUShaderModule::compile_stack)
         .ok_or_else(|| {
             d.global.throw_type_error(format_args!(
                 "{}.module: expected a GPUShaderModule",
                 d.name
             ))
         })?;
-    *source_len = (*source_len).max(len);
+    *compile_stack = (*compile_stack).max(stack);
     let entry_point = d.string("entryPoint")?.map(Cow::Owned);
     let mut constants = wgc::naga::back::PipelineConstants::default();
     if let Some(record) = d.get("constants")? {
@@ -97,19 +97,19 @@ impl GPUComputePipeline {
         let d = Dict::new(global, descriptor, "GPUComputePipelineDescriptor")?;
         let label = d.label()?;
         let mut held = Held::default();
-        let mut source_len = 0;
+        let mut compile_stack = 0;
         let mut desc = pl::ComputePipelineDescriptor {
             label: super::wgpu_label(&label),
             layout: parse_layout(&d, &mut held)?,
             stage: parse_stage(
                 &d.require_dict("compute", "GPUProgrammableStage")?,
                 &mut held,
-                &mut source_len,
+                &mut compile_stack,
             )?,
             cache: None,
         };
         let device_id = device.id();
-        let compiled = bun_webgpu::compile(source_len, || {
+        let compiled = bun_webgpu::compile(compile_stack, || {
             instance().device_create_compute_pipeline(device_id, &desc, None)
         });
         let (id, err) = match compiled {
@@ -129,7 +129,8 @@ impl GPUComputePipeline {
             label: JsCell::new(label),
         }
         .to_js(global);
-        Ok((value, err))
+        let set_device = crate::generated_classes::js_GPUComputePipeline::device_set_cached;
+        Ok((device.adopt(global, value, set_device), err))
     }
 
     pub(crate) fn get_bind_group_layout(
@@ -237,7 +238,7 @@ impl GPURenderPipeline {
         let d = Dict::new(global, descriptor, "GPURenderPipelineDescriptor")?;
         let label = d.label()?;
         let mut held = Held::default();
-        let mut source_len = 0;
+        let mut compile_stack = 0;
         let layout = parse_layout(&d, &mut held)?;
 
         let vertex = d.require_dict("vertex", "GPUVertexState")?;
@@ -275,7 +276,7 @@ impl GPURenderPipeline {
             Ok(())
         })?;
         let vertex = pl::VertexState {
-            stage: parse_stage(&vertex, &mut held, &mut source_len)?,
+            stage: parse_stage(&vertex, &mut held, &mut compile_stack)?,
             buffers: Cow::Owned(buffers),
         };
 
@@ -361,7 +362,7 @@ impl GPURenderPipeline {
                     Ok(())
                 })?;
                 Some(pl::FragmentState {
-                    stage: parse_stage(&f, &mut held, &mut source_len)?,
+                    stage: parse_stage(&f, &mut held, &mut compile_stack)?,
                     targets: Cow::Owned(targets),
                 })
             }
@@ -383,7 +384,7 @@ impl GPURenderPipeline {
             desc.multisample.count = 0;
         }
         let device_id = device.id();
-        let compiled = bun_webgpu::compile(source_len, || {
+        let compiled = bun_webgpu::compile(compile_stack, || {
             instance().device_create_render_pipeline(device_id, &desc, None)
         });
         let (id, err) = match compiled {
@@ -404,6 +405,8 @@ impl GPURenderPipeline {
             label: JsCell::new(label),
         }
         .to_js(global);
+        let set_device = crate::generated_classes::js_GPURenderPipeline::device_set_cached;
+        let value = device.adopt(global, value, set_device);
         let err = match bad_write_mask {
             Some(mask) => Some(GpuError::validation(format!(
                 "createRenderPipeline: writeMask 0x{mask:x} has bits that are not a GPUColorWrite"

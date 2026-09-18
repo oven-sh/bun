@@ -35,13 +35,18 @@ impl GPUCommandEncoder {
         let (id, err) = instance().device_create_command_encoder(device.id(), &desc, None);
         let raw = bun_webgpu::CommandEncoder::new(id);
         device.check(global, err)?;
-        Ok(GPUCommandEncoder {
+        let encoder = GPUCommandEncoder {
             device: Rc::clone(device),
             raw,
             label: JsCell::new(label),
             invalid: JsCell::new(None),
         }
-        .to_js(global))
+        .to_js(global);
+        Ok(device.adopt(
+            global,
+            encoder,
+            crate::generated_classes::js_GPUCommandEncoder::device_set_cached,
+        ))
     }
 
     pub(crate) fn begin_compute_pass(

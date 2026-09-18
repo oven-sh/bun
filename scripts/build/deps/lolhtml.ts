@@ -17,6 +17,10 @@
  * This dep entry exists only to FETCH the source into `vendor/lolhtml/` —
  * `emitRust` in `rust.ts` waits on its `.ref` stamp so cargo never sees a
  * missing path dependency.
+ *
+ * The source is a fork (see LOLHTML_COMMIT below), so lolhtml has no
+ * `.github/workflows/update-lolhtml.yml`: the pin is a commit of the fork,
+ * never of upstream, and a bump starts with a rebase in the fork.
  */
 
 import type { Dependency } from "../source.ts";

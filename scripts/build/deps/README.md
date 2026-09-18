@@ -41,6 +41,13 @@ The `.github/workflows/update-<name>.yml` jobs do this automatically by
 sed'ing the `const <NAME>_COMMIT = "..."` line. If you rename that
 constant, update the workflow too.
 
+A dep that is fetched from an oven-sh fork (boringssl, libuv, lolhtml,
+mimalloc, tinycc) has no such workflow, and must not get one: its pin is
+a commit of the fork, so a job that follows upstream releases proposes a
+commit that cannot build. Bump those by hand, after the rebase in the
+fork. `test/internal/source-lints/update-workflows.test.ts` checks that
+each workflow asks the repository that its dep is fetched from.
+
 **For `direct` deps:** the source list is hardcoded, so a bump that adds
 or removes a `.c`/`.cpp` upstream needs a matching list edit here. CI
 catches a missed addition (link error on the unresolved symbol); a

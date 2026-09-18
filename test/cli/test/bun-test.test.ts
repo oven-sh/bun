@@ -1945,6 +1945,35 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A directory argument and a file argument inside it select the same file
+  // twice. With --isolate or --parallel each entry in the run list is a
+  // separate load, so the file runs once only if the scanner lists it once.
+  for (const [name, args, summary] of [
+    ["directory then file", ["./sub", "./sub/b.test.ts"], "Ran 2 tests across 2 files."],
+    ["file then directory", ["./sub/b.test.ts", "./sub"], "Ran 2 tests across 2 files."],
+    ["the same file twice", ["./sub/b.test.ts", "./sub/b.test.ts"], "Ran 1 test across 1 file."],
+  ] as const) {
+    test(`a file selected by two path arguments runs once (${name})`, async () => {
+      using dir = tempDir("scanner-duplicate-args", {
+        "sub/a.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a"); });`,
+        "sub/b.test.ts": `import { test } from "bun:test"; test("b", () => { console.log("RAN b"); });`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout.split("RAN b").length - 1).toBe(1);
+      expect(stderr).toContain(summary);
+      expect(exitCode).toBe(0);
+    });
+  }
+
   // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
   // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows
   // it is 32767*3+1 bytes, more than a command line or an NT path can hold, so

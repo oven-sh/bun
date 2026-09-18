@@ -45,6 +45,12 @@ const {
 // software rasterizer counts). Everything under "with a device" needs one.
 const hasAdapter = (await gpu.requestAdapter()) !== null;
 
+// Whether that adapter is a software rasterizer (Mesa's llvmpipe, WARP). Only there may a test
+// submit a shader that never ends: it is a CPU thread, and it dies with its process. On a GPU it
+// hangs the GPU for every process until the system resets it, and the GPU of a virtual machine
+// can stay gone after that.
+const softwareAdapter = hasAdapter && (await gpu.requestAdapter()).info.isFallbackAdapter;
+
 async function requestDevice(descriptor?: object): Promise<any> {
   const adapter = await gpu.requestAdapter();
   return await adapter.requestDevice(descriptor);
@@ -1239,7 +1245,8 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     const bodies = [
       `let x = ${not}true;`,
       `var a = 1; let x = ${"*&".repeat(depth / 2)}a;`,
-      `var a = 1; if (a == 0) {} ${"else if (a == 1) {} ".repeat(600)}`,
+      // Metal's compiler stops at 256 nested brackets.
+      `var a = 1; if (a == 0) {} ${"else if (a == 1) {} ".repeat(200)}`,
       // One expression each: a ";" in a comment ends no statement, block comments nest, and a
       // line comment ends at every line break of WGSL, so what follows it is code.
       `let x = ${"!!!!!!!!/*;*/!!!!!!!!/*/*;*/;*/!!!!!!!!/*/;*/".repeat(depth / 24)}true;`,
@@ -1438,12 +1445,14 @@ describe.skipIf(!hasAdapter)("with a device", () => {
   });
 
   // Where the process leaves through a path that runs library exit handlers (macOS, Windows, every ASAN build), it first waits for the GPU.
-  test.skipIf(!isLinux || isASAN)("process.exit() does not wait for GPU work that never ends", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.skipIf(!isLinux || isASAN || !softwareAdapter)(
+    "process.exit() does not wait for GPU work that never ends",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           const adapter = await navigator.gpu.requestAdapter();
           const device = await adapter.requestDevice();
           const module = device.createShaderModule({
@@ -1470,15 +1479,16 @@ describe.skipIf(!hasAdapter)("with a device", () => {
           console.log("submitted");
           process.exit(0);
         `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("submitted\n");
-    expect(exitCode).toBe(0);
-  });
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("submitted\n");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("process.exit() on the main thread while a Worker submits GPU work", async () => {
     await using proc = Bun.spawn({
@@ -1528,12 +1538,14 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     expect(exitCode).toBe(7);
   });
 
-  test("a device that becomes garbage while its work runs does not block the collector", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.skipIf(!softwareAdapter)(
+    "a device that becomes garbage while its work runs does not block the collector",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           // This shader never ends. The device is garbage as soon as this function returns, and
           // releasing it waits for the GPU, so that wait must not happen on this thread.
           async function fireAndForget() {
@@ -1565,17 +1577,18 @@ describe.skipIf(!hasAdapter)("with a device", () => {
           Bun.gc(true);
           console.log("collected");
         `,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    // The line arrives as soon as the collector is done with the device. Before the fix the child
-    // hung inside Bun.gc() for as long as the shader ran, which is for ever here.
-    const reader = proc.stdout.getReader();
-    const { value } = await reader.read();
-    expect(new TextDecoder().decode(value)).toBe("collected\n");
-    proc.kill();
-  });
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      // The line arrives as soon as the collector is done with the device. Before the fix the child
+      // hung inside Bun.gc() for as long as the shader ran, which is for ever here.
+      const reader = proc.stdout.getReader();
+      const { value } = await reader.read();
+      expect(new TextDecoder().decode(value)).toBe("collected\n");
+      proc.kill();
+    },
+  );
 
   test("works in a Worker, and a Worker can be terminated with GPU work pending", async () => {
     const source = `
@@ -1715,7 +1728,7 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     device.destroy();
   });
 
-  test("a wait of a disposed Bun.ModuleGraph does not keep the process alive", async () => {
+  test.skipIf(!softwareAdapter)("a wait of a disposed Bun.ModuleGraph does not keep the process alive", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1761,7 +1774,7 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     proc.kill();
   });
 
-  test("a long wait for the GPU does not hold a thread of the work pool", async () => {
+  test.skipIf(!softwareAdapter)("a long wait for the GPU does not hold a thread of the work pool", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

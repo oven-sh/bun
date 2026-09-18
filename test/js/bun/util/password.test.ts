@@ -1,4 +1,5 @@
 import { password } from "bun";
+import { hashPasswordIntoBufferForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
@@ -544,4 +545,50 @@ test("verifySync reads the password buffer only after every argument has been co
   };
   expect(password.verifySync(passwordBytes, hashObject as any)).toBeFalse();
   expect(passwordBytes.byteLength).toBe(0);
+});
+
+// `Bun.password.hash` writes the encoded hash into a 4096-byte buffer, far
+// more than the ~133 bytes the longest PHC string needs, so the "does not
+// fit" error is only reachable through the internal hook that takes the
+// buffer length as an argument.
+describe("an output buffer too small for the encoded hash", () => {
+  const cases = [
+    { name: "bcrypt", algorithm: { algorithm: "bcrypt", cost: 4 }, password: "correct horse" },
+    // Passwords longer than 72 bytes take the SHA-512 pre-hash path.
+    {
+      name: "bcrypt, long password",
+      algorithm: { algorithm: "bcrypt", cost: 4 },
+      password: Buffer.alloc(100, "p").toString(),
+    },
+    { name: "argon2id", algorithm: { algorithm: "argon2id", memoryCost: 8, timeCost: 1 }, password: "correct horse" },
+    { name: "argon2d", algorithm: { algorithm: "argon2d", memoryCost: 8, timeCost: 1 }, password: "correct horse" },
+    { name: "argon2i", algorithm: { algorithm: "argon2i", memoryCost: 8, timeCost: 1 }, password: "correct horse" },
+  ] as const;
+
+  function hashError(plaintext: string, algorithm: (typeof cases)[number]["algorithm"], bufferLength: number) {
+    try {
+      return { hash: hashPasswordIntoBufferForTesting(plaintext, algorithm, bufferLength) };
+    } catch (e: any) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+  }
+
+  test.each(cases)("$name", ({ algorithm, password: plaintext }) => {
+    // The buffer size the real call uses gives a regular hash.
+    const hashed = hashPasswordIntoBufferForTesting(plaintext, algorithm, 4096);
+    expect(password.verifySync(plaintext, hashed)).toBeTrue();
+
+    // A buffer of exactly the encoded length fits.
+    const exact = hashPasswordIntoBufferForTesting(plaintext, algorithm, hashed.length);
+    expect(exact).toHaveLength(hashed.length);
+    expect(password.verifySync(plaintext, exact)).toBeTrue();
+
+    // One byte less does not, and the error code is derived from the
+    // `NoSpaceLeft` name, not from an errno name.
+    expect(hashError(plaintext, algorithm, hashed.length - 1)).toEqual({
+      name: "Error",
+      code: "PASSWORD_NO_SPACE_LEFT",
+      message: 'Password hashing failed with error "NoSpaceLeft"',
+    });
+  });
 });

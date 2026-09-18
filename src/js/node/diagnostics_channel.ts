@@ -12,7 +12,6 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const SymbolHasInstance = Symbol.hasInstance;
-const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromiseReject = Promise.$reject.bind(Promise);
 const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
 
@@ -248,6 +247,12 @@ function assertChannel(value, name) {
   }
 }
 
+function emitNonThenableWarning(fn) {
+  process.emitWarning(
+    `tracePromise was called with the function '${fn.name || "<anonymous>"}', which returned a non-thenable.`,
+  );
+}
+
 class TracingChannel {
   start;
   end;
@@ -343,12 +348,15 @@ class TracingChannel {
 
     return start.runStores(context, () => {
       try {
-        let promise = fn.$apply(thisArg, args);
-        // Convert thenables to native promises
-        if (!(promise instanceof Promise)) {
-          promise = PromiseResolve(promise);
+        const result = fn.$apply(thisArg, args);
+        // Non-thenables are passed through untouched, with only the sync events published.
+        if (typeof result?.then !== "function") {
+          emitNonThenableWarning(fn);
+          context.result = result;
+          return result;
         }
-        return PromisePrototypeThen(promise, resolve, reject);
+        // Calling .then() directly preserves the type of custom thenables.
+        return PromisePrototypeThen(result, resolve, reject);
       } catch (err) {
         context.error = err;
         error.publish(context);

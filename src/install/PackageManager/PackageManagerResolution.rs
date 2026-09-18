@@ -493,10 +493,15 @@ fn workspace_containment<'b>(
     workspace_path: &[u8],
     real_dir_buf: &'b mut bun_paths::PathBuffer,
 ) -> Containment<'b> {
-    // The installer creates these itself. Caseless: macOS and Windows open either spelling.
     for component in strings::split_any(workspace_path, b"/\\") {
+        // The installer creates these itself. Caseless: macOS and Windows open either name.
         if component.eq_ignore_ascii_case(b"node_modules") {
             return Containment::Refused("is inside node_modules");
+        }
+        // `C:..` is drive-relative on Windows, so the OS resolves it against that drive.
+        #[cfg(windows)]
+        if matches!(component, [letter, b':', ..] if bun_paths::is_drive_letter(*letter)) {
+            return Containment::Refused("names a drive");
         }
     }
 
@@ -540,7 +545,14 @@ fn workspace_containment<'b>(
 }
 
 /// `<root>/<path>` and a NUL, not normalized: only the OS resolves a `..` after a symlink.
-fn write_absolute_path(buf: &mut [u8], root: &[u8], path: &[u8]) -> Option<usize> {
+fn write_absolute_path(buf: &mut [u8], root: &[u8], mut path: &[u8]) -> Option<usize> {
+    // A trailing separator makes `lstat` follow the last component, which the walk reads.
+    while let [rest @ .., last] = path {
+        if !bun_paths::is_sep_any(*last) {
+            break;
+        }
+        path = rest;
+    }
     let root: &[u8] = if bun_paths::is_absolute(path) {
         b""
     } else {
@@ -614,12 +626,15 @@ fn is_symlink(path: &bun_core::ZStr) -> bool {
 
 /// Exact: both come from the same `realpath`, and a volume can be case-sensitive.
 fn is_inside(root: &[u8], dir: &[u8]) -> bool {
-    let root = match root.len() {
-        // The filesystem root keeps its separator, and every path starts with one.
-        1 => &root[..0],
-        _ => root,
-    };
-    if !strings::has_prefix(dir, root) {
+    // `/` and `C:\` keep a separator of their own, which every path below them repeats.
+    let mut root = root;
+    while let [rest @ .., last] = root {
+        if !bun_paths::is_sep_any(*last) {
+            break;
+        }
+        root = rest;
+    }
+    if !dir.starts_with(root) {
         return false;
     }
     dir.len() == root.len() || bun_paths::is_sep_any(dir[root.len()])

@@ -449,24 +449,25 @@ describe.concurrent("workspace packages outside the workspace root", () => {
 
   // `nm` is a symlink the clone ships, and it points at the `node_modules` the install
   // creates, so the path names a directory nobody can resolve yet. The `node_modules`
-  // refusal above only reads the spelling, which this path does not have.
-  test("a workspace path through a symlink that does not resolve is refused", async () => {
+  // refusal above only reads the spelling, which this path does not have. The second
+  // spelling ends in a separator, which makes `lstat` follow the link instead of reading it.
+  test.each(["nm/a/esc", "nm/"])("a workspace path %s through a symlink that does not resolve is refused", async entry => {
     using dir = tempDir("bad-workspace-dangling-symlink", {
       ...SIBLING_PROJECTS,
       "clone/packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
-      "clone/package.json": cloneRoot({ dependencies: { b: "workspace:nm/a/esc" } }),
+      "clone/package.json": cloneRoot({ dependencies: { b: `workspace:${entry}` } }),
       "clone/bun.lock": JSON.stringify({
         lockfileVersion: 2,
         configVersion: 1,
         workspaces: {
-          "": { name: "root", dependencies: { b: "workspace:nm/a/esc" } },
-          "nm/a/esc": { name: "victim", dependencies: { inner: "^1.0.0" } },
+          "": { name: "root", dependencies: { b: `workspace:${entry}` } },
+          [entry]: { name: "victim", dependencies: { inner: "^1.0.0" } },
           "packages/a": { name: "a", version: "1.0.0" },
           "packages/inner": { name: "inner", version: "1.99.0" },
         },
         packages: {
           a: ["a@workspace:packages/a"],
-          b: ["victim@workspace:nm/a/esc"],
+          b: [`victim@workspace:${entry}`],
           inner: ["inner@workspace:packages/inner"],
         },
       }),
@@ -475,7 +476,15 @@ describe.concurrent("workspace packages outside the workspace root", () => {
     // Not a junction: the target does not exist yet, which is the point.
     symlinkSync("node_modules", join(String(dir), "clone", "nm"), "dir");
 
-    await expectRefused(String(dir), `error: workspace "nm/a/esc" has a symlink that does not resolve\n`);
+    await expectRefused(String(dir), `error: workspace "${entry}" has a symlink that does not resolve\n`);
+  });
+
+  // A drive-relative path is resolved against that drive by the OS, not against the root it
+  // is joined onto. Windows only: elsewhere `C:..` is an ordinary directory name.
+  test.skipIf(!isWindows)("a bun.lock path that names a drive is refused", async () => {
+    using dir = tempDir("bad-workspace-drive-relative", lockfileNaming("C:../victim"));
+
+    await expectRefused(String(dir), `error: workspace "C:../victim" names a drive\n`);
   });
 
   // `bun prune` deletes inside the same `<workspace>/node_modules` directories, so it

@@ -155,8 +155,9 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
         resolution: &Resolution,
         err: crate::Error,
         url: &[u8],
+        is_required: bool,
     ) {
-        ctx.on_package_download_error(id, name, resolution, err, url);
+        ctx.on_package_download_error(id, name, resolution, err, url, is_required);
     }
 }
 

@@ -77,10 +77,7 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
-    /// Set by [`PostgresSQLQuery::on_undecodable_row`]: the query is already
-    /// rejected, but the server is still answering it. It stays in flight at
-    /// the queue head, and the rest of its response is skipped, until its
-    /// `ReadyForQuery`.
+    /// Rejected for an undecodable row: in flight, its response skipped, until `ReadyForQuery`.
     pub(crate) discard_response: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
@@ -225,17 +222,12 @@ impl PostgresSQLQuery {
         self.reject(err, global_object);
     }
 
-    /// The client cannot decode a row of this query's result. Reject the query
-    /// now, but leave `status` in flight: the server is still answering, so the
-    /// connection keeps the query current and skips the rest of its response
-    /// (`Flags::discard_response`) until `ReadyForQuery`.
+    /// Rejects now, but `status` stays in flight: the server is still answering this query.
     pub(crate) fn on_undecodable_row(&self, err: JSValue, global_object: &JSGlobalObject) {
         self.update_flags(|f| f.discard_response = true);
         self.reject(err, global_object);
     }
 
-    /// The query is already rejected, so nothing more of the server's response
-    /// to it is delivered.
     pub(crate) fn is_rejected(&self) -> bool {
         self.status.get() == Status::Fail || self.flags.get().discard_response
     }

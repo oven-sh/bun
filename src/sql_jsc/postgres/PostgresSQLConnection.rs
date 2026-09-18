@@ -1766,11 +1766,7 @@ impl PostgresSQLConnection {
         }
     }
 
-    /// What a request rejects with when the client cannot turn one of its
-    /// `DataRow`s into a JS value. The frame is read whole and the stream is
-    /// still in step, so that fails the request alone, not the connection and
-    /// the requests queued behind it. A `JSError` has its exception taken here.
-    /// A VM that is stopping fails the connection instead.
+    /// What a request rejects with for a row the client cannot decode. `Err`: the VM is stopping.
     fn undecodable_row_error(&self, err: AnyPostgresError) -> Result<JSValue, AnyPostgresError> {
         if self.global().has_pending_termination_exception() {
             return Err(err);
@@ -2337,8 +2333,7 @@ impl PostgresSQLConnection {
             MessageType::DataRow => {
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
                 if request.is_rejected() {
-                    // This request is already rejected and its GC protection
-                    // dropped; consume and discard until ReadyForQuery.
+                    // Already rejected, GC protection dropped: discard until ReadyForQuery.
                     return reader.skip_message();
                 }
 
@@ -2402,12 +2397,8 @@ impl PostgresSQLConnection {
                 // `DataRow::decode`'s callback is `FnMut`, so capture `&mut putter`
                 // directly instead of laundering it through a raw `*mut` context —
                 // the by-value `C: Copy` slot is unused (`()`).
-                //
-                // A cell this client cannot decode is kept in `undecodable` instead
-                // of failing `decode`, which then reads past the rest of the row:
-                // the frame is consumed whole and `decode_result` is a framing
-                // error only.
                 let raw = request_flags.result_mode == SQLQueryResultMode::Raw;
+                // Kept aside: `decode` still reads the whole frame and fails on framing only.
                 let mut undecodable: Option<AnyPostgresError> = None;
                 let decode_result = protocol::DataRow::decode((), &mut reader, |(), i, b| {
                     if undecodable.is_some() {
@@ -2442,8 +2433,7 @@ impl PostgresSQLConnection {
                     }
                     // `if free_cells free(cells)`: heap_cells Vec drops at scope end.
                 };
-                // Before `decode_result` can return: a `JSError` cell left its
-                // exception pending.
+                // Takes a `JSError` cell's pending exception before a framing error can return.
                 let undecodable = undecodable
                     .map(|err| self.undecodable_row_error(err))
                     .transpose()?;
@@ -2524,8 +2514,7 @@ impl PostgresSQLConnection {
 
                 if let Some(request) = self.current() {
                     if request.flags.get().discard_response {
-                        // Rejected for an undecodable row and kept in flight
-                        // until now, the end of its response.
+                        // The end of the response it was kept in flight for.
                         self.finish_request(&request);
                         request.status.set(QueryStatus::Fail);
                     } else if request.status.get() == QueryStatus::PartialResponse {

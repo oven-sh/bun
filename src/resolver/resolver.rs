@@ -3972,10 +3972,14 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// `config_dir` is the directory that `${configDir}` expands to. It is
+    /// `None` for the root config of an `extends` chain (its own directory)
+    /// and the root config's directory for every config the chain reaches.
     pub(crate) fn parse_tsconfig(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
+        config_dir: Option<&[u8]>,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
@@ -4020,12 +4024,15 @@ impl<'a> Resolver<'a> {
 
         // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
         // narrow `&mut` for this call only.
-        let mut result =
-            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
-            {
-                Some(r) => r,
-                None => return Ok(None),
-            };
+        let mut result = match TSConfigJSON::parse(
+            unsafe { &mut *self.log() },
+            &source,
+            &mut self.caches.json,
+            config_dir.unwrap_or(file_dir),
+        )? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
 
         if result.has_base_url() {
             // this might leak
@@ -6442,6 +6449,7 @@ impl<'a> Resolver<'a> {
                     } else {
                         FD::ZERO
                     },
+                    None,
                 ) {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
@@ -6490,6 +6498,13 @@ impl<'a> Resolver<'a> {
                     let mut current = bun_ptr::BackRef::from(
                         core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"),
                     );
+                    // `${configDir}` in every config of the chain expands to the
+                    // directory of the config that started it (tsc semantics).
+                    // SAFETY: `tsconfig_json` is a live heap allocation. Nothing
+                    // writes through it until the merge loop below, after the
+                    // last use of this borrow.
+                    let root_config_dir: &[u8] =
+                        Dirname::dirname(unsafe { &(*tsconfig_json).abs_path });
                     while !current.extends.is_empty() {
                         let ts_dir_name = Dirname::dirname(&current.abs_path);
                         let abs_path = ResolvePath::join_abs_string_buf(
@@ -6498,22 +6513,23 @@ impl<'a> Resolver<'a> {
                             &[ts_dir_name, &current.extends],
                             bun_paths::Platform::AUTO,
                         );
-                        let parent_config_maybe: Option<*mut TSConfigJSON> =
-                            match self.parse_tsconfig(abs_path, FD::INVALID) {
-                                Ok(v) => v.map(bun_core::heap::into_raw),
-                                Err(err) => {
-                                    let _ = self.log_mut().add_debug_fmt(
-                                        None,
-                                        bun_ast::Loc::EMPTY,
-                                        format_args!(
-                                            "{} loading tsconfig.json extends {}",
-                                            bstr::BStr::new(err.name()),
-                                            bun_core::fmt::quote(abs_path)
-                                        ),
-                                    );
-                                    break;
-                                }
-                            };
+                        let parent_config_maybe: Option<*mut TSConfigJSON> = match self
+                            .parse_tsconfig(abs_path, FD::INVALID, Some(root_config_dir))
+                        {
+                            Ok(v) => v.map(bun_core::heap::into_raw),
+                            Err(err) => {
+                                let _ = self.log_mut().add_debug_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "{} loading tsconfig.json extends {}",
+                                        bstr::BStr::new(err.name()),
+                                        bun_core::fmt::quote(abs_path)
+                                    ),
+                                );
+                                break;
+                            }
+                        };
                         if let Some(parent_config) = parent_config_maybe {
                             parent_configs.append(parent_config)?;
                             current = bun_ptr::BackRef::from(

@@ -141,6 +141,33 @@ describe.concurrent("process.argv[1] is path.resolve of the entry argument", () 
       expect(exitCode).toBe(0);
     });
 
+    // The kernel follows `linked` before it applies `..`, so `linked/../entry.mjs`
+    // runs real/entry.mjs. Collapsed as text, the same argument is <root>/entry.mjs.
+    test.each([
+      ["no file", {}],
+      ["another file", { "entry.mjs": "console.log('decoy');" }],
+    ])("real path when `..` follows a symlinked directory and the typed path names %s", async (_label, decoy) => {
+      using dir = tempDir("argv-symlink-dotdot-dir", {
+        "real/entry.mjs": printEntry,
+        "real/sub/.keep": "",
+        ...decoy,
+      });
+      const root = String(dir);
+      const entryPath = join(root, "real", "entry.mjs");
+      symlinkSync(join("real", "sub"), join(root, "linked"));
+
+      const { stdout, stderr, exitCode } = await run(root, "linked/../entry.mjs");
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        argv1: entryPath,
+        url: pathToFileURL(entryPath).href,
+        metaMain: true,
+        bunMain: entryPath,
+      });
+      expect(exitCode).toBe(0);
+    });
+
     test("absolute path when the cwd was deleted", async () => {
       using dir = tempDir("argv-symlink-nocwd", { "foo.mjs": printEntry });
       using goneDir = tempDir("argv-symlink-gone", {});
@@ -230,6 +257,26 @@ describe.concurrent("process.argv[1] is path.resolve of the entry argument", () 
     const fooPath = join(root, "foo.mjs");
 
     const { stdout, stderr, exitCode } = await run(root, "foo.mjs");
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      argv1: fooPath,
+      url: pathToFileURL(fooPath).href,
+      metaMain: true,
+      bunMain: fooPath,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Shells and editors hand Windows processes a cwd like `c:\proj`. That is the
+  // same path as `C:\proj`, so argv[1] stays equal to Bun.main.
+  test.skipIf(!isWindows)("a cwd spelled in another case is not a symlink", async () => {
+    using dir = tempDir("argv-case", { "foo.mjs": printEntry });
+    const root = String(dir);
+    const fooPath = join(root, "foo.mjs");
+    expect(root.toLowerCase()).not.toBe(root);
+
+    const { stdout, stderr, exitCode } = await run(root.toLowerCase(), "foo.mjs");
 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({

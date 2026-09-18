@@ -1094,9 +1094,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // while `entry` stays the user's path for the loader check further down.
         let mut run_entry = entry;
         vm.set_main(entry);
-        if let Some(argv_path) = argv_path {
-            vm.set_main_for_argv(Box::leak(argv_path));
-        }
 
         if let Some(entry) = entry
             && !ctx.runtime_options.eval.script.is_empty()
@@ -1201,6 +1198,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
             Some(_) => MainEntryPoint::File,
         };
+        // `internal/html.ts` reads its `.html` entries from `process.argv`.
+        if let Some(argv_path) = argv_path.filter(|_| vm.main_entry_point != MainEntryPoint::Html) {
+            vm.set_main_for_argv(Box::leak(argv_path));
+        }
 
         // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
@@ -2699,8 +2700,7 @@ impl RunCommand {
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    let argv_path =
-                        Self::absolutize_for_argv(target_name).filter(|p| p[..] != text[..]);
+                    let argv_path = Self::absolutize_for_argv(target_name, &text);
                     return Ok(Self::boot_and_handle_error(
                         ctx,
                         &text,
@@ -2932,8 +2932,9 @@ impl RunCommand {
     }
 
     /// Node's `path.resolve(argv[1])`: absolute against cwd, `.`/`..`
-    /// collapsed, trailing separator stripped, symlinks left as-is.
-    fn absolutize_for_argv(target: &[u8]) -> Option<Box<[u8]>> {
+    /// collapsed, trailing separator stripped, symlinks left as-is. `None`
+    /// when that is `entry_path`.
+    fn absolutize_for_argv(target: &[u8], entry_path: &[u8]) -> Option<Box<[u8]>> {
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let cwd_len = bun_core::getcwd_or_exe_dir(&mut cwd_buf).as_bytes().len();
         cwd_buf[cwd_len] = paths::SEP;
@@ -2951,10 +2952,29 @@ impl RunCommand {
         while joined.len() > root_len && joined[joined.len() - 1] == paths::SEP {
             joined = &joined[..joined.len() - 1];
         }
-        if joined.is_empty() {
+        // A Windows cwd or argument that is not spelled as on disk differs from
+        // `entry_path` by case alone. That is the same path, not a symlink.
+        let is_entry_path = if cfg!(windows) {
+            bun_core::strings::eql_case_insensitive_ascii(joined, entry_path, true)
+        } else {
+            joined == entry_path
+        };
+        if joined.is_empty() || is_entry_path {
             return None;
         }
         Some(joined.to_vec().into_boxed_slice())
+    }
+
+    /// Whether `path` reaches the file `entry` describes. The kernel applies
+    /// `..` after it follows a symlinked directory and `absolutize_for_argv`
+    /// before, so the typed path can name another file, or none.
+    fn names_entry_file(path: &[u8], entry: &bun_sys::Stat) -> bool {
+        if path.len() >= MAX_PATH_BYTES {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        bun_sys::stat(paths::resolve_path::z(path, &mut buf))
+            .is_ok_and(|st| st.st_dev == entry.st_dev && st.st_ino == entry.st_ino)
     }
 
     /// Fast-path file probe: if `target` resolves to an existing regular file,
@@ -3054,14 +3074,14 @@ impl RunCommand {
 
         // fstat: directories cannot be run. if only there was a faster way to
         // check this
-        let is_dir = match bun_sys::fstat(fd) {
-            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+        let entry_stat = match bun_sys::fstat(fd) {
+            Ok(st) => st,
             Err(_) => {
                 let _ = bun_sys::close(fd);
                 return false;
             }
         };
-        if is_dir {
+        if bun_sys::S::ISDIR(entry_stat.st_mode as _) {
             let _ = bun_sys::close(fd);
             return false;
         }
@@ -3070,8 +3090,6 @@ impl RunCommand {
             long_running: true,
             ..Default::default()
         });
-
-        let argv_path = Self::absolutize_for_argv(target);
 
         // Re-derive the canonical absolute path from the open fd (resolves
         // symlinks).
@@ -3087,7 +3105,8 @@ impl RunCommand {
         };
         let _ = bun_sys::close(fd);
 
-        let argv_path = argv_path.filter(|p| p[..] != absolute_script_path[..]);
+        let argv_path = Self::absolutize_for_argv(target, &absolute_script_path)
+            .filter(|p| Self::names_entry_file(p, &entry_stat));
 
         Self::boot_and_handle_error(ctx, &absolute_script_path, argv_path, None)
     }

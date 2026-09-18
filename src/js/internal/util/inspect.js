@@ -2742,27 +2742,39 @@ function getStringWidth(str, removeControlChars = true) {
 
 // node's ansi matcher (from chalk/ansi-regex): only complete sequences are stripped —
 // Bun.stripANSI also eats bare/invalid ESC/CSI prefixes, which node keeps.
-// https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
+// https://github.com/nodejs/node/blob/5b316e5402cd7c1bce0afc33cba66fda5f62157c/lib/internal/util/inspect.js#L284-L293
 let ansi;
 function getAnsiRegExp() {
   return (ansi ??= new RegExp(
-    "[\\u001B\\u009B][[\\]()#;?]*" +
-      "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
-      "|[a-zA-Z\\d]+(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]*)*)?" +
-      "(?:\\u0007|\\u001B\\u005C|\\u009C))" +
-      "|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?" +
-      "[\\dA-PR-TZcf-nq-uy=><~]))",
+    "(?:\\u001B\\][\\s\\S]*?(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+      "|[\\u001B\\u009B][[\\]()#;?]*" +
+      "(?:\\d{1,4}(?:[;:]\\d{0,4})*)?" +
+      "[\\dA-PR-TZcf-nq-uy=><~]",
     "g",
   ));
 }
 
+// For $call: the bound function uncurryThis() returns costs more per call than these do.
+const StringPrototypeIndexOfUnbound = String.prototype.indexOf;
+const StringPrototypeReplaceUnbound = String.prototype.replace;
+const RegExpPrototype = RegExp.prototype;
+const SymbolReplace = Symbol.replace;
+const RegExpPrototypeSymbolReplaceUnbound = RegExpPrototype[SymbolReplace];
+
 function stripVTControlCharacters(str) {
   if (typeof str !== "string") throw $ERR_INVALID_ARG_TYPE("str", "string", str);
   // All ANSI escape sequences start with ESC (7-bit) or CSI (8-bit).
-  if (StringPrototypeIndexOf(str, "\u001B") === -1 && StringPrototypeIndexOf(str, "\u009B") === -1) {
+  if (
+    StringPrototypeIndexOfUnbound.$call(str, "\u001B") === -1 &&
+    StringPrototypeIndexOfUnbound.$call(str, "\u009B") === -1
+  ) {
     return str;
   }
-  return RegExpPrototypeSymbolReplace(getAnsiRegExp(), str, "");
+  // JavaScriptCore has its fast path in String.prototype.replace, which calls regexp[Symbol.replace].
+  if (RegExpPrototype[SymbolReplace] === RegExpPrototypeSymbolReplaceUnbound) {
+    return StringPrototypeReplaceUnbound.$call(str, getAnsiRegExp(), "");
+  }
+  return RegExpPrototypeSymbolReplaceUnbound.$call(getAnsiRegExp(), str, "");
 }
 
 // utils

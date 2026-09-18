@@ -3093,6 +3093,42 @@ test.concurrent("hoisted: the nested tree of a package with bundled dependencies
 });
 
 test.concurrent(
+  "hoisted: folders a bundle ships next to it are kept, and a stale copy below a sibling goes",
+  async () => {
+    // `bundled-shipped-host` ships `no-deps@1.0.0` next to its bundled package. `one-dep` nests
+    // under the host with its own `no-deps@1.0.1`. The shipped folders are not bun's to prune.
+    const dir = await setup({
+      name: "foo",
+      dependencies: { "bundled-shipped-host": "1.0.0", "one-dep": "npm:no-deps@2.0.0" },
+    });
+    const hostNm = join(dir, "node_modules", "bundled-shipped-host", "node_modules");
+    expect(await file(join(hostNm, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
+    expect(await file(join(hostNm, "one-dep", "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.0.1",
+    });
+    const shippedJunk = plant(
+      dir,
+      "node_modules/bundled-shipped-host/node_modules/bundled-shipped-inner/node_modules/junk",
+    );
+    const oneDepJunk = plant(dir, "node_modules/bundled-shipped-host/node_modules/one-dep/node_modules/junk");
+
+    const { stdout, stderr, exitCode } = await prune(dir);
+    expect(stderr).not.toContain("warn:");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+    "bun prune <version> (<revision>)
+
+    - junk (node_modules/bundled-shipped-host/node_modules/one-dep/node_modules)
+    1 package removed (checked 4 installed packages)"
+  `);
+    expect(exitCode).toBe(0);
+    expect(existsSync(shippedJunk)).toBeTrue();
+    expect(existsSync(oneDepJunk)).toBeFalse();
+    expect(existsSync(join(hostNm, "no-deps", "package.json"))).toBeTrue();
+    expect(existsSync(join(hostNm, "bundled-shipped-inner", "package.json"))).toBeTrue();
+  },
+);
+
+test.concurrent(
   "hoisted: a nested copy of a git dependency is removed only once the root copy's .bun-tag matches bun.lock",
   async () => {
     const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });

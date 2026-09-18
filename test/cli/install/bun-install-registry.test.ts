@@ -1516,6 +1516,69 @@ describe("bundledDependencies", () => {
       await check();
     });
 
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) a dependency bun installs does not resolve through a folder a bundle ships`, async () => {
+      // `bundled-nested-host` bundles `bundled-shipped-inner` and nests the bundle's
+      // `no-deps@1.0.0` under it in the tarball. `bundled-shipped-sibling@1.0.0` nests under
+      // the host and needs the same `no-deps@1.0.0`. The lockfile gives both edges one
+      // package, but the sibling must get a copy bun installs, not the one the tarball may
+      // or may not have put next to it.
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-nested",
+          dependencies: {
+            "bundled-nested-host": "1.0.0",
+            "bundled-shipped-sibling": "npm:no-deps@2.0.0",
+          },
+        }),
+      );
+
+      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
+      let { exited } = spawn({
+        cmd,
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      });
+
+      expect(await exited).toBe(0);
+
+      async function check() {
+        const host = join(packageDir, "node_modules", "bundled-nested-host", "node_modules");
+        expect(
+          await Promise.all([
+            exists(join(packageDir, "node_modules", "no-deps")),
+            exists(join(host, "no-deps")),
+            file(join(host, "bundled-shipped-inner", "node_modules", "no-deps", "package.json")).json(),
+            file(join(host, "bundled-shipped-sibling", "node_modules", "no-deps", "package.json")).json(),
+          ]),
+        ).toEqual([false, false, { name: "no-deps", version: "1.0.0" }, { name: "no-deps", version: "1.0.0" }]);
+
+        const { stdout, exitCode } = Bun.spawnSync({
+          cmd: [bunExe(), "-e", `console.log(require("bundled-shipped-sibling"), require("./index.js"))`],
+          cwd: join(packageDir, "node_modules", "bundled-nested-host"),
+          env,
+        });
+        expect(stdout.toString()).toBe("1.0.0 1.0.0\n");
+        expect(exitCode).toBe(0);
+      }
+
+      await check();
+
+      ({ exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "ignore",
+        stderr: "ignore",
+        env,
+      }));
+
+      expect(await exited).toBe(0);
+
+      await check();
+    });
+
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) git dependencies`, async () => {
       await Promise.all([
         write(

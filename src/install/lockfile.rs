@@ -1450,7 +1450,7 @@ impl Lockfile {
             late_bound_optional_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
-            shipped_rows: Vec::new(),
+            shipped_rows: Default::default(),
         };
 
         Tree::default().process_subtree(

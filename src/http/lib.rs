@@ -4091,15 +4091,13 @@ impl<'a> HTTPClient<'a> {
     /// A compressed body is decoded one budget at a time, as its consumer reads. h1 only.
     #[inline]
     fn decodes_on_demand(&self) -> bool {
-        self.flags.takes_held_body
-            && self.flags.protocol == Protocol::Http1_1
-            && self.signals.is_demand_driven()
+        self.flags.protocol == Protocol::Http1_1 && self.signals.is_demand_driven()
     }
 
-    /// Output budget of one decode pass.
+    /// Output budget of one decode pass. None for the last of a body that has no `HeldBody` taker.
     #[inline]
-    fn decompress_output_cap(&self) -> usize {
-        if self.decodes_on_demand() {
+    fn decompress_output_cap(&self, is_final_chunk: bool) -> usize {
+        if self.decodes_on_demand() && (self.flags.takes_held_body || !is_final_chunk) {
             signals::BODY_HIGH_WATER_MARK
         } else {
             usize::MAX
@@ -4108,7 +4106,7 @@ impl<'a> HTTPClient<'a> {
 
     /// Decodes what has arrived under the consumer's budget. Returns whether to report bytes.
     fn process_received_body(&mut self, is_final_chunk: bool) -> crate::Result<bool> {
-        let max_output = self.decompress_output_cap();
+        let max_output = self.decompress_output_cap(is_final_chunk);
         if self.state.encoding.is_compressed() {
             // Nothing will read it, and its transport is being shut down.
             if self.signals.is_body_abandoned() {
@@ -4559,6 +4557,7 @@ impl<'a> HTTPClient<'a> {
         let held_body =
             (!has_more && self.state.fail.is_none() && self.state.has_pending_compressed())
                 .then(|| Box::new(self.state.take_held_body()));
+        debug_assert!(held_body.is_none() || self.flags.takes_held_body);
         if certificate_info.is_none() {
             if let Some(metadata) = self.state.cloned_metadata.take() {
                 // transfer ownership of the metadata here

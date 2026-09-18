@@ -253,7 +253,7 @@ pub struct Options<'a> {
     pub verbose: Option<HTTPVerboseLevel>,
     pub disable_keepalive: Option<bool>,
     pub disable_decompression: Option<bool>,
-    /// The consumer takes `HTTPClientResult::held_body`: a compressed body is decoded as it reads.
+    /// The consumer takes `HTTPClientResult::held_body`. Others get it decoded with the last chunk.
     pub takes_held_body: bool,
     pub max_redirects: Option<u8>,
     pub reject_unauthorized: Option<bool>,

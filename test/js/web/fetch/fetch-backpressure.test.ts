@@ -617,8 +617,10 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     const base = process.memoryUsage.rss();
     let peak = 0;
     const sample = () => (peak = Math.max(peak, process.memoryUsage.rss() - base));
-    const res = await fetch(url, opts);
-    const reader = res.body.getReader();
+    const body = opts.s3
+      ? new Bun.S3Client({ accessKeyId: "t", secretAccessKey: "t", endpoint: url, bucket: "b" }).file("k").stream()
+      : (await fetch(url, opts)).body;
+    const reader = body.getReader();
     const first = await reader.read();
     for (let last = sample(), stable = 0; stable < 3; ) {
       await Bun.sleep(20);
@@ -682,6 +684,12 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
       expectBounded(await runClient(server.url, {}, READ_A_LITTLE));
     },
   );
+
+  // The S3 client reads a bucket's compressed object through the same decoder.
+  test("gzip from S3: a reader that takes a little holds a little", async () => {
+    await using server = await serveBomb("gzip", false);
+    expectBounded(await runClient(server.url, { s3: true }, READ_A_LITTLE));
+  });
 
   // bun does not pause a tunnelled socket, so all of the body and then the origin's close reach
   // the client at once. The end of the transport must not decode what the reader has not asked

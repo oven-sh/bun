@@ -36,6 +36,12 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // Records the TLS 1.3 Finished messages and exposes them as
+  // SSL_get_finished_all_versions / SSL_get_peer_finished_all_versions, which
+  // node:tls's getFinished()/getPeerFinished() need. Upstream's
+  // SSL_get_finished keeps its documented "returns zero at TLS 1.3" contract.
+  patches: ["patches/boringssl/tls13-finished.patch"],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.

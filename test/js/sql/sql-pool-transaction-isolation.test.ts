@@ -400,6 +400,144 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     }
   });
 
+  // A query is lazy: it runs when it is first awaited. One created on a transaction or
+  // a reservation and first awaited after that handle settled must not run, because
+  // the pool's only connection can already be inside somebody else's transaction.
+  // unsafe() without parameters, because the mock servers answer simple queries only.
+  test("a query first awaited after its transaction settled rejects instead of running on the next transaction", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    const closedCode = adapter === "postgres" ? "ERR_POSTGRES_CONNECTION_CLOSED" : "ERR_MYSQL_CONNECTION_CLOSED";
+    try {
+      let afterRollback!: Promise<unknown>;
+      let afterCommit!: Promise<unknown>;
+      const err = await sql
+        .begin(async tx => {
+          afterRollback = tx.unsafe("SELECT 'lazy from T1'");
+          throw new Error("t1-app-error");
+        })
+        .catch(e => e);
+      expect(err.message).toBe("t1-app-error");
+      await sql.begin(async tx => {
+        await tx.unsafe("SELECT 'T2a'");
+        afterCommit = tx.unsafe("SELECT 'lazy from T2'");
+      });
+
+      const t3 = sql.begin(async tx => {
+        await tx.unsafe("SELECT 'T3a'");
+        expect(
+          await afterRollback.then(
+            () => null,
+            e => e.code,
+          ),
+        ).toBe(closedCode);
+        expect(
+          await afterCommit.then(
+            () => null,
+            e => e.code,
+          ),
+        ).toBe(closedCode);
+        await tx.unsafe("SELECT 'T3b'");
+        return "t3";
+      });
+      expect(await t3).toBe("t3");
+
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "ROLLBACK" },
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T2a'" },
+        { conn: 0, sql: "COMMIT" },
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T3a'" },
+        { conn: 0, sql: "SELECT 'T3b'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("a query first awaited after its reservation was released rejects instead of running on the next transaction", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    const closedCode = adapter === "postgres" ? "ERR_POSTGRES_CONNECTION_CLOSED" : "ERR_MYSQL_CONNECTION_CLOSED";
+    try {
+      const reserved = await sql.reserve();
+      await reserved.unsafe("SELECT 'R1'");
+      const afterRelease = reserved.unsafe("SELECT 'lazy from R'");
+      reserved.release();
+
+      const t1 = await sql.begin(async tx => {
+        await tx.unsafe("SELECT 'T1a'");
+        expect(
+          await afterRelease.then(
+            () => null,
+            e => e.code,
+          ),
+        ).toBe(closedCode);
+        await tx.unsafe("SELECT 'T1b'");
+        return "t1";
+      });
+      expect(t1).toBe("t1");
+
+      expect(received).toEqual([
+        { conn: 0, sql: "SELECT 'R1'" },
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: "SELECT 'T1b'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // Behaviour change: a query returned without await from a block that releases the
+  // handle first runs after release(). It used to run on the released connection.
+  test.each([
+    [
+      "a using block",
+      async (sql: Bun.SQL) => {
+        using reserved = await sql.reserve();
+        return reserved.unsafe("SELECT 'returned without await'");
+      },
+    ],
+    [
+      "a finally block that calls release()",
+      async (sql: Bun.SQL) => {
+        const reserved = await sql.reserve();
+        try {
+          return reserved.unsafe("SELECT 'returned without await'");
+        } finally {
+          reserved.release();
+        }
+      },
+    ],
+  ])("a query returned without await from %s rejects and sends nothing", async (_name, run) => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    const closedCode = adapter === "postgres" ? "ERR_POSTGRES_CONNECTION_CLOSED" : "ERR_MYSQL_CONNECTION_CLOSED";
+    try {
+      expect(
+        await run(sql).then(
+          () => null,
+          e => e.code,
+        ),
+      ).toBe(closedCode);
+      await sql.unsafe("SELECT 'barrier'");
+      expect(received).toEqual([{ conn: 0, sql: "SELECT 'barrier'" }]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // Runs in a child process: bun:test would turn any unhandled rejection into a test
   // failure, and the second half of this contract is that one rejection IS reported.
   test("a rejected reserved begin() is reported as unhandled only when the caller ignores it", async () => {

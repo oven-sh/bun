@@ -1209,6 +1209,43 @@ describe("Transactions", () => {
     expect(accounts[1].balance).toBe(500);
   });
 
+  // A query is lazy. One created inside the callback but first awaited after the
+  // transaction settled must not run outside the transaction.
+  test.each([
+    ["tagged template", (tx: Bun.TransactionSQL) => tx`UPDATE accounts SET balance = 0 WHERE id = 1`],
+    ["unsafe()", (tx: Bun.TransactionSQL) => tx.unsafe("UPDATE accounts SET balance = 0 WHERE id = 1")],
+  ])("a %s query first awaited after the transaction settled rejects", async (_name, make) => {
+    let afterRollback!: Promise<unknown>;
+    let afterCommit!: Promise<unknown>;
+
+    const err = await sql
+      .begin(async tx => {
+        afterRollback = make(tx);
+        throw new Error("roll back");
+      })
+      .catch(e => e);
+    expect(err.message).toBe("roll back");
+    expect(
+      await afterRollback.then(
+        () => null,
+        e => e.code,
+      ),
+    ).toBe("ERR_SQLITE_CONNECTION_CLOSED");
+
+    await sql.begin(async tx => {
+      afterCommit = make(tx);
+    });
+    expect(
+      await afterCommit.then(
+        () => null,
+        e => e.code,
+      ),
+    ).toBe("ERR_SQLITE_CONNECTION_CLOSED");
+
+    const accounts = await sql`SELECT balance FROM accounts WHERE id = 1`;
+    expect(accounts).toEqual([{ balance: 1000 }]);
+  });
+
   test("nested transactions (savepoints)", async () => {
     await sql.begin(async tx => {
       await tx`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;

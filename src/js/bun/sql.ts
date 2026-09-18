@@ -176,8 +176,9 @@ const SQL: typeof Bun.SQL = function SQL(
     transactionQueries.delete(query);
   }
 
-  function queryFromTransactionHandler(transactionQueries, query, handle, err) {
+  function queryFromTransactionHandler(state: TransactionState, query, handle, err) {
     const pooledConnection = this;
+    const transactionQueries = state.queries;
     if (err) {
       transactionQueries.delete(query);
       return query.reject(err);
@@ -187,6 +188,14 @@ const SQL: typeof Bun.SQL = function SQL(
     if (query.cancelled) {
       transactionQueries.delete(query);
       return query.reject(pool.queryCancelledError());
+    }
+
+    // A query is lazy: it runs when it is first awaited. The handle can be
+    // committed, rolled back or released by then, and the connection can
+    // already belong to another caller.
+    if (state.connectionState & ReservedConnectionState.closed) {
+      transactionQueries.delete(query);
+      return query.reject(pool.connectionClosedError());
     }
 
     query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
@@ -207,7 +216,7 @@ const SQL: typeof Bun.SQL = function SQL(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
     pooledConnection: PooledPostgresConnection,
-    transactionQueries: Set<Query<any, any>>,
+    state: TransactionState,
   ) {
     try {
       const query = new Query(
@@ -216,11 +225,11 @@ const SQL: typeof Bun.SQL = function SQL(
         connectionInfo.bigint
           ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
           : SQLQueryFlags.allowUnsafeTransaction,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        queryFromTransactionHandler.bind(pooledConnection, state),
         pool,
       );
 
-      transactionQueries.add(query);
+      state.queries.add(query);
       return query;
     } catch (err) {
       return Promise.$reject(err);
@@ -242,17 +251,17 @@ const SQL: typeof Bun.SQL = function SQL(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
     pooledConnection: PooledPostgresConnection,
-    transactionQueries: Set<Query<any, any>>,
+    state: TransactionState,
   ) {
     try {
       const query = new Query(
         strings,
         values,
         unsafeTransactionQueryFlags(values),
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        queryFromTransactionHandler.bind(pooledConnection, state),
         pool,
       );
-      transactionQueries.add(query);
+      state.queries.add(query);
       return query;
     } catch (err) {
       return Promise.$reject(err);
@@ -271,7 +280,7 @@ const SQL: typeof Bun.SQL = function SQL(
     values: any[],
   ) {
     if (acceptsQueries(state)) {
-      return unsafeQueryFromTransaction(strings, values, pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(strings, values, pooledConnection, state);
     }
     // Still a lazy Query, so .values() and use as a fragment work. It rejects when it runs.
     return new Query(strings, values, unsafeTransactionQueryFlags(values), rejectConnectionClosed, pool);
@@ -407,7 +416,7 @@ const SQL: typeof Bun.SQL = function SQL(
         return new SQLHelper([strings], values);
       }
       // we use the same code path as the transaction sql
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return queryFromTransaction(strings, values, pooledConnection, state);
     }
 
     reserved_sql.unsafe = (string, args = []) => unsafeQueryFromHandle(state, pooledConnection, string, args);
@@ -678,7 +687,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.$reject(pool.connectionClosedError());
       }
-      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, [], pooledConnection, state);
     }
     function transaction_sql(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
@@ -696,7 +705,7 @@ const SQL: typeof Bun.SQL = function SQL(
         return new SQLHelper([strings], values);
       }
 
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return queryFromTransaction(strings, values, pooledConnection, state);
     }
     transaction_sql.unsafe = (string, args = []) => unsafeQueryFromHandle(state, pooledConnection, string, args);
     transaction_sql.file = (path: string, args = []) => fileQueryFromHandle(state, pooledConnection, path, args);

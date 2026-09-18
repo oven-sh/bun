@@ -16,9 +16,6 @@ pub struct CounterStyleRule {
 
 impl CounterStyleRule {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
         dest.write_str("@counter-style")?;
         super::custom_ident_to_css(&self.name, dest)?;
         super::decl_block_to_css(&self.declarations, dest)

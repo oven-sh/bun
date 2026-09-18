@@ -17,9 +17,6 @@ pub struct UnknownAtRule {
 
 impl UnknownAtRule {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
         dest.write_char(b'@')?;
         dest.serialize_identifier(self.name)?;
 

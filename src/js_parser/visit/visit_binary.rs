@@ -239,7 +239,7 @@ impl BinaryExpressionVisitor {
                     } else {
                         // The left operand has no side effects, but we need to preserve
                         // the comma operator semantics when used as a call target
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                        if is_call_target && p.has_value_for_this_in_call(&e_.right) {
                             // Keep the comma expression to strip "this" binding
                             e_.left = Expr {
                                 data: prefill::data::ZERO,
@@ -359,7 +359,7 @@ impl BinaryExpressionVisitor {
                         // "(null ?? fn)()" => "fn()"
                         // "(null ?? this.fn)" => "this.fn"
                         // "(null ?? this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                        if is_call_target && p.has_value_for_this_in_call(&e_.right) {
                             return Expr::join_with_comma(
                                 Expr {
                                     data: ExprData::ENumber(E::Number::new(0.0)),
@@ -381,7 +381,7 @@ impl BinaryExpressionVisitor {
                         // "(0 || fn)()" => "fn()"
                         // "(0 || this.fn)" => "this.fn"
                         // "(0 || this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                        if is_call_target && p.has_value_for_this_in_call(&e_.right) {
                             return Expr::join_with_comma(
                                 Expr {
                                     data: prefill::data::ZERO,
@@ -403,7 +403,7 @@ impl BinaryExpressionVisitor {
                         // "(1 && fn)()" => "fn()"
                         // "(1 && this.fn)" => "this.fn"
                         // "(1 && this.fn)()" => "(0, this.fn)()"
-                        if is_call_target && e_.right.has_value_for_this_in_call() {
+                        if is_call_target && p.has_value_for_this_in_call(&e_.right) {
                             return Expr::join_with_comma(
                                 Expr {
                                     data: prefill::data::ZERO,

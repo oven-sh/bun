@@ -1,5 +1,6 @@
 use bun_core::strings;
 use bun_paths;
+use bun_paths::path_options::AssumeOk as _;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 
 pub(crate) struct Symlinker {
@@ -31,6 +32,28 @@ impl Symlinker {
         }
     }
 
+    /// The directory moves aside first, so a failure never leaves a partly deleted copy at `dest`.
+    fn replace_directory(&mut self) -> bun_sys::Result<()> {
+        let mut aside =
+            bun_paths::Path::<u8>::from(self.dest.dirname().unwrap_or(b".")).assume_ok();
+        aside
+            .append_fmt(format_args!(
+                ".{}.old-{:x}",
+                bstr::BStr::new(self.dest.basename()),
+                bun_core::fast_random(),
+            ))
+            .assume_ok();
+
+        bun_sys::renameat(Fd::cwd(), self.dest.slice_z(), Fd::cwd(), aside.slice_z())?;
+        if let Err(err) = self.symlink() {
+            // When the copy cannot move back, this error names where it is.
+            bun_sys::renameat(Fd::cwd(), aside.slice_z(), Fd::cwd(), self.dest.slice_z())?;
+            return Err(err);
+        }
+        let _ = Fd::cwd().delete_tree(aside.slice_z());
+        Ok(())
+    }
+
     // Ok(true) when a link was written.
     pub(crate) fn ensure_symlink(&mut self, strategy: Strategy) -> bun_sys::Result<bool> {
         match strategy {
@@ -54,7 +77,7 @@ impl Symlinker {
                     },
                 };
             }
-            Strategy::ExpectExisting => {
+            Strategy::ExpectExisting | Strategy::ReplaceDirectory => {
                 let mut current_link_buf = bun_paths::path_buffer_pool::get();
                 let current_link_len =
                     match bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf) {
@@ -100,7 +123,10 @@ impl Symlinker {
                                         false
                                     };
                                     if is_dir {
-                                        return Ok(false);
+                                        if !matches!(strategy, Strategy::ReplaceDirectory) {
+                                            return Ok(false);
+                                        }
+                                        return self.replace_directory().map(|()| true);
                                     }
                                     let _ = bun_sys::unlink(self.dest.slice_z());
                                     return self.symlink().map(|()| true);
@@ -153,4 +179,6 @@ impl Symlinker {
 pub enum Strategy {
     ExpectExisting,
     ExpectMissing,
+    /// `ExpectExisting`, but the link replaces a real directory that `bun patch --commit` diffed.
+    ReplaceDirectory,
 }

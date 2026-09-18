@@ -2039,8 +2039,7 @@ pub mod dir_entry_accessor {
                     let value = unsafe { &*p };
                     Ok(Ok(DirEntryHandle { value: Some(value) }))
                 }
-                // The glob walker reads ENOTDIR (a file) and ENOENT (missing) from the `Maybe`
-                // and treats them as a match or a skip. Every other error stays fatal.
+                // The walker treats ENOTDIR as a file match and ENOENT as a skip.
                 EntriesOption::Err(err) => match err.original_err {
                     crate::Error::Sys(
                         errno @ (bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::ENOENT),

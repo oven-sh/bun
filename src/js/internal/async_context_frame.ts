@@ -28,22 +28,6 @@ const AsyncContextFrame = {
     return prev;
   },
   /**
-   * Call `fn` with `frame` installed as the active async-context frame,
-   * restoring the previous frame afterwards. Fast-paths when `frame` is
-   * already active (which includes the "no ALS in use anywhere" case where
-   * both are undefined).
-   */
-  run(frame, fn, thisArg?, ...args) {
-    const prev = $getInternalField($asyncContext, 0);
-    if (frame === prev) return fn.$apply(thisArg, args);
-    $putInternalField($asyncContext, 0, frame);
-    try {
-      return fn.$apply(thisArg, args);
-    } finally {
-      $putInternalField($asyncContext, 0, prev);
-    }
-  },
-  /**
    * Call `fn` as `graph` (a currentGraph() of earlier; undefined: the host), so that what it
    * opens is that graph's. When that is not the caller's graph, the caller's AsyncLocalStorage
    * frame does not come along: what `fn` opens outlives the call and would keep its stores.
@@ -61,7 +45,11 @@ const AsyncContextFrame = {
       $putInternalField($asyncContext, 1, prevGraph);
     }
   },
-  /** Call `fn` with `frame` and `graph` installed: what script that kept both for later calls back in. */
+  /**
+   * Call `fn` with `frame` and `graph` installed, restoring the previous ones afterwards: what
+   * script that kept both for later calls back in. Fast-paths when both are already active
+   * (which includes the "no ALS in use anywhere" case where both are undefined).
+   */
   runInContext(frame, graph, fn, thisArg?, ...args) {
     const prevFrame = $getInternalField($asyncContext, 0);
     const prevGraph = $getInternalField($asyncContext, 1);

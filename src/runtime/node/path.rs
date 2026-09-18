@@ -2950,7 +2950,7 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
             //   path = process.env[`=${resolvedDevice}`] || process.cwd();
             #[cfg(windows)]
             {
-                let mut u16_buf = bun_paths::WPathBuffer::uninit();
+                let mut u16_buf = bun_paths::w_path_buffer_pool::get();
                 // Storage for the `=X:` fast-path key. Declared here (not inside the
                 // `'brk:` block) so the slice it backs stays live across `getenv_w`.
                 // 4 elements (not 3) so the wchar immediately following the 3-char
@@ -3000,10 +3000,7 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                     }
                     // T == u8 when !IS_U16; bytemuck statically checks the layout.
                     let key8: &[u8] = bytemuck::cast_slice::<T, u8>(&buf2[..buf_size]);
-                    // Write the NUL after widening so the LPCWSTR is properly
-                    // terminated regardless of `WPathBuffer::uninit()`'s init
-                    // state — don't rely on `uninit()` happening to zero-fill
-                    // today.
+                    // Write the NUL after widening; a pooled buffer is not zeroed.
                     let n = strings::convert_utf8_to_utf16_in_buffer(&mut u16_buf[..], key8).len();
                     u16_buf[n] = 0;
                     &u16_buf[..=n]

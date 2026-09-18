@@ -98,7 +98,13 @@ impl InternalMsgHolder {
 
         let event_loop = global.bun_vm().event_loop_mut();
 
-        event_loop.run_callback(cb, global, worker, &[message, handle]);
+        event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
+            cb,
+            global,
+            worker,
+            &[message, handle],
+        );
         Ok(())
     }
 
@@ -470,10 +476,6 @@ mod json {
         };
 
         let mut json_data = &data[0..idx as usize];
-        // An empty payload (newline with no preceding data) is invalid JSON.
-        if json_data.is_empty() {
-            return Err(IPCDecodeError::InvalidFormat);
-        }
 
         #[derive(Copy, Clone, Eq, PartialEq)]
         enum Kind {
@@ -481,10 +483,14 @@ mod json {
             Internal,
         }
         let mut kind = Kind::Regular;
-        if json_data[0] == 2 {
+        if json_data.first() == Some(&2) {
             // internal message
             json_data = &json_data[1..];
             kind = Kind::Internal;
+        }
+        // A bare newline or a lone tag byte is invalid JSON.
+        if json_data.is_empty() {
+            return Err(IPCDecodeError::InvalidFormat);
         }
 
         let is_ascii = strings::is_all_ascii(json_data);
@@ -1287,11 +1293,14 @@ impl SendQueue {
         let write_in_progress = self.write_in_progress.get();
         self.queue.with_mut(|queue| {
             // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
-            // this is rare. it will only happen if messages stack up after sending a handle, or if a long message is sent that is waiting for writable
+            // this is rare. it will only happen if messages stack up after sending a handle.
             let use_last = if handle.is_none() && !queue.is_empty() {
                 let len = queue.len();
                 let last = &queue[len - 1];
-                last.handle.is_none() && !last.is_ack_nack() && !(len == 1 && write_in_progress)
+                last.handle.is_none()
+                    && !last.is_ack_nack()
+                    && last.data.cursor == 0
+                    && !(len == 1 && write_in_progress)
             } else {
                 false
             };
@@ -1947,6 +1956,10 @@ impl bun_event_loop::Taskable for SendQueue {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the SendQueue root queued with a held ref.
         unsafe { SendQueue::release_deferred_unrun(this) }
+    }
+    /// The channel's own close hop.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

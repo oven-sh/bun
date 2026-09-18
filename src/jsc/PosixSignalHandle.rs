@@ -36,10 +36,7 @@ impl PosixSignalHandle {
         while let Some(signal) = self.ring.dequeue() {
             // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so build it
             // directly — `bun_runtime::dispatch::run_task` unpacks `task.ptr as usize as u8`.
-            let task = Task::new(
-                <PosixSignalTask as Taskable>::TAG,
-                signal as usize as *mut (),
-            );
+            let task = Task::init(signal as usize as *mut PosixSignalTask);
             event_loop.enqueue_task(task);
         }
     }
@@ -93,6 +90,10 @@ impl Taskable for PosixSignalTask {
     const TAG: bun_event_loop::TaskTag = task_tag::PosixSignalTask;
     /// `this` packs the signal number; nothing is owned.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// A signal is the process's: `process.on(<signal>)` listeners of the realm.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 unsafe extern "C" {

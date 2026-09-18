@@ -89,9 +89,9 @@ pub struct Chunk {
 
     pub compile_results_for_chunk: CompileResultSlots,
 
-    /// Pre-built JSON fragment for this chunk's metafile output entry.
-    /// Generated during parallel chunk generation, joined at the end.
-    pub(crate) metafile_chunk_json: Box<[u8]>,
+    /// Byte length of the output emitted for this chunk: what `code()` returned plus
+    /// the source map comment. The metafile reports it as `outputs[..].bytes`.
+    pub(crate) final_output_size: usize,
 
     /// Pack boolean flags to reduce padding overhead.
     /// Previously 3 separate bool fields caused ~21 bytes of padding waste.
@@ -219,7 +219,7 @@ impl Default for Chunk {
             renamer: bun_renamer::ChunkRenamer::default(),
             nested_scopes_to_rename: Vec::new(),
             compile_results_for_chunk: CompileResultSlots::default(),
-            metafile_chunk_json: Box::default(),
+            final_output_size: 0,
             flags: Flags::default(),
         }
     }
@@ -288,10 +288,11 @@ impl Chunk {
     }
 
     /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.
-    pub(crate) fn id(&self) -> [u8; CHUNK_ID_LEN] {
-        bun_core::fmt::truncated_hash32_bytes(
-            self.template.placeholder.hash.unwrap_or(self.isolated_hash),
-        )
+    pub(crate) fn id(&self) -> bun_core::fmt::ContentHash {
+        self.template
+            .placeholder
+            .hash
+            .unwrap_or_else(|| bun_core::fmt::ContentHash::short(self.isolated_hash))
     }
 
     /// The chunks reachable from chunk `start` through cross-chunk imports of the given kinds, `start` first.
@@ -606,20 +607,6 @@ impl IntermediateOutput {
         dst
     }
 
-    pub(crate) fn get_size(&self) -> usize {
-        match self {
-            IntermediateOutput::Pieces(pieces) => {
-                let mut total: usize = 0;
-                for piece in pieces.slice() {
-                    total += piece.data.len();
-                }
-                total
-            }
-            IntermediateOutput::Joiner(joiner) => joiner.len,
-            IntermediateOutput::Empty => 0,
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn code<'d>(
         &mut self,
@@ -779,7 +766,9 @@ impl IntermediateOutput {
                     count += piece.data.len();
 
                     match piece.query.kind() {
-                        QueryKind::ChunkId => count += CHUNK_ID_LEN,
+                        QueryKind::ChunkId => {
+                            count += chunks[piece.query.index() as usize].id().len()
+                        }
                         QueryKind::Chunk
                         | QueryKind::Asset
                         | QueryKind::Scb
@@ -910,13 +899,14 @@ impl IntermediateOutput {
                     match piece.query.kind() {
                         QueryKind::ChunkId => {
                             let id = chunks[piece.query.index() as usize].id();
-                            remain[..CHUNK_ID_LEN].copy_from_slice(&id);
+                            let (bytes, len) = (id.bytes(), id.len());
+                            remain[..len].copy_from_slice(&bytes[..len]);
                             if ENABLE_SOURCE_MAP_SHIFTS {
                                 shift.before.advance(chunk.unique_key);
-                                shift.after.advance(&id);
+                                shift.after.advance(&bytes[..len]);
                                 shifts.push(shift);
                             }
-                            remain = &mut remain[CHUNK_ID_LEN..];
+                            remain = &mut remain[len..];
                         }
                         QueryKind::Asset
                         | QueryKind::Chunk
@@ -1247,7 +1237,7 @@ pub enum QueryKind {
     Scb = 3,
     /// Given an HTML import index, print the manifest
     HtmlImport = 4,
-    /// Given a chunk index, print the chunk's 8-character content hash
+    /// Given a chunk index, print the chunk's content hash as `[hash]` prints it
     ChunkId = 5,
 }
 
@@ -1279,8 +1269,6 @@ impl QueryKind {
         }
     }
 }
-
-pub(crate) const CHUNK_ID_LEN: usize = 8;
 
 /// Length of the lowercase-hex `unique_key` prefix (16 nibbles of a `u64`).
 pub(crate) const UNIQUE_KEY_PREFIX_LEN: usize = 16;

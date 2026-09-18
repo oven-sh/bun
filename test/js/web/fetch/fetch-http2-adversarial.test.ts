@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls } from "harness";
+import { createPrivateKey } from "node:crypto";
 import { once } from "node:events";
+import { STATUS_CODES } from "node:http";
+import net from "node:net";
+import { listen } from "node:quic";
 import nodetls from "node:tls";
 
 // ─── frame helpers (copied from fetch-http2-client.test.ts; not exported) ────
@@ -141,7 +145,7 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
       },
       async url => {
         await using proc = spawnFetch(`
-          const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+          const rss = process.memoryUsage.rss;
           const baseline = rss();
           let peak = baseline;
           const t = setInterval(() => {
@@ -655,4 +659,172 @@ test("rejects HTTP/2 response header names that are not RFC 9110 tokens", async 
       expect(ok.status).toBe(200);
     },
   );
+});
+
+// HPACK and QPACK carry a field value verbatim, so a server can send the
+// optional whitespace that the HTTP/1.1 parser strips (RFC 9110 section 5.5).
+// Each origin puts the same value bytes on the wire.
+type RawResponse = { status: number; fields: [name: string, value: string][]; body?: string };
+
+/** Serves `responses(origin)` in order, one per request. The last one repeats. */
+async function withRawOrigin(
+  protocol: "http1.1" | "http2" | "http3",
+  responses: (origin: string) => RawResponse[],
+  fn: (origin: string, init: BunFetchRequestInit) => Promise<void>,
+) {
+  let origin = "";
+  let queue: RawResponse[] | undefined;
+  const next = () => {
+    queue ??= responses(origin);
+    return queue.length > 1 ? queue.shift()! : queue[0];
+  };
+  const insecure = { tls: { rejectUnauthorized: false } };
+
+  if (protocol === "http1.1") {
+    const server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => {
+        const { status, fields, body = "" } = next();
+        const lines = fields.map(([name, value]) => `${name}:${value}\r\n`).join("");
+        socket.end(`HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\n${lines}\r\n${body}`);
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    origin = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+    try {
+      await fn(origin, {});
+    } finally {
+      server.close();
+    }
+    return;
+  }
+
+  if (protocol === "http2") {
+    const onStream: StreamCb = (socket, id) => {
+      const { status, fields, body } = next();
+      const block = [hpackStatus(String(status)), ...fields.map(([name, value]) => hpackLit(name, value))];
+      socket.write(frame(1, body === undefined ? 5 : 4, id, Buffer.concat(block)));
+      if (body !== undefined) socket.write(frame(0, 1, id, Buffer.from(body)));
+    };
+    await withAdversarialServer({ onStream }, url => {
+      origin = url;
+      return fn(origin, { protocol, ...insecure });
+    });
+    return;
+  }
+
+  const encoder = new TextEncoder();
+  const endpoint = await listen(
+    async (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      await session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      onheaders(this: any) {
+        const { status, fields, body } = next();
+        const headers: Record<string, string | string[]> = { ":status": String(status) };
+        for (const [name, value] of fields) headers[name] = name in headers ? [headers[name], value].flat() : value;
+        this.sendHeaders(headers, { terminal: body === undefined });
+        if (body === undefined) return;
+        this.writer.writeSync(encoder.encode(body));
+        this.writer.endSync();
+      },
+    },
+  );
+  origin = `https://127.0.0.1:${endpoint.address.port}`;
+  try {
+    await fn(origin, { protocol, ...insecure });
+  } finally {
+    // Not close(): it waits for the session that fetch() keeps in its pool.
+    await endpoint.destroy();
+  }
+}
+
+describe.each(["http1.1", "http2", "http3"] as const)("padded response field values over %s", protocol => {
+  test("Headers has the value without its leading and trailing SP / HTAB", async () => {
+    const fields: RawResponse["fields"] = [
+      ["x-ws", " v\t"],
+      ["x-inner", "\ta \t b "],
+      ["x-only-ws", " \t "],
+      ["set-cookie", " a=1 "],
+      ["set-cookie", "\tb=2\t"],
+    ];
+    await withRawOrigin(
+      protocol,
+      () => [{ status: 204, fields }],
+      async (origin, init) => {
+        const { headers } = await fetch(origin, init);
+        expect({
+          ws: headers.get("x-ws"),
+          inner: headers.get("x-inner"),
+          onlyWs: headers.get("x-only-ws"),
+          setCookie: headers.getSetCookie(),
+        }).toEqual({ ws: "v", inner: "a \t b", onlyWs: "", setCookie: ["a=1", "b=2"] });
+      },
+    );
+  });
+
+  test("a padded absolute Location is followed", async () => {
+    await withRawOrigin(
+      protocol,
+      origin => [
+        { status: 302, fields: [["location", ` ${origin}/next\t`]] },
+        { status: 200, fields: [], body: "next" },
+      ],
+      async (origin, init) => {
+        const res = await fetch(origin, init);
+        expect({ url: res.url, body: await res.text() }).toEqual({ url: `${origin}/next`, body: "next" });
+      },
+    );
+  });
+
+  // lsquic checks content-length itself when it decodes the QPACK block. It
+  // refuses the padded value before Bun sees the field.
+  const [title, expected] =
+    protocol === "http3"
+      ? ["lsquic refuses a padded Content-Length", { error: "HTTP3StreamReset" }]
+      : ["a padded Content-Length frames the body", { contentLength: "5", body: "hello" }];
+  test(title, async () => {
+    await withRawOrigin(
+      protocol,
+      () => [{ status: 200, fields: [["content-length", " 5\t"]], body: "hello" }],
+      async (origin, init) => {
+        const result = await fetch(origin, init).then(
+          async res => ({ contentLength: res.headers.get("content-length"), body: await res.text() }),
+          e => ({ error: e.code }),
+        );
+        expect(result).toEqual(expected);
+      },
+    );
+  });
+});
+
+// HPACK integer (RFC 7541 section 5.1) with an N-bit prefix.
+function hpackInt(prefixBits: number, flags: number, n: number) {
+  const max = (1 << prefixBits) - 1;
+  if (n < max) return Buffer.from([flags | n]);
+  const bytes = [flags | max];
+  for (n -= max; n >= 128; n = Math.floor(n / 128)) bytes.push(n % 128 | 0x80);
+  bytes.push(n);
+  return Buffer.from(bytes);
+}
+
+// A value that trims to nothing still counts toward the decoded header list
+// cap (256 KiB), because the decoder produced it. One dynamic table entry of
+// 4000 SP and 70 one-byte references to it decode to 284 KB from a 4 KB block.
+test("whitespace-only HTTP/2 response values count toward the header list cap", async () => {
+  const spaces = Buffer.alloc(4000, " ");
+  // Literal with incremental indexing and a new name: dynamic table index 62.
+  const insert = Buffer.concat([Buffer.from([0x40, 1]), Buffer.from("a"), hpackInt(7, 0, spaces.length), spaces]);
+  const block = Buffer.concat([hpackStatus200, insert, Buffer.alloc(70, 0x80 | 62)]);
+  await withAdversarialServer({ onStream: (socket, id) => socket.write(frame(1, 5, id, block)) }, async url => {
+    const result = await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false } }).then(
+      res => ({ status: res.status }),
+      e => ({ error: e.code }),
+    );
+    expect(result).toEqual({ error: "HTTP2HeaderListTooLarge" });
+  });
 });

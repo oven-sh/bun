@@ -371,6 +371,10 @@ impl bun_event_loop::Taskable for HotReloadEvent {
             }
         }
     }
+    /// The dev server is the realm's.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl HotReloadEvent {

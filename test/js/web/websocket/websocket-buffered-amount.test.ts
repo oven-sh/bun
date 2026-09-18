@@ -3,22 +3,29 @@ import { tls } from "harness";
 import crypto from "node:crypto";
 import net from "node:net";
 import nodeTls from "node:tls";
+import { WebSocket as WS } from "ws";
 
 const CHUNK = new Uint8Array(64 * 1024);
-const TOTAL = 1024; // 64 MiB, far past any socket/TLS buffer
-const TOTAL_BYTES = TOTAL * CHUNK.byteLength;
 // Each binary frame is header (10 bytes for a 64 KiB payload) + 4-byte mask + payload.
-const FRAMING_PER_CHUNK = 14;
+const FRAME = CHUNK.byteLength + 14;
+// Upper bound on what the kernel (and any in-process proxy) may absorb before
+// the client has to start queueing. Far above what any platform takes on loopback.
+const MAX_TO_SATURATE = 1024;
+// Frames sent on top of a saturated socket. Every one of them must be counted.
+const EXTRA = 64;
 
 // A raw origin that completes the WebSocket upgrade and then reads only when
 // told to, so the client's send side has to queue. It sees plaintext frames
 // (TLS, when any, terminates here or at the proxy), so the byte count it
-// resolves on is payload plus framing.
+// reports is payload plus framing.
 function rawOrigin(secure: boolean) {
   const { promise: upgraded, resolve: resolveUpgraded } = Promise.withResolvers<net.Socket>();
   let received = 0;
-  const { promise: gotAll, resolve: resolveGotAll } = Promise.withResolvers<void>();
+  let waitingFor = Infinity;
+  let resolveReceived = () => {};
+  const sockets = new Set<net.Socket>();
   function onConnection(sock: net.Socket) {
+    sockets.add(sock);
     sock.once("data", head => {
       const key = /Sec-WebSocket-Key: (.+)\r\n/.exec(head.toString("latin1"))![1].trim();
       const accept = crypto
@@ -32,7 +39,7 @@ function rawOrigin(secure: boolean) {
       sock.pause();
       sock.on("data", (chunk: Buffer) => {
         received += chunk.length;
-        if (received >= TOTAL * (CHUNK.byteLength + FRAMING_PER_CHUNK)) resolveGotAll();
+        if (received >= waitingFor) resolveReceived();
       });
       resolveUpgraded(sock);
     });
@@ -47,8 +54,18 @@ function rawOrigin(secure: boolean) {
         server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
       ),
     upgraded,
-    gotAll,
-    close: () => server.close(),
+    // Resolves with the exact byte count once at least `bytes` have arrived.
+    receive(bytes: number): Promise<number> {
+      waitingFor = bytes;
+      const { promise, resolve } = Promise.withResolvers<void>();
+      resolveReceived = resolve;
+      if (received >= waitingFor) resolve();
+      return promise.then(() => received);
+    },
+    close: () => {
+      for (const sock of sockets) sock.destroy();
+      server.close();
+    },
   };
 }
 
@@ -82,6 +99,29 @@ function open(ws: WebSocket): Promise<void> {
   return new Promise(resolve => (ws.onopen = () => resolve()));
 }
 
+// Sends 64 KiB frames to a peer that is not reading. The kernel absorbs the
+// first few MiB, so bufferedAmount stays 0 until the socket is saturated. From
+// then on nothing drains until the event loop turns, so every further frame
+// must add exactly its framed size. Returns the number of frames sent.
+function sendUntilCounted(ws: { send(data: Uint8Array): void; readonly bufferedAmount: number }): number {
+  expect(ws.bufferedAmount).toBe(0);
+  let sent = 0;
+  while (ws.bufferedAmount === 0 && sent < MAX_TO_SATURATE) {
+    ws.send(CHUNK);
+    sent++;
+  }
+  // At most the frame that did not fit (through a TLS proxy tunnel it is that
+  // frame's ciphertext, a few record headers larger).
+  const saturated = ws.bufferedAmount;
+  expect(saturated).toBeGreaterThan(0);
+  expect(saturated).toBeLessThan(2 * FRAME);
+
+  for (let i = 0; i < EXTRA; i++) ws.send(CHUNK);
+  sent += EXTRA;
+  expect(ws.bufferedAmount).toBe(saturated + EXTRA * FRAME);
+  return sent;
+}
+
 const MODES = [
   { name: "ws", secure: false, proxy: null },
   { name: "wss", secure: true, proxy: null },
@@ -103,29 +143,25 @@ for (const mode of MODES) {
         });
         await open(ws);
         const peer = await origin.upgraded;
-        expect(ws.bufferedAmount).toBe(0);
 
-        for (let i = 0; i < TOTAL; i++) ws.send(CHUNK);
-
-        // The kernel and any proxy absorbed some; the rest is ours to report.
+        const sent = sendUntilCounted(ws);
         const queued = ws.bufferedAmount;
-        expect(queued).toBeGreaterThan(TOTAL_BYTES / 2);
-        expect(queued).toBeLessThanOrEqual(TOTAL * (CHUNK.byteLength + FRAMING_PER_CHUNK));
 
         // Only what the kernel can still absorb drains while the peer isn't reading.
         await new Promise(resolve => setImmediate(resolve));
+        expect(ws.bufferedAmount).toBeGreaterThan(0);
         expect(ws.bufferedAmount).toBeLessThanOrEqual(queued);
-        expect(ws.bufferedAmount).toBeGreaterThan(TOTAL_BYTES / 2);
 
         peer.resume();
-        await origin.gotAll;
+        expect(await origin.receive(sent * FRAME)).toBe(sent * FRAME);
         expect(ws.bufferedAmount).toBe(0);
         ws.close();
+        expect(ws.bufferedAmount).toBe(0);
       } finally {
         proxy?.close();
         origin.close();
       }
-    }, 60_000);
+    });
   });
 }
 
@@ -154,22 +190,19 @@ describe("WebSocket.bufferedAmount", () => {
   });
 
   it("ws package reports the same number", async () => {
-    const { WebSocket: WS } = await import("ws");
     const origin = rawOrigin(false);
     const originPort = await origin.listen();
     try {
       const ws = new WS(`ws://127.0.0.1:${originPort}`);
       await new Promise(resolve => ws.once("open", resolve));
       const peer = await origin.upgraded;
-      expect(ws.bufferedAmount).toBe(0);
-      for (let i = 0; i < TOTAL; i++) ws.send(CHUNK);
-      expect(ws.bufferedAmount).toBeGreaterThan(TOTAL_BYTES / 2);
+      const sent = sendUntilCounted(ws);
       peer.resume();
-      await origin.gotAll;
+      expect(await origin.receive(sent * FRAME)).toBe(sent * FRAME);
       expect(ws.bufferedAmount).toBe(0);
       ws.close();
     } finally {
       origin.close();
     }
-  }, 60_000);
+  });
 });

@@ -13,7 +13,7 @@ use bun_core::{MutableString, slice_to_nul, strings};
 use bun_core::{Output, ZStr, slice_as_bytes};
 #[cfg(unix)]
 use bun_paths::PathBuffer;
-use bun_paths::{OSPathBuffer, OSPathChar, SEP, SEP_STR};
+use bun_paths::{OSPathChar, SEP, SEP_STR};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
@@ -90,6 +90,7 @@ pub mod lib {
             offset: *mut la_int64_t,
         ) -> Result;
         fn archive_error_string(a: *mut Archive) -> *const c_char;
+        fn archive_errno(a: *mut Archive) -> c_int;
         // streaming-read setup (used by TarballStream's resumable extractor)
         pub fn archive_read_set_format(a: *mut Archive, code: c_int) -> c_int;
         pub fn archive_read_append_filter(a: *mut Archive, code: c_int) -> c_int;
@@ -363,6 +364,12 @@ pub mod lib {
             // `'static` here is a lifetime erasure — the caller must not let
             // the slice outlive the archive.
             unsafe { ZStr::from_c_ptr(p) }.as_bytes()
+        }
+
+        /// Last failure's error number: an OS `errno`, -1 (libarchive-internal) or 0 (unset).
+        pub fn errno(&self) -> c_int {
+            // SAFETY: `self` is a live archive handle.
+            unsafe { archive_errno(self.as_mut_ptr()) }
         }
 
         // ── write side ─────────────────────────────────────────────────────
@@ -973,6 +980,25 @@ impl Drop for BufferReadStream {
     }
 }
 
+/// `mkdirat` mode for a directory entry. `perm` is whatever the header
+/// encoded (a GNU base-256 field need not fit in `0o7777`), so mask it, then
+/// make readable directories listable like node-tar does:
+/// https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
+#[cfg(not(windows))]
+pub fn directory_mode(perm: bun_sys::Mode) -> bun_sys::Mode {
+    let mut mode = perm & 0o7777;
+    if (mode & 0o400) != 0 {
+        mode |= 0o100;
+    }
+    if (mode & 0o40) != 0 {
+        mode |= 0o10;
+    }
+    if (mode & 0o4) != 0 {
+        mode |= 0o1;
+    }
+    mode
+}
+
 /// Validates that a symlink target doesn't escape the extraction directory.
 /// Returns true if the symlink is safe (target stays within extraction dir),
 /// false if it would escape (e.g., via ../ traversal or absolute path).
@@ -1263,7 +1289,7 @@ impl Archiver {
         // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
         let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
 
-        let mut normalized_buf = bun_paths::PathBuffer::uninit();
+        let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
         'loop_: loop {
             // SAFETY: archive valid for stream lifetime
@@ -1406,7 +1432,7 @@ impl Archiver {
         #[cfg(unix)]
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
 
-        let mut normalized_buf = OSPathBuffer::uninit();
+        let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
         let mut use_pwrite = cfg!(unix);
         let mut use_lseek = true;
 
@@ -1586,39 +1612,20 @@ impl Archiver {
 
                     match kind {
                         bun_sys::FileKind::Directory => {
-                            // SAFETY: entry valid
-                            let mut mode = i32::try_from(lib::Entry::opaque_ref(entry).perm())
-                                .expect("int cast");
-
-                            // if dirs are readable, then they should be listable
-                            // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
-                            if (mode & 0o400) != 0 {
-                                mode |= 0o100;
-                            }
-                            if (mode & 0o40) != 0 {
-                                mode |= 0o10;
-                            }
-                            if (mode & 0o4) != 0 {
-                                mode |= 0o1;
-                            }
-
                             #[cfg(windows)]
                             {
                                 make_path_u16(dir, path_slice)?;
-                                let _ = mode;
                             }
                             #[cfg(not(windows))]
                             {
+                                // SAFETY: entry valid
+                                let mode = directory_mode(lib::Entry::opaque_ref(entry).perm());
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
                                 // so path_slice is a NUL-terminated [:0]u8.
                                 let path_z: &ZStr = unsafe {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
-                                match bun_sys::mkdirat_z(
-                                    dir_fd,
-                                    path_z,
-                                    bun_sys::Mode::try_from(mode).expect("int cast"),
-                                ) {
+                                match bun_sys::mkdirat_z(dir_fd, path_z, mode) {
                                     Ok(()) => {}
                                     Err(err) => {
                                         // It's possible for some tarballs to return a directory twice, with and

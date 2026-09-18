@@ -23,7 +23,8 @@ pub enum State {
     #[default]
     Pending,
     Done(Vec<u8>),
-    Err(bun_sys::Error),
+    /// The read failed. The bytes read before the error come first.
+    Err(Vec<u8>, bun_sys::Error),
 }
 
 // Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
@@ -208,7 +209,7 @@ impl PipeReader {
 
             #[cfg(unix)]
             {
-                if matches!(self.state, State::Err(_)) {
+                if matches!(self.state, State::Err(..)) {
                     // onReaderError already ran; `_guard`'s Drop on return
                     // will drop the last ref and deinit() closes the handle.
                     return;
@@ -225,8 +226,8 @@ impl PipeReader {
     }
 
     // pub const toJS = toReadableStream;
-    pub(crate) fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        self.to_readable_stream(global_object)
+    pub(crate) fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
+        self.to_readable_stream(cx)
     }
 
     fn on_reader_done(&mut self) {
@@ -286,7 +287,7 @@ impl PipeReader {
         }
     }
 
-    fn to_readable_stream(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    fn to_readable_stream(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         // detach() at scope exit = clear `process` backref + deref. The deref
         // may drop the last ref, so it must run after the result is computed; the backref
         // clear must also wait (from_pipe hands `&mut self.reader` to JS, which may
@@ -303,7 +304,7 @@ impl PipeReader {
             State::Pending => {
                 // `_parent` is unused in `from_pipe`; pass the raw ptr instead
                 // of `self` so borrowck allows `&mut self.reader` alongside it.
-                let stream = ReadableStream::from_pipe(global_object, this_ptr, &mut self.reader);
+                let stream = ReadableStream::from_pipe(cx, this_ptr, &mut self.reader);
                 self.state = State::Done(Vec::new());
                 stream
             }
@@ -315,15 +316,15 @@ impl PipeReader {
                 else {
                     unreachable!()
                 };
-                ReadableStream::from_owned_slice(global_object, bytes, 0)
+                ReadableStream::from_owned_slice(cx, bytes, 0)
             }
-            State::Err(_err) => {
-                let empty = ReadableStream::empty(global_object)?;
-                ReadableStream::cancel(
-                    &ReadableStream::from_js(empty, global_object)?.unwrap(),
-                    global_object,
-                )?;
-                Ok(empty)
+            State::Err(..) => {
+                let State::Err(bytes, err) =
+                    core::mem::replace(&mut self.state, State::Err(Vec::new(), Default::default()))
+                else {
+                    unreachable!()
+                };
+                ReadableStream::from_bytes_then_error(cx, bytes, err)
             }
         }
     }
@@ -339,8 +340,10 @@ impl PipeReader {
     }
 
     fn on_reader_error(&mut self, err: bun_sys::Error) {
-        // A previous `State::Done` buffer is freed by Drop of the replaced Vec.
-        self.state = State::Err(err);
+        let owned = self.to_owned_slice();
+        // Release the fd now, as EOF does, so a child still writing gets EPIPE.
+        self.reader.deinit();
+        self.state = State::Err(owned, err);
         if let Some(process) = self.process.take() {
             // `process` backref is valid while set; cleared before deref.
             let kind = self.kind(process.get());
@@ -356,7 +359,7 @@ impl PipeReader {
                 self.reader.close();
             }
             State::Done(_) => {}
-            State::Err(_) => {}
+            State::Err(..) => {}
         }
     }
 
@@ -385,7 +388,7 @@ impl PipeReader {
 impl Drop for PipeReader {
     fn drop(&mut self) {
         #[cfg(unix)]
-        debug_assert!(self.reader.is_done() || matches!(self.state, State::Err(_)));
+        debug_assert!(self.reader.is_done() || matches!(self.state, State::Err(..)));
     }
 }
 

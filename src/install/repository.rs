@@ -5,7 +5,6 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_core::ZBox;
 use bun_core::strings;
-use bun_paths::PathBuffer;
 use bun_semver::string::Buf as StringBuf;
 
 use crate::dependency as Dependency;
@@ -32,7 +31,7 @@ impl SloppyGlobalGitConfig {
             return SloppyGlobalGitConfig::default();
         };
 
-        let mut config_file_path_buf = PathBuffer::uninit();
+        let mut config_file_path_buf = bun_paths::path_buffer_pool::get();
         let config_file_path = bun_paths::resolve_path::join_abs_string_buf_z::<
             bun_paths::platform::Auto,
         >(home_dir, &mut config_file_path_buf, &[b".gitconfig"]);

@@ -7,7 +7,7 @@
 use core::ffi::c_void;
 #[cfg(unix)]
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicI32, Ordering};
 use std::io::Write as _;
 
 use bun_core::strings;
@@ -141,8 +141,9 @@ impl<'a> Coordinator<'a> {
         let _ = self.spawn_worker();
         self.run_pending_reaps();
         while !self.is_done() {
-            if abort_handler::SHOULD_ABORT.load(Ordering::Acquire) {
-                self.abort_all();
+            let signal = abort_handler::ABORT_SIGNAL.load(Ordering::Acquire);
+            if signal != 0 {
+                self.abort_all(signal);
                 return;
             }
             self.vm.event_loop_ref().tick();
@@ -180,7 +181,8 @@ impl<'a> Coordinator<'a> {
     /// the coordinator can't run this (SIGKILL): PDEATHSIG on Linux,
     /// kill-on-close Job Object on Windows. macOS has neither; the process
     /// group kill here plus stdin EOF in the worker loop is the best effort.
-    fn abort_all(&mut self) {
+    /// Exits with 128 + `signal`, the status a shell reports for a signal death.
+    fn abort_all(&mut self, signal: i32) {
         abort_handler::uninstall();
         let now = bun_core::time::milli_timestamp();
         let workers = &self.workers[..self.spawned_count as usize];
@@ -217,12 +219,7 @@ impl<'a> Coordinator<'a> {
         for w in self.workers[..self.spawned_count as usize].iter_mut() {
             if let Some(p) = &w.process {
                 #[cfg(unix)]
-                {
-                    // SAFETY: FFI call; -pid targets the worker's process group.
-                    unsafe {
-                        let _ = libc::kill(-(p.pid as libc::pid_t), libc::SIGTERM);
-                    }
-                }
+                terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
                     // SIGKILL → TerminateProcess; libuv-win ENOSYSes signals
@@ -231,7 +228,11 @@ impl<'a> Coordinator<'a> {
                 }
             }
         }
-        self.aborted = Some(130);
+        self.aborted = Some(u32::from(
+            bun_sys::SignalCode(signal as u8)
+                .to_exit_code()
+                .unwrap_or(130),
+        ));
     }
 
     fn spawn_worker(&mut self) -> bool {
@@ -597,6 +598,12 @@ impl<'a> Coordinator<'a> {
         let startup_failure = w.inflight.is_none() && !w.reached_ready;
         let worker_idx = w.idx;
         if let Some(idx) = w.inflight {
+            // The dead worker skipped the between-files cleanup of what its
+            // test spawned; it led its own process group, so kill(-pid) does it.
+            #[cfg(unix)]
+            if let Some(p) = &w.process {
+                terminate_process_group(p.pid);
+            }
             self.break_dots();
             self.ensure_header(idx);
             // A worker dying mid-file is never silently retried. If a test
@@ -828,12 +835,7 @@ impl<'a> Coordinator<'a> {
             // through *mut forms no `&mut Worker` aliasing the caller's `w`.
             if let Some(p) = unsafe { &(*other).process } {
                 #[cfg(unix)]
-                {
-                    // SAFETY: FFI call; -pid targets the worker's process group.
-                    unsafe {
-                        let _ = libc::kill(-(p.pid as libc::pid_t), libc::SIGTERM);
-                    }
-                }
+                terminate_process_group(p.pid);
                 #[cfg(not(unix))]
                 {
                     // SIGKILL → TerminateProcess (libuv-win ENOSYSes most
@@ -919,6 +921,17 @@ impl<'a> Coordinator<'a> {
             }
             Some(job)
         }
+    }
+}
+
+/// SIGTERM to the process group a worker leads: the worker and everything it
+/// spawned. Safe after the worker exited: the pid stays reserved while any
+/// member of the group lives, and an empty group gives ESRCH.
+#[cfg(unix)]
+fn terminate_process_group(pid: libc::pid_t) {
+    // SAFETY: FFI call; -pid targets the worker's process group.
+    unsafe {
+        let _ = libc::kill(-pid, libc::SIGTERM);
     }
 }
 
@@ -1033,7 +1046,8 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 pub(crate) mod abort_handler {
     use super::*;
 
-    pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
+    /// The signal that asked for the abort, or 0. Windows console events count as SIGINT.
+    pub(crate) static ABORT_SIGNAL: AtomicI32 = AtomicI32::new(0);
 
     // PORTING.md §Global mutable state: written once in `install()` (single
     // call site), read once in `uninstall()`. RacyCell — `sigaction` is POD,
@@ -1046,8 +1060,8 @@ pub(crate) mod abort_handler {
         bun_core::RacyCell::new(MaybeUninit::uninit());
 
     #[cfg(unix)]
-    extern "C" fn posix_handler(_: i32, _: *const libc::siginfo_t, _: *const c_void) {
-        SHOULD_ABORT.store(true, Ordering::Release);
+    extern "C" fn posix_handler(sig: i32, _: *const libc::siginfo_t, _: *const c_void) {
+        ABORT_SIGNAL.store(sig, Ordering::Release);
     }
 
     #[cfg(windows)]
@@ -1057,7 +1071,7 @@ pub(crate) mod abort_handler {
         use bun_sys::windows;
         match ctrl {
             windows::CTRL_C_EVENT | windows::CTRL_BREAK_EVENT | windows::CTRL_CLOSE_EVENT => {
-                SHOULD_ABORT.store(true, Ordering::Release);
+                ABORT_SIGNAL.store(libc::SIGINT, Ordering::Release);
                 windows::TRUE
             }
             _ => windows::FALSE,

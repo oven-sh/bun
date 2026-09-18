@@ -41,6 +41,11 @@ PerformanceObserver::PerformanceObserver(ScriptExecutionContext& scriptExecution
     m_performance = uncheckedDowncast<Zig::GlobalObject>(scriptExecutionContext.globalObject())->performance();
 }
 
+ScriptExecutionContext* PerformanceObserver::scriptExecutionContext() const
+{
+    return m_callback->scriptExecutionContext();
+}
+
 void PerformanceObserver::disassociate()
 {
     m_performance = nullptr;

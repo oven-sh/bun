@@ -115,9 +115,17 @@ describe("net.createServer listen", () => {
             console.log(JSON.stringify(result));
             process.exit(0);
           }
+          // once("listening") rejects with the "error" event, so this settles either way.
           const listenError = async (...args: any[]) => {
-            const [err] = await once(createServer().listen(...args), "error");
-            return { code: err.code, syscall: err.syscall, address: err.address, message: err.message };
+            const server = createServer().listen(...args);
+            try {
+              await once(server, "listening");
+            } catch (err: any) {
+              return { code: err.code, syscall: err.syscall, address: err.address, message: err.message };
+            }
+            const listening = server.address();
+            server.close();
+            return { listening };
           };
 
           const noHost = createServer().listen(0);

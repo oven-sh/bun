@@ -466,7 +466,7 @@ impl WhyCommand {
         }
 
         if target_versions.is_empty() {
-            bun_core::prettyln!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: No packages matching '{}' found in lockfile",
                 BStr::new(package_pattern)
             );

@@ -988,6 +988,7 @@ it.skipIf(isWindows)(
         version: "1.0.0",
         dependencies: { "test-package": "github:user/repo#main" },
       }),
+      ".tmp/.keep": "",
     });
     const installDir = String(dir);
 
@@ -1000,12 +1001,15 @@ it.skipIf(isWindows)(
         ...env,
         GITHUB_API_URL: `http://localhost:${server.port}`,
         BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
+        BUN_TMPDIR: join(installDir, ".tmp"),
       },
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain('tarball root directory "pkg.root/extra" is not a valid folder name');
     expect(stdout).not.toContain("1 package installed");
+    // The refusal comes after the extract, so the temp directory must be removed.
+    expect(await readdir(join(installDir, ".tmp"))).toEqual([".keep"]);
     expect(exitCode).not.toBe(0);
   },
   60000,

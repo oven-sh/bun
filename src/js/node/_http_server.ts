@@ -3273,19 +3273,24 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   this.finished = true;
   process.nextTick(markResponseEndedNT, this);
   this.emit("prefinish");
-  this._callPendingCallbacks();
 
   if (draining) {
-    // Native calls back once the body is out; a dying connection emits from emit("close").
+    // Native calls back once the body is out; a dying connection finishes from emit("close").
     this[kPendingFinish] = callback ?? null;
     handle.onwritable = flushPendingFinish.bind(this);
   } else {
-    // Next tick: the dispatcher sets kDispatcherDetached after a sync handler returns, and 'finish' reads it.
-    process.nextTick(emitResponseFinished, this, callback);
+    queueResponseFinished(this, callback);
   }
 
   return this;
 };
+
+// The write() callbacks that backpressure parked run first, then 'finish' and the end() callback.
+// Next tick: the dispatcher sets kDispatcherDetached after a sync handler returns, and 'finish' reads it.
+function queueResponseFinished(res, callback) {
+  res._callPendingCallbacks();
+  process.nextTick(emitResponseFinished, res, callback);
+}
 
 // 'close' is queued before the 'finish' listeners run, like Node.js's resOnFinish does.
 function emitResponseFinished(res, callback) {
@@ -3304,7 +3309,7 @@ function flushPendingFinish(this: ServerResponse) {
   const callback = this[kPendingFinish];
   if (callback === undefined) return;
   this[kPendingFinish] = undefined;
-  emitResponseFinished(this, callback);
+  queueResponseFinished(this, callback);
 }
 
 Object.defineProperty(ServerResponse.prototype, "writable", {
@@ -3683,12 +3688,24 @@ ServerResponse.prototype.destroy = function (err?: Error) {
 
 ServerResponse.prototype.emit = function (event) {
   if (event === "close") {
-    // The connection died mid-drain: Node.js still emits 'finish' before 'close'.
-    if (this[kPendingFinish] !== undefined) flushPendingFinish.$call(this);
+    const callback = this[kPendingFinish];
+    if (callback !== undefined) {
+      // The connection died mid-drain: like Node.js, the response still finishes, then closes.
+      this[kPendingFinish] = undefined;
+      this._closed = true;
+      this._callPendingCallbacks();
+      process.nextTick(emitResponseFinishedThenClose, this, callback);
+      return false;
+    }
     callCloseCallback(this);
   }
   return Stream.prototype.emit.$apply(this, arguments);
 };
+
+function emitResponseFinishedThenClose(res, callback) {
+  emitResponseFinished(res, callback);
+  res.emit("close");
+}
 
 ServerResponse.prototype.flushHeaders = function () {
   if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) return; // Should be idempotent.

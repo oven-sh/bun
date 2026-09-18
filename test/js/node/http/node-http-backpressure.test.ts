@@ -310,19 +310,28 @@ describe("backpressure", () => {
     });
   });
 
-  // Node emits a response's 'finish' (then the end() callback, then 'close')
-  // once every byte of it has been handed to the kernel, not when end() merely
-  // accepted them: bytes a slow reader leaves in the server's userspace buffer
-  // are still the response's. Until then writableFinished is false,
-  // writableLength counts them, the response keeps its socket (the next
-  // pipelined response queues behind it) and the body counts as work that keeps
-  // the process alive. The usual graceful-shutdown recipe (close the server once
-  // the last response has closed) relies on this: server.close() destroys
-  // connections whose response has ended, which is only safe once the bytes are
-  // in the kernel.
+  // Node runs the write() callbacks a slow reader held up, then emits a
+  // response's 'finish' (then the end() callback, then 'close') once every byte
+  // of it has been handed to the kernel, not when end() merely accepted them:
+  // bytes a slow reader leaves in the server's userspace buffer are still the
+  // response's (https://github.com/oven-sh/bun/issues/43155). Until then
+  // writableFinished is false, writableLength counts them, the response keeps
+  // its socket (the next pipelined response queues behind it, the keep-alive
+  // timer has not started) and the body counts as work that keeps the process
+  // alive. The usual graceful-shutdown recipe (close the server once the last
+  // response has closed) relies on this: server.close() destroys connections
+  // whose response has ended, which is only safe once the bytes are in the
+  // kernel.
   describe("a response finishes once its body has been written out, not when end() buffered it", () => {
     const BODY = 32 * 1024 * 1024;
     const FIRST = 1024 * 1024;
+    const CHUNK = Buffer.alloc(256 * 1024, "a");
+
+    const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+    const tlsOptions = {
+      cert: readFileSync(path.join(keysDir, "agent1-cert.pem")),
+      key: readFileSync(path.join(keysDir, "agent1-key.pem")),
+    };
 
     // The body goes out as write(1 MB) + end(31 MB) to a client that is not
     // reading yet. Most kernels take only a few MB of that from a socket
@@ -339,30 +348,111 @@ describe("backpressure", () => {
       return res.writableLength > 0;
     }
 
-    // A raw client that sends `request` but reads nothing until resume().
-    function pausedClient(port: number, request: string) {
-      const socket = net.connect(port, "127.0.0.1");
+    // The same body as 256 KB writes, then end(). By the last write a kernel
+    // that leaves a backlog has long stopped taking bytes, so that write's
+    // callback is one the backlog holds up.
+    function writeBodyInChunks(
+      res: http.ServerResponse,
+      endWithChunk: boolean,
+      endCallback: () => void,
+      lastWriteCallback?: () => void,
+    ) {
+      res.setHeader("Content-Length", BODY);
+      const writes = BODY / CHUNK.length - (endWithChunk ? 1 : 0);
+      for (let i = 0; i < writes; i++) res.write(CHUNK, i === writes - 1 ? lastWriteCallback : undefined);
+      if (endWithChunk) res.end(CHUNK, endCallback);
+      else res.end(endCallback);
+      return res.writableLength > 0;
+    }
+
+    // "/ping" is answered at once: see ping().
+    function createServer(tls: boolean, handler: http.RequestListener) {
+      const listener: http.RequestListener = (req, res) => (req.url === "/ping" ? res.end("pong") : handler(req, res));
+      return tls ? https.createServer(tlsOptions, listener) : http.createServer(listener);
+    }
+
+    // A complete exchange on a second connection. Whatever end() put on the
+    // tick queue has run by the time it is over, so a test that looks at the
+    // events afterwards sees the ones that did not wait for the reader.
+    function ping(port: number, tls = false) {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      (tls ? https : http)
+        .get({ port, host: "127.0.0.1", path: "/ping", agent: false, rejectUnauthorized: false }, res => {
+          res.resume();
+          res.on("end", () => resolve());
+        })
+        .on("error", reject);
+      return promise;
+    }
+
+    // A raw client that sends `request` but reads nothing until resume() or read().
+    function pausedClient(port: number, request: string, { tls = false, collect = true } = {}) {
+      const socket = tls
+        ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(port, "127.0.0.1");
       const done = Promise.withResolvers<{ bytes: Buffer; ended: boolean }>();
       const chunks: Buffer[] = [];
+      let head = "";
+      let headLength = -1;
+      let received = 0;
+      let target: { count: number; reached: () => void } | undefined;
       let reading = false;
       let ended = false;
+      const stopAtTarget = () => {
+        if (!target || headLength < 0 || received < target.count * (headLength + BODY)) return;
+        reading = false;
+        socket.pause();
+        target.reached();
+        target = undefined;
+      };
       socket.pause();
-      socket.on("connect", () => {
+      socket.on(tls ? "secureConnect" : "connect", () => {
         socket.write(request);
         if (!reading) socket.pause();
       });
-      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("data", chunk => {
+        received += chunk.length;
+        if (collect) chunks.push(chunk);
+        if (headLength < 0) {
+          head += chunk.toString("latin1");
+          const i = head.indexOf("\r\n\r\n");
+          if (i >= 0) headLength = i + 4;
+        }
+        stopAtTarget();
+      });
       socket.on("end", () => (ended = true));
       socket.on("error", () => {});
       // A connection that dies early resolves too, so it fails the test instead of hanging it.
       socket.on("close", () => done.resolve({ bytes: Buffer.concat(chunks), ended }));
+      const resume = () => {
+        reading = true;
+        socket.resume();
+      };
+      const destroy = () => void socket.destroy();
       return {
         send: (data: string) => socket.write(data),
-        resume() {
-          reading = true;
-          socket.resume();
+        resume,
+        // Reads until `count` whole responses (each one a head of the same
+        // length plus BODY bytes) have arrived, then stops reading again.
+        read(count: number) {
+          const reached = Promise.withResolvers<void>();
+          target = { count, reached: reached.resolve };
+          resume();
+          stopAtTarget();
+          return Promise.race([
+            reached.promise,
+            done.promise.then(() => Promise.reject(new Error(`the connection closed after ${received} bytes`))),
+          ]);
+        },
+        get received() {
+          return received;
+        },
+        get headLength() {
+          return headLength;
         },
         done: done.promise,
+        destroy,
+        [Symbol.dispose]: destroy,
       };
     }
 
@@ -388,7 +478,7 @@ describe("backpressure", () => {
       });
       try {
         await once(server.listen(0, "127.0.0.1"), "listening");
-        const client = pausedClient(
+        using client = pausedClient(
           (server.address() as AddressInfo).port,
           "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
         );
@@ -410,6 +500,69 @@ describe("backpressure", () => {
       }
     });
 
+    // https://github.com/oven-sh/bun/issues/43155
+    it.each([
+      ["res.end(callback)", false, false],
+      ["res.end(chunk, callback) over TLS", true, true],
+    ] as const)("the write() callbacks wait for the reader too: %s", async (_name, tls, endWithChunk) => {
+      const events: string[] = [];
+      let backlog = false;
+      const handled = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      await using server = createServer(tls, (req, res) => {
+        res.on("finish", () => events.push("finish"));
+        res.on("close", () => {
+          events.push("close");
+          closed.resolve();
+        });
+        backlog = writeBodyInChunks(
+          res,
+          endWithChunk,
+          () => events.push("end callback"),
+          () => events.push("write callback"),
+        );
+        handled.resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+      using client = pausedClient(port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", { tls, collect: false });
+      await Promise.race([handled.promise, client.done]);
+      await ping(port, tls);
+      // The client has not read anything yet.
+      if (backlog) expect(events).toEqual([]);
+      await Promise.all([client.read(1), closed.promise]);
+      expect(client.received).toBe(client.headLength + BODY);
+      expect(events).toEqual(["write callback", "finish", "end callback", "close"]);
+    });
+
+    // Node's failed socket write still runs its callback and the response still
+    // emits 'finish', so the order is the same when the bytes never leave.
+    it("a client that goes away without reading still completes the response, in the same order", async () => {
+      const events: string[] = [];
+      const handled = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      await using server = createServer(false, (req, res) => {
+        res.on("finish", () => events.push("finish"));
+        res.on("close", () => {
+          events.push("close");
+          closed.resolve();
+        });
+        writeBodyInChunks(
+          res,
+          true,
+          () => events.push("end callback"),
+          () => events.push("write callback"),
+        );
+        handled.resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const client = pausedClient((server.address() as AddressInfo).port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await Promise.race([handled.promise, client.done]);
+      client.destroy();
+      await closed.promise;
+      expect(events).toEqual(["write callback", "finish", "end callback", "close"]);
+    });
+
     it("a request pipelined behind the unfinished response is answered after it, intact", async () => {
       const events: string[] = [];
       let backlog = false;
@@ -427,7 +580,7 @@ describe("backpressure", () => {
         handled[name].resolve();
       });
       await once(server.listen(0, "127.0.0.1"), "listening");
-      const client = pausedClient(
+      using client = pausedClient(
         (server.address() as AddressInfo).port,
         "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n",
       );
@@ -460,6 +613,72 @@ describe("backpressure", () => {
       }
     });
 
+    // Both pipelined responses back up. The first one is done once its own
+    // bytes are out: its callback must not wait for the second response, which
+    // the client has not read yet.
+    it("a pipelined response that backs up too does not hold up the first one's callback", async () => {
+      const events: string[] = [];
+      const responses: http.ServerResponse[] = [];
+      const handled = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      const calledBack = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+      await using server = createServer(false, (req, res) => {
+        const id = responses.push(res) - 1;
+        writeBodyInChunks(res, true, () => {
+          events.push(`end callback ${id}`);
+          calledBack[id].resolve();
+        });
+        handled[id].resolve();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+      using client = pausedClient(
+        port,
+        "GET /0 HTTP/1.1\r\nHost: localhost\r\n\r\nGET /1 HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        { collect: false },
+      );
+      await Promise.race([Promise.all([handled[0].promise, handled[1].promise]), client.done]);
+      await ping(port);
+      // The client has not read anything yet.
+      if (responses[0].writableLength > 0) expect(events).toEqual([]);
+
+      // The client reads the first response and stops: the second one stays behind.
+      await Promise.all([client.read(1), calledBack[0].promise]);
+      await ping(port);
+      if (responses[1].writableLength > 0) expect(events).toEqual(["end callback 0"]);
+
+      await Promise.all([client.read(2), calledBack[1].promise]);
+      expect(events).toEqual(["end callback 0", "end callback 1"]);
+      expect(client.received).toBe(2 * (client.headLength + BODY));
+    });
+
+    // The keep-alive timer belongs to the idle time after a response. Started
+    // at end(), it destroys the connection of a reader that takes longer than
+    // keepAliveTimeout (5 seconds by default) to fetch the body. Not on
+    // Windows: a body that the kernel took whole is a finished response, so
+    // the timer legitimately starts before the client reads.
+    (process.platform === "win32" ? it.skip : it)(
+      "the keep-alive timer starts once the body is out, not while a slow reader still fetches it",
+      async () => {
+        const handled = Promise.withResolvers<void>();
+        await using server = createServer(false, (req, res) => {
+          writeBody(res);
+          handled.resolve();
+        });
+        server.keepAliveTimeout = 1;
+        (server as http.Server & { keepAliveTimeoutBuffer: number }).keepAliveTimeoutBuffer = 0;
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const port = (server.address() as AddressInfo).port;
+        using client = pausedClient(port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await Promise.race([handled.promise, client.done]);
+        await ping(port);
+        client.resume();
+        // The server closes the idle connection right after the response.
+        const { bytes, ended } = await client.done;
+        expect(bytes.length - bytes.indexOf("\r\n\r\n") - 4).toBe(BODY);
+        expect(ended).toBe(true);
+      },
+    );
+
     it("the unwritten part of the body keeps the process alive", async () => {
       // The child has nothing but the in-flight body left to do once its
       // handler has run and unref'd the server.
@@ -485,7 +704,7 @@ describe("backpressure", () => {
             throw new Error(`server exited before listening: code ${code}, signal ${signal}`);
           }),
         ]);
-        const client = pausedClient(
+        using client = pausedClient(
           Number(portLine.toString()),
           "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
         );

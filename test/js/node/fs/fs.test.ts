@@ -1001,13 +1001,20 @@ describe("copyFileSync", () => {
         import fs from "node:fs";
         import { promisify } from "node:util";
 
+        const write = (name, bytes, mode) => {
+          fs.writeFileSync(name, bytes);
+          fs.chmodSync(name, mode);
+        };
+        const mode = path => (fs.statSync(path).mode & 0o7777).toString(8);
+
         // macOS refuses set-gid when the caller is not in the group of the file.
         const setId = process.platform === "linux" ? 0o6000 : 0o4000;
-        fs.writeFileSync("small", "small");
+        write("small", "small", setId | 0o755);
         // Above the macOS clonefile threshold.
-        fs.writeFileSync("large", Buffer.alloc(256 * 1024, "a"));
-        fs.chmodSync("small", setId | 0o755);
-        fs.chmodSync("large", setId | 0o755);
+        write("large", Buffer.alloc(256 * 1024, "a"), setId | 0o755);
+        write("plain", "plain", 0o644);
+        // A multiple of the block size: FICLONE accepts a longer destination only then.
+        write("plain-aligned", Buffer.alloc(256 * 1024, "p"), 0o644);
 
         if (process.getuid() === 0) {
           // Root can keep the bits. Copy as an unprivileged uid instead. The paths are
@@ -1016,13 +1023,7 @@ describe("copyFileSync", () => {
           process.seteuid(65534);
         }
 
-        // An existing destination that the group or others could not read is emptied
-        // before the new mode goes on. Any other is overwritten in place, then cut.
-        for (const [name, oldMode] of [["existing-narrow", 0o600], ["existing-wide", 0o777]]) {
-          fs.writeFileSync(name, "longer than the source");
-          fs.chmodSync(name, oldMode);
-          fs.copyFileSync("small", name);
-        }
+        // New destinations come first: a failed FICLONE turns FICLONE off for the process.
         fs.copyFileSync("small", "sync");
         fs.copyFileSync("large", "sync-large");
         fs.copyFileSync("small", "excl", fs.constants.COPYFILE_EXCL);
@@ -1030,19 +1031,32 @@ describe("copyFileSync", () => {
         await promisify(fs.copyFile)("small", "callback");
         await fs.promises.copyFile("small", "promises");
 
-        const mode = path => (fs.statSync(path).mode & 0o7777).toString(8);
+        // Existing destinations, 22 bytes longer than the source: [source, old mode].
+        const existing = {
+          // Overwritten in place (or cloned), then cut.
+          "over-aligned": ["plain-aligned", 0o777],
+          "over-plain": ["plain", 0o777],
+          // Emptied before the new mode goes on: it adds readers, or it has set-uid.
+          "over-private": ["plain", 0o600],
+          "over-set-id": ["small", 0o777],
+        };
+        const overExisting = {};
+        for (const [dest, [src, oldMode]] of Object.entries(existing)) {
+          write(dest, Buffer.alloc(fs.statSync(src).size + 22, "o"), oldMode);
+          fs.copyFileSync(src, dest);
+          overExisting[dest] = [mode(dest), fs.readFileSync(dest).equals(fs.readFileSync(src))];
+        }
+
         console.log(
           JSON.stringify({
             source: mode("small"),
-            existingNarrow: [mode("existing-narrow"), fs.readFileSync("existing-narrow", "utf8")],
-            existingWide: [mode("existing-wide"), fs.readFileSync("existing-wide", "utf8")],
             sync: mode("sync"),
-            syncLarge: mode("sync-large"),
-            syncLargeSize: fs.statSync("sync-large").size,
+            syncLarge: [mode("sync-large"), fs.statSync("sync-large").size],
             excl: mode("excl"),
             ficlone: mode("ficlone"),
             callback: mode("callback"),
             promises: mode("promises"),
+            overExisting,
           }),
         );
         `,
@@ -1057,15 +1071,18 @@ describe("copyFileSync", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       source: isLinux ? "6755" : "4755",
-      existingNarrow: ["755", "small"],
-      existingWide: ["755", "small"],
       sync: "755",
-      syncLarge: "755",
-      syncLargeSize: 256 * 1024,
+      syncLarge: ["755", 256 * 1024],
       excl: "755",
       ficlone: "755",
       callback: "755",
       promises: "755",
+      overExisting: {
+        "over-aligned": ["644", true],
+        "over-plain": ["644", true],
+        "over-private": ["644", true],
+        "over-set-id": ["755", true],
+      },
     });
     expect(exitCode).toBe(0);
   });

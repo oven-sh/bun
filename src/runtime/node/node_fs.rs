@@ -4752,8 +4752,10 @@ impl NodeFS {
                 return Ok(None);
             }
             old_size = dest_stat.st_size.max(0) as u64;
-            // The new mode must not let the group or others read old bytes that the old mode hid.
-            if old_size > 0 && (src_stat.st_mode & !dest_stat.st_mode & 0o044) != 0 {
+            let new_readers = src_stat.st_mode & !dest_stat.st_mode & 0o044;
+            let set_id = src_stat.st_mode & (libc::S_ISUID | libc::S_ISGID);
+            // The new mode must not give the old bytes new readers, or set-uid/set-gid.
+            if old_size > 0 && (new_readers != 0 || set_id != 0) {
                 Syscall::ftruncate(dest_fd, 0)?;
                 old_size = 0;
             }
@@ -4938,17 +4940,10 @@ impl NodeFS {
             };
             let _close_dest = scopeguard::guard(dest_fd, |fd| fd.close());
 
-            // Don't O_TRUNC at open: if src and dest resolve to the same
-            // inode, that would zero the file before the first read. Match
-            // Node by checking inodes after both are open and refusing.
+            // No O_TRUNC at open: a copy onto itself is a no-op, as in libuv, not a zeroed file.
             if let Ok(dst_stat) = Syscall::fstat(dest_fd) {
                 if stat_.st_ino == dst_stat.st_ino && stat_.st_dev == dst_stat.st_dev {
-                    return Err(sys::Error {
-                        errno: SystemErrno::EINVAL as _,
-                        syscall: sys::Tag::copyfile,
-                        path: args.src.slice().into(),
-                        ..Default::default()
-                    });
+                    return Ok(());
                 }
             }
             let _ = Syscall::ftruncate(dest_fd, 0);
@@ -5028,12 +5023,6 @@ impl NodeFS {
             }
 
             let mut flags: i32 = sys::O::CREAT | sys::O::WRONLY;
-            // VERIFY-FIX(round1): `wrote` is read by the deferred-truncate scopeguard
-            // *after* the copy loops below mutate it. As a `usize` captured by-copy
-            // the guard always saw 0, and the `&mut (wrote as u64)` call sites
-            // wrote into discarded temporaries. `Cell<u64>` lets the guard borrow
-            // by reference while the loops `get`/`set`, so the value observed at
-            // scope-exit time is the final one.
             let wrote: core::cell::Cell<u64> = core::cell::Cell::new(0);
             if args.mode.shouldnt_overwrite() {
                 flags |= sys::O::EXCL;
@@ -5122,7 +5111,8 @@ impl NodeFS {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
                                 }
-                                let mut w = wrote.get();
+                                // copy_file_range did not move the fd offsets, so the fallback starts again at 0.
+                                let mut w = 0;
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
                                 return r;
@@ -5160,7 +5150,8 @@ impl NodeFS {
                                 if matches!(err.get_errno(), E::ENOSYS | E::EOPNOTSUPP) {
                                     sys::copy_file::disable_copy_file_range_syscall();
                                 }
-                                let mut w = wrote.get();
+                                // copy_file_range did not move the fd offsets, so the fallback starts again at 0.
+                                let mut w = 0;
                                 let r = Self::copy_file_using_sendfile_on_linux_with_read_write_fallback(src, dest, src_fd, dest_fd, size, &mut w);
                                 wrote.set(w);
                                 return r;

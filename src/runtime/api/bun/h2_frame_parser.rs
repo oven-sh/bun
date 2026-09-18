@@ -18,7 +18,6 @@ use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::strings;
-use bun_http::lshpack;
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
@@ -1139,7 +1138,8 @@ pub struct H2FrameParser {
 
     streams: JsCell<BunHashMap<u32, *mut Stream>>,
 
-    hpack: JsCell<Option<lshpack::HpackHandle>>,
+    /// The outbound HPACK encoder. The inbound decoder is the engine's own `Coder`.
+    hpack: JsCell<Option<crate::api::h2::hpack::Coder>>,
 
     has_nonnative_backpressure: Cell<bool>,
     /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
@@ -2020,6 +2020,27 @@ impl H2FrameParser {
             }
             Err(crate::Error::UnableToEncode)
         })
+    }
+
+    /// Opens an outbound header block: the peer's decoder learns about a changed dynamic table
+    /// size here and nowhere else (RFC 7541 §4.2). Pair with `header_block_sent`.
+    fn begin_header_block(&self, encoded_headers: &mut Vec<u8>) {
+        self.hpack.with_mut(|hpack| {
+            if let Some(hpack) = hpack.as_mut() {
+                hpack.write_pending_size_update(encoded_headers);
+            }
+        });
+    }
+
+    /// The block opened with `begin_header_block` was written. A block that is dropped before
+    /// this (a header that fails validation, an option that throws) keeps the size update pending
+    /// for the next one.
+    fn header_block_sent(&self) {
+        self.hpack.with_mut(|hpack| {
+            if let Some(hpack) = hpack.as_mut() {
+                hpack.size_update_sent();
+            }
+        });
     }
 
     /// Serialize the SETTINGS entries that go on the wire: only the standard parameters JS set
@@ -3801,6 +3822,14 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         });
     }
 
+    fn on_remote_header_table_size(&self, size: u32) {
+        self.hpack.with_mut(|hpack| {
+            if let Some(hpack) = hpack.as_mut() {
+                hpack.set_peer_header_table_size(size);
+            }
+        });
+    }
+
     fn on_remote_settings(&self, settings: &crate::api::h2::settings::Settings) {
         // Bridge: the legacy outbound (frame sizing, window init) reads the remote_settings Cell.
         let fp = FullSettingsPayload {
@@ -5569,6 +5598,7 @@ impl H2FrameParser {
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
+        this.begin_header_block(&mut encoded_headers);
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
 
@@ -5836,6 +5866,7 @@ impl H2FrameParser {
                 offset += chunk_size;
             }
         }
+        this.header_block_sent();
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         if stream.state == StreamState::HALF_CLOSED_REMOTE {
@@ -6042,6 +6073,7 @@ impl H2FrameParser {
 
         let mut name_buffer = [0u8; 4096];
         let mut encoded_headers: Vec<u8> = Vec::new();
+        this.begin_header_block(&mut encoded_headers);
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
@@ -6256,6 +6288,7 @@ impl H2FrameParser {
                 offset += chunk;
             }
         }
+        this.header_block_sent();
 
         let _ = this.flush();
         Ok(JSValue::js_number(promised_id as f64))
@@ -6484,6 +6517,7 @@ impl H2FrameParser {
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
+        this.begin_header_block(&mut encoded_headers);
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
         let stream_id: u32 =
@@ -7251,6 +7285,7 @@ impl H2FrameParser {
                 offset += chunk_size;
             }
         }
+        this.header_block_sent();
 
         if end_stream {
             stream.end_after_headers = true;
@@ -7651,13 +7686,10 @@ impl H2FrameParser {
             unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
         }
 
-        // Note: `HPACK::init` returns a C-allocated wrapper that must be
-        // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
-        // before freeing). Wrapping it in `heap::take` and letting `Box` drop
-        // would `mi_free` the struct but leak the encoder/decoder internals.
-        this_ref.hpack.set(Some(lshpack::HpackHandle::new(
-            this_ref.local_settings.get().header_table_size,
-        )));
+        // Our own headerTableSize sizes the engine's decoder. This encoder follows the peer's.
+        this_ref
+            .hpack
+            .set(Some(crate::api::h2::hpack::Coder::new()));
         if is_server {
             let _ = this_ref.set_settings(this_ref.local_settings.get());
         } else {

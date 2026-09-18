@@ -4,10 +4,13 @@ use core::mem::ManuallyDrop;
 use bun_collections::index_sort;
 use bun_core::Output;
 use bun_core::strings;
+use bun_paths::resolve_path;
 use bun_semver as semver;
 use bun_semver::{SlicedString, String as SemverString};
+use bun_sys::FdExt as _;
 
 use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
+use crate::bun_fs::FileSystem;
 use crate::dependency;
 use crate::lockfile::{DependencyIDSlice, DependencySlice};
 use crate::npm;
@@ -401,6 +404,115 @@ impl PackageManager {
 
         if any_failed {
             self.crash();
+        }
+    }
+
+    /// The linkers create `<workspace>/node_modules` for every workspace package, so one
+    /// outside the root is a write outside the project. The path reaches the lockfile from
+    /// `workspaces`, a `workspace:<path>` value in a dependency group, `overrides` or a
+    /// catalog, and from `bun.lock` itself, so the check is on the resolved packages.
+    pub(crate) fn verify_workspaces_inside_root(&mut self, log_level: LogLevel) {
+        let lockfile = &self.lockfile;
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let top_level_dir = FileSystem::instance().top_level_dir();
+        let mut real_root: Option<Box<[u8]>> = None;
+        let mut any_outside = false;
+
+        for (name, resolution) in lockfile
+            .packages
+            .items_name()
+            .iter()
+            .zip(lockfile.packages.items_resolution())
+        {
+            if resolution.tag != ResolutionTag::Workspace {
+                continue;
+            }
+            let workspace_path = resolution.workspace().slice(string_buf);
+
+            let mut abs_dir_buf = bun_paths::path_buffer_pool::get();
+            let abs_dir = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                top_level_dir,
+                &mut abs_dir_buf.0,
+                &[workspace_path],
+            );
+            let mut real_dir_buf = bun_paths::path_buffer_pool::get();
+            let outside = match real_dir_outside_root(
+                &mut real_root,
+                top_level_dir,
+                abs_dir,
+                &mut real_dir_buf,
+            ) {
+                Ok(None) => continue,
+                Ok(Some(real_dir)) => Ok(real_dir),
+                Err(err) => Err(err),
+            };
+
+            if log_level != LogLevel::Silent {
+                if !any_outside {
+                    Output::flush();
+                }
+                let name = bstr::BStr::new(name.slice(string_buf));
+                let workspace_path = bstr::BStr::new(workspace_path);
+                match outside {
+                    Ok(real_dir) => Output::err_generic(
+                        "workspace <b>\"{}\"<r> ({}) is outside the workspace root: it resolves to \"{}\"",
+                        (name, workspace_path, bstr::BStr::new(real_dir)),
+                    ),
+                    Err(err) => Output::err(
+                        err,
+                        "failed to resolve the directory of workspace <b>\"{}\"<r> ({})",
+                        (name, workspace_path),
+                    ),
+                }
+            }
+            any_outside = true;
+        }
+
+        if any_outside {
+            self.crash();
+        }
+    }
+}
+
+/// The real path of `abs_dir` when it is not inside the real path of `top_level_dir`.
+fn real_dir_outside_root<'b>(
+    real_root: &mut Option<Box<[u8]>>,
+    top_level_dir: &[u8],
+    abs_dir: &[u8],
+    real_dir_buf: &'b mut bun_paths::PathBuffer,
+) -> bun_sys::Maybe<Option<&'b [u8]>> {
+    let real_dir = real_path_of_nearest_existing_dir(abs_dir, real_dir_buf)?;
+    let real_root = match real_root {
+        Some(real_root) => real_root,
+        None => {
+            let mut real_root_buf = bun_paths::path_buffer_pool::get();
+            let root = real_path_of_nearest_existing_dir(top_level_dir, &mut real_root_buf)?;
+            real_root.insert(Box::from(root))
+        }
+    };
+    let inside = resolve_path::is_parent_or_equal(real_root, real_dir)
+        != resolve_path::ParentEqual::Unrelated;
+    Ok((!inside).then_some(real_dir))
+}
+
+/// A workspace that `bun.lock` lists can be missing on disk, so the nearest directory
+/// that exists stands in for it.
+fn real_path_of_nearest_existing_dir<'b>(
+    abs_dir: &[u8],
+    buf: &'b mut bun_paths::PathBuffer,
+) -> bun_sys::Maybe<&'b [u8]> {
+    let mut dir = abs_dir;
+    loop {
+        match bun_sys::open_dir_absolute(dir) {
+            Ok(fd) => {
+                let real = bun_sys::get_fd_path(fd, buf);
+                fd.close();
+                return real.map(|real| &*real);
+            }
+            Err(err) => match (err.get_errno(), bun_paths::dirname(dir)) {
+                (bun_sys::E::ENOENT | bun_sys::E::ENOTDIR, Some(parent)) => dir = parent,
+                _ => return Err(err),
+            },
         }
     }
 }

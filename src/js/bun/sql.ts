@@ -355,12 +355,7 @@ const SQL: typeof Bun.SQL = function SQL(
     }
 
     function reserved_sql(strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, any>, ...values: any[]) {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
+      // a fragment (sql(row), sql([...])) is inert until a query uses it, so it is never rejected
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray(strings.raw)) {
@@ -368,6 +363,12 @@ const SQL: typeof Bun.SQL = function SQL(
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
         return new SQLHelper([strings], values);
+      }
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return Promise.$reject(pool.connectionClosedError());
       }
       // we use the same code path as the transaction sql
       return queryFromTransaction(strings, values, pooledConnection, state.queries);
@@ -662,12 +663,7 @@ const SQL: typeof Bun.SQL = function SQL(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
       ...values: any[]
     ) {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$reject(pool.connectionClosedError());
-      }
+      // a fragment (sql(row), sql([...])) is inert until a query uses it, so it is never rejected
       if ($isArray(strings)) {
         // detect if is tagged template
         if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
@@ -675,6 +671,12 @@ const SQL: typeof Bun.SQL = function SQL(
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
         return new SQLHelper([strings], values);
+      }
+      if (
+        state.connectionState & ReservedConnectionState.closed ||
+        !(state.connectionState & ReservedConnectionState.acceptQueries)
+      ) {
+        return Promise.$reject(pool.connectionClosedError());
       }
 
       return queryFromTransaction(strings, values, pooledConnection, state.queries);

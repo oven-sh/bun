@@ -515,6 +515,44 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, closed
     },
   );
 
+  // handle(row) builds a fragment for a later query. On a handle that no longer accepts
+  // queries it has to stay a fragment: a rejected promise in its place is one that the
+  // query it is part of never awaits, and bun:test fails this test if one is reported.
+  test("a fragment built on a settled or released handle is not a rejected promise", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      let tx!: Bun.TransactionSQL;
+      await sql.begin(async handle => {
+        tx = handle;
+        await handle.unsafe("SELECT 'T1a'");
+      });
+      const reserved = await sql.reserve();
+      reserved.release();
+
+      const results = await Promise.all(
+        [tx, reserved].map(handle => {
+          const fragment = handle({ v: "late" });
+          expect(typeof (fragment as any).then).toBe("undefined");
+          return handle`INSERT INTO t ${fragment}`.then(
+            () => null,
+            err => err.code,
+          );
+        }),
+      );
+      expect(results).toEqual([closedCode, closedCode]);
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // Runs in a child process: bun:test would turn any unhandled rejection into a test
   // failure, and the second half of this contract is that one rejection IS reported.
   test("a rejected reserved begin() is reported as unhandled only when the caller ignores it", async () => {

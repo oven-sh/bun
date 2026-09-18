@@ -1326,19 +1326,13 @@ impl UpdateInteractiveCommand {
         Output::print(format_args!("\x1B[1A\x1B[2K")); // Move up one line and clear it too
         Output::flush();
 
-        // Enable mouse tracking for scrolling (if terminal supports it)
-        if colors {
-            Output::print(format_args!("\x1b[?25l")); // hide cursor
-            Output::print(format_args!("\x1b[?1000h")); // Enable basic mouse tracking
-            Output::print(format_args!("\x1b[?1006h")); // Enable SGR extended mouse mode
-        }
-        scopeguard::defer! {
-            if colors {
-                Output::print(format_args!("\x1b[?25h")); // show cursor
-                Output::print(format_args!("\x1b[?1000l")); // Disable mouse tracking
-                Output::print(format_args!("\x1b[?1006l")); // Disable SGR extended mouse mode
-            }
-        }
+        // Hide the cursor and enable mouse reporting (for wheel scrolling)
+        // until this returns or the process exits.
+        let _modes = colors.then(|| {
+            bun_core::tty::DecModesGuard::set(
+                bun_core::tty::dec::HIDDEN_CURSOR | bun_core::tty::dec::MOUSE_REPORTING,
+            )
+        });
 
         let mut initial_draw = true;
         let mut reprint_menu = true;

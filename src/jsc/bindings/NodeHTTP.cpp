@@ -57,7 +57,7 @@ static bool svEqualsIgnoreCase(std::string_view a, std::string_view lower)
 
 // `1#token` list scan (RFC 9110): does `value` contain `lowerToken` at
 // non-alphanumeric boundaries, ASCII-case-insensitively? Mirrors the
-// /(?:^|\W)tok(?:$|\W)/i checks node:http uses for Connection/Expect values.
+// /(?:^|\W)100-continue(?:$|\W)/i check node:http uses for the Expect value.
 static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
 {
     const size_t n = value.length(), m = lowerToken.length();
@@ -75,6 +75,27 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
         if (leftOk && rightOk)
             return true;
         i = end - 1;
+    }
+    return false;
+}
+
+// Whole comma-separated Connection member, like llhttp's F_CONNECTION_* flags.
+static bool svConnectionHasToken(std::string_view value, std::string_view lowerToken)
+{
+    size_t pos = 0;
+    while (pos < value.length()) {
+        while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t'))
+            pos++;
+        size_t tokenStart = pos;
+        while (pos < value.length() && value[pos] != ',')
+            pos++;
+        size_t tokenEnd = pos;
+        while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t'))
+            tokenEnd--;
+        if (svEqualsIgnoreCase(value.substr(tokenStart, tokenEnd - tokenStart), lowerToken))
+            return true;
+        if (pos < value.length())
+            pos++;
     }
     return false;
 }
@@ -146,9 +167,9 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
             break;
         case 10:
             if (svEqualsIgnoreCase(name, "connection")) {
-                if (svValueHasToken(value, "close"))
+                if (svConnectionHasToken(value, "close"))
                     bits |= kDispatchConnClose;
-                if (svValueHasToken(value, "upgrade"))
+                if (svConnectionHasToken(value, "upgrade"))
                     bits |= kDispatchConnUpgrade;
             }
             break;

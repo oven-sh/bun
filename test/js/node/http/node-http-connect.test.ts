@@ -446,6 +446,67 @@ describe("HTTP server CONNECT", () => {
     expect(requestUrls).toEqual([]);
   });
 
+  // Node v26.3.0: llhttp exits the HTTP parser at the end of a CONNECT head
+  // before it checks the framing, so a non-chunked Transfer-Encoding is not an
+  // error. The bytes after the head reach the connect socket and no
+  // 'clientError' fires.
+  test("should tunnel a CONNECT request with a non-chunked Transfer-Encoding without a clientError", async () => {
+    const events: string[] = [];
+    await using proxyServer = http.createServer((req, res) => {
+      events.push(`request ${req.url}`);
+      res.end();
+    });
+    proxyServer.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+
+    const expectedTunneled = "headmore";
+    const { promise: tunneled, resolve: resolveTunneled, reject: rejectTunneled } = Promise.withResolvers<string>();
+    proxyServer.on("connect", (req, socket, head) => {
+      events.push(`connect head=${head.toString()}`);
+      const chunks: Buffer[] = [head];
+      let receivedLength = head.length;
+      socket.on("data", chunk => {
+        chunks.push(chunk);
+        receivedLength += chunk.length;
+        if (receivedLength >= expectedTunneled.length) {
+          socket.end();
+        }
+      });
+      socket.on("end", () => resolveTunneled(Buffer.concat(chunks).toString()));
+      socket.on("close", () => rejectTunneled(new Error("connect socket closed: " + JSON.stringify(events))));
+      socket.on("error", rejectTunneled);
+      socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+    });
+
+    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+    const proxyAddress = proxyServer.address() as AddressInfo;
+
+    const { promise: clientReceived, resolve: resolveClient, reject: rejectClient } = Promise.withResolvers<string>();
+    const received: string[] = [];
+    const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+      client.write(
+        "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nTransfer-Encoding: identity\r\n\r\nhead",
+      );
+    });
+    client.on("data", data => {
+      received.push(data.toString());
+      if (received.join("") === "HTTP/1.1 200 Connection established\r\n\r\n") {
+        client.write("more");
+      }
+    });
+    client.on("error", rejectClient);
+    client.on("end", () => {
+      client.end();
+      resolveClient(received.join(""));
+    });
+
+    expect(await tunneled).toBe(expectedTunneled);
+    expect(await clientReceived).toBe("HTTP/1.1 200 Connection established\r\n\r\n");
+    expect(events).toEqual(["connect head=head"]);
+  });
+
   // Node v26.3.0: HPE_INVALID_CONTENT_LENGTH — Transfer-Encoding + Content-Length is
   // rejected with a 400 before the 'connect' event is dispatched.
   test("should reject a CONNECT request carrying both Transfer-Encoding and Content-Length with a 400", async () => {

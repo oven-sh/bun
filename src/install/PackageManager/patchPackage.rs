@@ -1252,8 +1252,7 @@ fn node_modules_folder_for_dependency_id(
     }
 }
 
-/// Exits when `pkg_id` is a folder bun links in place (a `file:` directory, a
-/// workspace member or a `link:` target): `bun install` never applies a patch to one.
+/// Exits when `pkg_id` is a `file:` directory, a workspace member or a `link:` target.
 fn crash_if_folder_target(lockfile: &Lockfile, pkg_id: PackageID, name: &[u8]) {
     let strbuf = lockfile.buffers.string_bytes.as_slice();
     let resolution = &lockfile.packages.items_resolution()[pkg_id as usize];

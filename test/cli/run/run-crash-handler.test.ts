@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import path from "path";
@@ -88,6 +88,38 @@ test.if(isPosix)(
   },
   20_000,
 );
+
+// bun installs a std::terminate handler. On macOS an addon shares bun's C++
+// runtime, so an exception that escapes from the addon's code into bun (which
+// has no unwind tables) ends up in that handler, and the report used to say only
+// "A C++ exception occurred". It has to name the exception's type and, for a
+// std::exception, carry its what(). The fixture throws a std::runtime_error
+// there. Elsewhere it calls std::terminate() with nothing in flight: a Linux
+// addon has its own runtime, and a throw from inside a glibc release build of
+// bun aborts in the unwinder (its tables are stripped) before any handler. Not
+// on Windows: bun builds with _HAS_EXCEPTIONS=0, and the MSVC STL's
+// std::terminate() then aborts (exit status 3, nothing printed) without calling
+// the handler std::set_terminate installed, so there is nothing to observe.
+test.if(isPosix)("an uncaught C++ exception is reported with its type and message", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      path.join(import.meta.dir, "fixture-crash.js"),
+      "uncaughtCxxException",
+      "--debug-crash-handler-use-trace-string",
+    ],
+    env: noReportEnv,
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(
+    isMacOS
+      ? "panic(main thread): uncaught C++ exception std::runtime_error: thrown by the crash handler test"
+      : "panic(main thread): std::terminate() was called with no C++ exception in flight",
+  );
+  expect(exitCode).not.toBe(0);
+});
 
 // After printing the crash report the handler must terminate with a signal
 // that reflects the crash cause: panics abort (SIGABRT), a caught fault is

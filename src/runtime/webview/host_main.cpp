@@ -143,6 +143,8 @@ struct Host {
     FrameWriter writer;
 
     std::unordered_map<uint32_t, Ref<WebViewHost>> views;
+    // Views whose Create failed. Each op on one of them fails with the reason.
+    std::unordered_map<uint32_t, WTF::String> failedViews;
 
     // CFFileDescriptor delivers one callback then disarms; read until EAGAIN,
     // then re-enable. Incomplete frame at buffer tail stays until more bytes.
@@ -172,11 +174,16 @@ struct Host {
     WebViewHost* view(uint32_t viewId, Op op)
     {
         auto it = views.find(viewId);
-        if (it == views.end()) {
+        if (it != views.end()) return it->second.ptr();
+        auto failed = failedViews.find(viewId);
+        if (failed == failedViews.end()) {
             writer.sendReplyStr(viewId, failureFor(op), "invalid viewId"_s);
             return nullptr;
         }
-        return it->second.ptr();
+        // NavFailEvent first, like navigateIPC: a constructor url's promise is marked handled.
+        if (op == Op::Navigate) writer.sendReplyStr(viewId, Reply::NavFailEvent, failed->second);
+        writer.sendReplyStr(viewId, failureFor(op), failed->second);
+        return nullptr;
     }
 };
 
@@ -243,6 +250,11 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
         WTF::String persistDir;
         if (static_cast<DataStoreKind>(p.dataStoreKind) == DataStoreKind::Persistent)
             persistDir = r.str();
+        // Nothing here catches the exception that initWithDirectory: raises on an older WebKit.
+        if (!persistDir.isEmpty() && !objc::WKWebViewConfiguration::s_hasInitWithDirectory) {
+            failedViews.emplace(viewId, "dataStore.directory needs a newer WebKit (macOS 15.2 or later); use dataStore: \"ephemeral\" or backend: \"chrome\""_s);
+            return;
+        }
         views.emplace(viewId, WebViewHost::createForIPC(viewId, p.width, p.height, persistDir));
         // No Ack for Create — parent doesn't await it (fire-and-forget).
         return;
@@ -263,6 +275,7 @@ void Host::dispatch(uint32_t viewId, Op op, Reader r)
     }
     case Op::Close:
         views.erase(viewId);
+        failedViews.erase(viewId);
         writer.sendReply(viewId, Reply::Ack);
         return;
     case Op::Resize: {

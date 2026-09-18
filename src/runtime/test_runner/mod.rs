@@ -494,7 +494,7 @@ cfg_jsc! {
     pub use done_callback::DoneCallback;
     pub use expect::{
         Expect, ExpectAny, ExpectAnything, ExpectArrayContaining, ExpectCloseTo,
-        ExpectCustomAsymmetricMatcher, ExpectMatcherContext, ExpectMatcherUtils,
+        ExpectCustomAsymmetricMatcher, ExpectMatcherContext,
         ExpectObjectContaining, ExpectStatic, ExpectStringContaining, ExpectStringMatching,
         ExpectTypeOf,
     };

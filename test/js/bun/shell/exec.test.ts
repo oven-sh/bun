@@ -95,6 +95,26 @@ describe("bun exec", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows)("a VAR=value prefix reaches the program that replaces the process", async () => {
+    const script = `EXEC_PREFIX=set ${BUN} -e "console.log(process.env.EXEC_PREFIX, process.ppid)"`;
+    await using proc = Bun.spawn({ cmd: [BUN, "exec", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(`set ${process.pid}`);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("the program that replaces the process gets the default SIGPIPE", async () => {
+    // Bun ignores SIGPIPE. A program spawned by a shell does not inherit that.
+    const probe = `${BUN} exec 'cat /dev/zero' | head -c 4 >/dev/null; echo \${PIPESTATUS[0]}`;
+    await using proc = Bun.spawn({ cmd: ["bash", "-c", probe], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // 128 + SIGPIPE(13): cat died of the signal, it did not see EPIPE.
+    expect(stdout.trim()).toBe("141");
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(isWindows)("a script with more than one command keeps the bun exec process", async () => {
     const script = `true && ${BUN} -e "console.log(process.ppid)"`;
     await using proc = Bun.spawn({ cmd: [BUN, "exec", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });

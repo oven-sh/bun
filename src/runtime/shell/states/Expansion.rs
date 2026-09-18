@@ -320,9 +320,7 @@ impl Expansion {
             vec![me.current_out.clone()]
         } else {
             let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
-            let arena = bun_alloc::Arena::new();
             if let Err(e) = braces::expand(
-                &arena,
                 &mut lexer_output.tokens[..],
                 &mut expanded[..],
                 lexer_output.contains_nested,
@@ -336,7 +334,6 @@ impl Expansion {
                 // An unexpected token from brace expansion is a parser bug.
                 panic!("unexpected error from Braces.expand: {e:?}");
             }
-            drop(arena);
             expanded
         };
 

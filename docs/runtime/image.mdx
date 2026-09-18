@@ -78,7 +78,17 @@ img.resize(800, 600, { filter: "mitchell" });
 | `"box"`                   | Area-average; good for large integer downscales  |
 | `"nearest"`               | Pixel art / hard edges                           |
 
-When the source is a JPEG and the target is at most half the source size, decode skips straight to the nearest M/8 IDCT scale. As a result, generating a thumbnail from a 24 MP photo never materializes the full-resolution buffer.
+### Linear-light resizing
+
+By default, `resize()` averages the encoded 8-bit sRGB values. This matches Sharp and the OS resizers, but sRGB encodes perceived brightness, not light, so downscaling darkens fine detail. Pass `colorspace: "linear"` to decode to linear light, resize in 16-bit, and re-encode:
+
+```ts
+img.resize(800, 600, { colorspace: "linear" }); // physically correct averaging
+```
+
+The linear path always runs Bun's portable kernel, so its output is byte-identical across platforms and `Bun.Image.backend` settings.
+
+When the source is a JPEG and the target is at most half the source size, decode skips straight to the nearest M/8 IDCT scale. As a result, generating a thumbnail from a 24 MP photo never materializes the full-resolution buffer. `colorspace: "linear"` disables this shortcut: the IDCT scale averages encoded values, so the linear path decodes JPEG sources at full resolution.
 
 ## Rotate · flip
 

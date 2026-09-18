@@ -1091,7 +1091,7 @@ describe.concurrent("bun patch keeps the nested node_modules of the package", ()
     return (await file.exists()) ? (await file.json()).version : undefined;
   }
 
-  test("bundled dependencies survive bun patch and stay out of the committed patch", async () => {
+  test("bundled dependencies survive bun patch and only their edits reach the committed patch", async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
@@ -1109,21 +1109,28 @@ describe.concurrent("bun patch keeps the nested node_modules of the package", ()
     expect(patch.exitCode).toBe(0);
     expect(await installedVersion(packageDir, "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
 
+    const bundledIndex = join(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps", "index.js");
     await Bun.write(join(packageDir, "node_modules", "bundled-1", "index.js"), `module.exports = "patched";\n`);
+    await Bun.write(bundledIndex, `module.exports = "patched bundled dependency";\n`);
 
     const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bundled-1");
     expect(commit.stderr).not.toContain("error:");
     expect(commit.exitCode).toBe(0);
 
+    // the patch has the two edits and nothing else: the bundled files that
+    // were not edited must not be recorded as deleted
     const patchContents = await Bun.file(join(packageDir, "patches", "bundled-1@1.0.0.patch")).text();
+    expect(patchContents.match(/^diff --git /gm)).toHaveLength(2);
     expect(patchContents).toContain(`+module.exports = "patched";`);
-    expect(patchContents).not.toContain("no-deps");
+    expect(patchContents).toContain("+++ b/node_modules/no-deps/index.js");
+    expect(patchContents).toContain(`+module.exports = "patched bundled dependency";`);
     expect(patchContents).not.toContain("deleted file");
 
     // the commit flow reinstalls with the patch applied
     expect(await Bun.file(join(packageDir, "node_modules", "bundled-1", "index.js")).text()).toBe(
       `module.exports = "patched";\n`,
     );
+    expect(await Bun.file(bundledIndex).text()).toBe(`module.exports = "patched bundled dependency";\n`);
     expect(await installedVersion(packageDir, "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
   });
 
@@ -1147,6 +1154,18 @@ describe.concurrent("bun patch keeps the nested node_modules of the package", ()
     const patch = await runBun(packageDir, "patch", "one-dep");
     expect(patch.stderr).not.toContain("error:");
     expect(patch.exitCode).toBe(0);
+    expect(await installedVersion(packageDir, "one-dep", "node_modules", "no-deps")).toBe("1.0.1");
+
+    await Bun.write(join(packageDir, "node_modules", "one-dep", "index.js"), `module.exports = "patched";\n`);
+
+    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/one-dep");
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+
+    // the nested dependency is not part of the package, so it stays out of the patch
+    const patchContents = await Bun.file(join(packageDir, "patches", "one-dep@1.0.0.patch")).text();
+    expect(patchContents.match(/^diff --git /gm)).toHaveLength(1);
+    expect(patchContents).not.toContain("no-deps");
     expect(await installedVersion(packageDir, "one-dep", "node_modules", "no-deps")).toBe("1.0.1");
   });
 });

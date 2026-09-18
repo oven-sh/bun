@@ -3,9 +3,11 @@ import { bunEnv, bunExe, bunRun, isLinux, isWindows, nodeExe, tempDir, tls as tl
 import http from "http";
 
 import { once } from "node:events";
+import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
+import tls from "node:tls";
 function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, add_http_prefix: boolean) {
   const client = net.connect({ port: proxyAddress.port, host: proxyAddress.address }, () => {
     client.write(
@@ -754,6 +756,87 @@ describe("HTTP server socket access via normal requests", () => {
 
     const total = await promise;
     expect(total).toBeGreaterThan(0);
+  });
+});
+
+// Node.js writes everything on a connection through one net.Socket. So what a 'connect' or
+// 'upgrade' listener writes to the socket follows the response before it, also when a part
+// of that response still waits in a user-space buffer.
+describe.each(["http", "https"] as const)("%s: tunnel writes behind a response that is still flushing", protocol => {
+  const BODY = Buffer.alloc(8 * 1024 * 1024, "a");
+  const MARK = "<<TUNNEL>>";
+  const tunnelRequests = {
+    connect: "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+    upgrade: "GET /ws HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+  };
+
+  // Sends GET /big with the tunnel request right behind it. Resolves with the bytes on the wire
+  // and the offset of the response body in them.
+  async function exchange(event: "connect" | "upgrade", endTunnel: boolean) {
+    const handler: http.RequestListener = (req, res) => {
+      res.writeHead(200, { "Content-Length": BODY.length });
+      res.end(BODY);
+    };
+    await using server = protocol === "https" ? https.createServer(tlsCert, handler) : http.createServer(handler);
+    let tunnel: net.Socket | undefined;
+    let wrote = false;
+    server.on(event, (req, socket) => {
+      // The dispatcher can leave the Duplex corked after the request before this one.
+      while (socket.writableCorked) socket.uncork();
+      tunnel = socket;
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const client =
+      protocol === "https"
+        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+        : net.connect(port, "127.0.0.1");
+    try {
+      await once(client, protocol === "https" ? "secureConnect" : "connect");
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const chunks: Buffer[] = [];
+      let received = 0;
+      let expected = Infinity;
+      client.on("error", reject);
+      client.on("end", resolve);
+      client.on("data", chunk => {
+        chunks.push(chunk);
+        received += chunk.length;
+        if (tunnel && !wrote) {
+          // This read gave the kernel buffer room again, and the server has not seen its
+          // writable event yet. The rest of the body is still in its user-space buffer.
+          wrote = true;
+          if (endTunnel) tunnel.end(MARK);
+          else tunnel.write(MARK);
+        }
+        if (expected === Infinity) {
+          const headEnd = Buffer.concat(chunks).indexOf("\r\n\r\n");
+          if (headEnd !== -1) expected = headEnd + 4 + BODY.length + MARK.length;
+        }
+        if (!endTunnel && received >= expected) resolve();
+      });
+      client.write("GET /big HTTP/1.1\r\nHost: x\r\n\r\n" + tunnelRequests[event]);
+      await promise;
+      const wire = Buffer.concat(chunks).toString("latin1");
+      return { wire, bodyStart: wire.indexOf("\r\n\r\n") + 4 };
+    } finally {
+      client.destroy();
+      tunnel?.destroy();
+    }
+  }
+
+  test.each(["connect", "upgrade"] as const)("'%s' socket.write() goes out after the whole body", async event => {
+    const { wire, bodyStart } = await exchange(event, false);
+    expect(wire.indexOf(MARK) - bodyStart).toBe(BODY.length);
+  });
+
+  test.each(["connect", "upgrade"] as const)("'%s' socket.end() sends the FIN after the whole body", async event => {
+    const { wire, bodyStart } = await exchange(event, true);
+    expect({ afterHead: wire.length - bodyStart, markAt: wire.indexOf(MARK) - bodyStart }).toEqual({
+      afterHead: BODY.length + MARK.length,
+      markAt: BODY.length,
+    });
   });
 });
 

@@ -1751,8 +1751,7 @@ impl NodeHTTPResponse {
         self.clear_pending_pinned_write(global_object, JSValue::ZERO);
     }
 
-    /// Whether bytes from an earlier write are still in user space: the
-    /// zero-copy tail, or the uWS backpressure buffer.
+    /// True while the zero-copy tail or the uWS backpressure buffer still holds bytes.
     fn has_unflushed_write(&self) -> bool {
         self.pending_pinned_write.get().is_some()
             || self
@@ -2010,12 +2009,7 @@ impl NodeHTTPResponse {
             self.get_this_value()
         };
 
-        // uWS answers an empty write with "flushed" without looking at what it
-        // still holds, and the WantMore arm would then disarm a drain that is
-        // still owed. Node sends an empty chunk through conn.write("", cb),
-        // which queues cb and reports the pending bytes:
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1013
-        // Before the spill: no bytes have to be ordered behind the zero-copy tail.
+        // An empty write looks flushed to uWS; WantMore would disarm the drain that is still owed.
         if !IS_END && bytes.is_empty() && self.has_unflushed_write() {
             if !callback_value.is_undefined() {
                 js::on_writable_set_cached(

@@ -3363,9 +3363,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     return true;
   }
 
-  // Node ignores a write to a response that cannot have a body and returns
-  // true whatever the socket still holds, so no 'drain' is armed for it.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L983-L991
+  // Node returns true for every write to a response that cannot have a body (write_ in lib/_http_outgoing.js).
   const hasBody = this._hasBody;
   const onWritable = hasBody ? allowWritesToContinue.bind(this) : undefined;
 
@@ -3432,9 +3430,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     scheduleWriteAccountingFlush(this);
   }
 
-  // An empty chunk adds nothing to this turn's accounting but still reports
-  // it: Node.js answers every write with state.length < highWaterMark.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L576
+  // An empty chunk reports the count too: Node returns state.length < highWaterMark for every write.
   const buffered = this[kBytesBuffered];
   return !buffered || buffered < this.writableHighWaterMark;
 };

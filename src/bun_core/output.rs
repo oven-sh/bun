@@ -867,12 +867,9 @@ pub fn is_github_action() -> bool {
     false
 }
 
-/// Per-child filter for a relay that prefixes output (`bun run --filter`,
-/// `--parallel`) under GitHub Actions. The runner parses a workflow command
-/// only at column 0, so the stateless commands go out bare. `::group::` and
-/// `::endgroup::` stay prefixed: concurrent children would leave them
-/// unpaired. Lines between `::stop-commands::<token>` and `::<token>::` stay
-/// prefixed too.
+/// Per-child filter: which relayed lines the GitHub Actions runner must see
+/// at column 0. Group markers stay prefixed (concurrent children would leave
+/// them unpaired), and so does the `::stop-commands::<token>` window.
 #[derive(Default)]
 pub struct GithubCommandRelay {
     stop_token: std::cell::Cell<Option<Box<[u8]>>>,

@@ -115,7 +115,7 @@ static constexpr const char* kConsoleCaptureJS = R"js(
 
 } // anonymous namespace
 
-Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir)
+Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir, const WTF::String& userAgent)
 {
     ASSERT(ObjCRuntime::tryLoad()->m_loaded);
 
@@ -141,6 +141,7 @@ Ref<WebViewHost> WebViewHost::createForIPC(uint32_t viewId, uint32_t width, uint
 
     host->m_webview = objc::WKWebView::create(cfg, width, height);
     host->m_webview.setNavigationDelegate(host->m_delegate);
+    if (!userAgent.isEmpty()) host->m_webview.setCustomUserAgent(objc::NSString::fromWTF(userAgent));
 
     host->m_window = objc::NSWindow::createOffscreen(width, height);
 
@@ -670,13 +671,13 @@ WTF::String WebViewHost::title() { return m_webview.title(); }
 // --- Completions -----------------------------------------------------------
 // Inside CFRunLoop. Write the reply, clear the pending req_id.
 
-// Pack two inline strings: u32 alen + a + u32 blen + b.
-static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& b)
+// NavEvent/NavDone payload: u32 urlLen + url + u32 titleLen + title + u16 status.
+static WTF::Vector<uint8_t, 512> packNav(const WTF::String& url, const WTF::String& title, uint16_t status)
 {
-    WTF::CString ca = a.utf8(), cb = b.utf8();
+    WTF::CString ca = url.utf8(), cb = title.utf8();
     uint32_t na = static_cast<uint32_t>(ca.length()), nb = static_cast<uint32_t>(cb.length());
     WTF::Vector<uint8_t, 512> out;
-    out.grow(8 + na + nb);
+    out.grow(8 + na + nb + 2);
     uint8_t* p = out.mutableSpan().data();
     memcpy(p, &na, 4);
     p += 4;
@@ -685,6 +686,8 @@ static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& 
     memcpy(p, &nb, 4);
     p += 4;
     memcpy(p, cb.data(), nb);
+    p += nb;
+    memcpy(p, &status, 2);
     return out;
 }
 
@@ -694,13 +697,43 @@ static WTF::Vector<uint8_t, 512> pack2(const WTF::String& a, const WTF::String& 
 // Sending the event first means both are in the same onData batch, processed
 // in order, callback fires before the promise microtask runs.
 
+void WebViewHost::onNavigationStarted()
+{
+    m_status = 0;
+    m_responseSeen = false;
+}
+
+void WebViewHost::onNavigationResponse(uint16_t status)
+{
+    m_status = status;
+    m_responseSeen = true;
+}
+
+// Before the new document runs any script: a pageshow handler may already
+// pushState.
+void WebViewHost::onNavigationCommitted()
+{
+    objc::WKBackForwardListItem item(m_webview.currentBackForwardItem());
+    if (!m_responseSeen && item.m_id != m_documentItem) m_status = item.status();
+    item.setStatus(m_status);
+    m_documentItem = item.m_id;
+    m_documentStatus = m_status;
+}
+
+void WebViewHost::onSameDocumentNavigation()
+{
+    objc::WKBackForwardListItem item(m_webview.currentBackForwardItem());
+    item.setStatus(m_documentStatus);
+    m_documentItem = item.m_id;
+}
+
 void WebViewHost::onNavigationFinished()
 {
     // NavEvent is unsolicited — fires for back()/forward()/reload() too,
     // which Ack immediately and don't set m_navPending. The parent updates
-    // url/title and runs onNavigated from NavEvent; NavDone only resolves
-    // the navigate() promise.
-    auto payload = pack2(url(), title());
+    // url/title/status and runs onNavigated from NavEvent; NavDone only
+    // resolves the navigate() promise.
+    auto payload = packNav(url(), title(), m_status);
     hostWriter()->sendReply(m_viewId, Reply::NavEvent, payload.span().data(), static_cast<uint32_t>(payload.size()));
     if (!std::exchange(m_navPending, false)) return;
     hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size()));

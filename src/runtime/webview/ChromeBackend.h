@@ -313,6 +313,20 @@ for (;;) {
 }
 }))js"_s;
 
+// Evaluated after Page.loadEventFired (returnByValue): the title, and the
+// main-frame HTTP status from PerformanceNavigationTiming (no Network
+// domain needed). Only http(s) documents have a status, as on WKWebView;
+// Chrome synthesizes responseStatus 200 for a data: document. A page that
+// replaces `performance` must not cost the title.
+constexpr ASCIILiteral kPageTitleAndStatusJS = R"js((() => {
+  let s = 0;
+  try {
+    const e = performance.getEntriesByType("navigation")[0];
+    if (e && /^https?:/.test(e.name)) s = e.responseStatus || 0;
+  } catch {}
+  return { t: document.title, s };
+})())js"_s;
+
 // --- Transport singleton ---------------------------------------------------
 // Mirror of HostClient but NUL-framed JSON instead of binary. One socketpair
 // — the child gets the peer end dup'd to fd 3 AND fd 4 (Chrome reads fd 3,

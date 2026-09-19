@@ -20,7 +20,7 @@ const screenshotBase64 = screenshot.toString("base64");
 // a real browser takes a moment to shut down after the pipe closes. Default 0.
 const exitDelay = Number(process.argv.find(a => a.startsWith("--exit-delay="))?.slice("--exit-delay=".length) ?? 0);
 
-// `--no-title-reply`: never answer the document.title fetch that follows
+// `--no-title-reply`: never answer the title and status fetch that follows
 // Page.loadEventFired, so the runtime's Navigate slot stays pending forever.
 const noTitleReply = process.argv.includes("--no-title-reply");
 
@@ -93,9 +93,11 @@ async function handle(command: { id: number; method: string; params?: any; sessi
     case "Page.captureScreenshot":
       return reply({ data: screenshotBase64 });
     case "Runtime.evaluate": {
-      if (params.expression === "document.title") {
+      // The title and status fetch after Page.loadEventFired: an expression
+      // that reads document.title and returns { t, s }.
+      if (params.expression.includes("document.title")) {
         if (noTitleReply) return;
-        return reply({ result: { type: "string", value: "fake chrome" } });
+        return reply({ result: { type: "object", value: { t: "fake chrome", s: 200 } } });
       }
       let value: unknown;
       try {

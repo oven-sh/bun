@@ -18,6 +18,7 @@ use crate::parser::{
     Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
     WrapMode,
 };
+use crate::scan::scan_side_effects::SideEffects;
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
 use bun_ast::{B, E, Expr, G, S, Stmt};
@@ -1530,7 +1531,47 @@ impl<'a> Parser<'a> {
                 found
             };
             if let Some(found) = stmt_and_part {
-                let stmt = found.stmt;
+                let mut stmt = found.stmt;
+                // Without --minify-syntax the NODE_ENV if/else above survives
+                // as `if (<const>) {} else { X }` after DCE empties the dead
+                // arm; peel to the live arm's single statement. `to_boolean` is
+                // the same predicate `s_if` used to pick the dead arm.
+                while let js_ast::StmtData::SIf(s_if) = &stmt.data {
+                    let Some(effects) = SideEffects::to_boolean(p, &s_if.test.data) else {
+                        break;
+                    };
+                    if effects.side_effects != SideEffects::NoSideEffects {
+                        break;
+                    }
+                    let (live, dead) = if effects.value {
+                        (Some(s_if.yes), s_if.no)
+                    } else {
+                        (s_if.no, Some(s_if.yes))
+                    };
+                    let dead_is_empty = match dead {
+                        None => true,
+                        Some(d) => match d.data {
+                            js_ast::StmtData::SEmpty(_) => true,
+                            js_ast::StmtData::SBlock(block) => block.stmts.len() == 0,
+                            _ => false,
+                        },
+                    };
+                    if !dead_is_empty {
+                        break;
+                    }
+                    let Some(live_stmt) = live else { break };
+                    match live_stmt.data {
+                        js_ast::StmtData::SBlock(block) => {
+                            let body = block.stmts.slice();
+                            if body.len() != 1 {
+                                break;
+                            }
+                            stmt = body[0];
+                        }
+                        js_ast::StmtData::SEmpty(_) => break,
+                        _ => stmt = live_stmt,
+                    }
+                }
                 let part = &mut parts[found.part_idx];
                 if p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
                 {

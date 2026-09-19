@@ -129,7 +129,8 @@ export function optimizeBun(path: string): void {
   const installScript =
     os === "win32" ? 'powershell -c "irm bun.sh/install.ps1 | iex"' : "curl -fsSL https://bun.com/install | bash";
   try {
-    rename(path, join(__dirname, "bin", "bun.exe"));
+    // Preserve the optional executable for postinstall reruns (https://github.com/oven-sh/bun/pull/25303).
+    link(path, join(__dirname, "bin", "bun.exe"));
     link(join(__dirname, "bin", "bun.exe"), join(__dirname, "bin", "bunx.exe"));
     return;
   } catch (error) {

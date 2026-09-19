@@ -35,6 +35,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
+import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getOs } from "./agent.ts";
 import {
   escapeCodeBlock,
   escapeHtml,
@@ -55,7 +56,6 @@ import {
   uploadArtifact,
   type JunitFileSuite,
 } from "./buildkite.ts";
-import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getOs } from "./host.ts";
 import {
   getEnv,
   getWindowsExitReason,
@@ -2293,7 +2293,7 @@ function getTestTimeout(testPath: string): number {
 /**
  * Streams the output of one child process stream to `io`, without the workflow
  * commands bun test prints because GITHUB_ACTIONS is set (see createLiveOutputFilter).
- * spawnSafe calls `end()` when the stream closes.
+ * spawnWithTimeout calls `end()` when the stream closes.
  */
 function pipeTestStdout(io: NodeJS.WritableStream): ((chunk: string) => void) & { end: () => void } {
   const filter = createLiveOutputFilter();

@@ -97,32 +97,16 @@ build {
     environment_vars = ["CI=true", "BUN_BOOTSTRAP_REPO_REF=${var.repo_ref}"]
   }
 
-  // Step 2: Upload the agent script and the files it imports (the list is
-  // agentFiles in scripts/agent.ts; a source lint keeps the two in step)
+  // Step 2: Upload the agent script (as .mts: see `install` in scripts/agent.ts)
   provisioner "file" {
-    source      = "${var.scripts_dir}/agent.ts"
-    destination = "C:\\buildkite-agent\\agent.ts"
-  }
-
-  provisioner "file" {
-    source      = "${var.scripts_dir}/process.ts"
-    destination = "C:\\buildkite-agent\\process.ts"
-  }
-
-  provisioner "file" {
-    source      = "${var.scripts_dir}/host.ts"
-    destination = "C:\\buildkite-agent\\host.ts"
-  }
-
-  provisioner "file" {
-    source      = "${var.scripts_dir}/buildkite.ts"
-    destination = "C:\\buildkite-agent\\buildkite.ts"
+    source      = var.agent_script
+    destination = "C:\\buildkite-agent\\agent.mts"
   }
 
   // Step 3: Install agent service via nssm
   provisioner "powershell" {
     inline = [
-      "C:\\Scoop\\apps\\nodejs\\current\\node.exe C:\\buildkite-agent\\agent.ts install"
+      "C:\\Scoop\\apps\\nodejs\\current\\node.exe C:\\buildkite-agent\\agent.mts install"
     ]
     valid_exit_codes = [0]
   }

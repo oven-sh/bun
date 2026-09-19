@@ -2,15 +2,341 @@
 
 // An agent that starts buildkite-agent and runs others services.
 
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir, release } from "node:os";
+import { homedir, hostname, release } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
-import { curl } from "./buildkite.ts";
-import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getKernel, getOs } from "./host.ts";
-import { getEnv, isLinux, isMacOS, isPosix, isWindows, spawn, spawnSafe, which } from "./process.ts";
+
+// This is the one file of Bun's that runs on a CI machine outside a checkout:
+// `install` copies it into the agent's home, and the machine's service runs the
+// copy. So it imports nothing but Node. The rest of the CI scripts import what
+// it knows about the machine (os, arch, abi, distro, ...) from here.
+
+const isWindows = process.platform === "win32";
+const isMacOS = process.platform === "darwin";
+// Node built for Termux/bionic reports "android"; CI models that as linux + abi=android.
+const isAndroid = process.platform === "android";
+const isLinux = process.platform === "linux" || isAndroid;
+const isPosix = isMacOS || isLinux || process.platform === "freebsd";
+const isBuildkite = process.env["BUILDKITE"] === "true";
+const isGithubAction = process.env["GITHUB_ACTIONS"] === "true";
+
+/** The path of the first of `names` found on PATH. */
+function which(names: string[]): string | undefined {
+  const executables = isWindows ? names.flatMap(name => [name, `${name}.exe`, `${name}.cmd`]) : names;
+  for (const directory of (process.env["PATH"] || "").split(isWindows ? ";" : ":")) {
+    for (const executable of executables) {
+      const path = join(directory, executable);
+      if (existsSync(path)) {
+        return path;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** The path of `name` on PATH; it has to be there. */
+function requireCommand(name: string): string {
+  const path = which([name]);
+  if (path === undefined) {
+    throw new Error(`Command not found: ${name}`);
+  }
+  return path;
+}
+
+function describeCommand(command: string[]): string {
+  return command.map(arg => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg)).join(" ");
+}
+
+/** What `command` prints, or undefined if it cannot be run or fails. */
+function output(command: string[]): string | undefined {
+  const [file, ...args] = command;
+  if (file === undefined) {
+    return undefined;
+  }
+  const { error, status, stdout } = spawnSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  return error || status !== 0 ? undefined : stdout;
+}
+
+/** Runs `command` on this process's stdio, and throws unless it exits with 0. */
+async function run(command: string[]): Promise<void> {
+  const [file, ...args] = command;
+  if (file === undefined) {
+    throw new TypeError("The command is empty");
+  }
+  const child = spawn(file, args, { stdio: "inherit" });
+  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve, reject) => {
+    child.on("error", cause => reject(new Error(`Command failed to start: ${describeCommand(command)}`, { cause })));
+    child.on("close", (code, signal) => resolve([code, signal]));
+  });
+  if (signal) {
+    throw new Error(`Command killed with ${signal}: ${describeCommand(command)}`);
+  }
+  if (code !== 0) {
+    throw new Error(`Command exited with code ${code}: ${describeCommand(command)}`);
+  }
+}
+
+type RequestOptions = {
+  method?: string;
+  headers?: Record<string, string> | undefined;
+  body?: string;
+  /** Parse the body of a successful response as JSON. */
+  json?: boolean;
+  /** How many times to try. */
+  attempts: number;
+};
+
+/**
+ * A request to the cloud's metadata or secret service. Those are not always up
+ * yet when the agent starts at boot, so a failed attempt is repeated, a little
+ * later each time. A 400, 404 or 422 is an answer, not a failure to repeat.
+ */
+async function request(url: string, options: RequestOptions): Promise<{ error: Error | undefined; body: unknown }> {
+  const { method = "GET", headers = {}, body: input, json, attempts } = options;
+  let error: Error | undefined;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+    }
+    let body: unknown;
+    let response: Response;
+    try {
+      response = await fetch(url, { method, headers, body: input ?? null });
+      body = json && response.ok ? await response.json() : await response.text();
+    } catch (cause) {
+      error = new Error(`Fetch failed: ${method} ${url}`, { cause });
+      continue;
+    }
+    if (response.ok) {
+      return { error: undefined, body };
+    }
+    error = new Error(`Fetch failed: ${method} ${url}: ${response.status} ${response.statusText}`, { cause: body });
+    if (response.status === 400 || response.status === 404 || response.status === 422) {
+      return { error, body };
+    }
+  }
+  return { error, body: undefined };
+}
+
+export type Os = "darwin" | "linux" | "windows" | "freebsd";
+
+export type Arch = "x64" | "aarch64";
+
+export type Abi = "musl" | "gnu" | "android";
+
+function parseOs(string: string): Os {
+  if (/darwin|apple|mac/i.test(string)) {
+    return "darwin";
+  }
+  if (/linux|android/i.test(string)) {
+    return "linux";
+  }
+  if (/freebsd/i.test(string)) {
+    return "freebsd";
+  }
+  if (/win/i.test(string)) {
+    return "windows";
+  }
+  throw new Error(`Unsupported operating system: ${string}`);
+}
+
+export function getOs(): Os {
+  return parseOs(process.platform);
+}
+
+function parseArch(string: string): Arch {
+  if (/x64|amd64|x86_64/i.test(string)) {
+    return "x64";
+  }
+  if (/arm64|aarch64/i.test(string)) {
+    return "aarch64";
+  }
+  throw new Error(`Unsupported architecture: ${string}`);
+}
+
+export function getArch(): Arch {
+  return parseArch(process.arch);
+}
+
+export function getKernel(): string | undefined {
+  if (isWindows) {
+    return;
+  }
+
+  const kernel = release();
+  const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(kernel);
+
+  if (match) {
+    const [, major, minor, patch] = match;
+    if (patch) {
+      return `${major}.${minor}.${patch}`;
+    }
+    return `${major}.${minor}`;
+  }
+
+  return kernel;
+}
+
+export function getAbi(): Abi | undefined {
+  if (!isLinux) {
+    return;
+  }
+
+  if (isAndroid || existsSync("/system/bin/linker64")) {
+    return "android";
+  }
+
+  if (existsSync("/etc/alpine-release")) {
+    return "musl";
+  }
+
+  const arch = getArch() === "x64" ? "x86_64" : "aarch64";
+  const muslLibPath = `/lib/ld-musl-${arch}.so.1`;
+  if (existsSync(muslLibPath)) {
+    return "musl";
+  }
+
+  const gnuLibPath = `/lib/ld-linux-${arch}.so.2`;
+  if (existsSync(gnuLibPath)) {
+    return "gnu";
+  }
+
+  const stdout = output(["ldd", "--version"]);
+  if (stdout !== undefined) {
+    if (/musl/i.test(stdout)) {
+      return "musl";
+    }
+    if (/gnu|glibc/i.test(stdout)) {
+      return "gnu";
+    }
+  }
+
+  return undefined;
+}
+
+export function getAbiVersion(): string | undefined {
+  if (!isLinux) {
+    return;
+  }
+
+  const stdout = output(["ldd", "--version"]);
+  if (stdout !== undefined) {
+    const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(stdout);
+    if (match) {
+      const [, major, minor, patch] = match;
+      if (patch) {
+        return `${major}.${minor}.${patch}`;
+      }
+      return `${major}.${minor}`;
+    }
+  }
+
+  return undefined;
+}
+
+export function getHostname(): string {
+  if (isBuildkite) {
+    const agent = process.env["BUILDKITE_AGENT_NAME"];
+    if (agent) {
+      return agent;
+    }
+  }
+
+  if (isGithubAction) {
+    const runner = process.env["RUNNER_NAME"];
+    if (runner) {
+      return runner;
+    }
+  }
+
+  return hostname();
+}
+
+export function getDistro(): string | undefined {
+  if (isMacOS) {
+    return "macOS";
+  }
+
+  if (isLinux) {
+    const alpinePath = "/etc/alpine-release";
+    if (existsSync(alpinePath)) {
+      return "alpine";
+    }
+
+    const releasePath = "/etc/os-release";
+    if (existsSync(releasePath)) {
+      const releaseFile = readFileSync(releasePath, "utf8");
+      const match = releaseFile.match(/^ID=(.*)/m);
+      if (match) {
+        const id = match[1]!;
+        return id.includes('"') ? (JSON.parse(id) as string) : id;
+      }
+    }
+
+    const stdout = output(["lsb_release", "-is"]);
+    if (stdout !== undefined) {
+      return stdout.trim().toLowerCase();
+    }
+  }
+
+  if (isWindows) {
+    const stdout = output(["cmd", "/c", "ver"]);
+    if (stdout !== undefined) {
+      return stdout.trim();
+    }
+  }
+
+  return undefined;
+}
+
+export function getDistroVersion(): string | undefined {
+  if (isMacOS) {
+    const stdout = output(["sw_vers", "-productVersion"]);
+    if (stdout !== undefined) {
+      return stdout.trim();
+    }
+  }
+
+  if (isLinux) {
+    const alpinePath = "/etc/alpine-release";
+    if (existsSync(alpinePath)) {
+      const release = readFileSync(alpinePath, "utf8").trim();
+      if (release.includes("_")) {
+        const [version] = release.split("_");
+        return `${version}-edge`;
+      }
+      return release;
+    }
+
+    const releasePath = "/etc/os-release";
+    if (existsSync(releasePath)) {
+      const releaseFile = readFileSync(releasePath, "utf8");
+      const match = releaseFile.match(/^VERSION_ID=(.*)/m);
+      if (match) {
+        const release = match[1]!;
+        return release.includes('"') ? (JSON.parse(release) as string) : release;
+      }
+    }
+
+    const stdout = output(["lsb_release", "-rs"]);
+    if (stdout !== undefined) {
+      return stdout.trim();
+    }
+  }
+
+  if (isWindows) {
+    const stdout = output(["cmd", "/c", "ver"]);
+    if (stdout !== undefined) {
+      return stdout.trim();
+    }
+  }
+
+  return undefined;
+}
 
 type Cloud = "aws" | "google" | "azure";
 
@@ -28,11 +354,8 @@ async function isAws(): Promise<boolean | undefined> {
         return true;
       }
 
-      const { error: systemdError, stdout } = await spawn(["systemd-detect-virt"]);
-      if (!systemdError) {
-        if (stdout.includes("amazon")) {
-          return true;
-        }
+      if (output(["systemd-detect-virt"])?.includes("amazon")) {
+        return true;
       }
 
       const dmiPath = "/sys/devices/virtual/dmi/id/board_asset_tag";
@@ -45,18 +368,17 @@ async function isAws(): Promise<boolean | undefined> {
     }
 
     if (isWindows) {
-      const executionEnv = getEnv("AWS_EXECUTION_ENV", false);
-      if (executionEnv === "EC2") {
+      if (process.env["AWS_EXECUTION_ENV"] === "EC2") {
         return true;
       }
 
-      const { error: powershellError, stdout } = await spawn([
+      const manufacturer = output([
         "powershell",
         "-Command",
         "Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object Manufacturer",
       ]);
-      if (!powershellError) {
-        return stdout.includes("Amazon");
+      if (manufacturer !== undefined) {
+        return manufacturer.includes("Amazon");
       }
     }
 
@@ -121,9 +443,9 @@ async function isAzure(): Promise<boolean | undefined> {
   async function detectAzure(): Promise<boolean | undefined> {
     // Azure IMDS (Instance Metadata Service) — the official way to detect Azure VMs.
     // https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service
-    const { error, body } = await curl("http://169.254.169.254/metadata/instance?api-version=2021-02-01", {
+    const { error, body } = await request("http://169.254.169.254/metadata/instance?api-version=2021-02-01", {
       headers: { "Metadata": "true" },
-      retries: 1,
+      attempts: 1,
     });
     if (!error && typeof body === "string" && body) {
       try {
@@ -198,7 +520,7 @@ async function getCloudMetadata(
     throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
   }
 
-  const { error, body } = await curl(url, { headers, retries: 10 });
+  const { error, body } = await request(url.href, { headers, attempts: 10 });
   if (error) {
     console.warn("Failed to get cloud metadata:", error);
     return;
@@ -360,12 +682,12 @@ async function getAwsSecret(secretId: string, options: AwsSecretOptions = {}): P
     },
   });
 
-  const { error, body: response } = await curl(`https://${host}/`, {
+  const { error, body: response } = await request(`https://${host}/`, {
     method: "POST",
     headers,
     body,
     json: true,
-    retries: 5,
+    attempts: 5,
   });
   if (error) {
     console.warn("Failed to get AWS secret:", error);
@@ -387,10 +709,10 @@ type AzureSecretValue = { value?: string } | null | undefined;
 async function getAzureSecret(vaultName: string, secretName: string): Promise<string | undefined> {
   const identityUrl =
     "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net";
-  const { error: identityError, body: identity } = await curl(identityUrl, {
+  const { error: identityError, body: identity } = await request(identityUrl, {
     headers: { "Metadata": "true" },
     json: true,
-    retries: 10,
+    attempts: 10,
   });
   const accessToken = (identity as AzureIdentityToken)?.["access_token"];
   if (identityError || !accessToken) {
@@ -399,10 +721,10 @@ async function getAzureSecret(vaultName: string, secretName: string): Promise<st
   }
 
   const secretUrl = `https://${vaultName}.vault.azure.net/secrets/${secretName}?api-version=7.4`;
-  const { error, body } = await curl(secretUrl, {
+  const { error, body } = await request(secretUrl, {
     headers: { "Authorization": `Bearer ${accessToken}` },
     json: true,
-    retries: 5,
+    attempts: 5,
   });
   if (error) {
     console.warn("Failed to get Azure secret:", error);
@@ -503,16 +825,9 @@ function writeFile(filename: string, content: string, mode?: number): void {
   }
 }
 
-/**
- * This script and everything it imports, by file name: what `install` copies
- * into the agent's home and what the Windows image bake uploads
- * (scripts/packer/). A source lint checks it against the imports.
- */
-const agentFiles = ["agent.ts", "process.ts", "host.ts", "buildkite.ts"];
-
 async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions = {}): Promise<void> {
   const username = "buildkite-agent";
-  const command = which("buildkite-agent", { required: true });
+  const command = requireCommand("buildkite-agent");
 
   const { homePath, cachePath, logsPath, agentLogPath, pidPath, cfgPath } = getAgentPaths();
 
@@ -521,34 +836,29 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
 
     // Checked before anything is written, so a Mac that cannot be given a
     // token is left as it was.
-    const token = getEnv("BUILDKITE_AGENT_TOKEN", false);
+    const token = process.env["BUILDKITE_AGENT_TOKEN"];
     if (isMacOS && cfgPath !== undefined && !token && !existsSync(cfgPath)) {
       throw new Error("BUILDKITE_AGENT_TOKEN not set and no existing buildkite-agent.cfg to reuse");
     }
 
-    // The service runs a copy of this script and the files it imports from
-    // the agent's home, so it does not depend on the checkout that ran
-    // `install` sticking around. When `install` is run from the home itself
-    // (the Windows image bake uploads the files there first), they are
-    // already in place.
+    // The service runs a copy of this script from the agent's home, so it does
+    // not depend on the checkout that ran `install` sticking around. The copy
+    // is an .mts: outside the repo no package.json says it is an ES module, and
+    // one above the home (on macOS, the user's home directory) could say it is
+    // not. When `install` is run on the copy itself (the Windows image bake
+    // uploads it there first), it is already in place.
     mkdirSync(homePath, { recursive: true });
-    const srcDir = fileURLToPath(new URL(".", import.meta.url));
-    if (realpathSync(srcDir) !== realpathSync(homePath)) {
-      for (const f of agentFiles) {
-        copyFileSync(join(srcDir, f), join(homePath, f));
-      }
+    const installedScript = join(homePath, "agent.mts");
+    const thisScript = fileURLToPath(import.meta.url);
+    if (!existsSync(installedScript) || realpathSync(thisScript) !== realpathSync(installedScript)) {
+      copyFileSync(thisScript, installedScript);
     }
-    // In the repo, scripts/package.json says these are ES modules. The copy
-    // says so itself rather than take its module type from whatever
-    // package.json sits above the home (on macOS, the user's home directory).
-    writeFile(join(homePath, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
-    const installedScript = join(homePath, "agent.ts");
     const args = [installedScript, "start"];
 
     if (isWindows) {
       mkdirSync(logsPath, { recursive: true });
 
-      const nssm = which("nssm", { required: true });
+      const nssm = requireCommand("nssm");
       const nssmCommands = [
         [nssm, "install", "buildkite-agent", command, ...args],
         [nssm, "set", "buildkite-agent", "Start", "SERVICE_AUTO_START"],
@@ -557,7 +867,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
         [nssm, "set", "buildkite-agent", "AppStderr", agentLogPath],
       ];
       for (const command of nssmCommands) {
-        await spawnSafe(command, { stdio: "inherit" });
+        await run(command);
       }
     }
 
@@ -583,12 +893,12 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
         }
       `;
       writeFile(servicePath, service, 0o755);
-      await spawnSafe(["rc-update", "add", "buildkite-agent", "default"], { stdio: "inherit" });
+      await run(["rc-update", "add", "buildkite-agent", "default"]);
     }
 
     // cfgPath is set exactly when isMacOS is; the second check is for the type checker.
     if (isMacOS && cfgPath !== undefined) {
-      const queue = cliOptions.queue || getEnv("BUILDKITE_AGENT_QUEUE", false) || "test-darwin";
+      const queue = cliOptions.queue || process.env["BUILDKITE_AGENT_QUEUE"] || "test-darwin";
       // `install` runs via sudo, so process.env.USER is "root". The launchd
       // service must run as the real login user (whose ~/Library the cfg and
       // build dirs live under), and the files we write here must be owned by
@@ -601,7 +911,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
 
       // Stable node path (the Homebrew/usr-local symlink, not a Cellar version
       // path that breaks on `brew upgrade node`).
-      const nodePath = which("node") || process.execPath;
+      const nodePath = which(["node"]) || process.execPath;
 
       // Preserve an existing token line if we're re-installing on a box that
       // already has one and BUILDKITE_AGENT_TOKEN wasn't supplied this time.
@@ -686,15 +996,13 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
       // install runs as root, so everything above is root-owned. The service
       // runs as runAsUser and needs to read the cfg (mode 0600) and write to
       // the build/log/cache dirs.
-      await spawnSafe(["chown", "-R", `${runAsUser}:staff`, cfgPath, homePath, cachePath, logsPath], {
-        stdio: "inherit",
-      });
+      await run(["chown", "-R", `${runAsUser}:staff`, cfgPath, homePath, cachePath, logsPath]);
 
       // Best-effort: replace any previously-loaded service. bootout fails if
       // not loaded, which is fine.
       for (const p of [plistPath, cleanupPlistPath]) {
-        await spawnSafe(["launchctl", "bootout", "system", p], { stdio: "inherit" }).catch(() => {});
-        await spawnSafe(["launchctl", "bootstrap", "system", p], { stdio: "inherit" });
+        await run(["launchctl", "bootout", "system", p]).catch(() => {});
+        await run(["launchctl", "bootstrap", "system", p]);
       }
       return;
     }
@@ -723,15 +1031,15 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
         WantedBy=multi-user.target
       `;
       writeFile(servicePath, service);
-      await spawnSafe(["systemctl", "daemon-reload"], { stdio: "inherit" });
-      await spawnSafe(["systemctl", "enable", "buildkite-agent"], { stdio: "inherit" });
+      await run(["systemctl", "daemon-reload"]);
+      await run(["systemctl", "enable", "buildkite-agent"]);
     }
   }
 
   async function start(): Promise<void> {
     const cloud = await getCloud();
 
-    let token = getEnv("BUILDKITE_AGENT_TOKEN", false);
+    let token = process.env["BUILDKITE_AGENT_TOKEN"];
     if (!token && cloud === "aws") {
       token = await getAwsSecret(BUILDKITE_TOKEN_SECRET);
     }
@@ -754,10 +1062,10 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
     if (isWindows) {
       // Command Prompt has a faster startup time than PowerShell.
       // Also, it propogates the exit code of the command, which PowerShell does not.
-      const cmd = which("cmd", { required: true });
+      const cmd = requireCommand("cmd");
       shell = `"${cmd}" /S /C`;
     } else {
-      const sh = which("sh", { required: true });
+      const sh = requireCommand("sh");
       shell = `${sh} -elc`;
     }
 
@@ -836,17 +1144,12 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
       .map(([key, value]) => `${key}=${value}`)
       .join(",");
 
-    await spawnSafe(
-      [
-        command,
-        "start",
-        ...flags.map(flag => `--${flag}`),
-        ...Object.entries(options).map(([key, value]) => `--${key}=${value}`),
-      ],
-      {
-        stdio: "inherit",
-      },
-    );
+    await run([
+      command,
+      "start",
+      ...flags.map(flag => `--${flag}`),
+      ...Object.entries(options).map(([key, value]) => `--${key}=${value}`),
+    ]);
   }
 
   if (action === "install") {
@@ -857,11 +1160,11 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
 }
 
 function isSystemd(): boolean {
-  return !!which("systemctl");
+  return !!which(["systemctl"]);
 }
 
 function isOpenRc(): boolean {
-  return !!which("rc-service");
+  return !!which(["rc-service"]);
 }
 
 function escape(string: string | undefined): string | undefined {
@@ -890,4 +1193,7 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+// Not when the other CI scripts import this file for what it knows about the machine.
+if (import.meta.main) {
+  await main();
+}

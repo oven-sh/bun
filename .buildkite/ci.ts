@@ -7,6 +7,7 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
 import {
   curl,
   getBuildMetadata,
@@ -23,7 +24,6 @@ import {
   startGroup,
   uploadArtifact,
 } from "../scripts/buildkite.ts";
-import type { Arch, Abi as HostAbi, Os } from "../scripts/host.ts";
 import { getEnv, isBuildkite, isGithubAction, isWindows, spawn, spawnSafe } from "../scripts/process.ts";
 
 function parseGitRepository(url: string | URL): string | undefined {
@@ -1100,8 +1100,8 @@ function getLinuxBuildImageSteps(platform: Platform, options: PipelineOptions): 
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    // `install` copies agent.ts and the files it imports out of this
-    // checkout into the agent's home, so the unit outlives the build directory.
+    // `install` copies agent.ts out of this checkout into the agent's home, so
+    // the unit outlives the build directory.
     // ($$ is a literal $ after pipeline-upload interpolation.)
     command: [
       `sh ./scripts/bootstrap.sh ${bootstrapArgs.join(" ")}`,

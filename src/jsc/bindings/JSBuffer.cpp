@@ -3958,7 +3958,6 @@ static JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexicalGlob
             }
             return JSC::JSValue::encode(uint8Array);
         }
-        case DataViewType:
         case Uint8ArrayType:
         case Uint8ClampedArrayType: {
             // byteOffset and byteLength are ignored in this case, which is consitent with Node.js and new Uint8Array()
@@ -3978,6 +3977,9 @@ static JSC::EncodedJSValue createJSBufferFromJS(JSC::JSGlobalObject* lexicalGlob
             return constructBufferFromArrayBuffer(throwScope, lexicalGlobalObject, args.size(), distinguishingArg, args.at(1), args.at(2));
         }
         default: {
+            // This includes DataViewType: a DataView has no `length`, so Node's
+            // Buffer.from() (and Bun's) gives an empty Buffer, which is what the
+            // array-like path below produces too.
             break;
         }
         }

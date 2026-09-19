@@ -4948,6 +4948,37 @@ describe("Upgrade pipelined behind a pending response", () => {
     }
   });
 
+  test("should send the listener's reply before the FIN of a response ahead that closes the connection", async () => {
+    const { promise: handedOff, resolve: onHandoff, reject: onFailure } = Promise.withResolvers<void>();
+    let first: http.ServerResponse | undefined;
+    await using server = http.createServer((req, res) => {
+      if (req.headers.upgrade !== undefined) return void onFailure(new Error("dispatched as a request"));
+      first = res;
+      res.setHeader("Connection", "close");
+      res.write("first");
+    });
+    server.on("upgrade", (req, socket) => {
+      socket.write(SWITCHING);
+      onHandoff();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      const received: Buffer[] = [];
+      client.on("data", chunk => received.push(chunk));
+      client.on("error", onFailure);
+      client.write(get("/first") + upgradeRequest("/second"));
+      await handedOff;
+      first!.end("-done");
+      await once(client, "end");
+      expect(withoutResponseHeads(Buffer.concat(received).toString("latin1"))).toBe(
+        `5\r\nfirst\r\n5\r\n-done\r\n0\r\n\r\n${SWITCHING}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  });
+
   test("should go to 'request' when shouldUpgradeCallback declines", async () => {
     const events: string[] = [];
     let first: http.ServerResponse | undefined;

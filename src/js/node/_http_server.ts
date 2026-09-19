@@ -1760,10 +1760,13 @@ function getNodeHTTPServerSocket() {
     }
 
     _destroy(err, callback) {
+      // Writes that wait for a native drain that never comes now.
       const pending = this[kPendingHandoff];
-      if (pending !== undefined) {
+      const waiting = this.#pendingCallback;
+      if (pending !== undefined || waiting !== null) {
         this[kPendingHandoff] = undefined;
-        process.nextTick(failParkedHandoff, pending, err ?? $ERR_STREAM_DESTROYED("write"));
+        this.#pendingCallback = null;
+        process.nextTick(failParkedHandoff, pending, waiting, err ?? $ERR_STREAM_DESTROYED("write"));
       }
       const handle = this[kHandle];
       if (!handle) {
@@ -2630,9 +2633,10 @@ function runHandoffReady(ready) {
   for (let i = 0; i < ready.length; i++) ready[i]();
 }
 
-function failParkedHandoff(pending, reason) {
-  pending.write?.callback(reason);
-  pending.final?.(reason);
+function failParkedHandoff(pending, waiting, reason) {
+  pending?.write?.callback(reason);
+  pending?.final?.(reason);
+  waiting?.(reason);
 }
 
 // When the connection dies with pipelined responses still queued behind the

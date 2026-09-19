@@ -233,6 +233,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
+        /* node:http: a tunnel queued behind this response ends the connection itself, after its parked bytes. */
+        if ((isConnectRequest || (state & HTTP_NODE_TUNNEL_AFTER_BODY)) && nodeHttpQueuedPipelinedCount > 0) {
+            return false;
+        }
         return (state & HTTP_CONNECTION_CLOSE)
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);

@@ -232,7 +232,8 @@ describe.each([
   test("$name in overrides takes the spec that a member declares", () => {
     using dir = tempDir("workspace-root-directory", MEMBERS);
     const root = rootOf(String(dir));
-    const packageJson = rootPackageJson([`${pkgsFrom(root, String(dir))}/*`]);
+    const pkgs = pkgsFrom(root, String(dir));
+    const packageJson = rootPackageJson([`${pkgs}/a`, `${pkgs}/b`]);
 
     expect(install_test_helpers.workspaceRef(join(root, "package.json"), packageJson, "no-deps")).toBe("1.0.0");
   });

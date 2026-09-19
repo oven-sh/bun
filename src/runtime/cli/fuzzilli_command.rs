@@ -8,7 +8,7 @@ use bun_core::{Environment, Global};
 use bun_sys::{self as sys, Fd, FdExt, O};
 
 #[cfg(unix)]
-use super::run_command::RunCommand;
+use super::run_command::{EntryPath, RunCommand};
 use crate::Command;
 
 pub(crate) struct FuzzilliCommand;
@@ -92,7 +92,12 @@ impl FuzzilliCommand {
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";
             // The `Run.boot` entry point is hosted on `RunCommand` to avoid the
             // higher-tier crate cycle (see run_command.rs §`Run`).
-            let result = RunCommand::boot(_ctx, temp_path.to_vec().into_boxed_slice(), None);
+            let result = RunCommand::boot(
+                _ctx,
+                temp_path.to_vec().into_boxed_slice(),
+                EntryPath::Resolved,
+                None,
+            );
 
             // `defer fd.close()` — Fd is Copy and has no Drop; close explicitly.
             temp_file_fd.close();

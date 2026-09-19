@@ -6046,9 +6046,23 @@ describe.concurrent("write() after end()", () => {
       expect(result).toEqual([lateWriteEvents, 4]);
     });
 
+    it("server stream, corked writes (_writev)", async () => {
+      const result = await serve((stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.cork();
+        stream.write("do");
+        stream.write("ne");
+        stream.uncork();
+        stream.end();
+        stream.write("late", late);
+      });
+      expect(result).toEqual([lateWriteEvents, 4]);
+    });
+
     it("client stream", async () => {
       const events = await request((client, req, late) => {
-        // A write on a pending stream is dispatched at 'ready', after end(), and ends the stream itself.
+        // Written at 'ready' so that the chunk is dispatched before end(). A write on a stream
+        // that is still pending is held until 'ready', after end(), and carries END_STREAM itself.
         req.on("ready", () => {
           req.write("body");
           req.end();
@@ -6069,16 +6083,23 @@ describe.concurrent("write() after end()", () => {
     });
 
     it("write blocked on flow control, late write on a later turn", async () => {
-      // The peer has not read anything yet on the next turn, so the write is still blocked.
+      // setImmediate runs before the loop polls again, so no WINDOW_UPDATE has arrived and the
+      // write is still blocked when the late write comes.
+      let blockedLength;
       const result = await serve((stream, late) => {
         stream.respond({ ":status": 200 });
         stream.write(big);
         stream.end();
-        setImmediate(() => stream.write("late", late));
+        setImmediate(() => {
+          blockedLength = stream.writableLength;
+          stream.write("late", late);
+        });
       });
-      expect(result).toEqual([lateWriteEvents, big.length]);
+      expect([blockedLength, ...result]).toEqual([big.length, lateWriteEvents, big.length]);
     });
 
+    // Guard, passes without the fix too: the END_STREAM must not make the callback of a write run
+    // before its bytes are flushed.
     it("destroy() in the callback of the blocked write does not truncate the body", async () => {
       const result = await serve((stream, late) => {
         stream.respond({ ":status": 200 });
@@ -6089,6 +6110,7 @@ describe.concurrent("write() after end()", () => {
       expect(result).toEqual([lateWriteEvents, big.length]);
     });
 
+    // Guard, passes without the fix too: the END_STREAM must not go out ahead of a pending reset.
     it("close(code) in the same tick still resets the stream", async () => {
       const result = serve((stream, late) => {
         stream.respond({ ":status": 200 });
@@ -6097,7 +6119,10 @@ describe.concurrent("write() after end()", () => {
         stream.write("late", late);
         stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
       });
-      await expect(result).rejects.toThrow("NGHTTP2_INTERNAL_ERROR");
+      await expect(result).rejects.toMatchObject({
+        code: "ERR_HTTP2_STREAM_ERROR",
+        message: expect.stringContaining("NGHTTP2_INTERNAL_ERROR"),
+      });
     });
 
     it("close() with no code in the same tick still ends the stream", async () => {
@@ -6126,6 +6151,105 @@ describe.concurrent("write() after end()", () => {
         stream.write("late", late);
       });
       expect(result).toEqual([lateWriteEvents, 4]);
+    });
+
+    // The native side drops a reset stream on the read after the RST_STREAM, and JS hears about
+    // the reset a tick later. With both reads in one turn, the write completes in between, when
+    // the native stream is already gone. That must not throw.
+    it("peer reset that drops the native stream before the write completes", async () => {
+      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, payload]);
+      }
+      // HEADERS (:status 200), RST_STREAM, then frames of an unknown type, which the receiver
+      // ignores. They make the burst longer than the 64 KiB that one read of a TLS socket decrypts.
+      const rstCode = Buffer.alloc(4);
+      rstCode.writeUInt32BE(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      const burst = Buffer.concat([
+        frame(1, 4, 1, Buffer.from([0x88])),
+        frame(3, 0, 1, rstCode),
+        ...Array(8).fill(frame(0xfa, 0, 0, Buffer.alloc(16384))),
+      ]);
+      // Raw HTTP/2 peer: sends SETTINGS, then answers the first HEADERS frame with the burst.
+      const server = tls.createServer({ ...TLS_CERT, ALPNProtocols: ["h2"] }, socket => {
+        let received = Buffer.alloc(0);
+        let sawPreface = false;
+        let answered = false;
+        socket.on("error", () => {});
+        socket.write(frame(4, 0, 0));
+        socket.on("data", chunk => {
+          received = Buffer.concat([received, chunk]);
+          if (!sawPreface) {
+            if (received.length < 24) return;
+            received = received.subarray(24);
+            sawPreface = true;
+          }
+          while (received.length >= 9) {
+            const length = received.readUIntBE(0, 3);
+            if (received.length < 9 + length) break;
+            const type = received[3];
+            received = received.subarray(9 + length);
+            if (type === 1 && !answered) {
+              answered = true;
+              socket.write(burst);
+            }
+          }
+        });
+      });
+      let raw, session;
+      try {
+        const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+        raw = net.connect(port, "127.0.0.1");
+        raw.on("error", () => {});
+        await new Promise(resolve => raw.once("connect", resolve));
+        // The TLS socket reads through this Duplex. Once `held` is an array, the ciphertext is kept
+        // until it is at least as long as the burst and then pushed at once, which makes the TLS
+        // socket deliver its reads back to back in one turn.
+        let held = null;
+        let heldLength = 0;
+        const proxy = new Duplex({
+          read() {},
+          write(chunk, encoding, callback) {
+            // The teardown below destroys `raw` while the session still writes its GOAWAY.
+            if (raw.destroyed) return callback();
+            raw.write(chunk, callback);
+          },
+        });
+        raw.on("data", chunk => {
+          if (held === null) return proxy.push(chunk);
+          held.push(chunk);
+          heldLength += chunk.length;
+          if (heldLength >= burst.length) {
+            proxy.push(Buffer.concat(held));
+            held = null;
+          }
+        });
+        const socket = tls.connect({ socket: proxy, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+        await new Promise(resolve => socket.once("secureConnect", resolve));
+        session = http2.connect(`https://localhost:${port}`, { createConnection: () => socket });
+        session.on("error", () => {});
+        await new Promise(resolve => session.once("remoteSettings", resolve));
+
+        held = [];
+        const closed = Promise.withResolvers();
+        const req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
+        const late = record(req, closed);
+        // 'response' is emitted inside the read that also carries the RST_STREAM.
+        req.on("response", () => {
+          req.write("body");
+          req.end();
+          req.write("late", late);
+        });
+        expect(await closed.promise).toEqual(lateWriteEvents);
+      } finally {
+        session?.destroy();
+        raw?.destroy();
+        server.close();
+      }
     });
   });
 });

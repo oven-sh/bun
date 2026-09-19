@@ -2093,13 +2093,19 @@ function onStreamWriteDone(this: Http2Stream, callback: (err?: Error | null) => 
   // A chunk still queued behind this one carries END_STREAM itself (isFinalWrite).
   if (err || !state.ending || !state.errored || state.destroyed || state.finalCalled || state.length !== 0) return;
   if ((this[bunHTTP2StreamStatus] & (StreamState.EndStreamSent | StreamState.NativeClosed)) !== 0) return;
-  // With trailers pending, END_STREAM rides the trailer HEADERS (node never ends such a stream
-  // either). A pending reset has to reach the peer as RST_STREAM, not behind a clean end.
+  // After respond({ waitForTrailers }) END_STREAM rides the trailer HEADERS, which only _final
+  // asks for (node never ends such a stream either). A pending reset has to reach the peer as
+  // RST_STREAM, not behind a clean end.
   if (this[bunHTTP2WaitForTrailers] || this.rstCode) return;
   const native = this[bunHTTP2Session]?.[bunHTTP2Native];
   if (!native) return;
   this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
-  sendEndStream(this, native);
+  try {
+    sendEndStream(this, native);
+  } catch {
+    // writeStream throws once the native side has dropped the stream, which a peer RST_STREAM can
+    // do before JS handles it: nothing is left to end. _final has Writable's try/catch for this.
+  }
 }
 
 function markWritableDone(stream: Http2Stream) {

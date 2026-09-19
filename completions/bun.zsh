@@ -1100,12 +1100,47 @@ _bun_list_bunfig_toml() {
 
 _bun_run_param_script_completion() {
     local -a scripts_list bins
-    IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
-    IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
+    local target_cwd="${PWD}"
+    local cwd_specified=0
+    local i val
+    for (( i=1; i < ${#words[@]}; i++ )); do
+        val=""
+        if [[ "${words[i]}" == "--cwd" && -n "${words[i+1]}" ]]; then
+            val="${words[i+1]}"
+            cwd_specified=1
+        elif [[ "${words[i]}" == --cwd=* ]]; then
+            val="${words[i]#--cwd=}"
+            cwd_specified=1
+        fi
+        if [[ -n "${val}" ]]; then
+            val="${val%\"}"
+            val="${val#\"}"
+            val="${val%\'}"
+            val="${val#\'}"
+            val="${val/#\~/$HOME}"
+            target_cwd="${val}"
+        fi
+    done
+
+    local orig_pwd="${PWD}"
+    local switched=0
+    if (( cwd_specified )); then
+        if [[ ! -d "${target_cwd}" ]] || ! builtin cd -q "${target_cwd}" 2>/dev/null; then
+            return
+        fi
+        switched=1
+    fi
+
+    scripts_list=(${(f)"$(SHELL=zsh bun getcompletes s 2>/dev/null)"})
+    bins=(${(f)"$(SHELL=zsh bun getcompletes b 2>/dev/null)"})
+
+    if (( switched )); then
+        builtin cd -q "${orig_pwd}" 2>/dev/null
+    fi
 
     _alternative "scripts:scripts:compadd -a scripts_list"
     _alternative "bin:bin:compadd -a bins"
-    _alternative "files:file:_files -g '*.(js|ts|jsx|tsx|wasm)'"
+    _alternative "files:file:_files -W ${(q)target_cwd} -g '*.(js|mjs|cjs|ts|jsx|tsx|wasm)'"
 }
 
 _bun_link_param_package_completion() {
@@ -1120,78 +1155,67 @@ _bun_link_param_package_completion() {
 }
 
 _bun_remove_param_package_completion() {
-    if ! command -v jq &>/dev/null; then
-        return
-    fi
-
-    # TODO: move to "bun getcompletes"
-    if [ -f "package.json" ]; then
-        local -a dependencies dev_dependencies
-        IFS=$'\n' dependencies=($(jq -r '.dependencies | keys[]' package.json))
-        IFS=$'\n' dev_dependencies=($(jq -r '.devDependencies | keys[]' package.json))
-        _alternative "deps:dependency:compadd -a dependencies"
-        _alternative "deps:dependency:compadd -a dev_dependencies"
-    fi
-}
-
-_bun_test_param_script_completion() {
-    local -a scripts_list
-
-    _alternative "files:file:_files -g '*(_|.)(test|spec).(js|ts|jsx|tsx)'"
-}
-
-_set_remove() {
-    comm -23 <(echo $1 | sort | tr " " "\n") <(echo $2 | sort | tr " " "\n") 2>/dev/null
-}
-
-_bun_add_param_package_completion() {
-
-    IFS=$'\n' inexact=($(history -n bun | grep -E "^bun add " | cut -c 9- | uniq))
-    IFS=$'\n' exact=($($inexact | grep -E "^$words[$CURRENT]"))
-    IFS=$'\n' packages=($(SHELL=zsh bun getcompletes a $words[$CURRENT]))
-
-    to_print=$inexact
-    if [ ! -z "$exact" -a "$exact" != " " ]; then
-        to_print=$exact
-    fi
-
-    if [ ! -z "$to_print" -a "$to_print" != " " ]; then
-        if [ ! -z "$packages" -a "$packages" != " " ]; then
-            _describe -1 -t to_print 'History' to_print
-            _describe -1 -t packages "Popular" packages
-            return
+    local pkg_dir="${PWD}"
+    local cwd_specified=0
+    local i val
+    for (( i=1; i < ${#words[@]}; i++ )); do
+        val=""
+        if [[ "${words[i]}" == "--cwd" && -n "${words[i+1]}" ]]; then
+            val="${words[i+1]}"
+            cwd_specified=1
+        elif [[ "${words[i]}" == --cwd=* ]]; then
+            val="${words[i]#--cwd=}"
+            cwd_specified=1
         fi
-
-        _describe -1 -t to_print 'History' to_print
-        return
-    fi
-
-    if [ ! -z "$packages" -a "$packages" != " " ]; then
-        _describe -1 -t packages "Popular" packages
-        return
-    fi
-
-}
-
-__bun_dynamic_comp() {
-    local comp=""
-
-    for arg in scripts; do
-        local line
-        while read -r line; do
-            local name="$line"
-            local desc="$line"
-            name="${name%$'\t'*}"
-            desc="${desc/*$'\t'/}"
-            echo
-        done <<<"$arg"
+        if [[ -n "${val}" ]]; then
+            val="${val%\"}"
+            val="${val#\"}"
+            val="${val%\'}"
+            val="${val#\'}"
+            val="${val/#\~/$HOME}"
+            pkg_dir="${val}"
+        fi
     done
 
-    return $comp
+    if (( cwd_specified )) && [[ ! -d "${pkg_dir}" ]]; then
+        return
+    fi
+
+    local pkg_file="${pkg_dir}/package.json"
+    if [[ -f "${pkg_file}" && -r "${pkg_file}" ]]; then
+        local -a deps
+        local in_dep_block=0 line_content rest
+        local dep_header_re='"(dependencies|devDependencies|peerDependencies|optionalDependencies)"[[:space:]]*:[[:space:]]*\{(.*)'
+        local dep_entry_re='^[[:space:]]*,?[[:space:]]*"([^"\\\\]+)"[[:space:]]*:[[:space:]]*"([^"]*)"(.*)'
+        local dep_close_re='^[[:space:]]*\}[[:space:]]*,?'
+
+        while IFS= read -r line_content || [[ -n "${line_content}" ]]; do
+            if (( ! in_dep_block )); then
+                if [[ "${line_content}" =~ $dep_header_re ]]; then
+                    in_dep_block=1
+                    rest="${match[2]}"
+                fi
+            else
+                rest="${line_content}"
+            fi
+
+            if (( in_dep_block )); then
+                while true; do
+                    if [[ "${rest}" =~ $dep_close_re ]]; then
+                        in_dep_block=0
+                        break
+                    elif [[ "${rest}" =~ $dep_entry_re ]]; then
+                        deps+=( "${match[1]}" )
+                        rest="${match[3]}"
+                    else
+                        break
+                    fi
+                done
+            fi
+        done < "${pkg_file}"
+
+        if (( ${#deps} > 0 )); then
+            _alternative "deps:dependency:compadd -a deps"
+        fi
+    fi
 }
-
-if ! command -v compinit >/dev/null; then
-    autoload -U compinit && compinit
-fi
-
-compdef _bun bun

@@ -4110,8 +4110,7 @@ class ServerHttp2Session extends Http2Session {
     ) {
       if (!self || typeof stream !== "object" || stream.closed) return;
       if (self.closed) {
-        // A request whose header block completes after close() is refused, or it stays counted:
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
+        // node refuses it too: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
         if ((stream[bunHTTP2StreamStatus] & StreamState.Delivered) === 0) {
           self.#parser?.rstStream(stream.id, constants.NGHTTP2_REFUSED_STREAM);
         }

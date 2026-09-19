@@ -1128,8 +1128,7 @@ pub struct H2FrameParser {
     /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
     /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
     last_peer_stream_id: Cell<u32>,
-    /// The lowest last-stream-id of the GOAWAY frames `send_go_away` has written
-    /// (`Sink::sent_goaway_last_stream_id`).
+    /// The lowest last-stream-id of the GOAWAY frames `send_go_away` has written.
     sent_goaway_last_stream_id: Cell<Option<u32>>,
     is_server: Cell<bool>,
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).

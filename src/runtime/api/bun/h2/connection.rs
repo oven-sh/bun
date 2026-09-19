@@ -124,9 +124,7 @@ enum BlockDisposition {
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
-    /// The block would open a stream above the last-stream-id of a GOAWAY this side sent
-    /// (RFC 9113 §6.8): nothing is sent and no stream opens, like nghttp2's
-    /// NGHTTP2_ERR_IGN_HEADER_BLOCK.
+    /// The stream is above the last-stream-id of a GOAWAY this side sent: nothing is sent (§6.8).
     Ignored,
 }
 
@@ -174,9 +172,7 @@ pub trait Sink {
     fn can_open_stream(&self) -> bool {
         true
     }
-    /// The lowest last-stream-id of the GOAWAY frames the embedder has sent, `None` before the
-    /// first one. The embedder writes those frames itself, possibly from inside a dispatch of
-    /// this engine, so the engine asks when it needs the value.
+    /// The lowest last-stream-id of the GOAWAY frames the embedder has sent, if any.
     fn sent_goaway_last_stream_id(&self) -> Option<u32> {
         None
     }
@@ -389,8 +385,7 @@ impl Connection {
     ) {
         self.going_away = true;
         self.terminated = true;
-        // RFC 9113 §6.8: a GOAWAY never names a higher last-stream-id than an earlier one. The
-        // high-water mark also covers the streams that were ignored after that earlier GOAWAY.
+        // RFC 9113 §6.8: a GOAWAY never names a higher last-stream-id than an earlier one.
         let last = sink
             .sent_goaway_last_stream_id()
             .map_or(self.last_stream_id, |sent| sent.min(self.last_stream_id));
@@ -892,10 +887,7 @@ impl Connection {
 
     // ---- Stream-level inbound ------------------------------------------
 
-    /// RFC 9113 §6.8: the sender of a GOAWAY can discard frames on peer-initiated streams above
-    /// its last-stream-id. nghttp2 does (session_allow_incoming_new_stream), so a request that
-    /// crosses a graceful close on the wire never reaches node. Server only: a client's peer
-    /// streams arrive by PUSH_PROMISE.
+    /// RFC 9113 §6.8: a client stream above the last-stream-id this side sent is discarded.
     fn is_past_sent_goaway(&self, sink: &impl Sink, stream_id: u32) -> bool {
         self.is_server
             && !stream_id.is_multiple_of(2)
@@ -1013,9 +1005,9 @@ impl Connection {
             }
         }
         if is_new {
-            // Must advance even for refused and ignored streams: §5.1 treats anything at or
-            // below the high-water mark as having existed, so frames a client pipelined behind
-            // the HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
+            // Must advance even for refused streams: §5.1 treats anything at or below the
+            // high-water mark as having existed, so frames a client pipelined behind the
+            // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }

@@ -22,8 +22,8 @@ use crate::package_manager_real::package_manager_directories::{
     compute_cache_dir_and_subpath, get_temporary_directory,
 };
 use crate::{
-    BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
-    initialize_store, invalid_package_id,
+    BuntagHashBuf, DependencyID, Features, PackageID, PackageNameHash, Resolution,
+    buntaghashbuf_make, initialize_store, invalid_package_id,
 };
 
 #[inline]
@@ -1447,5 +1447,36 @@ impl PatchArgKind {
             return PatchArgKind::Path;
         }
         PatchArgKind::NameAndVersion
+    }
+}
+
+/// The root dependency that the argument of `bun patch` / `bun patch --commit` names: `<name>[@<version>]`, or the path of `node_modules/<name>` in the top-level dir.
+pub(crate) fn named_root_dependency(argument: &[u8]) -> Option<PackageNameHash> {
+    match PatchArgKind::from_arg(argument) {
+        PatchArgKind::NameAndVersion => Some(string_hash(
+            Dependency::split_name_and_maybe_version(argument).0,
+        )),
+        PatchArgKind::Path => {
+            let top_level_dir = FileSystem::instance().top_level_dir();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
+            let mut root_buf = bun_paths::path_buffer_pool::get();
+            let path = resolve_path::join_abs_string_buf::<platform::Auto>(
+                top_level_dir,
+                &mut path_buf[..],
+                &[argument],
+            );
+            let root = resolve_path::join_abs_string_buf::<platform::Auto>(
+                top_level_dir,
+                &mut root_buf[..],
+                &[b"node_modules"],
+            );
+            // A scoped name is `@scope\name` in a Windows path.
+            let mut name = strings::without_trailing_slash(path)
+                .strip_prefix(root)?
+                .strip_prefix(&[SEP])?
+                .to_vec();
+            resolve_path::platform_to_posix_in_place(&mut name);
+            Some(string_hash(&name))
+        }
     }
 }

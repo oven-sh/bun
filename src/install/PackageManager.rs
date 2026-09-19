@@ -335,6 +335,8 @@ pub struct PackageManager {
     pub subcommand: Subcommand,
     pub(crate) update_requests: Box<[UpdateRequest]>,
     pub(crate) update_request_index: update_request::UpdateRequestIndex,
+    /// Dependencies the command line names with no update request: `add --only-missing` drops the request of a declared one, `patch` parses none.
+    pub(crate) named_without_update_request: Vec<PackageNameHash>,
     pub audit_fix_pins: Box<[crate::audit_fix::PlannedFix]>,
 
     /// Only set in `bun pm`
@@ -2096,6 +2098,7 @@ pub fn init(
         wr!(to_update, false);
         wr!(update_requests, Box::default());
         wr!(update_request_index, Default::default());
+        wr!(named_without_update_request, Vec::new());
         wr!(audit_fix_pins, Box::default());
         wr!(root_package_id, RootPackageId::default());
         wr!(task_batch, thread_pool::Batch::default());
@@ -2557,6 +2560,7 @@ fn init_with_runtime_once(
         wr!(to_update, false);
         wr!(update_requests, Box::default());
         wr!(update_request_index, Default::default());
+        wr!(named_without_update_request, Vec::new());
         wr!(audit_fix_pins, Box::default());
         wr!(root_package_json_name_at_time_of_init, Box::default());
         wr!(root_package_id, RootPackageId::default());

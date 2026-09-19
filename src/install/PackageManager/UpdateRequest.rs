@@ -9,7 +9,8 @@ use bun_semver::{SlicedString, String as SemverString, string::Builder as String
 
 use bun_install::dependency::{self, DependencyExt as _};
 use bun_install::{
-    Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash,
+    Dependency, DependencyID, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager,
+    PackageNameHash,
 };
 // `lockfile.packages.items_name()` is provided by an extension trait on
 // `MultiArrayList<Package>`.
@@ -341,6 +342,22 @@ impl PackageManager {
     #[inline]
     pub(crate) fn is_update_request(&self, name_hash: PackageNameHash, name: &[u8]) -> bool {
         self.index_of_update_request(name_hash, name).is_some()
+    }
+
+    /// Whether `dependency_id` is a root dependency that the command line names with no update request.
+    pub(crate) fn names_without_update_request(&self, dependency_id: DependencyID) -> bool {
+        if self.named_without_update_request.is_empty() {
+            return false;
+        }
+        let lockfile = &self.lockfile;
+        lockfile
+            .packages
+            .items_dependencies()
+            .first()
+            .is_some_and(|root| root.contains(dependency_id))
+            && self
+                .named_without_update_request
+                .contains(&lockfile.buffers.dependencies[dependency_id as usize].name_hash)
     }
 }
 

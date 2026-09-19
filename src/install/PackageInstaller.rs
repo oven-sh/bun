@@ -652,7 +652,7 @@ impl<'a> PackageInstaller<'a> {
                             break 'global true;
                         }
                     }
-                    break 'global false;
+                    break 'global manager.names_without_update_request(dep_id);
                 }
             };
 

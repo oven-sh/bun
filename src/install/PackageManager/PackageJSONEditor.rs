@@ -1058,6 +1058,9 @@ pub(crate) fn edit(
                                             );
                                             remaining -= 1;
                                         } else {
+                                            manager
+                                                .named_without_update_request
+                                                .push(request.name_hash);
                                             let last = updates.len() - 1;
                                             if i < last {
                                                 updates.swap(i, last);

@@ -164,6 +164,12 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
         update_requests.truncate(len);
     } else {
         update_requests.clear();
+        if let Some(name_hash) = positionals
+            .first()
+            .and_then(|argument| patch_package::named_root_dependency(argument))
+        {
+            manager.named_without_update_request.push(name_hash);
+        }
     }
     update_package_json_and_install_with_manager_with_updates(
         manager,

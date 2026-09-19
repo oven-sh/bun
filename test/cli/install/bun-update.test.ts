@@ -1,7 +1,16 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { access, appendFile, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
+import {
+  VerdaccioRegistry,
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  pack,
+  readdirSorted,
+  toBeValidBin,
+  toHaveBins,
+} from "harness";
 import { basename, dirname, join } from "path";
 import {
   dummyAfterAll,
@@ -2808,15 +2817,22 @@ describe("bun update <name> semantics", () => {
     const GLOBAL_PINNED = { "no-deps": "1.0.0", "a-dep": "1.0.1" };
     const GLOBAL_WIDENED = { "no-deps": "^1.0.0", "a-dep": "^1.0.1" };
 
-    async function globalRepo() {
+    async function globalRepo(pinned: Json = GLOBAL_PINNED, widened: Json = GLOBAL_WIDENED) {
       const dir = await createDir({ "project/package.json": PROJECT });
       const project = join(dir, "project");
       const globalDir = join(dir, ".global", "install", "global");
+      const globalBinDir = join(dir, ".global", "bin");
       const runGlobal = async (...args: string[]) => {
         await using proc = spawn({
           cmd: [bunExe(), ...args, "-g", `--config=${join(dir, "bunfig.toml")}`],
           cwd: project,
-          env: { ...envFor(dir), BUN_INSTALL: join(dir, ".global") },
+          // Every global-dir variable is set so an inherited one can never point a test at the developer's real global folder.
+          env: {
+            ...envFor(dir),
+            BUN_INSTALL: join(dir, ".global"),
+            BUN_INSTALL_GLOBAL_DIR: globalDir,
+            BUN_INSTALL_BIN: globalBinDir,
+          },
           stdout: "pipe",
           stderr: "pipe",
           stdin: "ignore",
@@ -2824,14 +2840,14 @@ describe("bun update <name> semantics", () => {
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         return { stdout, stderr, exitCode };
       };
-      const added = await runGlobal("add", "no-deps@1.0.0", "a-dep@1.0.1");
+      const added = await runGlobal("add", ...Object.entries(pinned).map(([name, version]) => `${name}@${version}`));
       expect(added.stderr).not.toContain("error:");
       expect(added.exitCode).toBe(0);
       const globalJson = await packageJsonOf(globalDir);
-      expect(globalJson.dependencies).toStrictEqual(GLOBAL_PINNED);
-      await writeFile(join(globalDir, "package.json"), stringify({ ...globalJson, dependencies: GLOBAL_WIDENED }));
+      expect(globalJson.dependencies).toStrictEqual(pinned);
+      await writeFile(join(globalDir, "package.json"), stringify({ ...globalJson, dependencies: widened }));
       const projectBefore = await packageJsonText(project);
-      return { project, globalDir, runGlobal, projectBefore };
+      return { project, globalDir, globalBinDir, runGlobal, projectBefore };
     }
 
     async function expectGlobalInSync(globalDir: string, dependencies: Json) {
@@ -2892,5 +2908,108 @@ describe("bun update <name> semantics", () => {
       expect(await installedVersion(globalDir, "a-dep")).toBe(aDep);
       await expectProjectUntouched(project, projectBefore);
     });
+
+    // Three of the four global packages declare bins. uses-what-bin has none: the bin of its dependency what-bin
+    // belongs in the global node_modules/.bin, not in the global bin dir.
+    const NAMED_PINNED = {
+      "@scoped/has-bin-entry": "1.0.0",
+      "bin-change-dir": "1.0.0",
+      "map-bin": "1.0.2",
+      "uses-what-bin": "1.0.0",
+    };
+    const NAMED_WITH_BINS = ["@scoped/has-bin-entry", "bin-change-dir", "map-bin"];
+    const NAMED_BINS = ["bin-change-dir", "has-bin-entry", "map-bin", "map_bin"];
+    const BIN_CHANGE_DIR = { "bin-change-dir": ["bin-change-dir", "bin-1.0.0", "bin.js"] };
+    const binFiles = (...names: string[]) =>
+      (isWindows ? names.flatMap(name => [`${name}.bunx`, `${name}.exe`]) : names).sort();
+    const globalBinTarget = (...path: string[]) => join("..", "install", "global", "node_modules", ...path);
+
+    // `add --only-missing` drops the update request of a dependency that package.json declares, and `patch` parses
+    // none. The command installs the other two packages with bins again as well, and it does not name them.
+    it.concurrent.each([
+      [["add", "--only-missing", "bin-change-dir"], BIN_CHANGE_DIR],
+      [
+        ["add", "--only-missing", "bin-change-dir", "dep-with-file-bin"],
+        { ...BIN_CHANGE_DIR, "dep-with-file-bin": ["dep-with-file-bin", "file-bin"] },
+      ],
+      [["patch", "bin-change-dir"], BIN_CHANGE_DIR],
+      [["patch", "bin-change-dir@1.0.0"], BIN_CHANGE_DIR],
+      [["patch", "node_modules/bin-change-dir"], BIN_CHANGE_DIR],
+      [["patch", "node_modules/@scoped/has-bin-entry"], { "has-bin-entry": ["@scoped", "has-bin-entry", "bin.js"] }],
+    ])("bun %p -g links only the bins of the package it names into the global bin dir", async (args, bins) => {
+      const { globalDir, globalBinDir, runGlobal } = await globalRepo(NAMED_PINNED, NAMED_PINNED);
+      expect(await readdirSorted(globalBinDir)).toEqual(binFiles(...NAMED_BINS));
+      await Promise.all([
+        ...NAMED_WITH_BINS.map(name => rm(join(globalDir, "node_modules", name), { recursive: true, force: true })),
+        ...binFiles(...NAMED_BINS).map(name => rm(join(globalBinDir, name))),
+      ]);
+
+      const { stderr, exitCode } = await runGlobal(...args);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await Promise.all(NAMED_WITH_BINS.map(name => installedVersion(globalDir, name)))).toEqual([
+        "1.0.0",
+        "1.0.0",
+        "1.0.2",
+      ]);
+      expect(await readdirSorted(globalBinDir)).toEqual(binFiles(...Object.keys(bins)));
+      for (const [name, target] of Object.entries(bins)) {
+        expect(join(globalBinDir, name)).toBeValidBin(globalBinTarget(...target));
+      }
+    });
+
+    // The rule keys on the name, as it does for `bun add -g <package>`. The package is in place and only its link is gone.
+    it.concurrent.each([[["add", "--only-missing", "bin-change-dir"]], [["patch", "bin-change-dir"]]])(
+      "bun %p -g links the bins of the package it names when the package is already installed",
+      async args => {
+        const { globalBinDir, runGlobal } = await globalRepo(NAMED_PINNED, NAMED_PINNED);
+        await Promise.all(binFiles("bin-change-dir").map(name => rm(join(globalBinDir, name))));
+
+        const { stderr, exitCode } = await runGlobal(...args);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect(await readdirSorted(globalBinDir)).toEqual(binFiles(...NAMED_BINS));
+        expect(join(globalBinDir, "bin-change-dir")).toBeValidBin(globalBinTarget(...BIN_CHANGE_DIR["bin-change-dir"]));
+      },
+    );
+
+    it.concurrent.each([[["patch", "--commit"]], [["patch-commit"]]])(
+      "bun %p -g links only the bins of the package it patches into the global bin dir",
+      async command => {
+        const { globalDir, globalBinDir, runGlobal } = await globalRepo(NAMED_PINNED, NAMED_PINNED);
+        const prepared = await runGlobal("patch", "bin-change-dir");
+        expect(prepared.stderr).not.toContain("error:");
+        expect(prepared.exitCode).toBe(0);
+        await Promise.all([
+          writeFile(join(globalDir, "node_modules", "bin-change-dir", "patched.txt"), "patched\n"),
+          ...binFiles(...NAMED_BINS).map(name => rm(join(globalBinDir, name))),
+        ]);
+
+        const { stderr, exitCode } = await runGlobal(...command, "node_modules/bin-change-dir");
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect((await packageJsonOf(globalDir)).patchedDependencies).toEqual({
+          "bin-change-dir@1.0.0": "patches/bin-change-dir@1.0.0.patch",
+        });
+        expect(await readdirSorted(globalBinDir)).toEqual(binFiles("bin-change-dir"));
+        expect(join(globalBinDir, "bin-change-dir")).toBeValidBin(globalBinTarget(...BIN_CHANGE_DIR["bin-change-dir"]));
+      },
+    );
+
+    // what-bin is hoisted into the root node_modules of the global dir. It is not a global package.
+    it.concurrent.each([[["patch", "what-bin"]], [["patch", "node_modules/what-bin"]]])(
+      "bun %p -g keeps the bin of a transitive dependency out of the global bin dir",
+      async args => {
+        const { globalDir, globalBinDir, runGlobal } = await globalRepo(NAMED_PINNED, NAMED_PINNED);
+        await rm(join(globalDir, "node_modules", "what-bin"), { recursive: true, force: true });
+
+        const { stderr, exitCode } = await runGlobal(...args);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect(await installedVersion(globalDir, "what-bin")).toBe("1.0.0");
+        expect(await readdirSorted(globalBinDir)).toEqual(binFiles(...NAMED_BINS));
+        expect(join(globalDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
+      },
+    );
   });
 });

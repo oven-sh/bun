@@ -2486,6 +2486,7 @@ fn init_with_runtime_once(
                 max_concurrent_lifecycle_scripts: cli
                     .concurrent_scripts
                     .unwrap_or((cpu_count * 2) as usize),
+                runtime_auto_install: true,
                 ..Default::default()
             }
         );

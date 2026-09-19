@@ -12,6 +12,7 @@ use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
 use bun_collections::HashMap;
+use bun_http_types::parse_content_length_strict;
 use std::num::NonZeroU32;
 
 /// Pseudo-header presence bits shared by the per-field decode loop and the RFC 9113 §8.3.1
@@ -59,22 +60,6 @@ impl Stream {
             recv_body_bytes: 0,
         }
     }
-}
-
-/// RFC 9110 §8.6: `content-length` is 1*DIGIT. Anything else, or a value that does not fit
-/// in a u64, is rejected.
-fn parse_content_length(value: &[u8]) -> Option<u64> {
-    if value.is_empty() {
-        return None;
-    }
-    let mut n: u64 = 0;
-    for &c in value {
-        if !c.is_ascii_digit() {
-            return None;
-        }
-        n = n.checked_mul(10)?.checked_add(u64::from(c - b'0'))?;
-    }
-    Some(n)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1211,7 +1196,7 @@ impl Connection {
                                         malformed = true;
                                     }
                                 }
-                                b"content-length" => match parse_content_length(value_b) {
+                                b"content-length" => match parse_content_length_strict(value_b) {
                                     Some(n) if content_length.is_none() => {
                                         content_length = Some(n);
                                     }

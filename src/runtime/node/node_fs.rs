@@ -3208,9 +3208,7 @@ pub mod args {
         Ok(encoding)
     }
 
-    /// Node's `getOptions()` asserts the encoding before `getValidatedPath()` runs, so
-    /// an invalid encoding wins over an invalid path. The path is still parsed first:
-    /// that captures a resizable buffer before an `encoding` getter can shrink it.
+    /// An invalid encoding wins over an invalid path: Node's `getOptions()` runs first.
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1761-L1764
     fn or_encoding_error<T>(
         ctx: &JSGlobalObject,
@@ -3220,7 +3218,6 @@ pub mod args {
         let Err(bun_jsc::JsError::Thrown) = path else {
             return path;
         };
-        // A termination keeps unwinding: it cannot be taken, and no more JS may run.
         if ctx.has_pending_termination_exception() {
             return path;
         }

@@ -146,8 +146,7 @@ class FSWatcher extends EventEmitter {
     } else if (typeof options === "string") {
       options = { encoding: options };
     }
-    // node's getOptions() asserts the encoding before the path or any other
-    // option is validated, so an invalid encoding wins over each of them.
+    // node's getOptions() runs first, so an invalid encoding wins over everything else.
     assertEncoding(options?.encoding);
 
     if (path instanceof URL) {

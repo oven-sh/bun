@@ -1586,9 +1586,12 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
         ?.map(item => item.trim())
         ?.filter(Boolean);
 
-    // The answers to the options step, as Buildkite stored them. "build-profiles"
-    // has a default, so it is always set, and its values are that field's options.
-    const buildProfiles = parseArray(options["build-profiles"]) as Profile[];
+    // The answers to the options step, as Buildkite stored them. The values of
+    // "build-profiles" are that field's options; it has a default, so it is set.
+    const buildProfiles = parseArray(options["build-profiles"]) as Profile[] | undefined;
+    if (buildProfiles === undefined) {
+      throw new Error("The options step has no build-profiles");
+    }
     const buildPlatformKeys = parseArray(options["build-platforms"]);
     const testPlatformKeys = parseArray(options["test-platforms"]);
     return {

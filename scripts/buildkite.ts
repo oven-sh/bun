@@ -3,7 +3,7 @@
 // meta-data, artifacts, annotations and log groups.
 
 import { spawnSync as nodeSpawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
 import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getKernel, getOs } from "./agent.ts";
@@ -26,14 +26,13 @@ import {
 
 type SecretOptions = {
   required?: boolean;
-  redact?: boolean;
 };
 
 export function getSecret(name: string, options?: SecretOptions & { required?: true }): string;
 
 export function getSecret(name: string, options: SecretOptions): string | undefined;
 
-export function getSecret(name: string, options: SecretOptions = { required: true, redact: true }): string | undefined {
+export function getSecret(name: string, options: SecretOptions = { required: true }): string | undefined {
   const value = getEnv(name, false);
   if (value) {
     return value;
@@ -41,9 +40,6 @@ export function getSecret(name: string, options: SecretOptions = { required: tru
 
   if (isBuildkite) {
     const command = ["buildkite-agent", "secret", "get", name];
-    if (options["redact"] === false) {
-      command.push("--skip-redaction");
-    }
 
     const { error, stdout } = spawnSync(command);
     const secret = stdout.trim();
@@ -313,119 +309,73 @@ function getGithubToken(): string | undefined {
 }
 
 type CurlOptions = {
-  method?: string;
-  body?: string;
-  headers?: Record<string, string> | undefined;
-  timeout?: number;
-  cache?: boolean;
-  retries?: number;
+  /** Parse the body of a successful response as JSON. */
   json?: boolean;
-  arrayBuffer?: boolean;
-  filename?: string;
+  /** Answer a repeated request for the same URL from the first one's result. */
+  cache?: boolean;
 };
 
 type CurlResult = {
-  status: number | undefined;
-  statusText: string | undefined;
   error: Error | undefined;
   body: unknown;
 };
 
 let cachedResults: Record<string, CurlResult | undefined> | undefined;
 
+/** A GET, tried up to three times. A 400, 404 or 422 is an answer, not a failure to repeat. */
 export async function curl(url: string | URL, options: CurlOptions = {}): Promise<CurlResult> {
-  let { hostname, href } = new URL(url);
-  let method = options["method"] || "GET";
-  let input = options["body"];
-  let headers = options["headers"] || {};
-  let retries = options["retries"] || 3;
-  let json = options["json"];
-  let arrayBuffer = options["arrayBuffer"];
-  let filename = options["filename"];
+  const { hostname, href } = new URL(url);
+  const { json, cache } = options;
 
-  let cacheKey: string | undefined;
-  let cache = options["cache"];
-  if (cache) {
-    cacheKey = `${method} ${href}`;
-    const cachedResult = cachedResults?.[cacheKey];
-    if (cachedResult) {
-      return cachedResult;
+  const cachedResult = cache ? cachedResults?.[href] : undefined;
+  if (cachedResult) {
+    return cachedResult;
+  }
+
+  const headers: Record<string, string> = {};
+  if (hostname === "api.github.com" || hostname === "uploads.github.com") {
+    const githubToken = getGithubToken();
+    if (githubToken) {
+      headers["Authorization"] = `Bearer ${githubToken}`;
     }
   }
 
-  if (typeof headers["Authorization"] === "undefined") {
-    if (hostname === "api.github.com" || hostname === "uploads.github.com") {
-      const githubToken = getGithubToken();
-      if (githubToken) {
-        headers["Authorization"] = `Bearer ${githubToken}`;
-      }
-    }
-  }
-
-  let status: number | undefined;
-  let statusText: string | undefined;
   let body: unknown;
   let error: Error | undefined;
-  for (let i = 0; i < retries; i++) {
+  for (let i = 0; i < 3; i++) {
     if (i > 0) {
       await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
     }
 
     let response;
     try {
-      response = await fetch(href, { method, headers, body: input ?? null });
+      response = await fetch(href, { headers });
+      body = json && response.ok ? await response.json() : await response.text();
     } catch (cause) {
       debugLog("$", "curl", href, "-> error");
-      error = new Error(`Fetch failed: ${method} ${url}`, { cause });
+      error = new Error(`Fetch failed: GET ${url}`, { cause });
       continue;
     }
+    debugLog("$", "curl", href, "->", response.status, response.statusText);
 
-    status = response["status"];
-    statusText = response["statusText"];
-    debugLog("$", "curl", href, "->", status, statusText);
-
-    const ok = response["ok"];
-    try {
-      if (filename && ok) {
-        const buffer = await response.arrayBuffer();
-        mkdirSync(dirname(filename), { recursive: true });
-        writeFileSync(filename, new Uint8Array(buffer));
-      } else if (arrayBuffer && ok) {
-        body = await response.arrayBuffer();
-      } else if (json && ok) {
-        body = await response.json();
-      } else {
-        body = await response.text();
-      }
-    } catch (cause) {
-      error = new Error(`Fetch failed: ${method} ${url}`, { cause });
-      continue;
-    }
-
-    if (response["ok"]) {
+    if (response.ok) {
       // An earlier attempt's failure is not this request's.
       error = undefined;
       break;
     }
 
-    error = new Error(`Fetch failed: ${method} ${url}: ${status} ${statusText}`, { cause: body });
-
-    if (status === 400 || status === 404 || status === 422) {
+    error = new Error(`Fetch failed: GET ${url}: ${response.status} ${response.statusText}`, { cause: body });
+    if (response.status === 400 || response.status === 404 || response.status === 422) {
       break;
     }
   }
 
-  if (cacheKey) {
+  const result = { error, body };
+  if (cache) {
     cachedResults ||= {};
-    cachedResults[cacheKey] = { status, statusText, error, body };
+    cachedResults[href] = result;
   }
-
-  return {
-    status,
-    statusText,
-    error,
-    body,
-  };
+  return result;
 }
 
 function getBuildId(): string | undefined {
@@ -775,18 +725,11 @@ export function markBuildkiteStepReported(): void {
   }
 }
 
-let lastGroup: string | undefined;
-
 export function startGroup<T>(title: string, fn: () => Promise<T>): Promise<T>;
 
 export function startGroup(title: string, fn?: () => unknown): void;
 
 export function startGroup(title: string, fn?: () => unknown): Promise<unknown> | void {
-  if (lastGroup && lastGroup !== title) {
-    lastGroup = title;
-    endGroup();
-  }
-
   if (isGithubAction) {
     console.log(`::group::${stripAnsi(title)}`);
   } else if (isBuildkite) {
@@ -810,10 +753,6 @@ export function startGroup(title: string, fn?: () => unknown): Promise<unknown> 
 }
 
 export function endGroup(): void {
-  if (lastGroup) {
-    lastGroup = undefined;
-  }
-
   if (isGithubAction) {
     console.log("::endgroup::");
   } else {

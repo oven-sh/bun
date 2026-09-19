@@ -34,7 +34,7 @@ export type Annotation = {
 };
 
 /** What a log line was matched into, before parseAnnotation() normalizes it. */
-export type AnnotationInput = {
+type AnnotationInput = {
   title?: string | undefined;
   content?: string | string[] | undefined;
   source?: string | undefined;
@@ -45,7 +45,7 @@ export type AnnotationInput = {
   metadata?: Record<string, string | undefined> | undefined;
 };
 
-export type AnnotationContext = {
+type AnnotationContext = {
   cwd?: string;
   command?: string[];
 };
@@ -99,7 +99,7 @@ export function parseAnnotation(options: AnnotationInput, context?: AnnotationCo
   };
 }
 
-export type AnnotationFormatOptions = {
+type AnnotationFormatOptions = {
   concise?: boolean;
   buildkite?: boolean;
 };
@@ -168,7 +168,7 @@ export function formatAnnotationToHtml(annotation: Annotation, options: Annotati
   return html;
 }
 
-export type AnnotationResult = {
+type AnnotationResult = {
   annotations: Annotation[];
   content: string;
 };

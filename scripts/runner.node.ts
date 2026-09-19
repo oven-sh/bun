@@ -58,7 +58,6 @@ import {
 } from "./buildkite.ts";
 import {
   getEnv,
-  getWindowsExitReason,
   isAndroid,
   isBuildkite,
   isCI,
@@ -1929,12 +1928,6 @@ async function spawnWithTimeout(options: SpawnOptions): Promise<SpawnResult> {
   } else if (exitCode === undefined) {
     error = "timeout";
   } else {
-    if (isWindows && typeof exitCode !== "string") {
-      const winCode = getWindowsExitReason(exitCode);
-      if (winCode) {
-        exitCode = winCode;
-      }
-    }
     error = `code ${exitCode}`;
   }
   if (timedOut && (!error || error === signalCode || /^code \d+$/.test(error)))

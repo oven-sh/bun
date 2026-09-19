@@ -8,7 +8,7 @@ import {
   type SpawnSyncOptions as NodeSpawnSyncOptions,
   type StdioOptions,
 } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { tmpdir as nodeTmpdir } from "node:os";
 import { join } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
@@ -113,13 +113,6 @@ export async function spawn(command: string[], options: SpawnOptions = {}): Prom
     spawnError = cause;
   }
 
-  if (exitCode !== 0 && isWindows) {
-    const exitReason = getWindowsExitReason(exitCode);
-    if (exitReason) {
-      signalCode = exitReason;
-    }
-  }
-
   if (spawnError || signalCode || exitCode !== 0) {
     const description = command.map(arg => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg)).join(" ");
     const cause = spawnError || stderr.trim() || stdout.trim() || undefined;
@@ -190,13 +183,6 @@ export function spawnSync(command: string[], options: SpawnOptions = {}): SpawnR
     stderr = stderrBuffer?.toString?.() ?? "";
   }
 
-  if (exitCode !== 0 && isWindows) {
-    const exitReason = getWindowsExitReason(exitCode);
-    if (exitReason) {
-      signalCode = exitReason;
-    }
-  }
-
   if (spawnError || signalCode || exitCode !== 0) {
     const description = command.map(arg => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg)).join(" ");
     const cause = spawnError || stderr?.trim() || stdout?.trim() || undefined;
@@ -215,47 +201,6 @@ export function spawnSync(command: string[], options: SpawnOptions = {}): SpawnR
     stderr,
     error,
   };
-}
-
-export function getWindowsExitReason(exitCode: number | null): string | undefined {
-  const windowsKitPath = "C:\\Program Files (x86)\\Windows Kits";
-  if (!existsSync(windowsKitPath)) {
-    return;
-  }
-
-  const windowsKitPaths = readdirSync(windowsKitPath)
-    .filter(filename => isFinite(parseInt(filename)))
-    .sort((a, b) => parseInt(b) - parseInt(a));
-
-  let ntStatusPath: string | undefined;
-  for (const windowsKitPath of windowsKitPaths) {
-    const includePath = `${windowsKitPath}\\Include`;
-    if (!existsSync(includePath)) {
-      continue;
-    }
-
-    const windowsSdkPaths = readdirSync(includePath).sort();
-    for (const windowsSdkPath of windowsSdkPaths) {
-      const statusPath = `${includePath}\\${windowsSdkPath}\\shared\\ntstatus.h`;
-      if (existsSync(statusPath)) {
-        ntStatusPath = statusPath;
-        break;
-      }
-    }
-  }
-
-  if (!ntStatusPath) {
-    return;
-  }
-
-  const nthStatus = readFileSync(ntStatusPath, "utf8");
-  const match = nthStatus.match(new RegExp(`(STATUS_\\w+).*0x${exitCode?.toString(16)}`, "i"));
-  if (match) {
-    const [, exitReason] = match;
-    return exitReason;
-  }
-
-  return undefined;
 }
 
 type WhichOptions = {

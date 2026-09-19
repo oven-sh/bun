@@ -6195,12 +6195,20 @@ describe.concurrent("write() after end()", () => {
         frame(3, 0, 1, rstCode),
         ...Array(8).fill(frame(0xfa, 0, 0, Buffer.alloc(16384))),
       ]);
+      const closed = Promise.withResolvers();
+      // Resolves on `event`. An 'error' or a 'close' that comes first rejects.
+      const waitFor = (emitter, event) =>
+        new Promise((resolve, reject) => {
+          emitter.once(event, resolve);
+          emitter.once("error", reject);
+          emitter.once("close", () => reject(new Error(`closed before '${event}'`)));
+        });
       // Raw HTTP/2 peer: sends SETTINGS, then answers the first HEADERS frame with the burst.
       const server = tls.createServer({ ...TLS_CERT, ALPNProtocols: ["h2"] }, socket => {
         let received = Buffer.alloc(0);
         let sawPreface = false;
         let answered = false;
-        socket.on("error", () => {});
+        socket.on("error", closed.reject);
         socket.write(frame(4, 0, 0));
         socket.on("data", chunk => {
           received = Buffer.concat([received, chunk]);
@@ -6225,8 +6233,7 @@ describe.concurrent("write() after end()", () => {
       try {
         const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
         raw = net.connect(port, "127.0.0.1");
-        raw.on("error", () => {});
-        await new Promise(resolve => raw.once("connect", resolve));
+        await waitFor(raw, "connect");
         // The TLS socket reads through this Duplex. Once `held` is an array, the ciphertext is kept
         // until it is at least as long as the burst and then pushed at once, which makes the TLS
         // socket deliver its reads back to back in one turn.
@@ -6250,13 +6257,12 @@ describe.concurrent("write() after end()", () => {
           }
         });
         const socket = tls.connect({ socket: proxy, ALPNProtocols: ["h2"], rejectUnauthorized: false });
-        await new Promise(resolve => socket.once("secureConnect", resolve));
+        await waitFor(socket, "secureConnect");
         session = http2.connect(`https://localhost:${port}`, { createConnection: () => socket });
-        session.on("error", () => {});
-        await new Promise(resolve => session.once("remoteSettings", resolve));
+        await waitFor(session, "remoteSettings");
+        for (const emitter of [raw, proxy, socket, session]) emitter.on("error", closed.reject);
 
         held = [];
-        const closed = Promise.withResolvers();
         const req = session.request({ ":method": "POST", ":path": "/" }, { endStream: false });
         const late = record(req, closed);
         // 'response' is emitted inside the read that also carries the RST_STREAM.

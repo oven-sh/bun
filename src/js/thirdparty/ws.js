@@ -1588,8 +1588,7 @@ class WebSocketServer extends EventEmitter {
         abortHandshake(socket, 500, undefined, undefined, request);
       }
     };
-    // node:http hands a socket to 'upgrade' while earlier responses on the connection can still
-    // be in flight. The native upgrade takes the connection over, so it waits for them.
+    // The native upgrade takes the connection over: not while responses ahead are in flight.
     const onHandoffActive = socket[require("internal/http").kOnHandoffActive];
     if (onHandoffActive !== undefined) {
       onHandoffActive.$call(socket, upgrade);

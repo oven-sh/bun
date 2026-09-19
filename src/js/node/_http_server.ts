@@ -780,8 +780,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.upgrade = true;
             // Node frees the parser before handing the raw socket to 'connect'.
             releaseServerParserShim(socket, http_req);
-            // Behind responses that are still in flight, the listener gets the socket now (like
-            // Node) but what it writes waits for its turn in the pipeline.
+            // Behind responses in flight, the listener's writes wait for their turn in the pipeline.
             if (isPipelined) queuePipelinedHandoff(server, socket, http_res, !!isAncientHTTP);
             try {
               server.emit("connect", http_req, socket, head);
@@ -901,10 +900,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // writes are buffered until the in-flight response finishes and the
           // pipeline assigns it the socket (advanceResponsePipeline).
           if (is_upgrade) {
-            // The connection leaves HTTP here: nothing after this request head is
-            // parsed as a request. The listener gets the socket now, like Node,
-            // but what it writes waits for its turn in the pipeline, so the 101
-            // follows the responses ahead of it on the wire.
+            // The listener gets the socket now, like Node. Its writes wait for their turn in the
+            // pipeline, so the 101 follows the responses ahead of it on the wire.
             socketHandle.upgradeToTunnel(hasBody, handle);
             socket[kHandoffResponse] = handle;
             socket[kEnableStreaming](true);
@@ -1329,15 +1326,12 @@ function resolveHandoffPromise(promise) {
   $resolvePromise(promise, undefined);
 }
 
-// Hand the raw socket to the 'upgrade' listeners, like Node.js's
-// onParserExecuteCommon. Returns false when the socket was destroyed because
-// shouldUpgradeCallback accepted the upgrade but no listener is installed.
+// Node's onParserExecuteCommon. False: no 'upgrade' listener, so the socket was destroyed.
 function emitUpgradeHandoff(server, socket, req, upgradeHead, hasBody) {
   detachSocketListenersForHandoff(socket);
   // Node frees the parser before emitting 'upgrade' (socket.parser === null there).
   releaseServerParserShim(socket, req);
-  // A read of a request ahead may have set the socket flowing. Flowing with no
-  // reader drops pushed bytes, so stop the flow (Node: onParserExecuteCommon).
+  // A flowing socket with no reader drops pushed bytes (Node does the same reset).
   if (socket.readableFlowing === true) socket.readableFlowing = null;
   if (hasBody && !req.complete) {
     socket[kUpgradeIncoming] = req;
@@ -1385,8 +1379,7 @@ const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
 // responses. Reads are paused while it is at or above the high water mark.
 const kOutgoingData = Symbol("kOutgoingData");
 const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
-// On a server socket handed to 'connect'/'upgrade' behind responses still in flight:
-// { write, final, ready } parked until the pipeline reaches the hand-off (undefined otherwise).
+// { write, final, ready } parked on a handed-off socket until the pipeline reaches it.
 const kPendingHandoff = Symbol("kPendingHandoff");
 const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
 // Set when the dispatcher already detached a synchronously-finished response,
@@ -2018,8 +2011,7 @@ function getNodeHTTPServerSocket() {
     }
 
     get [kInternalSocketData]() {
-      // After a 'connect'/'upgrade' hand-off the response of that request, which behind a
-      // pipeline is not the socket's current response yet.
+      // After a hand-off: that request's response, not the one still in flight ahead of it.
       return this[kHandoffResponse] ?? this[kHandle]?.response;
     }
   } as unknown as typeof import("node:net").Socket;
@@ -2574,16 +2566,13 @@ function queuePipelinedResponse(socket, res, isAncient) {
     ended: false,
     isAncient,
     socket,
-    // A CONNECT/Upgrade hand-off: its turn in the pipeline releases what the
-    // listener wrote to the socket instead of replaying a response.
+    // A CONNECT/Upgrade hand-off: its turn releases the listener's parked writes.
     handoff: false,
   };
   (socket[kPipelinedResponses] ??= []).push(res);
 }
 
-// A pipelined dispatch can arrive after the previous response finished and detached
-// (bytes still flushing keep it pending), leaving nothing in flight to advance the
-// queue. Kick the pipeline once this dispatch settles.
+// Nothing in flight advances the queue when the previous response finished but still flushes.
 function kickPipelineIfIdle(server, socket) {
   if (socket._httpMessage == null && !socket[kPipelineKickScheduled]) {
     socket[kPipelineKickScheduled] = true;
@@ -2591,10 +2580,7 @@ function kickPipelineIfIdle(server, socket) {
   }
 }
 
-// A CONNECT/Upgrade behind responses still in flight. The listener gets the socket at
-// once, like Node, but the socket parks what it writes (_write/_final) and what must
-// run once it is the connection's current exchange (kOnHandoffActive) until the
-// pipeline reaches this entry, so the responses ahead keep their place on the wire.
+// The socket parks its writes and kOnHandoffActive callbacks until the pipeline reaches it.
 function queuePipelinedHandoff(server, socket, res, isAncient) {
   queuePipelinedResponse(socket, res, isAncient);
   res[kPipelinedQueuedState].handoff = true;
@@ -2693,8 +2679,6 @@ function advanceResponsePipeline(server, socket) {
     }
 
     if (queued.handoff) {
-      // The responses ahead have finished and this request's native response
-      // is now the socket's current one: the tunnel owns the connection.
       activatePipelinedHandoff(socket);
       return;
     }

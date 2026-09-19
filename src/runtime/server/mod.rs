@@ -1498,10 +1498,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let nhr_flags = nhr.flags.get();
             if !nhr_flags.contains(NhrFlags::UPGRADED) {
                 if let Some(raw) = nhr.raw_response.get() {
-                    // A raw 'upgrade'/'connect' handoff keeps the WebSocket
-                    // upgrade context: behind a pipeline the builtin ws adopts
-                    // the tunnel only once the responses ahead are complete,
-                    // and the listener may have ended them during this dispatch.
+                    // A tunnel keeps its WebSocket upgrade context: ws adopts
+                    // it only once the responses ahead of it are complete.
                     if nhr_flags.contains(NhrFlags::TUNNELED)
                         || (!nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                             && raw.state().is_response_pending())

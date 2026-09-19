@@ -1348,6 +1348,9 @@ pub struct Options<'a> {
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub target: bun_ast::Target,
+    /// The output is a script for `vm.runInContext`, so `import.meta` is not
+    /// available and `require` comes from the context.
+    pub repl_mode: bool,
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
@@ -1432,6 +1435,7 @@ impl<'a> Default for Options<'a> {
             indent: Indentation::default(),
             source_map_handler: None,
             target: bun_ast::Target::Browser,
+            repl_mode: false,
             runtime_transpiler_cache: None,
             module_info: None,
             input_files_for_dev_server: None,
@@ -7858,6 +7862,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         && tree.uses_require_ref
         && tree.exports_kind == js_ast::ExportsKind::Esm
         && printer.options.target == bun_ast::Target::Bun
+        && !printer.options.repl_mode
     {
         // Hoist the `var {require}=import.meta;` declaration. Previously,
         // `import.meta.require` was inlined into transpiled files, which

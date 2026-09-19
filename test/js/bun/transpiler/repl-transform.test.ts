@@ -304,5 +304,23 @@ describe("Bun.Transpiler replMode", () => {
       // With replMode, value wrapper should be present
       expect(result).toContain("value:");
     });
+
+    // https://github.com/oven-sh/bun/issues/43506
+    test.each(["bun", "node", "browser"] as const)(
+      "no `import.meta.require` hoist in an ESM input with target %s",
+      async target => {
+        const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true, target });
+        const result = transpiler.transformSync('import fs from "fs"; require("path").sep');
+        expect(result).not.toContain("import.meta");
+        expect(result).toContain('require("path").sep');
+
+        // The output is a script. A script cannot use `import.meta`.
+        const ctx = vm.createContext({ require });
+        const { value } = await vm.runInContext(result, ctx, {
+          importModuleDynamically: specifier => import(specifier),
+        });
+        expect(value).toBe(require("path").sep);
+      },
+    );
   });
 });

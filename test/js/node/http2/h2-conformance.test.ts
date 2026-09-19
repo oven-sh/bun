@@ -1928,3 +1928,74 @@ describe("stream release after a queued END_STREAM", () => {
     }
   });
 });
+
+describe.concurrent("a response over maxSendHeaderBlockLength (nghttp2 on_frame_not_send_callback)", () => {
+  // Verified against node v26.3.0 with the same raw client: the stream only carries
+  // RST_STREAM FRAME_SIZE_ERROR, and the session closes with GOAWAY NO_ERROR (node sends that
+  // GOAWAY twice). The handler keeps using the stream for the rest of the tick, and none of
+  // that may reach the wire.
+  const BIG = Buffer.alloc(300, "b").toString();
+  const handlers: Record<string, (server: http2.Http2Server) => void> = {
+    "respond() then end()": server =>
+      server.on("stream", stream => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": 200, "x-big": BIG });
+        stream.end("ok");
+      }),
+    "respond() with waitForTrailers, then sendTrailers()": server =>
+      server.on("stream", stream => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": 200, "x-big": BIG }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "1" }));
+        stream.end("ok");
+      }),
+    "the compat API": server =>
+      server.on("request", (req, res) => {
+        res.on("error", () => {});
+        res.setHeader("x-big", BIG);
+        res.end("ok");
+      }),
+    "the compat API with trailers": server =>
+      server.on("request", (req, res) => {
+        res.on("error", () => {});
+        res.setHeader("x-big", BIG);
+        res.addTrailers({ "x-trailer": "1" });
+        res.end("ok");
+      }),
+  };
+
+  test.each(Object.keys(handlers))("%s", async name => {
+    const server = http2.createServer({ maxSendHeaderBlockLength: 100 });
+    handlers[name](server);
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      const closed = once(c.socket, "close");
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await closed;
+      const frames = c.frames
+        .filter(f => f.streamId === 1 || f.type === FrameType.GOAWAY)
+        .map(f => ({
+          type: f.type,
+          streamId: f.streamId,
+          code:
+            f.type === FrameType.GOAWAY
+              ? goawayErrorCode(f)
+              : f.type === FrameType.RST_STREAM
+                ? f.payload.readUInt32BE(0)
+                : undefined,
+        }));
+      expect(frames).toEqual([
+        { type: FrameType.RST_STREAM, streamId: 1, code: ErrorCode.FRAME_SIZE_ERROR },
+        { type: FrameType.GOAWAY, streamId: 0, code: ErrorCode.NO_ERROR },
+      ]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+});

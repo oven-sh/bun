@@ -5798,9 +5798,9 @@ it("delivers the reserved push stream and fails the session when its headers can
 
 it("resets the stream and closes the session gracefully when respond() exceeds maxSendHeaderBlockLength", async () => {
   // Verified against node v26.3.0: the server stream gets 'frameError' (HEADERS,
-  // FRAME_SIZE_ERROR), RST_STREAM FRAME_SIZE_ERROR goes out, and the session closes with one
-  // GOAWAY NO_ERROR. The pushed stream responds after the refused block and is still
-  // delivered: the refused block never reached the HPACK encoder.
+  // FRAME_SIZE_ERROR), RST_STREAM FRAME_SIZE_ERROR goes out, and the session closes with
+  // GOAWAY NO_ERROR (node sends that GOAWAY twice). The pushed stream responds after the
+  // refused block and is still delivered: the refused block never reached the HPACK encoder.
   const server = http2.createServer({ maxSendHeaderBlockLength: 200 });
   try {
     const serverEvents = [];
@@ -5980,6 +5980,57 @@ it("respond() delivers the response after additionalHeaders() exceeds maxSendHea
     expect(serverRstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
     expect(goaways).toEqual([{ code: http2.constants.NGHTTP2_NO_ERROR, lastStreamID: 1 }]);
     expect(serverEvents).toEqual(["frameError type=1 code=6"]);
+  } finally {
+    server.close();
+  }
+});
+
+it("a client request over maxSendHeaderBlockLength leaves the session usable", async () => {
+  // Verified against node v26.3.0: the request is refused locally with 'frameError' and
+  // REFUSED_STREAM. The next request reuses an indexed field, so the server only decodes it if
+  // the refused block never reached the client's HPACK encoder.
+  const server = http2.createServer();
+  try {
+    server.on("stream", (stream, headers) => {
+      stream.respond({ ":status": 200, "x-echo": String(headers["x-marker"]) });
+      stream.end();
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`, { maxSendHeaderBlockLength: 300 });
+    const sessionErrors = [];
+    client.on("error", e => sessionErrors.push(e.message));
+    const send = headers =>
+      new Promise(resolve => {
+        const result = { frameError: undefined, echo: undefined, error: undefined };
+        const req = client.request(headers);
+        req.on("frameError", (type, code) => (result.frameError = [type, code]));
+        req.on("response", responseHeaders => (result.echo = responseHeaders["x-echo"]));
+        req.on("error", e => (result.error = e.message));
+        req.on("close", () => resolve({ ...result, rstCode: req.rstCode }));
+        req.resume();
+        req.end();
+      });
+
+    const results = [
+      await send({ ":path": "/a", "x-marker": "indexed" }),
+      await send({ ":path": "/b", "x-marker": "indexed", "x-big": Buffer.alloc(400, "b").toString() }),
+      await send({ ":path": "/c", "x-marker": "indexed" }),
+    ];
+    client.destroy();
+    expect({ results, sessionErrors }).toEqual({
+      results: [
+        { frameError: undefined, echo: "indexed", error: undefined, rstCode: 0 },
+        {
+          // frame type 1 is HEADERS
+          frameError: [1, http2.constants.NGHTTP2_FRAME_SIZE_ERROR],
+          echo: undefined,
+          error: "Stream closed with error code NGHTTP2_REFUSED_STREAM",
+          rstCode: http2.constants.NGHTTP2_REFUSED_STREAM,
+        },
+        { frameError: undefined, echo: "indexed", error: undefined, rstCode: 0 },
+      ],
+      sessionErrors: [],
+    });
   } finally {
     server.close();
   }

@@ -5466,6 +5466,10 @@ impl H2FrameParser {
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
+        // JS can still end a stream in the tick that reset it. A reset stream sends nothing.
+        if stream.state == StreamState::CLOSED {
+            return Ok(JSValue::UNDEFINED);
+        }
 
         stream.wait_for_trailers = false;
         let _ = this.send_data(
@@ -5634,6 +5638,10 @@ impl H2FrameParser {
         // The header/sensitive-object getters and value coercions below can run user JS
         // while `stream` is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
+        // JS can still send trailers in the tick that reset the stream. A reset stream sends nothing.
+        if stream.state == StreamState::CLOSED {
+            return Ok(JSValue::UNDEFINED);
+        }
 
         let Some(headers_obj) = headers_arg.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));

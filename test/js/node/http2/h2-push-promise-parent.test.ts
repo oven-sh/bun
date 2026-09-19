@@ -42,7 +42,7 @@ class RawH2Server {
   private buf: Buffer = Buffer.alloc(0);
   private sawPreface = false;
   frames: Frame[] = [];
-  private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
+  private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void; reject: (e: Error) => void }> = [];
 
   private constructor(server: net.Server) {
     this.server = server;
@@ -55,6 +55,10 @@ class RawH2Server {
       s.socket = socket;
       socket.on("data", d => s.onData(d));
       socket.on("error", () => {});
+      socket.on("close", () => {
+        for (const w of s.waiters.splice(0))
+          w.reject(new Error("the connection closed before the awaited frame arrived"));
+      });
     });
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -93,23 +97,13 @@ class RawH2Server {
     this.socket!.write(encodeFrame(type, flags, streamId, payload));
   }
 
-  waitFor(pred: (f: Frame) => boolean, timeoutMs = 2000): Promise<Frame> {
+  /** No deadline here: the test's own timeout is the limit. */
+  waitFor(pred: (f: Frame) => boolean): Promise<Frame> {
     const existing = this.frames.find(pred);
     if (existing) return Promise.resolve(existing);
-    return new Promise((resolve, reject) => {
-      const w = { pred, resolve };
-      this.waiters.push(w);
-      const t = setTimeout(() => {
-        const i = this.waiters.indexOf(w);
-        if (i !== -1) this.waiters.splice(i, 1);
-        reject(new Error("timed out waiting for frame"));
-      }, timeoutMs);
-      const orig = w.resolve;
-      w.resolve = f => {
-        clearTimeout(t);
-        orig(f);
-      };
-    });
+    const { promise, resolve, reject } = Promise.withResolvers<Frame>();
+    this.waiters.push({ pred, resolve, reject });
+    return promise;
   }
 
   close() {

@@ -13,7 +13,7 @@ const literal_kinds = new Set([
 // The `$debug` and `$assert` macros expand to calls of these.
 const kept_names = new Set(["$debug_log", "$assert"]);
 
-/** Throws if the preprocessor rewrote a `$name` inside a literal of `text`, or left a `$name` in its code. */
+/** Throws if the preprocessor rewrote a `$name` inside a literal of `text`, or left a `$name` or a `require()` in its code. */
 export function checkPreprocessedSource(fileName: string, text: string, firstLine = 1) {
   const kind = fileName.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, false, kind);
@@ -24,6 +24,8 @@ export function checkPreprocessedSource(fileName: string, text: string, firstLin
       problem = "the preprocessor rewrote a `$name` inside this literal";
     } else if (ts.isIdentifier(node) && /^\$\w/.test(node.text) && !kept_names.has(node.text)) {
       problem = "the preprocessor did not rewrite this `$name`";
+    } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require") {
+      problem = "the preprocessor did not replace this require()";
     }
     if (problem) {
       const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));

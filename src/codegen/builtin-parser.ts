@@ -178,7 +178,7 @@ function sliceRegularExpressionSourceCode(contents: string, replace: boolean) {
   let i = 0;
   let result = "";
   while (contents.length) {
-    i = contents.match(/\/(?!\/|\*)|\\|\[/)!.index!;
+    i = contents.match(/[/\\[]/)!.index!;
     result += contents.slice(0, i);
     contents = contents.slice(i);
     if (!contents.length) break;

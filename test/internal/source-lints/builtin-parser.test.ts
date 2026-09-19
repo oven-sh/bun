@@ -96,6 +96,14 @@ describe("builtin preprocessor", () => {
     expect(preprocess(body)).toEqual(expected(body));
   });
 
+  test.each([
+    ["*", "x = /[$a]/*2 + $b / 2;"],
+    ["a block comment", "x = /[$a]//* it's a comment */ + $b / 2;"],
+    ["a line comment", "x = /[$a]/// it's a comment\n + $b / 2;"],
+  ])("a regex literal ends at its `/` when %s follows", (_, body) => {
+    expect(preprocess(body)).toEqual(expected(body));
+  });
+
   test("a bracket in a regex literal does not move the end of the slice", () => {
     expect(sliceSourceCode("{ x = [$b, /[)]/]; } rest", true)).toEqual({
       result: "{ x = [__intrinsic__b, /[)]/]; }",

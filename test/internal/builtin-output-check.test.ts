@@ -9,7 +9,7 @@ import { checkPreprocessedSource } from "../../src/codegen/builtin-output-check.
 import { sliceSourceCode } from "../../src/codegen/builtin-parser.ts";
 
 function check(source: string, firstLine?: number) {
-  const { result, rest } = sliceSourceCode(`{${source}}`, true);
+  const { result, rest } = sliceSourceCode(`{${source}}`, true, specifier => `load(${JSON.stringify(specifier)})`);
   expect(rest).toBe("");
   return () => checkPreprocessedSource("src/js/example.ts", result.slice(1, -1), firstLine);
 }
@@ -19,7 +19,7 @@ test("accepts what the preprocessor reads right", () => {
     "const re = x ? /[$a]/ : !/[$a]/.test(`${$b} \\`$a\\``);",
     "$debug('$a', $b);",
     "$assert($b, '$a');",
-    "export default { re, half: $b / 2 / $c };",
+    "export default { re, half: $b / 2 / $c, fs: require('node:fs') };",
   ].join("\n");
   expect(check(source)).not.toThrow();
 });
@@ -30,9 +30,15 @@ test("reports a regex literal that the preprocessor read as code", () => {
   );
 });
 
-test("reports code that the preprocessor read as a comment", () => {
-  // After `)` the regex literal is read as code, so the `//` in it opens a line comment.
+// After `)` the regex literal is read as code, so the `//` in it opens a line comment.
+test("reports a `$name` in code that the preprocessor read as a comment", () => {
   expect(check("if (x) /a\\/\\//.test(y) && $b();")).toThrow(
     "src/js/example.ts:1:27: the preprocessor did not rewrite this `$name`: $b",
+  );
+});
+
+test("reports a require() in code that the preprocessor read as a comment", () => {
+  expect(check('if (x) /a\\/\\//.test(y) && require("node:fs");')).toThrow(
+    'src/js/example.ts:1:27: the preprocessor did not replace this require(): require("node:fs")',
   );
 });

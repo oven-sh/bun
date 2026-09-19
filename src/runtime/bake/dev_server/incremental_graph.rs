@@ -1352,10 +1352,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         Content::CssRoot(id) => Some(id),
                         _ => None,
                     };
-                    self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
+                    // A css root stays routable (the id is the path hash) and
+                    // keeps its asset while the rebuild runs, so a page served
+                    // in between links a stylesheet that still exists. The
+                    // rebuild replaces the asset (`replace_path`) or drops it
+                    // (`insert_failure`).
+                    let css_mode = if prior_css_root.is_some() {
+                        FreeCssMode::IgnoreCss
+                    } else {
+                        FreeCssMode::UnrefCss
+                    };
+                    self.free_file_content(key.slice(), &mut existing, css_mode);
                     if let Some(id) = prior_css_root {
-                        // Keep css chunk entries routable as css roots (the
-                        // id is the path hash) so traces keep their slot.
                         existing.kind = FileKind::Css;
                         existing.content = Content::CssRoot(id);
                     } else {

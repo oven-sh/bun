@@ -1127,7 +1127,9 @@ test.concurrent("dev server started after process.chdir() reports bundle failure
 // route stays loaded until the rebuild ends. A request for the page in between
 // builds the <link> list from that graph. The page had no <link> for the
 // stylesheet, and when the stylesheet imports another one a debug build aborted
-// with "only CSS roots should be found by tracing".
+// with "only CSS roots should be found by tracing". The stylesheet's asset was
+// also dropped at that moment, so a <link> to it answered 404 until the rebuild
+// ended.
 //
 // The plugin parks the rebuild inside onResolve. The bundler resolves the
 // imports of a file in order, so "./missing.css" has failed by then.
@@ -1162,13 +1164,22 @@ test.concurrent("page request while a rebuild that fails a linked stylesheet is 
       globalThis.releaseBundle = Promise.withResolvers();
 
       using server = Bun.serve({ port: 0, development: true, routes: { "/": index } });
+      // The page must not link a stylesheet the server cannot serve, so every
+      // linked stylesheet is fetched too.
       async function fetchPage() {
         const response = await fetch(server.url);
         const text = await response.text();
+        const links = text.match(/<link rel="stylesheet"[^>]*>/g) ?? [];
+        const stylesheets = [];
+        for (const link of links) {
+          const href = link.match(/href="([^"]*)"/)[1];
+          const css = await fetch(new URL(href, server.url));
+          stylesheets.push({ status: css.status, rules: (await css.text()).match(/\\.[a-z] \\{/g) });
+        }
         return {
           status: response.status,
           title: text.match(/<title>(.*?)<\\/title>/)?.[1] ?? null,
-          stylesheets: text.match(/<link rel="stylesheet"[^>]*>/g)?.length ?? 0,
+          stylesheets,
         };
       }
 
@@ -1222,9 +1233,9 @@ test.concurrent("page request while a rebuild that fails a linked stylesheet is 
   const { stdout, stderr, exitCode } = await runServeFixture(dir);
   expect({ stdout, exitCode }, stderr).toEqual({
     stdout: JSON.stringify({
-      first: { status: 200, title: "one", stylesheets: 1 },
-      duringRebuild: { status: 200, title: "two", stylesheets: 1 },
-      afterRebuild: { status: 500, title: "Bun - Build Failed", stylesheets: 0 },
+      first: { status: 200, title: "one", stylesheets: [{ status: 200, rules: [".c {", ".a {"] }] },
+      duringRebuild: { status: 200, title: "two", stylesheets: [{ status: 200, rules: [".c {", ".a {"] }] },
+      afterRebuild: { status: 500, title: "Bun - Build Failed", stylesheets: [] },
     }),
     exitCode: 0,
   });

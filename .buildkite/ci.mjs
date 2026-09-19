@@ -1911,11 +1911,29 @@ async function probeHostedRunner() {
     ],
   });
 
+  // The real pipeline generation, on the container image, with the same
+  // sparse checkout the pipeline step uses. PROBE_GENERATE_ONLY makes main()
+  // generate the full pipeline (secrets, GitHub API, everything) and stop
+  // short of uploading it.
+  const generate = {
+    key: "probe-generate-pipeline",
+    label: ":mag: probe generate pipeline on node:26",
+    agents: { queue: "build-image" },
+    image: "docker.io/library/node:26",
+    checkout: {
+      sparse: { paths: [".buildkite/", "scripts/", "package.json", "bun.lock", "packages/", "LATEST"] },
+    },
+    env: { PROBE_GENERATE_ONLY: "1" },
+    timeout_in_minutes: 10,
+    command: ["node --version", "node .buildkite/ci.mjs"],
+  };
+
   const pipeline = {
     steps: [
       probe("default-image", undefined),
       probe("node-26", "docker.io/library/node:26"),
       probe("node-26.3.0", "docker.io/library/node:26.3.0"),
+      generate,
     ],
   };
   const content = toYaml(pipeline);
@@ -1929,7 +1947,8 @@ async function probeHostedRunner() {
 }
 
 async function main() {
-  if (process.env.BUILDKITE_BRANCH === "claude/ci-hosted-image-probe" || !isBuildkite) {
+  const generateOnly = process.env.PROBE_GENERATE_ONLY === "1";
+  if (process.env.BUILDKITE_BRANCH === "claude/ci-hosted-image-probe" && !generateOnly) {
     await probeHostedRunner();
     return;
   }
@@ -2004,6 +2023,12 @@ async function main() {
   console.log("Generated pipeline:");
   console.log(" - Path:", contentPath);
   console.log(" - Size:", (content.length / 1024).toFixed(), "KB");
+
+  if (isBuildkite && generateOnly) {
+    startGroup("Not uploading (PROBE_GENERATE_ONLY)");
+    await uploadArtifact(contentPath);
+    return;
+  }
 
   if (isBuildkite) {
     startGroup("Uploading pipeline...");

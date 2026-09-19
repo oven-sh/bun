@@ -3040,6 +3040,10 @@ function doSendFileFD(options, fd, headers, err, stat) {
     headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
   try {
+    // respond() prepares the headers again. Its 200 default is for the caller's headers only: a
+    // :status that statCheck replaced with a value that coerces to 0 is an error.
+    const status = headers[HTTP2_HEADER_STATUS];
+    if (status !== undefined && (status | 0) === 0) throw $ERR_HTTP2_STATUS_INVALID(0);
     this.respond(headers, options);
   } catch (err) {
     // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
@@ -3333,7 +3337,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers, options) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3379,7 +3383,7 @@ class ServerHttp2Stream extends Http2Stream {
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
   }
   respondWithFD(fd, headers, options) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();

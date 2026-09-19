@@ -97,6 +97,14 @@ function buildCases(file) {
   add(`respondWithFD("fd", { ":status": 99 })`, stream =>
     methods.respondWithFD(stream, { ":status": 99 }, undefined, "fd"),
   );
+
+  // A closed stream is rejected before every other check, like a destroyed one.
+  for (const method of ["respondWithFile", "respondWithFD"]) {
+    add(`close(), then ${method}({ ":status": 99 }, { offset: "1" })`, stream => {
+      stream.close();
+      methods[method](stream, { ":status": 99 }, { offset: "1" });
+    });
+  }
   return cases;
 }
 
@@ -136,8 +144,10 @@ async function run(file) {
     } catch (err) {
       seen.unshift(`throws ${err.name} ${err.code}: ${err.message}`);
       // A synchronous throw leaves the stream open for another response.
-      stream.respond({ ":status": 200 });
-      stream.end("fallback");
+      if (!stream.closed) {
+        stream.respond({ ":status": 200 });
+        stream.end("fallback");
+      }
     }
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));

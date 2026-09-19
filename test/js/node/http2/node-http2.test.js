@@ -5184,7 +5184,9 @@ it("http2 server stream prepares the final response headers like node", async ()
     respondWithFD({ ":status": 204, [sensitiveHeaders]: "x" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'headers[http2.neverIndex]' is invalid. Received 'x' | client: response 200, body "fallback"
     respondWithFD({ ":status": "0" }, { statCheck }): returns, statCheck saw :status 200 and a string date | client: response 200, body "file body"
     respondWithFD("fd", { ":status": 99 }, { offset: "1" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'options.offset' is invalid. Received '1' | client: response 200, body "fallback"
-    respondWithFD("fd", { ":status": 99 }): throws TypeError ERR_INVALID_ARG_TYPE: The "fd" argument must be of type number or an instance of FileHandle. Received type string ('fd') | client: response 200, body "fallback""
+    respondWithFD("fd", { ":status": 99 }): throws TypeError ERR_INVALID_ARG_TYPE: The "fd" argument must be of type number or an instance of FileHandle. Received type string ('fd') | client: response 200, body "fallback"
+    close(), then respondWithFile({ ":status": 99 }, { offset: "1" }): throws Error ERR_HTTP2_INVALID_STREAM: The stream has been destroyed | client: body ""
+    close(), then respondWithFD({ ":status": 99 }, { offset: "1" }): throws Error ERR_HTTP2_INVALID_STREAM: The stream has been destroyed | client: body """
   `);
 
   const node = nodeExe();
@@ -5198,6 +5200,63 @@ it("http2 server stream prepares the final response headers like node", async ()
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout.trimEnd().split(/\r?\n/)).toEqual(lines);
     expect(exitCode).toBe(0);
+  }
+});
+// respond() runs again after statCheck. Its 200 default is for the caller's headers: a :status that
+// statCheck replaced with a value that coerces to 0 still reaches onError. Node sends such a value
+// as is and the client fails the stream, so these calls are not in the fixture above.
+it("http2 file responses reject a :status that statCheck set to a value that coerces to 0", async () => {
+  using dir = tempDir("http2-statcheck-status", { "body.txt": "file body" });
+  const file = path.join(String(dir), "body.txt");
+  const calls = [];
+  for (const value of ["abc", null, 0]) {
+    for (const method of ["respondWithFile", "respondWithFD"]) calls.push({ method, value });
+  }
+  const errors = [];
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    const index = Number(headers[":path"].slice(1));
+    const { method, value } = calls[index];
+    const options = {
+      statCheck(stat, responseHeaders) {
+        responseHeaders[":status"] = value;
+      },
+      onError(err) {
+        errors[index] = `${err.code}: ${err.message}`;
+        stream.respond({ ":status": 500 });
+        stream.end();
+      },
+    };
+    if (method === "respondWithFile") {
+      stream.respondWithFile(file, {}, options);
+    } else {
+      const fd = fs.openSync(file, "r");
+      stream.on("close", () => fs.closeSync(fd));
+      stream.respondWithFD(fd, {}, options);
+    }
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+  try {
+    const statuses = await Promise.all(
+      calls.map((_, i) => {
+        const { promise, resolve } = Promise.withResolvers();
+        const req = client.request({ ":path": `/${i}` });
+        let status;
+        req.on("response", responseHeaders => (status = responseHeaders[":status"]));
+        req.on("error", () => {});
+        req.on("close", () => resolve(status));
+        req.resume();
+        req.end();
+        return promise;
+      }),
+    );
+    expect(errors).toEqual(calls.map(() => "ERR_HTTP2_STATUS_INVALID: Invalid status code: 0"));
+    expect(statuses).toEqual(calls.map(() => 500));
+  } finally {
+    client.close();
+    server.close();
   }
 });
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {

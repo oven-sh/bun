@@ -53,6 +53,25 @@ impl Declaration {
 }
 
 impl Declaration {
+    /// The features that a browser supports if it accepts this declaration.
+    fn supported_features(&self, arena: &bun_alloc::Arena) -> css::Features {
+        // Every browser with custom properties accepts any value for one.
+        if matches!(
+            self.property_id,
+            PropertyId::Custom(css::css_properties::custom::CustomPropertyName::Custom(_))
+        ) {
+            return css::Features::empty();
+        }
+        css::parse_utility::parse_string(arena, self.value, |parser| {
+            css::TokenList::parse(parser, &css::ParserOptions::default(None), 0)
+        })
+        .ok()
+        .and_then(|tokens| tokens.get_features())
+        .unwrap_or_default()
+    }
+}
+
+impl Declaration {
     fn eql(&self, other: &Self) -> bool {
         // `PropertyId` carries its own tag+prefix `PartialEq` (see
         // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
@@ -139,24 +158,22 @@ impl SupportsCondition {
                 }
                 Some(features)
             }
+            SupportsCondition::Declaration(declaration) => {
+                Some(declaration.supported_features(arena))
+            }
             // `parse_in_parens` keeps a `(property: value)` group as the raw
-            // text of an `Unknown`, so scan it like a declaration value.
-            SupportsCondition::Declaration(Declaration { value, .. })
-            | SupportsCondition::Unknown(value) => {
-                let mut input = css::ParserInput::new(value, arena);
-                let mut parser = css::Parser::new(
-                    &mut input,
-                    None,
-                    css::css_parser::ParserOpts::default(),
-                    None,
-                );
-                let tokens =
-                    css::TokenList::parse(&mut parser, &css::ParserOptions::default(None), 0);
-                Some(
-                    tokens
-                        .map(|tokens| tokens.get_features())
-                        .unwrap_or_default(),
-                )
+            // text of an `Unknown`.
+            SupportsCondition::Unknown(group) => {
+                let declaration = css::parse_utility::parse_string(arena, group, |parser| {
+                    parser.expect_parenthesis_block()?;
+                    parser.parse_nested_block(SupportsCondition::parse_declaration)
+                });
+                Some(match declaration {
+                    Ok(SupportsCondition::Declaration(declaration)) => {
+                        declaration.supported_features(arena)
+                    }
+                    _ => css::Features::empty(),
+                })
             }
             SupportsCondition::Not(_) | SupportsCondition::Or(_) => None,
             SupportsCondition::Selector(_) => Some(css::Features::empty()),

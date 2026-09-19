@@ -833,35 +833,27 @@ impl TokenList {
         fallbacks
     }
 
-    /// The features that the colors in these tokens use.
-    pub(crate) fn get_features(&self) -> css::targets::Features {
+    /// The features that the colors in these tokens use. `None` if the tokens
+    /// have a `var()` or an `env()`: a browser accepts such a value at parse
+    /// time without a check of the rest.
+    pub(crate) fn get_features(&self) -> Option<css::targets::Features> {
         use css::targets::Features;
         let mut features = Features::empty();
         for token_or_value in self.v.iter() {
-            match token_or_value {
-                TokenOrValue::Color(color) => features |= color.get_features(),
-                TokenOrValue::UnresolvedColor(UnresolvedColor::RGB { .. })
-                | TokenOrValue::UnresolvedColor(UnresolvedColor::HSL { .. }) => {
-                    features |= Features::SPACE_SEPARATED_COLOR_NOTATION;
-                }
+            features |= match token_or_value {
+                TokenOrValue::Color(color) => color.get_features(),
+                TokenOrValue::UnresolvedColor(
+                    UnresolvedColor::RGB { alpha, .. } | UnresolvedColor::HSL { alpha, .. },
+                ) => Features::SPACE_SEPARATED_COLOR_NOTATION | alpha.get_features()?,
                 TokenOrValue::UnresolvedColor(UnresolvedColor::LightDark { light, dark }) => {
-                    features |= light.get_features() | dark.get_features();
+                    light.get_features()? | dark.get_features()?
                 }
-                TokenOrValue::Function(f) => features |= f.arguments.get_features(),
-                TokenOrValue::Var(v) => {
-                    if let Some(fallback) = &v.fallback {
-                        features |= fallback.get_features();
-                    }
-                }
-                TokenOrValue::Env(v) => {
-                    if let Some(fallback) = &v.fallback {
-                        features |= fallback.get_features();
-                    }
-                }
-                _ => {}
-            }
+                TokenOrValue::Function(f) => f.arguments.get_features()?,
+                TokenOrValue::Var(_) | TokenOrValue::Env(_) => return None,
+                _ => Features::empty(),
+            };
         }
-        features
+        Some(features)
     }
 
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.

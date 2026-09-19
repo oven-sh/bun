@@ -1267,9 +1267,7 @@ fn workspace_ref_literal(
     Ok(found)
 }
 
-/// For `bun:internal-for-testing`: the spec that `$ref_name` in the `overrides` of the
-/// package.json in `source` takes from a workspace member. That package.json does not have
-/// to exist (see `workspace_map::parse_for_testing`).
+/// For `bun:internal-for-testing`: what `$ref_name` in `overrides` takes from a workspace member.
 pub fn workspace_ref_for_testing(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,

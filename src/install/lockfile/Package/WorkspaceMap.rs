@@ -256,8 +256,7 @@ fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
     path::fs::Path::init(abs_package_json_path).dir_keeping_root()
 }
 
-/// Not `source.path.name().dir`: that is not an absolute path for a package.json in a
-/// filesystem root.
+/// Not `source.path.name().dir`: that is not absolute for a package.json in a filesystem root.
 pub(crate) fn package_json_dir(source: &bun_ast::Source) -> &[u8] {
     let dir = source.path.dir_keeping_root();
     if dir.is_empty() {
@@ -651,9 +650,7 @@ impl WorkspaceMap {
     }
 }
 
-/// For `bun:internal-for-testing`: the members of the `workspaces` in `source`. The
-/// package.json that `source` names does not have to exist, so a test can put the workspace
-/// root where it cannot write, such as the filesystem root.
+/// For `bun:internal-for-testing`. The package.json in `source` does not have to exist.
 pub(crate) fn parse_for_testing(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,

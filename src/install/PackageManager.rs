@@ -1789,8 +1789,7 @@ pub fn init(
                             workspace_names.values().len()
                         );
                         if let Some(entry) = workspace_names.member_in(&json_source, child_cwd) {
-                            // Intern via the resolver's DirnameStore so the slice is
-                            // process-lifetime (`set_top_level_dir` requires `'static`).
+                            // `set_top_level_dir` requires `'static`: intern in the DirnameStore.
                             fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                             let _ = child_json.close();
                             #[cfg(windows)]

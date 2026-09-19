@@ -142,21 +142,11 @@ export const install_test_helpers = $rust("install_binding.rs", "bun_install_js_
    * Returns the lockfile at the given path as an object.
    */
   parseLockfile: (cwd: string) => any;
-  /**
-   * Returns the members of the "workspaces" in a package.json, each with its path from the workspace root.
-   * Throws what `bun install` reports. The package.json at `packageJsonPath` does not have to exist,
-   * so the workspace root can be a directory that a test cannot write to.
-   */
+  /** The "workspaces" members of a package.json that does not have to exist, by their path from it. */
   workspaceMembers: (packageJsonPath: string, packageJson: string) => { path: string; name: string }[];
-  /**
-   * Returns the name of the member of the same kind of package.json whose directory is `dir` (an absolute
-   * path), or null. `bun install` uses this lookup to find the workspace root from a member directory.
-   */
+  /** The member in the directory `dir`: how `bun install` finds the workspace root above a member. */
   workspaceMemberIn: (packageJsonPath: string, packageJson: string, dir: string) => string | null;
-  /**
-   * Returns the spec that `$name` in the "overrides" of the same kind of package.json takes from the
-   * "dependencies" of a workspace member, or null when no member (or more than one spec) declares `name`.
-   */
+  /** The spec that `$name` in "overrides" takes from the "dependencies" of a member. */
   workspaceRef: (packageJsonPath: string, packageJson: string, name: string) => string | null;
 };
 

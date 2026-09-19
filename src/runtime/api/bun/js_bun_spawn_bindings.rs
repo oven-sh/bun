@@ -1252,9 +1252,10 @@ fn spawn_maybe_sync(
 
     // Use the isolated loop for spawnSync operations
     //
-    // Note: `SpawnResult::to_process` consumes `self` but only reads
-    // `pid`/`pidfd`/`has_exited`. `stdin/stdout/stderr/extra_pipes` are still
-    // needed afterward, so take those fields out first so the partial move is
+    // Note: `SpawnResult::to_process` consumes `self` but uses only what
+    // identifies the process (`pid`, `pidfd`, the process handle) and
+    // `has_exited`. `stdin/stdout/stderr/extra_pipes` are still needed
+    // afterward, so take those fields out first so the partial move is
     // explicit.
     let spawned_stdin = spawned.stdin.take();
     let spawned_stdout = spawned.stdout.take();

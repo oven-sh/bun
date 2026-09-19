@@ -3330,6 +3330,7 @@ pub(crate) mod __gated_printer {
                 ExprData::EImportMetaMain(data) => {
                     if self.options.module_type == bundle_opts::Format::Esm
                         && self.options.target != bun_ast::Target::Node
+                        && !self.options.repl_mode
                     {
                         // Node.js doesn't support import.meta.main
                         // Most of the time, leave it in there

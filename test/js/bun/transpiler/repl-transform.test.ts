@@ -322,5 +322,22 @@ describe("Bun.Transpiler replMode", () => {
         expect(value).toBe(require("path").sep);
       },
     );
+
+    test.each(["bun", "browser"] as const)(
+      "`require.main === module` is not folded to `import.meta.main` with target %s",
+      async target => {
+        const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true, target });
+        const result = transpiler.transformSync('import fs from "fs"; require.main === module');
+        expect(result).not.toContain("import.meta");
+        expect(result).toContain("require.main == module");
+
+        const main = {};
+        const ctx = vm.createContext({ require: Object.assign(() => {}, { main }), module: main });
+        const { value } = await vm.runInContext(result, ctx, {
+          importModuleDynamically: specifier => import(specifier),
+        });
+        expect(value).toBe(true);
+      },
+    );
   });
 });

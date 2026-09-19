@@ -2738,12 +2738,14 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
       req.resume();
       req.end("request-body");
       const stream = await opened.promise;
-      const { streamClosed, sessionClosed } = record(stream, stream.session);
+      const { sessionClosed } = record(stream, stream.session);
       // The server has the whole request by the ack, so the trailers close the stream.
       await ping(client);
       expect({ closed: stream.closed, unread: stream.readableLength }).toEqual({ closed: false, unread: 12 });
       stream.end("hello");
-      const [events] = await Promise.all([streamClosed, sessionClosed]);
+      const events = await sessionClosed;
+      // The stream's 'close' is queued by now. One turn lets it run.
+      await new Promise(resolve => setImmediate(resolve));
       expect(events.toSorted()).toEqual(["close:0", "session close"]);
     } finally {
       client.destroy();
@@ -2782,9 +2784,10 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
     expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "request-body" });
   });
 
-  // close() waits for the ack of the SETTINGS frame, and the peer's socket has ended before the
-  // frame arrives, so the socket close is what completes the graceful close.
-  it("a socket close that completes a graceful close leaves it readable (client)", async () => {
+  // close() waits up to 250ms for the ack of the SETTINGS frame, and the peer's socket has ended
+  // before the frame arrives, so the socket close is what completes the graceful close. Serial, so
+  // that a loaded event loop does not let the wait run out first.
+  it.serial("a socket close that completes a graceful close leaves it readable (client)", async () => {
     const result = await withUnreadResponse(async ({ client, req, serverSocket, sessionClosed, streamClosed }) => {
       client.settings({ enablePush: false });
       client.close();
@@ -2795,7 +2798,7 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
     expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "hello" });
   });
 
-  it("a socket close that completes a graceful close leaves it readable (server)", async () => {
+  it.serial("a socket close that completes a graceful close leaves it readable (server)", async () => {
     const result = await withUnreadRequest(async ({ session, clientSocket, stream, sessionClosed, streamClosed }) => {
       session.settings({ maxConcurrentStreams: 10 });
       session.close();
@@ -2807,8 +2810,9 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
   });
 
   // Both sessions hold a closed stream until its destroy(). While the sessions live on, they
-  // must not keep the streams that were read to the end.
-  it("a live session does not retain the streams that ended", async () => {
+  // must not keep the streams that were read to the end. Serial: the streams of concurrent tests
+  // slow the collection down.
+  it.serial("a live session does not retain the streams that ended", async () => {
     const COUNT = 32;
     const refs = [];
     const allClosed = Promise.withResolvers();
@@ -2835,10 +2839,10 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
       }
       await allClosed.promise;
       // A collection can miss a few objects (see GC_STRAGGLERS in h2-conformance.test.ts), so
-      // collect until the count stops at that level. A session that retains them keeps all 64.
+      // collect until the count is down to that level. A session that retains them keeps all 64.
       const live = () => refs.filter(ref => ref.deref() !== undefined).length;
       let alive = live();
-      for (let pass = 0; pass < 20 && alive > 3; pass++) {
+      for (let pass = 0; pass < 50 && alive > 3; pass++) {
         await new Promise(resolve => setImmediate(resolve));
         Bun.gc(true);
         alive = live();

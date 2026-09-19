@@ -39,6 +39,20 @@ its hooks path. It asks for one reboot the first time and is re-run after it.
 `bake` is safe on a live host: it builds a staging image and swaps it in only
 after the toolchain verifies. Re-run it when toolchain pins move.
 
+## Reboots
+
+Every host reboots nightly (the `com.buildkite.cleanup` launchd job).
+
+A `bare` host on macOS 26 or later can also reboot at the start of a test job.
+It keeps one kernel between jobs, and macOS does not free every TCP socket the
+test suite closes: `sysctl net.inet.tcp.pcbcount` grows by about 1,000 per job
+while netstat shows nothing. macOS 26 caps TCP memory at 1/32 of RAM, so an
+8 GB host loses its network after about 60 jobs. When the count is over
+`getDarwinLeakedSocketLimit()` (`scripts/utils.mjs`, 5,000 per GiB of RAM),
+the job reboots the host instead of running tests, and Buildkite retries it
+on another agent. The job log says so. `tart` guests are fresh for every job
+and never do this.
+
 ## Bringing up a host
 
 Prerequisites on a freshly imaged host: an admin account you can ssh into

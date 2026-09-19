@@ -2010,19 +2010,26 @@ describe("socket teardown events (#43381)", () => {
         });
       });
       if (SCENARIO === "destroy") return holder.destroy();
-      // Write until the kernel stops taking the bytes, so one write is in flight. It has no
-      // callback: what that callback gets (ECANCELED in node) is the business of the destroy,
-      // not of this teardown.
+      // Write until the kernel stops taking the bytes, so one write is in flight, and queue
+      // one more behind it. The callbacks are recorded on the client only: an accepted
+      // socket has no handle left when it is destroyed, so its 'close' comes on the next tick,
+      // before the canceled write reports. #43250 moves the cancel into _destroy.
+      const record = SIDE === "client";
       const chunk = Buffer.alloc(1024 * 1024, "a");
       let writes = 0;
       while (writes < 256 && holder.writableLength === 0) {
-        writes++;
-        holder.write(chunk);
+        const nth = ++writes;
+        holder.write(chunk, err => {
+          if (record && nth === writes) events.push("write " + shape(err));
+        });
       }
       if (holder.writableLength === 0) {
         console.error("no write stayed in flight");
         process.exit(1);
       }
+      holder.write("b", err => {
+        if (record) events.push("queued " + shape(err));
+      });
       peer.resetAndDestroy();
     }
   `;
@@ -2055,7 +2062,11 @@ describe("socket teardown events (#43381)", () => {
         "a peer reset with a write in flight and no 'error' listener throws the read error",
         async () => {
           expect(await run({ SIDE, SCENARIO: "peer reset" })).toEqual(
-            reports(["uncaught ECONNRESET read", "close true"]),
+            reports(
+              SIDE === "client"
+                ? ["uncaught ECONNRESET read", "write ECANCELED write", "queued ECONNRESET read", "close true"]
+                : ["uncaught ECONNRESET read", "close true"],
+            ),
           );
         },
       );

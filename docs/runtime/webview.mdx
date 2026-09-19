@@ -210,7 +210,7 @@ A server that answers with an error status (`404`, `500`, `429`) still delivers 
 
 ```ts
 await view.navigate("https://example.com/missing");
-if (view.status !== 200) {
+if (view.status !== null && view.status >= 400) {
   console.log("server answered", view.status); // 404
 }
 ```

@@ -1093,7 +1093,7 @@ fn configure_env_for_scripts_run(
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
-            value: Box::<[u8]>::from(strings::without_trailing_slash(
+            value: Box::<[u8]>::from(without_trailing_slash_windows_path(
                 FileSystem::instance().top_level_dir(),
             )),
         };
@@ -2451,16 +2451,9 @@ fn init_with_runtime_once(
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
-    let top_level_dir_no_trailing_slash =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
     let mut original_package_json_path =
-        vec![0u8; top_level_dir_no_trailing_slash.len() + "/package.json".len() + 1];
-    original_package_json_path[..top_level_dir_no_trailing_slash.len()]
-        .copy_from_slice(top_level_dir_no_trailing_slash);
-    original_package_json_path[top_level_dir_no_trailing_slash.len()
-        ..top_level_dir_no_trailing_slash.len() + b"/package.json".len()]
-        .copy_from_slice(b"/package.json");
-    // last byte already 0 (sentinel)
+        without_trailing_slash_windows_path(FileSystem::instance().top_level_dir()).to_vec();
+    push_package_json(&mut original_package_json_path);
 
     // SAFETY: manager_ptr points to uninitialized memory; fully initialize
     // field-by-field via `addr_of_mut!((*p).field).write(..)`. See the PERF

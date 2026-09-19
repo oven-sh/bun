@@ -7446,13 +7446,19 @@ describe.concurrent("bun-install", () => {
         setContextHandler(ctx, dummyRegistryForContext(ctx, []));
         await writeFile(
           join(ctx.package_dir, "package.json"),
-          JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "^0" } }),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            dependencies: { bar: "^0" },
+            scripts: { postinstall: "echo INIT_CWD=$INIT_CWD" },
+          }),
         );
         using drive = substDrive(ctx.package_dir);
 
         const { stdout, stderr, exitCode } = await run(drive.root, "install");
         expect(stderr).toContain("Saved lockfile");
         expect(stdout).toContain("+ bar@0.0.2");
+        expect(stdout.split(/\r?\n/)).toContain(`INIT_CWD=${drive.root}`);
         expect(exitCode).toBe(0);
         expect(await file(join(drive.root, "node_modules", "bar", "package.json")).json()).toEqual(bar);
         await access(join(drive.root, "bun.lockb"));

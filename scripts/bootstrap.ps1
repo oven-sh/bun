@@ -14,7 +14,7 @@
 #   2. Once green, change the subject to `[publish windows images]` and push
 #      again to bake the real `-vN` image tag.
 #   3. Merge after the publish run finishes so main never waits on a bake.
-# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.mjs.
+# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.ts.
 
 param (
   [Parameter(Mandatory = $false)]
@@ -628,7 +628,7 @@ function Create-Buildkite-Environment-Hooks {
 
   # pre-exit hook: logout from Tailscale so ephemeral nodes are removed
   # instantly instead of waiting 30-60 minutes. This runs after the job
-  # finishes, which is after the SSH user wait loop in runner.node.mjs.
+  # finishes, which is after the SSH user wait loop in runner.node.ts.
   $preExitHook = Join-Path $hooksDir "pre-exit.ps1"
   @"
 if (Test-Path "C:\Program Files\Tailscale\tailscale.exe") {

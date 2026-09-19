@@ -225,7 +225,7 @@ let allFiles: string[] = [];
 let newFiles: string[] = [];
 let prFileCount = 0;
 if (isBuildkite) {
-  // The pipeline-upload step (.buildkite/ci.mjs) already fetched the PR file
+  // The pipeline-upload step (.buildkite/ci.ts) already fetched the PR file
   // list once and stored it as build meta-data. Read it from there so each of
   // the ~150 test shards doesn't repeat the GitHub API call and burn through
   // the token's hourly rate limit.
@@ -483,7 +483,7 @@ function getTestModifiers(testPath: string): string[] {
 /**
  * Smoke-checks that this agent actually matches the platform the CI step was
  * generated for. The step exports EXPECTED_PLATFORM_* (see getTestBunStep in
- * .buildkite/ci.mjs); we compare against the same utils the agent uses to
+ * .buildkite/ci.ts); we compare against the same utils the agent uses to
  * emit its tags. Catches misrouted jobs (e.g. a macOS 26 step landing on a
  * macOS 15 box) before any test runs, instead of producing silently-wrong
  * results for a whole shard.

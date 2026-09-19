@@ -27,3 +27,5 @@ jobs:
           bun install --frozen-lockfile
       - name: Lint
         run: bun lint
+      - name: Typecheck the CI scripts
+        run: bun x tsc --noEmit -p scripts/tsconfig.json

@@ -76,7 +76,7 @@ export function cargoProfile(cfg: Config): { name: string; subdir: string } {
 }
 
 /**
- * All target triples CI builds (`buildPlatforms` in .buildkite/ci.mjs, one
+ * All target triples CI builds (`buildPlatforms` in .buildkite/ci.ts, one
  * triple per os/arch/abi; test/internal/source-lints/build-rust.test.ts keeps
  * the two in sync). Drives `rust:check-all` and the generated
  * `.cargo/config.toml` (cargo-config.ts). `rust-toolchain.toml`'s `targets`

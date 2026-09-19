@@ -15,7 +15,7 @@
 #   2. Once green, change the subject to `[publish images]` and push again to
 #      bake the real `-vN` image tag.
 #   3. Merge after the publish run finishes so main never waits on a bake.
-# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.mjs.
+# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.ts.
 
 pid="$$"
 
@@ -1165,7 +1165,7 @@ install_build_essentials() {
 	install_gcc
 	install_rust
 	# Cross-compile sysroots + runtimes are only needed on the single build
-	# host (buildHostPlatform in .buildkite/ci.mjs); test images never
+	# host (buildHostPlatform in .buildkite/ci.ts); test images never
 	# cross-compile, so skip the ~3GB of NDK/SDK/sysroot downloads there.
 	if is_ci_build_host; then
 		install_cross_compiler_rt
@@ -1181,7 +1181,7 @@ install_build_essentials() {
 }
 
 is_ci_build_host() {
-	# Must match buildHostPlatform in .buildkite/ci.mjs.
+	# Must match buildHostPlatform in .buildkite/ci.ts.
 	[ "$os-$distro-$arch-$ci" = "linux-debian-aarch64-1" ]
 }
 
@@ -2255,7 +2255,7 @@ prefetch_build_deps() {
 
 	# Warm a shared `bun install` download cache so every test shard's
 	# `bun install` (root + test/ + scripts/ci-remap-server, whose only
-	# dependency is a github: package that runner.node.mjs would otherwise
+	# dependency is a github: package that runner.node.ts would otherwise
 	# fetch from GitHub on every shard) hits disk instead of npm. Keyed by
 	# name@version, so a test/package.json bump after the bake just misses for
 	# that one package. Left writable and owned by the buildkite user: bun

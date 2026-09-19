@@ -359,14 +359,14 @@ function upload(paths: string[], cwd: string): void {
 //
 // bunTriplet = bun-${os}-${arch}[-musl][-baseline]
 //
-// Test steps (runner.node.mjs) download '**' from build-bun and pick any
+// Test steps (runner.node.ts) download '**' from build-bun and pick any
 // bun*.zip; baseline-verification step downloads ${triplet}.zip specifically
 // and expects ${triplet}/bun inside.
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
  * Base triplet (bun-os-arch[-musl][-baseline]). Variant suffix (-profile,
- * -asan) is added by the caller. Matches ci.mjs getTargetTriplet() and
+ * -asan) is added by the caller. Matches ci.ts getTargetTriplet() and
  * cmake's bunTriplet — any drift breaks test-step downloads.
  */
 export function computeBunTriplet(cfg: Config): string {
@@ -437,7 +437,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     files.push(`${exeName}.dSYM`);
   }
   // Linker map(s). On windows they are also what the trace-order step
-  // (.buildkite/ci.mjs) resolves traced addresses against, the PE itself
+  // (.buildkite/ci.ts) resolves traced addresses against, the PE itself
   // having no symbol table, so without them that step has nothing to work from.
   files.push(...linkerMapOutputs(cfg).map(map => basename(map)));
   // The symbol ordering file this binary was linked with, next to the linker
@@ -451,7 +451,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Also upload it standalone, so the next build inherits it with a small
   // download instead of pulling the whole profile zip. Only when this lane
   // traced the file itself — a cross-compiled lane's fresh trace comes from the
-  // sibling trace-order step (.buildkite/ci.mjs), and re-uploading the inherited
+  // sibling trace-order step (.buildkite/ci.ts), and re-uploading the inherited
   // copy would give inheritOrderFile() two same-named artifacts to race over.
   if (hasOrderFile && canTraceOrderFile(cfg)) {
     const artifact = orderFileArtifact(cfg);
@@ -735,7 +735,7 @@ export function canTraceOrderFile(cfg: Config): boolean {
 /**
  * An eligible lane that cannot trace (cross-compiled) and inherited nothing is
  * shipping unordered. A sibling `-trace-order` step on a native-arch host seeds
- * the chain (see getTraceOrderStep in .buildkite/ci.mjs), so this fires once on
+ * the chain (see getTraceOrderStep in .buildkite/ci.ts), so this fires once on
  * the first build and then the next build inherits that trace. If it persists,
  * the trace step is failing or missing for this target.
  */
@@ -889,7 +889,7 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
     tried++;
     // No --step: exactly one step per build publishes the target-unique name —
     // packageAndUpload() for a lane that traced its own binary, the sibling
-    // trace-order step (.buildkite/ci.mjs) for a cross-compiled one.
+    // trace-order step (.buildkite/ci.ts) for a cross-compiled one.
     const result = spawnSync("buildkite-agent", ["artifact", "download", artifact, ".", "--build", build.id], {
       cwd: cfg.buildDir,
       stdio: "ignore",

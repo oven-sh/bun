@@ -2957,8 +2957,7 @@ function tryClose(fd) {
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   const ownsFd = this[kOwnsFd] === true;
-  // node's file responders read waitForTrailers and sendDate before statCheck runs, and never read
-  // endStream: the file is the payload. statCheck is given `options` and can write to it.
+  // statCheck is handed `options` and may write to it. node reads these first and never reads endStream.
   const respondOptions = {
     waitForTrailers: options.waitForTrailers,
     sendDate: options.sendDate,
@@ -3518,9 +3517,7 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
     assertIsObject(options, "options");
-    // node's respond() (lib/internal/http2/core.js) copies its options, so only own enumerable
-    // keys count, then reads endStream, waitForTrailers and sendDate from the copy, each by
-    // truthiness. It ignores every other option. paddingStrategy is a bun extension.
+    // Like node, read a copy so only own enumerable keys count. paddingStrategy is a bun extension.
     options = { ...options };
     const sendDate = options.sendDate;
     const paddingStrategy = options.paddingStrategy;
@@ -3627,9 +3624,8 @@ class ServerHttp2Stream extends Http2Stream {
       // If waitForTrailers is ALSO true the native layer dispatches
       // onWantTrailers immediately after, whose JS handler calls
       // noTrailers → sendData("", true) and emits a spurious DATA frame on
-      // the already-half-closed stream (RFC 9113 §5.1 violation). Drop
-      // waitForTrailers here so the native never fires that path, and so
-      // `_final` never drives the wantTrailers path on a half-closed stream.
+      // the already-half-closed stream (RFC 9113 §5.1 violation). Strip
+      // waitForTrailers so neither the native layer nor `_final` takes the wantTrailers path.
       endStream = true;
       waitForTrailers = false;
     }
@@ -3641,9 +3637,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-    // The native HEADERS writer is shared with ClientHttp2Session.request(). It reads the
-    // request-only options (parent, weight, exclusive, silent, signal) from the object it is
-    // given, and resets the stream or throws on a value it rejects.
+    // The native writer is shared with request() and acts on parent, weight, exclusive, silent and signal.
     session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames, {
       endStream,
       waitForTrailers,

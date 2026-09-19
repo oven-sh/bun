@@ -1319,9 +1319,7 @@ function clearUpgradeIncoming(socket) {
   socket[kUpgradeIncoming] = undefined;
 }
 
-// Like Node.js, a read of the raw socket resumes a paused request only while its body is
-// incomplete. Checked one event loop turn after the read: the 'upgrade' listener runs before
-// the rest of its read is parsed, and that rest can complete the body.
+// Deferred: the 'upgrade' listener runs before the rest of its read, which can complete the body.
 function resumePausedUpgradeIncoming(socket) {
   const req = socket[kUpgradeIncoming];
   if (req === undefined) return;
@@ -1793,8 +1791,7 @@ function getNodeHTTPServerSocket() {
             upgradeIncoming.push(resumed);
           }
         }
-        // Not paused: resumed at once, also with a complete body. req.complete is still false
-        // inside the listener then, so a listener can wait for 'end' and never read the body.
+        // Not paused: req.complete is false in the listener, so it can wait for 'end' with no reader.
         if (upgradeIncoming.readableFlowing !== false) upgradeIncoming.resume();
         else setImmediate(resumePausedUpgradeIncoming, this);
         return;

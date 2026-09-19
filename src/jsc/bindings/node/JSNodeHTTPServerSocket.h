@@ -115,10 +115,8 @@ public:
      * body deliver it through the request first, like Node 26). */
     void upgradeToTunnelMode(bool afterBody = false);
 
-    /* Read flow control of a CONNECT/Upgrade tunnel, like Node's
-     * handle.readStop()/readStart(): the JS stream stops kernel reads when
-     * its buffer is full and restarts them from _read(). No-ops while the
-     * connection still parses HTTP, where the parser owns the read state. */
+    /* Tunnel read flow control (Node's handle.readStop/readStart). No-ops
+     * while the HTTP parser still owns the connection's read state. */
     bool isTunnel() const;
     void readStop();
     void readStart();

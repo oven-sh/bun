@@ -148,8 +148,6 @@ static bool isTunnelImpl(us_socket_t* socket)
     return reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->isConnectRequest;
 }
 
-/* True once the connection is a CONNECT/Upgrade tunnel: bytes bypass the HTTP
- * parser and reach the ondata callback as opaque data. */
 bool JSNodeHTTPServerSocket::isTunnel() const
 {
     if (!socket || upgraded || us_socket_is_closed(socket)) {

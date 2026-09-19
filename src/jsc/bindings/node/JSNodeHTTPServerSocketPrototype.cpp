@@ -207,9 +207,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing, (JSC::JSGlob
     return JSValue::encode(JSC::jsUndefined());
 }
 
-// node:http tunnel read flow control (Node's handle.readStop / readStart): the
-// socket's Readable stops kernel reads when push() reports a full buffer and
-// restarts them from _read().
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStop, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());

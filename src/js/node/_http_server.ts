@@ -1573,8 +1573,7 @@ function getNodeHTTPServerSocket() {
     #onData(chunk, last) {
       this._unrefTimer();
       if (chunk) {
-        // Node's onStreamRead: a full Readable buffer stops kernel reads of
-        // the tunnel; _read() restarts them.
+        // Like Node's onStreamRead: a full buffer stops reads, _read() restarts them.
         if (!this.push(chunk)) {
           this[kHandle]?.readStop();
         }

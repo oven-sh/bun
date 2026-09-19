@@ -587,7 +587,7 @@ impl NodeHTTPResponse {
             &upgrade_context.sec_websocket_key
         };
 
-        let mut ended_pending_body = false;
+        let mut ended_unfinished_body = false;
         if let Some(raw_response) = self.raw_response.take() {
             self.update_flags(|f| f.insert(Flags::UPGRADED));
             // Unref the poll_ref since the socket is now upgraded to WebSocket
@@ -598,7 +598,11 @@ impl NodeHTTPResponse {
             if self.body_read_state.get() == BodyReadState::Pending {
                 self.body_read_ref.with_mut(|r| r.unref(vm));
                 self.body_read_state.set(BodyReadState::Done);
-                ended_pending_body = true;
+                // A fin that was buffered during a pause leaves the state at `Pending` too.
+                ended_unfinished_body = !self
+                    .flags
+                    .get()
+                    .contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
             }
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
@@ -619,13 +623,13 @@ impl NodeHTTPResponse {
         // post-upgrade — it would read freed header views.
         self.upgrade_context.with_mut(|c| c.reset());
 
-        if ended_pending_body {
+        // Bytes that were buffered during a pause stay for the next `_read()`, which drains them and
+        // ends the request. Pushing them here would run 'data' listeners before the caller has the
+        // WebSocket.
+        if ended_unfinished_body && self.buffered_request_body_data_during_pause.get().len() == 0 {
             // The request's stream has to see the body end. `ondata` runs JS that can abort the
-            // request or close the socket, so it runs last. It gets no bytes buffered during a
-            // pause: their 'data' listeners would run before the caller has the WebSocket.
-            scoped_log!(NodeHTTPResponse, "upgrade: end the pending body");
-            self.buffered_request_body_data_during_pause
-                .with_mut(|b| b.clear_and_free());
+            // request or close the socket, so it runs last.
+            scoped_log!(NodeHTTPResponse, "upgrade: end the unfinished body");
             let _guard = self.ref_guard();
             self.call_on_data(self.armed_this_value.get(), b"", true, AbortEvent::None);
         }

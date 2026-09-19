@@ -265,14 +265,24 @@ test("WebSocket upgrade should unref body_read_ref from response", async () => {
   });
 });
 
-// The same handoff, seen from the stream of the request. The body can never arrive, so the stream ends at
-// the upgrade. A reader that already waits for the body gets 'end', like a reader that starts later, and
-// like every reader in Node.js up to 25. (Node.js 26 keeps reading the body from the socket. Here the
-// WebSocket owns the socket.)
-describe.concurrent("a request reader that waits for the body when ws upgrades", () => {
-  async function upgradeWhileReading(listenFor: "upgrade" | "request", upgradeInLaterTask: boolean) {
+// The same handoff, seen from the stream of the request. The rest of the body can never arrive, so the
+// stream ends at the upgrade. A reader that already waits for the body gets 'end', like a reader that starts
+// later, and like every reader in Node.js up to 25. (Node.js 26 keeps reading the body from the socket.
+// Here the WebSocket owns the socket.)
+describe.concurrent("the request stream when ws upgrades before the declared body is complete", () => {
+  const body = '{"hello":"world"}';
+
+  type Reader =
+    | "flowing"
+    | "read() in the upgrade tick"
+    | "paused, resumed in the upgrade tick"
+    | "paused, starts after the upgrade";
+
+  // `sent` is the part of the body that the client sends, in the same write as the head.
+  async function upgradeBeforeTheBodyIsComplete(listenFor: "upgrade" | "request", sent: string, reader: Reader) {
     const events: string[] = [];
     let readerWaitedBeforeUpgrade = false;
+    let duringUpgrade: string[] = [];
     const request = Promise.withResolvers<http.IncomingMessage>();
     await using server = http.createServer();
     const wsServer = new WebSocketServer({ noServer: true });
@@ -285,20 +295,44 @@ describe.concurrent("a request reader that waits for the body when ws upgrades",
         didRead = true;
         return read.call(this, size);
       };
-      // The 'data' listener starts the flow on the next tick.
-      for (const name of ["data", "end", "close", "aborted", "error"]) req.on(name, () => events.push(name));
+      for (const name of ["end", "close", "aborted", "error"]) req.on(name, () => events.push(name));
+      const listenForData = () => req.on("data", chunk => events.push("data:" + chunk));
       const upgrade = () => {
         readerWaitedBeforeUpgrade = didRead;
+        const before = events.length;
         wsServer.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
           events.push("connection");
           // A later task: the request has ended and closed by then, and the WebSocket still works.
           setImmediate(() => ws.send("hello"));
         });
+        duringUpgrade = events.slice(before);
       };
-      if (upgradeInLaterTask) return setImmediate(upgrade);
-      // read() asks for the body now, so the reader waits before an upgrade in the same tick too.
-      req.read();
-      upgrade();
+      switch (reader) {
+        case "flowing":
+          // The 'data' listener starts the flow on the next tick.
+          listenForData();
+          return setImmediate(upgrade);
+        case "read() in the upgrade tick":
+          listenForData();
+          req.read();
+          return upgrade();
+        case "paused, resumed in the upgrade tick":
+          // After a read(), push() emits 'data' at once. While paused, the bytes wait in native code.
+          req.read();
+          req.pause();
+          return setImmediate(() => {
+            listenForData();
+            req.resume();
+            upgrade();
+          });
+        case "paused, starts after the upgrade":
+          req.pause();
+          return setImmediate(() => {
+            upgrade();
+            listenForData();
+            req.resume();
+          });
+      }
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
 
@@ -312,10 +346,9 @@ describe.concurrent("a request reader that waits for the body when ws upgrades",
         "Upgrade: websocket",
         "Sec-WebSocket-Version: 13",
         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
-        // The body is never sent.
-        "Content-Length: 17",
+        "Content-Length: " + body.length,
         "",
-        "",
+        sent,
       ].join("\r\n"),
     );
     // An unmasked text frame: FIN and opcode 1, length 5, "hello".
@@ -337,6 +370,7 @@ describe.concurrent("a request reader that waits for the body when ws upgrades",
       status: text.slice(0, text.indexOf("\r\n")),
       afterHead: Buffer.from(text.slice(headEnd + 4), "latin1").toString("hex"),
       readerWaitedBeforeUpgrade,
+      duringUpgrade,
       events: [...events],
       complete: (await request.promise).complete,
     };
@@ -345,17 +379,47 @@ describe.concurrent("a request reader that waits for the body when ws upgrades",
     return result;
   }
 
+  const upgraded = { status: "HTTP/1.1 101 Switching Protocols", afterHead: "810568656c6c6f" };
+
   test.each([
-    ["in the 'upgrade' event, from a later task", "upgrade", true],
-    ["in the 'upgrade' event, in the same tick as req.read()", "upgrade", false],
-    ["in a 'request' listener, from a later task", "request", true],
-  ] as const)("handleUpgrade() %s", async (_when, listenFor, upgradeInLaterTask) => {
-    expect(await upgradeWhileReading(listenFor, upgradeInLaterTask)).toEqual({
-      status: "HTTP/1.1 101 Switching Protocols",
-      afterHead: "810568656c6c6f",
+    ["in the 'upgrade' event, from a later task", "upgrade", "flowing"],
+    ["in the 'upgrade' event, in the same tick as req.read()", "upgrade", "read() in the upgrade tick"],
+    ["in a 'request' listener, from a later task", "request", "flowing"],
+  ] as const)("a reader that waits for the body gets 'end': handleUpgrade() %s", async (_when, listenFor, reader) => {
+    expect(await upgradeBeforeTheBodyIsComplete(listenFor, "", reader)).toEqual({
+      ...upgraded,
       readerWaitedBeforeUpgrade: true,
+      duringUpgrade: ["connection"],
       events: ["connection", "end", "close"],
       complete: true,
+    });
+  });
+
+  // The bytes arrived while the request was paused, so native code still holds them at the upgrade.
+  test.each([
+    ["the whole body, in a 'request' listener", "request", body],
+    ["a part of the body, in the 'upgrade' event", "upgrade", body.slice(0, 5)],
+  ] as const)("a reader that starts after the upgrade gets the buffered bytes: %s", async (_what, listenFor, sent) => {
+    expect(await upgradeBeforeTheBodyIsComplete(listenFor, sent, "paused, starts after the upgrade")).toEqual({
+      ...upgraded,
+      readerWaitedBeforeUpgrade: false,
+      duringUpgrade: ["connection"],
+      events: ["connection", "data:" + sent, "end", "close"],
+      complete: true,
+    });
+  });
+
+  test("no 'data' listener runs inside handleUpgrade() for bytes that were buffered during a pause", async () => {
+    const { status, afterHead, readerWaitedBeforeUpgrade, duringUpgrade } = await upgradeBeforeTheBodyIsComplete(
+      "upgrade",
+      body.slice(0, 5),
+      "paused, resumed in the upgrade tick",
+    );
+    // A listener that closed the socket there left a closed WebSocket in wsServer.clients.
+    expect({ status, afterHead, readerWaitedBeforeUpgrade, duringUpgrade }).toEqual({
+      ...upgraded,
+      readerWaitedBeforeUpgrade: true,
+      duringUpgrade: ["connection"],
     });
   });
 });

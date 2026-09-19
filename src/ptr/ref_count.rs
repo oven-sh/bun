@@ -541,6 +541,21 @@ impl<T: AnyRefCounted> RefPtr<T> {
         Self(ptr)
     }
 
+    /// [`new`](Self::new) for a `T` that stores its own root pointer (to hand
+    /// out [`ThisPtr`](crate::ThisPtr)s from `&self` entry points). `init`
+    /// receives a [`SelfRoot`](crate::SelfRoot) to store in the value; the
+    /// token cannot be dereferenced on its own, only through the `&T` that
+    /// exists once construction is done.
+    pub fn new_cyclic(init: impl FnOnce(crate::SelfRoot<T>) -> T) -> Self {
+        let raw: NonNull<T> = bun_core::heap::into_raw_nn(Box::<T>::new_uninit()).cast::<T>();
+        let value = init(crate::SelfRoot(raw));
+        // SAFETY: `raw` is a live, uninitialized, properly aligned `T` slot.
+        unsafe { raw.as_ptr().write(value) };
+        // SAFETY: freshly written, so live.
+        debug_assert!(unsafe { T::rc_has_one_ref(raw.as_ptr()) });
+        Self(raw)
+    }
+
     /// Take a new ref on `*raw_ptr`.
     ///
     /// # Safety
@@ -974,5 +989,58 @@ mod tests {
         assert_eq!(type_base_name("a::b::Foo"), "Foo");
         assert_eq!(type_base_name("a::b::Foo<c::Bar>"), "Foo<c::Bar>");
         assert_eq!(type_base_name("Foo"), "Foo");
+    }
+
+    struct Cyclic {
+        ref_count: RefCount<Cyclic>,
+        self_ref: crate::SelfRoot<Cyclic>,
+        payload: Box<u32>,
+    }
+
+    impl Drop for Cyclic {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl RefCounted for Cyclic {
+        unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
+            // SAFETY: caller contract — field projection on a live allocation.
+            unsafe { &raw mut (*this).ref_count }
+        }
+        unsafe fn destructor(this: *mut Self) {
+            // SAFETY: caller contract — refcount hit zero, sole owner.
+            drop(unsafe { bun_core::heap::take(this) });
+        }
+    }
+
+    #[test]
+    fn new_cyclic_self_root_round_trip() {
+        let _serial = serial();
+        let before = drops();
+        let p = RefPtr::new_cyclic(|self_ref| Cyclic {
+            ref_count: RefCount::init(),
+            self_ref,
+            payload: Box::new(9),
+        });
+        assert_eq!(*p.payload, 9);
+        {
+            // The token hands back a `ThisPtr` to the same allocation; a ref
+            // taken through it bumps and releases the count.
+            let this = p.self_ref.this_ptr(&*p);
+            assert_eq!(this.as_ptr().cast_const(), p.as_ptr().cast_const());
+            let _guard = RefPtr::from_this(this);
+            assert_eq!(*this.payload, 9);
+            assert_eq!(p.ref_count.get(), 2);
+        }
+        assert_eq!(p.ref_count.get(), 1);
+        assert_eq!(drops(), before);
+        // Last release goes through the root the token stored.
+        let this = p.self_ref.this_ptr(&*p);
+        let guard = RefPtr::from_this(this);
+        drop(p);
+        assert_eq!(drops(), before);
+        drop(guard);
+        assert_eq!(drops(), before + 1);
     }
 }

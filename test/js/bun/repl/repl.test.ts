@@ -689,6 +689,39 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("__dirname and __filename are the globals that belong to `module`", async () => {
+      using dir = tempDir("repl-dirname", {
+        "local.js": `module.exports = { value: "from-local-file" };`,
+      });
+      const { outputs, stderr, exitCode } = await runRepl(
+        [
+          "__dirname === module.path",
+          "__filename === module.filename",
+          // An import statement makes the parser treat the input as ESM.
+          "import { basename } from 'path'; basename(__dirname)",
+          "require(require('path').join(__dirname, 'local.js')).value",
+          // An input that reads the identifiers leaves the globals as they were.
+          "globalThis.__dirname === module.path && globalThis.__filename === module.filename",
+          // They are ordinary globals, so an assignment lasts for the session.
+          "__dirname = 'assigned'",
+          "__dirname",
+          ".exit",
+        ],
+        { cwd: String(dir) },
+      );
+      expect(outputs).toEqual([
+        "true",
+        "true",
+        JSON.stringify(path.basename(String(dir))),
+        '"from-local-file"',
+        "true",
+        '"assigned"',
+        '"assigned"',
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("global objects", () => {
@@ -832,11 +865,12 @@ describe.concurrent("Bun REPL", () => {
   });
 
   describe("-e / --eval and -p / --print", () => {
-    async function runReplWith(args: string[]) {
+    async function runReplWith(args: string[], cwd?: string) {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "repl", ...args],
         stdout: "pipe",
         stderr: "pipe",
+        cwd,
         env: { ...bunEnv, NO_COLOR: "1" },
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -994,6 +1028,25 @@ describe.concurrent("Bun REPL", () => {
         "console.log(typeof __dirname, typeof __filename)",
       ]);
       expect(stdout).toBe("string string\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("-e reads __dirname and __filename from the globals that belong to `module`", async () => {
+      using dir = tempDir("repl-eval-dirname", {});
+      const { stdout, stderr, exitCode } = await runReplWith(
+        [
+          "-e",
+          `const { basename } = require("path");
+           console.log(JSON.stringify({
+             dirname: __dirname === module.path,
+             filename: __filename === module.filename,
+             dir: basename(__dirname),
+           }))`,
+        ],
+        String(dir),
+      );
+      expect(stdout).toBe(JSON.stringify({ dirname: true, filename: true, dir: path.basename(String(dir)) }) + "\n");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

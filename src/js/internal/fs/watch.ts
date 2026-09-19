@@ -5,6 +5,8 @@ const { basename } = require("node:path");
 // The native `node:fs` binding, shared via `internal/fs/binding`.
 const fs = require("internal/fs/binding");
 
+const assertEncoding = $newRustFunction("runtime/node/types.rs", "jsAssertEncodingValid", 1);
+
 // Creates an ignore matcher function from the `ignore` watch option,
 // mirroring node lib/internal/fs/watchers.js createIgnoreMatcher.
 // string -> glob (patterns without a slash also match the basename),
@@ -138,17 +140,22 @@ class FSWatcher extends EventEmitter {
   constructor(path, options, listener) {
     super();
 
-    if (path instanceof URL) {
-      path = Bun.fileURLToPath(path);
-    } else if (typeof path === "string" && path.startsWith("file:")) {
-      path = Bun.fileURLToPath(path);
-    }
-
     if (typeof options === "function") {
       listener = options;
       options = {};
     } else if (typeof options === "string") {
       options = { encoding: options };
+    }
+
+    if (path instanceof URL || (typeof path === "string" && path.startsWith("file:"))) {
+      try {
+        path = Bun.fileURLToPath(path);
+      } catch (err) {
+        // node's getOptions() asserts the encoding before the path is validated,
+        // so an invalid encoding wins over an invalid URL.
+        assertEncoding(options?.encoding);
+        throw err;
+      }
     }
 
     if (typeof listener !== "function") {

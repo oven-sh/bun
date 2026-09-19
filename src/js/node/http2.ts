@@ -2062,49 +2062,30 @@ function isFinalWrite(stream: Http2Stream, pendingLength: number) {
 // suppressed: the JS side runs the bookkeeping the onStreamEnd(5) handler would have.
 function onEndStreamSettled(stream: Http2Stream) {
   markWritableDone(stream);
-  // A server-initiated push (even id) has no client→server half, so HALF_CLOSED_LOCAL is its
-  // CLOSED state — mark it closed here so the diagnostics close-channel observes
-  // destroyed === false and rstCode === NGHTTP2_NO_ERROR, like node's nghttp2 onStreamClose path.
   if ((stream.id & 1) === 0 && stream[bunHTTP2Session]?.type === constants.NGHTTP2_SESSION_SERVER) {
     if (!stream.rstCode) stream.rstCode = 0;
     markStreamClosed(stream);
   }
 }
 
-// Ends the writable side with an empty DATA frame, for chunks that went out without END_STREAM.
-function sendEndStream(stream: Http2Stream, native, callback?: VoidFunction) {
-  const settled = native.writeStream(stream.id, "", "ascii", true, callback);
-  // Hand the frame to the socket now: with deferred write completion this can run on the
-  // program's last live turn and a frame left in the cork for the auto-flusher would strand a
-  // generic-streams (duplexPair) peer waiting for 'end'.
-  native.flush();
-  if (settled === 5) onEndStreamSettled(stream);
-}
-
-// Completion of a _write/_writev that went out without END_STREAM. When end() came while it was in
-// flight, Writable calls _final from inside `callback` and _final sends END_STREAM. Writable never
-// calls _final on an errored stream, and a write() after end() errors the stream without destroying
-// it (autoDestroy is off, like node), so the peer would wait forever: END_STREAM goes out here
-// instead. Node does not depend on _final for this either, kWriteGeneric checks `ending` after
-// every write: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2308-L2318
+// Writable never calls _final on an errored stream (a write() after end()): send its END_STREAM here.
 function onStreamWriteDone(this: Http2Stream, callback: (err?: Error | null) => void, err?: Error | null) {
   callback(err);
   const state = this._writableState;
   // A chunk still queued behind this one carries END_STREAM itself (isFinalWrite).
   if (err || !state.ending || !state.errored || state.destroyed || state.finalCalled || state.length !== 0) return;
   if ((this[bunHTTP2StreamStatus] & (StreamState.EndStreamSent | StreamState.NativeClosed)) !== 0) return;
-  // After respond({ waitForTrailers }) END_STREAM rides the trailer HEADERS, which only _final
-  // asks for (node never ends such a stream either). A pending reset has to reach the peer as
-  // RST_STREAM, not behind a clean end.
+  // Pending trailers carry END_STREAM themselves. A pending reset must not follow a clean end.
   if (this[bunHTTP2WaitForTrailers] || this.rstCode) return;
   const native = this[bunHTTP2Session]?.[bunHTTP2Native];
   if (!native) return;
   this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
   try {
-    sendEndStream(this, native);
+    const settled = native.writeStream(this.id, "", "ascii", true);
+    native.flush();
+    if (settled === 5) onEndStreamSettled(this);
   } catch {
-    // writeStream throws once the native side has dropped the stream, which a peer RST_STREAM can
-    // do before JS handles it: nothing is left to end. _final has Writable's try/catch for this.
+    // A peer reset made the native side drop the stream before JS handled it: nothing is left to end.
   }
 }
 
@@ -2788,7 +2769,22 @@ class Http2Stream extends Duplex {
           callback();
           return;
         }
-        sendEndStream(this, native, callback);
+        const settled = native.writeStream(this.#id, "", "ascii", true, callback);
+        // Same as above: don't leave the END_STREAM frame in the cork on what may be the
+        // program's last live turn.
+        native.flush();
+        if (settled === 5) {
+          // HALF_CLOSED_LOCAL settled synchronously; the dispatch was suppressed.
+          markWritableDone(this);
+          // A server-initiated push (even id) has no client→server half, so HALF_CLOSED_LOCAL is
+          // its CLOSED state — mark it closed here so the diagnostics close-channel observes
+          // destroyed === false and rstCode === NGHTTP2_NO_ERROR, like node's nghttp2
+          // onStreamClose path.
+          if ((this.#id & 1) === 0 && this[bunHTTP2Session]?.type === constants.NGHTTP2_SESSION_SERVER) {
+            if (!this.rstCode) this.rstCode = 0;
+            markStreamClosed(this);
+          }
+        }
         return;
       }
     }
@@ -4916,9 +4912,8 @@ function destroySelfOnEnd(this: Http2Stream) {
 function destroyClosedStream(stream: Http2Stream) {
   if (stream.errored) {
     // Neither event below fires on an errored Duplex. node's onStreamClose destroys at once too:
-    // an emitted 'error' makes `stream.readable` false. When the 'error' is still queued (the
-    // END_STREAM of onStreamWriteDone closed the stream), streamOnErrored destroys after it, so
-    // its listeners observe a live stream there too.
+    // an emitted 'error' makes `stream.readable` false.
+    // While 'error' is still queued, streamOnErrored destroys after it, so its listeners get a live stream.
     if (stream._writableState.errorEmitted) stream.destroy();
   } else if (stream.readable && !stream.rstCode) {
     // Clean close while data is still buffered on the readable side (e.g. the response ended

@@ -3318,6 +3318,17 @@ function flushPendingFinish(this: ServerResponse) {
   queueResponseFinished(this, callback);
 }
 
+// internal/http1_server_fallback calls this when the bytes of an ended response have left its socket, or
+// when the socket closes with them. Like Node.js's onFinish, 'finish' is emitted right there: a tick
+// later, the socket's 'close' listeners (the response's own among them) would run first.
+function finishDrainedResponse(res) {
+  const callback = res[kPendingFinish];
+  if (callback === undefined) return;
+  res[kPendingFinish] = undefined;
+  res._callPendingCallbacks();
+  emitResponseFinished(res, callback);
+}
+
 Object.defineProperty(ServerResponse.prototype, "writable", {
   // Node.js's OutgoingMessage assigns `this.writable = true` in the
   // constructor and never flips it back to false - not on end(), not on
@@ -3935,6 +3946,7 @@ http1ServerPipeline.advanceResponsePipeline = advanceResponsePipeline;
 http1ServerPipeline.abortQueuedPipelinedResponses = abortQueuedPipelinedResponses;
 http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
+http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
 
 export default {

@@ -6,6 +6,7 @@ const { SafeSet } = require("internal/primordials");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
+const reportError = globalThis.reportError;
 
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
@@ -146,14 +147,36 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     return length;
   }
 
+  // The bytes end() left in the socket are out, or the socket closed with them.
+  function flushed() {
+    if (!handle.ended || handle.finished) return;
+    handle.finished = true;
+    handle.onflushed?.();
+  }
+
+  // The callback of the empty write that end() queues behind the response. A destroyed socket
+  // finishes the response from its 'close' instead: a stream can fail its pending writes inside
+  // destroy(), where 'finish' must not run, or never call back.
+  function onEndWritten() {
+    if (!socket.destroyed) flushed();
+  }
+
   const handle = {
     flags: 0,
     ended: false,
+    // True once the bytes end() wrote have left the socket, like the native handle's.
     finished: false,
     aborted: false,
-    bufferedAmount: 0,
+    // The bytes of an ended response that are still in the socket.
+    get bufferedAmount() {
+      return this.ended && !this.finished ? socket.writableLength : 0;
+    },
     shouldKeepAlive,
     onfinished: null,
+    // Runs once when flushed() does, after an end() that returned a negative length. The `onwritable`
+    // that ServerResponse#end() sets for the native handle stays unused: it emits 'finish' a tick
+    // later, and from a socket's 'close' that is after the response's own 'close'.
+    onflushed: null,
     cork(callback) {
       return callback();
     },
@@ -210,7 +233,15 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       // Transfer-Encoding: chunked themselves.
       if (chunked && !noBody) socket.write("0\r\n\r\n");
       this.ended = true;
-      this.finished = true;
+      // Like Node's OutgoingMessage#end(): while the socket holds bytes, the response has finished
+      // when an empty write queued behind them completes. A socket that was ended (after the
+      // client's FIN) takes no more writes: its own 'finish' says that the bytes are out.
+      if (socket.writableLength > 0 && !socket.destroyed) {
+        if (socket.writableEnded) socket.once("finish", onEndWritten);
+        else socket.write("", "latin1", onEndWritten);
+      } else {
+        this.finished = true;
+      }
       const onfinished = this.onfinished;
       if (onfinished) {
         this.onfinished = null;
@@ -220,8 +251,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (closeDelimited && !socket.destroyed) {
         socket.end();
       }
-      return length;
+      // The native handle's contract: -(length + 1) while bytes are still draining, which makes
+      // ServerResponse#end() hold 'finish' back.
+      return this.finished ? length : -(length + 1);
     },
+    flushed,
     abort() {
       this.aborted = true;
       if (!socket.destroyed) socket.destroy();
@@ -244,6 +278,7 @@ function connectionListenerHTTP1(server, socket, options) {
     abortQueuedPipelinedResponses,
     maybePauseFallbackReads,
     resumeFallbackReadsOnDrain,
+    finishDrainedResponse,
     kMustCloseConnection,
   } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
@@ -336,6 +371,9 @@ function connectionListenerHTTP1(server, socket, options) {
       if (!shouldKeepAlive && !socket.destroyed) {
         socket.end();
       }
+    };
+    handle.onflushed = function () {
+      finishDrainedResponse(res);
     };
     res[kHttp1ResponseHandle] = handle;
     // Node's parserOnIncoming outgoing queue: pipelined requests parse while
@@ -484,6 +522,17 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.on("error", onHttp1SocketErrorListener);
   socket.once("end", onHttp1SocketEnd);
   socket.on("drain", onHttp1SocketDrain);
+  // A response that ended and whose bytes were still in the socket finishes now, like Node's after
+  // its failed last write, and detaches itself: its request is not aborted below. Prepended, because
+  // in Node that 'finish' comes before the socket's 'close'.
+  socket.prependOnceListener("close", () => {
+    try {
+      socket._httpMessage?.[kHttp1ResponseHandle]?.flushed();
+    } catch (err) {
+      // A 'finish' listener that throws must not skip the cleanup in the listener below.
+      reportError(err);
+    }
+  });
   socket.once("close", () => {
     connections.delete(socket);
     // Like the native socket's close path (Node's socketOnClose ->

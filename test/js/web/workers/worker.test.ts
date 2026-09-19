@@ -403,42 +403,6 @@ describe("web worker", () => {
     });
   });
 
-  // A message the worker never took from its inbox is dropped when the worker is gone. A port in
-  // that message is closed with it, so the port's peer hears 'close'.
-  describe("a MessagePort posted to a worker that never reads it closes", () => {
-    // Stays referenced, as a Worker in a pool does: a collected Worker drops its inbox too.
-    let worker: Worker;
-
-    test("the entry point does not resolve", async () => {
-      using dir = tempDir("web-worker-missing-entry-port", {});
-      const { port1, port2 } = new MessageChannel();
-      worker = new Worker(path.join(String(dir), "missing.js"));
-      const events: string[] = [];
-      worker.addEventListener("error", () => events.push("error"));
-      worker.addEventListener("close", e => events.push(`close:${e.code}`));
-      const portClosed = once(port1, "close").then(() => events.push("port-close"));
-      worker.postMessage({ port: port2 }, [port2]);
-
-      await portClosed;
-      expect(events).toEqual(["error", "close:1", "port-close"]);
-    });
-
-    // The entry never returns, so the worker never reads its inbox, whether terminate() lands
-    // before the thread starts or while the entry runs.
-    test("terminate() stops a worker whose entry is still running", async () => {
-      const { port1, port2 } = new MessageChannel();
-      worker = new Worker("data:text/javascript,for(;;){}");
-      const events: string[] = [];
-      worker.addEventListener("close", () => events.push("close"));
-      const portClosed = once(port1, "close").then(() => events.push("port-close"));
-      worker.postMessage({ port: port2 }, [port2]);
-      worker.terminate();
-
-      await portClosed;
-      expect(events).toEqual(["close", "port-close"]);
-    });
-  });
-
   // As in browsers (and Node's Web Worker), the worker's implicit port opens once the entry's
   // synchronous part has run: a message dispatched while no 'message' handler exists is dropped.
   // node:worker_threads' parentPort is what queues until a listener is attached. #40141

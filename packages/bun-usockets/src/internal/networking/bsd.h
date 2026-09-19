@@ -221,6 +221,13 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags);
 #endif
 ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length);
 #if !defined(_WIN32)
+/* A zero-byte send(). It moves nothing and needs no send-buffer space, so the
+ * result is the state of the write side alone: 0 while it is up (also with a
+ * full send buffer, also after the peer's FIN), -1 with errno once it is down:
+ * the pending socket error after a reset, EPIPE once an earlier call consumed
+ * that error, EPIPE after our own shutdown(). Not a fault-injection point:
+ * callers use it to tell a send() that stalled from a peer that is gone. */
+int bsd_send_probe(LIBUS_SOCKET_DESCRIPTOR fd);
 ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags);
 #endif
 struct us_iovec_t;

@@ -6040,6 +6040,40 @@ it("a refused 1xx block followed by a late respond() resets the stream without a
   }
 });
 
+it("maxSendHeaderBlockLength is compared against nghttp2's pre-compression bound", async () => {
+  // respond({ ":status": "200" }) stages one field of 10 bytes: the bound is 12 + 12 + 10 = 34,
+  // plus 5 priority bytes. Verified against node v26.3.0: 39 delivers the response, 38 refuses it.
+  const probe = async limit => {
+    const server = http2.createServer({ maxSendHeaderBlockLength: limit });
+    try {
+      server.on("stream", stream => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": 200 }, { sendDate: false, endStream: true });
+      });
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      const client = http2.connect(`http://localhost:${port}`);
+      client.on("error", () => {});
+      try {
+        const req = client.request({ ":path": "/" });
+        return await new Promise(resolve => {
+          let status;
+          req.on("response", headers => (status = headers[":status"]));
+          req.on("error", () => {});
+          req.on("close", () => resolve({ status, rstCode: req.rstCode }));
+          req.resume();
+          req.end();
+        });
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  };
+  expect(await probe(39)).toEqual({ status: 200, rstCode: 0 });
+  expect(await probe(38)).toEqual({ status: undefined, rstCode: http2.constants.NGHTTP2_FRAME_SIZE_ERROR });
+});
+
 it("a client request over maxSendHeaderBlockLength leaves the session usable", async () => {
   // Verified against node v26.3.0: the request is refused locally with 'frameError' and
   // REFUSED_STREAM. The next request reuses an indexed field, so the server only decodes it if

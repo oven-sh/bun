@@ -468,6 +468,48 @@ describe.each(["hoisted", "isolated"] as const)(
   },
 );
 
+// A bun.lock from a bun that dropped the workspace for such an alias does not list the workspace.
+// It is out of date like any lockfile that misses a workspace: a frozen install rejects it, and a
+// plain install adds the workspace.
+test.concurrent("bun.lock without the workspace that a root alias used to drop is out of date", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const lockfilePath = join(packageDir, "bun.lock");
+  type Lockfile = { workspaces: Record<string, unknown>; packages: Record<string, unknown> };
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { published: "npm:no-deps@1.0.0" } }),
+    ),
+    write(
+      join(packageDir, "packages", "no-deps", "package.json"),
+      JSON.stringify({ name: "no-deps", version: "3.0.0", dependencies: { "a-dep": "1.0.1" } }),
+    ),
+  ]);
+  await runBunInstall(env, packageDir);
+
+  const lockfile = Bun.JSONC.parse(await file(lockfilePath).text()) as Lockfile;
+  delete lockfile.workspaces["packages/no-deps"];
+  delete lockfile.packages["no-deps"];
+  delete lockfile.packages["a-dep"];
+  expect(Object.keys(lockfile.packages)).toEqual(["published"]);
+  await write(lockfilePath, JSON.stringify(lockfile, null, 2));
+
+  const { err } = await runBunInstall(env, packageDir, {
+    frozenLockfile: true,
+    allowErrors: true,
+    expectedExitCode: 1,
+  });
+  expect(err).toContain("lockfile had changes, but lockfile is frozen");
+
+  await runBunInstall(env, packageDir);
+  expect(Object.keys((Bun.JSONC.parse(await file(lockfilePath).text()) as Lockfile).workspaces)).toEqual([
+    "",
+    "packages/no-deps",
+  ]);
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+});
+
 // `$name` copies the root's spec for `name`. When that spec is a range linked to a workspace, the
 // override is still the range, which is what bun.lock records, so a reload sees no change.
 test.concurrent("$ref override of a range linked to a workspace round-trips through bun.lock", async () => {

@@ -49,16 +49,19 @@ test("aborted request body emits 'error' ECONNRESET and res 'close' before req '
   }
 });
 
-// The 'request' listener destroys the response in the tick in which the request
-// starts to be read, so the request's first _read() finds a connection that is
-// already gone. The request emits 'end' only if its whole body reaches it.
-describe("res.destroy() in the tick in which the request starts to be read", () => {
+// res.destroy() tears the connection down while the request is being read. The
+// request emits 'end' only if its whole body reaches it.
+describe("res.destroy() while the request is being read", () => {
+  // `wire` is what the client sends. Of a pair, the second part is sent once
+  // the 'request' listener has run.
   async function recordRequest(
-    wire: string,
+    wire: string | [string, string],
     listener: (req: IncomingMessage, res: ServerResponse) => void,
     options: { highWaterMark?: number } = {},
   ) {
+    const [first, second] = typeof wire === "string" ? [wire] : wire;
     const events: string[] = [];
+    const listenerRan = Promise.withResolvers<void>();
     const reqClosed = Promise.withResolvers<void>();
     const resClosed = Promise.withResolvers<void>();
     const server = createServer(options, (req, res) => {
@@ -74,6 +77,7 @@ describe("res.destroy() in the tick in which the request starts to be read", () 
         resClosed.resolve();
       });
       listener(req, res);
+      listenerRan.resolve();
     });
     let client: ReturnType<typeof connect> | undefined;
     try {
@@ -82,7 +86,11 @@ describe("res.destroy() in the tick in which the request starts to be read", () 
       const { port } = server.address() as AddressInfo;
       client = connect(port, "127.0.0.1");
       client.on("error", () => {});
-      client.write(wire);
+      client.write(first);
+      if (second !== undefined) {
+        await listenerRan.promise;
+        client.write(second);
+      }
       await Promise.all([reqClosed.promise, resClosed.promise]);
       return events;
     } finally {
@@ -91,8 +99,10 @@ describe("res.destroy() in the tick in which the request starts to be read", () 
     }
   }
 
-  // Only 3 of the 10 body bytes ever arrive: the request is aborted like any
-  // other truncated body, not ended as if its body were complete (and empty).
+  // Only 3 of the 10 body bytes ever arrive, and the listener destroys the
+  // response before the request's first _read() has run. The request is aborted
+  // like any other truncated body, not ended as if its body were complete (and
+  // empty).
   const truncatedPost = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc";
   const aborted = ["req.aborted", "res.close", "req.error:ECONNRESET", "req.close (complete: false)"];
 
@@ -127,6 +137,18 @@ describe("res.destroy() in the tick in which the request starts to be read", () 
       events: aborted,
       iteration: "rejected: ECONNRESET",
     });
+  });
+
+  // An upload that the listener rejects part way: the first body bytes arrive in
+  // a later read than the headers, and a 'data' listener destroys the response.
+  test.concurrent.each([
+    ["Content-Length", "Content-Length: 100\r\n\r\n", "0123456789"],
+    ["chunked", "Transfer-Encoding: chunked\r\n\r\n", "a\r\n0123456789\r\n"],
+  ])("upload (%s) cut short from inside a 'data' listener: aborted, no 'end'", async (_, framing, bodyStart) => {
+    const events = await recordRequest(["POST / HTTP/1.1\r\nHost: x\r\n" + framing, bodyStart], (req, res) => {
+      req.on("data", () => res.destroy());
+    });
+    expect(events).toEqual(aborted);
   });
 
   // The first chunk alone overflows the 1 KiB highWaterMark, so the connection

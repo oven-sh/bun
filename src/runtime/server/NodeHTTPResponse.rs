@@ -1231,9 +1231,12 @@ pub enum AbortEvent {
 
 impl NodeHTTPResponse {
     /// The only place that sets SOCKET_CLOSED (the connection closed, or JS
-    /// called abort()), so a body that had not finished arriving is recorded
-    /// as truncated before the teardown that follows moves `body_read_state`
-    /// to `Done`. A fin buffered during a pause (LAST) is a complete body.
+    /// called abort()). uws dispatches nothing more on a closed socket, not
+    /// even the rest of the read it is parsing (#43513), so a body that is
+    /// still `Pending` here never completes. Record that before the teardown
+    /// that follows moves `body_read_state` to `Done`. A fin buffered during a
+    /// pause (LAST) is a complete body. Not covered: uws ends an Upgrade
+    /// request body with a synthetic fin before this runs (#43543).
     fn mark_socket_closed(&self) {
         let body_truncated = self.body_read_state.get() == BodyReadState::Pending
             && !self

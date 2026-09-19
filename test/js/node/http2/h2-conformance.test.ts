@@ -1198,7 +1198,8 @@ describe("a response starts with HEADERS (RFC 9113 §8.1)", () => {
   });
 
   // RFC 9113 §8.1: a server may answer before the request body is complete and then reset the
-  // stream with NO_ERROR. The response must survive, and a late write must not be an error.
+  // stream with NO_ERROR. The response must survive. A late write must not succeed, and it must
+  // not raise 'error' either.
   test("a NO_ERROR reset after an early response aborts the open request body and keeps the response", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
@@ -1228,17 +1229,18 @@ describe("a response starts with HEADERS (RFC 9113 §8.1)", () => {
         ]),
       );
       await aborted;
-      // The request body is still open. A write after the reset is dropped, it is not an error.
-      req.write("late");
+      let lateWrite = "pending";
+      req.write("late", err => (lateWrite = err ? (err as NodeJS.ErrnoException).code! : "written"));
       // Nothing has read the response yet. The reset must not have discarded it.
       let body = "";
       req.setEncoding("utf8");
       req.on("data", (chunk: string) => (body += chunk));
       await closed;
-      expect({ events, status, body, rstCode: req.rstCode }).toEqual({
+      expect({ events, status, body, lateWrite, rstCode: req.rstCode }).toEqual({
         events: ["aborted", "end"],
         status: 200,
         body: "early response",
+        lateWrite: "ERR_STREAM_DESTROYED",
         rstCode: ErrorCode.NO_ERROR,
       });
     } finally {
@@ -1297,6 +1299,27 @@ describe("a response starts with HEADERS (RFC 9113 §8.1)", () => {
 
   test("the server sends nothing for end() without respond()", async () => {
     expect(await responseFrames(stream => stream.end(), "finish")).toEqual([]);
+  });
+
+  test("respond() throws on a stream that close() closed, and only the RST_STREAM goes out", async () => {
+    let thrown: string | undefined;
+    const frames = await responseFrames(stream => {
+      stream.close(ErrorCode.INTERNAL_ERROR);
+      try {
+        stream.respond({ ":status": 200 });
+      } catch (err) {
+        thrown = (err as NodeJS.ErrnoException).code;
+      }
+    }, "stream end");
+    expect({ thrown, frames }).toEqual({ thrown: "ERR_HTTP2_INVALID_STREAM", frames: ["RST_STREAM code=2"] });
+  });
+
+  test("respondWithFD() with a bad fd does not throw from its fstat callback when close() came first", async () => {
+    const frames = await responseFrames(stream => {
+      stream.respondWithFD(1 << 30);
+      stream.close();
+    }, "stream end");
+    expect(frames).toEqual(["RST_STREAM code=0"]);
   });
 
   test("the server puts END_STREAM on the HEADERS frame for end() before respond()", async () => {

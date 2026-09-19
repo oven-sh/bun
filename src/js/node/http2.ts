@@ -2028,6 +2028,8 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // The server reset the stream with NO_ERROR. It stays alive only for its reader.
+  PeerReset = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2199,6 +2201,13 @@ function abortOpenWritable(stream: Http2Stream) {
   if (stream._writableState.ending || stream[kPush] || stream.aborted) return;
   stream[kAborted] = true;
   stream.emit("aborted");
+}
+const kPeerResetWrite = Symbol("peerResetWrite");
+// Holds a write to a stream the peer reset, so backpressure stops the source. _destroy fails it.
+function holdWriteAfterPeerReset(stream: Http2Stream, callback): boolean {
+  if ((stream[bunHTTP2StreamStatus] & StreamState.PeerReset) === 0) return false;
+  stream[kPeerResetWrite] = callback;
+  return true;
 }
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
@@ -2654,6 +2663,11 @@ class Http2Stream extends Duplex {
         onServerStreamErrorChannel.publish({ stream: this, error: err });
       }
     }
+    const heldWrite = this[kPeerResetWrite];
+    if (heldWrite !== undefined) {
+      this[kPeerResetWrite] = undefined;
+      process.nextTick(heldWrite, $ERR_STREAM_DESTROYED("write"));
+    }
     callback(err);
   }
 
@@ -2682,7 +2696,7 @@ class Http2Stream extends Duplex {
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
-      if (native && (status & StreamState.NativeClosed) === 0) {
+      if (native && (status & StreamState.PeerReset) === 0) {
         if (this instanceof ServerHttp2Stream && !this.headersSent) {
           // RFC 9113 §8.1: a response begins with HEADERS, so no DATA frame can end the stream here.
           if ((this.id & 1) === 0) {
@@ -2826,6 +2840,7 @@ class Http2Stream extends Duplex {
       this.once("ready", this._writev.bind(this, data, callback));
       return;
     }
+    if (holdWriteAfterPeerReset(this, callback)) return;
     const writevPerf = this[kPerfState];
     if (writevPerf !== undefined) {
       if (writevPerf.firstByteSent === 0) writevPerf.firstByteSent = performance.now() - writevPerf.start;
@@ -2837,7 +2852,7 @@ class Http2Stream extends Duplex {
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
-      if (native && (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0) {
+      if (native) {
         let batchLength = 0;
         for (let i = 0; i < data.length; i++) {
           batchLength += data[i].chunk.length;
@@ -2888,6 +2903,7 @@ class Http2Stream extends Duplex {
       this.once("ready", this._write.bind(this, chunk, encoding, callback));
       return;
     }
+    if (holdWriteAfterPeerReset(this, callback)) return;
     const writePerf = this[kPerfState];
     if (writePerf !== undefined) {
       if (writePerf.firstByteSent === 0) writePerf.firstByteSent = performance.now() - writePerf.start;
@@ -2896,7 +2912,7 @@ class Http2Stream extends Duplex {
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
-      if (native && (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0) {
+      if (native) {
         let wireChunk = chunk;
         let wireEncoding = encoding;
         if (typeof chunk === "string" && (encoding === "utf-16le" || encoding === "utf16le" || encoding === "ucs-2")) {
@@ -2973,7 +2989,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
     if (onError) onError(err);
     else {
-      this.respond(headers, options);
+      if (!this.destroyed && !this.closed) this.respond(headers, options);
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -2992,7 +3008,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
       else {
-        this.respond(headers, options);
+        if (!this.destroyed && !this.closed) this.respond(headers, options);
         this.destroy(err);
       }
       return;
@@ -3320,7 +3336,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers, options) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3380,7 +3396,7 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3507,7 +3523,7 @@ class ServerHttp2Stream extends Http2Stream {
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers: any, options?: any) {
-    if (this.destroyed || this.session === undefined) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 
@@ -5068,7 +5084,9 @@ class ClientHttp2Session extends Http2Session {
 
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+        stream[bunHTTP2StreamStatus] |= peerReset
+          ? StreamState.NativeClosed | StreamState.PeerReset
+          : StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
         if (peerReset) abortOpenWritable(stream);
@@ -5078,6 +5096,7 @@ class ClientHttp2Session extends Http2Session {
           // lose data.
           stream.once("end", destroySelfOnEnd);
         } else if (
+          !peerReset &&
           (stream.writableEnded || stream[kEndingWithChunk]) &&
           !stream.writableFinished &&
           !stream.destroyed

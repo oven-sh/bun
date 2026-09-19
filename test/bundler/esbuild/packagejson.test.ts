@@ -909,7 +909,6 @@ describe("bundler", () => {
     },
   });
   itBundled("packagejson/DualPackageHazardImportAndRequireBrowser", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import './test-main'

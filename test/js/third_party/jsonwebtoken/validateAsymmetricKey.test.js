@@ -115,14 +115,14 @@ describe("Asymmetric key validation", function () {
       validateAsymmetricKey(algorithm);
     });
 
-    it.todo("should pass the validation if no algorithm has been provided", function () {
+    it("should pass the validation if no algorithm has been provided", function () {
       const key = loadKey("dsa-private.pem");
       validateAsymmetricKey(null, key);
     });
   });
 
   describe("when validating a key with an unsupported type", function () {
-    it.todo("should throw an error", function () {
+    it("should throw an error", function () {
       const algorithm = "RS256";
       const key = loadKey("dsa-private.pem");
       const expectedErrorMessage = 'Unknown key type "dsa".';

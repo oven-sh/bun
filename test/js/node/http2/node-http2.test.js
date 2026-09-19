@@ -5084,10 +5084,8 @@ it("http2 client.request() on a destroyed or closed session uses the right error
   }
 });
 
-// node validates the header block, then options (parent, exclusive, silent, endStream, signal),
-// applies endStream and the signal, and acts on the session state last. Every expectation below
-// holds on node v26.3.0. One channel differs: node reports a closed session on the stream, bun
-// throws the same error, so failureOf() accepts both.
+// node validates the headers, then options (parent, exclusive, silent, endStream, signal), and acts on the
+// session state last. This block passes on node v26.3.0: failureOf() takes node's stream error and bun's throw.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1812-L1937
 describe.concurrent("http2 client.request() validates headers, then options, then looks at the session state", () => {
   const invalidHeaders = [

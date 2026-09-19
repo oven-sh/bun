@@ -6014,8 +6014,6 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
-      // node reads options only after the header block is valid, so a header error wins:
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1866-L1878
       // Copy options so user-supplied getters run now, before the header block
       // is encoded — a getter that re-entrantly calls request() would otherwise
       // reorder header blocks on the wire (Node does the same).
@@ -6036,6 +6034,7 @@ class ClientHttp2Session extends Http2Session {
         }
         delete options.weight;
       }
+      // node's order, after the headers: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1866
       if (options !== undefined) {
         if (options.parent !== undefined) validateNumber(options.parent, "options.parent");
         if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
@@ -6127,10 +6126,7 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
-      // node acts on the session state last, so an invalid argument (options.signal included)
-      // throws on a destroyed or closed session too, and the stream it fails is already ended
-      // (endStream) and listening to the signal:
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1888-L1910
+      // Like node, act on the session state last: after every argument check, on a stream that is set up.
       if (this.destroyed) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         setupRequestEndAndSignal(req, options, signal);

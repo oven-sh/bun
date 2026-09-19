@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
 import http from "node:http";
+import net from "node:net";
 
 const skip = !fault.available() || isWindows;
 
@@ -189,6 +190,63 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
       stderr: expect.any(String),
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.skipIf(skip)("node:http pipelining under short sends", () => {
+  // Every send() takes at most 12 KB, so each 16 KB response leaves a tail in
+  // userspace, and the flush that follows a drain callback sends the next
+  // response's tail whole. That response has ended, its buffer is empty and
+  // its drain callback has not run: the next pipelined request still has to
+  // queue behind it. The last end() callback exits, so a callback that does
+  // not wait for its tail cuts that body short.
+  test("responses whose tail leaves before their drain callback stay in order and complete (subprocess server)", async () => {
+    const COUNT = 8;
+    const BODY = Buffer.alloc(16 * 1024, "A");
+    const fixture = /* js */ `
+      const http = require("node:http");
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const body = Buffer.alloc(${BODY.length}, "A");
+      let served = 0;
+      const server = http.createServer((req, res) => {
+        res.end(body, ++served === ${COUNT} ? () => process.exit(0) : undefined);
+      });
+      server.listen(0, "127.0.0.1", () => {
+        fault.set({ syscall: "send", action: "short", bytes: 12 * 1024, repeat: -1 });
+        console.log(server.address().port);
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+    let portLine = "";
+    for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+      portLine += chunk;
+      if (portLine.includes("\n")) break;
+    }
+
+    const socket = net.connect(Number(portLine), "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("error", () => {});
+    socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n".repeat(COUNT)));
+    await once(socket, "close");
+
+    const bytes = Buffer.concat(chunks);
+    let complete = 0;
+    let offset = 0;
+    while (offset < bytes.length) {
+      const bodyStart = bytes.indexOf("\r\n\r\n", offset) + 4;
+      if (bodyStart < 4 || !bytes.subarray(offset, bodyStart).toString("latin1").startsWith("HTTP/1.1 200 OK\r\n")) break;
+      if (!bytes.subarray(bodyStart, bodyStart + BODY.length).equals(BODY)) break;
+      offset = bodyStart + BODY.length;
+      complete++;
+    }
+    expect({ complete, unparsed: bytes.length - offset }).toEqual({ complete: COUNT, unparsed: 0 });
+    expect(await proc.exited).toBe(0);
   });
 });
 

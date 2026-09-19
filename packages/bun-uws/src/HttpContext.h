@@ -464,9 +464,12 @@ private:
                  * in the outgoing buffer (or the TLS spill slot), and it owns the
                  * connection (Node's socket._httpMessage) until they have been
                  * written out, with later responses queued behind it (Node's
-                 * state.outgoing). */
+                 * state.outgoing). A write or uncork can empty the buffer before
+                 * the writable event tells that response so (kqueue reports read
+                 * and write readiness separately); onWritable stays armed until then. */
                 queueBehindEarlierResponse = httpResponseData->nodeHttpQueuedPipelinedCount > 0
-                    || !((AsyncSocket<SSL> *) s)->hasFullyDrained();
+                    || !((AsyncSocket<SSL> *) s)->hasFullyDrained()
+                    || httpResponseData->onWritable != nullptr;
             }
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || queueBehindEarlierResponse) {
                 if constexpr (!IsNodeHttp) {

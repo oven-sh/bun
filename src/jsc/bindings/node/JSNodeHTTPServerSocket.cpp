@@ -298,17 +298,13 @@ bool JSNodeHTTPServerSocket::tunnelOwesHttpOutput()
 
 void JSNodeHTTPServerSocket::flushAndShutdown(JSC::JSGlobalObject* globalObject)
 {
-    // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
-    // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
-    // re-add), without which macOS 26 does not deliver the peer's close.
+    // Pause, shut down, resume: cycles kqueue's EVFILT_READ, or macOS 26 does not deliver the peer's close.
     bool cycle = this->ended && this->socket && !this->upgraded;
     if (cycle) {
         us_socket_pause(this->socket);
     }
     us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, false, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-    // Undo the pause above after the shutdown so the unread body drains
-    // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
-    // SHUT_WR) is not deleted by a W -> R|W -> R step.
+    // Resume after the shutdown: a W -> R|W -> R step would delete kqueue's one-shot EVFILT_WRITE.
     if (cycle && this->socket) {
         us_socket_resume(this->socket);
     }

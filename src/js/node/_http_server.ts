@@ -2622,8 +2622,7 @@ function activatePipelinedHandoff(socket) {
   if (write !== undefined) socket._write(write.chunk, write.encoding, write.callback);
   const final = pending.final;
   if (final !== undefined) socket._final(final);
-  // On a fresh turn: a ws adoption replaces the native socket, which no native callback
-  // on the stack (the response ahead's drain) may outlive.
+  // A fresh turn: a ws adoption must not run inside a native callback of the response ahead.
   if (pending.ready.length !== 0) setImmediate(runHandoffReady, pending.ready);
 }
 

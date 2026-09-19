@@ -96,8 +96,6 @@ bitflags! {
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
         const TUNNELED                            = 1 << 8;
         /// The connection went away while the request body was still arriving.
-        /// The teardown moves `body_read_state` to `Done` (nothing more to
-        /// read), which on its own is indistinguishable from a body that ended.
         const REQUEST_BODY_TRUNCATED              = 1 << 9;
     }
 }
@@ -715,10 +713,8 @@ impl NodeHTTPResponse {
 
         // A body whose fin was buffered during a pause is still owed to the
         // IncomingMessage, which drains it through `drainRequestBody` when it
-        // next reads. That can be after the response has ended, and after
-        // res.destroy() closed the connection: `hasBody` still reports that
-        // body as done, so a freed tail would surface as 'end' with bytes
-        // missing. `set_on_data` frees it once the reader lets go.
+        // next reads (possibly only after the response has ended). Keep it while
+        // JS can still get at it; `set_on_data` frees it once the reader lets go.
         let flags = self.flags.get();
         let tail_still_readable = flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
             && !flags.contains(Flags::UPGRADED);
@@ -784,10 +780,7 @@ impl NodeHTTPResponse {
     pub(crate) fn get_has_body(&self, _global: &JSGlobalObject) -> JSValue {
         let mut result: i32 = 0;
         let flags = self.flags.get();
-        // IncomingMessage._read() takes the done bit for EOF and emits 'end'.
-        // A truncated body stays pending for JS: that request ends when
-        // NodeHTTPServerSocket#onClose destroys it with ECONNRESET. The LAST
-        // flag below is never set together with REQUEST_BODY_TRUNCATED.
+        // _read() takes the done bit for EOF, so a truncated body stays pending for JS.
         let body_read_state = if flags.contains(Flags::REQUEST_BODY_TRUNCATED) {
             BodyReadState::Pending
         } else {
@@ -1230,13 +1223,7 @@ pub enum AbortEvent {
 }
 
 impl NodeHTTPResponse {
-    /// The only place that sets SOCKET_CLOSED (the connection closed, or JS
-    /// called abort()). uws dispatches nothing more on a closed socket, not
-    /// even the rest of the read it is parsing (#43513), so a body that is
-    /// still `Pending` here never completes. Record that before the teardown
-    /// that follows moves `body_read_state` to `Done`. A fin buffered during a
-    /// pause (LAST) is a complete body. Not covered: uws ends an Upgrade
-    /// request body with a synthetic fin before this runs (#43543).
+    /// Sole setter of SOCKET_CLOSED: a body that is still arriving at that moment is truncated.
     fn mark_socket_closed(&self) {
         let body_truncated = self.body_read_state.get() == BodyReadState::Pending
             && !self

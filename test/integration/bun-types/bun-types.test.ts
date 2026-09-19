@@ -916,16 +916,6 @@ describe("@types/bun integration test", () => {
             "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
         },
         {
-          code: 2339,
-          line: "spawn.ts:62:38",
-          message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
-        },
-        {
-          code: 2339,
-          line: "spawn.ts:107:38",
-          message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
-        },
-        {
           code: 2769,
           line: "streams.ts:18:3",
           message:
@@ -935,26 +925,6 @@ describe("@types/bun integration test", () => {
           code: 2339,
           line: "streams.ts:20:16",
           message: "Property 'write' does not exist on type 'ReadableByteStreamController'.",
-        },
-        {
-          code: 2339,
-          line: "streams.ts:46:19",
-          message: "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        },
-        {
-          code: 2339,
-          line: "streams.ts:47:19",
-          message: "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        },
-        {
-          code: 2339,
-          line: "streams.ts:48:19",
-          message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
-        },
-        {
-          code: 2339,
-          line: "streams.ts:49:19",
-          message: "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         },
         {
           code: 2345,

@@ -356,13 +356,15 @@ describe.concurrent("a WebSocket upgrade that is pipelined behind a pending resp
   test("should not cut short the parse of the connection whose request ends the response ahead", async () => {
     // The upgrade runs in a task of its own, not inside the dispatch of that request.
     let first: http.ServerResponse | undefined;
+    const dispatched = Promise.withResolvers<void>();
+    const { promise: upgradeDispatched, resolve: onUpgradeDispatched } = dispatched;
+    const { promise: connected, resolve: onConnected } = Promise.withResolvers<void>();
     await using server = http.createServer((req, res) => {
       if (req.url === "/first") return void (first = res);
+      if (req.url === "/ws") return void dispatched.reject(new Error("the Upgrade was dispatched as a request"));
       if (req.url === "/release") first!.end("first");
       res.end(req.url);
     });
-    const { promise: upgradeDispatched, resolve: onUpgradeDispatched } = Promise.withResolvers<void>();
-    const { promise: connected, resolve: onConnected } = Promise.withResolvers<void>();
     new WebSocketServer({ server }).on("connection", () => onConnected());
     server.on("upgrade", () => onUpgradeDispatched());
     await once(server.listen(0, "127.0.0.1"), "listening");
@@ -402,6 +404,10 @@ describe.concurrent("a WebSocket upgrade that is pipelined behind a pending resp
       process.on("uncaughtException", err => console.log("uncaught:", err.message));
       let first;
       const server = http.createServer((req, res) => {
+        if (req.url === "/ws") {
+          console.log("the Upgrade was dispatched as a request");
+          process.exit(1);
+        }
         first = res;
         res.on("finish", () => console.log("first finish"));
         res.on("close", () => console.log("first close"));
@@ -446,6 +452,10 @@ describe.concurrent("a WebSocket upgrade that is pipelined behind a pending resp
       const kInternals = Symbol.for("::bunternal::");
       let first;
       const server = http.createServer((req, res) => {
+        if (req.url === "/ws") {
+          console.log("the Upgrade was dispatched as a request");
+          process.exit(1);
+        }
         first = res;
         res.write("partial-");
       });

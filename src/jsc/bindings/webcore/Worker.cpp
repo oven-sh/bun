@@ -286,6 +286,36 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(jsUndefined());
 }
 
+// The claim flag of a resource in transit to a worker (worker_threads.ts, packJSTransferables): one
+// shared int32 that rides inside the cloned workerData. Native so that neither side depends on the
+// SharedArrayBuffer and Atomics globals, which user code can replace.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateJSTransferableClaim, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RefPtr<ArrayBuffer> buffer = ArrayBuffer::tryCreate(sizeof(int32_t), 1);
+    if (!buffer) [[unlikely]] {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return {};
+    }
+    buffer->makeShared();
+    return JSValue::encode(JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(buffer)));
+}
+
+// true: this call flipped the flag, so the caller now owns the resource. false: another caller
+// flipped it first. undefined: the argument is not a claim flag.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionClaimJSTransferable, (JSGlobalObject*, CallFrame* callFrame))
+{
+    auto* jsBuffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(0));
+    if (!jsBuffer)
+        return JSValue::encode(jsUndefined());
+    auto* buffer = jsBuffer->impl();
+    if (!buffer->isShared() || buffer->byteLength() < sizeof(int32_t))
+        return JSValue::encode(jsUndefined());
+    auto* flag = static_cast<int32_t*>(buffer->data());
+    return JSValue::encode(jsBoolean(WTF::atomicCompareExchangeStrong(flag, 0, 1) == 0));
+}
+
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -342,7 +372,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 17);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 19);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     RETURN_IF_EXCEPTION(scope, {});
@@ -379,6 +409,10 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 15, JSBroadcastChannel::getConstructor(vm, globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 16, JSWorker::getConstructor(vm, globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 17, JSFunction::create(vm, globalObject, 0, "createJSTransferableClaim"_s, jsFunctionCreateJSTransferableClaim, ImplementationVisibility::Public, NoIntrinsic));
+    RETURN_IF_EXCEPTION(scope, {});
+    array->putDirectIndex(globalObject, 18, JSFunction::create(vm, globalObject, 1, "claimJSTransferable"_s, jsFunctionClaimJSTransferable, ImplementationVisibility::Public, NoIntrinsic));
     RETURN_IF_EXCEPTION(scope, {});
     return array;
 }

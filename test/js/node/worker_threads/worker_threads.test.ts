@@ -1170,16 +1170,48 @@ describe("the fd of a FileHandle transferred through workerData", () => {
     });
   });
 
+  // The claim flag is made and flipped natively. Code that replaces these globals (a DOM shim, a
+  // hardened realm) keeps the transfer that it had before the flag existed.
+  test("is transferred when user code removed SharedArrayBuffer and Atomics", async () => {
+    using dir = tempDir("worker-fh-no-sab", { "x.txt": "hello" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const fs = require("node:fs");
+         globalThis.SharedArrayBuffer = globalThis.Atomics = globalThis.Int32Array = undefined;
+         fs.promises.open("x.txt", "r").then(fh => {
+           const worker = new Worker(
+             \`const { workerData, parentPort } = require("node:worker_threads");
+              workerData.fh.readFile("utf8").then(text => workerData.fh.close().then(() => parentPort.postMessage(text)));\`,
+             { eval: true, workerData: { fh }, transferList: [fh] },
+           );
+           worker.on("message", text => console.log(JSON.stringify({ text, parentFd: fh.fd })));
+         });`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ text: "hello", parentFd: -1 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The worker unpacks workerData before user code runs, so a lookalike must not throw there.
   test.each([
-    ["no claim flag", undefined],
-    ["a claim flag of the wrong type", new Float64Array(1)],
-    ["an empty claim flag", new Int32Array(0)],
-  ])("workerData that imitates a marker with %s stays plain data", async (_, claim) => {
-    const imitation = {
-      __bunNodeWorkerJSTransferable: "internal/fs/promises:FileHandle",
-      data: { fd: 1 << 20 },
-      claim,
-    };
+    ["no claim flag", { data: { fd: 1 << 20 } }],
+    ["a claim flag of the wrong type", { data: { fd: 1 << 20 }, claim: new Int32Array(1) }],
+    ["a claim flag that is too small", { data: { fd: 1 << 20 }, claim: new SharedArrayBuffer(2) }],
+    ["a claim flag and no fd", { data: {}, claim: new SharedArrayBuffer(4) }],
+    ["a claim flag and no data", { claim: new SharedArrayBuffer(4) }],
+  ])("workerData that imitates a marker with %s stays plain data", async (_, rest) => {
+    const imitation = { __bunNodeWorkerJSTransferable: "internal/fs/promises:FileHandle", ...rest };
     await using worker = new Worker(
       `const { workerData, parentPort } = require("node:worker_threads");
        parentPort.postMessage(workerData);`,

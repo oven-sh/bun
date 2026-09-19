@@ -2,7 +2,6 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
-const { isInt32Array } = require("node:util/types");
 const { SafeMap } = require("internal/primordials");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const {
@@ -77,6 +76,8 @@ const {
   14: MessageChannel,
   15: BroadcastChannel,
   16: WebWorker,
+  17: _createJSTransferableClaim,
+  18: _claimJSTransferable,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -98,6 +99,9 @@ const {
   // instance. This is so that it can emit the `worker` event on the process with the
   // node:worker_threads instance instead of the Web Worker instance.
   new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
+  () => SharedArrayBuffer,
+  // true: this call took the claim. false: another thread took it first. undefined: not a claim flag.
+  (claim: unknown) => boolean | undefined,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -357,39 +361,30 @@ function setupWorkerStdio(stdio) {
 // A plain string key on purpose: Symbols don't survive structured clone, and
 // Bun has no native HostObject hook, so the marker must ride along inside the
 // cloned graph (including Map/Set entries). This is in-band signaling: a user
-// object that fabricates the key and the claim flag in workerData will
-// deserialize on the worker side where node would deliver it unchanged. That's
-// accepted - it is not a privilege boundary (worker threads share the parent's
-// fd table anyway).
+// object that fabricates the whole marker (key, data and claim flag) in
+// workerData will deserialize on the worker side where node would deliver it
+// unchanged. That's accepted - it is not a privilege boundary (worker threads
+// share the parent's fd table anyway).
 const kJSTransferableMarker = "__bunNodeWorkerJSTransferable";
 
 function isJSTransferableMarker(value: object): boolean {
-  if (
-    typeof (value as Record<string, unknown>)[kJSTransferableMarker] !== "string" ||
-    !Object.prototype.hasOwnProperty.$call(value, kJSTransferableMarker)
-  ) {
-    return false;
-  }
-  // Exactly what claimJSTransferable() accepts, so user data that looks like a
-  // marker stays plain data and never throws in the worker bootstrap.
-  const claim = (value as Record<string, any>).claim;
-  return isInt32Array(claim) && claim.length > 0;
+  return (
+    typeof (value as Record<string, unknown>)[kJSTransferableMarker] === "string" &&
+    Object.prototype.hasOwnProperty.$call(value, kJSTransferableMarker)
+  );
 }
 
 // Between kTransfer() on the parent and kDeserialize() on the worker the
-// resource (a bare fd) has no owner. Each marker carries a one-slot
-// SharedArrayBuffer, and the resource belongs to the thread that flips the slot
-// first: the worker when it deserializes the marker, or the parent when it
-// rolls the transfer back or finds the marker undelivered after the worker
-// exited. Node closes the fd of a message that is destroyed undelivered:
+// resource (a bare fd) has no owner. Each marker carries a claim flag (4 shared
+// bytes, made and flipped natively), and the resource belongs to the thread
+// that flips it first: the worker when it deserializes the marker, or the
+// parent when it rolls the transfer back or finds the marker undelivered after
+// the worker exited. Node closes the fd of a message that is destroyed
+// undelivered:
 // https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L318-L327
-function claimJSTransferable(claim: Int32Array): boolean {
-  return Atomics.compareExchange(claim, 0, 0, 1) === 0;
-}
-
-function closeIfUnclaimed(data: unknown, claim: Int32Array) {
+function closeIfUnclaimed(data: unknown, claim: SharedArrayBuffer) {
   const fd = (data as any)?.fd;
-  if (typeof fd !== "number" || fd < 0 || !claimJSTransferable(claim)) return;
+  if (typeof fd !== "number" || fd < 0 || _claimJSTransferable(claim) !== true) return;
   try {
     require("node:fs").closeSync(fd);
   } catch {
@@ -400,19 +395,27 @@ function closeIfUnclaimed(data: unknown, claim: Int32Array) {
 // Module scope on purpose. The Worker keeps this closure until it exits, and a
 // closure made inside packJSTransferables() would keep that call's whole scope
 // alive with it, the user's workerData graph included.
-function makeReclaimJSTransferables(pending: Array<[data: unknown, claim: Int32Array]>) {
+function makeReclaimJSTransferables(pending: Array<[data: unknown, claim: SharedArrayBuffer]>) {
   return function reclaimJSTransferables() {
     for (const { 0: data, 1: claim } of pending) closeIfUnclaimed(data, claim);
   };
 }
 
+// Returns undefined for user data that only looks like a marker. It stays plain
+// data, as in node, and must not throw here: this runs in the worker bootstrap.
 function deserializeJSTransferable(marker: Record<string, any>): unknown {
   const deserializeInfo = marker[kJSTransferableMarker];
   switch (deserializeInfo) {
     case "internal/fs/promises:FileHandle": {
+      const data = marker.data;
+      if (data === null || typeof data !== "object" || typeof data.fd !== "number") return undefined;
       const { FileHandle, kDeserialize } = require("node:fs").promises.$data;
       const handle = new FileHandle(-1);
-      if (claimJSTransferable(marker.claim)) handle[kDeserialize](marker.data);
+      // Claim last. A terminate() that lands between the claim and kDeserialize()
+      // leaks the fd, so nothing slow (the node:fs load above) may sit in between.
+      const claimed = _claimJSTransferable(marker.claim);
+      if (claimed === undefined) return undefined;
+      if (claimed) handle[kDeserialize](data);
       return handle;
     }
     default:
@@ -432,8 +435,10 @@ function unpackJSTransferables(value: unknown, memo?: Map<object, unknown>): unk
   if (cached !== undefined) return cached;
   if (isJSTransferableMarker(value)) {
     const instance = deserializeJSTransferable(value as Record<string, any>);
-    memo.set(value, instance);
-    return instance;
+    if (instance !== undefined) {
+      memo.set(value, instance);
+      return instance;
+    }
   }
   memo.set(value, value);
   if ($isArray(value)) {
@@ -499,10 +504,10 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   // kTransfer() neuters the handle (extracts the bare fd); if anything later
   // in the pack/construct sequence throws, restore the already-neutered
   // handles so their fds aren't orphaned.
-  const neutered: Array<[item: any, data: unknown, claim: Int32Array]> = [];
+  const neutered: Array<[item: any, data: unknown, claim: SharedArrayBuffer]> = [];
   function restoreNeutered() {
     for (const { 0: item, 1: data, 2: claim } of neutered) {
-      if (!claimJSTransferable(claim)) continue;
+      if (_claimJSTransferable(claim) !== true) continue;
       try {
         item[kDeserialize](data);
       } catch {
@@ -524,7 +529,7 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
         }
         const extraTransfers = item[kTransferList]?.();
         // Allocated before kTransfer() so nothing can throw between neutering and the push.
-        const claim = new Int32Array(new SharedArrayBuffer(4));
+        const claim = _createJSTransferableClaim();
         // May throw DataCloneError (e.g. FileHandle in use); propagate synchronously like Node.
         const { data, deserializeInfo } = item[kTransfer]();
         neutered.push([item, data, claim]);
@@ -620,7 +625,7 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   // A worker that exits before it unpacks its workerData (the entry did not
   // resolve, or terminate() got there first) leaves every marker undelivered.
   // Runs on 'close', which the worker thread posts after its VM is destroyed.
-  const pending: Array<[data: unknown, claim: Int32Array]> = [];
+  const pending: Array<[data: unknown, claim: SharedArrayBuffer]> = [];
   for (const { 1: data, 2: claim } of neutered) pending.push([data, claim]);
   packed[kReclaimJSTransferables] = makeReclaimJSTransferables(pending);
   return packed;

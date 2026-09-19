@@ -82,7 +82,7 @@ enum State {
     Initializing,
     Reading,
     Failed,
-    /// Sent CONNECT, waiting for 200
+    /// Sent CONNECT, waiting for a 2xx reply
     ProxyHandshake,
     /// WebSocket upgrade complete, forwarding data through tunnel
     Done,
@@ -845,8 +845,7 @@ where
             HeadParse::NeedMore => return,
         };
 
-        // Proxy returned non-200 status
-        if status_code != 200 {
+        if !bun_http::is_successful_connect_status(status_code) {
             if status_code == 407 {
                 Self::terminate(this, ErrorCode::ProxyAuthenticationRequired);
             } else {

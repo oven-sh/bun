@@ -360,6 +360,37 @@ describe("the CONNECT reply gives the same outcome wherever the first read ends"
       tunnel: true,
       events: () => echoed(message),
     },
+    // RFC 9110 section 9.3.6: any 2xx reply opens the tunnel. fetch() applies the same rule.
+    {
+      name: "101",
+      reply: "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+      tunnel: false,
+      events: (url: string) => failed(url, "Proxy connection failed", 1006),
+    },
+    {
+      name: "201",
+      reply: "HTTP/1.1 201 Created\r\n\r\n",
+      tunnel: true,
+      events: () => echoed(message),
+    },
+    {
+      name: "204",
+      reply: "HTTP/1.1 204 No Content\r\n\r\n",
+      tunnel: true,
+      events: () => echoed(message),
+    },
+    {
+      name: "299",
+      reply: "HTTP/1.1 299 Tunnel Ready\r\n\r\n",
+      tunnel: true,
+      events: () => echoed(message),
+    },
+    {
+      name: "300",
+      reply: "HTTP/1.1 300 Multiple Choices\r\nContent-Length: 0\r\n\r\n",
+      tunnel: false,
+      events: (url: string) => failed(url, "Proxy connection failed", 1006),
+    },
     {
       name: "a reply that is not HTTP",
       reply: "SSH-2.0-OpenSSH_9.6\r\n",

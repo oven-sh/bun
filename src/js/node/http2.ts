@@ -5641,11 +5641,18 @@ class ClientHttp2Session extends Http2Session {
       this.#authority = needsBrackets ? `[${authorityHost}]:${port}` : `${authorityHost}:${port}`;
     }
 
+    // An options.settings that validation rejected while the socket was still connecting.
+    let settingsRejected = false;
+    let settingsError;
     function onConnect() {
       // The parser's construction re-enters JS and can drain the tick queue, so a
       // connect that fires from that drain arrives before the constructor finished.
       if (this.#parser === undefined) {
         process.nextTick(onConnect.bind(this));
+        return;
+      }
+      if (settingsRejected && !this.destroyed) {
+        this[bunHTTP2Socket].destroy(settingsError);
         return;
       }
       try {
@@ -5673,6 +5680,9 @@ class ClientHttp2Session extends Http2Session {
         connectOnNextTick = true;
       }
     } else {
+      // node builds the tls.connect() options with initializeTLSOptions, which throws for an
+      // options.settings that is not an object. No socket exists yet at that point.
+      if (protocol === "https:") assertIsObject(options.settings, "options.settings");
       socket = connectWithProtocol(
         protocol,
         options
@@ -5695,10 +5705,23 @@ class ClientHttp2Session extends Http2Session {
     const nativeSocket = socket._handle;
     this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
 
-    if (options?.settings !== undefined) {
-      validateSettings(options.settings);
+    // node reads options.settings in setupHandle, which runs once the socket is connected. It
+    // ignores a value that is not an object. A throw from validation is caught at the connect
+    // event and destroys the socket with that error, so the session reports it as 'error'.
+    // For a socket that is already connected, setupHandle runs inline and connect() throws.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1147
+    let settings = typeof options.settings === "object" ? options.settings : undefined;
+    if (settings !== undefined) {
+      try {
+        validateSettings(settings);
+      } catch (e) {
+        if (connectOnNextTick) throw e;
+        settingsRejected = true;
+        settingsError = e;
+        settings = undefined;
+      }
     }
-    const nativeSettings = { ...options, ...options?.settings };
+    const nativeSettings = { ...options, ...settings };
     this.#localSettings = initialLocalSettings(nativeSettings);
     // #onConnect attaches the native socket; frames written before that (the preface) queue.
     this.#parser = new H2FrameParser({

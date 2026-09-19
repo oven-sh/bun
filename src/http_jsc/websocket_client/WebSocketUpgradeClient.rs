@@ -68,8 +68,7 @@ fn handshake_timeout_seconds() -> core::ffi::c_uint {
     )
 }
 
-/// Bound on the raw head. Node limits what llhttp counts, which leaves out framing (": ", "\r\n"),
-/// so the framing of 128 fields is slack (`MAX_HEADER_FRAMING_SLACK` in bun-uws `HttpParser.h`).
+/// Raw bound: `max_http_header_size` plus the framing of 128 fields, which llhttp does not count.
 #[inline]
 fn max_response_head_len() -> usize {
     bun_http::max_http_header_size().saturating_add(128 * 4 + 64)

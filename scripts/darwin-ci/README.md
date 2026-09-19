@@ -49,9 +49,14 @@ test suite closes: `sysctl net.inet.tcp.pcbcount` grows by about 1,000 per job
 while netstat shows nothing. macOS 26 caps TCP memory at 1/32 of RAM, so an
 8 GB host loses its network after about 60 jobs. When the count is over
 `getDarwinLeakedSocketLimit()` (`scripts/utils.mjs`, 5,000 per GiB of RAM),
-the job reboots the host instead of running tests, and Buildkite retries it
-on another agent. The job log says so. `tart` guests are fresh for every job
-and never do this.
+the job runs `sudo -n shutdown -r now` instead of the tests. The shutdown
+stops the agent, which ends the job as `agent_stop`, and the pipeline retries
+that on another agent. The job log says so.
+
+If the host does not reboot, the job runs its tests after five minutes and
+leaves a warning annotation on the build that names the host. Reboot that host
+by hand. The beta lane has no automatic retry, so its host never does this.
+`tart` guests are fresh for every job and never do it either.
 
 ## Bringing up a host
 

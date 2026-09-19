@@ -39,16 +39,27 @@ const syntaxErrorOf = (source: string) => {
   return "no SyntaxError";
 };
 
+// [text before the expression, text after it]
+const generators = [
+  ["(function* () { (", "); })"],
+  ["(function* (p = ", ") { })"],
+  ["({ *g() { (", "); } })"],
+  ["(async function* () { (", "); })"],
+];
+// Strict mode code. `yield` is a reserved word there, so the message is not always about the generator.
+const strictGenerator = ["(class { *g() { (", "); } })"];
+
 describe("yield in the parameters of an arrow function", () => {
+  test("the text around the expressions is valid", () => {
+    for (const [before, after] of [...generators, strictGenerator])
+      expect(syntaxErrorOf(before + "(a = (b) => b) => a" + after)).toBe("no SyntaxError");
+  });
+
   test.each(invalid)("%s is a SyntaxError in a generator", (expression, message) => {
-    expect(syntaxErrorOf(`(function* () { (${expression}); })`)).toBe(message);
-    for (const [before, after] of [
-      ["(function* (p = ", ") { })"],
-      ["({ *g() { (", "); } })"],
-      ["(async function* () { (", "); })"],
-      ["(class { *g() { (", "); } })"],
-    ])
-      expect(syntaxErrorOf(before + expression + after)).not.toBe("no SyntaxError");
+    // The message is the one that the parser gives with BUN_JSC_useSourceProviderCache=0.
+    for (const [before, after] of generators) expect(syntaxErrorOf(before + expression + after)).toBe(message);
+    const [before, after] = strictGenerator;
+    expect(syntaxErrorOf(before + expression + after)).not.toBe("no SyntaxError");
   });
 
   test.each(invalid)("%s is valid where yield is an identifier", expression => {
@@ -56,6 +67,18 @@ describe("yield in the parameters of an arrow function", () => {
     // The body of an arrow function and a function that is not an arrow function are not part of the generator.
     expect(syntaxErrorOf(`(function* () { () => { (${expression}); }; })`)).toBe("no SyntaxError");
     expect(syntaxErrorOf(`(function* () { (a = function () { (${expression}); }) => a; })`)).toBe("no SyntaxError");
+  });
+
+  // The parser takes these arrow functions from its cache. A version of the engine change that parsed them again
+  // rejected the first three: that parse reads `await` in the body of the nested function as the async generator's.
+  test.each([
+    "(async function* () { ((...[a = () => await => 1]) => a); })",
+    "(async function* () { ((...[a = () => (await) => 1]) => a); })",
+    "(async function* () { (({ x = 1 }, a = () => { var await; }) => a); })",
+    "(function* () { ((a = (await) => 1) => a); })",
+    "(function* () { (({ x = 1 }, a = (b = await) => b) => a); })",
+  ])("%s is valid", source => {
+    expect(syntaxErrorOf(source)).toBe("no SyntaxError");
   });
 
   test("valid arrow functions keep what they capture", () => {

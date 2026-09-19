@@ -237,7 +237,9 @@ test.concurrent("a refused browser context rejects navigate() with the cause", a
     view.close();
   `);
   expect(result).toEqual({
-    rejected: expect.stringMatching(/^Chrome refused a browser context for this view .*: Cannot navigate to invalid URL$/),
+    rejected: expect.stringMatching(
+      /^Chrome refused a browser context for this view .*: Cannot navigate to invalid URL$/,
+    ),
   });
 });
 

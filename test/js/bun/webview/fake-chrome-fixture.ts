@@ -87,7 +87,11 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
 
-  if (method === "Target.createBrowserContext" || method === "Target.createTarget" || method === "Target.disposeBrowserContext") {
+  if (
+    method === "Target.createBrowserContext" ||
+    method === "Target.createTarget" ||
+    method === "Target.disposeBrowserContext"
+  ) {
     targetLog.push({ method, params });
   }
 

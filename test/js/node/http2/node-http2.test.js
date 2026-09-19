@@ -4973,6 +4973,85 @@ it("getPackedSettings caps initialWindowSize at 2**31-1", () => {
   expect(error?.code).toBe("ERR_HTTP2_INVALID_SETTING_VALUE");
 });
 
+it("http2 stream.respondWithFD checks the stream state, the options, fd, then the headers; respondWithFile rejects a closed stream", async () => {
+  // Each respondWithFD call has more than one problem, so the result shows which check runs first.
+  // The expected values are node v26.3.0's: the stream state, then the options, then fd, then the headers.
+  const badFd = "not-an-fd";
+  const capture = fn => {
+    try {
+      fn();
+      return "no throw";
+    } catch (e) {
+      return `${e.code}: ${e.message}`;
+    }
+  };
+  const results = {};
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    results.optionsNotAnObject = capture(() => stream.respondWithFD(badFd, {}, "opts"));
+    results.optionsOffset = capture(() => stream.respondWithFD(badFd, {}, { offset: "x" }));
+    results.optionsLength = capture(() => stream.respondWithFD(badFd, {}, { length: "x" }));
+    results.optionsStatCheck = capture(() => stream.respondWithFD(badFd, {}, { statCheck: "x" }));
+    results.headersNotAnObject = capture(() => stream.respondWithFD(badFd, "hdrs"));
+    results.payloadForbidden = capture(() => stream.respondWithFD(badFd, { ":status": 204 }));
+    // node unwraps only a real FileHandle: a look-alike object is rejected and its `fd` is never read.
+    results.fdPlainObject = capture(() => stream.respondWithFD({ fd: 0 }, "hdrs"));
+    let fdGetterRan = false;
+    results.fdGetter = capture(() =>
+      stream.respondWithFD({
+        get fd() {
+          fdGetterRan = true;
+          return "x";
+        },
+      }),
+    );
+    results.fdGetterRan = fdGetterRan;
+    // From here on every argument is bad, so only a state check that runs first gives these results.
+    stream.respond();
+    results.headersSent = capture(() => stream.respondWithFD(badFd, "hdrs", "opts"));
+    stream.close();
+    // close() has not destroyed the stream yet, so the next two calls test `closed`.
+    results.destroyedAfterClose = stream.destroyed;
+    results.closed = capture(() => stream.respondWithFD(badFd, "hdrs", "opts"));
+    results.closedRespondWithFile = capture(() => stream.respondWithFile(import.meta.path));
+    stream.destroy();
+    results.destroyed = capture(() => stream.respondWithFD(badFd, "hdrs", "opts"));
+  });
+
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", () => {});
+  try {
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    req.end();
+    await new Promise(resolve => req.on("close", resolve));
+
+    const fdError = `ERR_INVALID_ARG_TYPE: The "fd" argument must be of type number or an instance of FileHandle. Received type string ('not-an-fd')`;
+    expect(results).toEqual({
+      optionsNotAnObject: `ERR_INVALID_ARG_TYPE: The "options" argument must be of type object. Received type string ('opts')`,
+      optionsOffset: "ERR_INVALID_ARG_VALUE: The property 'options.offset' is invalid. Received 'x'",
+      optionsLength: "ERR_INVALID_ARG_VALUE: The property 'options.length' is invalid. Received 'x'",
+      optionsStatCheck: "ERR_INVALID_ARG_VALUE: The property 'options.statCheck' is invalid. Received 'x'",
+      headersNotAnObject: fdError,
+      payloadForbidden: fdError,
+      fdPlainObject: `ERR_INVALID_ARG_TYPE: The "fd" argument must be of type number or an instance of FileHandle. Received an instance of Object`,
+      fdGetter: `ERR_INVALID_ARG_TYPE: The "fd" argument must be of type number or an instance of FileHandle. Received an instance of Object`,
+      fdGetterRan: false,
+      headersSent: "ERR_HTTP2_HEADERS_SENT: Response has already been initiated.",
+      destroyedAfterClose: false,
+      closed: "ERR_HTTP2_INVALID_STREAM: The stream has been destroyed",
+      closedRespondWithFile: "ERR_HTTP2_INVALID_STREAM: The stream has been destroyed",
+      destroyed: "ERR_HTTP2_INVALID_STREAM: The stream has been destroyed",
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
 it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFile reject them", async () => {
   // respond() accepts the node v26 raw [name1, value1, ...] headers form (verified
   // on node v26.3.0: status/x-foo land on the wire); respondWithFD/respondWithFile

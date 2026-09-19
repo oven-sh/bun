@@ -3312,7 +3312,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers, options) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3350,20 +3350,7 @@ class ServerHttp2Stream extends Http2Stream {
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
   }
   respondWithFD(fd, headers, options) {
-    if (typeof fd !== "number") {
-      // node accepts a FileHandle too; unwrap its descriptor.
-      if (fd !== null && typeof fd === "object" && typeof fd.fd === "number") {
-        fd = fd.fd;
-      } else {
-        const err = new TypeError(
-          `The "fd" argument must be of type number or an instance of FileHandle.` +
-            ` Received ${receivedValueLabel(fd)}`,
-        );
-        err.code = "ERR_INVALID_ARG_TYPE";
-        throw err;
-      }
-    }
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3378,6 +3365,12 @@ class ServerHttp2Stream extends Http2Stream {
     }
     if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
+    }
+
+    if (fd instanceof FileHandle) {
+      fd = fd.fd;
+    } else if (typeof fd !== "number") {
+      throw $ERR_INVALID_ARG_TYPE("fd", ["number", "FileHandle"], fd);
     }
 
     // node's message names Array, yet only respond() accepts the raw-array form.
@@ -3406,11 +3399,7 @@ class ServerHttp2Stream extends Http2Stream {
       // stream.end() right after it is a no-op instead of ending the stream before the file.
       closeWritableForFileResponse(this);
     }
-    if (fd instanceof FileHandle) {
-      fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
-    } else {
-      fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
-    }
+    fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
   }
   additionalHeaders(headers) {
     if (this.destroyed || this.closed || this.session === undefined) {

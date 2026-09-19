@@ -2101,6 +2101,87 @@ it("http2 padded DATA write survives a re-entrant stream write from a JS Duplex 
   expect(exitCode).toBe(0);
 });
 
+describe("http2 priority fields of a request HEADERS frame", () => {
+  const HEADERS = 0x1;
+  const CONTINUATION = 0x9;
+  const END_HEADERS = 0x4;
+  const PADDED = 0x8;
+  const PRIORITY = 0x20;
+
+  // Sends one request on a new session over a Duplex transport and resolves with its header
+  // block: the flags and the payload of the HEADERS frame, and the payloads of the CONTINUATION
+  // frames after it. The authority is fixed, so every session encodes the same header block for
+  // the same headers.
+  async function captureRequestHeaderBlock(headers, options) {
+    const headerBlock = Promise.withResolvers();
+    const magic = http2utils.kClientMagic;
+    let wire = Buffer.alloc(0);
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        wire = Buffer.concat([wire, chunk]);
+        const frames = [];
+        let offset = wire.subarray(0, magic.length).equals(magic) ? magic.length : 0;
+        while (offset + 9 <= wire.length) {
+          const end = offset + 9 + wire.readUIntBE(offset, 3);
+          if (end > wire.length) break;
+          const type = wire[offset + 3];
+          const flags = wire[offset + 4];
+          if (type === HEADERS || type === CONTINUATION) {
+            frames.push({ flags, payload: wire.subarray(offset + 9, end) });
+            if (flags & END_HEADERS) {
+              const [first, ...rest] = frames;
+              headerBlock.resolve({ ...first, continuation: Buffer.concat(rest.map(frame => frame.payload)) });
+            }
+          }
+          offset = end;
+        }
+        callback();
+      },
+    });
+    const session = http2.connect("http://localhost:1", { createConnection: () => transport });
+    session.on("error", () => {});
+    try {
+      await new Promise(resolve => session.once("connect", resolve));
+      const req = session.request(headers, options);
+      req.on("error", headerBlock.reject);
+      req.on("close", () => headerBlock.reject(new Error("the request closed before its header block was written")));
+      return await headerBlock.promise;
+    } finally {
+      session.destroy();
+    }
+  }
+
+  // RFC 7540 section 6.2, no PADDED flag: E + Stream Dependency (4 octets), Weight (1 octet, the
+  // weight minus one), then the header block fragment.
+  function parseHeaderBlock({ flags, payload, continuation }) {
+    if ((flags & (PADDED | PRIORITY)) !== PRIORITY) {
+      return { priority: null, block: Buffer.concat([payload, continuation]).toString("hex") };
+    }
+    const dependency = payload.readUInt32BE(0);
+    return {
+      priority: { exclusive: dependency >>> 31 === 1, parent: dependency & 0x7fffffff, weight: payload[4] + 1 },
+      block: Buffer.concat([payload.subarray(5), continuation]).toString("hex"),
+    };
+  }
+
+  it.each([
+    ["one HEADERS frame", { ":path": "/" }],
+    // The header block is about 22 KiB, more than one 16384-byte frame.
+    ["HEADERS and CONTINUATION frames", { ":path": "/", "x-fill": Buffer.alloc(30000, "p").toString() }],
+  ])("carry the default weight 16 (%s)", async (_, headers) => {
+    const plain = parseHeaderBlock(await captureRequestHeaderBlock(headers, undefined));
+    expect(plain.priority).toBeNull();
+
+    const frames = await captureRequestHeaderBlock(headers, { exclusive: true, parent: 3 });
+    expect(frames.continuation.length > 0).toBe("x-fill" in headers);
+    expect(parseHeaderBlock(frames)).toEqual({
+      priority: { exclusive: true, parent: 3, weight: 16 },
+      block: plain.block,
+    });
+  });
+});
+
 it("http2 server sends protocol-error GOAWAY on stream 0", async () => {
   // RFC 9113 section 6.8: GOAWAY frames MUST be sent with a stream identifier
   // of 0 in the frame header; the last processed stream id lives in the

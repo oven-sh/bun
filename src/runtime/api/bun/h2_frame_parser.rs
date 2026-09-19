@@ -6883,7 +6883,8 @@ impl H2FrameParser {
         let mut flags: u8 = HeadersFrameFlags::END_HEADERS as u8;
         let mut exclusive: bool = false;
         let mut has_priority: bool = false;
-        let mut weight: i32 = 0;
+        // RFC 7540 §5.3.5 default. The Weight octet on the wire is the weight minus one (§6.2).
+        let mut weight: i32 = 16;
         let mut parent: i32 = 0;
         let mut silent: bool = false;
         let mut wait_for_trailers: bool = false;
@@ -7173,7 +7174,7 @@ impl H2FrameParser {
                     UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
                 let priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
-                    weight: u8::try_from(weight).expect("int cast"),
+                    weight: u8::try_from(weight - 1).expect("int cast"),
                 };
                 let _ = priority_data.write(&mut writer);
             }
@@ -7221,7 +7222,7 @@ impl H2FrameParser {
                     UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
                 let priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
-                    weight: u8::try_from(weight).expect("int cast"),
+                    weight: u8::try_from(weight - 1).expect("int cast"),
                 };
                 let _ = priority_data.write(&mut writer);
             }

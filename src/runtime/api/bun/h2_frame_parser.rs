@@ -934,10 +934,10 @@ impl Drop for DispatchGuard<'_> {
     }
 }
 
-/// Follows the byte stream `write()` emits over a transport whose write runs JS and reports
-/// when it sits at a point where another frame may legally begin: between frames, and not
-/// inside a header block (HEADERS / PUSH_PROMISE without END_HEADERS up to the CONTINUATION
-/// that carries it, RFC 9113 §4.3). See `write_to_js_transport`.
+/// Follows the byte stream `write()` emits over a JS-backed transport and reports when it
+/// sits at a point where another frame may legally begin: between frames, and not inside a
+/// header block (HEADERS / PUSH_PROMISE without END_HEADERS up to the CONTINUATION that carries
+/// it, RFC 9113 §4.3). See `write_to_js_transport`.
 #[derive(Clone, Copy, Default)]
 struct TxFrameTracker {
     /// Payload bytes still owed on the current frame.
@@ -1156,8 +1156,8 @@ pub struct H2FrameParser {
     /// never contends with the engine borrow.
     engine_frames_received: Cell<u64>,
     engine_frames_sent: Cell<u64>,
-    /// Where the bytes emitted through `write()` over a transport whose write runs JS stand
-    /// relative to frame and header-block boundaries.
+    /// Where the bytes emitted through `write()` over a JS-backed transport stand relative to
+    /// frame and header-block boundaries.
     tx_tracker: Cell<TxFrameTracker>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
@@ -2510,11 +2510,7 @@ impl H2FrameParser {
         CORK_OFFSET.with(|c| c.set(0));
     }
 
-    /// `generic_flush` / `generic_write` with bytes pending, for a socket whose write runs user
-    /// JS (`transport_write_runs_js`). The pending bytes, with `bytes` behind them, leave in one
-    /// socket write and are taken out of `write_buffer` first: a frame or a flush issued from
-    /// inside that write then finds nothing pending (it would send the same bytes again) and
-    /// lands behind everything serialized before it. Returns `(written, total)`.
+    /// Takes the pending bytes out for the write: JS re-entering under it would send them again.
     fn write_pending_through_js<S: NativeSocketWrite>(
         &self,
         mut socket: S,
@@ -3268,25 +3264,22 @@ impl H2FrameParser {
             });
             CORK_OFFSET.with(|c| c.set(H2_CORK_BUFFER_SIZE as u16));
             ok = self.flush_cork_buffer() && ok;
-            // A socket that closes inside the flush's _write runs JS, which can re-cork
-            // a different parser; re-assert ownership before touching the shared cork
-            // state again.
+            // A close inside the flush's _write runs JS, which can re-cork a different parser;
+            // re-assert ownership before touching the shared cork state again.
             self.cork();
             bytes = &bytes[avail..];
         }
     }
 
-    /// `write()` for a session whose transport write runs user JS (`transport_write_runs_js`).
-    /// With no native socket the bytes reach the wire through the `onWrite` handler
-    /// (`socket.write()` on a JS stream); a TLS socket upgraded from a JS Duplex hands its
-    /// records to that Duplex's `write()`. Either call runs the Duplex's `_write` synchronously,
-    /// and user code there can serialize another frame (ping(), settings(), goaway(), request())
-    /// or flush before it returns. Bytes are therefore only handed over where another frame may
-    /// legally follow: at a frame boundary outside a header block. A unit that overflows the
-    /// cork is assembled in the (empty at this point) batch scratch and written whole once its
-    /// last chunk arrives; the producers emit those chunks back to back, so no JS can run while
-    /// the scratch holds a partial unit, and a frame serialized re-entrantly corks up behind the
-    /// unit instead of landing inside it.
+    /// `write()` when `transport_write_runs_js`, e.g. when the bytes reach the wire through the
+    /// `onWrite` handler (`socket.write()` on a JS stream). That call runs the transport's
+    /// `_write` synchronously, and user code there can serialize another frame (ping(),
+    /// settings(), goaway(), request()) or flush before it returns. Bytes are therefore only
+    /// handed over where another frame may legally follow: at a frame boundary outside a header
+    /// block. A unit that overflows the cork is assembled in the (empty at this point) batch
+    /// scratch and written whole once its last chunk arrives; the producers emit those chunks
+    /// back to back, so no JS can run while the scratch holds a partial unit, and a frame
+    /// serialized re-entrantly corks up behind the unit instead of landing inside it.
     fn write_to_js_transport(&self, bytes: &[u8]) -> bool {
         let mut tracker = self.tx_tracker.get();
         tracker.advance(bytes);

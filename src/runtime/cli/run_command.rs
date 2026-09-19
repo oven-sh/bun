@@ -784,10 +784,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .copied()
     }
 
-    /// The loader the VM gives the entry point at `path`, in the order of its
-    /// `loader_for_path`: a `--loader` flag or bunfig `[loader]` entry for the
-    /// extension, the default for the extension, the extension read as a
-    /// loader name (any case), then TSX.
+    /// Same lookup order as the VM's `loader_for_path`, so both give the entry point one loader.
     fn entry_point_loader(ctx: &ContextData, path: &[u8]) -> Loader {
         let ext = paths::fs::PathName::init(path).ext;
         if let Some(map) = ctx.args.loaders.as_ref() {
@@ -802,10 +799,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .unwrap_or(Loader::Tsx)
     }
 
-    /// Whether `bun <entry>` executes the file at `path`. `boot` runs a `.sh`
-    /// path in the Bun shell whatever its loader is. `Html` starts the dev
-    /// server and `Md` renders the file. Every other loader outside
-    /// `can_be_run_by_bun` only produces a value to import.
+    /// `boot` runs any `.sh` path in the Bun shell. `Html` serves the file and `Md` renders it.
     fn can_run_entry_point(path: &[u8], loader: Loader) -> bool {
         strings::has_suffix_comptime(path, b".sh")
             || loader.can_be_run_by_bun()
@@ -2663,9 +2657,7 @@ impl RunCommand {
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
                     let out = destination.as_bytes();
-                    // For a target with a directory, `which` does not search
-                    // `$PATH`. It looks at that path only, which can be the
-                    // data file that the resolve step refused.
+                    // With a directory in the target, `which` skips `$PATH` and looks at that path.
                     const SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
                     let loader = Self::entry_point_loader(ctx, out);
                     if strings::contains_any(target_name, SEPARATORS)
@@ -2701,9 +2693,7 @@ impl RunCommand {
         ))
     }
 
-    /// The failure tail of [`RunCommand::exec_with_cfg`]. `unrunnable` is an
-    /// existing file that `target_name` names, with the loader that Bun cannot
-    /// execute. Returns whether the caller treats the target as handled.
+    /// Failure tail of [`RunCommand::exec_with_cfg`]. `true` means the target counts as handled.
     #[cold]
     #[inline(never)]
     #[cfg_attr(
@@ -2765,8 +2755,7 @@ impl RunCommand {
     /// Fast-path file probe: if `target` resolves to an existing regular file,
     /// duplicate its absolute path and boot the VM. Returns `false` if the
     /// path does not exist / is a directory, so the caller can fall through to
-    /// script lookup. An existing file whose loader Bun cannot run is reported
-    /// here, through [`RunCommand::nothing_ran`].
+    /// script lookup.
     ///
     /// `Arguments::parse` does not populate `entry_points` yet, so we
     /// take the target slice explicitly.
@@ -2877,7 +2866,8 @@ impl RunCommand {
         let _ = bun_sys::close(fd);
 
         let loader = Self::entry_point_loader(ctx, &absolute_script_path);
-        if !Self::can_run_entry_point(&absolute_script_path, loader) {
+        // A plugin that a preload registers can turn a data file into code.
+        if ctx.preloads.is_empty() && !Self::can_run_entry_point(&absolute_script_path, loader) {
             return Self::nothing_ran(
                 ctx,
                 log_errors,

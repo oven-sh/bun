@@ -908,8 +908,7 @@ describe.concurrent("bun run", () => {
       return { stdout, stderr, exitCode };
     }
 
-    // `file` is the basename of the canonical path in the message. It has no
-    // regular expression syntax other than ".".
+    // `file` is the basename of the path in the message. Its only regular expression syntax is ".".
     const cannotRun = (file: string, loader: string) => ({
       stdout: "",
       stderr: expect.stringMatching(
@@ -947,8 +946,7 @@ describe.concurrent("bun run", () => {
     it.each([
       ["./notes.txt", "text"],
       ["./config.toml", "toml"],
-      // The VM also takes the loader from an extension in upper case, and from
-      // an extension that is a loader name.
+      // The VM also reads an extension in upper case, and a loader name as an extension.
       ["./UPPER.CSS", "css"],
       ["UPPER.CSS", "css"],
       ["./data.sqlite", "sqlite"],
@@ -990,9 +988,7 @@ describe.concurrent("bun run", () => {
       expect(await run(String(cwd), "--loader", ".js:text", "./words.js")).toEqual(cannotRun("words.js", "text"));
     });
 
-    // The `sh` loader does not survive the trip through `--loader` and bunfig:
-    // it arrives as the `file` loader. A `.sh` entry point runs in the Bun shell
-    // whatever its loader is.
+    // `--loader` and bunfig store the `sh` loader as the `file` loader.
     it("runs a .sh file whose extension is mapped to the sh loader", async () => {
       using cwd = tempDir("bun-run-sh-loader", {
         "bunfig.toml": `[loader]\n".sh" = "sh"\n`,
@@ -1004,6 +1000,30 @@ describe.concurrent("bun run", () => {
           run(String(cwd), "./script.sh"),
           run(String(cwd), "run", "script.sh"),
           run(String(cwd), "--loader", ".sh:sh", "./script.sh"),
+        ]),
+      ).toEqual([ran, ran, ran]);
+    });
+
+    it("leaves a data file to a plugin that a preload registers", async () => {
+      using cwd = tempDir("bun-run-plugin-entry", {
+        "plugin.ts": `
+          import { plugin } from "bun";
+          plugin({
+            name: "yaml-entry",
+            setup(build) {
+              build.onLoad({ filter: /\\.yaml$/ }, () => ({ contents: "console.log('ran entry.yaml');", loader: "js" }));
+            },
+          });
+        `,
+        "entry.yaml": "a: 1",
+        "preloaded": { "bunfig.toml": `preload = ["../plugin.ts"]`, "entry.yaml": "a: 1" },
+      });
+      const ran = { stdout: "ran entry.yaml\n", stderr: "", exitCode: 0 };
+      expect(
+        await Promise.all([
+          run(String(cwd), "--preload", "./plugin.ts", "./entry.yaml"),
+          run(String(cwd), "run", "--preload", "./plugin.ts", join(String(cwd), "entry.yaml")),
+          run(join(String(cwd), "preloaded"), "./entry.yaml"),
         ]),
       ).toEqual([ran, ran, ran]);
     });

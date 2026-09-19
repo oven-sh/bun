@@ -978,8 +978,12 @@ describe("Bun.file in serve routes", () => {
       ["another ETag", '"v2"', full],
       ["the ETag as a weak tag", 'W/"v1"', full],
       ["the Last-Modified date", "Wed, 21 Oct 2015 07:28:00 GMT", partial],
+      ["the Last-Modified date in the rfc850 form", "Wednesday, 21-Oct-15 07:28:00 GMT", partial],
       ["a date after Last-Modified", "Wed, 21 Oct 2015 07:28:01 GMT", full],
       ["a date before Last-Modified", "Wed, 21 Oct 2015 07:27:59 GMT", full],
+      // No zone: the parse would depend on the server's time zone, so it never matches.
+      ["the Last-Modified date in the asctime form", "Wed Oct 21 07:28:00 2015", full],
+      ["the Last-Modified date with no zone", "Wed, 21 Oct 2015 07:28:00", full],
       ["neither an entity-tag nor a date", "v1", full],
     ])("If-Range is %s", async (_name, ifRange, expected) => {
       expect(await get(path, { "Range": "bytes=4-7", "If-Range": ifRange })).toEqual(expected);

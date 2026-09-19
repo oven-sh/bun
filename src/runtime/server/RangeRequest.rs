@@ -185,6 +185,11 @@ pub(crate) fn if_range_matches(
     let Some(last_modified_ms) = last_modified_ms else {
         return false;
     };
+    // An HTTP-date is GMT, but `parse_http_date` is `Date.parse`: it reads a
+    // date with no zone (the obsolete asctime form) in the server's local time.
+    if !if_range.ends_with(b"GMT") {
+        return false;
+    }
     let Some(date_ms) = crate::jsc_hooks::parse_http_date(if_range) else {
         return false;
     };

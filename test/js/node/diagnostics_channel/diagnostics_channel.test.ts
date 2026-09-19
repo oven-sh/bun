@@ -1,5 +1,6 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
 
@@ -351,6 +352,73 @@ describe("Channel", () => {
     // all 1000 alive.
     const alive = refs.filter(ref => ref.deref() !== undefined).length;
     expect(alive).toBeLessThan(refs.length / 10);
+  });
+
+  // https://github.com/oven-sh/bun/issues/43086
+  // The finalizer of a collected channel must not remove a newer channel that
+  // was created under the same name before the finalizer ran.
+  test("finalizer of a dead channel keeps the live channel of the same name", async () => {
+    const script = `
+      const dc = require("node:diagnostics_channel");
+      const name = "gc.finalizer.evt";
+      let firstFinalized = false;
+      const registry = new FinalizationRegistry(() => { firstFinalized = true; });
+      const first = new WeakRef((function () {
+        const channel = dc.channel(name);
+        registry.register(channel, null);
+        return channel;
+      })());
+      // Collect the first channel. Bun.gc() clears the WeakRef target this job
+      // kept alive before it collects. Its finalizers are queued, not run yet.
+      for (let i = 0; i < 50 && first.deref() !== undefined; i++) { await Bun.sleep(0); Bun.gc(true); }
+      if (first.deref() !== undefined) throw new Error("the first channel was not collected");
+      // Create the successor before the queued finalizers run.
+      const held = dc.channel(name);
+      held.subscribe(() => {});
+      for (let i = 0; i < 100 && !firstFinalized; i++) await Bun.sleep(0);
+      if (!firstFinalized) throw new Error("the finalizer of the first channel did not run");
+      // The module's own finalizer has no ordering guarantee against the one
+      // above. Keep checking the entry for a while after it.
+      for (let i = 0; i < 100; i++) {
+        await Bun.sleep(0);
+        if (dc.channel(name) !== held) throw new Error("the finalizer removed the live channel");
+      }
+      console.log(JSON.stringify({
+        sameObject: dc.channel(name) === held,
+        hasSubscribers: dc.hasSubscribers(name),
+        heldHasSubscribers: held.hasSubscribers,
+      }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ sameObject: true, hasSubscribers: true, heldHasSubscribers: true });
+    expect(exitCode).toBe(0);
+  });
+
+  // The finalizer of a collected channel with no successor still removes its
+  // entry. Each entry holds a WeakRef, so the WeakRef count is the observable.
+  test("finalizer of a dead channel removes its entry", async () => {
+    const script = `
+      const dc = require("node:diagnostics_channel");
+      const { heapStats } = require("bun:jsc");
+      const count = () => heapStats().objectTypeCounts.WeakRef ?? 0;
+      const before = count();
+      for (let i = 0; i < 1000; i++) dc.channel("gc.cleanup." + i);
+      const after = count();
+      let now = after;
+      for (let i = 0; i < 100 && now > before + 100; i++) {
+        await Bun.sleep(0);
+        Bun.gc(true);
+        now = count();
+      }
+      console.log(JSON.stringify({ created: after - before >= 1000, cleaned: now <= before + 100 }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ created: true, cleaned: true });
+    expect(exitCode).toBe(0);
   });
 });
 

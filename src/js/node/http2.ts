@@ -2964,8 +2964,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     }
 
     if (onError) onError(err);
-    else {
-      this.respond(headers, options);
+    else if (respondOrDestroy.$call(this, headers, options)) {
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -2983,10 +2982,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       const err = isDirectory ? $ERR_HTTP2_SEND_FILE() : $ERR_HTTP2_SEND_FILE_NOSEEK();
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
-      else {
-        this.respond(headers, options);
-        this.destroy(err);
-      }
+      else if (respondOrDestroy.$call(this, headers, options)) this.destroy(err);
       return;
     }
 
@@ -3095,6 +3091,17 @@ function doSendFileFD(options, fd, headers, err, stat) {
     else fileStream.pause();
   });
   fileStream.pipe(sink);
+}
+// respond() throws when the stream is already destroyed and when it rejects the headers. A throw
+// from an fs callback is an uncaught exception, so the error destroys the stream instead.
+function respondOrDestroy(this: ServerHttp2Stream, headers, options) {
+  try {
+    this.respond(headers, options);
+    return true;
+  } catch (err) {
+    this.destroy(err);
+    return false;
+  }
 }
 function onFileStreamError(this: Http2Stream) {
   if (!this.destroyed && !this.closed) this.close(NGHTTP2_INTERNAL_ERROR);

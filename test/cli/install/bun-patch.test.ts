@@ -1,7 +1,8 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { tmpdir } from "os";
 import { isAbsolute, join, relative, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -665,6 +666,22 @@ describe("isolated linker: package with no folder at its hoisted path", () => {
         dependent: kind(packageDir, entry("one-fixed-dep@1.0.0")),
         loaded: await runOk(packageDir, "-e", loadDependency),
       }).toEqual({ entry: "directory", marker: "file", dependent: "directory", loaded: '"patched"\n' });
+    });
+
+    // Windows and macOS volumes ignore case by default. The directory that replaces the link gets the typed name.
+    test.skipIf(!existsSync(tmpdir().toUpperCase()))("a store folder typed in another case", async () => {
+      const id = "no-deps@1.0.0";
+      const { packageDir } = await installInGlobalStore({ "one-fixed-dep": "1.0.0" }, id);
+      const typed = storeFolder("NO-DEPS@1.0.0", "no-deps");
+
+      await patch(packageDir, typed, "no-deps", typed);
+      await Bun.write(join(packageDir, typed, "index.js"), patched);
+      await runOk(packageDir, "install");
+      expect({
+        entry: kind(packageDir, entry(id)),
+        copy: await Bun.file(join(packageDir, folderOf(id), "index.js")).text(),
+        loaded: await runOk(packageDir, "-e", loadDependency),
+      }).toEqual({ entry: "directory", copy: patched, loaded: '"patched"\n' });
     });
 
     test.concurrent("a folder that is inside the shared store", async () => {

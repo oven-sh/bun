@@ -1166,6 +1166,18 @@ fn marked_patch_entries() -> sys::Result<Vec<Box<[u8]>>> {
     Ok(names)
 }
 
+/// `bun patch <path>` makes the entry with the case that the user typed, which a case-insensitive volume accepts.
+fn eql_store_entry_name(on_disk: &[u8], store_path: &[u8]) -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        on_disk == store_path
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        bun_core::strings::eql_case_insensitive_ascii(on_disk, store_path, true)
+    }
+}
+
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
@@ -1348,7 +1360,10 @@ pub(crate) fn install_isolated_packages(
                                         store::entry::fmt_store_path(id, &store, lockfile)
                                     )
                                     .expect("formatting into a Vec is infallible");
-                                    if patch_entries.iter().any(|entry| **entry == *store_path) {
+                                    if patch_entries
+                                        .iter()
+                                        .any(|entry| eql_store_entry_name(entry, &store_path))
+                                    {
                                         break 'eligible false;
                                     }
                                 }

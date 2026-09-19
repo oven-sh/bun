@@ -4291,9 +4291,6 @@ class ServerHttp2Session extends Http2Session {
     this.#parser?.read(data);
   }
   #onClose() {
-    // Read first: the abort sweep and close() below make the session closed and idle, which
-    // destroy() takes for a graceful close (see settleUnreadClosedStreams).
-    const closedAndIdle = this.#closed && this.#connections === 0;
     const parser = this.#parser;
     if (parser) {
       parser.emitAbortToAllStreams();
@@ -4301,7 +4298,6 @@ class ServerHttp2Session extends Http2Session {
       parser.detach();
       this.#parser = null;
     }
-    settleUnreadClosedStreams(this, undefined, closedAndIdle);
     // Like Node's socketOnClose, a dead socket always tears the session down
     // (close() followed by closeSession() upstream). close() alone is not
     // enough: it early-returns once a received GOAWAY has already marked the
@@ -4723,6 +4719,7 @@ class ServerHttp2Session extends Http2Session {
       const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
       const closedAndIdle = this.#closed && this.#connections === 0;
+      const transportGone = !socket || socket.destroyed;
       this.#closed = true;
       this.#connected = false;
       if (socket) {
@@ -4766,7 +4763,7 @@ class ServerHttp2Session extends Http2Session {
         parser.detach();
         this.#parser = null;
       }
-      settleUnreadClosedStreams(this, error, closedAndIdle);
+      settleUnreadClosedStreams(this, error, closedAndIdle, transportGone);
     } catch (e) {
       // A throwing destroy did not destroy: argument validation (goaway's
       // validateInteger, the native session rejecting a non-numeric error
@@ -4907,16 +4904,25 @@ function destroyClosedStream(session: ClientHttp2Session | ServerHttp2Session, s
 // Session teardown for the streams in kUnreadClosedStreams. node's closeSession() destroys every
 // stream the session still holds, with the session error:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1234-L1239
+// Without an error, two cases let a stream go instead: it stays readable and destroys itself on
+// 'end'. Both keep data that Bun delivered before sessions tracked these streams.
 // `closedAndIdle`: the session closed gracefully and nothing was left on the wire. Bun completes
-// that session without waiting for unread streams. node keeps it open until they are read
-// (kMaybeDestroy, #L1662-L1675). Without an error those streams are let go instead, also by an
-// explicit destroy(): they stay readable and destroy themselves on 'end'.
-function settleUnreadClosedStreams(session: Http2Session, error: Error | null | undefined, closedAndIdle: boolean) {
+// that session without waiting for unread streams, also by an explicit destroy(). node keeps it
+// open until they are read (kMaybeDestroy, #L1662-L1675).
+// `transportGone`: the socket went away with no error to report. A stream that has a reader
+// (a pipe() under backpressure, a paused consumer) keeps its data. node destroys it.
+function settleUnreadClosedStreams(
+  session: Http2Session,
+  error: Error | null | undefined,
+  closedAndIdle: boolean,
+  transportGone: boolean,
+) {
   const streams = session[kUnreadClosedStreams];
   if (streams === null) return;
   session[kUnreadClosedStreams] = null;
-  if (closedAndIdle && error == null) return;
+  if (error == null && closedAndIdle) return;
   for (const stream of streams) {
+    if (error == null && transportGone && stream.readableFlowing !== null) continue;
     // Same guard as destroyStreamForSessionDestroy: a stream nobody listens to gets no 'error'.
     stream.destroy(error != null && stream.listenerCount("error") > 0 ? error : undefined);
   }
@@ -5418,7 +5424,7 @@ class ClientHttp2Session extends Http2Session {
       parser.detach();
       this.#parser = null;
     }
-    settleUnreadClosedStreams(this, err, closedAndIdle);
+    settleUnreadClosedStreams(this, err, closedAndIdle, true);
     this.destroy(err, NGHTTP2_NO_ERROR);
     this[bunHTTP2Socket] = null;
   }
@@ -5828,6 +5834,7 @@ class ClientHttp2Session extends Http2Session {
         this[kSessionDestroyError] = error;
       }
       const closedAndIdle = this.#closed && this.#connections === 0;
+      const transportGone = !socket || socket.destroyed;
       this.#closed = true;
       this.#connected = false;
       {
@@ -5885,7 +5892,7 @@ class ClientHttp2Session extends Http2Session {
         }
         parser.detach();
       }
-      settleUnreadClosedStreams(this, error, closedAndIdle);
+      settleUnreadClosedStreams(this, error, closedAndIdle, transportGone);
     } catch (e) {
       // A throwing destroy did not destroy: argument validation (goaway's
       // validateInteger, the native session rejecting a non-numeric error

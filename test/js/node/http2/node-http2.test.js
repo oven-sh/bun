@@ -2437,8 +2437,10 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
     return { client, clientSocket };
   }
 
-  // Calls `fn` once the client has the whole 5-byte response of its request, unread.
-  async function withUnreadResponse(fn, { pause = true, errorListener = true } = {}) {
+  // Calls `fn` once the client has the whole 5-byte response of its request, unread. `pause`
+  // gives the request a reader that is not reading. `open` adds a second request that the server
+  // never answers.
+  async function withUnreadResponse(fn, { pause = true, errorListener = true, open = false } = {}) {
     const server = http2.createServer();
     const accepted = Promise.withResolvers();
     let serverSocket;
@@ -2447,8 +2449,9 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
       session.on("error", () => {});
       accepted.resolve(session);
     });
-    server.on("stream", stream => {
+    server.on("stream", (stream, headers) => {
       stream.on("error", () => {});
+      if (headers[":path"] === "/open") return;
       stream.respond({ ":status": 200 });
       stream.end("hello");
     });
@@ -2465,6 +2468,7 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
       });
       req.on("close", () => responded.reject(new Error("the request closed before 'response'")));
       req.end();
+      if (open) client.request({ ":path": "/open", ":method": "POST" }).on("error", () => {});
       const [serverSession] = await Promise.all([accepted.promise, responded.promise]);
       // The server wrote the whole response before it read this PING, so the ack arrives after it.
       await ping(client);
@@ -2484,14 +2488,12 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
 
   // Calls `fn` once the server stream has sent its whole response and holds the whole 12-byte
   // request body, unread. The stream is paused: the session resumes a server stream nobody reads.
-  // `open` adds a second request that the server never answers.
-  async function withUnreadRequest(fn, { open = false } = {}) {
+  async function withUnreadRequest(fn) {
     const server = http2.createServer();
     const opened = Promise.withResolvers();
     server.on("session", session => session.on("error", () => {}));
-    server.on("stream", (stream, headers) => {
+    server.on("stream", stream => {
       stream.on("error", () => {});
-      if (headers[":path"] === "/open") return;
       stream.pause();
       stream.respond({ ":status": 200 });
       stream.end("hello");
@@ -2506,7 +2508,6 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
       req.on("close", reqClosed.resolve);
       req.resume();
       req.end("request-body");
-      if (open) client.request({ ":path": "/open", ":method": "POST" }).on("error", () => {});
       const [stream] = await Promise.all([opened.promise, reqClosed.promise]);
       const recorded = record(stream, stream.session);
       // The server read everything the client sent before this PING, so its stream is closed by now.
@@ -2589,11 +2590,14 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
   });
 
   // end(), not destroy(): a FIN on every platform, and no GOAWAY before it.
-  it("a socket that the peer ends destroys it (client)", async () => {
-    const events = await withUnreadResponse(({ serverSocket, sessionClosed }) => {
-      serverSocket.end();
-      return sessionClosed;
-    });
+  it("a socket that the peer ends destroys a stream that nobody reads (client)", async () => {
+    const events = await withUnreadResponse(
+      ({ serverSocket, sessionClosed }) => {
+        serverSocket.end();
+        return sessionClosed;
+      },
+      { pause: false },
+    );
     expect(events).toEqual(["close:0", "session close"]);
   });
 
@@ -2608,7 +2612,7 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
   // The session is closed, but a second request is still open when the socket ends, so this is not
   // a graceful close. Handling the socket close then closes that request too (its response is
   // complete), and the session must not take the result for "closed with nothing on the wire".
-  it("a socket that the peer ends destroys it when the close()d session had an open stream (client)", async () => {
+  it("a socket that the peer ends destroys a stream that nobody reads when the close()d session had an open stream", async () => {
     // A raw peer: it answers each request with a complete response and never resets the stream.
     let peer;
     const server = net.createServer(socket => {
@@ -2645,7 +2649,6 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
     try {
       const unread = client.request({ ":path": "/unread" });
       const { sessionClosed } = record(unread, client);
-      unread.on("response", () => unread.pause());
       unread.end();
       // Its request body stays open, so the complete response leaves it half closed.
       const open = client.request({ ":path": "/open", ":method": "POST" });
@@ -2695,26 +2698,6 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
     expect(events).toEqual(["error:ERR_HTTP2_SESSION_ERROR", "close:0", "session close"]);
   });
 
-  it("a socket that the peer ends destroys it (server)", async () => {
-    const events = await withUnreadRequest(({ clientSocket, sessionClosed }) => {
-      clientSocket.end();
-      return sessionClosed;
-    });
-    expect(events).toEqual(["close:0", "session close"]);
-  });
-
-  it("a socket that the peer ends destroys it when the close()d session had an open stream (server)", async () => {
-    const events = await withUnreadRequest(
-      ({ session, clientSocket, sessionClosed }) => {
-        session.close();
-        clientSocket.end();
-        return sessionClosed;
-      },
-      { open: true },
-    );
-    expect(events).toEqual(["close:0", "session close"]);
-  });
-
   // sendTrailers() closes the stream on the wire, and the session learns of it one tick later.
   // The order of the two 'close' events is not the point here.
   it("server session.destroy() in the same tick as the sendTrailers() that closed it destroys it", async () => {
@@ -2755,7 +2738,7 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
   });
 
   // node keeps a gracefully closed session open until the stream is read. Bun completes the
-  // session as soon as nothing is left on the wire, so the stream has to outlive it. These five
+  // session as soon as nothing is left on the wire, so the stream has to outlive it. These four
   // tests pin that: node would not emit the session's 'close' before the read.
   it("client session.close() leaves it readable", async () => {
     const result = await withUnreadResponse(async ({ client, req, sessionClosed, streamClosed }) => {
@@ -2785,12 +2768,28 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
   });
 
   // close() waits up to 250ms for the ack of the SETTINGS frame, and the peer's socket has ended
-  // before the frame arrives, so the socket close is what completes the graceful close. Serial, so
-  // that a loaded event loop does not let the wait run out first.
-  it.serial("a socket close that completes a graceful close leaves it readable (client)", async () => {
-    const result = await withUnreadResponse(async ({ client, req, serverSocket, sessionClosed, streamClosed }) => {
-      client.settings({ enablePush: false });
-      client.close();
+  // before the frame arrives, so the socket close is what completes the graceful close. Nobody
+  // reads the stream yet, and it still has to survive. Serial, so that a loaded event loop does
+  // not let the wait run out first.
+  it.serial("a socket close that completes a graceful close leaves it readable", async () => {
+    const result = await withUnreadResponse(
+      async ({ client, req, serverSocket, sessionClosed, streamClosed }) => {
+        client.settings({ enablePush: false });
+        client.close();
+        serverSocket.end();
+        expect(await sessionClosed).toEqual(["session close"]);
+        return readToEnd(req, streamClosed);
+      },
+      { pause: false },
+    );
+    expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "hello" });
+  });
+
+  // The socket goes away and there is no error to report. node destroys every stream here, and a
+  // pipe() under backpressure loses the data it has not written yet. Bun delivered that data before
+  // sessions tracked these streams, so a stream that has a reader still gets it.
+  it("a socket that the peer ends leaves a stream that has a reader readable (client)", async () => {
+    const result = await withUnreadResponse(async ({ req, serverSocket, sessionClosed, streamClosed }) => {
       serverSocket.end();
       expect(await sessionClosed).toEqual(["session close"]);
       return readToEnd(req, streamClosed);
@@ -2798,15 +2797,27 @@ describe.concurrent("http2 session teardown with a stream that closed with its d
     expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "hello" });
   });
 
-  it.serial("a socket close that completes a graceful close leaves it readable (server)", async () => {
-    const result = await withUnreadRequest(async ({ session, clientSocket, stream, sessionClosed, streamClosed }) => {
-      session.settings({ maxConcurrentStreams: 10 });
-      session.close();
+  it("a socket that the peer ends leaves a stream that has a reader readable (server)", async () => {
+    const result = await withUnreadRequest(async ({ clientSocket, stream, sessionClosed, streamClosed }) => {
       clientSocket.end();
       expect(await sessionClosed).toEqual(["session close"]);
       return readToEnd(stream, streamClosed);
     });
     expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "request-body" });
+  });
+
+  // A close()d session does not report a socket error, so its streams get none either.
+  it("a socket error after close() leaves a stream that has a reader readable", async () => {
+    const result = await withUnreadResponse(
+      async ({ client, clientSocket, req, sessionClosed, streamClosed }) => {
+        client.close();
+        clientSocket.destroy(new Error("boom"));
+        expect(await sessionClosed).toEqual(["session close"]);
+        return readToEnd(req, streamClosed);
+      },
+      { open: true },
+    );
+    expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "hello" });
   });
 
   // Both sessions hold a closed stream until its destroy(). While the sessions live on, they

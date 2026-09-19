@@ -641,8 +641,7 @@ impl NodeHTTPResponse {
         }
     }
 
-    /// Whether uws's per-connection body handler slot is still this request's.
-    /// After the fin (delivered or parked) a set slot is a pipelined successor's.
+    /// uws's per-connection body handler slot is still this request's.
     fn body_still_arriving(&self) -> bool {
         self.body_read_state.get() == BodyReadState::Pending
             && !self

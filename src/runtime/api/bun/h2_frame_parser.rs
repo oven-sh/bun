@@ -5756,7 +5756,7 @@ impl H2FrameParser {
                             triggering_id,
                             ErrorCode::NO_ERROR,
                             b"",
-                            this.last_stream_id.get(),
+                            this.last_peer_stream_id.get(),
                             true,
                         );
                         Ok(Some(JSValue::UNDEFINED))
@@ -7189,17 +7189,18 @@ impl H2FrameParser {
             // Client: the request never reached the wire, nghttp2 refuses it locally.
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::REFUSED_STREAM.0;
-
+            let identifier = stream.get_identifier();
+            identifier.ensure_still_alive();
+            stream.free_resources::<false>(this);
             this.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onFrameError,
-                stream.get_identifier(),
+                identifier,
                 JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                 JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
             );
-
             this.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamError,
-                stream.get_identifier(),
+                identifier,
                 JSValue::js_number(stream.rst_code as f64),
             );
             return Ok(JSValue::js_number(stream_id as f64));

@@ -6567,6 +6567,10 @@ function emitFrameErrorEventNT(stream, frameType, errorCode) {
 }
 // node's onFrameError (lib/internal/http2/core.js#L661-L681 at v26.3.0). Both calls are no-ops once closed.
 function closeAfterFrameError(session: ServerHttp2Session, stream: ServerHttp2Stream, code: number) {
+  if (!stream.destroyed && !stream.headersSent) {
+    // No response HEADERS went out, so the writable must not end with a DATA frame. Reset first.
+    session[bunHTTP2Native]?.rstStream(stream.id, code);
+  }
   stream.close(code);
   session.close();
 }

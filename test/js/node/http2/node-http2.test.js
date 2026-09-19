@@ -5985,6 +5985,61 @@ it("respond() delivers the response after additionalHeaders() exceeds maxSendHea
   }
 });
 
+it("a refused 1xx block followed by a late respond() resets the stream without a DATA frame", async () => {
+  // Verified against node v26.3.0: the deferred close resets the stream with FRAME_SIZE_ERROR,
+  // the late respond() throws ERR_HTTP2_INVALID_STREAM, and the client session stays healthy.
+  // An empty DATA END_STREAM before any HEADERS would be a protocol error for the peer.
+  const server = http2.createServer({ maxSendHeaderBlockLength: 200 });
+  try {
+    const serverEvents = [];
+    const serverStreamClosed = Promise.withResolvers();
+    server.on("stream", async stream => {
+      stream.on("error", e => serverEvents.push(`error ${e.code} ${e.message}`));
+      stream.on("frameError", (type, code) => serverEvents.push(`frameError type=${type} code=${code}`));
+      stream.on("close", () => serverStreamClosed.resolve(stream.rstCode));
+      stream.additionalHeaders({ ":status": 103, "x-big": Buffer.alloc(1000, "b").toString() });
+      await new Promise(resolve => setImmediate(() => setImmediate(resolve)));
+      try {
+        stream.respond({ ":status": 200 });
+        serverEvents.push("respond ok");
+      } catch (e) {
+        serverEvents.push(`respond threw ${e.code}`);
+      }
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`);
+    const sessionErrors = [];
+    client.on("error", e => sessionErrors.push(e.code));
+    const clientClosed = new Promise(resolve => client.on("close", resolve));
+
+    const req = client.request({ ":path": "/" });
+    const reqResult = new Promise(resolve => {
+      const result = { response: false, error: undefined };
+      req.on("response", () => (result.response = true));
+      req.on("error", e => (result.error = e.message));
+      req.on("close", () => resolve({ ...result, rstCode: req.rstCode }));
+    });
+    req.resume();
+    req.end();
+
+    const [reqRes, serverRstCode] = await Promise.all([reqResult, serverStreamClosed.promise, clientClosed]);
+    expect(reqRes).toEqual({
+      response: false,
+      error: "Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR",
+      rstCode: http2.constants.NGHTTP2_FRAME_SIZE_ERROR,
+    });
+    expect(serverRstCode).toBe(http2.constants.NGHTTP2_FRAME_SIZE_ERROR);
+    expect(sessionErrors).toEqual([]);
+    expect(serverEvents).toEqual([
+      "frameError type=1 code=6",
+      "error ERR_HTTP2_STREAM_ERROR Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR",
+      "respond threw ERR_HTTP2_INVALID_STREAM",
+    ]);
+  } finally {
+    server.close();
+  }
+});
+
 it("a client request over maxSendHeaderBlockLength leaves the session usable", async () => {
   // Verified against node v26.3.0: the request is refused locally with 'frameError' and
   // REFUSED_STREAM. The next request reuses an indexed field, so the server only decodes it if

@@ -4231,6 +4231,70 @@ describe("Buffer.fill offset/end argument handling", () => {
   });
 });
 
+// Node's getEncodingOps does `encoding += ''`: ToPrimitive with the default
+// hint, so valueOf() wins over toString(), a String object or an array coerces
+// to its string value, and a Symbol throws a TypeError. byteLength, toString,
+// write and indexOf all go through it. (fill and alloc differ on purpose; see
+// the fill tests above.)
+describe("non-string encoding argument is coerced like Node's getEncodingOps", () => {
+  const valueOfHex = { valueOf: () => "hex" };
+  const valueOfHexToStringLatin1 = { valueOf: () => "hex", toString: () => "latin1" };
+  const toPrimitiveHex = { [Symbol.toPrimitive]: hint => (hint === "default" ? "hex" : "latin1") };
+
+  it("Buffer.byteLength", () => {
+    expect(Buffer.byteLength("abcd", ["hex"])).toBe(2);
+    expect(Buffer.byteLength("abcd", new String("hex"))).toBe(2);
+    expect(Buffer.byteLength("abcd", valueOfHex)).toBe(2);
+    expect(Buffer.byteLength("abcd", valueOfHexToStringLatin1)).toBe(2);
+    expect(Buffer.byteLength("abcd", toPrimitiveHex)).toBe(2);
+    // An unknown encoding, a falsy encoding, and an object that coerces to an
+    // unknown encoding all fall back to utf8.
+    expect(Buffer.byteLength("abcd", "nope")).toBe(4);
+    expect(Buffer.byteLength("abcd", 0)).toBe(4);
+    expect(Buffer.byteLength("abcd", null)).toBe(4);
+    expect(Buffer.byteLength("abcd", {})).toBe(4);
+    expect(() => Buffer.byteLength("abcd", Symbol())).toThrow(TypeError);
+    // The string check and the empty-string shortcut run before the encoding
+    // is touched.
+    expect(Buffer.byteLength("", Symbol())).toBe(0);
+    expect(Buffer.byteLength(Buffer.alloc(3), Symbol())).toBe(3);
+  });
+
+  it("buf.toString", () => {
+    const buf = Buffer.from("abc");
+    expect(buf.toString(valueOfHex)).toBe("616263");
+    expect(buf.toString(valueOfHexToStringLatin1)).toBe("616263");
+    expect(buf.toString(toPrimitiveHex)).toBe("616263");
+    expect(buf.toString(new String("hex"))).toBe("616263");
+    expect(buf.toString(["hex"])).toBe("616263");
+    expect(() => buf.toString({})).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+    expect(() => buf.toString(Symbol())).toThrow(TypeError);
+  });
+
+  it("buf.write", () => {
+    expect(Buffer.alloc(4).write("6162", 0, 4, valueOfHex)).toBe(2);
+    expect(Buffer.alloc(4).write("6162", 0, 4, valueOfHexToStringLatin1)).toBe(2);
+    expect(Buffer.alloc(4).write("6162", 0, 4, toPrimitiveHex)).toBe(2);
+    expect(Buffer.alloc(4).write("6162", 0, 4, new String("hex"))).toBe(2);
+    expect(() => Buffer.alloc(4).write("6162", 0, 4, {})).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+    expect(() => Buffer.alloc(4).write("6162", 0, 4, Symbol())).toThrow(TypeError);
+  });
+
+  it("buf.indexOf", () => {
+    const buf = Buffer.from("abc");
+    expect(buf.indexOf("6162", 0, undefined, valueOfHex)).toBe(0);
+    expect(buf.indexOf("6162", 0, undefined, valueOfHexToStringLatin1)).toBe(0);
+    expect(buf.indexOf("6162", 0, undefined, toPrimitiveHex)).toBe(0);
+    expect(buf.indexOf("6263", 0, undefined, new String("hex"))).toBe(1);
+    expect(() => buf.indexOf("6162", 0, undefined, {})).toThrow(
+      expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }),
+    );
+    expect(() => buf.indexOf("6162", 0, undefined, Symbol())).toThrow(TypeError);
+  });
+});
+
 describe("*Write methods with NaN/invalid offset and length", () => {
   // Regression test: NaN offset/length values must be handled safely.
   // NaN offset should be treated as 0, and length should be clamped to buffer size.

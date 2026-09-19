@@ -176,7 +176,7 @@ fn join(dir: &[u8], name: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-fn join_alias(scope: &[u8], name: &[u8]) -> Box<[u8]> {
+pub(crate) fn join_alias(scope: &[u8], name: &[u8]) -> Box<[u8]> {
     let mut out = Vec::with_capacity(scope.len() + 1 + name.len());
     out.extend_from_slice(scope);
     out.push(b'/');
@@ -1598,7 +1598,8 @@ fn entry_kind(dir: &Dir, name: &[u8], kind: EntryKind) -> EntryKind {
     lstat_kind(dir, name)
 }
 
-fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
+/// The directories and links of `dir` whose name does not start with a dot.
+pub(crate) fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
     let mut out = Vec::new();
     let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {

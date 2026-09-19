@@ -1131,6 +1131,61 @@ pub(crate) fn build_store(
     })
 }
 
+/// The `bun link` registrations in `node_modules`: the links at `<name>` and `@scope/<name>`.
+fn link_registrations(node_modules: &sys::Dir) -> Vec<Box<[u8]>> {
+    let mut names = Vec::new();
+    for (name, kind) in crate::prune::read_entries(node_modules) {
+        match kind {
+            sys::EntryKind::SymLink => names.push(name),
+            sys::EntryKind::Directory if name.first() == Some(&b'@') => {
+                let Ok(scope) = node_modules.open_at(&name) else {
+                    continue;
+                };
+                for (scoped_name, scoped_kind) in crate::prune::read_entries(&scope) {
+                    if scoped_kind == sys::EntryKind::SymLink {
+                        names.push(crate::prune::join_alias(&name, &scoped_name));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// The global `node_modules` is also the `bun link` registry, and bun.lock does not list the registrations.
+fn restore_link_registrations(old_modules: &mut AutoRelPath) {
+    let Ok(old_modules_dir) = sys::Dir::open(old_modules.slice()) else {
+        return;
+    };
+    let mut node_modules = AutoRelPath::from(b"node_modules").assume_ok();
+
+    for name in link_registrations(&old_modules_dir) {
+        let mut from = old_modules.save();
+        let mut to = node_modules.save();
+        from.append(&name[..]).assume_ok();
+        to.append(&name[..]).assume_ok();
+
+        if name.first() == Some(&b'@')
+            && let Some(scope) = to.dirname()
+        {
+            use bun_sys::FdDirExt as _;
+            let _ = Fd::cwd().make_path(scope);
+        }
+        if let Err(err) = sys::renameat(Fd::cwd(), from.slice_z(), Fd::cwd(), to.slice_z()) {
+            bun_core::warn!(
+                "failed to keep the 'bun link' registration of \"{}\": {}",
+                BStr::new(&name),
+                BStr::new(err.name()),
+            );
+            bun_core::note!(
+                "run 'bun link' in the folder of \"{}\" to register it again",
+                BStr::new(&name),
+            );
+        }
+    }
+}
+
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
@@ -1793,6 +1848,10 @@ pub(crate) fn install_isolated_packages(
 
                         rename_path.set_length(rename_path_save);
                     }
+
+                    if manager.options.global {
+                        restore_link_registrations(&mut rename_path);
+                    }
                 }
                 #[cfg(not(windows))]
                 {
@@ -1903,6 +1962,10 @@ pub(crate) fn install_isolated_packages(
                         );
 
                         rename_path.set_length(rename_path_save);
+                    }
+
+                    if manager.options.global {
+                        restore_link_registrations(&mut rename_path);
                     }
                 }
 

@@ -217,6 +217,21 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         })
     }
 
+    /// The runners' interpreter before the script: `<sh> -c`, or
+    /// `<bun> exec --no-env-file` (always on Windows: cmd.exe loses quotes).
+    pub(crate) fn script_shell_argv(
+        use_system_shell: bool,
+        path: &[u8],
+        cwd: &[u8],
+    ) -> crate::Result<(&'static ZStr, &'static [&'static ::core::ffi::CStr])> {
+        if cfg!(windows) || !use_system_shell {
+            let bun = bun_core::self_exe_path().map_err(|_| crate::Error::MissingShell)?;
+            return Ok((bun, &[c"exec", c"--no-env-file"]));
+        }
+        let shell = Self::find_shell(path, cwd).ok_or(crate::Error::MissingShell)?;
+        Ok((shell, &[c"-c"]))
+    }
+
     // Look for invocations of any: `yarn run` / `yarn $cmd` / `pnpm run` /
     // `npm run` / `npx` / `pnpx` and replace them with `bun run` / `bun x`.
     //

@@ -2561,17 +2561,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     }
     if (lengthValue.isUndefined() && offsetValue.isString()) {
         encodingValue = offsetValue;
-
-        // Node resolves the encoding first, so an unknown encoding wins over a non-string value.
-        auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
-        RETURN_IF_EXCEPTION(scope, {});
-        Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto* str = stringValue.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
         offset = 0;
         length = castedThis->byteLength();
-        RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
     } else {
         length = castedThis->byteLength();
         offset = validateOffset(scope, lexicalGlobalObject, offsetValue, "offset"_s, 0, length);
@@ -2592,7 +2583,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         }
     }
 
-    // Encoding first, as above. An object encoding's toString() can detach or shrink the buffer.
+    // Node resolves the encoding before it checks the value. An object encoding's toString() can detach or shrink the buffer.
     auto encoding = WebCore::BufferEncodingType::utf8;
     if (encodingValue.toBoolean(lexicalGlobalObject)) {
         encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);

@@ -4386,6 +4386,20 @@ describe("buf.write resolves the encoding before it checks the value", () => {
     });
   });
 
+  it("reads an empty string encoding as utf8 in the forms where the encoding replaces offset or length", () => {
+    expect({
+      "write(string, '')": write("6162", ""),
+      "write(string, offset, '')": write("6162", 0, ""),
+      "write(123, '')": write(123, ""),
+      "write(123, offset, '')": write(123, 0, ""),
+    }).toEqual({
+      "write(string, '')": "4 36313632",
+      "write(string, offset, '')": "4 36313632",
+      "write(123, '')": "ERR_INVALID_ARG_TYPE aaaaaaaa",
+      "write(123, offset, '')": "ERR_INVALID_ARG_TYPE aaaaaaaa",
+    });
+  });
+
   it("calls an object encoding's toString() before it rejects the value", () => {
     const calls = [];
     const encoding = name => ({

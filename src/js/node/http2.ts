@@ -5346,10 +5346,10 @@ class ClientHttp2Session extends Http2Session {
   get alpnProtocol() {
     return this.#alpnProtocol;
   }
-  #onConnect(socket) {
+  #onConnect(socket, connectDue) {
     if (!this[bunHTTP2Socket]) {
       // node's setupHandle: a session destroyed before its socket connected still emits 'connect'.
-      process.nextTick(emitConnectNT, this, socket);
+      connectDue();
       return;
     }
     this.#connected = true;
@@ -5370,7 +5370,7 @@ class ClientHttp2Session extends Http2Session {
       this.#parser.setNativeSocket(nativeSocket);
       this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
     }
-    process.nextTick(emitConnectNT, this, socket);
+    connectDue();
     this.#parser.flush();
     if (this.#closed) {
       // close() was called while the socket was still connecting: requests made in the meantime
@@ -5651,11 +5651,20 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
         return;
       }
+      // 'connect' is emitted outside the try: a throw from a 'connect' listener is an uncaught
+      // exception and never reaches the session. node emits on the tick after the socket's
+      // connect event, or on the first tick for a transport that was connected already. That
+      // first tick is this call (connectOnNextTick), so the emit happens at its end.
+      let emitNow = false;
       try {
-        this.#onConnect(socket);
+        this.#onConnect(socket, () => {
+          if (connectOnNextTick) emitNow = true;
+          else process.nextTick(emitConnectNT, this, socket);
+        });
       } catch (e) {
         this.destroy(e);
       }
+      if (emitNow) emitConnectNT(this, socket);
     }
 
     // h2 with ALPNProtocols
@@ -5720,8 +5729,7 @@ class ClientHttp2Session extends Http2Session {
       // would then run against a session whose #parser is not assigned yet.
       process.nextTick(onConnect.bind(this));
     }
-    // Like node's connect(): the listener is an ordinary 'connect' listener, so a throw
-    // from it is an uncaught exception and never reaches the session.
+    // Like node's connect(): the listener is an ordinary 'connect' listener, never called directly.
     if (typeof listener === "function") this.once("connect", listener);
   }
 

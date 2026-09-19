@@ -2827,6 +2827,45 @@ it("http2 connect() listener and 'connect' still fire for a session destroyed be
   }
 });
 
+it("http2 connect() over a connected socket runs the listener and 'connect' on the first tick, like node", async () => {
+  const server = http2.createServer();
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  const sockets = [];
+  try {
+    // Resolves with the first three calls. The socket closes after all of them.
+    const firstCalls = async afterConnect => {
+      const socket = net.connect(port, "127.0.0.1");
+      sockets.push(socket);
+      await new Promise((resolve, reject) => socket.once("connect", resolve).once("error", reject));
+      const calls = [];
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const record = name => {
+        if (calls.push(name) === 3) resolve(calls);
+      };
+      const client = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => socket }, () =>
+        record("listener"),
+      );
+      client.on("connect", () => record("connect"));
+      client.on("close", () => record("close"));
+      client.on("error", reject);
+      socket.on("close", () => reject(new Error(`the socket closed after only: ${calls}`)));
+      afterConnect(client, record);
+      return promise;
+    };
+
+    expect(await firstCalls((client, record) => process.nextTick(record, "tick"))).toEqual([
+      "listener",
+      "connect",
+      "tick",
+    ]);
+    expect(await firstCalls(client => client.destroy())).toEqual(["listener", "connect", "close"]);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});
+
 it("http2 request.close() validates input and manages stream state", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer();

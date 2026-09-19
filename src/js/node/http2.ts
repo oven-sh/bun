@@ -3040,6 +3040,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
     headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
   try {
+    // The 200 default in respond() is for the caller's headers, not for a :status that statCheck wrote.
+    const status = headers[HTTP2_HEADER_STATUS];
+    if (status !== undefined && (status | 0) === 0) throw $ERR_HTTP2_STATUS_INVALID(0);
     this.respond(headers, options);
   } catch (err) {
     // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
@@ -3167,6 +3170,23 @@ function serverStreamOnFinish(this: ServerHttp2Stream) {
 }
 function callStreamClose(stream: ServerHttp2Stream) {
   if (!stream.destroyed && !stream.closed) stream.close();
+}
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2670-L2683
+function validatePreparedResponseHeaders(headers, statusCode: number) {
+  if (statusCode < 200 || statusCode > 599) throw $ERR_HTTP2_STATUS_INVALID(statusCode);
+  const neverIndex = headers[sensitiveHeaders];
+  if (neverIndex !== undefined && !$isArray(neverIndex)) {
+    throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", neverIndex);
+  }
+}
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2625-L2633
+function prepareResponseHeadersObject(headers, options): number {
+  const statusCode = (headers[HTTP2_HEADER_STATUS] = headers[HTTP2_HEADER_STATUS] | 0 || HTTP_STATUS_OK);
+  if (options?.sendDate == null || options.sendDate) {
+    headers[HTTP2_HEADER_DATE] ??= utcDate();
+  }
+  validatePreparedResponseHeaders(headers, statusCode);
+  return statusCode;
 }
 class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
@@ -3311,10 +3331,22 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers, options) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
+
+    // node's check order: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3131-L3177
+    options = { ...options };
+    if (options.offset !== undefined && typeof options.offset !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
+    }
+    if (options.length !== undefined && typeof options.length !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
+    }
+    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
+      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
+    }
 
     if ($isArray(headers)) {
       // node rejects the raw-array form here (only respond() accepts it) - same
@@ -3329,24 +3361,7 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
-    options = { ...options };
-    if (options.offset !== undefined && typeof options.offset !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
-    }
-    if (options.length !== undefined && typeof options.length !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
-    }
-    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
-      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
-    }
-
-    if (headers[HTTP2_HEADER_STATUS] === undefined) {
-      headers[HTTP2_HEADER_STATUS] = 200;
-    }
-    const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
-    if (statusCode < 200 || statusCode > 599) {
-      throw $ERR_HTTP2_STATUS_INVALID(statusCode);
-    }
+    const statusCode = prepareResponseHeadersObject(headers, options);
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -3361,6 +3376,23 @@ class ServerHttp2Stream extends Http2Stream {
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
   }
   respondWithFD(fd, headers, options) {
+    if (this.destroyed || this.closed) {
+      throw $ERR_HTTP2_INVALID_STREAM();
+    }
+    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
+
+    // node's check order: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3062-L3110
+    options = { ...options };
+    if (options.offset !== undefined && typeof options.offset !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
+    }
+    if (options.length !== undefined && typeof options.length !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
+    }
+    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
+      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
+    }
+
     if (typeof fd !== "number") {
       // node accepts a FileHandle too; unwrap its descriptor.
       if (fd !== null && typeof fd === "object" && typeof fd.fd === "number") {
@@ -3374,10 +3406,6 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed) {
-      throw $ERR_HTTP2_INVALID_STREAM();
-    }
-    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
     if ($isArray(headers)) {
       // node rejects the raw-array form here (only respond() accepts it) - same
@@ -3392,24 +3420,7 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
-    options = { ...options };
-    if (options.offset !== undefined && typeof options.offset !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
-    }
-    if (options.length !== undefined && typeof options.length !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
-    }
-    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
-      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
-    }
-
-    if (headers[HTTP2_HEADER_STATUS] === undefined) {
-      headers[HTTP2_HEADER_STATUS] = 200;
-    }
-    const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
-    if (statusCode < 200 || statusCode > 599) {
-      throw $ERR_HTTP2_STATUS_INVALID(statusCode);
-    }
+    const statusCode = prepareResponseHeadersObject(headers, options);
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -3541,6 +3552,7 @@ class ServerHttp2Stream extends Http2Stream {
       if (!statusFound) {
         // Only default :status when it is genuinely absent - a present-but-invalid value (0, a
         // non-numeric string) must fall through to the range validation instead of being doubled.
+        // node doubles it and throws ERR_HTTP2_HEADER_SINGLE_VALUE, so only the error code differs.
         statusCode = 200;
         headers.unshift(HTTP2_HEADER_STATUS, statusCode);
       }
@@ -3568,13 +3580,14 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
+    // Like node, this runs before the header list is walked: an invalid :status or never-index list wins.
+    if (rawHeadersList === null) statusCode = prepareResponseHeadersObject(headers, options);
+    else validatePreparedResponseHeaders(headers, statusCode);
+
     const sensitives = headers[sensitiveHeaders];
     // Note: the sensitiveHeaders symbol stays on the object — the native header walk skips
     // symbol keys, and deleting it here would flip the object into dictionary mode,
     // pessimizing every later property access on it.
-    if (sensitives !== undefined && !$isArray(sensitives)) {
-      throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
-    }
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
     // Pre-validate single-value headers in JS so a throwing respond() leaves no partial state in
     // the shared HPACK table (same rule request() applies).
@@ -3588,14 +3601,6 @@ class ServerHttp2Stream extends Http2Stream {
           delete headers[name];
         }
       }
-      if (headers[HTTP2_HEADER_STATUS] === undefined) {
-        headers[HTTP2_HEADER_STATUS] = 200;
-      }
-      statusCode = headers[HTTP2_HEADER_STATUS] |= 0;
-    }
-    // A final response is 2xx-5xx, as in node. A 1xx block goes through additionalHeaders().
-    if (statusCode < 200 || statusCode > 599) {
-      throw $ERR_HTTP2_STATUS_INVALID(statusCode);
     }
     let endStream = !!options?.endStream;
     if (
@@ -3616,13 +3621,6 @@ class ServerHttp2Stream extends Http2Stream {
       // covers the `_final` side and runs AFTER the native call.
       options = { ...options, endStream: true, waitForTrailers: false };
       endStream = true;
-    }
-    const sendDate = options?.sendDate;
-    if (rawHeadersList === null && (sendDate == null || sendDate)) {
-      const current_date = headers["date"];
-      if (current_date == null) {
-        headers["date"] = utcDate();
-      }
     }
 
     const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;

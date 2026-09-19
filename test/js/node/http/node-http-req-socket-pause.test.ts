@@ -394,4 +394,40 @@ describe("request that its handler pause()d, with a body below the highWaterMark
       if (server.listening) server.close();
     }
   });
+
+  it("is aborted when the client half-closes before the response, like a request that is not paused", async () => {
+    // The server does not allow half-open connections by default: once it has
+    // read the client's FIN, a request without a response is aborted. The
+    // connection of a paused request keeps reading, so it is no exception.
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<object>();
+    const server = createServer(req => {
+      const events: string[] = [];
+      req.pause();
+      req.on("aborted", () => events.push("aborted"));
+      req.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      req.on("close", () => onClose({ events, ...stateOf(req) }));
+    });
+    try {
+      const client = await connectTo(server);
+      let response = "";
+      client.socket.on("data", chunk => (response += chunk));
+      client.socket.on("error", () => {});
+      const { promise: clientClosed, resolve: onClientClose } = Promise.withResolvers<void>();
+      client.socket.on("close", () => onClientClose());
+      client.socket.end(POST_HEAD + "hello");
+      expect(await closed).toEqual({
+        events: ["aborted", "error ECONNRESET"],
+        complete: true,
+        readableLength: 5,
+        readableEnded: false,
+      });
+      await clientClosed;
+      expect(response).toBe("");
+      server.close();
+      await once(server, "close");
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
 });

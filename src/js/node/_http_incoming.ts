@@ -106,9 +106,6 @@ function IncomingMessage(socket) {
     // Like Node's IncomingMessage: the readable side inherits the connection
     // socket's highWaterMark (which carries createServer({ highWaterMark })).
     Readable.$call(this, arguments[7] ? { highWaterMark: arguments[7].readableHighWaterMark } : undefined);
-
-    // Like Node, no 'pause'/'resume' hooks: only push() === false stops the socket and only _read() restarts it.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L128-L141
   } else {
     // Node.js-style construction from a net.Socket (used by the HTTP client
     // and anything driving the llhttp parser through node:_http_common).

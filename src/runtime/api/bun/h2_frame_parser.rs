@@ -2186,6 +2186,27 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
+    /// Node's `onFrameError`: `frameError`, RST_STREAM FRAME_SIZE_ERROR, then GOAWAY.
+    fn reject_oversized_header_block(&self, stream: &mut Stream) {
+        let identifier = stream.get_identifier();
+        identifier.ensure_still_alive();
+        self.dispatch_with_2_extra(
+            JSH2FrameParser::Gc::onFrameError,
+            identifier,
+            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+        );
+        let triggering_id = stream.id;
+        self.end_stream(stream, ErrorCode::FRAME_SIZE_ERROR);
+        self.send_go_away(
+            triggering_id,
+            ErrorCode::NO_ERROR,
+            b"",
+            self.last_peer_stream_id.get(),
+            true,
+        );
+    }
+
     pub(crate) fn send_go_away(
         &self,
         triggering_stream_id: u32,
@@ -5657,23 +5678,7 @@ impl H2FrameParser {
                         // nghttp2 checks maxSendHeaderBlockLength pre-deflation and fires
                         // on_frame_not_send_callback(NGHTTP2_ERR_FRAME_SIZE_ERROR); Node surfaces
                         // 'frameError' + ERR_HTTP2_STREAM_ERROR (test-http2-exceeds-server-trailer-size.js).
-                        let identifier = stream.get_identifier();
-                        identifier.ensure_still_alive();
-                        this.dispatch_with_2_extra(
-                            JSH2FrameParser::Gc::onFrameError,
-                            identifier,
-                            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-                            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-                        );
-                        let triggering_id = stream.id;
-                        this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
-                        this.send_go_away(
-                            triggering_id,
-                            ErrorCode::NO_ERROR,
-                            b"",
-                            this.last_stream_id.get(),
-                            true,
-                        );
+                        this.reject_oversized_header_block(&mut stream);
                         Ok(Some(JSValue::UNDEFINED))
                     }
                 }
@@ -6450,6 +6455,20 @@ impl H2FrameParser {
         Ok(JSValue::js_number(this.flush() as f64))
     }
 
+    /// Uncork the control frames (GOAWAY, RST_STREAM) without draining the stream DATA queues.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn flush_corked(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if this.js_socket_flushing.get() || !this.tx_tracker.get().at_boundary() {
+            return Ok(JSValue::js_number(0.0));
+        }
+        let _keepalive = this.keepalive();
+        Ok(JSValue::js_number(this.uncork() as f64))
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn request(
         this: &Self,
@@ -7083,19 +7102,25 @@ impl H2FrameParser {
         if this.max_send_header_block_length.get() != 0
             && encoded_size > this.max_send_header_block_length.get() as usize
         {
+            if this.is_server.get() {
+                this.reject_oversized_header_block(&mut stream);
+                return Ok(JSValue::js_number(stream_id as f64));
+            }
+
+            // Client: the request never reached the wire, nghttp2 refuses it locally.
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::REFUSED_STREAM.0;
-
+            let identifier = stream.get_identifier();
+            identifier.ensure_still_alive();
             this.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onFrameError,
-                stream.get_identifier(),
+                identifier,
                 JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                 JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
             );
-
             this.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamError,
-                stream.get_identifier(),
+                identifier,
                 JSValue::js_number(stream.rst_code as f64),
             );
             return Ok(JSValue::js_number(stream_id as f64));

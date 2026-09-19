@@ -53,6 +53,10 @@ export default [
         fn: "flushFromJS",
         length: 0,
       },
+      flushCorked: {
+        fn: "flushCorked",
+        length: 0,
+      },
       detach: {
         fn: "detachFromJS",
         length: 0,

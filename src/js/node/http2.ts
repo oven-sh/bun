@@ -4281,6 +4281,8 @@ class ServerHttp2Session extends Http2Session {
     },
     end(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
+      // The native side wrote the GOAWAY before this callback. destroy() must not send a second one.
+      self[kGoawaySent] = true;
       self.destroy();
     },
     write(self: ServerHttp2Session, buffer: Buffer) {
@@ -4727,14 +4729,14 @@ class ServerHttp2Session extends Http2Session {
       const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
       this.#closed = true;
+      if (socket && (!this[kGoawaySent] || code)) {
+        // close() already sent a NO_ERROR GOAWAY. An error code is new information.
+        this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+      }
+      // Corked frames reach a JS transport only while connected.
+      this.#parser?.flushCorked?.();
       this.#connected = false;
       if (socket) {
-        if (!this[kGoawaySent] || code) {
-          // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-          // and double-fires the peer's 'goaway' event. An error code is new information, though:
-          // a destroy(err) after close() must still put the error GOAWAY on the wire.
-          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
-        }
         if (error) {
           // node's finishSessionClose destroys the socket when the session dies
           // with an error (a misbehaving peer must observe the connection going
@@ -5299,6 +5301,8 @@ class ClientHttp2Session extends Http2Session {
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
+      // The native side wrote the GOAWAY before this callback. destroy() must not send a second one.
+      self[kGoawaySent] = true;
       self.destroy();
     },
     altsvc(self: ClientHttp2Session, origin: string, value: string, streamId: number) {
@@ -5806,6 +5810,12 @@ class ClientHttp2Session extends Http2Session {
         this[kSessionDestroyError] = error;
       }
       this.#closed = true;
+      if (socket && (!this[kGoawaySent] || code)) {
+        // close() already sent a NO_ERROR GOAWAY. An error code is new information.
+        this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+      }
+      // Corked frames reach a JS transport only while connected.
+      this.#parser?.flushCorked?.();
       this.#connected = false;
       {
         // Requests still queued (waiting for connect or for a concurrency slot) never reached the
@@ -5825,12 +5835,6 @@ class ClientHttp2Session extends Http2Session {
         }
       }
       if (socket) {
-        if (!this[kGoawaySent] || code) {
-          // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-          // and double-fires the peer's 'goaway' event. An error code is new information, though:
-          // a destroy(err) after close() must still put the error GOAWAY on the wire.
-          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
-        }
         if (error) {
           // See the client session: end first, destroy a tick later (node's
           // finishSessionClose Windows-ECONNRESET avoidance).

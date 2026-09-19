@@ -641,12 +641,8 @@ impl NodeHTTPResponse {
         }
     }
 
-    /// uws keeps one body data handler slot per connection. It belongs to this
-    /// request only while uws still owes it chunks: once the fin was delivered
-    /// (or parked while paused) uws nulled the slot, and a set slot is a later
-    /// pipelined request's. Arming the slot for this request is gated on this;
-    /// clearing it on a connection that stays open goes through
-    /// `release_body_slot`.
+    /// Whether uws's per-connection body handler slot is still this request's.
+    /// After the fin (delivered or parked) a set slot is a pipelined successor's.
     fn body_still_arriving(&self) -> bool {
         self.body_read_state.get() == BodyReadState::Pending
             && !self
@@ -2226,9 +2222,6 @@ impl NodeHTTPResponse {
             if !this_value.is_empty() {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             }
-            // The uws slot is not touched here: `mark_request_as_done` runs on a
-            // live connection only once this body is complete, so the slot is
-            // already null or belongs to a pipelined request behind this one.
             if self.body_read_state.get() != BodyReadState::Done {
                 self.body_read_state.set(BodyReadState::Done);
             }

@@ -571,22 +571,25 @@ it('chrome: dataStore: "ephemeral" gives each view its own cookie jar', async ()
   });
   const url = `http://127.0.0.1:${server.port}/`;
   await using shared = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
-  await using a = new Bun.WebView({ backend: chrome, width: 100, height: 100, dataStore: "ephemeral" });
+  const a = new Bun.WebView({ backend: chrome, width: 100, height: 100, dataStore: "ephemeral" });
   await using b = new Bun.WebView({ backend: chrome, width: 100, height: 100, dataStore: "ephemeral" });
-  await shared.navigate(url);
-  await a.navigate(url);
-  await b.navigate(url);
-  expect([
-    await shared.evaluate("document.cookie"),
-    await a.evaluate("document.cookie"),
-    await b.evaluate("document.cookie"),
-  ]).toEqual(["jar=1", "jar=2", "jar=3"]);
-  expect(cookiesSeen).toEqual([null, null, null]);
-  // Reloading sends each view its own cookie back.
-  await a.navigate(url);
-  expect(cookiesSeen[3]).toBe("jar=2");
-  // The context goes with the view. A later shared view still has the default jar.
-  a.close();
+  try {
+    await shared.navigate(url);
+    await a.navigate(url);
+    await b.navigate(url);
+    expect([
+      await shared.evaluate("document.cookie"),
+      await a.evaluate("document.cookie"),
+      await b.evaluate("document.cookie"),
+    ]).toEqual(["jar=1", "jar=2", "jar=3"]);
+    expect(cookiesSeen).toEqual([null, null, null]);
+    // Reloading sends each view its own cookie back.
+    await a.navigate(url);
+    expect(cookiesSeen[3]).toBe("jar=2");
+  } finally {
+    a.close();
+  }
+  // The context went with the view. A later shared view still has the default jar.
   await using later = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
   await later.navigate(url);
   expect(cookiesSeen[4]).toBe("jar=1");

@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -14,6 +14,7 @@ import tls from "node:tls";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
+import { run as runResponseStatusFixture } from "./http2-response-status.fixture.js";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx, mock } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
 // there; the 10k-request maxSessionMemory stress test takes ~105s under
@@ -5118,6 +5119,85 @@ it("http2 ServerHttp2Stream validates :status like node (integer conversion, 1xx
     fs.closeSync(fd);
     client.close();
     server.close();
+  }
+});
+// respond(), respondWithFile() and respondWithFD() prepare the headers the way node's
+// prepareResponseHeadersObject() does: a :status that coerces to 0 becomes 200, and `options`, the
+// status range and the never-index list are checked in node's order. The fixture reports one line
+// per call; Node.js must report the same lines.
+it("http2 server stream prepares the final response headers like node", async () => {
+  using dir = tempDir("http2-response-status", { "body.txt": "file body" });
+  const file = path.join(String(dir), "body.txt");
+
+  const lines = await runResponseStatusFixture(file);
+  expect(lines.join("\n")).toMatchInlineSnapshot(`
+    "respond({ ":status": 0 }): returns | client: response 200, body "respond body"
+    respond({ ":status": "" }): returns | client: response 200, body "respond body"
+    respond({ ":status": null }): returns | client: response 200, body "respond body"
+    respond({ ":status": NaN }): returns | client: response 200, body "respond body"
+    respond({ ":status": "abc" }): returns | client: response 200, body "respond body"
+    respond({ ":status": "404" }): returns | client: response 404, body "respond body"
+    respond({ ":status": 99 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 99 | client: response 200, body "fallback"
+    respond({ ":status": 100 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 100 | client: response 200, body "fallback"
+    respond({ ":status": 101 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 101 | client: response 200, body "fallback"
+    respond({ ":status": 600 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 600 | client: response 200, body "fallback"
+    respond({ [sensitiveHeaders]: "x" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'headers[http2.neverIndex]' is invalid. Received 'x' | client: response 200, body "fallback"
+    respond({ ":status": 99, [sensitiveHeaders]: "x" }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 99 | client: response 200, body "fallback"
+    respondWithFile({ ":status": 0 }): returns | client: response 200, body "file body"
+    respondWithFile({ ":status": "" }): returns | client: response 200, body "file body"
+    respondWithFile({ ":status": null }): returns | client: response 200, body "file body"
+    respondWithFile({ ":status": NaN }): returns | client: response 200, body "file body"
+    respondWithFile({ ":status": "abc" }): returns | client: response 200, body "file body"
+    respondWithFile({ ":status": "404" }): returns | client: response 404, body "file body"
+    respondWithFile({ ":status": 99 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 99 | client: response 200, body "fallback"
+    respondWithFile({ ":status": 100 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 100 | client: response 200, body "fallback"
+    respondWithFile({ ":status": 101 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 101 | client: response 200, body "fallback"
+    respondWithFile({ ":status": 600 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 600 | client: response 200, body "fallback"
+    respondWithFile({ ":status": "204" }): throws Error ERR_HTTP2_PAYLOAD_FORBIDDEN: Responses with 204 status must not have a payload | client: response 200, body "fallback"
+    respondWithFile({ [sensitiveHeaders]: "x" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'headers[http2.neverIndex]' is invalid. Received 'x' | client: response 200, body "fallback"
+    respondWithFile({ ":status": 99, [sensitiveHeaders]: "x" }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 99 | client: response 200, body "fallback"
+    respondWithFD({ ":status": 0 }): returns | client: response 200, body "file body"
+    respondWithFD({ ":status": "" }): returns | client: response 200, body "file body"
+    respondWithFD({ ":status": null }): returns | client: response 200, body "file body"
+    respondWithFD({ ":status": NaN }): returns | client: response 200, body "file body"
+    respondWithFD({ ":status": "abc" }): returns | client: response 200, body "file body"
+    respondWithFD({ ":status": "404" }): returns | client: response 404, body "file body"
+    respondWithFD({ ":status": 99 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 99 | client: response 200, body "fallback"
+    respondWithFD({ ":status": 100 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 100 | client: response 200, body "fallback"
+    respondWithFD({ ":status": 101 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 101 | client: response 200, body "fallback"
+    respondWithFD({ ":status": 600 }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 600 | client: response 200, body "fallback"
+    respondWithFD({ ":status": "204" }): throws Error ERR_HTTP2_PAYLOAD_FORBIDDEN: Responses with 204 status must not have a payload | client: response 200, body "fallback"
+    respondWithFD({ [sensitiveHeaders]: "x" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'headers[http2.neverIndex]' is invalid. Received 'x' | client: response 200, body "fallback"
+    respondWithFD({ ":status": 99, [sensitiveHeaders]: "x" }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 99 | client: response 200, body "fallback"
+    respond({ ":status": 99, "content-type": ["a", "b"] }): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 99 | client: response 200, body "fallback"
+    respond([":status", 100]): throws RangeError ERR_HTTP2_STATUS_INVALID: Invalid status code: 100 | client: response 200, body "fallback"
+    respond({ Date: "x" }): throws TypeError ERR_HTTP2_HEADER_SINGLE_VALUE: Header field "date" must only have a single value | client: response 200, body "fallback"
+    respond({ date: "x\\r\\n" }): returns | client: response 200, no date, body "respond body"
+    respondWithFile({ ":status": 99 }, { offset: "1" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'options.offset' is invalid. Received '1' | client: response 200, body "fallback"
+    respondWithFile({ ":status": 204 }, { statCheck: 1 }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'options.statCheck' is invalid. Received 1 | client: response 200, body "fallback"
+    respondWithFile("headers", { length: "1" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'options.length' is invalid. Received '1' | client: response 200, body "fallback"
+    respondWithFile({ ":status": 204, [sensitiveHeaders]: "x" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'headers[http2.neverIndex]' is invalid. Received 'x' | client: response 200, body "fallback"
+    respondWithFile({ ":status": "0" }, { statCheck }): returns, statCheck saw :status 200 and a string date | client: response 200, body "file body"
+    respondWithFD({ ":status": 99 }, { offset: "1" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'options.offset' is invalid. Received '1' | client: response 200, body "fallback"
+    respondWithFD({ ":status": 204 }, { statCheck: 1 }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'options.statCheck' is invalid. Received 1 | client: response 200, body "fallback"
+    respondWithFD("headers", { length: "1" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'options.length' is invalid. Received '1' | client: response 200, body "fallback"
+    respondWithFD({ ":status": 204, [sensitiveHeaders]: "x" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'headers[http2.neverIndex]' is invalid. Received 'x' | client: response 200, body "fallback"
+    respondWithFD({ ":status": "0" }, { statCheck }): returns, statCheck saw :status 200 and a string date | client: response 200, body "file body"
+    respondWithFD("fd", { ":status": 99 }, { offset: "1" }): throws TypeError ERR_INVALID_ARG_VALUE: The property 'options.offset' is invalid. Received '1' | client: response 200, body "fallback"
+    respondWithFD("fd", { ":status": 99 }): throws TypeError ERR_INVALID_ARG_TYPE: The "fd" argument must be of type number or an instance of FileHandle. Received type string ('fd') | client: response 200, body "fallback""
+  `);
+
+  const node = nodeExe();
+  if (node) {
+    await using proc = Bun.spawn({
+      cmd: [node, path.join(import.meta.dir, "http2-response-status.fixture.js"), file],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trimEnd().split(/\r?\n/)).toEqual(lines);
+    expect(exitCode).toBe(0);
   }
 });
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {

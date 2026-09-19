@@ -858,8 +858,7 @@ private:
         /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
         asyncSocket->flush();
 
-        /* node:http compat: a CONNECT/Upgrade tunnel's own writes (JSNodeHTTPServerSocket's
-         * stream buffer) go out once the responses ahead of it owe nothing more. */
+        /* node:http compat: a tunnel's own writes go out once the responses ahead owe nothing more. */
         if constexpr (IsNodeHttp) {
             bool tunnel = httpResponseData->isConnectRequest || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY);
             if (tunnel && httpResponseData->socketData && httpContextData->onSocketDrain

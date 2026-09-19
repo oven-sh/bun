@@ -2587,12 +2587,15 @@ describe("writeSync", () => {
     // "é" tells UTF-8 (c3 a9) from latin1 (e9), and it ends a hex decode after "ab".
     const data = "ab\u00e9d";
     const utf8 = [0x61, 0x62, 0xc3, 0xa9, 0x64];
+    const utf16le = [0x61, 0, 0x62, 0, 0xe9, 0, 0x64, 0];
     const cases: [label: string, encoding: unknown, expected: number[]][] = [
       ["'bogus'", "bogus", utf8],
       ["'BOGUS'", "BOGUS", utf8],
       ["'he'", "he", utf8],
       ["'hexx'", "hexx", utf8],
       ["' hex'", " hex", utf8],
+      // Not one of Node's names, though it looks like "utf-16le".
+      ["'utf16-le'", "utf16-le", utf8],
       ["'\\u00fctf8'", "\u00fctf8", utf8],
       ["'\\u{1F600}'", "\u{1F600}", utf8],
       // Only a primitive string names an encoding.
@@ -2602,6 +2605,10 @@ describe("writeSync", () => {
       ["['hex']", ["hex"], utf8],
       // A known name is still matched case-insensitively.
       ["'HeX'", "HeX", [0xab]],
+      // "utf-16le" is one of Node's names. This slot never throws, so a name
+      // missing from Bun's table would write UTF-8 here and report nothing.
+      ["'utf-16le'", "utf-16le", utf16le],
+      ["'UTF-16LE'", "UTF-16LE", utf16le],
     ];
     for (const [label, encoding, expected] of cases) {
       for (const position of [0, null]) {

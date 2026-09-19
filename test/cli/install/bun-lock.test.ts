@@ -1267,6 +1267,126 @@ describe.concurrent("hand-edited bun.lock that lists workspaces but has no packa
   });
 });
 
+// One `dependencies` line can be in the lockfile twice: a merge resolved by hand keeps it from
+// both sides, or bun saves it that way while package.json repeats the line. Both rows load and
+// both pair with the one package.json row. The differ derived the number of added rows from
+// the two lengths, so it missed a new dependency: `bun add` resolved nothing, exited 0 and
+// wrote `"a-dep": ""`, and `bun install --frozen-lockfile` passed without it.
+describe.concurrent("a new dependency next to a lockfile that repeats a dependency line", () => {
+  async function exec(projectDir: string, cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      // One cache per project: the environment's cache dir takes precedence over bunfig, and
+      // these tests run concurrently.
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(projectDir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, code };
+  }
+
+  async function run(projectDir: string, cwd: string, ...args: string[]) {
+    const { out, err, code } = await exec(projectDir, cwd, ...args);
+    expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
+    return { out, err };
+  }
+
+  const line = /^ *"no-deps": "1\.0\.0",\n/gm;
+
+  // Installs `no-deps` for the root or for the workspace member, then repeats its bun.lock line.
+  async function projectWithRepeatedLine(member: "" | "packages/a") {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const manifestPath = join(packageDir, member, "package.json");
+    const manifest = { name: member ? "a" : "foo", dependencies: { "no-deps": "1.0.0" } };
+    if (member) await write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] }));
+    await write(manifestPath, JSON.stringify(manifest));
+    await run(packageDir, packageDir, "install");
+
+    const lockfilePath = join(packageDir, "bun.lock");
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile.match(line)).toHaveLength(1);
+    const repeated = lockfile.replace(line, row => row + row);
+    await write(lockfilePath, repeated);
+    return { packageDir, manifestPath, manifest, lockfilePath, repeated };
+  }
+
+  async function expectInstalled(packageDir: string) {
+    expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+      name: "a-dep",
+      version: "1.0.10",
+    });
+  }
+
+  // "" is the key of the root in the `workspaces` object of bun.lock.
+  describe.concurrent.each(["", "packages/a"] as const)(
+    'bun.lock with the line repeated by hand in the block of workspace "%s"',
+    member => {
+      it("bun add installs the new dependency", async () => {
+        const { packageDir, manifestPath, manifest, lockfilePath, repeated } = await projectWithRepeatedLine(member);
+
+        // The repeated line alone is not a change.
+        await run(packageDir, packageDir, "install", "--frozen-lockfile");
+        expect(await file(lockfilePath).text()).toBe(repeated);
+
+        const { err } = await run(packageDir, join(packageDir, member), "add", "a-dep");
+        expect(err).toContain('warn: Duplicate key "no-deps" in object literal');
+        expect(await file(manifestPath).json()).toEqual({
+          ...manifest,
+          dependencies: { "no-deps": "1.0.0", "a-dep": "^1.0.10" },
+        });
+        await expectInstalled(packageDir);
+        const saved = await file(lockfilePath).text();
+        expect(saved).toContain('"a-dep": ["a-dep@1.0.10"');
+        expect(saved.match(line)).toHaveLength(1);
+      });
+    },
+  );
+
+  it("bun install sees a dependency written into package.json by hand", async () => {
+    const { packageDir, manifestPath, manifest, lockfilePath, repeated } = await projectWithRepeatedLine("");
+    await write(
+      manifestPath,
+      JSON.stringify({ ...manifest, dependencies: { ...manifest.dependencies, "a-dep": "1.0.10" } }),
+    );
+
+    expect(await exec(packageDir, packageDir, "install", "--frozen-lockfile")).toMatchObject({
+      err: expect.stringContaining("error: lockfile had changes, but lockfile is frozen"),
+      code: 1,
+    });
+    expect(await file(lockfilePath).text()).toBe(repeated);
+
+    await run(packageDir, packageDir, "install");
+    await expectInstalled(packageDir);
+    expect(await file(lockfilePath).text()).toContain('"a-dep": ["a-dep@1.0.10"');
+  });
+
+  describe.concurrent.each(["bun.lock", "bun.lockb"] as const)(
+    "%s that bun saved while package.json repeated the line",
+    lockfile => {
+      it("bun add installs the new dependency", async () => {
+        const { packageDir, packageJson } = await registry.createTestDir({
+          bunfigOpts: { saveTextLockfile: lockfile === "bun.lock", linker: "hoisted" },
+        });
+        await write(packageJson, `{ "name": "foo", "dependencies": { "no-deps": "1.0.0", "no-deps": "1.0.0" } }`);
+        const { err } = await run(packageDir, packageDir, "install");
+        expect(err).toContain('warn: Duplicate dependency: "no-deps" specified in package.json');
+        expect(await exists(join(packageDir, lockfile))).toBeTrue();
+
+        // Any tool that reads package.json with JSON.parse writes the key back once.
+        await write(packageJson, JSON.stringify(await file(packageJson).json()));
+        await run(packageDir, packageDir, "add", "a-dep");
+        expect(await file(packageJson).json()).toEqual({
+          name: "foo",
+          dependencies: { "no-deps": "1.0.0", "a-dep": "^1.0.10" },
+        });
+        await expectInstalled(packageDir);
+      });
+    },
+  );
+});
+
 const makeInstallRunner = (cwd: string) => async (args: string[]) => {
   await using proc = spawn({
     cmd: [bunExe(), ...args],

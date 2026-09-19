@@ -1,7 +1,9 @@
 use bun_collections::VecExt;
 use core::mem;
 
-use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet, index_sort};
+use bun_collections::{
+    ArrayHashMap, ArrayIdentityContext, AutoBitSet, MultiArrayList, StringSet, index_sort,
+};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, resolve_path};
@@ -1358,6 +1360,8 @@ impl Diff {
 
         let mut missing_workspaces: Vec<PackageID> = Vec::new();
         let mut survivors: Vec<(String, DependencySlice)> = Vec::new();
+        // Two `from` rows can pair with one `to` row, so the lengths do not give the added count.
+        let mut paired = AutoBitSet::init_empty(to_deps!().len())?;
         for (i, from_dep) in from_deps.iter().enumerate() {
             let found = 'found: {
                 let prev_i = to_i;
@@ -1427,6 +1431,7 @@ impl Diff {
             }
             let cur_to_i = to_i;
             to_i += 1;
+            paired.set(cur_to_i);
 
             if Dependency::eql(
                 &to_deps!()[cur_to_i],
@@ -1597,14 +1602,7 @@ impl Diff {
             summary.update += 1;
         }
 
-        // Use saturating arithmetic here because a migrated
-        // package-lock.json could be out of sync with the package.json, so the
-        // number of from_deps could be greater than to_deps.
-        summary.add = (to_deps!().len().saturating_sub(
-            from_deps
-                .len()
-                .saturating_sub(summary.remove as usize + summary.pruned_workspaces.len()),
-        )) as u32;
+        summary.add = (to_deps!().len() - paired.count()) as u32;
         if is_root {
             summary.remove = removed_names.len() as u32;
         }

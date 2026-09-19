@@ -1,6 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { once } from "node:events";
+import { createServer, type AddressInfo } from "node:net";
+import { join } from "node:path";
+
+// `until(marker)` reads `stream` until the text read so far contains `marker`; `output()` is that text.
+function readUntil(stream: ReadableStream<Uint8Array>) {
+  let output = "";
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  async function until(marker: string) {
+    while (!output.includes(marker)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error("stdout ended before " + marker + ": " + JSON.stringify(output));
+      output += decoder.decode(value, { stream: true });
+    }
+  }
+  return { until, output: () => output };
+}
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -40,19 +58,15 @@ test.concurrent("stdin with 'readable' event handler should receive data when pa
       bunExe(),
       "-e",
       `
-      const handleReadable = () => {
+      const chunks = [];
+      process.stdin.on("readable", () => {
         let chunk;
-        while ((chunk = process.stdin.read())) {
-          console.log("got chunk", JSON.stringify(chunk));
-        }
-      };
-      
-      process.stdin.on("readable", handleReadable);
+        while ((chunk = process.stdin.read()) !== null) chunks.push(chunk);
+      });
+      process.stdin.on("end", () => {
+        console.log("got", JSON.stringify(Buffer.concat(chunks).toString()));
+      });
       process.stdin.pause();
-      
-      setTimeout(() => {
-        process.exit(1);
-      }, 1000);
       `,
     ],
     stdin: "pipe",
@@ -65,14 +79,10 @@ test.concurrent("stdin with 'readable' event handler should receive data when pa
   proc.stdin.write("def\n");
   proc.stdin.end();
 
-  await proc.exited;
-
-  expect(await proc.stdout.text()).toMatchInlineSnapshot(`
-    "got chunk {"type":"Buffer","data":[97,98,99,10,100,101,102,10]}
-    "
-  `);
-  expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
-  expect(proc.exitCode).toBe(1);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe('got "abc\\ndef\\n"\n');
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("stdin with 'data' event handler should NOT receive data when paused", async () => {
@@ -161,13 +171,13 @@ test.concurrent("explicit read(n) with no 'readable' listener still pulls from s
       process.stdin.on("end", () => {
         console.log(JSON.stringify({ chunks, readableEnded: process.stdin.readableEnded }));
       });
-      let spins = 0;
+      const deadline = Date.now() + 60_000;
       function poll() {
         let chunk;
         while ((chunk = process.stdin.read(3)) !== null) chunks.push(chunk.toString());
         if (process.stdin.readableEnded) return;
         // Bounded so a regression fails with output instead of spinning forever.
-        if (++spins > 20000) {
+        if (Date.now() > deadline) {
           console.log(JSON.stringify({ chunks, readableEnded: false }));
           process.exit(1);
         }
@@ -472,12 +482,141 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
+// pause() happens two loop turns after a chunk was delivered, so the read for the next chunk
+// is already pending. Pausing has to take that read back: the next chunk belongs to whoever
+// reads fd 0 next, here a child that inherits it.
+describe("pause() with a read pending, then a child inherits stdin", () => {
+  const child = `
+    process.stdout.write("CHILD-READY\\n");
+    process.stdin.once("data", d => {
+      process.stdout.write("CHILD-GOT:" + JSON.stringify(d.toString()) + "\\n");
+      process.exit(0);
+    });`;
+  const parent = `
+    let spawned = false;
+    process.stdin.on("data", d => {
+      process.stdout.write("PARENT-GOT:" + JSON.stringify(d.toString()) + "\\n");
+      if (spawned) return;
+      spawned = true;
+      setImmediate(() => setImmediate(() => {
+        process.stdin.pause();
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+          stdin: "inherit",
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        child.exited.then(code => process.exit(code));
+      }));
+    });
+    process.stdout.write("PARENT-READY\\n");`;
+
+  async function run(stdin: "pipe" | "overlapped") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parent],
+      env: bunEnv,
+      // @ts-expect-error "overlapped" is Windows-only and not in the types
+      stdin,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const { until, output } = readUntil(proc.stdout);
+    await until("PARENT-READY");
+    proc.stdin.write("first\n");
+    proc.stdin.flush();
+    await until("CHILD-READY");
+    proc.stdin.write("second\n");
+    proc.stdin.flush();
+    await until('-GOT:"second');
+    await proc.stdin.end();
+    expect(output().trim().split("\n")).toEqual([
+      "PARENT-READY",
+      'PARENT-GOT:"first\\n"',
+      "CHILD-READY",
+      'CHILD-GOT:"second\\n"',
+    ]);
+    expect(await proc.exited).toBe(0);
+  }
+
+  test.concurrent("stdin is a pipe", () => run("pipe"));
+  test.concurrent.skipIf(!isWindows)("stdin is an overlapped pipe", () => run("overlapped"));
+});
+
+// A synchronous pipe serves one call at a time, whichever process makes it. While the child's read
+// has the pipe, the parent's reader thread is queued behind it and cannot be taken out of that
+// queue; pausing stdin must not wait for it.
+test.skipIf(!isWindows)("pause() returns while a child is blocked reading the same synchronous stdin", async () => {
+  const child = `
+    process.stdout.write("CHILD-READING\\n");
+    const buffer = Buffer.alloc(16);
+    const n = require("fs").readSync(0, buffer);
+    process.stdout.write("CHILD-GOT:" + JSON.stringify(buffer.toString("utf8", 0, n)) + "\\n");`;
+  const parent = `
+    const turn = () => new Promise(resolve => setTimeout(resolve, 1));
+    process.stdin.once("data", async d => {
+      process.stdout.write("PARENT-GOT:" + JSON.stringify(d.toString()) + "\\n");
+      process.stdin.pause();
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+        stdin: "inherit",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = child.stdout.getReader();
+      let seen = "";
+      while (!seen.includes("CHILD-READING\\n")) seen += new TextDecoder().decode((await reader.read()).value);
+      process.stdout.write("CHILD-READING\\n");
+      // The child enters its read some time after it said so: every turn from then on finds it there.
+      for (let i = 0; i < 100; i++) {
+        process.stdin.resume();
+        await turn();
+        process.stdin.pause();
+        await turn();
+      }
+      process.stdout.write("PARENT-ALIVE\\n");
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        seen += new TextDecoder().decode(value);
+      }
+      process.stdout.write(seen.slice(seen.indexOf("CHILD-GOT")));
+      process.exit(await child.exited);
+    });
+    process.stdout.write("PARENT-READY\\n");`;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", parent],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const { until, output } = readUntil(proc.stdout);
+  await until("PARENT-READY");
+  proc.stdin.write("first\n");
+  proc.stdin.flush();
+  // Nothing is written until the parent has shown that its loop still turns.
+  await until("PARENT-ALIVE");
+  proc.stdin.write("second\n");
+  proc.stdin.flush();
+  await until("CHILD-GOT");
+  await proc.stdin.end();
+  expect(output().trim().split("\n")).toEqual([
+    "PARENT-READY",
+    'PARENT-GOT:"first\\n"',
+    "CHILD-READING",
+    "PARENT-ALIVE",
+    'CHILD-GOT:"second\\n"',
+  ]);
+  expect(await proc.exited).toBe(0);
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the
 // backpressure signal; these tests feed far more than that and check the
 // child's resident set does not grow to match.
-describe.skipIf(isWindows)("pipe backpressure", () => {
+describe("pipe backpressure", () => {
   const feedMB = 40;
   // With no backpressure the child buffers the whole feed (Vec growth roughly
   // doubles that in RSS). With backpressure only the highwater mark plus the
@@ -665,3 +804,376 @@ test("process.stdin over an anonymous pipe delivers each byte exactly once", asy
   expect(stdout).toBe(`${total} ${expected}`);
   expect(err).toBeNull();
 });
+
+// The second line reaches the pipe while the 'data' handler for the first is still running. pause() from
+// that handler has to leave it there for the child that inherits fd 0.
+describe("pause() inside a 'data' handler, then a child inherits stdin", () => {
+  async function run(stdin: "pipe" | "overlapped") {
+    using dir = tempDir("stdin-pause-in-handler", {
+      "child.js": `
+        process.stdin.once("data", d => {
+          process.stdout.write("CHILD-GOT:" + JSON.stringify(d.toString()) + "\\n");
+          process.exit(0);
+        });`,
+      "parent.js": `
+        const fs = require("fs");
+        process.stdin.on("data", d => {
+          fs.writeSync(1, "PARENT-GOT:" + JSON.stringify(d.toString()) + "\\n");
+          // Until the test has put the second line in the pipe.
+          const deadline = Date.now() + 60_000;
+          while (!fs.existsSync("second-written")) {
+            if (Date.now() > deadline) {
+              fs.writeSync(2, "gave up waiting for second-written\\n");
+              process.exit(3);
+            }
+            Bun.sleepSync(1);
+          }
+          process.stdin.pause();
+          const child = Bun.spawn({ cmd: [process.execPath, "child.js"], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+          child.exited.then(code => process.exit(code));
+        });
+        fs.writeSync(1, "PARENT-READY\\n");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      // @ts-expect-error "overlapped" is Windows-only and not in the types
+      stdin,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const { until, output } = readUntil(proc.stdout);
+    await until("PARENT-READY");
+    proc.stdin.write("first\n");
+    await proc.stdin.flush();
+    await until("PARENT-GOT");
+    proc.stdin.write("second\n");
+    await proc.stdin.flush();
+    await Bun.write(join(String(dir), "second-written"), "");
+    await until("CHILD-GOT");
+    await proc.stdin.end();
+    expect(output().trim().split("\n")).toEqual(["PARENT-READY", 'PARENT-GOT:"first\\n"', 'CHILD-GOT:"second\\n"']);
+    expect(await proc.exited).toBe(0);
+  }
+
+  test.concurrent("stdin is a pipe", () => run("pipe"));
+  test.concurrent.skipIf(!isWindows)("stdin is an overlapped pipe", () => run("overlapped"));
+});
+
+// More than one read's worth is in the pipe before the parent reads its first chunk. Everything past that
+// chunk is the child's: a pipe cannot be un-read, so nothing may leave it on the parent's behalf once the
+// handler has paused. On POSIX the reader takes what the pipe holds before it delivers the first chunk.
+describe.skipIf(!isWindows)(
+  "pause() inside a 'data' handler with more already in the pipe, then a child inherits stdin",
+  () => {
+    async function run(stdin: "pipe" | "overlapped") {
+      const total = 1 << 20;
+      using dir = tempDir("stdin-pause-with-more-waiting", {
+        "child.js": `
+        let n = 0;
+        process.stdin.on("data", d => (n += d.length));
+        process.stdin.on("end", () => process.stdout.write(String(n)));`,
+        "parent.js": `
+        process.stdin.once("data", d => {
+          process.stdin.pause();
+          const child = Bun.spawnSync({ cmd: [process.execPath, "child.js"], stdin: "inherit", stdout: "pipe", stderr: "inherit" });
+          const childGot = Number(child.stdout.toString());
+          console.log(JSON.stringify({ parentGotSome: d.length > 0, lost: ${total} - d.length - childGot }));
+          process.exit(child.exitCode);
+        });`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        // @ts-expect-error "overlapped" is Windows-only and not in the types
+        stdin,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      proc.stdin.write(Buffer.alloc(total, "a"));
+      await proc.stdin.end();
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe(JSON.stringify({ parentGotSome: true, lost: 0 }));
+      expect(exitCode).toBe(0);
+    }
+
+    test.concurrent("stdin is a pipe", () => run("pipe"));
+    test.concurrent("stdin is an overlapped pipe", () => run("overlapped"));
+  },
+);
+
+// stdin stays flowing in the parent. What arrives while its thread is inside a synchronous spawn belongs to
+// the child that inherited the pipe.
+describe("a synchronous spawn that inherits a flowing stdin gets the input that arrives while it runs", () => {
+  async function run(stdin: "pipe" | "overlapped") {
+    using dir = tempDir("stdin-spawn-sync-inherit", {
+      "child.js": `
+        const fs = require("fs");
+        fs.writeSync(1, "CHILD-READY\\n");
+        const buf = Buffer.alloc(64);
+        const n = fs.readSync(0, buf, 0, 64);
+        fs.writeSync(1, "CHILD-GOT:" + JSON.stringify(buf.toString("utf8", 0, n)) + "\\n");`,
+      "parent.js": `
+        const fs = require("fs");
+        process.stdin.on("data", d => {
+          fs.writeSync(1, "PARENT-GOT:" + JSON.stringify(d.toString()) + "\\n");
+        });
+        // From a later turn of the loop, so the read of the next chunk is already out.
+        process.stdin.once("data", () => setImmediate(() => {
+          const child = Bun.spawnSync({ cmd: [process.execPath, "child.js"], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+          fs.writeSync(1, "CHILD-EXITED:" + child.exitCode + "\\n");
+        }));
+        fs.writeSync(1, "PARENT-READY\\n");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      // @ts-expect-error "overlapped" is Windows-only and not in the types
+      stdin,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const { until, output } = readUntil(proc.stdout);
+    await until("PARENT-READY");
+    proc.stdin.write("first\n");
+    await proc.stdin.flush();
+    await until("CHILD-READY");
+    proc.stdin.write("second\n");
+    await proc.stdin.flush();
+    await until("CHILD-EXITED");
+    proc.stdin.write("third\n");
+    await proc.stdin.flush();
+    await until('PARENT-GOT:"third');
+    await proc.stdin.end();
+    expect(output().trim().split("\n")).toEqual([
+      "PARENT-READY",
+      'PARENT-GOT:"first\\n"',
+      "CHILD-READY",
+      'CHILD-GOT:"second\\n"',
+      "CHILD-EXITED:0",
+      'PARENT-GOT:"third\\n"',
+    ]);
+    expect(await proc.exited).toBe(0);
+  }
+
+  test.concurrent("stdin is a pipe", () => run("pipe"));
+  test.concurrent.skipIf(!isWindows)("stdin is an overlapped pipe", () => run("overlapped"));
+});
+
+// On Windows a chunk of a child's stdin pipe can be taken while the 'data' event for the one before it is
+// still running: it has to come out after resume(), in order.
+test.concurrent("pause() and resume() around chunks of a bulk transfer lose and reorder nothing", async () => {
+  const total = 4 * 1024 * 1024;
+  const payload = Buffer.alloc(total);
+  for (let i = 0; i < total; i++) payload[i] = (i * 31 + ((i >> 8) & 0xff)) % 251;
+  const child = `
+    const h = new Bun.CryptoHasher("sha1");
+    let n = 0, chunks = 0;
+    process.stdin.on("data", d => {
+      n += d.length;
+      h.update(d);
+      if (++chunks % 3 === 0) {
+        process.stdin.pause();
+        (chunks % 2 ? setImmediate : queueMicrotask)(() => process.stdin.resume());
+      }
+    });
+    process.stdin.on("end", () => process.stdout.write(n + " " + h.digest("hex")));`;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", child],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  for (let sent = 0; sent < total; sent += 1 << 20) {
+    proc.stdin.write(payload.subarray(sent, sent + (1 << 20)));
+    await proc.stdin.flush();
+  }
+  await proc.stdin.end();
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(`${total} ${new Bun.CryptoHasher("sha1").update(payload).digest("hex")}`);
+  expect(exitCode).toBe(0);
+});
+
+// The limit counts what earlier reads took. The child says when it is reading, so the first write is one
+// read of its own; the second arrives once the grandchild's marker cannot have been printed without it.
+test.concurrent("a size-limited read of stdin that takes several reads stops at its limit", async () => {
+  using dir = tempDir("stdin-slice-limit-reads", {
+    "grandchild.js": `let data = ""; for await (const chunk of Bun.stdin.stream()) data += Buffer.from(chunk).toString(); console.log("GRANDCHILD:" + JSON.stringify(data));`,
+    "child.js": `
+      console.log("READING");
+      console.log("CHILD:" + JSON.stringify(await Bun.stdin.slice(0, 10).text()));
+      const proc = Bun.spawn({ cmd: [process.execPath, "grandchild.js"], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+      process.exit(await proc.exited);`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  while (!stdout.includes("READING\n")) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stdout += decoder.decode(value, { stream: true });
+  }
+  proc.stdin.write("01234");
+  await proc.stdin.flush();
+  // Ten bytes are asked for and five are there, so the read of the first five has been made and
+  // another is waiting when this arrives.
+  proc.stdin.write("56789" + "abcdefghij" + "\n");
+  await proc.stdin.end();
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    stdout += decoder.decode(value, { stream: true });
+  }
+  expect(stdout.trim().split("\n")).toEqual(["READING", 'CHILD:"0123456789"', 'GRANDCHILD:"abcdefghij\\n"']);
+  expect(await proc.exited).toBe(0);
+});
+
+// The bytes after the slice are in the pipe before the child reads, and belong to whoever reads fd 0 next.
+test.concurrent("a size-limited read of stdin takes nothing past its limit", async () => {
+  using dir = tempDir("stdin-slice-limit", {
+    "grandchild.js": `let data = ""; for await (const chunk of Bun.stdin.stream()) data += Buffer.from(chunk).toString(); console.log("GRANDCHILD:" + JSON.stringify(data));`,
+    "child.js": `
+      console.log("CHILD:" + JSON.stringify(await Bun.stdin.slice(0, 10).text()));
+      const proc = Bun.spawn({ cmd: [process.execPath, "grandchild.js"], stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+      process.exit(await proc.exited);`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  proc.stdin.write("0123456789" + "abcdefghij".repeat(3) + "\n");
+  await proc.stdin.end();
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.trim().split("\n")).toEqual(['CHILD:"0123456789"', 'GRANDCHILD:"abcdefghijabcdefghijabcdefghij\\n"']);
+  expect(exitCode).toBe(0);
+});
+
+// A console input handle opened without write access (`CreateFileW("CONIN$", GENERIC_READ)`,
+// cmd.exe's `< CON`) reads, but refuses WriteConsoleInputW. A line read is pending on such a
+// stdin when raw mode is switched on; a key typed after that arrives at once, without Enter.
+test.skipIf(!isWindows)(
+  "setRawMode() takes effect during a line read of a console stdin opened read-only",
+  async () => {
+    using dir = tempDir("stdin-readonly-console", {
+      // Starts `bun child.js` with a read-only CONIN$ handle as its stdin and this process's
+      // stdout and stderr, and exits with its exit code.
+      "launcher.js": `
+      import { dlopen, ptr } from "bun:ffi";
+      const k32 = dlopen("kernel32.dll", {
+        GetStdHandle: { args: ["i32"], returns: "ptr" },
+        GetCurrentProcess: { args: [], returns: "ptr" },
+        DuplicateHandle: { args: ["ptr", "ptr", "ptr", "ptr", "u32", "i32", "u32"], returns: "i32" },
+        CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "ptr" },
+        CreateProcessW: { args: ["ptr", "ptr", "ptr", "ptr", "i32", "u32", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+        WaitForSingleObject: { args: ["ptr", "u32"], returns: "u32" },
+        GetExitCodeProcess: { args: ["ptr", "ptr"], returns: "i32" },
+      }).symbols;
+      const GENERIC_READ = 0x80000000;
+      // SECURITY_ATTRIBUTES: nLength @0, bInheritHandle @16.
+      const inheritable = new DataView(new ArrayBuffer(24));
+      inheritable.setUint32(0, 24, true);
+      inheritable.setInt32(16, 1, true);
+      const input = k32.CreateFileW(ptr(Buffer.from("CONIN$\\0", "utf16le")), GENERIC_READ, 3, ptr(new Uint8Array(inheritable.buffer)), 3, 0, null);
+      if (!input || Number(input) === -1) throw new Error("CreateFileW(CONIN$) failed");
+      const me = k32.GetCurrentProcess();
+      const inherit = handle => {
+        const out = new BigUint64Array(1);
+        if (!k32.DuplicateHandle(me, handle, me, ptr(out), 0, 1, 2)) throw new Error("DuplicateHandle failed");
+        return out[0];
+      };
+      // STARTUPINFOW: cb @0, dwFlags @60, hStdInput @80, hStdOutput @88, hStdError @96.
+      const startup = new DataView(new ArrayBuffer(104));
+      startup.setUint32(0, 104, true);
+      startup.setUint32(60, 0x100, true); // STARTF_USESTDHANDLES
+      startup.setBigUint64(80, BigInt(input), true);
+      startup.setBigUint64(88, inherit(k32.GetStdHandle(-11)), true);
+      startup.setBigUint64(96, inherit(k32.GetStdHandle(-12)), true);
+      const info = new BigUint64Array(3);
+      const commandLine = Buffer.from('"' + process.execPath + '" child.js\\0', "utf16le");
+      if (!k32.CreateProcessW(null, ptr(commandLine), null, null, 1, 0, null, null, ptr(new Uint8Array(startup.buffer)), ptr(info)))
+        throw new Error("CreateProcessW failed");
+      k32.WaitForSingleObject(Number(info[0]), 0xffffffff);
+      const code = new Uint32Array(1);
+      k32.GetExitCodeProcess(Number(info[0]), ptr(code));
+      process.exit(code[0]);
+    `,
+      "child.js": `
+      import { connect } from "node:net";
+      let typed = "";
+      process.stdin.on("data", chunk => {
+        typed += chunk.toString();
+        if (!typed.includes("x")) return;
+        console.log("data " + JSON.stringify(typed));
+        process.exit(0);
+      });
+      const socket = connect(Number(process.env.GO_PORT), "127.0.0.1");
+      socket.on("data", () => {
+        process.stdin.setRawMode(true);
+        console.log("raw");
+      });
+      console.log("ready");
+    `,
+    });
+
+    // The console echoes a typed character only while a line read is pending, which is how the
+    // test knows one is before it lets the child switch to raw mode.
+    const go = Promise.withResolvers<void>();
+    await using server = createServer(socket => {
+      socket.on("error", () => {});
+      go.promise.then(() => socket.write("go"));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    let output = "";
+    let step = 0;
+    const endOfOutput = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "launcher.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, GO_PORT: String((server.address() as AddressInfo).port) },
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(terminal, chunk: Uint8Array) {
+          output += Buffer.from(chunk).toString();
+          const shown = Bun.stripANSI(output);
+          if (step === 0 && shown.includes("ready")) {
+            step = 1;
+            terminal.write("Q");
+          } else if (step === 1 && shown.includes("Q")) {
+            step = 2;
+            go.resolve();
+          } else if (step === 2 && shown.includes("raw")) {
+            step = 3;
+            terminal.write("x");
+          }
+        },
+        exit() {
+          endOfOutput.resolve();
+        },
+      },
+    });
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    await endOfOutput.promise;
+    // The character typed during the line read is carried into what raw mode reads.
+    expect(Bun.stripANSI(output)).toContain('data "Qx"');
+    expect(exitCode).toBe(0);
+  },
+);

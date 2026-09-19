@@ -388,6 +388,19 @@ impl BuiltinIO {
         }
     }
 
+    /// [`enqueue`](Self::enqueue) for bytes the caller is done with.
+    pub(crate) fn enqueue_owned(
+        &mut self,
+        child: io_writer::ChildPtr,
+        buf: Vec<u8>,
+        _safeguard: OutputNeedsIOSafeGuard,
+    ) -> Yield {
+        match self {
+            BuiltinIO::Fd(fd) => fd.writer.enqueue_owned(child, fd.captured, buf),
+            _ => unreachable!("enqueue_owned() on non-fd output; caller must check needs_io()"),
+        }
+    }
+
     /// Format with the optional `"{kind}: "` prefix and enqueue on the
     /// underlying IOWriter.
     pub(crate) fn enqueue_fmt(
@@ -412,11 +425,6 @@ impl BuiltinInput {
             InKind::Ignore => BuiltinInput::Ignore,
         }
     }
-
-    #[inline]
-    pub(crate) fn needs_io(&self) -> bool {
-        matches!(self, BuiltinInput::Fd(_))
-    }
 }
 
 impl Builtin {
@@ -429,7 +437,6 @@ impl Builtin {
     /// impl the heap sweep already deleted; see
     /// `ShellSubprocess::defuse_array_buffer_unpins`. VM-shutdown finalizer
     /// only.
-    #[cfg(not(windows))]
     pub(crate) fn defuse_array_buf_pins(&mut self) {
         if let BuiltinInput::ArrayBuf { buf, .. } = &mut self.stdin {
             buf.defuse();
@@ -553,7 +560,6 @@ impl Builtin {
                 let path = bun_core::ZStr::from_slice_with_nul(&path_buf[..]);
                 let perm: bun_sys::Mode = 0o666;
                 let cwd_fd = Self::cwd(interp, cmd);
-                let evtloop = interp.event_loop;
 
                 let mut pollable = false;
                 let mut is_socket = false;
@@ -603,62 +609,28 @@ impl Builtin {
                                 ),
                             ));
                         }
-                        Ok(f) => {
-                            #[cfg(windows)]
-                            {
-                                use bun_sys::FdExt as _;
-                                match f.make_lib_uv_owned_for_syscall(
-                                    bun_sys::Tag::open,
-                                    bun_sys::ErrorCase::CloseOnFail,
-                                ) {
-                                    Err(e) => {
-                                        let sys = e.to_shell_system_error();
-                                        return Some(Self::cmd_write_failing_error(
-                                            interp,
-                                            cmd,
-                                            format_args!(
-                                                "bun: {}: {}",
-                                                bstr::BStr::new(sys.message.byte_slice()),
-                                                bstr::BStr::new(path.as_bytes()),
-                                            ),
-                                        ));
-                                    }
-                                    Ok(f2) => f2,
-                                }
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                f
-                            }
-                        }
+                        Ok(f) => f,
                     }
                 };
 
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if redirect.stdin() {
-                    let r = IOReader::init(redirfd, evtloop);
-                    r.set_interp(interp_ptr);
-                    Self::of_mut(interp, cmd).stdin = BuiltinInput::Fd(r);
+                    Self::of_mut(interp, cmd).stdin =
+                        BuiltinInput::Fd(IOReader::init(redirfd, interp));
                 }
 
                 if !redirect.stdout() && !redirect.stderr() {
                     return None;
                 }
 
+                // `open_for_writing_impl` classifies the fd on POSIX only.
+                #[cfg(windows)]
+                let flags = io_writer::Flags::unclassified();
                 // Honor the `pollable` computed by `open_for_writing_impl` on
                 // POSIX so a FIFO/socket target (whose fd is now O_NONBLOCK)
-                // takes the pollable path; Windows keeps the async writer.
-                let redirect_writer = IOWriter::init(
-                    redirfd,
-                    io_writer::Flags {
-                        pollable: if cfg!(windows) { true } else { pollable },
-                        nonblock: is_nonblocking,
-                        is_socket,
-                        ..Default::default()
-                    },
-                    evtloop,
-                );
-                redirect_writer.set_interp(interp_ptr);
+                // takes the pollable path.
+                #[cfg(not(windows))]
+                let flags = io_writer::Flags::classified(pollable, is_nonblocking, is_socket);
+                let redirect_writer = IOWriter::init(redirfd, flags, interp);
 
                 if redirect.stdout() {
                     let me = Self::of_mut(interp, cmd);
@@ -816,7 +788,7 @@ impl Builtin {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Cmd);
             // SAFETY: `OutKind::Fd` guaranteed by `needs_io()`.
             if let OutKind::Fd(fd) = &interp.as_cmd(cmd).io.stderr {
-                return fd.writer.enqueue(child, fd.captured, &buf);
+                return fd.writer.enqueue_owned(child, fd.captured, buf);
             }
             unreachable!()
         }
@@ -842,6 +814,23 @@ impl Builtin {
     pub(crate) fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
         // Output is written through immediately in `write_no_io`, so there
         // is nothing to flush here.
+        //
+        // A queued chunk calls back into this Cmd by `NodeId`, which is free
+        // for reuse after this.
+        #[cfg(debug_assertions)]
+        {
+            let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
+            let me = Self::of(interp, cmd);
+            for out in [&me.stdout, &me.stderr] {
+                if let BuiltinIO::Fd(fd) = out {
+                    debug_assert!(
+                        !fd.writer.has_live_chunks(child),
+                        "builtin {} finished with a chunk still queued",
+                        me.kind.as_str(),
+                    );
+                }
+            }
+        }
         Cmd::on_exec_done(interp, cmd, exit_code)
     }
 
@@ -1077,12 +1066,10 @@ impl Builtin {
     ) -> Yield {
         if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
-            // Clone buf so the &mut on
-            // `stderr` doesn't overlap a borrow into `err_buf`.
-            let owned = buf.to_vec();
+            // `buf` may borrow `err_buf`, next to the `stderr` borrowed here.
             return Self::of_mut(interp, cmd)
                 .stderr
-                .enqueue(child, &owned, safeguard);
+                .enqueue_owned(child, buf.to_vec(), safeguard);
         }
         let _ = Self::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Self::done(interp, cmd, exit_code)

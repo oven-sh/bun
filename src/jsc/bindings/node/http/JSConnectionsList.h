@@ -5,6 +5,10 @@
 #include <JavaScriptCore/JSObject.h>
 #include "BunClientData.h"
 
+// Monotonic nanoseconds (uv-polyfills.c): the clock of HTTPParser::m_lastMessageStart and of the
+// timeouts that ConnectionsList.prototype.expired compares it with.
+extern "C" uint64_t uv_hrtime(void);
+
 namespace Bun {
 
 class JSConnectionsList final : public JSC::JSNonFinalObject {

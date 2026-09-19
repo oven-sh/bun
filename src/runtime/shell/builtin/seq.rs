@@ -192,7 +192,7 @@ impl Seq {
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stdout
-                .enqueue(child, &out, safeguard);
+                .enqueue_owned(child, out, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
         Builtin::done(interp, cmd, 0)

@@ -10,13 +10,10 @@
 
 // clang-format off
 
-// The numeric values come from libuv's own uv_errno_t (UV_ERRNO_MAP in uv.h):
-// on POSIX every UV_E* equals -E* of the host, and on Windows libuv defines
-// its own synthetic codes (e.g. UV_ENOENT == -4058), which is what node
-// reports in err.errno. Negating the compiling host's <errno.h> values -- the
-// previous approach -- silently produced CRT-style codes on Windows (-2 for
-// ENOENT) that match neither node nor the errors bun's fs emits there.
-#include <uv.h>
+// The numeric values are libuv's (src/jsc/bindings/libuv/uv/errno.h): -E* of
+// the host on POSIX, libuv's own codes on Windows (UV__ENOENT == -4058), which
+// is what node reports in err.errno.
+#include <uv/errno.h>
 
 #define BUN_UV_ERRNO_MAP(macro) \
   macro(E2BIG, "argument list too long") \
@@ -118,10 +115,19 @@ struct UVErrnoEntry {
 };
 
 static constexpr UVErrnoEntry uvErrnoEntries[] = {
-#define UV_ERRNO_ENTRY(name, desc) { #name ""_s, desc ""_s, UV_##name },
+#define UV_ERRNO_ENTRY(name, desc) { #name ""_s, desc ""_s, UV__##name },
     BUN_UV_ERRNO_MAP(UV_ERRNO_ENTRY)
 #undef UV_ERRNO_ENTRY
 };
+
+String errorMessage(int err)
+{
+    for (auto& entry : uvErrnoEntries) {
+        if (err == entry.value)
+            return String(entry.description);
+    }
+    return makeString("Unknown system error "_s, err);
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

@@ -177,11 +177,7 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
 ) {
     if (bsd_prepare_adopted_udp_socket(fd)) {
         if (err != NULL) {
-#ifdef _WIN32
-            *err = WSAGetLastError();
-#else
-            *err = errno;
-#endif
+            *err = LIBUS_ERR;
         }
         return 0;
     }

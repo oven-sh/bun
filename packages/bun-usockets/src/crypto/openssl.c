@@ -2371,8 +2371,7 @@ struct us_socket_t *us_internal_ssl_on_end(struct us_socket_t *s) {
        * responses still flush and the app's own end() completes the
        * shutdown. With SENT_SHUTDOWN both directions are closed; fall
        * through so a deferred graceful close completes (mirrors the
-       * ZERO_RETURN path; loop.c raw-closes this case first on the
-       * epoll/kqueue backend, the libuv one reaches here). */
+       * ZERO_RETURN path). */
       return s;
     }
   }
@@ -2413,7 +2412,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
        * uWS layer's flushed==0-after-FIN guard, or hasFullyDrained() when
        * nothing is buffered, then closes the connection on this dispatch)
        * and dispatch directly, bypassing the is_shut_down gate below that
-       * ssl_fatal_error would otherwise trip. On the libuv backend zero
+       * ssl_fatal_error would otherwise trip. On Windows zero
        * progress does not prove death (a stale SEND completion can run
        * after this loop turn refilled the buffer), so confirm with the
        * kernel before declaring the spill undrainable. */

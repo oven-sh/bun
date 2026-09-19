@@ -213,26 +213,39 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
   });
 });
 
+// Bytes that are not WTF-8 have no UTF-16 form, so they name no file: every call fails the way libuv's
+// path conversion makes Node's fail. In particular an overlong encoding of "/" or "." is not a separator.
 describe.if(isWindows)("Buffer paths containing malformed byte sequences", () => {
-  it("decodes each malformed byte as U+FFFD in the resulting file name", () => {
+  it("name no file, whichever call is given them", () => {
     using dir = tempDir("fs-buffer-path-malformed", {});
     const base = Buffer.from(String(dir) + "\\");
     fs.mkdirSync(String(dir) + "\\sub");
-    fs.writeFileSync(Buffer.concat([base, Buffer.from("sub"), Buffer.from([0xc0, 0xaf]), Buffer.from("file")]), "1");
-    fs.writeFileSync(Buffer.concat([base, Buffer.from("a"), Buffer.from([0xc0, 0xae]), Buffer.from("b")]), "2");
-    fs.writeFileSync(Buffer.concat([base, Buffer.from("c"), Buffer.from([0xc0, 0x80]), Buffer.from("d")]), "3");
-    fs.writeFileSync(Buffer.concat([base, Buffer.from("e"), Buffer.from([0xc2]), Buffer.from("F")]), "4");
-    fs.writeFileSync(Buffer.concat([base, Buffer.from("g"), Buffer.from([0xe0, 0x80, 0x80]), Buffer.from("h")]), "5");
-    expect(fs.readdirSync(String(dir)).sort()).toEqual([
-      "a\uFFFD\uFFFDb",
-      "c\uFFFD\uFFFDd",
-      "e\uFFFDF",
-      "g\uFFFD\uFFFD\uFFFDh",
-      "sub",
-      "sub\uFFFD\uFFFDfile",
-    ]);
+    const malformed = [
+      Buffer.concat([base, Buffer.from("sub"), Buffer.from([0xc0, 0xaf]), Buffer.from("file")]),
+      Buffer.concat([base, Buffer.from("a"), Buffer.from([0xc0, 0xae]), Buffer.from("b")]),
+      Buffer.concat([base, Buffer.from("c"), Buffer.from([0xc0, 0x80]), Buffer.from("d")]),
+      Buffer.concat([base, Buffer.from("e"), Buffer.from([0xc2]), Buffer.from("F")]),
+      Buffer.concat([base, Buffer.from("g"), Buffer.from([0xe0, 0x80, 0x80]), Buffer.from("h")]),
+    ];
+    const code = (fn: () => unknown) => {
+      try {
+        fn();
+        return "no error";
+      } catch (e: any) {
+        return e.code;
+      }
+    };
+    for (const path of malformed) {
+      expect({
+        writeFile: code(() => fs.writeFileSync(path, "1")),
+        open: code(() => fs.closeSync(fs.openSync(path, "w"))),
+        mkdir: code(() => fs.mkdirSync(path)),
+        stat: code(() => fs.statSync(path)),
+        exists: fs.existsSync(path),
+      }).toEqual({ writeFile: "ENOENT", open: "ENOENT", mkdir: "ENOENT", stat: "ENOENT", exists: false });
+    }
+    expect(fs.readdirSync(String(dir))).toEqual(["sub"]);
     expect(fs.readdirSync(String(dir) + "\\sub")).toEqual([]);
-    expect(fs.readFileSync(String(dir) + "\\e\uFFFDF", "utf8")).toBe("4");
   });
 });
 

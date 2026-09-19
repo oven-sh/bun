@@ -2,33 +2,11 @@
 use core::ffi::c_int;
 use core::ffi::c_void;
 use core::fmt;
-#[cfg(unix)]
 use core::ptr;
 
-#[cfg(not(windows))]
-use bun_sys::{self as sys, Fd};
-use bun_uws_sys::Loop as UwsLoop;
-
-pub type Loop = UwsLoop;
-
-// Note: `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
-// `active` counter is a public field, so inline the saturating math here until
-// `bun_uws_sys` grows `add_active`/`sub_active`. On Windows the uws loop has no
-// such counter (libuv tracks active handles itself); `posix_event_loop` is only
-// reachable from non-Windows `Loop` consumers, so the Windows arm is a no-op.
-#[cfg(not(windows))]
-#[inline]
-fn loop_add_active(loop_: &mut Loop, value: u32) {
-    loop_.active = loop_.active.saturating_add(value);
-}
-#[cfg(not(windows))]
-#[inline]
-fn loop_sub_active(loop_: &mut Loop, value: u32) {
-    loop_.active = loop_.active.saturating_sub(value);
-}
-
-#[cfg(not(windows))]
 use bun_sys::syslog;
+use bun_sys::{self as sys, Fd};
+use bun_uws_sys::Loop;
 
 /// Local `errno_sys` helper. `bun_sys`
 /// does not yet expose this helper on `Result<T>`; once it does, drop this and
@@ -131,9 +109,6 @@ pub fn js_vm_ctx() -> EventLoopCtx {
     get_vm_ctx(AllocatorType::Js)
 }
 
-// `KeepAlive` (struct + 14-method impl) was duplicated here and in
-// `windows_event_loop.rs`; both copies now live in `crate::keep_alive`.
-
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll
 // ──────────────────────────────────────────────────────────────────────────
@@ -141,7 +116,7 @@ pub fn js_vm_ctx() -> EventLoopCtx {
 // `KQueueGenerationNumber` is `usize` on macOS-debug, else a zero-size sentinel.
 #[cfg(all(target_os = "macos", debug_assertions))]
 type KQueueGenerationNumber = usize;
-#[cfg(all(unix, not(all(target_os = "macos", debug_assertions))))]
+#[cfg(not(all(target_os = "macos", debug_assertions)))]
 type KQueueGenerationNumber = u8; // Note: conceptually zero-width; smallest Rust int is u8. Gated by cfg below.
 
 // Debug-only diagnostic; `Relaxed` (no synchronization implied).
@@ -244,7 +219,6 @@ pub struct Owner {
 }
 
 impl Owner {
-    #[cfg(not(windows))]
     pub(crate) const NULL: Owner = Owner {
         tag: PollTag::Null,
         ptr: core::ptr::null_mut(),
@@ -258,7 +232,6 @@ impl Owner {
         self.ptr.is_null()
     }
     #[inline]
-    #[cfg(not(windows))]
     pub(crate) fn clear(&mut self) {
         *self = Self::NULL;
     }
@@ -280,11 +253,8 @@ pub enum AllocatorType {
     Mini,
 }
 
-// `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
-// generation_number, allocator_type). On Windows the variants live in
-// `windows_event_loop`; the shared `EventLoopCtxVTable` above names
-// `crate::FilePoll`/`crate::Store` so the right one is picked.
-#[cfg(not(windows))]
+/// On Windows only a SOCKET can be polled (the loop asks AFD for its
+/// readiness); pipes, consoles and files complete through `crate::windows`.
 pub struct FilePoll {
     pub fd: Fd,
     pub flags: FlagsSet,
@@ -299,9 +269,12 @@ pub struct FilePoll {
     pub(crate) next_to_free: *mut FilePoll,
 
     pub(crate) allocator_type: AllocatorType,
+
+    /// The loop's readiness poll for `fd`, while registered.
+    #[cfg(windows)]
+    pub(crate) socket_poll: *mut bun_uws_sys::iocp::SocketPoll,
 }
 
-#[cfg(not(windows))]
 impl FilePoll {
     fn update_flags(&mut self, updated: FlagsSet) {
         let mut flags = self.flags;
@@ -355,6 +328,22 @@ impl FilePoll {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn on_epoll_event(&mut self, epoll_event: &bun_sys::linux::epoll_event) {
         self.update_flags(Flags::from_epoll_event(epoll_event));
+        self.on_update(0);
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn on_socket_event(
+        &mut self,
+        loop_: *mut Loop,
+        event: bun_uws_sys::loop_::EventType,
+    ) {
+        self.update_flags(Flags::from_socket_event(event));
+        // The loop re-arms a socket poll by itself; a one-shot owner hears
+        // nothing more until it registers again.
+        if self.flags.contains(Flags::OneShot) && !self.socket_poll.is_null() {
+            // SAFETY: `socket_poll` is this poll's live registration on `loop_`.
+            unsafe { bun_uws_sys::iocp::us_iocp_poll_socket_change(loop_, self.socket_poll, 0) };
+        }
         self.on_update(0);
     }
 
@@ -432,6 +421,7 @@ impl FilePoll {
         unsafe { __bun_run_file_poll(self, size_or_offset) };
     }
 
+    #[cfg(unix)]
     #[inline]
     pub(crate) fn is_active(&self) -> bool {
         self.flags.contains(Flags::HasIncrementedPollCount)
@@ -474,10 +464,7 @@ impl FilePoll {
         }
         self.flags.remove(Flags::HasIncrementedPollCount);
 
-        loop_sub_active(
-            loop_,
-            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
-        );
+        loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
@@ -492,10 +479,7 @@ impl FilePoll {
         self.flags.insert(Flags::HasIncrementedPollCount);
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
-            loop_add_active(
-                loop_,
-                (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
-            );
+            loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
             self.flags.insert(Flags::HasIncrementedActiveCount);
         }
     }
@@ -523,6 +507,8 @@ impl FilePoll {
                 .wrapping_add(1),
             #[cfg(not(all(target_os = "macos", debug_assertions)))]
             generation_number: 0,
+            #[cfg(windows)]
+            socket_poll: ptr::null_mut(),
         }
     }
 
@@ -560,38 +546,7 @@ impl FilePoll {
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        ))]
-        return self.register_with_fd_impl(loop_, flag, one_shot, fd);
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        )))]
-        {
-            let _ = (loop_, flag, one_shot, fd);
-            sys::Result::Ok(())
-        }
-    }
-
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "freebsd"
-    ))]
-    fn register_with_fd_impl(
-        &mut self,
-        loop_: &mut Loop,
-        flag: Flags,
-        one_shot: OneShotFlag,
-        fd: Fd,
-    ) -> sys::Result<()> {
+        #[cfg(not(windows))]
         let watcher_fd = loop_.fd;
 
         syslog!(
@@ -832,6 +787,54 @@ impl FilePoll {
                 return err;
             }
         }
+        #[cfg(windows)]
+        {
+            use bun_uws_sys::iocp;
+            let mut events = match flag {
+                Flags::Readable => iocp::SOCKET_READABLE,
+                Flags::Writable => iocp::SOCKET_WRITABLE,
+                // Nothing but a socket has readiness here.
+                _ => {
+                    return sys::Result::Err(sys::Error::from_code(
+                        sys::E::EOPNOTSUPP,
+                        sys::Tag::poll,
+                    ));
+                }
+            };
+            // A socket has one poll; it carries both directions.
+            if flag == Flags::Readable && self.flags.contains(Flags::PollWritable) {
+                events |= iocp::SOCKET_WRITABLE;
+            }
+            if flag == Flags::Writable && self.flags.contains(Flags::PollReadable) {
+                events |= iocp::SOCKET_READABLE;
+            }
+            let loop_ptr: *mut Loop = loop_;
+            if self.socket_poll.is_null() {
+                // SAFETY: `loop_ptr` is the live loop; `fd` is the caller's open
+                // SOCKET; the tagged owner is handed back to
+                // `Bun__internal_dispatch_ready_poll` until the poll is stopped.
+                let poll = unsafe {
+                    iocp::us_iocp_poll_socket(
+                        loop_ptr,
+                        Pollable::init(self).ptr(),
+                        fd.native() as usize,
+                        events,
+                    )
+                };
+                self.flags.insert(Flags::WasEverRegistered);
+                if poll.is_null() {
+                    let err = bun_sys::windows::Win32Error::get();
+                    self.deactivate(loop_);
+                    return sys::Result::Err(
+                        sys::Error::from_win32(err, sys::Tag::poll).with_fd(fd),
+                    );
+                }
+                self.socket_poll = poll;
+            } else {
+                // SAFETY: `socket_poll` is this poll's live registration on `loop_ptr`.
+                unsafe { iocp::us_iocp_poll_socket_change(loop_ptr, self.socket_poll, events) };
+            }
+        }
 
         self.activate(loop_);
         self.flags.insert(match flag {
@@ -868,40 +871,20 @@ impl FilePoll {
     ) -> sys::Result<()> {
         // Note: compute the syscall result first, then unconditionally
         // deactivate. Avoids a raw-pointer scopeguard.
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        ))]
         let result = self.unregister_with_fd_impl(loop_, fd, force_unregister);
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "android",
-            target_os = "macos",
-            target_os = "freebsd"
-        )))]
-        let result: sys::Result<()> = {
-            let _ = (fd, force_unregister);
-            sys::Result::Ok(())
-        };
         self.deactivate(loop_);
         result
     }
 
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "freebsd"
-    ))]
     fn unregister_with_fd_impl(
         &mut self,
         loop_: &mut Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
-        debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
+        #[cfg(not(windows))]
+        debug_assert!(fd.native() >= 0);
+        debug_assert!(fd != INVALID_FD);
 
         let registered = self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollWritable)
@@ -914,6 +897,7 @@ impl FilePoll {
             return sys::Result::Ok(());
         }
 
+        #[cfg(not(windows))]
         let watcher_fd = loop_.fd;
         let both_directions = disarmed_only
             || (self.flags.contains(Flags::PollReadable)
@@ -1138,6 +1122,14 @@ impl FilePoll {
                 e => return sys::Result::Err(sys::Error::from_code(e, sys::Tag::kevent)),
             }
         }
+        #[cfg(windows)]
+        if !self.socket_poll.is_null() {
+            // SAFETY: `socket_poll` is this poll's live registration on
+            // `loop_`. The loop releases it once the kernel is done with it and
+            // does not use the tagged owner again.
+            unsafe { bun_uws_sys::iocp::us_iocp_poll_socket_stop(loop_, self.socket_poll) };
+            self.socket_poll = ptr::null_mut();
+        }
 
         self.flags.remove(Flags::NeedsRearm);
         self.flags.remove(Flags::OneShot);
@@ -1151,7 +1143,6 @@ impl FilePoll {
     }
 }
 
-#[cfg(not(windows))]
 impl fmt::Display for FilePoll {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -1268,6 +1259,25 @@ impl Flags {
         }
         flags
     }
+
+    #[cfg(windows)]
+    pub(crate) fn from_socket_event(event: bun_uws_sys::loop_::EventType) -> FlagsSet {
+        use bun_uws_sys::iocp;
+        let mut flags = FlagsSet::empty();
+        if event.events & iocp::SOCKET_READABLE != 0 {
+            flags.insert(Flags::Readable);
+        }
+        if event.events & iocp::SOCKET_WRITABLE != 0 {
+            flags.insert(Flags::Writable);
+        }
+        if event.error {
+            flags.insert(Flags::Eof);
+        }
+        if event.eof {
+            flags.insert(Flags::Hup);
+        }
+        flags
+    }
 }
 
 #[allow(dead_code)]
@@ -1294,21 +1304,17 @@ impl fmt::Display for FlagsFormatter {
 // `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments
 // heap-breakdown builds, so the 128-slot hive is unconditional here (same
 // choice as `RuntimeTranspilerStore`'s TranspilerJob hive).
-#[cfg(not(windows))]
 const HIVE_SIZE: usize = 128;
-#[cfg(not(windows))]
 type FilePollHive = bun_collections::hive_array::Fallback<FilePoll, HIVE_SIZE>;
 
 /// We defer freeing FilePoll until the end of the next event loop iteration
 /// This ensures that we don't free a FilePoll before the next callback is called
-#[cfg(not(windows))]
 pub struct Store {
     hive: FilePollHive,
     pending_free_head: *mut FilePoll,
     pending_free_tail: *mut FilePoll,
 }
 
-#[cfg(not(windows))]
 impl Store {
     pub fn init() -> Store {
         Store {
@@ -1412,18 +1418,15 @@ impl Store {
 // on a tuple). Since the union has exactly one variant, wrap the raw
 // `TaggedPtr` directly with the same tag scheme (`1024 - index`).
 #[derive(Copy, Clone)]
-#[allow(dead_code)]
 pub(crate) struct Pollable {
     repr: bun_collections::TaggedPtr,
 }
 
 impl Pollable {
     /// Tag value for `FilePoll` (index 0 → `1024 - 0`).
-    #[allow(dead_code)]
     pub(crate) const FILE_POLL_TAG: u16 = 1024;
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
         Self {
             repr: bun_collections::TaggedPtr::init(ptr, Self::FILE_POLL_TAG),
@@ -1431,7 +1434,6 @@ impl Pollable {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn from(val: *mut c_void) -> Self {
         Self {
             repr: bun_collections::TaggedPtr::from(val),
@@ -1439,33 +1441,21 @@ impl Pollable {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn tag(self) -> u16 {
         self.repr.data()
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn as_file_poll(self) -> *mut crate::FilePoll {
         self.repr.get::<crate::FilePoll>()
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn ptr(self) -> *mut c_void {
         self.repr.to()
     }
 }
 
-// `current_ready_poll`/`ready_polls` only exist on the POSIX uws loop layout;
-// on Windows the libuv loop drives readiness, so this entry point is never
-// linked there. Restrict to the platforms where the fields are present.
-#[cfg(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "macos",
-    target_os = "freebsd"
-))]
 #[unsafe(no_mangle)]
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
@@ -1499,6 +1489,8 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
     file_poll.on_kqueue_event(&ev);
     #[cfg(any(target_os = "linux", target_os = "android"))]
     file_poll.on_epoll_event(&ev);
+    #[cfg(windows)]
+    file_poll.on_socket_event(loop_, ev);
 }
 
 #[cfg(target_os = "macos")]
@@ -1515,7 +1507,6 @@ pub enum OneShotFlag {
     None,
 }
 
-#[cfg(not(windows))]
 const INVALID_FD: Fd = Fd::INVALID;
 
 #[cfg(all(test, not(windows)))]

@@ -184,7 +184,7 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
   );
   if (offenders.length > 0) {
     throw new BuildError(`${name}: objects reference symbols its build forbids:\n${offenders.join("\n")}`, {
-      hint: `The symbols and the objects allowed to use them are declared by forbidUndefined in scripts/build/deps/${name}.ts; the comment there says what the references have to go through instead.`,
+      hint: `The symbols are declared by forbidUndefined in scripts/build/deps/${name}.ts; the comment there says what the references have to go through instead.`,
     });
   }
   // dep_check_undefined is restat=1: an existing stamp keeps its mtime.

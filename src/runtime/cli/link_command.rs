@@ -114,7 +114,6 @@ fn link(ctx: command::Context) -> crate::Result<()> {
 
         // Step 2. Setup the global directory
         let node_modules: Dir = 'brk: {
-            bin::Linker::ensure_umask();
             let explicit_global_dir: &[u8] = match &ctx.install {
                 Some(install_) => install_.global_dir.as_deref().unwrap_or(b""),
                 None => b"",
@@ -180,11 +179,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
                 let global_path = pm::global_link_dir_path(manager);
                 let dest_path =
                     resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
-                match bun_sys::sys_uv::symlink_uv(
-                    link_path,
-                    dest_path,
-                    bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
-                ) {
+                match bun_sys::junction(link_path, dest_path) {
                     Err(e) => {
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}",
@@ -201,8 +196,6 @@ fn link(ctx: command::Context) -> crate::Result<()> {
                 if let Err(e) = node_modules.sym_link(
                     FileSystem::instance().top_level_dir_without_trailing_slash(),
                     name,
-                    // is_directory
-                    true,
                 ) {
                     if manager.options.log_level != LogLevel::Silent {
                         bun_core::pretty_errorln!(

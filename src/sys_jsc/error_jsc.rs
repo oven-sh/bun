@@ -74,7 +74,7 @@ pub mod TestingAPIs {
         }
     }
 
-    /// Exposes libuv -> `bun.sys.E` translation so tests can feed out-of-range
+    /// Exposes the `UV_E*` -> `E` translation so tests can feed out-of-range
     /// negative values and verify it does not panic. Windows-only.
     #[bun_jsc::host_fn]
     pub fn translate_uv_error_to_e(

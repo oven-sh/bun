@@ -8,7 +8,6 @@ import {
   expectMaxObjectTypeCount,
   isASAN,
   isDebug,
-  isWindows,
   runFixtureMaxRSS,
   tempDir,
 } from "harness";
@@ -438,7 +437,6 @@ describe("spawn stdin ReadableStream", () => {
   // When the child dies mid-write the sink's close path must tear down the
   // ReadableStream feeding it (for an async iterable, return the generator),
   // or the still-running pull keeps the parent's event loop alive forever.
-  // On Windows the libuv write-error path skipped that close notification.
   // https://github.com/oven-sh/bun/issues/33020
   async function expectParentExitsAfterChildDies(useIterator: boolean) {
     await using proc = Bun.spawn({
@@ -1082,12 +1080,7 @@ describe("spawn stdin ReadableStream", () => {
   // each stderr write's index on stdout (tiny, never fills its pipe); the parent
   // drains stdout concurrently and samples the child's progress while the
   // stderr reader is deliberately stalled.
-  //
-  // Windows: WindowsBufferedReader::on_read discards the on_read_chunk return
-  // value, so FileReader's highwater mark never propagates to uv_read_stop and
-  // the pipe drains at socket speed regardless of JS demand. Same limitation as
-  // the process-stdin.test.ts "pipe backpressure" suite; skipped there too.
-  test.skipIf(isWindows)("spawn stderr for-await applies backpressure to the writer", async () => {
+  test("spawn stderr for-await applies backpressure to the writer", async () => {
     const chunkSize = 64 * 1024;
     const chunkCount = 128; // 8 MB — well above the OS pipe + ByteStream buffers
     const totalBytes = chunkSize * chunkCount;

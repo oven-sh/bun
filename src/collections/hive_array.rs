@@ -434,7 +434,7 @@ pub struct HiveSlot<'h, T, const CAPACITY: usize> {
 
 impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
     /// Stable address of the slot. Safe to capture (e.g. register as a
-    /// libuv/uws user-data pointer) **before** [`write`](Self::write), as long
+    /// uws user-data pointer) **before** [`write`](Self::write), as long
     /// as nothing dereferences it until after `write()`.
     #[inline]
     pub fn addr(&self) -> NonNull<T> {

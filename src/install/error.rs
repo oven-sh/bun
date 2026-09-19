@@ -10,8 +10,6 @@ pub enum Error {
     NameTooLong,
     #[error("SymLinkLoop")]
     SymLinkLoop,
-    #[error("SystemFdQuotaExceeded")]
-    SystemFdQuotaExceeded,
     #[error("SystemResources")]
     SystemResources,
     #[error("TarballHTTP400")]
@@ -246,7 +244,6 @@ impl Error {
             Self::NotDir => "NotDir",
             Self::NameTooLong => "NameTooLong",
             Self::SymLinkLoop => "SymLinkLoop",
-            Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
             Self::SystemResources => "SystemResources",
             Self::TarballHTTP400 => "TarballHTTP400",
             Self::TarballHTTP401 => "TarballHTTP401",
@@ -402,7 +399,6 @@ impl From<bun_libarchive::Error> for Error {
             bun_libarchive::Error::Fail => Self::Fail,
             bun_libarchive::Error::Sys(s) => Self::Sys(s),
             bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
-            bun_libarchive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
             bun_libarchive::Error::Paths(p) => Self::Paths(p),
         }
     }

@@ -21,42 +21,11 @@ use crate::Mutex;
 #[cfg(windows)]
 use crate::windows_sys as windows;
 
-// `HANDLE` is an opaque kernel handle (kernel32 validates and returns 0/FALSE
-// on a non-console handle); every out-param is `&mut T` to a `#[repr(C)]` POD,
-// ABI-identical to the Win32 `LP*` pointer (thin non-null). The reference type
-// encodes the only pointer-validity precondition, so `safe fn` discharges the
-// link-time proof. (`bun_windows_sys::kernel32` declares these with `*mut`;
-// redeclared locally so the legacy-conhost cursor path below is plain calls.)
 #[cfg(windows)]
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    safe fn GetConsoleMode(
-        hConsoleHandle: windows::HANDLE,
-        lpMode: &mut windows::DWORD,
-    ) -> windows::BOOL;
-    safe fn GetConsoleScreenBufferInfo(
-        hConsoleOutput: windows::HANDLE,
-        lpConsoleScreenBufferInfo: &mut windows::CONSOLE_SCREEN_BUFFER_INFO,
-    ) -> windows::BOOL;
-    safe fn FillConsoleOutputAttribute(
-        hConsoleOutput: windows::HANDLE,
-        wAttribute: windows::WORD,
-        nLength: windows::DWORD,
-        dwWriteCoord: windows::COORD,
-        lpNumberOfAttrsWritten: &mut windows::DWORD,
-    ) -> windows::BOOL;
-    safe fn FillConsoleOutputCharacterW(
-        hConsoleOutput: windows::HANDLE,
-        cCharacter: windows::WCHAR,
-        nLength: windows::DWORD,
-        dwWriteCoord: windows::COORD,
-        lpNumberOfCharsWritten: &mut windows::DWORD,
-    ) -> windows::BOOL;
-    safe fn SetConsoleCursorPosition(
-        hConsoleOutput: windows::HANDLE,
-        dwCursorPosition: windows::COORD,
-    ) -> windows::BOOL;
-}
+use crate::windows_sys::kernel32::{
+    FillConsoleOutputAttribute, FillConsoleOutputCharacterW, GetConsoleMode,
+    GetConsoleScreenBufferInfo, SetConsoleCursorPosition,
+};
 
 // Progress's terminal handle is the canonical `output::File` (vtable-backed
 // stderr/File from `OutputSinkVTable`). The duplicate `ProgressTerminalVTable`
@@ -448,7 +417,10 @@ impl Progress {
                     debug_assert!(self.is_windows_terminal);
 
                     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = crate::ffi::zeroed();
-                    if GetConsoleScreenBufferInfo(file.console_handle(), &mut info) != windows::TRUE
+                    // SAFETY: `info` is a valid out-pointer; a handle that is not a
+                    // console's fails the call.
+                    if unsafe { GetConsoleScreenBufferInfo(file.console_handle(), &mut info) }
+                        != windows::TRUE
                     {
                         // stop trying to write to this file
                         self.terminal = None;

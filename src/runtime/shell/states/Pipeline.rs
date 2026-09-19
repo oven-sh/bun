@@ -46,6 +46,48 @@ impl Default for PipelineState {
     }
 }
 
+/// Whether `item` runs as a builtin whatever its words expand to: a command
+/// whose name is a literal word that names one. Any other stage may spawn a
+/// child process, which inherits the stage's ends of the pipes.
+#[cfg(windows)]
+fn is_certainly_builtin(item: &ast::PipelineItem) -> bool {
+    let ast::PipelineItem::Cmd(cmd) = item else {
+        return false;
+    };
+    matches!(
+        cmd.name_and_args.first(),
+        Some(ast::Atom::Simple(ast::SimpleAtom::Text(name)))
+            if crate::shell::builtin::Kind::from_argv0(name).is_some()
+    )
+}
+
+/// The pipe between two neighbouring stages. An end that only a builtin uses
+/// is overlapped and runs on the loop's port; an end that a child process may
+/// inherit is synchronous, which is what a program expects of its stdio.
+#[cfg(windows)]
+fn create_pipe(writer_is_builtin: bool, reader_is_builtin: bool) -> bun_sys::Result<Pipe> {
+    use bun_spawn_sys::windows::stdio::{ChildPipe, create_pipe_pair};
+    if !writer_is_builtin && !reader_is_builtin {
+        return bun_sys::pipe();
+    }
+    // `parent` is always overlapped; `child` is the end the other stage gets.
+    let pair = create_pipe_pair(ChildPipe {
+        readable: writer_is_builtin,
+        writable: !writer_is_builtin,
+        overlapped: writer_is_builtin && reader_is_builtin,
+    })
+    .map_err(|code| bun_spawn_sys::windows::win32::sys_error(code, bun_sys::Tag::pipe))?;
+    let (read, write) = if writer_is_builtin {
+        (pair.child, pair.parent)
+    } else {
+        (pair.parent, pair.child)
+    };
+    Ok([
+        bun_sys::Fd::from_system(read),
+        bun_sys::Fd::from_system(write),
+    ])
+}
+
 impl Pipeline {
     pub(crate) fn init(
         interp: &Interpreter,
@@ -134,9 +176,9 @@ impl Pipeline {
     /// failed pipe or dup finishes the pipeline (`Some(yield)`) while no child
     /// runs a subtree that `deinit` cannot reach.
     fn setup_commands(interp: &Interpreter, this: NodeId) -> Option<Yield> {
-        let (node, parent_shell, evtloop) = {
+        let (node, parent_shell) = {
             let me = interp.as_pipeline(this);
-            (me.node, me.base.shell, interp.event_loop)
+            (me.node, me.base.shell)
         };
         let items: &[ast::PipelineItem] = node.items;
         let cmd_count = items
@@ -149,16 +191,24 @@ impl Pipeline {
             return Some(Self::finish(interp, this, 0));
         }
 
+        // By runnable child, like `pipes[]` and `cmds[]`.
+        #[cfg(windows)]
+        let runs_builtin: Vec<bool> = items
+            .iter()
+            .filter(|it| !matches!(it, ast::PipelineItem::Assigns(_)))
+            .map(is_certainly_builtin)
+            .collect();
+
         let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count - 1);
-        for _ in 0..cmd_count - 1 {
+        while pipes.len() < cmd_count - 1 {
             // On POSIX use a
             // UNIX stream socketpair via `socketpairForShell` — on macOS
             // that variant intentionally skips SO_NOSIGPIPE so the
             // subprocess writing to a closed read end is killed by SIGPIPE
             // (like a real shell) instead of seeing EPIPE and printing
-            // "Broken pipe" to stderr; on Windows use pipe().
+            // "Broken pipe" to stderr.
             #[cfg(windows)]
-            let r = bun_sys::pipe();
+            let r = create_pipe(runs_builtin[pipes.len()], runs_builtin[pipes.len() + 1]);
             #[cfg(unix)]
             let r = bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false);
             match r {
@@ -178,7 +228,6 @@ impl Pipeline {
             }
         }
 
-        let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
         let mut cmds: Vec<CmdOrResult> = Vec::with_capacity(cmd_count);
         for item in items {
             if matches!(item, ast::PipelineItem::Assigns(_)) {
@@ -192,25 +241,29 @@ impl Pipeline {
                 let stdin = if cmd_idx == 0 {
                     me.io.stdin.clone()
                 } else {
-                    let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
-                    r.set_interp(interp_ptr);
-                    InKind::Fd(r)
+                    let fd = pipes[cmd_idx - 1][0];
+                    #[cfg(windows)]
+                    let reader = if runs_builtin[cmd_idx] {
+                        IOReader::init_overlapped_pipe(fd, interp)
+                    } else {
+                        IOReader::init_created_pipe(fd, interp)
+                    };
+                    #[cfg(unix)]
+                    let reader = IOReader::init_created_pipe(fd, interp);
+                    InKind::Fd(reader)
                 };
                 let stdout = if cmd_idx == cmd_count - 1 {
                     me.io.stdout.clone()
                 } else {
-                    // `is_socket` is set on POSIX — the POSIX
-                    // pipe is actually a socketpair end (see above).
-                    let w = IOWriter::init(
-                        pipes[cmd_idx][1],
-                        io_writer::Flags {
-                            pollable: true,
-                            is_socket: cfg!(unix),
-                            ..Default::default()
-                        },
-                        evtloop,
-                    );
-                    w.set_interp(interp_ptr);
+                    #[cfg(windows)]
+                    let flags = if runs_builtin[cmd_idx] {
+                        io_writer::Flags::overlapped_pipe()
+                    } else {
+                        io_writer::Flags::pipe()
+                    };
+                    #[cfg(unix)]
+                    let flags = io_writer::Flags::pipe();
+                    let w = IOWriter::init(pipes[cmd_idx][1], flags, interp);
                     OutKind::Fd(crate::shell::io::OutFd {
                         writer: w,
                         captured: None,
@@ -292,7 +345,7 @@ impl Pipeline {
             // Only the fd arm transitions state.
             interp.as_pipeline_mut(this).state = PipelineState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::Pipeline);
-            return writer.enqueue(child, captured, &buf);
+            return writer.enqueue_owned(child, captured, buf);
         }
         if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's

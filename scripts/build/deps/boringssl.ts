@@ -91,7 +91,7 @@ export const boringssl: Dependency = {
       // With the hooks on, nothing in BoringSSL may allocate from libc any
       // more (mem.cc's fallback is dead code the compiler drops); under ASAN
       // the fallbacks are live and libc is the point.
-      ...(!cfg.asan && { forbidUndefined: { symbols: LIBC_ALLOCATION_SYMBOLS } }),
+      ...(!cfg.asan && { forbidUndefined: LIBC_ALLOCATION_SYMBOLS }),
     };
     return spec;
   },

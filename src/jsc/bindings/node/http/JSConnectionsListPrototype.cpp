@@ -2,7 +2,6 @@
 #include "JSConnectionsList.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
-#include "uv.h"
 
 namespace Bun {
 

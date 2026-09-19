@@ -6,31 +6,14 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
 
-#if USE(MIMALLOC)
-// Matches oven-sh/mimalloc's mi_attr_noexcept declaration; bmalloc's
-// vendored mimalloc.h predates this entry point.
-extern "C" void mi_on_thread_idle(void) noexcept;
-#if OS(WINDOWS)
-extern "C" bool mi_on_thread_idle_pending(void) noexcept;
-#else
-// uSockets' CLOCK_MONOTONIC reading (packages/bun-usockets/src/loop.c). Must be
-// the same clock the caller's `nowNs` came from, or the rate limit below
-// compares two epochs. Windows always passes a reading, so it needs no fallback.
-extern "C" uint64_t us_internal_monotonic_ns(void);
-#endif
-#endif
-
 // Rust-side `AtomicI32` static (src/jsc/VirtualMachine.rs). Same layout as a plain
 // int32_t, but Rust writes it (env parsing) while this thread reads it, so read
 // it as an atomic rather than through a plain `int`.
 extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 
-// Returns in how many milliseconds the caller is to call this again even if nothing else
-// wakes it (0: no need). Only the libuv loop gets anything but 0.
-extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
+extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 {
     ASSERT(vm);
-    unsigned int runAgainInMs = 0;
     const bool previouslyHadAccess = vm->heap.hasHeapAccess();
     // sanity check for debug builds to ensure we're not doing a
     // use-after-free here
@@ -74,20 +57,11 @@ extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t now
 
         static thread_local int remainingRunsUntilSkipReleaseAccess = 0;
 
-#if USE(MIMALLOC) && OS(WINDOWS)
-        // mimalloc wants three more calls after the first at the most; counted from the last time JS ran.
-        static constexpr unsigned maxIdleFollowUpSweeps = 3;
-        static thread_local unsigned idleFollowUpSweeps = 0;
-#endif
-
         // Note: usage of `didEnterVM` in JSC::VM conflicts with Options::validateDFGClobberize
         // We don't need to use that option, so it should be fine.
         if (vm->didEnterVM) {
             vm->didEnterVM = false;
             remainingRunsUntilSkipReleaseAccess = defaultRemainingRunsUntilSkipReleaseAccess;
-#if USE(MIMALLOC) && OS(WINDOWS)
-            idleFollowUpSweeps = 0;
-#endif
         }
 
         if (remainingRunsUntilSkipReleaseAccess-- > 0) {
@@ -95,30 +69,6 @@ extern "C" unsigned int Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t now
             // > If you are not moving a VM to the different thread, then you can aquire the access and do not need to release
             vm->heap.stopIfNecessary();
             vm->didEnterVM = false;
-
-#if USE(MIMALLOC) && OS(WINDOWS)
-            // Collect retired pages, punch free-block holes, hand the arena purge to
-            // the scavenger. Rate-limited; nowNs is the tick's shared reading (0 = take
-            // one), compared by addition so an out-of-order reading cannot underflow.
-            //
-            // Windows only: everywhere else `us_loop_run_bun_tick` hands the heaps to the
-            // scavenger across the poll instead, so this thread never does the sweep itself.
-            // The libuv loop has no handoff: uv_run() dispatches completions right after its poll,
-            // inside the same call, and libuv allocates from mimalloc. So it keeps paying for it here.
-            static constexpr uint64_t idleSweepIntervalNs = 100 * 1000000ULL;
-            static thread_local uint64_t lastIdleSweepNs = 0;
-            if (nowNs >= lastIdleSweepNs + idleSweepIntervalNs) {
-                lastIdleSweepNs = nowNs;
-                mi_on_thread_idle();
-                // One sweep leaves the free blocks of a large page that was just allocated
-                // from, and nothing comes back for them once libuv blocks.
-                if (mi_on_thread_idle_pending() && idleFollowUpSweeps < maxIdleFollowUpSweeps) {
-                    idleFollowUpSweeps++;
-                    runAgainInMs = idleSweepIntervalNs / 1000000;
-                }
-            }
-#endif
         }
     }
-    return runAgainInMs;
 }

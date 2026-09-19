@@ -13,10 +13,8 @@ workspace = true
 thiserror.workspace = true
 bun_alloc.workspace = true
 bun_errno.workspace = true
-bun_opaque.workspace = true
 libc.workspace = true
 scopeguard.workspace = true
-bun_analytics.workspace = true
 bun_dispatch.workspace = true
 bun_core.workspace = true
 bun_crash_handler.workspace = true
@@ -27,3 +25,6 @@ bun_ptr.workspace = true
 bun_spawn_sys.workspace = true
 bun_sys.workspace = true
 bun_threading.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_uws_sys.workspace = true

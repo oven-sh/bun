@@ -19,7 +19,7 @@
 #ifndef UWS_LOOP_H
 #define UWS_LOOP_H
 
-/* The loop is lazily created per-thread and run with run() */
+/* The loop is lazily created per-thread */
 
 #include "LoopData.h"
 #include <libusockets.h>
@@ -83,8 +83,8 @@ private:
         return this;
     }
 
-    static Loop *create(void *hint) {
-        Loop *loop = (Loop *) us_create_loop(hint, wakeupCb, preCb, postCb, sizeof(LoopData));
+    static Loop *create() {
+        Loop *loop = (Loop *) us_create_loop(wakeupCb, preCb, postCb, sizeof(LoopData));
         if (!loop) {
             /* The per-thread loop is not recoverable; every caller of get()
              * dereferences it. Only Bun.spawnSync's isolated loop (created
@@ -95,19 +95,14 @@ private:
         return loop->init();
     }
 
-    /* What to do with loops created with existingNativeLoop? */
     struct LoopCleaner {
         ~LoopCleaner() {
             // There's no need to call this destructor if Bun is in the process of exiting.
-            // This is both a performance thing, and also to prevent freeing some things which are not meant to be freed
-            // such as uv_tty_t
-            if(loop && cleanMe && !bun_is_exiting()) {
-                cleanMe = false;
+            if(loop && !bun_is_exiting()) {
                 loop->free();
             }
         }
         Loop *loop = nullptr;
-        bool cleanMe = false;
     };
 
     static LoopCleaner &getLazyLoop() {
@@ -118,25 +113,15 @@ private:
 public:
     /* Lazily initializes a per-thread loop and returns it.
      * Will automatically free all initialized loops at exit. */
-    static Loop *get(void *existingNativeLoop = nullptr) {
+    static Loop *get() {
         if (!getLazyLoop().loop) {
-            /* If we are given a native loop pointer we pass that to uSockets and let it deal with it */
-            if (existingNativeLoop) {
-                /* Todo: here we want to pass the pointer, not a boolean */
-                getLazyLoop().loop = create(existingNativeLoop);
-                /* We cannot register automatic free here, must be manually done */
-            } else {
-                getLazyLoop().loop = create(nullptr);
-                getLazyLoop().cleanMe = true;
-            }
+            getLazyLoop().loop = create();
         }
 
         return getLazyLoop().loop;
     }
 
-    /* A thread that ran a loop is exiting: free this thread's loop whether uSockets created the
-     * native loop (cleanMe) or was handed one (Windows: the thread's libuv loop, which the caller
-     * closes afterwards; us_loop_free leaves a borrowed native loop alone). */
+    /* A thread that ran a loop is exiting: free this thread's loop. */
     static void freeLoopAtThreadExit() {
         if (getLazyLoop().loop) {
             getLazyLoop().loop->free();
@@ -148,7 +133,6 @@ public:
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
         
         loopData->~LoopData();
-        /* uSockets will track whether this loop is owned by us or a borrowed alien loop */
         us_loop_free((us_loop_t *) this);
 
         /* Reset lazyLoop */
@@ -197,17 +181,7 @@ public:
         us_wakeup_loop((us_loop_t *) this);
     }
 
-    /* Actively block and run this loop */
-    void run() {
-        us_loop_run((us_loop_t *) this);
-    }
-
 };
-
-/* Can be called from any thread to run the thread local loop */
-inline void run() {
-    Loop::get()->run();
-}
 
 }
 

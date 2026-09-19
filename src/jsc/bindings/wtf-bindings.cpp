@@ -13,8 +13,21 @@
 static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_TIME in WTF.rs must match");
 
 #include "wtf/SIMDUTF.h"
+
 #if OS(WINDOWS)
-#include <uv.h>
+#include <io.h>
+
+// The console is owned by bun_io (src/io/windows/tty.rs). `mode` is a libuv
+// uv_tty_mode_t; the result is 0 or a negative UV_E* number.
+extern "C" int Bun__Windows__setConsoleMode(void* inputHandle, int mode);
+extern "C" void Bun__Windows__resetConsoleMode();
+
+// Exported through src/symbols.def.
+extern "C" int uv_tty_reset_mode(void)
+{
+    Bun__Windows__resetConsoleMode();
+    return 0;
+}
 #endif
 
 #if !OS(WINDOWS)
@@ -216,11 +229,17 @@ extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
     memcpy(rawState, &state, sizeof(state));
     return rc;
 #else
-    UNUSED_PARAM(fd);
-    UNUSED_PARAM(mode);
-    UNUSED_PARAM(rawState);
     UNUSED_PARAM(drain);
-    return 0;
+    BunTTYState state;
+    memcpy(&state, rawState, sizeof(state));
+    // No early-out on state.mode: the mode belongs to the console, which another
+    // stream or uv_tty_reset_mode can have changed since `state` recorded it.
+    int rc = Bun__Windows__setConsoleMode(reinterpret_cast<void*>(_get_osfhandle(fd)), mode);
+    if (rc == 0) {
+        state.mode = mode;
+        memcpy(rawState, &state, sizeof(state));
+    }
+    return rc;
 #endif
 }
 

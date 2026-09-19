@@ -124,14 +124,11 @@ test.concurrent(
   60_000,
 );
 
-// us_poll_start_rc wraps uv_poll_init_socket on Windows and EPOLL_CTL_ADD /
-// kevent on posix. On Windows the return value was ignored, so an ioctlsocket
-// FIONBIO failure left a never-initialized uv_poll_t that uv_unref/uv_poll_start
-// then operated on (assertion failure at libuv win/poll.c:508 in debug,
-// undefined behaviour in release). The fd is always fresh from the kernel at
-// that point, so the failure path is unreachable without injection; each case
-// runs in a subprocess so a crash surfaces as a non-zero exit rather than
-// taking the test runner down.
+// us_poll_start_rc is FIONBIO + an AFD poll on Windows and EPOLL_CTL_ADD /
+// kevent on posix; its failure must reach the caller. The fd is always fresh
+// from the kernel at that point, so the failure path is unreachable without
+// injection; each case runs in a subprocess so a crash surfaces as a non-zero
+// exit rather than taking the test runner down.
 describe.skipIf(!fault.available())("poll_start failure is reported, not a crash", () => {
   // WSAENOTSOCK is what ioctlsocket(FIONBIO) on a bad handle yields. ENOMEM is
   // one of the documented EPOLL_CTL_ADD failure modes.
@@ -215,7 +212,7 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
 // A paused socket whose peer hung up is taken out of epoll by the dispatcher
 // (EPOLLHUP is level-triggered and cannot be masked) and registered again by
 // resume(), which is a fresh EPOLL_CTL_ADD and can fail the way the first one
-// can. epoll only: kqueue and libuv never park the fd, so their resume is a
+// can. epoll only: kqueue and IOCP never park the fd, so their resume is a
 // plain filter/poll change with nothing for the hook to fail. onread mode, because
 // like in node only that mode's pause() stops the handle (a plain pause() keeps
 // reading into the stream's buffer, which would deliver the reply as data here).
@@ -271,6 +268,176 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
       stderr: "",
       exitCode: 0,
     });
+  },
+);
+
+// A socket whose Winsock provider chain does not end at AFD (a non-IFS layered
+// service provider) is polled with select() on a helper thread. select() reports
+// only readable and writable, so a paused socket whose write side was shut down
+// has nothing to wait for.
+test.skipIf(!fault.available() || !isWindows)(
+  "a paused socket polled with the select() fallback can end its write side and still read the reply",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const net = require("node:net");
+        fault.set({ syscall: "poll_slow", action: "errno", errno: "EINVAL", repeat: -1 });
+        const replied = Promise.withResolvers();
+        const server = net.createServer({ allowHalfOpen: true }, conn => {
+          conn.on("error", e => console.log("server error", e.code));
+          conn.resume();
+          conn.once("end", () => conn.end("reply", () => replied.resolve()));
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const client = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true }, () => {
+            client.pause();
+            client.end("request");
+          });
+          const chunks = [];
+          client.on("error", e => console.log("client error", e.code));
+          client.on("close", hadError => {
+            console.log(JSON.stringify({ chunks, hadError }));
+            fault.clear();
+            server.close();
+          });
+          replied.promise.then(() => {
+            client.on("data", chunk => chunks.push(String(chunk)));
+            client.resume();
+          });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({ chunks: ["reply"], hadError: false }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// Where ntdll has no wait completion packets, a wait on a handle (a listener's accept event, a
+// child process) is a thread-pool wait whose callback posts to the loop's port.
+test.skipIf(!fault.available() || !isWindows)(
+  "a listener accepts and a child's exit is seen with the thread-pool fallback for waits",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const net = require("node:net");
+        fault.set({ syscall: "wait_fallback", action: "errno", errno: "EINVAL", repeat: -1 });
+        const server = net.createServer(conn => conn.end("accepted"));
+        server.listen(0, "127.0.0.1", async () => {
+          const replies = await Promise.all(
+            Array.from({ length: 3 }, () => {
+              const { promise, resolve, reject } = Promise.withResolvers();
+              let received = "";
+              const client = net.connect({ port: server.address().port, host: "127.0.0.1" });
+              client.setEncoding("utf8");
+              client.on("data", chunk => (received += chunk));
+              client.on("error", reject);
+              client.on("close", () => resolve(received));
+              return promise;
+            }),
+          );
+          const child = Bun.spawn({ cmd: [process.execPath, "-e", "process.exit(7)"], stdio: ["ignore", "ignore", "ignore"] });
+          const exitCode = await child.exited;
+          console.log(JSON.stringify({ replies, exitCode }));
+          fault.clear();
+          server.close();
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({ replies: ["accepted", "accepted", "accepted"], exitCode: 7 }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A Windows listener takes connections with AcceptEx, into a socket it makes first. While that
+// socket cannot be made, connections wait in the backlog, and every tick tries again. 10055 is
+// WSAENOBUFS.
+test.skipIf(!fault.available() || !isWindows)(
+  "a listener that could not start accepting takes the waiting connections once it can",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        let accepted = 0;
+        const waiters = [];
+        const acceptedReaches = n => new Promise(resolve => (accepted >= n ? resolve() : waiters.push([n, resolve])));
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open() {
+              accepted++;
+              for (const [n, resolve] of waiters) if (accepted >= n) resolve();
+            },
+            data() {},
+          },
+        });
+        const connect = () =>
+          new Promise((resolve, reject) =>
+            Bun.connect({
+              hostname: "127.0.0.1",
+              port: server.port,
+              socket: { open: resolve, data() {}, connectError: (_, e) => reject(e), error: (_, e) => reject(e) },
+            }).catch(reject),
+          );
+        // A turn of the loop.
+        const tick = () => new Promise(resolve => setImmediate(resolve));
+        try {
+          await connect();
+          await acceptedReaches(1);
+          // The AcceptEx in flight takes the next connection; the one after it cannot be started.
+          fault.set({ syscall: "socket", action: "errno", errno: 10055, fd: server.fd, repeat: -1 });
+          await connect();
+          await acceptedReaches(2);
+          await connect();
+          await connect();
+          for (let i = 0; i < 4; i++) await tick();
+          if (accepted !== 2) throw new Error("accepted " + accepted + " connections with no socket to take them into");
+          fault.clear();
+          // Both that waited, and this one behind them.
+          await connect();
+          await acceptedReaches(5);
+          console.log("OK");
+        } finally {
+          fault.clear();
+          server.stop(true);
+        }
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({ stdout: "OK", stderr: "" });
+    expect(exitCode).toBe(0);
   },
 );
 
@@ -506,3 +673,26 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     H2_TIMEOUT_MS,
   );
 });
+
+// On Windows a socket's poll goes back to the kernel between callbacks, so a refusal has no caller
+// to return to: the socket closes from the loop. That has to happen where every other completion
+// is delivered, after the tick has looked for events, or the answer to something its close handler
+// wrote arrives within the same tick, ahead of the microtasks the handler queued.
+test.skipIf(!fault.available() || !isWindows)(
+  "a socket whose poll the kernel refuses closes after the tick has looked for events",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "socket-refused-poll-tick-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const result = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
+    expect({ result, stderr, exitCode }).toEqual({
+      result: { closed: ["refused"], replyBeforeCheckpoint: false },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

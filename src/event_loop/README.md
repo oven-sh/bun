@@ -4,7 +4,7 @@ This document explains how Bun's event loop works, including task draining, micr
 
 ## Overview
 
-Bun's event loop is built on top of **uSockets** (a cross-platform event loop based on epoll/kqueue) and integrates with **JavaScriptCore's** microtask queue and a custom **process.nextTick** queue. The event loop processes tasks in a specific order to ensure correct JavaScript semantics while maximizing performance.
+Bun's event loop is built on top of **uSockets** (a cross-platform event loop based on epoll/kqueue/IOCP) and integrates with **JavaScriptCore's** microtask queue and a custom **process.nextTick** queue. The event loop processes tasks in a specific order to ensure correct JavaScript semantics while maximizing performance.
 
 ## Core Components
 
@@ -88,15 +88,15 @@ This is called when the event loop is active and needs to wait for I/O:
                │
                ▼
 ┌─────────────────────────────────────┐
-│  4. Poll I/O via uSockets            │ ← epoll_wait/kevent with timeout
-│     (epoll_kqueue.c:251-320)        │
+│  4. Poll I/O via uSockets            │ ← epoll/kevent/IOCP wait with timeout
+│     (epoll_kqueue.c, iocp.c)        │
 │     - Dispatch ready polls          │
 │     - Each I/O event treated as task│
 └──────────────┬──────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────┐
-│  5. Drain timers (POSIX)            │ ← setTimeout/setInterval callbacks
+│  5. Drain timers                    │ ← setTimeout/setInterval callbacks
 └──────────────┬──────────────────────┘
                │
                ▼
@@ -230,7 +230,7 @@ The queue maintains a map of `(pointer, task_fn)` pairs and runs each task. If a
 
 ## I/O Polling Integration
 
-### uSockets Event Loop (`epoll_kqueue.c:251-320`)
+### uSockets Event Loop (`epoll_kqueue.c`, `iocp.c`)
 
 The I/O poll is integrated into the event loop via `us_loop_run_bun_tick()`:
 
@@ -245,7 +245,8 @@ The I/O poll is integrated into the event loop via `us_loop_run_bun_tick()`:
 │                                                              │
 │   3. POLL I/O                                               │
 │      ├─> epoll_pwait2() [Linux]                             │
-│      └─> kevent64() [macOS/BSD]                             │
+│      ├─> kevent64() [macOS/BSD]                             │
+│      └─> GetQueuedCompletionStatusEx() [Windows]            │
 │          └─> Block with timeout until I/O ready             │
 │                                                              │
 │   4. FOR EACH READY POLL:                                   │
@@ -279,23 +280,15 @@ When I/O becomes ready (socket readable/writable, file descriptor ready):
 
 ## setTimeout and setInterval Ordering
 
-Timers are handled differently based on platform:
-
-### POSIX (`event_loop.rs:396`)
-
 ```rust
 ctx.timer.drain_timers(ctx);
 ```
 
-Timers are drained after I/O polling. Each timer callback:
+Timers are drained after I/O polling, on every platform. Each timer callback:
 
 1. Is wrapped in `enter()`/`exit()`
 2. Triggers microtask draining after execution
 3. Can enqueue new tasks
-
-### Windows
-
-Uses the uv_timer_t mechanism integrated into the uSockets loop.
 
 ### Timer vs. setImmediate Ordering
 
@@ -339,7 +332,7 @@ This ensures microtasks are only drained once per top-level event loop task, eve
 The Bun event loop processes work in this order:
 
 1. **Immediate tasks** (setImmediate)
-2. **I/O polling** (epoll/kqueue)
+2. **I/O polling** (epoll/kqueue/IOCP)
 3. **Timer callbacks** (setTimeout/setInterval)
 4. **Regular tasks** from the task queue
    - For each task:

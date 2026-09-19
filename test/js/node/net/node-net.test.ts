@@ -30,6 +30,7 @@ import {
   Socket,
   Stream,
 } from "node:net";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { TLSSocket } from "node:tls";
 
@@ -122,6 +123,34 @@ describe("net.BlockList subnet rules", () => {
     expect(v6.check("8592:757c:efae:4e45::f", "ipv6")).toBe(true);
     expect(v6.check("1.2.3.4", "ipv4")).toBe(true);
   });
+});
+
+it.skipIf(!isWindows)("a write to a pipe whose other end is gone is an error before 'close'", async () => {
+  const name = `\\\\.\\pipe\\bun-test-${randomUUID()}`;
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const server = createServer(socket => {
+    socket.on("data", () => {});
+    // The client has closed its end by now, so the kernel refuses the write on the spot.
+    socket.on("end", () => socket.write("bye", err => events.push("write:" + (err ? (err as any).code : "ok"))));
+    socket.on("error", err => events.push("error:" + (err as any).code));
+    socket.on("close", hadError => {
+      events.push("close:" + hadError);
+      server.close(() => resolve());
+    });
+  });
+  server.listen(name, () => {
+    const client = connect(name, () => {
+      client.write("hello");
+      client.end();
+    });
+    client.on("error", () => {});
+  });
+  await promise;
+  expect(events.filter(event => event !== "write:ok" && event !== "write:EPIPE")).toEqual([
+    "error:EPIPE",
+    "close:true",
+  ]);
 });
 
 describe("net.Socket read", () => {
@@ -490,10 +519,12 @@ describe("net.Socket write", () => {
 
     async function run() {
       return new Promise((resolve, reject) => {
+        // connect() starts over only on a socket that has closed.
+        socket.once("close", resolve);
         socket.once("connect", (...args) => {
           socket.write("script\n", err => {
             if (err) return reject(err);
-            socket.end(() => setTimeout(resolve, 3));
+            socket.end();
           });
         });
         socket.connect(port, "127.0.0.1");
@@ -1190,6 +1221,259 @@ it.if(isWindows)("should not leak when connect({path}) fails asynchronously whil
     exitCode: 0,
   });
 });
+
+// A pipe name stays taken for as long as any server instance handle is open, so
+// close() has to close them itself rather than when their aborted accepts complete.
+describe.concurrent.skipIf(!isWindows)("closing a named pipe server frees the name before close() returns", () => {
+  const pipeName = () => `\\\\.\\pipe\\test\\${randomUUID()}`;
+
+  it("the same server can listen() on it again in the same tick", async () => {
+    const name = pipeName();
+    await using server = createServer();
+    await once(server.listen(name), "listening");
+    server.close();
+    // once() rejects with the 'error' an EADDRINUSE would be reported through.
+    await once(server.listen(name), "listening");
+    expect(server.address()).toBe(name);
+  });
+
+  it("another server can listen() on it in the same tick", async () => {
+    const name = pipeName();
+    await using first = createServer();
+    await once(first.listen(name), "listening");
+    first.close();
+    await using second = createServer();
+    await once(second.listen(name), "listening");
+    expect(second.address()).toBe(name);
+  });
+
+  it("the server can listen() on it again after 'close'", async () => {
+    const name = pipeName();
+    await using server = createServer();
+    await once(server.listen(name), "listening");
+    server.close();
+    await once(server, "close");
+    await once(server.listen(name), "listening");
+    expect(server.address()).toBe(name);
+  });
+
+  // The connected instance holds the name too: it has to be gone by the time 'close' is emitted
+  // (test-pipe-stream.js listens again from there).
+  it("a server can listen() on it again from the 'close' of its last connection", async () => {
+    const name = pipeName();
+    for (let round = 0; round < 3; round++) {
+      const server = createServer(conn => {
+        conn.on("data", () => conn.write("pong"));
+        conn.on("close", () => server.close());
+      });
+      await once(server.listen(name), "listening");
+      const client = connect(name, () => client.write("ping"));
+      client.on("data", () => client.destroy());
+      // The next round's listen() runs in the same tick as this 'close'.
+      await once(server, "close");
+    }
+  });
+
+  it("a connect() right after close() fails with ENOENT instead of being accepted and dropped", async () => {
+    const name = pipeName();
+    let connections = 0;
+    const server = createServer(() => connections++);
+    await once(server.listen(name), "listening");
+    server.close();
+
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const client = connect(name);
+    client.on("connect", () => events.push("connect"));
+    client.on("error", (err: NodeJS.ErrnoException) => events.push(`error:${err.code}`));
+    client.on("close", hadError => {
+      events.push(`close:${hadError}`);
+      closed.resolve();
+    });
+    await closed.promise;
+    expect({ events, connections }).toEqual({ events: ["error:ENOENT", "close:true"], connections: 0 });
+  });
+});
+
+// A pipe server keeps 4 instances waiting for clients. Clients beyond that find the pipe busy and
+// wait on other threads (WaitNamedPipeW); the instance the server creates next wakes all of them
+// before the server has started to wait on it, so one of them is usually connected already by then.
+describe.concurrent.skipIf(!isWindows)("a named pipe server under a burst of connects", () => {
+  function connectAll(name: string, count: number) {
+    return Promise.all(
+      Array.from({ length: count }, () => {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        let received = "";
+        const client = connect(name);
+        client.setEncoding("utf8");
+        client.on("data", chunk => (received += chunk));
+        client.on("error", reject);
+        client.on("close", () => resolve(received));
+        return promise;
+      }),
+    );
+  }
+
+  // One client, as many as there are waiting instances, one more than that, and many more.
+  it.each([1, 4, 5, 64])("every one of %d clients connecting at once gets its greeting", async count => {
+    const name = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    let accepted = 0;
+    await using server = createServer(conn => {
+      accepted++;
+      conn.end("hello");
+    });
+    await once(server.listen(name), "listening");
+
+    const rounds = 4;
+    for (let round = 0; round < rounds; round++) {
+      expect(await connectAll(name, count)).toEqual(Array(count).fill("hello"));
+    }
+    expect(accepted).toBe(rounds * count);
+  });
+});
+
+// A client holds the server's one instance, so the next clients find the pipe busy and wait for
+// an instance. One of them is destroyed while it waits, and with that it stops waiting: the
+// instance the server makes next is the other's, not one the destroyed client takes and drops.
+// The server makes it before it lets go of the first: a pipe whose last instance is closed is
+// gone, and whoever waits for it is told so.
+it.skipIf(!isWindows || !Bun.which("powershell.exe"))(
+  "a client waits for a busy named pipe, and a waiting client can be destroyed",
+  async () => {
+    const name = `bun-test-${randomUUID()}`;
+    const script = `
+      $ErrorActionPreference = 'Stop'
+      function Instance() {
+        New-Object System.IO.Pipes.NamedPipeServerStream('${name}', [System.IO.Pipes.PipeDirection]::InOut, 2, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None)
+      }
+      function Greet($server, [string]$greeting) {
+        $bytes = [System.Text.Encoding]::ASCII.GetBytes($greeting)
+        $server.Write($bytes, 0, $bytes.Length)
+        $server.WaitForPipeDrain()
+        $server.Dispose()
+      }
+      $first = Instance
+      [Console]::Out.WriteLine('LISTENING')
+      $first.WaitForConnection()
+      [Console]::Out.WriteLine('CONNECTED')
+      [void][Console]::In.ReadLine()
+      $second = Instance
+      Greet $first 'first'
+      $second.WaitForConnection()
+      [Console]::Out.WriteLine('CONNECTED')
+      [void][Console]::In.ReadLine()
+      Greet $second 'second'
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const decoder = new TextDecoder();
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    async function serverSaid(line: string, times: number) {
+      while (stdout.split(line).length - 1 < times) {
+        const chunk = await reader.read();
+        if (chunk.done) throw new Error(`the server exited: ${stdout}\n${await proc.stderr.text()}`);
+        stdout += decoder.decode(chunk.value, { stream: true });
+      }
+    }
+    function client() {
+      const socket = connect(`\\\\.\\pipe\\${name}`);
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let received = "";
+      socket.setEncoding("utf8");
+      socket.on("data", chunk => (received += chunk));
+      socket.on("error", reject);
+      socket.on("close", () => resolve(received));
+      return { socket, closed: promise };
+    }
+
+    await serverSaid("LISTENING", 1);
+    const holder = client();
+    await serverSaid("CONNECTED", 1);
+
+    const waiter = client();
+    const abandoned = client();
+    let abandonedConnected = false;
+    abandoned.socket.on("connect", () => (abandonedConnected = true));
+    // Both have found the pipe busy once their connect() has had a turn of the loop.
+    await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+    abandoned.socket.destroy();
+
+    proc.stdin.write("go\n");
+    proc.stdin.flush();
+    expect(await holder.closed).toBe("first");
+    await serverSaid("CONNECTED", 2);
+    proc.stdin.write("go\n");
+    proc.stdin.flush();
+    expect(await waiter.closed).toBe("second");
+    expect(await abandoned.closed).toBe("");
+    expect(abandonedConnected).toBe(false);
+    await proc.stdin.end();
+    expect(await proc.exited).toBe(0);
+  },
+);
+
+// A server that identifies its client (an ssh agent, anything using RunAsClient) only
+// can if the client did not open the pipe with SECURITY_ANONYMOUS.
+it.skipIf(!isWindows || !Bun.which("powershell.exe"))(
+  "connect() to a named pipe lets the server see which user connected",
+  async () => {
+    const name = `bun-test-${randomUUID()}`;
+    // The server has to read from the pipe before it may impersonate the client.
+    const script = `
+      $ErrorActionPreference = 'Stop'
+      $server = New-Object System.IO.Pipes.NamedPipeServerStream('${name}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None)
+      [Console]::Out.WriteLine('READY')
+      $server.WaitForConnection()
+      [void]$server.ReadByte()
+      try { [Console]::Out.WriteLine('USER=' + $server.GetImpersonationUserName()) }
+      catch { [Console]::Out.WriteLine('ERROR=' + $_.Exception.Message) }
+      $server.Dispose()
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const decoder = new TextDecoder();
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    async function readUntil(done: () => boolean) {
+      while (!done()) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        stdout += decoder.decode(chunk.value, { stream: true });
+      }
+    }
+
+    await readUntil(() => stdout.includes("READY"));
+    let client: Socket | undefined;
+    try {
+      // If the server died before READY, skip to the assertion so its output is shown.
+      if (stdout.includes("READY")) {
+        client = connect(`\\\\.\\pipe\\${name}`, () => client!.write("x"));
+        client.on("error", () => {});
+      }
+      await readUntil(() => false);
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.toLowerCase().split(/\r?\n/), stderr, exitCode }).toEqual({
+        stdout: ["ready", `user=${userInfo().username.toLowerCase()}`, ""],
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      client?.destroy();
+    }
+  },
+);
 
 // On Windows, unix paths route through the named-pipe codepath which reports
 // failure asynchronously; this test targets the synchronous-failure branch in
@@ -2045,6 +2329,56 @@ it("pause() in a 'connect' listener leaves the peer's bytes unread until resume(
   } finally {
     server.close();
   }
+});
+
+describe.concurrent.skipIf(!isWindows)("pause() on a named pipe client", () => {
+  async function pausedPipeClient(pause: (client: Socket) => Promise<void> | void) {
+    const accepted = Promise.withResolvers<Socket>();
+    const server = createServer(accepted.resolve);
+    const name = `\\\\.\\pipe\\test\\${randomUUID()}`;
+    await once(server.listen(name), "listening");
+    try {
+      const client = new Socket();
+      client.connect(name);
+      const connected = once(client, "connect");
+      await pause(client);
+      const [socket] = await Promise.all([accepted.promise, connected]);
+      await expectNothingRead(client, socket, "first");
+      // A pause() once connected still has to take effect.
+      client.pause();
+      let received = "";
+      client.on("data", chunk => (received += chunk));
+      await new Promise(resolve => socket.write("second", resolve));
+      await new Promise(resolve => setImmediate(() => setImmediate(resolve)));
+      expect(received).toBe("");
+      const data = once(client, "data");
+      client.resume();
+      await data;
+      expect(received).toBe("second");
+      socket.destroy();
+      await once(client, "close");
+    } finally {
+      server.close();
+    }
+  }
+
+  // net.ts hands the connect to the native socket on the next tick, so two ticks in the
+  // handle exists but the pipe is not open yet.
+  it("while the connect is in flight leaves the peer's bytes unread until resume()", () =>
+    pausedPipeClient(
+      client =>
+        new Promise<void>(resolve =>
+          process.nextTick(() =>
+            process.nextTick(() => {
+              client.pause();
+              resolve();
+            }),
+          ),
+        ),
+    ));
+
+  it("in a 'connect' listener leaves the peer's bytes unread until resume()", () =>
+    pausedPipeClient(client => void client.once("connect", () => client.pause())));
 });
 
 // A 'readable' listener sets flowing to false as well, but the read() has asked for data: Node's

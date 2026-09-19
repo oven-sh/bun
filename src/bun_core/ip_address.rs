@@ -13,7 +13,7 @@ mod sys {
     #[cfg(not(windows))]
     pub(super) const AF_INET6: c_int = libc::AF_INET6 as c_int;
     #[cfg(windows)]
-    pub(super) const AF_INET6: c_int = 23; // ws2def.h
+    pub(super) use bun_windows_sys::ws2_32::AF_INET6;
 
     unsafe extern "C" {
         fn ares_inet_pton(af: c_int, src: *const c_char, dst: *mut c_void) -> c_int;

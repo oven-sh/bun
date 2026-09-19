@@ -658,8 +658,9 @@ private:
                 }
             }
             if constexpr (IsNodeHttp) {
-                /* Not after upgrade() from the body handler: the ext holds a WebSocketData then. */
-                if (switchToTunnelAfterThisChunk && httpContextData->upgradedWebSocket != user) {
+                /* Not after upgrade() from the body handler: the socket is a WebSocket then, and
+                 * its ext holds a WebSocketData. upgradedWebSocket can name another connection. */
+                if (switchToTunnelAfterThisChunk && us_socket_kind((struct us_socket_t *) user) == socketKind()) {
                     /* pause() and resume() on the response do nothing in tunnel mode:
                      * lift a read pause that the request body left (req.pause(), a full buffer). */
                     Bun__NodeHTTP__onReadsResumable(SSL, (struct us_socket_t *) user);

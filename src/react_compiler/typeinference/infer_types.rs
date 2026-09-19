@@ -20,8 +20,8 @@ use crate::hir::object_shape::{
 };
 use crate::hir::visitors::{each_lvalue, each_operand};
 use crate::hir::{
-    ArrayPatternElement, AstAlloc, BinaryOperator, FunctionId, HirFunction, HirVec, Identifier,
-    IdentifierId, IdentifierName, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
+    ArrayPatternElement, BinaryOperator, FunctionId, HirFunction, HirVec, Identifier, IdentifierId,
+    IdentifierName, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
     LoweredFunction, NonLocalBinding, ObjectPropertyKey, ObjectPropertyOrSpread, ParamPattern,
     Pattern, PropertyLiteral, PropertyNameKind, ReactFunctionType, SourceLocation, StoreStr,
     Terminal, Type, TypeId,
@@ -329,7 +329,7 @@ fn index_property_literal(i: usize) -> PropertyLiteral {
         buf[pos] = b'0' + (n % 10) as u8;
         n /= 10;
     }
-    PropertyLiteral::String(StoreStr::new(AstAlloc::vec_from_slice(&buf[pos..]).leak()))
+    PropertyLiteral::String(StoreStr::new(bun_ast::data_store_dupe_str(&buf[pos..])))
 }
 
 // =============================================================================
@@ -401,13 +401,13 @@ fn generate(
     }
 
     let mut names: IdMap<IdentifierId, StoreStr> = IdMap::new();
-    let mut return_types: HirVec<Type> = AstAlloc::vec();
+    let mut return_types: HirVec<Type> = Vec::new();
 
     for (_block_id, block) in &func.body.blocks {
         // Phis
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, &env.identifiers);
-            let operands = AstAlloc::vec_from_iter(
+            let operands = Vec::from_iter(
                 phi.operands
                     .values()
                     .map(|p| get_type(p.identifier, &env.identifiers)),
@@ -503,12 +503,12 @@ fn generate_for_function_id(
     // TS creates a fresh `names` Map per recursive `generate` call, so inner
     // functions don't inherit or pollute the outer function's name mappings.
     let mut inner_names: IdMap<IdentifierId, StoreStr> = IdMap::new();
-    let mut inner_return_types: HirVec<Type> = AstAlloc::vec();
+    let mut inner_return_types: HirVec<Type> = Vec::new();
 
     for (_block_id, block) in &inner.body.blocks {
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, identifiers);
-            let operands = AstAlloc::vec_from_iter(
+            let operands = Vec::from_iter(
                 phi.operands
                     .values()
                     .map(|p| get_type(p.identifier, identifiers)),
@@ -1255,7 +1255,7 @@ impl Unifier {
     fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
         match ty {
             Type::Phi { operands } => {
-                let mut new_operands = AstAlloc::vec();
+                let mut new_operands = Vec::new();
                 for operand in operands {
                     if let Type::TypeVar { id } = operand {
                         if let Type::TypeVar { id: v_id } = v {
@@ -1344,7 +1344,7 @@ impl Unifier {
 
         if let Type::Phi { operands } = ty {
             return Type::Phi {
-                operands: AstAlloc::vec_from_iter(operands.iter().map(|o| self.get(o))),
+                operands: Vec::from_iter(operands.iter().map(|o| self.get(o))),
             };
         }
 

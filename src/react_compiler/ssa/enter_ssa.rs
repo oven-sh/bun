@@ -331,8 +331,8 @@ fn enter_ssa_impl(
                 )
                 .into());
             }
-            let params = AstAlloc::take(&mut func.params);
-            let mut new_params = AstAlloc::vec_with_capacity(params.len());
+            let params = std::mem::take(&mut func.params);
+            let mut new_params = Vec::with_capacity(params.len());
             for param in params {
                 new_params.push(match param {
                     ParamPattern::Place(p) => ParamPattern::Place(builder.define_place(&p, env)?),
@@ -369,8 +369,8 @@ fn enter_ssa_impl(
 
             // Map context places for function expressions before other operands
             if let Some(fid) = func_expr_id {
-                let context = AstAlloc::take(&mut env.functions[fid.0 as usize].context);
-                env.functions[fid.0 as usize].context = AstAlloc::vec_from_iter(
+                let context = std::mem::take(&mut env.functions[fid.0 as usize].context);
+                env.functions[fid.0 as usize].context = Vec::from_iter(
                     context
                         .into_iter()
                         .map(|place| builder.get_place(&place, env)),
@@ -428,8 +428,8 @@ fn enter_ssa_impl(
                 let saved_current = builder.current;
 
                 // Map inner function params
-                let inner_params = AstAlloc::take(&mut env.functions[fid.0 as usize].params);
-                let mut new_inner_params = AstAlloc::vec_with_capacity(inner_params.len());
+                let inner_params = std::mem::take(&mut env.functions[fid.0 as usize].params);
+                let mut new_inner_params = Vec::with_capacity(inner_params.len());
                 for param in inner_params {
                     new_inner_params.push(match param {
                         ParamPattern::Place(p) => {

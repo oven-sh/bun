@@ -593,6 +593,11 @@ impl NodeHTTPResponse {
             // and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();
             self.poll_ref.with_mut(|r| r.unref(vm));
+            // Once uWS adopts the socket, a body that is still pending never arrives.
+            if self.body_read_state.get() == BodyReadState::Pending {
+                self.body_read_ref.with_mut(|r| r.unref(vm));
+                self.body_read_state.set(BodyReadState::Done);
+            }
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
             let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);

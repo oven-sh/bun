@@ -162,3 +162,105 @@ describe.concurrent("request handlers run to completion before the callbacks the
     expect(order).toEqual(["rest of handler", "nextTick", "microtask"]);
   });
 });
+
+// An Upgrade request can declare a body. The upgrade hands the socket to the WebSocket, so a body
+// that has not arrived never does, and a keep-alive ref that waits for it never lets the process exit.
+// Not concurrent: a debug build needs most of the default timeout to start this child, and more beside another.
+test("WebSocket upgrade should unref body_read_ref from response", async () => {
+  const script = /* js */ `
+    const http = require("http");
+    const net = require("net");
+    const { once } = require("events");
+    const { WebSocketServer } = require("ws");
+    const { getEventLoopStats } = require("bun:internal-for-testing");
+
+    async function upgradeRequestThatDeclaresABody(upgradeInLaterTask, sendBody) {
+      const tasksBefore = getEventLoopStats().activeTasks;
+      let requestEnded = false;
+      // A request that is not taken for an upgrade gets an answer too, so the client never waits.
+      const server = http.createServer((req, res) => res.writeHead(426).end());
+      const wsServer = new WebSocketServer({ noServer: true });
+      server.on("upgrade", (req, socket, head) => {
+        const upgrade = () => {
+          wsServer.handleUpgrade(req, socket, head, () => {});
+          req.on("end", () => (requestEnded = true)).resume();
+        };
+        if (upgradeInLaterTask) setImmediate(upgrade);
+        else upgrade();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const body = '{"hello":"world"}';
+      const client = net.connect(server.address().port, "127.0.0.1");
+      client.write(
+        [
+          "GET / HTTP/1.1",
+          "Host: localhost",
+          "Connection: Upgrade",
+          "Upgrade: websocket",
+          "Sec-WebSocket-Version: 13",
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+          "Content-Length: " + body.length,
+          "",
+          sendBody ? body : "",
+        ].join("\\r\\n"),
+      );
+      const { promise, resolve, reject } = Promise.withResolvers();
+      let received = "";
+      client.on("data", chunk => {
+        received += chunk;
+        if (!received.includes("\\r\\n\\r\\n")) return;
+        // The response is in, so the upgrade and the callbacks it queued are over.
+        const leakedTasks = getEventLoopStats().activeTasks - tasksBefore;
+        resolve({ status: received.split("\\r\\n")[0], leakedTasks, requestEnded });
+      });
+      client.on("error", reject);
+      client.on("close", () => reject(new Error("closed before the response: " + JSON.stringify(received))));
+      const result = await promise;
+
+      client.destroy();
+      wsServer.close();
+      await once(server.close(), "close");
+      return result;
+    }
+
+    const results = {
+      "in a later task, body not sent": await upgradeRequestThatDeclaresABody(true, false),
+      // The body is complete before the upgrade: there is nothing left for the upgrade to release.
+      "in a later task, body sent": await upgradeRequestThatDeclaresABody(true, true),
+      "in the 'upgrade' event, body sent": await upgradeRequestThatDeclaresABody(false, true),
+      "in the 'upgrade' event, body not sent": await upgradeRequestThatDeclaresABody(false, false),
+    };
+    console.log(JSON.stringify(results));
+    // A leaked task keeps the event loop alive forever. Exit, so that the test fails fast.
+    if (Object.values(results).some(result => result.leakedTasks !== 0)) process.exit(1);
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const upgraded = { status: "HTTP/1.1 101 Switching Protocols", leakedTasks: 0, requestEnded: true };
+  expect({
+    results: stdout.startsWith("{") ? JSON.parse(stdout) : stdout,
+    stderr,
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({
+    results: {
+      "in a later task, body not sent": upgraded,
+      "in a later task, body sent": upgraded,
+      "in the 'upgrade' event, body sent": upgraded,
+      "in the 'upgrade' event, body not sent": upgraded,
+    },
+    stderr: "",
+    // The script calls process.exit() only for a leak: the process has to exit by itself.
+    exitCode: 0,
+    signalCode: null,
+  });
+});

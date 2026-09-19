@@ -33,15 +33,11 @@ fn next_ref_id() -> RefId {
 
 // --- RefAccessType / RefAccessRefType / RefFnType ---
 
-/// Not in upstream, which nests these types by value. A type that holds its previous type
-/// several times then multiplies on each pass of the fixpoint, and each join clones it.
+/// Not in upstream, which nests these types by value and clones them in each join.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct RefAccessTypeId(u32);
 
-/// Corresponds to TS `RefAccessType`.
-///
-/// The derived `PartialEq` compares every field. TS `tyEqual` is
-/// `RefAccessTypeInterner::ty_equal`.
+/// Corresponds to TS `RefAccessType`. TS `tyEqual` is `RefAccessTypeInterner::ty_equal`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum RefAccessType {
     None,
@@ -148,8 +144,7 @@ impl RefAccessTypeInterner {
         id
     }
 
-    /// `ty` without the fields that TS `tyEqual` ignores, and with the first `ty_equal` entry
-    /// in place of each nested type.
+    /// `ty` without what TS `tyEqual` ignores, nested types as their first `ty_equal` entry.
     fn ty_equal_key(&self, ty: &RefAccessType) -> RefAccessType {
         let ty_equal_ids = self.types.values();
         match *ty {
@@ -166,9 +161,7 @@ impl RefAccessTypeInterner {
         }
     }
 
-    /// TS `tyEqual`: Ref ignores ref_id, RefValue compares loc but ignores ref_id. This is
-    /// critical for fixpoint convergence: join creates fresh ref_ids, and comparing them
-    /// would prevent the environment from stabilizing.
+    /// TS `tyEqual`: a join makes new ref ids, so the id of a Ref or a RefValue does not count.
     fn ty_equal(&self, a: &RefAccessType, b: &RefAccessType) -> bool {
         self.ty_equal_key(a) == self.ty_equal_key(b)
     }
@@ -179,8 +172,7 @@ impl RefAccessTypeInterner {
         next_ref_id()
     }
 
-    /// `join_ref_access_types` of two nested types. For two `Structure.value`s that is the
-    /// same as `join_ref_access_ref_types`.
+    /// Joins two nested types. On two `Structure.value`s this is `join_ref_access_ref_types`.
     fn join(&mut self, a: RefAccessTypeId, b: RefAccessTypeId) -> RefAccessTypeId {
         // A type joined with itself is itself, ref ids included.
         if a == b {

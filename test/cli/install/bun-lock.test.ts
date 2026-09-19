@@ -1958,6 +1958,24 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
         [".", "shared", "shared@2.0.0"],
       ],
     },
+    // A library in a monorepo: a range to develop against and a wide peer range. The peer accepts the root's copy, and
+    // it must not vouch for the devDependencies row, which does not.
+    "a workspace's devDependency next to a peer of the same name": {
+      packageJsons: {
+        "package.json": { name: "app", workspaces: ["packages/*"], dependencies: { shared: "2.0.0" } },
+        "packages/lib/package.json": {
+          name: "lib",
+          version: "1.0.0",
+          devDependencies: { shared: "^1.0.0" },
+          peerDependencies: { shared: ">=1.0.0" },
+        },
+      },
+      breakLockfile: withoutEntry("lib/shared"),
+      seen: [
+        ["packages/lib", "shared", "shared@1.5.0"],
+        [".", "shared", "shared@2.0.0"],
+      ],
+    },
     "a root dependency above its range": {
       packageJsons: { "package.json": { name: "app", dependencies: { shared: "^1.0.0" } } },
       breakLockfile: entryPointedAt("shared", "shared", "2.0.0"),

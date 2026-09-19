@@ -1649,10 +1649,12 @@ impl<'a> RowScan<'a> {
                 if self.accepts(dep_id, target) != Some(false) {
                     continue;
                 }
-                // bun.lock has one folder per owner and name: loading binds every row of that name to one row's choice.
+                // Rows of one owner and name load from one folder. The row that placed it vouches. A peer places none.
                 let shares_a_folder = (slice.begin()..slice.end()).any(|sibling_id| {
+                    let sibling = &self.dependencies[sibling_id as usize];
                     sibling_id != dep_id
-                        && self.dependencies[sibling_id as usize].name_hash == dep.name_hash
+                        && sibling.name_hash == dep.name_hash
+                        && !sibling.behavior.is_peer()
                         && self.resolutions[sibling_id as usize] as usize == target
                         && self.accepts(sibling_id, target) == Some(true)
                 });

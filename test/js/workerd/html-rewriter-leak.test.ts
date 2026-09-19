@@ -1045,8 +1045,10 @@ describe("a handler error that nothing has read yet", () => {
   const encoder = new TextEncoder();
   const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 
-  // A rewrite of a streamed input. Its `p` handler fails with an error that references the output Response.
-  const start = () => {
+  // A rewrite of a streamed input. Its `p` handler fails, by default with an error that references the output Response.
+  const start = (
+    thrown = (response: Response): unknown => Object.assign(new Error("handler failed"), { response }),
+  ) => {
     let controller!: ReadableStreamDefaultController;
     let handled = Promise.withResolvers<void>();
     const holder: { response?: Response } = {};
@@ -1055,7 +1057,7 @@ describe("a handler error that nothing has read yet", () => {
       .on("p", {
         element() {
           handled.resolve();
-          throw Object.assign(new Error("handler failed"), { response: holder.response });
+          throw thrown(holder.response!);
         },
       })
       .transform(new Response(new ReadableStream({ start: c => void (controller = c) })));
@@ -1120,12 +1122,14 @@ describe("a handler error that nothing has read yet", () => {
   // The other half of a visited slot: the error has to stay alive until something takes it.
   // These pass before the change too (a Strong cannot die): they guard the slot.
   describe("is still the one its next reader gets, after a collection", () => {
-    // A full collection, then garbage in the cell size of the error, so that an error
-    // collected by mistake is reused and cannot reach its reader by luck.
+    // A full collection, then garbage in the cell sizes of what the handlers throw, so that
+    // an error collected by mistake is reused and cannot reach its reader by luck.
     const churn = () => {
       Bun.gc(true);
       const junk: unknown[] = [];
-      for (let i = 0; i < 5_000; i++) junk.push(Object.assign(new Error("junk"), { response: junk }));
+      for (let i = 0; i < 5_000; i++) {
+        junk.push(Object.assign(new Error("junk"), { response: junk }), ["junk", i].join(" "));
+      }
     };
     const describeError = (error: unknown, response: Response) => ({
       isError: error instanceof Error,
@@ -1160,6 +1164,15 @@ describe("a handler error that nothing has read yet", () => {
       churn();
       const second = new HTMLRewriter().on("b", { element() {} }).transform(new Response(body));
       expect(describeError(await second.text().catch(error => error), response)).toEqual(theHandlerError);
+    });
+
+    // Script can throw anything. A weak handle, which only an object can have, would not do for the slot.
+    test("text(), when the handler threw a string", async () => {
+      const rewrite = start(() => ["a", "thrown", "string"].join(" "));
+      void rewrite.response.body;
+      await rewrite.send("<p>fails</p>");
+      churn();
+      expect(await rewrite.response.text().catch(error => error)).toBe("a thrown string");
     });
 
     // The upload looks for the error before it makes a request.

@@ -490,6 +490,189 @@ describe("backpressure", () => {
     });
   });
 
+  // An empty chunk adds no bytes, but it is still a write. While a 'drain' is
+  // owed it returns false and its callback waits behind the earlier ones, and
+  // that 'drain' still fires. Node: conn.write("") queues the callback and
+  // returns state.length < highWaterMark.
+  describe("an empty res.write() reports backpressure like any other write", () => {
+    it("while earlier bytes are pending, and leaves their 'drain' and callbacks alone", async () => {
+      // More than the Linux and macOS loopback buffers hold, so there the
+      // response stays backed up until the client reads.
+      const BODY = 64 * 1024 * 1024;
+      const payload = Buffer.alloc(BODY, "a");
+      const called: string[] = [];
+      let drained = false;
+      const wrote = Promise.withResolvers<boolean[]>();
+      const clientGotBody = Promise.withResolvers<void>();
+      const finished = Promise.withResolvers<{ drained: boolean; afterDrain: boolean }>();
+      finished.promise.catch(() => {});
+
+      await using server = http.createServer(async (req, res) => {
+        try {
+          res.writeHead(200, { "Content-Length": String(BODY + 1) });
+          res.once("drain", () => (drained = true));
+          const callbacks: Promise<void>[] = [];
+          const callback = (name: string) => {
+            const { promise, resolve } = Promise.withResolvers<void>();
+            callbacks.push(promise);
+            return () => {
+              called.push(name);
+              resolve();
+            };
+          };
+          wrote.resolve([
+            res.write(payload, callback("payload")),
+            // The unsent tail of `payload` is held by reference here.
+            res.write("", callback("empty string")),
+            // A second write with bytes copies that tail into the socket's
+            // backpressure buffer, which is the other place bytes can wait.
+            res.write("x", callback("x")),
+            res.write(Buffer.alloc(0), callback("empty Buffer")),
+          ]);
+          // 'drain' and the callbacks come before the client can see the last
+          // byte. Racing them against it turns a lost 'drain' or callback
+          // into a failed assertion, not a timeout.
+          await Promise.race([once(res, "drain"), clientGotBody.promise]);
+          await Promise.race([Promise.all(callbacks), clientGotBody.promise]);
+          const afterDrain = res.write("");
+          res.end();
+          finished.resolve({ drained, afterDrain });
+        } catch (e) {
+          wrote.reject(e);
+          finished.reject(e);
+          res.destroy();
+        }
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const socket = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      await once(socket, "connect");
+      socket.pause();
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      try {
+        const returned = await wrote.promise;
+        // A callback handed to process.nextTick() by one of the writes above
+        // has run by the time a setImmediate() callback does.
+        await new Promise(resolve => setImmediate(resolve));
+        const beforeClientRead = { called: [...called], drained };
+
+        let head = "";
+        let body = -1;
+        socket.on("data", chunk => {
+          if (body < 0) {
+            head += chunk.toString("latin1");
+            const end = head.indexOf("\r\n\r\n");
+            if (end < 0) return;
+            body = Buffer.byteLength(head.slice(end + 4), "latin1");
+          } else {
+            body += chunk.length;
+          }
+          if (body >= BODY + 1) clientGotBody.resolve();
+        });
+        const closed = once(socket, "close");
+        socket.resume();
+        const [result] = await Promise.all([finished.promise, closed]);
+
+        expect({ returned, beforeClientRead, ...result, called, body }).toEqual({
+          returned: [false, false, false, false],
+          // Winsock can take the whole payload in one send(). Then nothing is
+          // pending, and 'drain' and the callbacks are free to come at once.
+          beforeClientRead: process.platform === "win32" ? expect.any(Object) : { called: [], drained: false },
+          drained: true,
+          afterDrain: true,
+          called: ["payload", "empty string", "x", "empty Buffer"],
+          body: BODY + 1,
+        });
+      } finally {
+        socket.destroy();
+      }
+    });
+
+    it("in the turn of a write that reached the high water mark", async () => {
+      const finished = Promise.withResolvers<{ size: number; returned: boolean[] }>();
+      finished.promise.catch(() => {});
+      await using server = http.createServer(async (req, res) => {
+        try {
+          const size = res.writableHighWaterMark;
+          const returned = [res.write(Buffer.alloc(size, "a")), res.write(""), res.write(Buffer.alloc(0))];
+          await once(res, "drain");
+          returned.push(res.write(""));
+          res.end();
+          finished.resolve({ size, returned });
+        } catch (e) {
+          finished.reject(e);
+          res.destroy();
+        }
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+      const [{ size, returned }, received] = await Promise.all([
+        finished.promise,
+        fetch(url).then(async response => (await response.arrayBuffer()).byteLength),
+      ]);
+      expect({ returned, received }).toEqual({ returned: [false, false, false, true], received: size });
+    });
+
+    // The exception: Node ignores every write to a response that cannot have
+    // a body. It returns true and runs the callback on the next tick, also
+    // while the socket still holds the bytes of the response before it.
+    it.each([
+      ["a HEAD response", "HEAD /ignored HTTP/1.1"],
+      ["a 204 response", "GET /ignored HTTP/1.1"],
+    ])("but not on %s", async (_name, requestLine) => {
+      const BODY = 8 * 1024 * 1024;
+      const payload = Buffer.alloc(BODY, "a");
+      const called: string[] = [];
+      const wrote = Promise.withResolvers<{ res: http.ServerResponse; returned: boolean[] }>();
+      await using server = http.createServer((req, res) => {
+        if (req.url !== "/ignored") {
+          res.end(payload);
+          return;
+        }
+        try {
+          res.statusCode = req.method === "HEAD" ? 200 : 204;
+          res.on("drain", () => called.push("drain"));
+          const returned = [
+            res.write("x", () => called.push("x")),
+            res.write("", () => called.push("empty string")),
+            res.write(Buffer.alloc(0), () => called.push("empty Buffer")),
+          ];
+          wrote.resolve({ res, returned });
+        } catch (e) {
+          wrote.reject(e);
+          res.destroy();
+        }
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const socket = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+      await once(socket, "connect");
+      socket.pause();
+      socket.write(
+        `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n${requestLine}\r\nHost: localhost\r\nConnection: close\r\n\r\n`,
+      );
+      try {
+        const { res, returned } = await wrote.promise;
+        await new Promise(resolve => setImmediate(resolve));
+        expect({ returned, called }).toEqual({
+          returned: [true, true, true],
+          called: ["x", "empty string", "empty Buffer"],
+        });
+        res.end();
+
+        let received = 0;
+        socket.on("data", chunk => (received += chunk.length));
+        const closed = once(socket, "close");
+        socket.resume();
+        await closed;
+        expect(received).toBeGreaterThan(BODY);
+      } finally {
+        socket.destroy();
+      }
+    });
+  });
+
   it("should handle backpressure with INT_MAX bytes", async () => {
     const totalSize = 1024 * 1024 * 1024 * 2; // 2^31, one past INT_MAX
     const chunk = Buffer.alloc(64 * 1024 * 1024, "a");

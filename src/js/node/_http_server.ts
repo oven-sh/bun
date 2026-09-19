@@ -3363,6 +3363,12 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     return true;
   }
 
+  // Node ignores a write to a response that cannot have a body and returns
+  // true whatever the socket still holds, so no 'drain' is armed for it.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L983-L991
+  const hasBody = this._hasBody;
+  const onWritable = hasBody ? allowWritesToContinue.bind(this) : undefined;
+
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
@@ -3383,13 +3389,13 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       // If handle.writeHead throws, we don't want headersSent to be set to true.
       // So we set it here.
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
+      result = handle.write(chunk, encoding, onWritable, strictContentLength(this));
     });
   } else {
-    result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
+    result = handle.write(chunk, encoding, onWritable, strictContentLength(this));
   }
 
-  if (result < 0) {
+  if (result < 0 && hasBody) {
     if (callback) {
       // The write was buffered due to backpressure.
       // We need to defer the callback until the write actually goes through.
@@ -3424,12 +3430,13 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   if (written > 0 && !this[kReplayingPipelinedOps]) {
     this[kBytesBuffered] = (this[kBytesBuffered] ?? 0) + written;
     scheduleWriteAccountingFlush(this);
-    if (this[kBytesBuffered] >= this.writableHighWaterMark) {
-      return false;
-    }
   }
 
-  return true;
+  // An empty chunk adds nothing to this turn's accounting but still reports
+  // it: Node.js answers every write with state.length < highWaterMark.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L576
+  const buffered = this[kBytesBuffered];
+  return !buffered || buffered < this.writableHighWaterMark;
 };
 
 const kBytesBuffered = Symbol("kBytesBuffered");

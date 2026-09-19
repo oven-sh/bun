@@ -1751,6 +1751,16 @@ impl NodeHTTPResponse {
         self.clear_pending_pinned_write(global_object, JSValue::ZERO);
     }
 
+    /// Whether bytes from an earlier write are still in user space: the
+    /// zero-copy tail, or the uWS backpressure buffer.
+    fn has_unflushed_write(&self) -> bool {
+        self.pending_pinned_write.get().is_some()
+            || self
+                .raw_response
+                .get()
+                .is_some_and(|raw| raw.get_buffered_amount() > 0)
+    }
+
     /// Continue a zero-copy write from the stored offset. Returns `true` if
     /// bytes are still outstanding (the caller should wait for another
     /// onWritable before notifying JS).
@@ -1999,6 +2009,26 @@ impl NodeHTTPResponse {
         } else {
             self.get_this_value()
         };
+
+        // uWS answers an empty write with "flushed" without looking at what it
+        // still holds, and the WantMore arm would then disarm a drain that is
+        // still owed. Node sends an empty chunk through conn.write("", cb),
+        // which queues cb and reports the pending bytes:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1013
+        // Before the spill: no bytes have to be ordered behind the zero-copy tail.
+        if !IS_END && bytes.is_empty() && self.has_unflushed_write() {
+            if !callback_value.is_undefined() {
+                js::on_writable_set_cached(
+                    js_this,
+                    global_object,
+                    callback_value.with_async_context_if_needed(global_object),
+                );
+                let raw_response = self.raw_response.get().unwrap();
+                raw_response.on_writable(on_drain_shim, self.as_ctx_ptr());
+            }
+            // -0 would not read as negative (backpressure) in JS.
+            return Ok(JSValue::js_number_from_int32(-1));
+        }
 
         // A previous zero-copy write's tail must hit the wire before this one;
         // copy it into backpressure so ordering is preserved. No-op when the

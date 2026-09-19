@@ -1402,6 +1402,38 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
     join_abs_string_buf::<P>(cwd, &mut spill[..], parts)
 }
 
+/// Node's `path.resolve(cwd, path)`: [`join_abs_string_spill`] minus a trailing separator.
+pub fn resolve_spill<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    spill: &'a mut Vec<u8>,
+    path: &[u8],
+) -> &'a [u8] {
+    let is_windows = P::P == Platform::Windows || (cfg!(windows) && P::P == Platform::Loose);
+    // The Windows join finds no volume in `\\.\C:\x` and answers `C:\C:\x`.
+    if is_windows
+        && path.len() >= 4
+        && is_sep_any(path[0])
+        && is_sep_any(path[1])
+        && path[2] == b'.'
+        && is_sep_any(path[3])
+    {
+        spill.clear();
+        spill.extend_from_slice(path);
+        return &spill[..];
+    }
+    let resolved = join_abs_string_spill::<P>(cwd, spill, &[path]);
+    let root_len = if is_windows {
+        windows_filesystem_root(resolved).len()
+    } else {
+        1
+    };
+    let mut len = resolved.len();
+    while len > root_len && P::P.is_separator(resolved[len - 1]) {
+        len -= 1;
+    }
+    &resolved[..len]
+}
+
 /// Convert parts of potentially invalid file paths into a single valid filpeath
 /// without querying the filesystem
 /// This is the equivalent of path.resolve
@@ -2626,6 +2658,112 @@ mod tests {
         let mut spill = Vec::new();
         let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[&part]);
         assert_eq!(out, b"/work/sub");
+    }
+
+    fn assert_resolve_spill<P: PlatformT>(cwd: &[u8], rows: &[(&[u8], &[u8])]) {
+        for &(path, expected) in rows {
+            let mut spill = Vec::new();
+            assert_eq!(
+                bstr::BStr::new(resolve_spill::<P>(cwd, &mut spill, path)),
+                bstr::BStr::new(expected),
+                "path: {}",
+                bstr::BStr::new(path)
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_spill_matches_path_posix_resolve() {
+        // (path, `path.posix.resolve("/work/dir", path)`)
+        let rows: &[(&[u8], &[u8])] = &[
+            (b"main.js", b"/work/dir/main.js"),
+            (b"./pkg/", b"/work/dir/pkg"),
+            (b"pkg//", b"/work/dir/pkg"),
+            (b"pkg/./", b"/work/dir/pkg"),
+            (b"sub/../main.js", b"/work/dir/main.js"),
+            (b".", b"/work/dir"),
+            (b"./", b"/work/dir"),
+            (b"", b"/work/dir"),
+            (b"../..", b"/"),
+            (b"../../..", b"/"),
+            (b"/abs/./sub/../main.js", b"/abs/main.js"),
+            (b"/abs//main.js", b"/abs/main.js"),
+            (b"//abs/main.js", b"/abs/main.js"),
+            (b"/abs/pkg///", b"/abs/pkg"),
+            (b"/", b"/"),
+            (b"//", b"/"),
+        ];
+        assert_resolve_spill::<platform::Posix>(b"/work/dir", rows);
+        if cfg!(not(windows)) {
+            assert_resolve_spill::<platform::Loose>(b"/work/dir", rows);
+        }
+    }
+
+    #[test]
+    fn resolve_spill_matches_path_win32_resolve() {
+        // (path, `path.win32.resolve("C:\\work\\dir", path)`)
+        let rows: &[(&[u8], &[u8])] = &[
+            (b"main.js", b"C:\\work\\dir\\main.js"),
+            (b"./pkg/", b"C:\\work\\dir\\pkg"),
+            (b".\\pkg\\", b"C:\\work\\dir\\pkg"),
+            (b"pkg//", b"C:\\work\\dir\\pkg"),
+            (b"sub/../main.js", b"C:\\work\\dir\\main.js"),
+            (b".", b"C:\\work\\dir"),
+            (b"", b"C:\\work\\dir"),
+            (b"../../..", b"C:\\"),
+            (b"C:/proj/main.mjs", b"C:\\proj\\main.mjs"),
+            (b"C:\\proj\\.\\sub\\..\\main.mjs", b"C:\\proj\\main.mjs"),
+            (b"C:/proj//main.mjs", b"C:\\proj\\main.mjs"),
+            (b"C:/proj/", b"C:\\proj"),
+            (b"C:\\proj\\", b"C:\\proj"),
+            (b"C:/", b"C:\\"),
+            (b"C:\\", b"C:\\"),
+            (b"C:main.js", b"C:\\work\\dir\\main.js"),
+            (b"D:/other/main.js", b"D:\\other\\main.js"),
+            (b"D:\\", b"D:\\"),
+            (b"/proj/main.js", b"C:\\proj\\main.js"),
+            (b"\\proj\\", b"C:\\proj"),
+            (b"/", b"C:\\"),
+            (
+                b"//server/share/dir/main.js",
+                b"\\\\server\\share\\dir\\main.js",
+            ),
+            (b"\\\\server\\share\\dir\\", b"\\\\server\\share\\dir"),
+            (b"\\\\server\\share\\", b"\\\\server\\share\\"),
+            (b"\\\\server\\share", b"\\\\server\\share\\"),
+            (b"\\\\?\\C:\\proj\\main.js", b"\\\\?\\C:\\proj\\main.js"),
+            (b"\\\\.\\C:\\proj\\main.js", b"\\\\.\\C:\\proj\\main.js"),
+            (b"\\\\.\\pipe\\name", b"\\\\.\\pipe\\name"),
+        ];
+        assert_resolve_spill::<platform::Windows>(b"C:\\work\\dir", rows);
+    }
+
+    #[test]
+    fn resolve_spill_differs_from_path_win32_resolve() {
+        assert_resolve_spill::<platform::Windows>(
+            b"C:\\work\\dir",
+            &[
+                // The join writes an uppercase drive letter. Node keeps `c:`.
+                (b"c:/proj/main.mjs", b"C:\\proj\\main.mjs"),
+                // A `\\.\` device path is returned as given. Node normalizes it.
+                (b"//./C:/proj/../main.js", b"//./C:/proj/../main.js"),
+            ],
+        );
+    }
+
+    #[test]
+    fn resolve_spill_strips_a_result_that_spills() {
+        let name = vec![b'a'; PARSER_JOIN_INPUT_BUFFER_LEN + 1];
+        let mut path = name.clone();
+        path.extend_from_slice(b"//");
+        let mut expected = b"/work/".to_vec();
+        expected.extend_from_slice(&name);
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            resolve_spill::<platform::Posix>(b"/work", &mut spill, &path),
+            &expected[..]
+        );
     }
 
     #[test]

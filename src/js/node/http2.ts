@@ -3367,8 +3367,6 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
 
-    // Only a real FileHandle is unwrapped, so no user getter runs between the state checks above
-    // and the response below.
     if (fd instanceof FileHandle) {
       fd = fd.fd;
     } else if (typeof fd !== "number") {

@@ -4728,6 +4728,9 @@ class ServerHttp2Session extends Http2Session {
 
       const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
+      // Frames the native side corked (RST_STREAM, GOAWAY) only reach a JS transport while
+      // the session is connected.
+      this.#parser?.flush?.();
       this.#closed = true;
       this.#connected = false;
       if (socket) {
@@ -5809,6 +5812,9 @@ class ClientHttp2Session extends Http2Session {
         // Streams torn down by this destroy surface the same session error (node semantics).
         this[kSessionDestroyError] = error;
       }
+      // Frames the native side corked (RST_STREAM, GOAWAY) only reach a JS transport while
+      // the session is connected.
+      this.#parser?.flush?.();
       this.#closed = true;
       this.#connected = false;
       {

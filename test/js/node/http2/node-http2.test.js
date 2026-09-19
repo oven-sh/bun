@@ -5852,6 +5852,38 @@ it("resets the stream and closes the session when respond() exceeds maxSendHeade
   }
 });
 
+it("an oversized respond() over a JS Duplex transport still puts RST_STREAM and GOAWAY on the wire", async () => {
+  // A session on a user Duplex has no native socket, so the frames the native side corked
+  // must be flushed before destroy() stops accepting writes.
+  const [clientSide, serverSide] = duplexPair();
+  const server = http2.createServer({ maxSendHeaderBlockLength: 200 });
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    stream.respond({ ":status": 200, "x-big": Buffer.alloc(1000, "b").toString() });
+    stream.end("big");
+  });
+  server.emit("connection", serverSide);
+  const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+  client.on("error", () => {});
+  const goaways = [];
+  client.on("goaway", (code, lastStreamID) => goaways.push({ code, lastStreamID }));
+  const clientClosed = new Promise(resolve => client.on("close", resolve));
+
+  const req = client.request({ ":path": "/big" });
+  const reqClosed = new Promise((resolve, reject) => {
+    req.on("response", () => reject(new Error("the client must not receive a response")));
+    req.on("error", () => {});
+    req.on("close", resolve);
+  });
+  req.resume();
+  req.end();
+
+  await Promise.all([reqClosed, clientClosed]);
+  expect(req.rstCode).toBe(http2.constants.NGHTTP2_FRAME_SIZE_ERROR);
+  expect(goaways).toEqual([{ code: http2.constants.NGHTTP2_NO_ERROR, lastStreamID: 1 }]);
+  server.close();
+});
+
 it("PerformanceObserver receives http2 session and stream entries", async () => {
   const entries = [];
   // Two streams (client+server) + two sessions (client+server): resolve once

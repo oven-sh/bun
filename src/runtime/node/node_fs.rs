@@ -3209,7 +3209,6 @@ pub mod args {
     }
 
     /// An invalid encoding wins over an invalid path: Node's `getOptions()` runs first.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1761-L1764
     fn or_encoding_error<T>(
         ctx: &JSGlobalObject,
         options: Option<JSValue>,

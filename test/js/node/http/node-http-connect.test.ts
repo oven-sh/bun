@@ -448,7 +448,13 @@ describe("HTTP server CONNECT", () => {
 
   // Node v26.3.0: the request of a 'connect' event has no body, whatever framing the
   // CONNECT declares. It ends with no data and the socket gets each tunnel byte once.
-  describe.each(["Content-Length: 5", "Transfer-Encoding: chunked"])("CONNECT request with %s", framing => {
+  // The parser enters tunnel mode at the request line only for an authority-form target.
+  describe.each([
+    ["example.com:80", "Content-Length: 5"],
+    ["example.com:80", "Transfer-Encoding: chunked"],
+    ["/x", "Content-Length: 5"],
+    ["/x", "Transfer-Encoding: chunked"],
+  ])("CONNECT %s with %s", (target, framing) => {
     test.each([
       ["a flowing", false],
       ["a paused", true],
@@ -487,7 +493,7 @@ describe("HTTP server CONNECT", () => {
       const proxyAddress = proxyServer.address() as AddressInfo;
 
       const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-        client.write(`CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\n${framing}\r\n\r\n`);
+        client.write(`CONNECT ${target} HTTP/1.1\r\nHost: example.com:80\r\n${framing}\r\n\r\n`);
       });
       client.on("error", reject);
       client.once("data", () => client.end(payload));

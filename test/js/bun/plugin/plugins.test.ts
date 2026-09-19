@@ -855,6 +855,40 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
   expect(exitCode).toBe(0);
 });
 
+it.skipIf(process.platform === "win32")(
+  "onResolve can redirect an existing absolute POSIX path with a literal backslash",
+  async () => {
+    using dir = tempDir("plugin-onresolve-backslash", {
+      "artifact\\root/original.js": `export const value = "original";`,
+      "redirected.js": `export const value = "redirected";`,
+    });
+    const original = resolve(String(dir), "artifact\\root/original.js");
+    const redirected = resolve(String(dir), "redirected.js");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          Bun.plugin({
+            name: "redirect-existing-backslash-path",
+            setup(build) {
+              build.onResolve({ filter: /artifact\\\\root/ }, () => ({ path: ${JSON.stringify(redirected)} }));
+            },
+          });
+          console.log((await import(${JSON.stringify(original)})).value);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("redirected");
+    expect(exitCode).toBe(0);
+  },
+);
+
 it.concurrent("a no-op onResolve that returns args.path unchanged is transparent", async () => {
   using dir = tempDir("plugin-onresolve-no-op", {
     "preload.js": `

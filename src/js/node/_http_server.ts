@@ -1647,7 +1647,10 @@ function getNodeHTTPServerSocket() {
       const pending = this.#pendingAbortMessage;
       this.#pendingAbortMessage = undefined;
       const message = this._httpMessage ?? (pending?.destroyed ? pending : undefined);
-      const req = message?.req;
+      // An ended response that was still draining finishes first, like Node.js's failed last write: its request is not aborted.
+      const wasDraining = message != null && message[kPendingFinish] !== undefined;
+      if (wasDraining) flushPendingFinish.$call(message);
+      const req = wasDraining ? undefined : message?.req;
 
       if (req && !req.destroyed && !req[kHandle]?.upgraded) {
         // At this point the socket is already destroyed; let's avoid UAF

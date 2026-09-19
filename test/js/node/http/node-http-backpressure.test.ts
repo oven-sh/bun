@@ -552,6 +552,8 @@ describe("backpressure", () => {
         res.on("finish", () => {
           events.push("finish");
           state.writableFinishedAtFinish = res.writableFinished;
+          // 'finish' comes before the response is torn down, as after a drain.
+          state.tornDownAtFinish = res.destroyed || res.closed;
         });
         res.on("close", () => {
           events.push("close");
@@ -578,6 +580,7 @@ describe("backpressure", () => {
       expect(events).toEqual(["write callback", "finish", "end callback", "close"]);
       expect(state).toEqual({
         writableFinishedAtFinish: true,
+        tornDownAtFinish: false,
         writableFinishedAtClose: true,
         streamFinished: "ok",
       });

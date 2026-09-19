@@ -313,8 +313,9 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
 // loop was current when their work started: what the macro started goes to the macro loop (or the wait
 // hangs), what the program started stays on the regular loop (or program callbacks run mid-transpile),
 // and whatever a macro started but did not await is adopted by the regular loop once the macro returns
-// (or it is stranded and its keep-alive holds the process open). These run the macro in the main VM:
-// the entry file's macros, or a module require()d so it transpiles on the main thread.
+// (or it is stranded and its keep-alive holds the process open). Unless a test names another VM, these
+// run the macro in the main VM: the entry file's macros, or a module require()d so it transpiles on
+// the main thread.
 describe("event loop routing around macros", () => {
   async function run(files: Record<string, string>, env: Record<string, string> = {}) {
     using dir = tempDir("macro-loops", files);
@@ -451,6 +452,60 @@ describe("event loop routing around macros", () => {
     expect({ lines, stderr }).toEqual({ lines: ["1 chained"], stderr: "" });
     expect(exitCode).toBe(0);
   });
+
+  // JSC takes a keep-alive for a WebAssembly.compile() on the loop that is current, the macro loop here,
+  // and has to release it on that same loop. A macro VM on a transpiler or bundler thread never ticks
+  // its regular loop, so a release parked there is never applied and the thread's loop stays active.
+  const keepAliveMacro = [
+    `import { getEventLoopStats } from "bun:internal-for-testing";`,
+    `let before = 0;`,
+    `export function start() {`,
+    `  before = getEventLoopStats().numPolls;`,
+    `  return 0;`,
+    `}`,
+    `export async function compile() {`,
+    `  await WebAssembly.compile(new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));`,
+    `  return 0;`,
+    `}`,
+    `export function leaked() {`,
+    `  const thread = Bun.isMainThread ? "the main thread" : "another thread";`,
+    `  return (getEventLoopStats().numPolls - before) + " on " + thread;`,
+    `}`,
+  ].join("\n");
+  const callsKeepAliveMacro = [
+    `import { start, compile, leaked } from "./m.ts" with { type: "macro" };`,
+    `start();`,
+    `compile();`,
+    `console.log("leaked", leaked());`,
+  ].join("\n");
+  const macroVMs: [name: string, files: Record<string, string>, line: string][] = [
+    ["the main VM", { "index.ts": callsKeepAliveMacro }, "leaked 0 on the main thread"],
+    [
+      "a transpiler thread's VM",
+      { "lib.ts": callsKeepAliveMacro, "index.ts": `import "./lib.ts";\n` },
+      "leaked 0 on another thread",
+    ],
+    [
+      "a Bun.build() worker's VM",
+      {
+        "entry.ts": callsKeepAliveMacro,
+        "index.ts": [
+          `const result = await Bun.build({ entrypoints: ["./entry.ts"] });`,
+          `console.log((await result.outputs[0].text()).trim().split("\\n").pop());`,
+        ].join("\n"),
+      },
+      `console.log("leaked", "0 on another thread");`,
+    ],
+  ];
+
+  test.concurrent.each(macroVMs)(
+    "a WebAssembly.compile() that a macro awaits in %s releases its event loop keep-alive",
+    async (_name, files, line) => {
+      const { lines, stderr, exitCode } = await run({ "m.ts": keepAliveMacro, ...files });
+      expect({ lines, stderr }).toEqual({ lines: [line], stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // A module that is not the entry point is transpiled on a worker thread, where no VM exists yet. The

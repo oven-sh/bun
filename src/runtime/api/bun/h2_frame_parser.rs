@@ -2189,6 +2189,11 @@ impl H2FrameParser {
     /// An outbound header block on an open stream is over `maxSendHeaderBlockLength`.
     /// Node's `onFrameError` (lib/internal/http2/core.js) emits `frameError`, resets the
     /// stream with FRAME_SIZE_ERROR and then closes the session.
+    ///
+    /// The refused block was already fed to the HPACK encoder, so the peer's decoder table
+    /// no longer matches ours and any later header block on this connection fails with
+    /// COMPRESSION_ERROR. The session therefore ends here (GOAWAY + `onEnd`) instead of
+    /// a graceful close that would let other streams send more headers.
     fn reject_oversized_header_block(&self, stream: &mut Stream) {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
@@ -2200,11 +2205,13 @@ impl H2FrameParser {
         );
         let triggering_id = stream.id;
         self.end_stream(stream, ErrorCode::FRAME_SIZE_ERROR);
+        // GOAWAY carries the last peer-initiated stream id. A server push advances
+        // `last_stream_id` but not `last_peer_stream_id`.
         self.send_go_away(
             triggering_id,
             ErrorCode::NO_ERROR,
             b"",
-            self.last_stream_id.get(),
+            self.last_peer_stream_id.get(),
             true,
         );
     }

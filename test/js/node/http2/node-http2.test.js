@@ -5799,7 +5799,9 @@ it("delivers the reserved push stream and fails the session when its headers can
 it("resets the stream and closes the session when respond() exceeds maxSendHeaderBlockLength", async () => {
   // Verified against node v26.3.0: the server stream gets 'frameError' (HEADERS,
   // FRAME_SIZE_ERROR), then RST_STREAM FRAME_SIZE_ERROR goes out and the server
-  // session sends a graceful GOAWAY. The client request fails with that code.
+  // session sends one GOAWAY. The client request fails with that code. The GOAWAY
+  // carries the last peer-initiated stream id even after a server push allocated a
+  // higher one.
   const server = http2.createServer({ maxSendHeaderBlockLength: 200 });
   try {
     const serverEvents = [];
@@ -5808,37 +5810,43 @@ it("resets the stream and closes the session when respond() exceeds maxSendHeade
       stream.on("error", e => serverEvents.push(`error ${e.code} ${e.message}`));
       stream.on("frameError", (type, code) => serverEvents.push(`frameError type=${type} code=${code}`));
       stream.on("close", () => serverStreamClosed.resolve(stream.rstCode));
+      stream.pushStream({ ":path": "/pushed" }, (err, push) => {
+        if (err) throw err;
+        push.on("error", () => {});
+      });
       stream.respond({ ":status": 200, "x-big": Buffer.alloc(1000, "b").toString() });
       stream.end("big");
     });
     const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
     const client = http2.connect(`http://localhost:${port}`);
     client.on("error", () => {});
-    const clientGoaway = new Promise(resolve =>
-      client.on("goaway", (code, lastStreamID) => resolve({ code, lastStreamID })),
-    );
+    client.on("stream", push => push.on("error", () => {}));
+    const goaways = [];
+    client.on("goaway", (code, lastStreamID) => goaways.push({ code, lastStreamID }));
+    const clientClosed = new Promise(resolve => client.on("close", resolve));
 
     const req = client.request({ ":path": "/big" });
-    const reqError = new Promise(resolve => req.on("error", resolve));
-    const reqClosed = new Promise(resolve => req.on("close", resolve));
-    req.on("response", () => {
-      throw new Error("the client must not receive a response");
+    const reqResult = new Promise((resolve, reject) => {
+      let error;
+      req.on("response", () => reject(new Error("the client must not receive a response")));
+      req.on("error", e => (error = e));
+      req.on("close", () => resolve({ code: error?.code, message: error?.message, rstCode: req.rstCode }));
     });
     req.resume();
     req.end();
 
-    const [err, goaway, serverRstCode] = await Promise.all([reqError, clientGoaway, serverStreamClosed.promise]);
-    await reqClosed;
-    expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
-    expect(err.message).toBe("Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR");
-    expect(req.rstCode).toBe(http2.constants.NGHTTP2_FRAME_SIZE_ERROR);
-    expect(goaway).toEqual({ code: http2.constants.NGHTTP2_NO_ERROR, lastStreamID: 1 });
+    const [reqRes, serverRstCode] = await Promise.all([reqResult, serverStreamClosed.promise, clientClosed]);
+    expect(reqRes).toEqual({
+      code: "ERR_HTTP2_STREAM_ERROR",
+      message: "Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR",
+      rstCode: http2.constants.NGHTTP2_FRAME_SIZE_ERROR,
+    });
     expect(serverRstCode).toBe(http2.constants.NGHTTP2_FRAME_SIZE_ERROR);
+    expect(goaways).toEqual([{ code: http2.constants.NGHTTP2_NO_ERROR, lastStreamID: 1 }]);
     expect(serverEvents).toEqual([
       "frameError type=1 code=6",
       "error ERR_HTTP2_STREAM_ERROR Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR",
     ]);
-    client.destroy();
   } finally {
     server.close();
   }

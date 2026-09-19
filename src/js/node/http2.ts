@@ -4281,6 +4281,8 @@ class ServerHttp2Session extends Http2Session {
     },
     end(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
+      // The native side wrote the GOAWAY before this callback. destroy() must not send a second one.
+      self[kGoawaySent] = true;
       self.destroy();
     },
     write(self: ServerHttp2Session, buffer: Buffer) {
@@ -5299,6 +5301,8 @@ class ClientHttp2Session extends Http2Session {
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
+      // The native side wrote the GOAWAY before this callback. destroy() must not send a second one.
+      self[kGoawaySent] = true;
       self.destroy();
     },
     altsvc(self: ClientHttp2Session, origin: string, value: string, streamId: number) {

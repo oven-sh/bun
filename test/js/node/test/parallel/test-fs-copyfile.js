@@ -1,13 +1,15 @@
+// Flags: --expose-internals
 'use strict';
 const common = require('../common');
 const fixtures = require('../common/fixtures');
 const tmpdir = require('../common/tmpdir');
 const assert = require('assert');
 const fs = require('fs');
+const { internalBinding } = require('internal/test/binding');
 const {
   UV_ENOENT,
   UV_EEXIST
-} = process.binding('uv');
+} = internalBinding('uv');
 const src = fixtures.path('a.js');
 const dest = tmpdir.resolve('copyfile.out');
 const {

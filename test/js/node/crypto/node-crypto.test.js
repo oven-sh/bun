@@ -1162,6 +1162,16 @@ describe("string arguments are decoded like Buffer.from(string, encoding)", () =
       message: "The argument 'encoding' is invalid for data of length 3. Received 'hex'",
     });
   });
+
+  // A cipher stream keeps strings (decodeStrings is false), and Node's _transform() skips validateEncoding().
+  // Node v26.3.0 aborts the process here (CHECK in StringBytes::StorageSize). Bun throws the update() error.
+  it("cipher.write() rejects an odd-length hex string like cipher.update()", () => {
+    const cipher = crypto.createCipheriv("aes-128-ctr", gcmKey, Buffer.alloc(16));
+    expect(outcome(() => cipher.write("abc", "hex"))).toEqual({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "The argument 'encoding' is invalid for data of length 3. Received 'hex'",
+    });
+  });
 });
 
 describe("ECDH", () => {

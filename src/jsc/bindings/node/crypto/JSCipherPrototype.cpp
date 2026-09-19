@@ -53,7 +53,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     JSValue dataValue = callFrame->argument(0);
     JSValue encodingValue = callFrame->argument(1);
 
-    // validateEncoding()
+    // validateEncoding(). Node calls it from the JS update() only. Its _transform() reaches the native
+    // update() without it, and Node then aborts on an odd-length hex string (CHECK in
+    // StringBytes::StorageSize). The check is here so that update() and the stream both throw.
     if (dataValue.isString()) {
         auto encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
         RETURN_IF_EXCEPTION(scope, {});

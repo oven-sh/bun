@@ -4775,6 +4775,107 @@ it("http2 pushStream reports an unsendable array element through the callback", 
   expect(blocks).toEqual([]);
 });
 
+it("http2 pushStream() and ping() are refused after session.close(), like node", async () => {
+  const out = {};
+  const serverDone = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    const session = stream.session;
+    out.pushAllowedBefore = stream.pushAllowed;
+    session.close();
+    out.sessionClosed = session.closed;
+    out.sessionDestroyed = session.destroyed;
+    out.pushAllowedAfter = stream.pushAllowed;
+    try {
+      stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+        out.pushCallback = err ? err.code : "pushed";
+        if (pushed) {
+          pushed.on("error", () => {});
+          pushed.respond({ ":status": 200 });
+          pushed.end();
+        }
+      });
+      out.pushStream = "no throw";
+    } catch (e) {
+      out.pushStream = e.code;
+    }
+    out.pingReturn = session.ping((err, duration) => {
+      out.pingCallback = err ? err.code : "ok";
+      out.pingDuration = duration;
+      serverDone.resolve();
+    });
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    const clientClosed = new Promise(resolve => client.once("close", resolve));
+    client.on("stream", (pushed, headers) => {
+      out.clientGotPush = headers[":path"];
+      pushed.on("error", () => {});
+      pushed.resume();
+    });
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    await new Promise(resolve => req.once("close", resolve));
+    await serverDone.promise;
+    await clientClosed;
+  } finally {
+    server.close();
+  }
+
+  expect(out).toEqual({
+    pushAllowedBefore: true,
+    sessionClosed: true,
+    sessionDestroyed: false,
+    pushAllowedAfter: false,
+    pushStream: "ERR_HTTP2_PUSH_DISABLED",
+    pingReturn: undefined,
+    pingCallback: "ERR_HTTP2_PING_CANCEL",
+    pingDuration: undefined,
+  });
+});
+
+it("http2 client ping() after session.close() is cancelled on the next tick, like node", async () => {
+  const server = http2.createServer();
+  const serverStream = Promise.withResolvers();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    serverStream.resolve(stream);
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    const clientClosed = new Promise(resolve => client.once("close", resolve));
+    await new Promise(resolve => client.once("connect", resolve));
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    const stream = await serverStream.promise;
+
+    // The open request keeps the session alive, so close() marks it closed without destroying it.
+    client.close();
+    expect(client.closed).toBe(true);
+    expect(client.destroyed).toBe(false);
+
+    const pingResult = Promise.withResolvers();
+    const pingReturn = client.ping((err, duration) => pingResult.resolve({ code: err?.code, duration }));
+    expect(pingReturn).toBeUndefined();
+    expect(await pingResult.promise).toEqual({ code: "ERR_HTTP2_PING_CANCEL", duration: undefined });
+
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+    await clientClosed;
+  } finally {
+    server.close();
+  }
+});
+
 // Every kind of field name the native header-block materializer distinguishes, in one request and
 // one response: pseudo-headers, names WebCore knows (with the cookie and set-cookie special cases),
 // names it has never seen, and all-digit names. The second round trip on the same session is served

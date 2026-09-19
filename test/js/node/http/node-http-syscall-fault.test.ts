@@ -240,7 +240,8 @@ describe.skipIf(skip)("node:http pipelining under short sends", () => {
     let offset = 0;
     while (offset < bytes.length) {
       const bodyStart = bytes.indexOf("\r\n\r\n", offset) + 4;
-      if (bodyStart < 4 || !bytes.subarray(offset, bodyStart).toString("latin1").startsWith("HTTP/1.1 200 OK\r\n")) break;
+      if (bodyStart < 4 || !bytes.subarray(offset, bodyStart).toString("latin1").startsWith("HTTP/1.1 200 OK\r\n"))
+        break;
       if (!bytes.subarray(bodyStart, bodyStart + BODY.length).equals(BODY)) break;
       offset = bodyStart + BODY.length;
       complete++;

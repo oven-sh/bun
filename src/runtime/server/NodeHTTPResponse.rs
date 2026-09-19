@@ -629,10 +629,7 @@ impl NodeHTTPResponse {
         {
             let had_ref = self.body_read_ref.get().has;
             if !flags.contains(Flags::UPGRADED) && !flags.contains(Flags::SOCKET_CLOSED) {
-                scoped_log!(NodeHTTPResponse, "clearOnData");
-                if let Some(raw_response) = self.raw_response.get() {
-                    raw_response.clear_on_data();
-                }
+                self.release_body_slot();
             }
 
             self.body_read_ref.with_mut(|r| r.unref(vm));
@@ -640,6 +637,30 @@ impl NodeHTTPResponse {
 
             if had_ref {
                 self.mark_request_as_done_if_necessary();
+            }
+        }
+    }
+
+    /// uws keeps one body data handler slot per connection. It belongs to this
+    /// request only while uws still owes it chunks: once the fin was delivered
+    /// (or parked while paused) uws nulled the slot, and a set slot is a later
+    /// pipelined request's. Arming the slot for this request is gated on this;
+    /// clearing it on a connection that stays open goes through
+    /// `release_body_slot`.
+    fn body_still_arriving(&self) -> bool {
+        self.body_read_state.get() == BodyReadState::Pending
+            && !self
+                .flags
+                .get()
+                .contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+    }
+
+    /// Null uws's data handler slot if it is still this request's.
+    fn release_body_slot(&self) {
+        if self.body_still_arriving() {
+            scoped_log!(NodeHTTPResponse, "clearOnData");
+            if let Some(raw_response) = self.raw_response.get() {
+                raw_response.clear_on_data();
             }
         }
     }
@@ -660,8 +681,7 @@ impl NodeHTTPResponse {
         // `body_read_state` at `Pending` so JS can still drain the buffered
         // tail (`drainRequestBody`), but uws will not deliver anything further,
         // so for this accounting that body is complete as well.
-        let body_pending = self.body_read_state.get() == BodyReadState::Pending
-            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
+        let body_pending = self.body_still_arriving();
 
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
         // same way, except an Upgrade carrying a body keeps parsing as HTTP
@@ -1335,9 +1355,7 @@ impl NodeHTTPResponse {
         // Body already delivered: nothing to buffer, and re-arming onData would
         // overwrite a pipelined request's userData on the shared HttpResponseData.
         // pause_socket() still runs so pausePipelineReads can gate the fd.
-        if self.body_read_state.get() == BodyReadState::Pending
-            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-        {
+        if self.body_still_arriving() {
             self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
             raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
         }
@@ -1408,9 +1426,7 @@ impl NodeHTTPResponse {
         // Body already delivered: re-arming onData/onTimeout would overwrite a
         // pipelined request's userData on the shared HttpResponseData. The drain
         // below still runs so a body buffered-while-paused reaches its own caller.
-        if self.body_read_state.get() == BodyReadState::Pending
-            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-        {
+        if self.body_still_arriving() {
             self.set_on_aborted_handler();
             raw.on_data(on_data_shim, self.as_ctx_ptr());
         }
@@ -1454,12 +1470,11 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
         if !this_value.is_empty() {
             js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
         }
-        scoped_log!(NodeHTTPResponse, "clearOnData");
         // Put any held zero-copy tail on the wire before terminating so the
         // chunked stream stays well-formed.
         this.spill_pending_pinned_write(global_object);
+        this.release_body_slot();
         if let Some(raw_response) = this.raw_response.get() {
-            raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
             if raw_response.state().is_response_pending() {
@@ -1500,12 +1515,11 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         if !this_value.is_empty() {
             js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
         }
-        scoped_log!(NodeHTTPResponse, "clearOnData");
         // Put any held zero-copy tail on the wire before the terminating chunk
         // so the client's chunked decoder stays in sync.
         this.spill_pending_pinned_write(global_object);
+        this.release_body_slot();
         if let Some(raw_response) = this.raw_response.get() {
-            raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
             if !raw_response.state().is_http_status_called() {
@@ -2214,10 +2228,7 @@ impl NodeHTTPResponse {
             }
             let flags = self.flags.get();
             if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
-                scoped_log!(NodeHTTPResponse, "clearOnData");
-                if let Some(raw_response) = self.raw_response.get() {
-                    raw_response.clear_on_data();
-                }
+                self.release_body_slot();
             }
             if self.body_read_state.get() != BodyReadState::Done {
                 self.body_read_state.set(BodyReadState::Done);
@@ -2250,10 +2261,7 @@ impl NodeHTTPResponse {
                         && !flags.contains(Flags::SOCKET_CLOSED)
                         && !flags.contains(Flags::UPGRADED)
                     {
-                        scoped_log!(NodeHTTPResponse, "clearOnData");
-                        if let Some(raw_response) = self.raw_response.get() {
-                            raw_response.clear_on_data();
-                        }
+                        self.release_body_slot();
                     }
                     self.body_read_state.set(BodyReadState::Done);
                 }

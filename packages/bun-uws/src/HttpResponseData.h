@@ -48,8 +48,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Also remove onWritable so that we do not emit when draining behind the scenes. */
         onWritable = nullptr;
         writableUserData = nullptr;
-        /* Ignore data after this point */
-        inStream = nullptr;
+        /* Ignore data after this point. One data handler slot serves the whole
+         * connection. Under node:http pipelining a queued request has already
+         * been dispatched, which means this response's request body was fully
+         * parsed (its fin nulls the slot), so an armed handler is the queued
+         * request's and its body is still arriving: leave it. */
+        if (nodeHttpQueuedPipelinedCount == 0) {
+            inStream = nullptr;
+        }
 
         // Ensure we don't call a timeout callback
         onTimeout = nullptr;

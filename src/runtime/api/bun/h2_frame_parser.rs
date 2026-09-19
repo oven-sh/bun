@@ -2186,14 +2186,9 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    /// An outbound header block on an open stream is over `maxSendHeaderBlockLength`.
-    /// Node's `onFrameError` (lib/internal/http2/core.js) emits `frameError`, resets the
-    /// stream with FRAME_SIZE_ERROR and then closes the session.
-    ///
-    /// The refused block was already fed to the HPACK encoder, so the peer's decoder table
-    /// no longer matches ours and any later header block on this connection fails with
-    /// COMPRESSION_ERROR. The session therefore ends here (GOAWAY + `onEnd`) instead of
-    /// a graceful close that would let other streams send more headers.
+    /// Node's `onFrameError`: emit `frameError`, reset the stream with FRAME_SIZE_ERROR,
+    /// then end the session. The refused block is already in the HPACK encoder table,
+    /// so no later header block on this connection can be decoded by the peer.
     fn reject_oversized_header_block(&self, stream: &mut Stream) {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
@@ -2205,8 +2200,6 @@ impl H2FrameParser {
         );
         let triggering_id = stream.id;
         self.end_stream(stream, ErrorCode::FRAME_SIZE_ERROR);
-        // GOAWAY carries the last peer-initiated stream id. A server push advances
-        // `last_stream_id` but not `last_peer_stream_id`.
         self.send_go_away(
             triggering_id,
             ErrorCode::NO_ERROR,
@@ -7098,13 +7091,11 @@ impl H2FrameParser {
             && encoded_size > this.max_send_header_block_length.get() as usize
         {
             if this.is_server.get() {
-                // The peer opened this stream and waits for the response.
                 this.reject_oversized_header_block(&mut stream);
                 return Ok(JSValue::js_number(stream_id as f64));
             }
 
-            // A client request never reached the wire. nghttp2 closes such a stream
-            // locally with REFUSED_STREAM and sends nothing.
+            // Client: the request never reached the wire, nghttp2 refuses it locally.
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::REFUSED_STREAM.0;
             let identifier = stream.get_identifier();

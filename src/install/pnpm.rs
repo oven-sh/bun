@@ -163,8 +163,7 @@ fn missing_package_entry(
     MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency
 }
 
-/// `parts` resolved against the top-level dir. pnpm-lock.yaml does not bound the length of a
-/// `link:` or `file:` path, so this is `None` when the result does not fit a path buffer.
+/// `parts` resolved against the top-level dir, or `None` when the result does not fit a path buffer.
 fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::AutoAbsPathChecked> {
     let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();
     path.join(parts).ok()?;

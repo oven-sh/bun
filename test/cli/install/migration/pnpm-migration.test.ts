@@ -166,9 +166,8 @@ describe("folder dependencies", () => {
   });
 });
 
-// pnpm-lock.yaml does not limit the length of a `link:` or `file:` path. The migration joins each
-// one onto the project directory in a path buffer of MAX_PATH_BYTES: 4096 bytes on Linux, 1024 on
-// macOS (on Windows 32767 * 3 + 1, so the tests around the buffer size are POSIX only).
+// The migration joins each `link:` and `file:` path onto the project directory in a path buffer of
+// MAX_PATH_BYTES: 4096 bytes on Linux, 1024 on macOS, 32767 * 3 + 1 on Windows.
 describe.concurrent("link: and file: paths longer than the path buffer", () => {
   const POSIX_PATH_BUFFER_BYTES = isLinux ? 4096 : 1024;
   // Longer than the buffer on every platform.
@@ -188,8 +187,7 @@ describe.concurrent("link: and file: paths longer than the path buffer", () => {
     packages?: string;
   };
 
-  // Writes a root with the workspaces `packages/a` and `packages/b` and the folder `vendor/c`,
-  // then runs `bun pm migrate` in it.
+  // Runs `bun pm migrate` in a root with the workspaces packages/a and packages/b and the folder vendor/c.
   async function migrate(project: Project | ((dir: string) => Project)) {
     using dir = tempDir("pnpm-migrate-long-path", {});
     const { rootDependencies, aDependencies, rootImporter, aImporter, packages } =
@@ -321,8 +319,7 @@ snapshots:
     expect(exitCode).toBe(code);
   });
 
-  // What has to fit the buffer is the resolved path, not the link as written. The unchecked join
-  // resolved this link too, so the test passes without the checked join as well.
+  // What has to fit the buffer is the resolved path, not the link as written. The unchecked join did the same.
   test("link: that only fits the path buffer once resolved still names its workspace", async () => {
     const linkToB = "../b" + Buffer.alloc(100_000, "/../b").toString();
     const { stderr, bunLock, exitCode } = await migrate({

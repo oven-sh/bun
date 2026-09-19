@@ -2821,10 +2821,7 @@ impl H2FrameParser {
         self.write_buffer.get().len_u32() > 0 || self.has_nonnative_backpressure.get()
     }
 
-    /// Whether a DATA frame of `stream` has to wait in the stream's queue: the transport is
-    /// backed up, or the stream already has frames queued (frame order). Frames queued on another
-    /// stream are no reason: they can wait on that stream's own window, and then no event would
-    /// flush this frame.
+    /// Per stream, not per session: another stream's queue can wait on its own window forever.
     fn must_queue_data(&self, stream: &Stream) -> bool {
         self.has_backpressure() || !stream.data_frame_queue.is_empty()
     }

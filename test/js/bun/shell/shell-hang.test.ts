@@ -39,9 +39,24 @@ test.skipIf(isWindows)("a command whose wait fails still completes", async () =>
     import { $ } from "bun";
     import { dlopen, ptr } from "bun:ffi";
 
-    const { waitpid } = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+    const { waitpid, syscall, getpid, close } = dlopen(${JSON.stringify(libcPathForDlopen())}, {
       waitpid: { args: ["i32", "ptr", "i32"], returns: "i32" },
+      syscall: { args: ["i64", "i32", "u32"], returns: "i64" },
+      getpid: { args: [], returns: "i32" },
+      close: { args: ["i32"], returns: "i32" },
     }).symbols;
+
+    // Without pidfd_open (a seccomp profile can block it) bun on Linux waits on
+    // a second thread, and that thread reaps the command before waitpid() here.
+    if (process.platform === "linux") {
+      const SYS_pidfd_open = 434;
+      const pidfd = Number(syscall(SYS_pidfd_open, getpid(), 0));
+      if (pidfd < 0) {
+        console.log(JSON.stringify({ skipped: "pidfd_open is not available" }));
+        process.exit(0);
+      }
+      close(pidfd);
+    }
 
     const results = {};
     for (const quiet of [true, false]) {
@@ -61,13 +76,22 @@ test.skipIf(isWindows)("a command whose wait fails still completes", async () =>
     console.log(JSON.stringify(results));
   `;
 
+  // This flag forces the second-thread wait that the script has to avoid.
+  const { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: _, ...env } = bunEnv;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  if (stdout === JSON.stringify({ skipped: "pidfd_open is not available" }) + "\n") {
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    console.warn("pidfd_open is not available here, so the failed wait was not exercised");
+    return;
+  }
 
   const waitFailed = {
     reaped: true,

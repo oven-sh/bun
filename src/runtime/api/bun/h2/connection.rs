@@ -43,6 +43,8 @@ pub struct Stream {
     /// A non-informational inbound header block was delivered: the next inbound HEADERS on this
     /// stream is a trailer section (RFC 9113 §8.1).
     pub recv_final_headers: bool,
+    /// Only interim (1xx) header blocks were delivered so far: the final response is still due.
+    pub expect_final_response: bool,
     /// Declared `content-length` of the inbound message, if any (RFC 9113 §8.1.1).
     pub content_length: Option<u64>,
     /// DATA payload bytes (padding excluded) received so far.
@@ -56,9 +58,15 @@ impl Stream {
             send_window: SendWindow::new(initial_send),
             recv_window: RecvWindow::new(initial_recv),
             recv_final_headers: false,
+            expect_final_response: false,
             content_length: None,
             recv_body_bytes: 0,
         }
+    }
+
+    /// An empty END_STREAM DATA still passes: Bun's server sends one when closed before respond().
+    fn payload_precedes_final_response(&self, payload_len: usize) -> bool {
+        self.expect_final_response && payload_len > 0
     }
 }
 
@@ -1275,6 +1283,10 @@ impl Connection {
                 }
             }
         }
+        // RFC 9113 §8.1: an interim (1xx) block is not the response, so a stream cannot end on it.
+        if informational && end_stream {
+            malformed = true;
+        }
         if malformed && !rejected {
             // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
             // against maxSessionInvalidFrames; exceeding it tears the session down with
@@ -1308,10 +1320,12 @@ impl Connection {
             return false;
         }
         if push_parent.is_none()
-            && !informational
             && let Some(s) = self.streams.get_mut(&target)
         {
-            s.recv_final_headers = true;
+            s.expect_final_response = informational;
+            if !informational {
+                s.recv_final_headers = true;
+            }
         }
         sink.on_headers_complete(target, end_stream, flags);
         if end_stream {
@@ -1377,12 +1391,19 @@ impl Connection {
                 discard = true;
             }
             Some(st) => {
-                if !stream::can_receive_data(st.state) {
-                    self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
+                let refused = if !stream::can_receive_data(st.state) {
+                    Some(ErrorCode::StreamClosed)
+                } else if st.payload_precedes_final_response(data_total) {
+                    Some(ErrorCode::ProtocolError)
+                } else {
+                    None
+                };
+                if let Some(code) = refused {
+                    self.send_rst_stream(sink, hdr.stream_id, code);
                     if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
                         st2.state = State::Closed;
                     }
-                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                    sink.on_stream_reset(hdr.stream_id, code.as_u32());
                     discard = true;
                 } else {
                     st.recv_window.on_data(hdr.length as i64);
@@ -1515,6 +1536,8 @@ impl Connection {
             Some(s) => {
                 if !stream::can_receive_data(s.state) {
                     DataDecision::Rst(ErrorCode::StreamClosed)
+                } else if s.payload_precedes_final_response(end - off) {
+                    DataDecision::Rst(ErrorCode::ProtocolError)
                 } else {
                     s.recv_window.on_data(consumed);
                     if s.recv_window.is_overflowed_with(recv_limit) {

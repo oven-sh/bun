@@ -1884,6 +1884,8 @@ it("process.execArgv", async () => {
     ["-c index.ts a", ["-c"], ["a"]],
     // In a short chain the last short takes the next token (`-be code` is `-b -e code`).
     [`-be '${printCode}' a`, ["-be", printCode], []],
+    // ...but `-c` ends the chain (`-ce` is `-c`, the `e` is dropped) and the next token is the script.
+    ["-ce index.ts a", ["-ce"], ["a"]],
     // `-pe` is an alias of `-p` without `run`; `bun run -pe x` is `-p e` and `x` is the script.
     [`-pe '${printExpr}' a`, ["-pe", printExpr], []],
     ["run -pe index.ts a", ["-pe"], ["a"]],

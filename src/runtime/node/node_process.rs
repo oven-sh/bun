@@ -292,6 +292,15 @@ mod _impl {
                 set
             });
 
+        // Shorts of OneOptional params (`-c`): they end a chain without a value.
+        static ENDS_CHAIN: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| {
+            crate::cli::arguments::AUTO_PARAMS
+                .iter()
+                .filter(|param| param.takes_value == bun_clap::Values::OneOptional)
+                .filter_map(|param| param.names.short)
+                .collect()
+        });
+
         // Same token rules as `src/clap/streaming.rs`.
         fn consumes_next_arg(arg: &[u8], seen_run: bool) -> bool {
             if arg.starts_with(b"--") {
@@ -306,6 +315,9 @@ mod _impl {
                 }
             }
             for (i, &short) in arg.iter().enumerate().skip(1) {
+                if bun_core::strings::contains_char(&ENDS_CHAIN, short) {
+                    return false;
+                }
                 if CONSUMES_NEXT_ARG.contains(&[b'-', short]) {
                     return i == arg.len() - 1;
                 }

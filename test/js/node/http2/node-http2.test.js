@@ -5275,6 +5275,42 @@ it("http2 respondWithFD() throws on a closed stream", async () => {
   }
 });
 
+it("http2 respondWithFD() and respondWithFile() send nothing after a statCheck that closes the stream", async () => {
+  using dir = tempDir("http2-stat-check-close", { "file.txt": "0123456789" });
+  const file = path.join(String(dir), "file.txt");
+  const fd = fs.openSync(file, "r");
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.on("error", () => {});
+    const [, method, action] = headers[":path"].split("/");
+    const options = {
+      statCheck() {
+        if (action === "refuse") this.close(http2.constants.NGHTTP2_REFUSED_STREAM);
+      },
+    };
+    if (method === "fd") stream.respondWithFD(fd, {}, options);
+    else stream.respondWithFile(file, {}, options);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    for (const method of ["fd", "file"]) {
+      const refused = await collectHttp2Response(client, `/${method}/refuse`);
+      expect({ method, status: refused.status, body: refused.body }).toEqual({ method, status: undefined, body: "" });
+      // HEADERS on the closed stream were a connection error for the client, so the next request
+      // on the same session shows that none were sent.
+      const { status, body, error } = await collectHttp2Response(client, `/${method}/send`);
+      expect({ method, status, body, error }).toEqual({ method, status: 200, body: "0123456789", error: undefined });
+    }
+  } finally {
+    client.destroy();
+    server.close();
+    fs.closeSync(fd);
+  }
+});
+
 it("http2 respondWithFile() of a directory resets the stream without sending headers", async () => {
   using dir = tempDir("http2-respond-with-file-dir", {});
   const { promise: serverError, resolve: onServerError } = Promise.withResolvers();

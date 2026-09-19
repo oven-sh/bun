@@ -2963,8 +2963,14 @@ function doSendFD(this: ServerHttp2Stream, options, fd, headers, err, stat) {
     offset: options.offset !== undefined ? options.offset : 0,
     length: options.length !== undefined ? options.length : -1,
   };
-  // statCheck cancels the response when it returns false, and it can send another one itself.
-  if (options.statCheck.$call(this, stat, headers, statOptions) === false || this.headersSent) {
+  // statCheck cancels the response when it returns false. It can also send another response or
+  // close the stream itself, and HEADERS after that would be a connection error for the peer.
+  if (
+    options.statCheck.$call(this, stat, headers, statOptions) === false ||
+    this.headersSent ||
+    this.destroyed ||
+    this.closed
+  ) {
     return;
   }
 
@@ -3029,10 +3035,13 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // verify stat values, override or set headers, or even cancel the
   // response operation. If statCheck explicitly returns false, the
   // response is canceled. The user code may also send a separate type
-  // of response so check again for the HEADERS_SENT flag
+  // of response so check again for the HEADERS_SENT flag, or close the
+  // stream (see doSendFD).
   if (
     (typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false) ||
-    this.headersSent
+    this.headersSent ||
+    this.destroyed ||
+    this.closed
   ) {
     tryClose(fd);
     return;

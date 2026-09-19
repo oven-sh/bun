@@ -3336,7 +3336,8 @@ test("react-compiler memory does not grow with the square of the operands of an 
           stderr: "pipe",
         });
         const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        const outputs = readdirSync(outdir).map(file => readFileSync(outdir + "/" + file, "utf8"));
+        const files = exitCode === 0 ? readdirSync(outdir) : [];
+        const outputs = files.map(file => readFileSync(outdir + "/" + file, "utf8"));
         const memoized = outputs.filter(output => /\\b_c\\(\\d+\\)/.test(output)).length;
         return { stderr, exitCode, memoized, peakMB: Math.round(proc.resourceUsage().maxRSS / 1024 / 1024) };
       };
@@ -3362,13 +3363,12 @@ test("react-compiler memory does not grow with the square of the operands of an 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   const [empty, operands] = JSON.parse(stdout);
   expect({ empty, operands }).toEqual({
     empty: { stderr: "", exitCode: 0, memoized: 0, peakMB: expect.any(Number) },
     operands: { stderr: "", exitCode: 0, memoized: 4, peakMB: expect.any(Number) },
   });
-  expect(exitCode).toBe(0);
 
   // Above the empty build: 160 MB without the fix and 50 MB with it for the
   // small inputs, 1080 MB and 130 MB for the large ones.

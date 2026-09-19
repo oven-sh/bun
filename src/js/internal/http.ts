@@ -314,7 +314,7 @@ function hasServerResponseFinished(self, chunk, callback, fromEnd) {
   const finished = self.finished;
 
   // Only end() takes "" for no chunk. To Node.js's write_() it is a write: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L943-L957
-  if (chunk || !fromEnd) {
+  if (chunk || (!fromEnd && chunk === "")) {
     const destroyed = self.destroyed;
 
     if (finished || destroyed) {

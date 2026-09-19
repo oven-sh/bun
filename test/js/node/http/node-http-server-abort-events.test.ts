@@ -157,6 +157,32 @@ describe("a late end() or write() answers its callback like Node.js", () => {
         'write("", cb)': { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"] },
       },
     },
+    // 'close' is queued before the 'finish' listeners run, so the response is destroyed before 'error' can be emitted.
+    "finished, inside a 'finish' listener": {
+      reach: overConnection(false, (req, res, run) => {
+        res.once("finish", run);
+        res.end("ok");
+      }),
+      expected: {
+        "end(cb)": alreadyFinished,
+        'end("", cb)': alreadyFinished,
+        "end(chunk, cb)": { ...writeAfterEnd, returned: "res" },
+        "write(chunk, cb)": writeAfterEnd,
+        'write("", cb)': writeAfterEnd,
+      },
+    },
+    "finished, inside the end() callback": {
+      reach: overConnection(false, (req, res, run) => {
+        res.end("ok", run);
+      }),
+      expected: {
+        "end(cb)": alreadyFinished,
+        'end("", cb)': alreadyFinished,
+        "end(chunk, cb)": { ...writeAfterEnd, returned: "res" },
+        "write(chunk, cb)": writeAfterEnd,
+        'write("", cb)': writeAfterEnd,
+      },
+    },
     "unfinished, the client closed the connection": {
       reach: overConnection(true, (req, res, run) => {
         whenConnectionClosed(req, res, run);
@@ -206,6 +232,21 @@ describe("a late end() or write() answers its callback like Node.js", () => {
       code: "ERR_STREAM_DESTROYED",
       message: "Cannot call write after a stream was destroyed",
     });
+  });
+
+  // Only the empty string is a chunk that write() accepts and end() ignores.
+  test("write() of a chunk that is not a string still throws on a destroyed response without a socket", () => {
+    const res = new ServerResponse(new IncomingMessage(null as any));
+    res.destroy();
+    const codes = [null, undefined].map(chunk => {
+      try {
+        res.write(chunk as any);
+        return "no throw";
+      } catch (err) {
+        return (err as NodeJS.ErrnoException).code;
+      }
+    });
+    expect(codes).toEqual(["ERR_STREAM_NULL_VALUES", "ERR_INVALID_ARG_TYPE"]);
   });
 });
 

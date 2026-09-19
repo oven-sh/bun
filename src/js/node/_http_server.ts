@@ -3263,27 +3263,28 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       function (callback, self) {
         // In Node.js, the "finish" event triggers the "close" event.
         // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
-        self.emit("finish");
+        queueCloseAndEmitFinish(self);
         try {
           callback();
         } catch (err) {
           self.emit("error", err);
         }
-
-        process.nextTick(emitCloseNT, self);
       },
       callback,
       this,
     );
   } else {
-    process.nextTick(function (self) {
-      self.emit("finish");
-      process.nextTick(emitCloseNT, self);
-    }, this);
+    process.nextTick(queueCloseAndEmitFinish, this);
   }
 
   return this;
 };
+
+// Node.js's resOnFinish queues 'close' before the user's 'finish' listeners run: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L1186-L1211
+function queueCloseAndEmitFinish(res) {
+  process.nextTick(emitCloseNT, res);
+  res.emit("finish");
+}
 
 Object.defineProperty(ServerResponse.prototype, "writable", {
   // Node.js's OutgoingMessage assigns `this.writable = true` in the

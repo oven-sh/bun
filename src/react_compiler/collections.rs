@@ -1,10 +1,8 @@
 //! Drop-in `IndexMap` / `IndexSet` for the React Compiler port.
 //!
-//! Newtype wrappers over [`bun_collections::ArrayHashMap`] on the global heap,
-//! so a map/set is freed when it is dropped. The AST arena never frees, and
-//! it outlives the compile of one function by far: see [`crate::hir::HirVec`].
-//! Method surface mirrors `indexmap::IndexMap` / `indexmap::IndexSet`
-//! closely enough that upstream call sites need only swap the `use` line.
+//! Newtype wrappers over [`bun_collections::ArrayHashMap`]. Method surface
+//! mirrors `indexmap::IndexMap` / `indexmap::IndexSet` closely enough that
+//! upstream call sites need only swap the `use` line.
 //!
 //! Semantic notes vs `indexmap`:
 //!   * lookups take `&K` (no `Borrow<Q>` adapter) — every key type in this

@@ -57,15 +57,7 @@ pub use reactive::*;
 // Vec for HIR data
 // =============================================================================
 
-/// `Vec` for the working memory of one compiled function: the HIR, the
-/// reactive function, and the tables of each pass. It is on the global heap,
-/// so it is freed when it is dropped.
-///
-/// It is not on [`bun_alloc::AstAlloc`]: that allocator never frees, and its
-/// arena lives as long as the AST of the file (in `bun build`, as long as the
-/// bundle). Bytes that the output AST points to (a [`StoreStr`]) are the
-/// exception. They go in the arena, through `bun_ast::data_store_dupe_str` or
-/// a [`bun_alloc::AstVec`].
+/// `Vec` of HIR data. DESIGN.md ("Memory") says what may go in the AST arena.
 pub type HirVec<T> = Vec<T>;
 /// Arena-owned (or `'static`) byte string. Copy; no Drop.
 pub use bun_ast::StoreStr;
@@ -1513,9 +1505,6 @@ impl NonLocalBinding {
 // Type system (from Types.ts)
 // =============================================================================
 
-/// `Type` values are also held by the process-lifetime
-/// [`ShapeRegistry`](crate::hir::object_shape::ShapeRegistry), which outlives
-/// every AST arena. A `Type` stored there must not point into an arena.
 #[derive(Debug, Clone)]
 pub enum Type {
     Primitive,

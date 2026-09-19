@@ -690,9 +690,7 @@ impl protocol::TryOp for LengthValue {
             let v = f(ctx, self.value(), rhs.value());
             return Some(self.map_value(|_| v));
         }
-        // Intentionally calls `self.to_px()` for BOTH operands (sic) — kept
-        // for behavioral compatibility.
-        if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
+        if let (Some(a), Some(b)) = (self.to_px(), rhs.to_px()) {
             return Some(LengthValue::Px(f(ctx, a, b)));
         }
         None
@@ -704,9 +702,7 @@ impl protocol::TryOpTo for LengthValue {
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             return Some(f(ctx, self.value(), rhs.value()));
         }
-        // Intentionally calls `self.to_px()` for BOTH operands (sic) — kept
-        // for behavioral compatibility.
-        if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
+        if let (Some(a), Some(b)) = (self.to_px(), rhs.to_px()) {
             return Some(f(ctx, a, b));
         }
         None

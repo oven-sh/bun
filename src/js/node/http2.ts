@@ -3259,8 +3259,10 @@ class ServerHttp2Stream extends Http2Stream {
       options = undefined;
     }
     {
+      // node checks pushAllowed before it validates the other arguments, so a closed session
+      // reports ERR_HTTP2_PUSH_DISABLED whatever the callback is.
       const session = this[bunHTTP2Session];
-      if (session == null || session.destroyed) {
+      if (session == null || session.destroyed || session.closed) {
         throw $ERR_HTTP2_PUSH_DISABLED();
       }
     }
@@ -5514,7 +5516,9 @@ class ClientHttp2Session extends Http2Session {
     if (!socket) {
       return false;
     }
-    return socket.connecting || false;
+    // node keeps the session in the connecting state until the TLS handshake completes, not
+    // only until the TCP connect.
+    return socket.connecting || socket.secureConnecting || false;
   }
   get connected() {
     return this[bunHTTP2Socket]?.connecting === false;

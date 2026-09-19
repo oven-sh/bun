@@ -4973,6 +4973,53 @@ it("getPackedSettings caps initialWindowSize at 2**31-1", () => {
   expect(error?.code).toBe("ERR_HTTP2_INVALID_SETTING_VALUE");
 });
 
+it.each([
+  ["Http2Server", () => http2.createServer(), "http", undefined],
+  ["Http2SecureServer", () => http2.createSecureServer(TLS_CERT), "https", TLS_OPTIONS],
+])(
+  "%s#updateSettings() accepts an undefined settings argument",
+  async (_name, createServer, scheme, connectOptions) => {
+    // node v26.3.0 treats undefined as an empty update. Every other non-object throws.
+    const server = createServer();
+    server.updateSettings({ maxConcurrentStreams: 7 });
+    expect(server.updateSettings()).toBeUndefined();
+    expect(server.updateSettings(undefined)).toBeUndefined();
+
+    for (const [invalid, received] of [
+      [null, "Received null"],
+      [1, "Received type number (1)"],
+      ["", "Received type string ('')"],
+      [[], "Received an instance of Array"],
+      [function fn() {}, "Received function fn"],
+      [true, "Received type boolean (true)"],
+    ]) {
+      expect(() => server.updateSettings(invalid)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "settings" argument must be of type object. ${received}`,
+        }),
+      );
+    }
+
+    // The empty updates keep the earlier value: a new session still advertises it.
+    let client;
+    try {
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      client = http2.connect(`${scheme}://127.0.0.1:${server.address().port}`, connectOptions);
+      const remoteSettings = await new Promise((resolve, reject) => {
+        client.once("error", reject);
+        client.once("close", () => reject(new Error("session closed before 'remoteSettings'")));
+        client.once("remoteSettings", resolve);
+      });
+      expect(remoteSettings.maxConcurrentStreams).toBe(7);
+    } finally {
+      client?.close();
+      server.close();
+    }
+  },
+);
+
 it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFile reject them", async () => {
   // respond() accepts the node v26 raw [name1, value1, ...] headers form (verified
   // on node v26.3.0: status/x-foo land on the wire); respondWithFD/respondWithFile

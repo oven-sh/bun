@@ -132,6 +132,9 @@ function throwSettingTypeError(name: string, value: any) {
 }
 
 function validateSettings(settings: any) {
+  // node's assertIsObject() and validateSettings() both accept undefined.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1010-L1011
+  if (settings === undefined) return;
   if (typeof settings !== "object" || settings === null || $isArray(settings)) {
     throw $ERR_INVALID_ARG_TYPE("settings", "object", settings);
   }
@@ -215,10 +218,6 @@ function validateSettings(settings: any) {
       }
     }
   }
-}
-
-function assertSettings(settings: any) {
-  validateSettings(settings);
 }
 
 function getPackedSettings(settings?: any): Buffer {
@@ -6503,7 +6502,7 @@ class Http2Server extends net.Server {
     return this;
   }
   updateSettings(settings) {
-    assertSettings(settings);
+    validateSettings(settings);
     const options = this[bunSocketServerOptions];
     if (options) {
       options.settings = { ...options.settings, ...settings };
@@ -6637,7 +6636,7 @@ class Http2SecureServer extends tls.Server {
     return this;
   }
   updateSettings(settings) {
-    assertSettings(settings);
+    validateSettings(settings);
     const options = this[bunSocketServerOptions];
     if (options) {
       options.settings = { ...options.settings, ...settings };

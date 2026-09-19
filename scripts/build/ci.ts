@@ -23,6 +23,7 @@ import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
 import * as utils from "../utils.ts";
+import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
 import { webkitTestFFIPath } from "./deps/webkit.ts";
@@ -167,12 +168,12 @@ export async function spawnWithAnnotations(
         .split("\n")
         .filter(line => !/^\[[\w-]+\]\s+CMake (Deprecation )?Warning/i.test(line.replace(/\x1b\[[0-9;]*m/g, "")))
         .join("\n");
-      const { annotations } = utils.parseAnnotations(annotatable);
+      const { annotations } = parseAnnotations(annotatable);
       for (const ann of annotations) {
         utils.reportAnnotationToBuildKite({
           priority: 10,
           label: ann.title,
-          content: utils.formatAnnotationToHtml(ann),
+          content: formatAnnotationToHtml(ann),
         });
         annotated = true;
       }
@@ -183,7 +184,7 @@ export async function spawnWithAnnotations(
     // Nothing matched the compiler-error regexes → post a generic annotation
     // with the full buffered output so there's still a PR-visible signal.
     if (!annotated) {
-      const content = utils.formatAnnotationToHtml({
+      const content = formatAnnotationToHtml({
         filename: relative(process.cwd(), fileURLToPath(import.meta.url)),
         title: "build failed",
         content: buffer,
@@ -751,7 +752,7 @@ export function reportOrderFileCannotTrace(cfg: Config): void {
     style: "warning",
     priority: 5,
     label: "symbol order file",
-    content: utils.formatAnnotationToHtml({
+    content: formatAnnotationToHtml({
       filename: "scripts/build/ci.ts",
       title: "symbol order file: cross-compiled lane cannot trace, shipping unordered",
       content: msg,
@@ -958,7 +959,7 @@ export function reportOrderFileBootstrap(cfg: Config): void {
     style: "warning",
     priority: 5,
     label: "symbol order file",
-    content: utils.formatAnnotationToHtml({
+    content: formatAnnotationToHtml({
       filename: "scripts/build/ci.ts",
       title: "symbol order file: nothing to inherit, generating from scratch",
       content: message,
@@ -981,7 +982,7 @@ export function reportOrderFileFailure(error: Error): void {
     style: "warning",
     priority: 5,
     label: "symbol order file",
-    content: utils.formatAnnotationToHtml({
+    content: formatAnnotationToHtml({
       filename: "scripts/orderfile/generate.ts",
       title: "symbol order file not generated — shipped unordered",
       content: error.message,

@@ -1,12 +1,12 @@
 /**
- * parseAnnotations() (scripts/utils.ts) turns compiler output captured from a
+ * parseAnnotations() (scripts/build/annotations.ts) turns compiler output captured from a
  * failed CI build into Buildkite annotations (scripts/build/ci.ts). Each
  * matcher reads the lines following the one it matched into the annotation
  * body with readUntil(); these pin what ends up in the body.
  */
 import { describe, expect, test } from "bun:test";
 
-import { parseAnnotation, parseAnnotations, type Annotation } from "../../../scripts/utils.ts";
+import { parseAnnotation, parseAnnotations, type Annotation } from "../../../scripts/build/annotations.ts";
 
 // rustc's human-readable format (`cargo build` output): a header line, the
 // `-->` location, the rendered span with `|` gutters, optional `=` notes, and

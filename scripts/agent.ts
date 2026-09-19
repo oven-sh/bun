@@ -2,33 +2,441 @@
 
 // An agent that starts buildkite-agent and runs others services.
 
+import { createHash, createHmac } from "node:crypto";
 import { copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir as nodeHomedir, release } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs } from "node:util";
+import { inspect, parseArgs } from "node:util";
 import {
+  curl,
   getAbi,
   getAbiVersion,
   getArch,
-  getAwsSecret,
-  getAzureSecret,
-  getCloud,
-  getCloudMetadataTag,
   getDistro,
   getDistroVersion,
   getEnv,
   getHostname,
   getKernel,
   getOs,
-  homedir,
+  isLinux,
   isMacOS,
   isPosix,
   isWindows,
   mkdir,
+  spawn,
   spawnSafe,
   which,
   writeFile,
 } from "./utils.ts";
+
+function homedir(): string {
+  return nodeHomedir();
+}
+
+type Cloud = "aws" | "google" | "azure";
+
+let detectedCloud: Cloud | undefined;
+
+async function isAws(): Promise<boolean | undefined> {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "aws";
+  }
+
+  async function checkAws(): Promise<boolean | undefined> {
+    if (isLinux) {
+      const kernel = release();
+      if (kernel.endsWith("-aws")) {
+        return true;
+      }
+
+      const { error: systemdError, stdout } = await spawn(["systemd-detect-virt"]);
+      if (!systemdError) {
+        if (stdout.includes("amazon")) {
+          return true;
+        }
+      }
+
+      const dmiPath = "/sys/devices/virtual/dmi/id/board_asset_tag";
+      if (existsSync(dmiPath)) {
+        const dmiFile = readFileSync(dmiPath, { encoding: "utf-8" });
+        if (dmiFile.startsWith("i-")) {
+          return true;
+        }
+      }
+    }
+
+    if (isWindows) {
+      const executionEnv = getEnv("AWS_EXECUTION_ENV", false);
+      if (executionEnv === "EC2") {
+        return true;
+      }
+
+      const { error: powershellError, stdout } = await spawn([
+        "powershell",
+        "-Command",
+        "Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object Manufacturer",
+      ]);
+      if (!powershellError) {
+        return stdout.includes("Amazon");
+      }
+    }
+
+    return undefined;
+  }
+
+  if (await checkAws()) {
+    detectedCloud = "aws";
+    return true;
+  }
+
+  return undefined;
+}
+
+async function isGoogleCloud(): Promise<boolean | undefined> {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "google";
+  }
+
+  async function detectGoogleCloud(): Promise<boolean | undefined> {
+    if (isLinux) {
+      const vendorPaths = [
+        "/sys/class/dmi/id/sys_vendor",
+        "/sys/class/dmi/id/bios_vendor",
+        "/sys/class/dmi/id/product_name",
+      ];
+
+      for (const vendorPath of vendorPaths) {
+        if (existsSync(vendorPath)) {
+          const vendorFile = readFileSync(vendorPath, { encoding: "utf-8" });
+          if (vendorFile.includes("Google")) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return undefined;
+  }
+
+  if (await detectGoogleCloud()) {
+    detectedCloud = "google";
+    return true;
+  }
+
+  return undefined;
+}
+
+/** The fields of the Azure IMDS instance document that are read here. */
+type AzureInstanceMetadata = {
+  compute?: {
+    azEnvironment?: string;
+    tagsList?: { name: string; value: string }[];
+  };
+} | null;
+
+async function isAzure(): Promise<boolean | undefined> {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "azure";
+  }
+
+  async function detectAzure(): Promise<boolean | undefined> {
+    // Azure IMDS (Instance Metadata Service) — the official way to detect Azure VMs.
+    // https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service
+    const { error, body } = await curl("http://169.254.169.254/metadata/instance?api-version=2021-02-01", {
+      headers: { "Metadata": "true" },
+      retries: 1,
+    });
+    if (!error && typeof body === "string" && body) {
+      try {
+        const metadata = JSON.parse(body) as AzureInstanceMetadata;
+        if (metadata?.compute?.azEnvironment) {
+          return true;
+        }
+      } catch {}
+    }
+
+    return undefined;
+  }
+
+  if (await detectAzure()) {
+    detectedCloud = "azure";
+    return true;
+  }
+
+  return undefined;
+}
+
+async function getCloud(): Promise<Cloud | undefined> {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud;
+  }
+
+  if (await isAws()) {
+    return "aws";
+  }
+
+  if (await isGoogleCloud()) {
+    return "google";
+  }
+
+  if (await isAzure()) {
+    return "azure";
+  }
+
+  return undefined;
+}
+
+/**
+ * `name` is the path of the metadata entry, or one path per cloud. There is
+ * no azure path: Azure serves one JSON document, and the caller picks fields
+ * out of it.
+ */
+async function getCloudMetadata(
+  name: string | { aws: string; google: string },
+  cloud?: Cloud,
+): Promise<string | undefined> {
+  cloud ??= await getCloud();
+  if (!cloud) {
+    return;
+  }
+
+  if (typeof name === "object") {
+    name = cloud === "azure" ? "" : name[cloud];
+  }
+
+  let url;
+  let headers;
+  if (cloud === "aws") {
+    url = new URL(name, "http://169.254.169.254/latest/meta-data/");
+  } else if (cloud === "google") {
+    url = new URL(name, "http://metadata.google.internal/computeMetadata/v1/instance/");
+    headers = { "Metadata-Flavor": "Google" };
+  } else if (cloud === "azure") {
+    // Azure IMDS uses a single JSON endpoint; individual fields are extracted by the caller.
+    url = new URL("http://169.254.169.254/metadata/instance?api-version=2021-02-01");
+    headers = { "Metadata": "true" };
+  } else {
+    throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
+  }
+
+  const { error, body } = await curl(url, { headers, retries: 10 });
+  if (error) {
+    console.warn("Failed to get cloud metadata:", error);
+    return;
+  }
+
+  // Without the json, arrayBuffer or filename option, the body of a response is its text.
+  return typeof body === "string" ? body.trim() : undefined;
+}
+
+async function getCloudMetadataTag(tag: string, cloud?: Cloud): Promise<string | undefined> {
+  cloud ??= await getCloud();
+
+  if (cloud === "azure") {
+    // Azure IMDS returns all tags in a single JSON response.
+    // Tags are in compute.tagsList as [{name, value}, ...].
+    const body = await getCloudMetadata("", cloud);
+    if (!body) return;
+    try {
+      const metadata = JSON.parse(body) as AzureInstanceMetadata;
+      const tags = metadata?.compute?.tagsList;
+      if (Array.isArray(tags)) {
+        const entry = tags.find(t => t.name === tag);
+        return entry?.value;
+      }
+    } catch {}
+    return;
+  }
+
+  const metadata = {
+    "aws": `tags/instance/${tag}`,
+    "google": `labels/${tag.replace(":", "-")}`,
+  };
+
+  return getCloudMetadata(metadata, cloud);
+}
+
+type AwsCredentials = {
+  AccessKeyId: string;
+  SecretAccessKey: string;
+  Token?: string;
+};
+
+/**
+ * Instance-role credentials from IMDS.
+ */
+async function getAwsInstanceCredentials(): Promise<AwsCredentials | undefined> {
+  const role = await getCloudMetadata("iam/security-credentials/", "aws");
+  if (!role) {
+    return;
+  }
+  const body = await getCloudMetadata(`iam/security-credentials/${role.trim()}`, "aws");
+  if (!body) {
+    return;
+  }
+  try {
+    return JSON.parse(body) as AwsCredentials;
+  } catch {
+    return;
+  }
+}
+
+type AwsRequest = {
+  method: string;
+  host: string;
+  path: string;
+  body: string;
+  service: string;
+  region: string;
+  headers: Record<string, string>;
+  credentials: AwsCredentials;
+  date?: Date;
+};
+
+/**
+ * Signs an AWS API request (SigV4). agent.ts and this file are all that is
+ * installed on a CI machine, so there is no SDK to call.
+ * @returns headers, including Authorization
+ */
+function signAwsRequest({
+  method,
+  host,
+  path,
+  body,
+  service,
+  region,
+  headers,
+  credentials,
+  date,
+}: AwsRequest): Record<string, string> {
+  const { AccessKeyId, SecretAccessKey, Token } = credentials;
+  const amzDate = (date ?? new Date()).toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const day = amzDate.slice(0, 8);
+  const bodyHash = sha256(body);
+
+  const signed: Record<string, string> = {
+    ...headers,
+    "host": host,
+    "x-amz-date": amzDate,
+    "x-amz-content-sha256": bodyHash,
+  };
+  if (Token) {
+    signed["x-amz-security-token"] = Token;
+  }
+
+  const canonical = Object.entries(signed)
+    .map(([key, value]): [string, string] => [key.toLowerCase(), `${value}`.trim()])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const canonicalHeaders = canonical.map(([key, value]) => `${key}:${value}\n`).join("");
+  const signedHeaders = canonical.map(([key]) => key).join(";");
+  const canonicalRequest = [method, path, "", canonicalHeaders, signedHeaders, bodyHash].join("\n");
+
+  const scope = `${day}/${region}/${service}/aws4_request`;
+  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256(canonicalRequest)].join("\n");
+
+  const hmac = (key: string | Buffer, data: string) => createHmac("sha256", key).update(data).digest();
+  const signingKey = hmac(hmac(hmac(hmac(`AWS4${SecretAccessKey}`, day), region), service), "aws4_request");
+  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+
+  return {
+    ...signed,
+    "Authorization": `AWS4-HMAC-SHA256 Credential=${AccessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+  };
+}
+
+type AwsSecretOptions = {
+  /** defaults to the instance's region */
+  region?: string;
+  /** defaults to IMDS credentials */
+  credentials?: AwsCredentials;
+};
+
+/** The field of the Secrets Manager GetSecretValue response that is read here. */
+type AwsSecretValue = { SecretString?: string } | null | undefined;
+
+/**
+ * Reads a secret from AWS Secrets Manager using the instance role.
+ */
+async function getAwsSecret(secretId: string, options: AwsSecretOptions = {}): Promise<string | undefined> {
+  const region = options["region"] || (await getCloudMetadata("placement/region", "aws")) || "us-east-1";
+  const credentials = options["credentials"] || (await getAwsInstanceCredentials());
+  if (!credentials) {
+    console.warn("Failed to get AWS secret: no instance credentials");
+    return;
+  }
+
+  const host = `secretsmanager.${region}.amazonaws.com`;
+  const body = JSON.stringify({ SecretId: secretId });
+  const headers = signAwsRequest({
+    method: "POST",
+    host,
+    path: "/",
+    body,
+    service: "secretsmanager",
+    region,
+    credentials,
+    headers: {
+      "Content-Type": "application/x-amz-json-1.1",
+      "X-Amz-Target": "secretsmanager.GetSecretValue",
+    },
+  });
+
+  const { error, body: response } = await curl(`https://${host}/`, {
+    method: "POST",
+    headers,
+    body,
+    json: true,
+    retries: 5,
+  });
+  if (error) {
+    console.warn("Failed to get AWS secret:", error);
+    return;
+  }
+
+  return (response as AwsSecretValue)?.["SecretString"];
+}
+
+/** The field of the managed identity token response that is read here. */
+type AzureIdentityToken = { access_token?: string } | null | undefined;
+
+/** The field of the Key Vault "get secret" response that is read here. */
+type AzureSecretValue = { value?: string } | null | undefined;
+
+/**
+ * Reads a secret from Azure Key Vault using the VM's managed identity.
+ */
+async function getAzureSecret(vaultName: string, secretName: string): Promise<string | undefined> {
+  const identityUrl =
+    "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net";
+  const { error: identityError, body: identity } = await curl(identityUrl, {
+    headers: { "Metadata": "true" },
+    json: true,
+    retries: 10,
+  });
+  const accessToken = (identity as AzureIdentityToken)?.["access_token"];
+  if (identityError || !accessToken) {
+    console.warn("Failed to get Azure managed identity token:", identityError);
+    return;
+  }
+
+  const secretUrl = `https://${vaultName}.vault.azure.net/secrets/${secretName}?api-version=7.4`;
+  const { error, body } = await curl(secretUrl, {
+    headers: { "Authorization": `Bearer ${accessToken}` },
+    json: true,
+    retries: 5,
+  });
+  if (error) {
+    console.warn("Failed to get Azure secret:", error);
+    return;
+  }
+
+  return (body as AzureSecretValue)?.["value"];
+}
+
+function sha256(string: string): string {
+  return createHash("sha256").update(Buffer.from(string)).digest("hex");
+}
 
 // The buildkite-agent registration token, per cloud. AWS builders read
 // Secrets Manager with their instance role; Azure builders read Key Vault

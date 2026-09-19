@@ -36,7 +36,6 @@ import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
-  createLiveOutputFilter,
   getAbi,
   getAbiVersion,
   getArch,
@@ -50,10 +49,8 @@ import {
   getEnv,
   getFileUrl,
   getHostname,
-  getLoggedInUserCountOrDetails,
   getOs,
   getSecret,
-  getShell,
   getWindowsExitReason,
   isAndroid,
   isBuildkite,
@@ -62,17 +59,191 @@ import {
   isLinux,
   isMacOS,
   isWindows,
-  isX64,
   markBuildkiteStepReported,
   parseJunitFileSuites,
   printEnvironment,
   reportAnnotationToBuildKite,
+  spawnSafe as spawnCommandSafe,
+  spawnSync as spawnCommandSync,
   startGroup,
+  stripAnsi as stripAnsiEscapes,
   tmpdir,
-  unzip,
   uploadArtifact,
+  which,
   type JunitFileSuite,
 } from "./utils.ts";
+
+const isX64 = process.arch === "x64";
+
+function escapePowershell(string: string): string {
+  return string.replace(/'/g, "''").replace(/`/g, "``");
+}
+
+async function unzip(filename: string, output?: string): Promise<string> {
+  const destination = output || mkdtempSync(join(tmpdir(), "unzip-"));
+  if (isWindows) {
+    const command = `Expand-Archive -Force -LiteralPath "${escapePowershell(filename)}" -DestinationPath "${escapePowershell(destination)}"`;
+    await spawnCommandSafe(["powershell", "-Command", command]);
+  } else {
+    await spawnCommandSafe(["unzip", "-o", filename, "-d", destination]);
+  }
+  return destination;
+}
+
+function getShell(): string | undefined {
+  if (isWindows) {
+    const pwsh = which(["pwsh", "powershell"]);
+    if (pwsh) {
+      return pwsh;
+    }
+  }
+
+  const sh = which(["bash", "sh"]);
+  if (sh) {
+    return sh;
+  }
+
+  return getEnv("SHELL", false);
+}
+
+type LiveOutputFilterOptions = {
+  /** the runner itself runs in GitHub Actions */
+  github?: boolean;
+  /** the runner itself runs in Buildkite */
+  buildkite?: boolean;
+};
+
+type LiveOutputFilter = ((chunk: string) => string) & { end: () => string };
+
+/**
+ * Creates a filter for the live output of one child process stream, for the CI log.
+ *
+ * The runner spawns every `bun test` with GITHUB_ACTIONS=true so that bun prints each
+ * failure as a `::error` workflow command it can parse, and the file headers as
+ * `::group::` commands. Those lines are for the parser, not for the log: GitHub renders
+ * them as annotations, Buildkite prints them verbatim. So outside GitHub Actions every
+ * line that starts with `::` is dropped. In GitHub Actions the group commands are dropped
+ * (the runner groups the log itself) and the rest is kept for GitHub to render. In
+ * Buildkite a line that starts with one of its group markers (`--- `) is defused too.
+ *
+ * The output arrives in pipe-sized chunks, and bun writes a `::error` line as many small
+ * writes, so a chunk usually ends in the middle of one. An incomplete last line that
+ * starts with `::`, or that is so far only the start of a marker, is held back until
+ * the rest of it arrives. `end()` returns what is still held back when the stream ends.
+ *
+ * @returns the text to write for each chunk
+ */
+function createLiveOutputFilter({
+  github = isGithubAction,
+  buildkite = isBuildkite,
+}: LiveOutputFilterOptions = {}): LiveOutputFilter {
+  const ansi = /(?:\u001b\[[0-9;]*[a-zA-Z])*/.source;
+  const command = `^${ansi}::${github ? "(?:end)?group::" : ""}.*`;
+  const commands = new RegExp(`${command}(?:\r\n|\r|\n)`, "gm");
+  const lastCommand = new RegExp(`${command}\r?$`);
+  const groupMarkers = /^(?:---|\+\+\+|~~~|\^\^\^) /gm;
+  const markers = buildkite ? ["::", "--- ", "+++ ", "~~~ ", "^^^ "] : ["::"];
+
+  /** `line` is an incomplete line. */
+  const holdBack = (line: string) => {
+    const visible = stripAnsiEscapes(line);
+    return (
+      visible.startsWith("::") || markers.some(marker => marker.length > visible.length && marker.startsWith(visible))
+    );
+  };
+
+  let pending = "";
+  let atLineStart = true;
+  const filter = (chunk: string) => {
+    let text = pending + chunk;
+    const startsLine = atLineStart;
+
+    // A trailing \r may be the first half of a \r\n, so the line it ends is not complete yet.
+    // Once written, the next chunk starts a line either way: the \n of a \r\n is an empty one.
+    const endsWithCR = text.endsWith("\r");
+    const searchEnd = endsWithCR ? text.length - 2 : text.length - 1;
+    const lastLineStart = Math.max(text.lastIndexOf("\n", searchEnd), text.lastIndexOf("\r", searchEnd)) + 1;
+    const lastLine = text.slice(lastLineStart);
+    if (lastLine && (lastLineStart > 0 || startsLine) && holdBack(lastLine)) {
+      pending = lastLine;
+      text = text.slice(0, lastLineStart);
+      atLineStart = true;
+    } else {
+      pending = "";
+      if (text) atLineStart = endsWithCR || lastLineStart === text.length;
+    }
+
+    // A chunk that starts in the middle of a line continues a line that was already written.
+    let head = "";
+    if (!startsLine) {
+      const end = /\r\n|\r|\n/.exec(text);
+      const split = end ? end.index + end[0].length : text.length;
+      head = text.slice(0, split);
+      text = text.slice(split);
+    }
+
+    text = text.replace(commands, "");
+    if (buildkite) text = text.replace(groupMarkers, " ");
+    return head + text;
+  };
+  filter.end = () => {
+    const text = pending;
+    pending = "";
+    atLineStart = true;
+    return text.replace(lastCommand, "");
+  };
+  return filter;
+}
+
+function getLoggedInUserCountOrDetails(): number | string | undefined {
+  if (isWindows) {
+    const pwsh = which(["pwsh", "powershell"]);
+    if (pwsh) {
+      const { error, stdout } = spawnCommandSync([
+        pwsh,
+        "-Command",
+        `Get-CimInstance -ClassName Win32_Process -Filter "Name = 'sshd.exe'" | Get-CimAssociatedInstance -Association Win32_SessionProcess | Get-CimAssociatedInstance -Association Win32_LoggedOnUser | Where-Object {$_.Name -ne 'SYSTEM'} | Measure-Object | Select-Object -ExpandProperty Count`,
+      ]);
+      if (!error) {
+        return parseInt(stdout) || undefined;
+      }
+    }
+  }
+
+  const { error, stdout } = spawnCommandSync(["who"]);
+  if (!error) {
+    const users = stdout
+      .split("\n")
+      .filter(line => /tty|pts/i.test(line))
+      // Only count REMOTE logins (have an `(ip)` suffix from sshd). A local
+      // console/auto-login (e.g. cirruslabs CI VM images log the admin user in
+      // on ttys000 at boot) has no source host and isn't a human debugging the
+      // job — waiting for it would hang the runner forever.
+      .filter(line => /\([^)]+\)\s*$/.test(line))
+      .map(line => {
+        // `who` output: `username terminal date time (host)`. The date/time
+        // field has spaces, so a plain split() can't slice it cleanly — take
+        // the first two tokens and pull the host from the trailing `(...)`.
+        const [username, terminal] = line.split(/\s+/);
+        const ip = line.match(/\(([^)]+)\)\s*$/)?.[1] || "";
+        return { username, terminal, ip };
+      });
+
+    if (users.length === 0) {
+      return 0;
+    }
+
+    let message = `${users.length} currently logged in users:`;
+
+    for (const user of users) {
+      message += `\n- ${user.username} on ${user.terminal}${user.ip ? ` from ${user.ip}` : ""}`;
+    }
+
+    return message;
+  }
+
+  return undefined;
+}
 
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();

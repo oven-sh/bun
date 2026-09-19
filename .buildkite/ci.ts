@@ -8,29 +8,262 @@
 import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/utils.ts";
 import {
-  getBootstrapVersion,
-  getBuildkiteEmoji,
+  curl,
   getBuildMetadata,
-  getBuildNumber,
-  getCanaryRevision,
+  getCommit,
   getCommitMessage,
-  getEmoji,
   getEnv,
   getLastSuccessfulBuild,
+  getRepositoryUrl,
   getSecret,
   isBuildkite,
-  isBuildManual,
   isFork,
+  isGithubAction,
   isMainBranch,
   isMergeQueue,
-  parseBoolean,
-  setBuildMetadata,
+  isPullRequest,
+  isWindows,
+  parseGitUrl,
+  readFile,
+  spawn,
   spawnSafe,
   startGroup,
-  toYaml,
   uploadArtifact,
   writeFile,
 } from "../scripts/utils.ts";
+
+function parseGitRepository(url: string | URL): string | undefined {
+  const parsed = parseGitUrl(url);
+  if (parsed) {
+    const { hostname, pathname } = parsed;
+    if (hostname == "github.com") {
+      return pathname.slice(1);
+    }
+  }
+
+  return undefined;
+}
+
+function getRepository(cwd?: string): string | undefined {
+  if (!cwd) {
+    if (isGithubAction) {
+      const repository = getEnv("GITHUB_REPOSITORY", false);
+      if (repository) {
+        return repository;
+      }
+    }
+  }
+
+  const url = getRepositoryUrl(cwd);
+  if (url) {
+    return parseGitRepository(url);
+  }
+
+  return undefined;
+}
+
+function getBuildNumber(): number | undefined {
+  if (isBuildkite) {
+    return parseInt(getEnv("BUILDKITE_BUILD_NUMBER"));
+  }
+
+  if (isGithubAction) {
+    return parseInt(getEnv("GITHUB_RUN_ID"));
+  }
+
+  return undefined;
+}
+
+function isBuildManual(): boolean | undefined {
+  if (isBuildkite) {
+    const buildSource = getEnv("BUILDKITE_SOURCE", false);
+    if (buildSource) {
+      const buildId = getEnv("BUILDKITE_REBUILT_FROM_BUILD_ID", false);
+      return buildSource === "ui" && !buildId;
+    }
+  }
+
+  return undefined;
+}
+
+function getBootstrapVersion(os?: string): number {
+  const scriptPath = join(
+    import.meta.dirname,
+    "..",
+    "scripts",
+    os === "windows" || (!os && isWindows) ? "bootstrap.ps1" : "bootstrap.sh",
+  );
+  const scriptContent = readFile(scriptPath, { cache: true });
+  const match = /# Version: (\d+)/.exec(scriptContent);
+  if (match) {
+    const version = match[1]!;
+    return parseInt(version);
+  }
+  return 0;
+}
+
+function parseBoolean(value: string): boolean | undefined {
+  if (/^(true|yes|1|on)$/i.test(value)) {
+    return true;
+  }
+  if (/^(false|no|0|off)$/i.test(value)) {
+    return false;
+  }
+
+  return undefined;
+}
+
+async function setBuildMetadata(name: string, value: string): Promise<void> {
+  if (isBuildkite) {
+    const { error } = await spawn(["buildkite-agent", "meta-data", "set", name, value]);
+    if (error) {
+      console.error(`Failed to set build meta-data '${name}':`, error);
+    }
+  }
+}
+
+/** The fields of GitHub's "get the latest release" response that are read here. */
+type GithubRelease = { tag_name: string };
+
+/** The fields of GitHub's "compare two commits" response that are read here. */
+type GithubComparison = { ahead_by?: unknown };
+
+async function getCanaryRevision(): Promise<number> {
+  if (isPullRequest() || isFork()) {
+    return 1;
+  }
+
+  const repository = getRepository() || "oven-sh/bun";
+  const { error: releaseError, body: release } = await curl(
+    new URL(`repos/${repository}/releases/latest`, getGithubApiUrl()),
+    { json: true },
+  );
+  if (releaseError) {
+    return 1;
+  }
+
+  const commit = getCommit();
+  const { tag_name: latest } = release as GithubRelease;
+  const { error: compareError, body: compare } = await curl(
+    new URL(`repos/${repository}/compare/${latest}...${commit}`, getGithubApiUrl()),
+    { json: true },
+  );
+  if (compareError) {
+    return 1;
+  }
+
+  const { ahead_by: revision } = compare as GithubComparison;
+  if (typeof revision === "number") {
+    return revision;
+  }
+
+  return 1;
+}
+
+function getGithubApiUrl(): URL {
+  return new URL(getEnv("GITHUB_API_URL", false) || "https://api.github.com");
+}
+
+function toYaml(obj: object, indent = 0): string {
+  const spaces = " ".repeat(indent);
+  let result = "";
+  const entries: [string, unknown][] = Object.entries(obj);
+  for (const [key, value] of entries) {
+    if (value === undefined) {
+      continue;
+    }
+    if (value === null) {
+      result += `${spaces}${key}: null\n`;
+      continue;
+    }
+    if (Array.isArray(value)) {
+      result += `${spaces}${key}:\n`;
+      value.forEach((item: unknown) => {
+        if (typeof item === "object" && item !== null) {
+          result += `${spaces}- \n${toYaml(item, indent + 2)
+            .split("\n")
+            .map(line => `${spaces}  ${line}`)
+            .join("\n")}\n`;
+        } else {
+          result += `${spaces}- ${item}\n`;
+        }
+      });
+      continue;
+    }
+    if (typeof value === "object") {
+      result += `${spaces}${key}:\n${toYaml(value, indent + 2)}`;
+      continue;
+    }
+    if (
+      typeof value === "string" &&
+      (value.includes(":") ||
+        value.includes("#") ||
+        value.includes("'") ||
+        value.includes('"') ||
+        value.includes("\\") ||
+        value.includes("\n") ||
+        value.includes("*") ||
+        value.includes("&") ||
+        value.includes("!") ||
+        value.includes("|") ||
+        value.includes(">") ||
+        value.includes("%") ||
+        value.includes("@") ||
+        value.includes("`") ||
+        value.includes("{") ||
+        value.includes("}") ||
+        value.includes("[") ||
+        value.includes("]") ||
+        value.includes(",") ||
+        value.includes(";"))
+    ) {
+      result += `${spaces}${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
+      continue;
+    }
+    result += `${spaces}${key}: ${value}\n`;
+  }
+  return result;
+}
+
+type Emoji = keyof typeof emojiMap;
+
+const emojiMap = {
+  darwin: ["🍎", "darwin"],
+  linux: ["🐧", "linux"],
+  debian: ["🐧", "debian"],
+  ubuntu: ["🐧", "ubuntu"],
+  alpine: ["🐧", "alpine"],
+  aws: ["☁️", "aws"],
+  amazonlinux: ["🐧", "aws"],
+  nix: ["🐧", "nix"],
+  windows: ["🪟", "windows"],
+  true: ["✅", "white_check_mark"],
+  false: ["❌", "x"],
+  debug: ["🐞", "bug"],
+  asan: ["🐛", "bug"],
+  assert: ["🔍", "mag"],
+  release: ["🏆", "trophy"],
+  gear: ["⚙️", "gear"],
+  clipboard: ["📋", "clipboard"],
+  package: ["📦", "package"],
+  rocket: ["🚀", "rocket"],
+  openbsd: ["🐡", "openbsd"],
+  netbsd: ["🚩", "netbsd"],
+  freebsd: ["😈", "freebsd"],
+};
+
+function getEmoji(emoji: Emoji): string {
+  const [unicode] = emojiMap[emoji] || [];
+  return unicode || "";
+}
+
+/**
+ * @link https://github.com/buildkite/emojis#emoji-reference
+ */
+function getBuildkiteEmoji(emoji: Emoji): string {
+  const [, name] = emojiMap[emoji] || [];
+  return name ? `:${name}:` : "";
+}
 
 /** A target's abi. glibc is the absence of one, so "gnu" is never spelled here. */
 type Abi = Exclude<HostAbi, "gnu">;

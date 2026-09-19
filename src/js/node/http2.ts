@@ -3332,7 +3332,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
+    const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
     options = { ...options };
 
     // Payload/DATA frames are not permitted in these cases
@@ -3392,7 +3392,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
+    const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -3465,13 +3465,9 @@ class ServerHttp2Stream extends Http2Stream {
     // Pre-validate single-value headers in JS so a throwing additionalHeaders() leaves no partial
     // state in the shared HPACK table (same rule request() applies).
     if (this[bunHTTP2Session]?.[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
-    let hasStatus = true;
-    if (headers[HTTP2_HEADER_STATUS] === undefined) {
-      headers[HTTP2_HEADER_STATUS] = 200;
-      hasStatus = false;
-    }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
-    if (hasStatus) {
+    // Like node, a block without :status goes out as given; only a present status is validated.
+    if (headers[HTTP2_HEADER_STATUS] != null) {
+      const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
       if (statusCode === HTTP_STATUS_SWITCHING_PROTOCOLS) throw $ERR_HTTP2_STATUS_101();
       if (statusCode < 100 || statusCode >= 200) {
         throw $ERR_HTTP2_INVALID_INFO_STATUS(statusCode);
@@ -3590,12 +3586,9 @@ class ServerHttp2Stream extends Http2Stream {
       }
       statusCode = headers[HTTP2_HEADER_STATUS] |= 0;
     }
-    // RFC 9113 8.1.1 removes 101 (Switching Protocols) from HTTP/2; node uses a dedicated code.
-    if (statusCode === 101) {
-      throw $ERR_HTTP2_STATUS_101();
-    }
-    // RFC 9110: only 1xx-5xx status codes exist; node rejects anything outside 100-599.
-    if (statusCode < 100 || statusCode > 599) {
+    // node's validatePreparedResponseHeaders: a final response is 2xx-5xx. A 1xx block is sent
+    // with additionalHeaders() instead.
+    if (statusCode < 200 || statusCode > 599) {
       throw $ERR_HTTP2_STATUS_INVALID(statusCode);
     }
     let endStream = !!options?.endStream;

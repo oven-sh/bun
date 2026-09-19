@@ -2447,9 +2447,9 @@ impl<'a> Resolver<'a> {
         }
         let source_dir = bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO);
 
-        if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
+        if is_package_path(specifier) {
             let mut busted = false;
-            self.for_each_tsconfig_target(source_dir, specifier, &mut |this, abs| {
+            self.for_each_tsconfig_paths_target_from(source_dir, specifier, &mut |this, abs| {
                 // `@/dir/` maps to a path that ends in a separator.
                 let abs = strings::without_trailing_slash_windows_path(abs);
                 let dir = bun_paths::dirname_platform(abs, bun_paths::Platform::AUTO);
@@ -4932,8 +4932,8 @@ impl<'a> Resolver<'a> {
         false
     }
 
-    /// Visits each path the tsconfig enclosing `source_dir` maps `specifier` to.
-    pub fn for_each_tsconfig_target(
+    /// Visits each target the tsconfig `paths` enclosing `source_dir` map `specifier` to.
+    pub fn for_each_tsconfig_paths_target_from(
         &mut self,
         source_dir: &[u8],
         specifier: &[u8],
@@ -4948,21 +4948,13 @@ impl<'a> Resolver<'a> {
         let Some(tsconfig) = dir_info.enclosing_tsconfig_json else {
             return;
         };
-        if tsconfig.paths.count() > 0 {
-            self.for_each_tsconfig_paths_target(tsconfig, specifier, &mut |this, abs| {
-                visit(this, abs);
-                false
-            });
+        if tsconfig.paths.count() == 0 {
+            return;
         }
-        if tsconfig.has_base_url() {
-            let base: &[u8] = &tsconfig.base_url;
-            if let Some(abs) = self.fs_ref().abs_buf_checked(
-                &[base, specifier],
-                bufs!(load_as_file_or_directory_via_tsconfig_base_path),
-            ) {
-                visit(self, abs);
-            }
-        }
+        self.for_each_tsconfig_paths_target(tsconfig, specifier, &mut |this, abs| {
+            visit(this, abs);
+            false
+        });
     }
 
     /// A `paths` substitution written as a declaration file exists for type checking

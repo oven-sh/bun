@@ -1235,13 +1235,15 @@ impl DirectoryWatchStore {
 
         let source_dir =
             bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source);
-        let is_relative = specifier.starts_with(b"./") || specifier.starts_with(b"../");
 
         let mut dirs: Vec<Box<[u8]>> = Vec::new();
         let mut specifier_to_resolve: Box<[u8]> = Box::from(specifier);
         match loader {
             Loader::Tsx | Loader::Ts | Loader::Jsx | Loader::Js => {
-                if !is_relative {
+                if bun_paths::is_absolute(specifier) {
+                    return Ok(());
+                }
+                if bun_paths::is_package_path_not_absolute(specifier) {
                     let dev = self.owner();
                     // SAFETY: `server_transpiler` is initialized before the
                     // bundler can report a failure. `owner()` recovers the
@@ -1249,15 +1251,22 @@ impl DirectoryWatchStore {
                     // from `directory_watchers`.
                     unsafe { (*dev).server_transpiler.assume_init_mut() }
                         .resolver
-                        .for_each_tsconfig_target(source_dir, specifier, &mut |_, abs| {
-                            let abs =
-                                bun_paths::string_paths::without_trailing_slash_windows_path(abs);
-                            let dir =
-                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(abs);
-                            if !dirs.iter().any(|d| **d == *dir) {
-                                dirs.push(Box::from(dir));
-                            }
-                        });
+                        .for_each_tsconfig_paths_target_from(
+                            source_dir,
+                            specifier,
+                            &mut |_, abs| {
+                                let abs =
+                                    bun_paths::string_paths::without_trailing_slash_windows_path(
+                                        abs,
+                                    );
+                                let dir = bun_paths::resolve_path::dirname::<
+                                    bun_paths::platform::Auto,
+                                >(abs);
+                                if !dirs.iter().any(|d| **d == *dir) {
+                                    dirs.push(Box::from(dir));
+                                }
+                            },
+                        );
                     if dirs.is_empty() {
                         return Ok(());
                     }

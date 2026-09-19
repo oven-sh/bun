@@ -797,31 +797,66 @@ fn refetch_manifest_for_missing_version(
             );
         }
 
-        let needs_extended_manifest = this.options.minimum_release_age_ms.is_some();
-        let this_ptr: *mut PackageManager = this;
-        let network_task = this.get_network_task();
-        // SAFETY: `network_task` is the unique handle to a freshly-vended
-        // pool slot. `write_init` resets every defaulted field (callback is
-        // uninitialized and overwritten by `for_manifest`).
-        unsafe {
-            NetworkTask::write_init(network_task, task_id, this_ptr, None);
-        }
-        let scope = this.scope_for_package_name(&name_str);
         // `loaded_manifest: None` keeps `If-None-Match` / `If-Modified-Since`
         // out of the request so a stale 304 cannot re-stamp the old manifest.
-        // SAFETY: `network_task` points to a valid initialized NetworkTask slot.
-        unsafe {
-            (*network_task).for_manifest(
-                &name_str,
-                scope,
-                None,
-                dependency.behavior.is_optional(),
-                needs_extended_manifest,
-            )?;
-        }
-        enqueue_network_task(this, network_task);
+        let needs_extended_manifest = this.options.minimum_release_age_ms.is_some();
+        enqueue_manifest_network_task(
+            this,
+            task_id,
+            &name_str,
+            None,
+            dependency.behavior.is_optional(),
+            needs_extended_manifest,
+        )?;
     }
 
+    queue_dependency_on_task(this, task_id, id, is_root)?;
+    Ok(true)
+}
+
+/// Vends a network-task slot for the manifest of `name` and enqueues it.
+/// `loaded_manifest` supplies the etag / last-modified for a conditional
+/// request; `None` sends an unconditional one.
+fn enqueue_manifest_network_task(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    name: &[u8],
+    loaded_manifest: Option<&Npm::PackageManifest>,
+    is_optional: bool,
+    needs_extended_manifest: bool,
+) -> crate::Result<()> {
+    let this_ptr: *mut PackageManager = this;
+    // `get_network_task` touches only the preallocated pool, not
+    // `string_bytes`, so `name` (an owned copy at every caller) stays valid.
+    let network_task = this.get_network_task();
+    // SAFETY: `network_task` is the unique handle to a freshly-vended pool
+    // slot. `write_init` resets every defaulted field (callback is
+    // uninitialized and overwritten by `for_manifest`).
+    unsafe {
+        NetworkTask::write_init(network_task, task_id, this_ptr, None);
+    }
+    let scope = this.scope_for_package_name(name);
+    // SAFETY: `network_task` points to a valid initialized NetworkTask slot.
+    unsafe {
+        (*network_task).for_manifest(
+            name,
+            scope,
+            loaded_manifest,
+            is_optional,
+            needs_extended_manifest,
+        )?;
+    }
+    enqueue_network_task(this, network_task);
+    Ok(())
+}
+
+/// Re-enqueues dependency `id` when the task `task_id` completes.
+fn queue_dependency_on_task(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    id: DependencyID,
+    is_root: bool,
+) -> crate::Result<()> {
     let manifest_entry_parse = this.task_queue.get_or_put_context(task_id, ())?;
     if !manifest_entry_parse.found_existing {
         *manifest_entry_parse.value_ptr = TaskCallbackList::default();
@@ -831,7 +866,7 @@ fn refetch_manifest_for_missing_version(
     } else {
         TaskCallbackContext::Dependency(id)
     });
-    Ok(true)
+    Ok(())
 }
 
 /// Q: "What do we do with a dependency in a package.json?"
@@ -1387,49 +1422,21 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     );
                                 }
 
-                                // `get_network_task` touches only the
-                                // preallocated pool, not `string_bytes`;
-                                // `name_str` is an owned copy, so `this` is
-                                // free to reborrow `&mut`.
-                                let network_task = this.get_network_task();
-                                // SAFETY: `network_task` is the unique handle to a
-                                // freshly-vended pool slot. `write_init` resets every
-                                // defaulted field (callback is uninitialized and
-                                // overwritten by `for_manifest`).
-                                unsafe {
-                                    NetworkTask::write_init(network_task, task_id, this_ptr, None);
-                                }
-
-                                let scope = this.scope_for_package_name(&name_str);
-                                // SAFETY: network_task points to a valid initialized NetworkTask slot
-                                unsafe {
-                                    (*network_task).for_manifest(
-                                        &name_str,
-                                        scope,
-                                        loaded_manifest.as_ref(),
-                                        dependency.behavior.is_optional(),
-                                        needs_extended_manifest,
-                                    )?;
-                                }
-                                enqueue_network_task(this, network_task);
+                                enqueue_manifest_network_task(
+                                    this,
+                                    task_id,
+                                    &name_str,
+                                    loaded_manifest.as_ref(),
+                                    dependency.behavior.is_optional(),
+                                    needs_extended_manifest,
+                                )?;
                             }
                         } else {
                             this.peer_dependencies.write_item(id)?;
                             return Ok(());
                         }
 
-                        let manifest_entry_parse =
-                            this.task_queue.get_or_put_context(task_id, ())?;
-                        if !manifest_entry_parse.found_existing {
-                            *manifest_entry_parse.value_ptr = TaskCallbackList::default();
-                        }
-
-                        let ctx = if is_root {
-                            TaskCallbackContext::RootDependency(id)
-                        } else {
-                            TaskCallbackContext::Dependency(id)
-                        };
-                        manifest_entry_parse.value_ptr.push(ctx);
+                        queue_dependency_on_task(this, task_id, id, is_root)?;
                     }
                     return Ok(());
                 }

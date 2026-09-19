@@ -1180,30 +1180,74 @@ describe("outbound padding (RFC 9113 §6.1/§6.2, paddingStrategy)", () => {
     );
   });
 
+  /**
+   * The HEADERS frame of a request from a client that pads with `paddingStrategy`, as a raw server
+   * reads it. The server announces `peerMaxFrameSize` as SETTINGS_MAX_FRAME_SIZE when it is given,
+   * and the client has that setting before it sends the request.
+   */
+  async function requestHeaders(
+    paddingStrategy: number,
+    headers: http2.OutgoingHttpHeaders,
+    options?: http2.ClientSessionRequestOptions,
+    peerMaxFrameSize?: number,
+  ): Promise<Frame> {
+    const raw = await RawH2Server.listen();
+    try {
+      const client = http2.connect(`http://127.0.0.1:${raw.port}`, { paddingStrategy });
+      client.on("error", () => {});
+      try {
+        if (peerMaxFrameSize !== undefined) {
+          // The raw server has its socket once the client's SETTINGS frame is in.
+          await raw.waitFor(f => f.type === FrameType.SETTINGS);
+          const settings = Buffer.alloc(6);
+          settings.writeUInt16BE(0x5, 0); // SETTINGS_MAX_FRAME_SIZE
+          settings.writeUInt32BE(peerMaxFrameSize, 2);
+          raw.sendFrame(FrameType.SETTINGS, 0, 0, settings);
+          await once(client, "remoteSettings");
+        }
+        const req = client.request({ ":path": "/", ":authority": "localhost", ...headers }, options);
+        req.on("error", () => {});
+        return await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      raw.close();
+    }
+  }
+
+  // nghttp2 never pads a HEADERS frame past 16384 bytes of payload (NGHTTP2_MAX_PAYLOADLEN), also
+  // for a peer that allows larger frames, and it does not pad a larger header block at all.
+  test.each<[string, number, number, boolean]>([
+    ["PADDING_STRATEGY_MAX", 16180, PADDING_STRATEGY_MAX, true],
+    ["PADDING_STRATEGY_MAX", 16400, PADDING_STRATEGY_MAX, false],
+    ["PADDING_STRATEGY_ALIGNED", 16400, PADDING_STRATEGY_ALIGNED, false],
+  ])(
+    "%s keeps the padding of a HEADERS frame within 16384 bytes for a peer that allows more (%i-byte header)",
+    async (_, valueBytes, paddingStrategy, fits) => {
+      // "!" is never Huffman coded, so the block is a few bytes longer than the value.
+      const headers = { "x-big": Buffer.alloc(valueBytes, "!").toString() };
+      const plain = await requestHeaders(PADDING_STRATEGY_NONE, headers, undefined, 32768);
+      const padded = await requestHeaders(paddingStrategy, headers, undefined, 32768);
+      // The premise: the unpadded block is just under 16384 bytes, or just over.
+      expect({ under: plain.length < 16384, near: Math.abs(16384 - plain.length) < 256 }).toEqual({
+        under: fits,
+        near: true,
+      });
+      expect({ flags: padded.flags, payload: padded.payload.toString("hex") }).toEqual(
+        withPadding(plain, fits ? 16384 - plain.length - 1 : null),
+      );
+    },
+  );
+
   // RFC 9113 §6.2 puts Pad Length first and the priority fields second. The priority fields are
   // part of the payload that PADDING_STRATEGY_ALIGNED aligns.
   test.each<[string, number, (n: number) => number | null]>([
     ["PADDING_STRATEGY_ALIGNED", PADDING_STRATEGY_ALIGNED, n => aligned(n).padLength],
     ["PADDING_STRATEGY_MAX", PADDING_STRATEGY_MAX, () => 255],
   ])("%s pads a HEADERS frame that carries priority fields", async (_, paddingStrategy, padLength) => {
-    async function requestHeaders(strategy: number): Promise<Frame> {
-      const raw = await RawH2Server.listen();
-      try {
-        const client = http2.connect(`http://127.0.0.1:${raw.port}`, { paddingStrategy: strategy });
-        client.on("error", () => {});
-        try {
-          const req = client.request({ ":path": "/", ":authority": "localhost" }, { exclusive: true });
-          req.on("error", () => {});
-          return await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
-        } finally {
-          client.destroy();
-        }
-      } finally {
-        raw.close();
-      }
-    }
-    const plain = await requestHeaders(PADDING_STRATEGY_NONE);
-    const padded = await requestHeaders(paddingStrategy);
+    const plain = await requestHeaders(PADDING_STRATEGY_NONE, {}, { exclusive: true });
+    const padded = await requestHeaders(paddingStrategy, {}, { exclusive: true });
     // The premise: priority fields that start with the exclusive bit, and a length that
     // PADDING_STRATEGY_ALIGNED has to pad.
     expect({

@@ -94,6 +94,11 @@ const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1
 /// The padding of a PADDED frame: zeros (RFC 9113 6.1), at most as many as Pad Length can count.
 static ZERO_PADDING: [u8; u8::MAX as usize] = [0; u8::MAX as usize];
 
+/// nghttp2 never pads a HEADERS frame past this payload size (NGHTTP2_MAX_PAYLOADLEN), whatever
+/// frame size the peer allows:
+/// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L1883-L1884
+const MAX_PADDED_HEADERS_PAYLOAD: usize = 16384;
+
 /// `Copy` view of [`NativeSocket`] for call sites to snapshot across
 /// re-entrant writes. BACKREF — the socket strictly outlives the attachment:
 /// `Tls`/`Tcp` are kept alive by the `RefPtr<H2FrameParser>` stored in the
@@ -7102,7 +7107,10 @@ impl H2FrameParser {
         // Padding aligns the whole payload, priority fields included. CONTINUATION frames cannot
         // carry padding: get_padding() only pads a payload that fits one frame, so the
         // CONTINUATION branch below never sees a padded block.
-        let padding = stream.get_padding(encoded_size + priority_overhead, actual_max_frame_size);
+        let padding = stream.get_padding(
+            encoded_size + priority_overhead,
+            actual_max_frame_size.min(MAX_PADDED_HEADERS_PAYLOAD),
+        );
         let payload_size = encoded_size + priority_overhead + Stream::padding_overhead(padding);
 
         let mut writer = this.to_writer();

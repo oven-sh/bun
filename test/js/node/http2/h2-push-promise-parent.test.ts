@@ -41,6 +41,7 @@ class RawH2Server {
   socket: net.Socket | null = null;
   private buf: Buffer = Buffer.alloc(0);
   private sawPreface = false;
+  private closed = false;
   frames: Frame[] = [];
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void; reject: (e: Error) => void }> = [];
 
@@ -56,8 +57,8 @@ class RawH2Server {
       socket.on("data", d => s.onData(d));
       socket.on("error", () => {});
       socket.on("close", () => {
-        for (const w of s.waiters.splice(0))
-          w.reject(new Error("the connection closed before the awaited frame arrived"));
+        s.closed = true;
+        for (const w of s.waiters.splice(0)) w.reject(RawH2Server.closedError());
       });
     });
     server.listen(0, "127.0.0.1");
@@ -67,6 +68,10 @@ class RawH2Server {
 
   get port(): number {
     return (this.server.address() as net.AddressInfo).port;
+  }
+
+  private static closedError() {
+    return new Error("the connection closed before the awaited frame arrived");
   }
 
   private onData(d: Buffer) {
@@ -101,6 +106,7 @@ class RawH2Server {
   waitFor(pred: (f: Frame) => boolean): Promise<Frame> {
     const existing = this.frames.find(pred);
     if (existing) return Promise.resolve(existing);
+    if (this.closed) return Promise.reject(RawH2Server.closedError());
     const { promise, resolve, reject } = Promise.withResolvers<Frame>();
     this.waiters.push({ pred, resolve, reject });
     return promise;

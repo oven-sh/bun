@@ -114,6 +114,8 @@ it("req.socket emits 'pause' on every body-bearing keep-alive request, not just 
   }
 });
 
+const bunOnlyIt = process.versions.bun ? it : it.skip;
+
 // A chunked body whose first chunk alone overflows a 1 KiB highWaterMark: the
 // first push() pauses the connection while the parser is still inside this
 // segment, so the chunk after it and the terminating chunk are received while
@@ -154,6 +156,19 @@ async function connectTo(server: Server) {
       return promise;
     },
   };
+}
+
+// One whole exchange on a connection of its own. Once its response is here,
+// the server has polled its sockets again, so it has seen (or put off) every
+// byte and FIN that was written before this call.
+async function roundTrip(server: Server) {
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  socket.on("error", () => {});
+  let response = "";
+  socket.on("data", chunk => (response += chunk));
+  socket.write("GET /ping HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+  await once(socket, "close");
+  expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("pong");
 }
 
 async function disconnectAndClose(socket: Socket, server: Server) {
@@ -403,6 +418,68 @@ describe("request whose whole body is in the segment that paused the connection"
       client.socket.write(chunkedPost("/read", headers));
       await client.receive("alpha");
       expect(await body).toBe(BODY_HEAD + BODY_TAIL);
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  // The connection stays paused until the request is read, although the
+  // request is complete. What the peer sends next has to wait for the reader.
+  function serveWhenReleased(released: Promise<void>, onHeld = () => {}) {
+    return createServer({ highWaterMark: 1024 }, (req, res) => {
+      if (req.url === "/ping") return void res.end("pong");
+      const read = () => {
+        let length = 0;
+        req.on("data", chunk => (length += chunk.length));
+        req.on("end", () => res.end(`${req.url}:${length};`));
+      };
+      if (req.url !== "/held") return read();
+      released.then(read);
+      onHeld();
+    });
+  }
+
+  it("serves a request that streams its body behind it on the same connection", async () => {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    const { promise: held, resolve: onHeld } = Promise.withResolvers<void>();
+    const server = serveWhenReleased(released, onHeld);
+    try {
+      const client = await connectTo(server);
+      client.socket.write(chunkedPost("/held"));
+      // The next request must come in a later read than the end of this body.
+      await held;
+      const half = Buffer.alloc(50_000, "y").toString();
+      client.socket.write(`POST /streamed HTTP/1.1\r\nHost: a\r\nContent-Length: ${2 * half.length}\r\n\r\n${half}`);
+      await roundTrip(server);
+      release();
+      await client.receive(`/held:${BODY_HEAD.length + BODY_TAIL.length};`);
+      client.socket.write(half);
+      await client.receive(`/streamed:${2 * half.length};`);
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  // Node reads the FIN as soon as the request is complete and aborts the request.
+  bunOnlyIt("does not act on the peer's FIN before the request is read", async () => {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    const server = serveWhenReleased(released);
+    try {
+      const client = await connectTo(server);
+      let response = "";
+      client.socket.on("data", chunk => (response += chunk));
+      // An aborted request resets the connection. The assertion below reports it.
+      client.socket.on("error", () => {});
+      client.socket.end(chunkedPost("/held", "Connection: close\r\n"));
+      await once(client.socket, "finish");
+      await roundTrip(server);
+      release();
+      if (!client.socket.closed) await once(client.socket, "close");
+      expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe(`/held:${BODY_HEAD.length + BODY_TAIL.length};`);
       await disconnectAndClose(client.socket, server);
     } finally {
       server.closeAllConnections();

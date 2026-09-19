@@ -60,14 +60,10 @@ function onIncomingMessagePauseNodeHTTPResponse(this: IncomingMessage) {
 function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
   const handle = this[kHandle];
   if (handle && !this.destroyed) {
-    const resumed = handle.resume();
-    if (resumed && resumed !== true) {
-      const bodyReadState = handle.hasBody;
-      if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
-        emitEOFIncomingMessage(this);
-      }
-      this.push(resumed);
-    }
+    handle.resume();
+    // The last chunk can leave the connection paused, and _read() does not run again for a request that has ended.
+    const socket = this.upgrade ? undefined : this.socket;
+    if (socket && !socket._paused && socket.readable && socket.isPaused()) socket.resume();
   }
 }
 
@@ -395,13 +391,6 @@ IncomingMessage.prototype._read = function _read(_n) {
     this._dumped
   ) {
     emitEOFIncomingMessage(this);
-  }
-
-  if ((bodyReadState & NodeHTTPBodyReadState.hasBufferedDataDuringPause) !== 0) {
-    const drained = handle.drainRequestBody();
-    if (drained && !this._dumped) {
-      this.push(drained);
-    }
   }
 
   if (!handle.ondata) {

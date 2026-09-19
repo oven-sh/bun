@@ -68,7 +68,6 @@ export const enum NodeHTTPBodyReadState {
   none,
   pending = 1 << 1,
   done = 1 << 2,
-  hasBufferedDataDuringPause = 1 << 3,
 }
 
 // Must be kept in sync with NodeHTTPResponse.Flags
@@ -180,6 +179,9 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
   const socket = this.socket;
   socket?._unrefTimer?.();
 
+  // A connection that this request paused before its last chunk stays paused until the request is read or answered.
+  const keepPaused = isLast && !this.upgrade && socket && (socket.isPaused() || this.isPaused());
+
   if (chunk && !this._dumped) {
     if (!this.push(chunk)) {
       // Like Node's parserOnBody: pause the connection once the buffer fills.
@@ -194,7 +196,7 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
     emitEOFIncomingMessage(this);
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
-    if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
+    if (!keepPaused && !this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
   }
 }
 

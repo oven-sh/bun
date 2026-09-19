@@ -47,8 +47,6 @@ const {
   STATUS_CODES,
   isTlsSymbol,
   hasServerResponseFinished,
-  NodeHTTPBodyReadState,
-  eofInProgress,
   drainMicrotasks,
   setServerCustomOptions,
   setServerAppFlags,
@@ -1773,32 +1771,11 @@ function getNodeHTTPServerSocket() {
         // body keeps draining (Node's UpgradeStream._read). Request-body bytes
         // belong to the request stream, never to the raw upgrade stream, and the
         // socket does not end when the request body does.
-        if (response) {
-          const resumed = response.resume();
-          if (resumed && resumed !== true) {
-            upgradeIncoming.push(resumed);
-          }
-        }
+        response?.resume();
         upgradeIncoming.resume();
         return;
       }
-      if (response) {
-        const resumed = response.resume();
-        if (resumed && resumed !== true) {
-          const bodyReadState = handle.hasBody;
-
-          const message = this._httpMessage;
-          const req = message?.req;
-
-          if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
-            emitServerSocketEOFNT(this, req);
-          }
-          if (req) {
-            req.push(resumed);
-          }
-          this.push(resumed);
-        }
-      }
+      response?.resume();
     }
 
     _read(_size) {
@@ -3720,21 +3697,6 @@ function updateHasBody(response, statusCode) {
   // No else: Node.js never sets _hasBody back to true here, so a HEAD
   // request's response (set in the constructor) stays body-less whatever
   // status writeHead() picks.
-}
-
-function emitServerSocketEOF(self, req) {
-  self.push(null);
-  if (req) {
-    req.push(null);
-    req.complete = true;
-  }
-}
-
-function emitServerSocketEOFNT(self, req) {
-  if (req) {
-    req[eofInProgress] = true;
-  }
-  process.nextTick(emitServerSocketEOF, self);
 }
 
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;

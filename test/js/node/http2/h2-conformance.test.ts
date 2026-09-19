@@ -7,7 +7,7 @@
 // Connection-level cases only here (no HPACK required): preface, SETTINGS handshake/ack, PING,
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
@@ -797,6 +797,127 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       client.destroy();
       raw.close();
     }
+  });
+
+  // RFC 9113 §6.6: an endpoint that reset a stream still has to handle a PUSH_PROMISE the peer
+  // created on it before the reset arrived. nghttp2_session_on_push_promise_received refuses the
+  // promised stream with RST_STREAM(CANCEL) when the associated stream is gone or closing:
+  // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4613-L4627
+  const serverSettings = Buffer.concat([
+    encodeFrame(FrameType.SETTINGS, 0, 0),
+    encodeFrame(FrameType.SETTINGS, 0x1 /* ACK */, 0),
+  ]);
+  /** Response HEADERS on stream 1: [:status 200]. */
+  const responseHeaders = (flags: number) => encodeFrame(FrameType.HEADERS, flags, 1, Buffer.from([0x88]));
+  /** PUSH_PROMISE on stream 1 reserving stream 2, then the whole pushed response on stream 2. */
+  function pushOnStream1(): Buffer {
+    const promised = Buffer.alloc(4);
+    promised.writeUInt32BE(2, 0);
+    // [:method GET, :scheme http, :path /, :authority localhost]
+    const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+    return Buffer.concat([
+      encodeFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block])),
+      encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 2, Buffer.from([0x88])),
+      encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 2, Buffer.from("pushed")),
+    ]);
+  }
+  /**
+   * Sends one request (stream 1) to a raw server. `serve` writes the server's frames once the
+   * request HEADERS arrived. The PING ACK that ends the exchange follows every frame the client
+   * sent in reply to them.
+   */
+  async function pushExchange(
+    onResponse: (req: http2.ClientHttp2Stream) => void,
+    serve: (raw: RawH2Server) => void | Promise<void>,
+  ) {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    const onStream = mock((pushed: http2.ClientHttp2Stream) => {
+      pushed.on("error", () => {});
+    });
+    client.on("stream", onStream);
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.once("response", () => onResponse(req));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      await serve(raw);
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      return {
+        pushedStreams: onStream.mock.calls.length,
+        resetsOnStream2: raw.frames
+          .filter(f => f.type === FrameType.RST_STREAM && f.streamId === 2)
+          .map(f => f.payload.readUInt32BE(0)),
+      };
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }
+  // One write: the client parses the PUSH_PROMISE in the read that delivered the response.
+  const pushInSameReadAsResponse = (raw: RawH2Server) => {
+    raw.socket!.write(
+      Buffer.concat([
+        serverSettings,
+        responseHeaders(0x4 /* END_HEADERS */),
+        pushOnStream1(),
+        encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("body")),
+      ]),
+    );
+  };
+
+  // close(NGHTTP2_CANCEL) is left out. Inside a read node holds that RST_STREAM back until the
+  // read ends, so nghttp2 does not see the stream as closing and node surfaces the push:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L2513-L2524
+  test.each([
+    ["destroy()", (req: http2.ClientHttp2Stream) => req.destroy()],
+    ["close()", (req: http2.ClientHttp2Stream) => req.close()],
+  ])(
+    "a PUSH_PROMISE read together with the response is refused once the 'response' listener called %s",
+    async (_, closeRequest) => {
+      // The request is closed in JS only: its RST_STREAM leaves after the rest of the read is parsed.
+      expect(await pushExchange(closeRequest, pushInSameReadAsResponse)).toEqual({
+        pushedStreams: 0,
+        resetsOnStream2: [ErrorCode.CANCEL],
+      });
+    },
+  );
+
+  test("a PUSH_PROMISE on a request stream that stays open surfaces the pushed stream", async () => {
+    expect(await pushExchange(() => {}, pushInSameReadAsResponse)).toEqual({
+      pushedStreams: 1,
+      resetsOnStream2: [],
+    });
+  });
+
+  // node refuses these two as well (the `!stream` arm of the same nghttp2 check). The client still
+  // surfaces the pushed stream, because our own server writes PUSH_PROMISE after the parent's
+  // END_STREAM when end() runs before pushStream() (test-http2-respond-file-push.js does that).
+  test.todo("a PUSH_PROMISE that arrives after the client reset its request stream is refused", async () => {
+    const result = await pushExchange(
+      req => req.close(http2.constants.NGHTTP2_CANCEL),
+      async raw => {
+        raw.socket!.write(Buffer.concat([serverSettings, responseHeaders(0x4 /* END_HEADERS */)]));
+        const rst = await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+        expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.CANCEL);
+        raw.socket!.write(pushOnStream1());
+      },
+    );
+    expect(result).toEqual({ pushedStreams: 0, resetsOnStream2: [ErrorCode.CANCEL] });
+  });
+
+  test.todo("a PUSH_PROMISE on a request stream that already completed is refused", async () => {
+    const result = await pushExchange(
+      () => {},
+      raw => {
+        raw.socket!.write(
+          Buffer.concat([serverSettings, responseHeaders(0x5 /* END_STREAM | END_HEADERS */), pushOnStream1()]),
+        );
+      },
+    );
+    expect(result).toEqual({ pushedStreams: 0, resetsOnStream2: [ErrorCode.CANCEL] });
   });
 });
 

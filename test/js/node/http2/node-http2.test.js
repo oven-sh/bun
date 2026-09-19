@@ -5024,6 +5024,102 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
     server.close();
   }
 });
+it("http2 ServerHttp2Stream validates :status like node (integer conversion, 1xx only in additionalHeaders)", async () => {
+  // Verified on node v26.3.0: additionalHeaders() converts :status with `| 0` before it checks it
+  // and adds no default; respond() rejects 1xx; respondWithFile()/respondWithFD() convert before
+  // the 204/205/304 check and reject a status outside 200..599 synchronously.
+  const calls = {
+    "/info-101-string": stream => stream.additionalHeaders({ ":status": "101" }),
+    "/info-no-status": stream => stream.additionalHeaders({ "x-foo": "bar" }),
+    "/respond-102": stream => stream.respond({ ":status": 102 }),
+    "/file-204-string": stream => stream.respondWithFile(import.meta.path, { ":status": "204" }),
+    "/fd-204-string": stream => stream.respondWithFD(fd, { ":status": "204" }),
+    "/file-102": stream => stream.respondWithFile(import.meta.path, { ":status": 102 }),
+    "/fd-102": stream => stream.respondWithFD(fd, { ":status": 102 }),
+    "/respond-199": stream => stream.respond({ ":status": 199 }),
+    "/respond-599": stream => stream.respond({ ":status": 599 }),
+    "/respond-600": stream => stream.respond({ ":status": 600 }),
+    "/file-600": stream => stream.respondWithFile(import.meta.path, { ":status": 600 }),
+    "/fd-600": stream => stream.respondWithFD(fd, { ":status": 600 }),
+    "/file-600-bad-offset": stream => stream.respondWithFile(import.meta.path, { ":status": 600 }, { offset: "1" }),
+  };
+  const fd = fs.openSync(import.meta.path, "r");
+  const serverResults = {};
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.on("error", () => {});
+    const path = headers[":path"];
+    let threw = false;
+    try {
+      calls[path](stream);
+      serverResults[path] = "no throw";
+    } catch (e) {
+      threw = true;
+      serverResults[path] = e.code;
+    }
+    // Send the final response when the call above did not start one. A file response that did
+    // not throw ends the stream itself.
+    if (threw || path.startsWith("/info-")) stream.respond({ ":status": 200 });
+    if (threw || !(path.startsWith("/file-") || path.startsWith("/fd-"))) stream.end();
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+  try {
+    const clientResults = {};
+    for (const path of Object.keys(calls)) {
+      const seen = [];
+      clientResults[path] = seen;
+      const req = client.request({ ":path": path });
+      await new Promise(resolve => {
+        req.on("headers", h => seen.push(["headers", h[":status"]]));
+        req.on("response", h => seen.push(["response", h[":status"]]));
+        req.on("error", e => seen.push(["error", e.code]));
+        req.on("close", resolve);
+        req.resume();
+        req.end();
+      });
+    }
+    expect(serverResults).toEqual({
+      "/info-101-string": "ERR_HTTP2_STATUS_101",
+      "/info-no-status": "no throw",
+      "/respond-102": "ERR_HTTP2_STATUS_INVALID",
+      "/file-204-string": "ERR_HTTP2_PAYLOAD_FORBIDDEN",
+      "/fd-204-string": "ERR_HTTP2_PAYLOAD_FORBIDDEN",
+      "/file-102": "ERR_HTTP2_STATUS_INVALID",
+      "/fd-102": "ERR_HTTP2_STATUS_INVALID",
+      "/respond-199": "ERR_HTTP2_STATUS_INVALID",
+      "/respond-599": "no throw",
+      "/respond-600": "ERR_HTTP2_STATUS_INVALID",
+      "/file-600": "ERR_HTTP2_STATUS_INVALID",
+      "/fd-600": "ERR_HTTP2_STATUS_INVALID",
+      "/file-600-bad-offset": "ERR_INVALID_ARG_VALUE",
+    });
+    // A HEADERS block without :status is a protocol error for the client, as with node. Only the
+    // stream error is asserted: node's client emits no 'response' for it, bun's client does.
+    const noStatus = clientResults["/info-no-status"];
+    delete clientResults["/info-no-status"];
+    expect(noStatus.at(-1)).toEqual(["error", "ERR_HTTP2_STREAM_ERROR"]);
+    expect(clientResults).toEqual({
+      "/info-101-string": [["response", 200]],
+      "/respond-102": [["response", 200]],
+      "/file-204-string": [["response", 200]],
+      "/fd-204-string": [["response", 200]],
+      "/file-102": [["response", 200]],
+      "/fd-102": [["response", 200]],
+      "/respond-199": [["response", 200]],
+      "/respond-599": [["response", 599]],
+      "/respond-600": [["response", 200]],
+      "/file-600": [["response", 200]],
+      "/fd-600": [["response", 200]],
+      "/file-600-bad-offset": [["response", 200]],
+    });
+  } finally {
+    fs.closeSync(fd);
+    client.close();
+    server.close();
+  }
+});
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

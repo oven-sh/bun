@@ -9,7 +9,9 @@ import {
   gc,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
+  nodeExe,
   tempDir,
   tls as tlsCert,
   tmpdirSync,
@@ -1970,6 +1972,90 @@ describe("paused socket whose peer sends RST", () => {
       server.close();
     }
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+});
+
+// #43381: the events of a socket teardown. Node reports only 'close' after destroy(),
+// and a peer reset with a write in flight surfaces the read error, also when no
+// 'error' listener turns it into a handled one (it is an uncaught exception then).
+// The fixture runs on both runtimes so the expected reports are pinned to node.
+describe("socket teardown events (#43381)", () => {
+  // Prints the events of `holder` (the client or the accepted socket), in order, up to 'close'.
+  const fixture = /* js */ `
+    const net = require("node:net");
+    const { SIDE, SCENARIO } = process.env;
+    const shape = err => (err ? [err.code, err.syscall].filter(Boolean).join(" ") : "ok");
+    const events = [];
+    process.on("uncaughtException", err => events.push("uncaught " + shape(err)));
+    let client, accepted, ready = 0;
+    // A write made inside the 'connect' or 'connection' dispatch is flushed on another native path.
+    const onReady = () => ++ready === 2 && setImmediate(run);
+    const server = net.createServer(socket => {
+      accepted = socket;
+      onReady();
+    });
+    server.listen(0, "127.0.0.1", () => {
+      client = net.connect(server.address().port, "127.0.0.1", onReady);
+    });
+    function run() {
+      const [holder, peer] = SIDE === "client" ? [client, accepted] : [accepted, client];
+      peer.on("error", () => {});
+      holder.on("end", () => events.push("end"));
+      holder.on("close", hadError => {
+        events.push("close " + hadError);
+        setImmediate(() => {
+          console.log(JSON.stringify(events));
+          peer.destroy();
+          server.close();
+        });
+      });
+      if (SCENARIO === "destroy") return holder.destroy();
+      // Write until the kernel stops taking the bytes, so one write is in flight. It has no
+      // callback: what that callback gets (ECANCELED in node) is the business of the destroy,
+      // not of this teardown.
+      const chunk = Buffer.alloc(1024 * 1024, "a");
+      let writes = 0;
+      while (writes < 256 && holder.writableLength === 0) {
+        writes++;
+        holder.write(chunk);
+      }
+      if (holder.writableLength === 0) throw new Error("no write stayed in flight");
+      peer.resetAndDestroy();
+    }
+  `;
+
+  describe.each([
+    ["bun", bunExe()],
+    ["node", nodeExe()],
+  ])("%s", (_runtime, exe) => {
+    async function run(env: Record<string, string>) {
+      await using proc = Bun.spawn({
+        cmd: [exe!, "-e", fixture],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { events: stdout.trim() ? JSON.parse(stdout) : stdout, stderr, exitCode };
+    }
+    const reports = (events: string[]) => ({ events, stderr: "", exitCode: 0 });
+
+    describe.each(["client", "server"])("%s", SIDE => {
+      it.concurrent.skipIf(!exe)("destroy() emits 'close' and no 'end'", async () => {
+        expect(await run({ SIDE, SCENARIO: "destroy" })).toEqual(reports(["close false"]));
+      });
+
+      // Linux only: a loopback RST arrives before the close() that sends it returns, so the
+      // reset is seen as a read error. On Windows a writable event wins and settles the write.
+      it.concurrent.skipIf(!exe || !isLinux)(
+        "a peer reset with a write in flight and no 'error' listener throws the read error",
+        async () => {
+          expect(await run({ SIDE, SCENARIO: "peer reset" })).toEqual(
+            reports(["uncaught ECONNRESET read", "close true"]),
+          );
+        },
+      );
+    });
   });
 });
 

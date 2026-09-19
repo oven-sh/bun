@@ -1414,6 +1414,341 @@ describe("bundler", () => {
     },
   });
 
+  // ValidateNoRefAccessInRender allows one write to a ref during render, the
+  // lazy initialization `if (ref.current == null) { ref.current = ... }`. It
+  // pairs the write with the guard through the id it gave the ref. The port had
+  // two additions that upstream does not have. Each one made the pass reject a
+  // component that upstream compiles:
+  //  - A captured ref got a new id on each visit of a nested function. The
+  //    fixpoint visits every nested function again on each pass, so on the
+  //    second pass the guard no longer matched the ref. One function that
+  //    captures the ref was enough: the first group of components.
+  //  - The side map of temporaries also covered nested functions. There, a
+  //    property load became an alias of its object. `row.ref` in a callback
+  //    made `row` a ref, and the next pass took `row.ref` for a ref value.
+  //    `ref.size` in an event handler made `ref` a ref value for the whole
+  //    component. A function above the declaration of `ref` loads it without a
+  //    type, so `ref.current` did the same there. The second group.
+  //
+  // The third group is what upstream rejects, each time next to a function that
+  // captures the ref. It has the shapes of the upstream fixtures
+  // `error.ref-initialization-*`. Those are Flow files, and the fixture runner
+  // skips them.
+  //
+  // The fake `c` records the size of every memo cache, so the last element of
+  // each result is the `_c(n)` of that component, or `[]` when the compiler
+  // skips it. babel-plugin-react-compiler 1.0.0 and
+  // 0.0.0-experimental-a1856f3-20260507 give the same results.
+  itBundled("react-compiler/LazyRefInitializationNextToAClosureOverTheRef", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useEffect, useRef, useState } from "react";
+        import { sizes } from "react/compiler-runtime";
+
+        const kept = [];
+        const keep = f => kept.push(f);
+        const DEFAULT_VALUE = "default";
+
+        function ClosureBeforeGuard(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          if (ref.current == null) {
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function ClosureInsideGuard(p) {
+          const ref = useRef(null);
+          if (ref.current == null) {
+            const read = () => ref;
+            ref.current = p.init;
+            keep(read);
+          }
+          return <div onClick={kept.pop()}>{p.x}</div>;
+        }
+        function ClosureAfterGuard(p) {
+          const ref = useRef(null);
+          if (ref.current == null) {
+            ref.current = p.init;
+          }
+          const read = () => ref;
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function TwoClosuresAroundGuard(p) {
+          const ref = useRef(null);
+          const write = () => {
+            ref.current = p.x;
+          };
+          if (ref.current === null) {
+            ref.current = p.init;
+          }
+          const read = () => ref;
+          return <div onClick={read} onFocus={write}>{p.x}</div>;
+        }
+        function EffectReadsRef(p) {
+          const ref = useRef(null);
+          if (ref.current == null) {
+            ref.current = p.init;
+          }
+          useEffect(() => {
+            keep(ref.current);
+          }, []);
+          return <div onClick={() => ref}>{p.x}</div>;
+        }
+        function UndefinedGuard(p) {
+          const ref = useRef(undefined);
+          const read = () => ref;
+          if (ref.current === undefined) {
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function ReversedGuard(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          if (null == ref.current) {
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function WriteInElse(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          if (ref.current != null) {
+            keep(p.x);
+          } else {
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        // Upstream does not look at the operator of the guard, so it accepts
+        // this write too.
+        function NotEqualThenWrite(p) {
+          const ref = useRef(p.init);
+          const read = () => ref;
+          if (ref.current != null) {
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+
+        function RefOfAParameterInACallback(p) {
+          const rows = p.rows.map(row => <li ref={row.ref}>{row.label}</li>);
+          return <ul onClick={() => rows[0].props.ref}>{p.x}</ul>;
+        }
+        function ClosureReadsAnotherProperty(p) {
+          const ref = useRef(null);
+          if (ref.current == null) {
+            ref.current = p.init;
+          }
+          const read = () => {
+            keep(ref.size);
+            return ref;
+          };
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function ClosureAboveRefInitializesIt(p) {
+          const init = () => {
+            if (ref.current == null) {
+              ref.current = p.init;
+            }
+          };
+          const ref = useRef(null);
+          init();
+          return <div onClick={() => ref}>{p.x}</div>;
+        }
+
+        function ClosureReadsRefInRender(p) {
+          const ref = useRef(p.init);
+          const read = () => ref.current;
+          const value = read();
+          return <div onClick={() => ref}>{value}</div>;
+        }
+        function StateInitializerReadsRef(p) {
+          const ref = useRef(p.init);
+          const [value] = useState(() => ref.current);
+          return <div onClick={() => ref}>{value}</div>;
+        }
+        function ReadAfterGuard(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          if (ref.current == null) {
+            ref.current = p.init;
+          }
+          const value = ref.current;
+          return <div onClick={read}>{value}</div>;
+        }
+        function SecondWriteInGuard(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          if (ref.current == null) {
+            ref.current = p.x;
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function WriteAfterGuard(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          if (ref.current == null) {
+            ref.current = p.x;
+          }
+          ref.current = p.init;
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function WriteBeforeGuard(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          ref.current = null;
+          if (ref.current == null) {
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function CallInGuard(p) {
+          const ref = useRef(p.init);
+          const read = () => ref;
+          if (ref.current == null) {
+            keep(ref.current);
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function GuardOnAnotherRef(p) {
+          const ref = useRef(null);
+          const other = useRef(null);
+          const read = () => [ref, other][0];
+          if (other.current == null) {
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function GuardOnAnotherValue(p) {
+          const ref = useRef(DEFAULT_VALUE);
+          const read = () => ref;
+          if (ref.current == DEFAULT_VALUE) {
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function GuardInAVariable(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          const empty = ref.current == null;
+          if (empty) {
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function NotGuard(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          if (!ref.current) {
+            ref.current = p.init;
+          }
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function TernaryGuard(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          ref.current == null ? (ref.current = p.init) : null;
+          return <div onClick={read}>{p.x}</div>;
+        }
+        function LogicalAndGuard(p) {
+          const ref = useRef(null);
+          const read = () => ref;
+          ref.current == null && (ref.current = p.init);
+          return <div onClick={read}>{p.x}</div>;
+        }
+
+        function render(fn) {
+          const before = sizes().length;
+          const { props } = fn({ init: "init", x: "x", rows: [{ label: "row", ref: { current: "init" } }] });
+          return [props.onClick().current, props.children, sizes().slice(before)];
+        }
+        const components = {
+          ClosureBeforeGuard,
+          ClosureInsideGuard,
+          ClosureAfterGuard,
+          TwoClosuresAroundGuard,
+          EffectReadsRef,
+          UndefinedGuard,
+          ReversedGuard,
+          WriteInElse,
+          NotEqualThenWrite,
+          RefOfAParameterInACallback,
+          ClosureReadsAnotherProperty,
+          ClosureAboveRefInitializesIt,
+          ClosureReadsRefInRender,
+          StateInitializerReadsRef,
+          ReadAfterGuard,
+          SecondWriteInGuard,
+          WriteAfterGuard,
+          WriteBeforeGuard,
+          CallInGuard,
+          GuardOnAnotherRef,
+          GuardOnAnotherValue,
+          GuardInAVariable,
+          NotGuard,
+          TernaryGuard,
+          LogicalAndGuard,
+        };
+        const results = {};
+        for (const [name, fn] of Object.entries(components)) {
+          results[name] = render(fn);
+        }
+        console.log(JSON.stringify(results));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `
+        exports.useRef = current => ({ current });
+        exports.useState = init => [typeof init === "function" ? init() : init, () => {}];
+        exports.useEffect = () => {};
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const sizes = [];
+        exports.c = size => {
+          sizes.push(size);
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.sizes = () => sizes;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        ClosureBeforeGuard: ["init", "x", [3]],
+        ClosureInsideGuard: ["init", "x", [3]],
+        ClosureAfterGuard: ["init", "x", [3]],
+        TwoClosuresAroundGuard: ["init", "x", [6]],
+        EffectReadsRef: ["init", "x", [5]],
+        UndefinedGuard: ["init", "x", [3]],
+        ReversedGuard: ["init", "x", [3]],
+        WriteInElse: ["init", "x", [3]],
+        NotEqualThenWrite: ["init", "x", [3]],
+        RefOfAParameterInACallback: ["init", "x", [7]],
+        ClosureReadsAnotherProperty: ["init", "x", [3]],
+        ClosureAboveRefInitializesIt: ["init", "x", [5]],
+        ClosureReadsRefInRender: ["init", "init", []],
+        StateInitializerReadsRef: ["init", "init", []],
+        ReadAfterGuard: ["init", "init", []],
+        SecondWriteInGuard: ["init", "x", []],
+        WriteAfterGuard: ["init", "x", []],
+        WriteBeforeGuard: ["init", "x", []],
+        CallInGuard: ["init", "x", []],
+        GuardOnAnotherRef: ["init", "x", []],
+        GuardOnAnotherValue: ["init", "x", []],
+        GuardInAVariable: ["init", "x", []],
+        NotGuard: ["init", "x", []],
+        TernaryGuard: ["init", "x", []],
+        LogicalAndGuard: ["init", "x", []],
+      }),
+    },
+  });
+
   // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces
   // (no operand is reactive, callee isn't a hook), so its scope's deps prune
   // to empty and it becomes a sentinel-only block. Babel does the same; this
@@ -3384,6 +3719,12 @@ test("react-compiler compile time is not exponential in the function nesting dep
 // took 93 seconds, and with three it did not finish. `p.a ? [f] : f` makes the
 // type of `f` twice as large on each pass, so one arrow around it was enough to
 // use memory without bound.
+//
+// The last two rows use a ref in a way that upstream allows. The port reported
+// a ref error in `f` for both (see LazyRefInitializationNextToAClosureOverTheRef).
+// That error ended the fixpoint of `f` on its first pass, so the component
+// compiled. Without that error the fixpoint of `f` does not converge, as in
+// Babel, and these rows need the stop to finish.
 const functionsThatReturnThemselves = {
   "under 20 arrows": `${Buffer.alloc("() => ".length * 20, "() => ")}{
     const f = () => f;
@@ -3391,6 +3732,22 @@ const functionsThatReturnThemselves = {
   }`,
   "in two shapes under one arrow": `() => {
     const f = () => (p.a ? [f] : f);
+    return f;
+  }`,
+  "after a lazy ref initialization": `() => () => {
+    const f = () => {
+      if (ref.current == null) {
+        ref.current = p.a;
+      }
+      return f;
+    };
+    return f;
+  }`,
+  "after it passes the ref of a parameter to JSX": `row => () => {
+    const f = () => {
+      p.log(<li ref={row.ref} />);
+      return f;
+    };
     return f;
   }`,
 };
@@ -3402,7 +3759,9 @@ test.each(Object.entries(functionsThatReturnThemselves))(
   async (_name, outer) => {
     using dir = tempDir("react-compiler-returns-itself", {
       "entry.jsx": `
+        import { useRef } from "react";
         export default function App(p) {
+          const ref = useRef(null);
           const outer = ${outer};
           return <div onClick={outer}>{p.a}</div>;
         }

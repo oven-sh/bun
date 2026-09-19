@@ -580,6 +580,31 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
+                if let Some(expr) = test.get(b"timeout") {
+                    self.expect(&expr, ExprTag::ENumber)?;
+                    let value = expr.as_number().expect("infallible: type checked");
+                    // `as u32` would silently truncate fractions and saturate
+                    // overflow, so validate before converting.
+                    if !value.is_finite()
+                        || value < 0.0
+                        || value.fract() != 0.0
+                        || value > u32::MAX as f64
+                    {
+                        self.add_error_format(
+                            expr.loc,
+                            format_args!(
+                                "\"timeout\" must be a finite integer in the range 0..={} milliseconds; received {}",
+                                u32::MAX,
+                                value
+                            ),
+                        )?;
+                        return Ok(());
+                    }
+                    if !self.ctx.test_options.timeout_from_cli {
+                        self.ctx.test_options.default_timeout_ms = value as u32;
+                    }
+                }
+
                 if let Some(expr) = test.get(b"concurrentTestGlob") {
                     match &expr.data {
                         ExprData::EString(s) => {

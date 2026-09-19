@@ -386,6 +386,10 @@ describe("HTTP server CONNECT", () => {
       expect({ intact: Buffer.concat(chunks).equals(payload), drains }).toEqual({ intact: true, drains: 0 });
     });
 
+    // An open Upgrade tunnel runs the same code as a CONNECT tunnel. The tests below move 8 to 24 MiB
+    // each, on one thread, so they run for CONNECT only.
+    if (kind === "Upgrade") return;
+
     // The reader takes the first half as fast as it arrives, so the kernel holds megabytes for the
     // socket when it pauses, and one turn of the read loop can take them all.
     test("a pause in the middle of a fast transfer stops the reads after two of them", async () => {

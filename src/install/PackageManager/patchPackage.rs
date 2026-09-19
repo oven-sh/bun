@@ -1428,7 +1428,7 @@ fn refuse_global_store_folder(
     Global::crash();
 }
 
-/// Marks `node_modules/.bun/<entry>` when it holds `module_folder`. An install keeps a marked entry: `marked_patch_entries`.
+/// Marks `node_modules/.bun/<entry>` when it holds `module_folder`. An install keeps a marked entry: `has_patch_copy`.
 fn mark_store_entry(module_folder: &[u8]) -> sys::Result<()> {
     let store = match Dir::cwd().open_dir(b"node_modules/.bun", sys::OpenDirOptions::default()) {
         Ok(store) => store,

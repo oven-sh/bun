@@ -1137,12 +1137,11 @@ pub(crate) const GLOBAL_STORE_DIR: &[u8] = b"links";
 /// `bun patch` writes this file into the `node_modules/.bun/<entry>` that holds the copy of the package.
 pub(crate) const PATCH_COPY_MARKER: &[u8] = b".bun-patch";
 
-/// The names of the store entries that hold a `bun patch` copy. A link into the global store is never one.
-fn marked_patch_entries() -> sys::Result<Vec<Box<[u8]>>> {
-    let mut names = Vec::new();
+/// Whether a store entry of the project holds a `bun patch` copy. A link into the global store is never one.
+fn has_patch_copy() -> sys::Result<bool> {
     let store_dir = match sys::open_dir_for_iteration(Fd::cwd(), b"node_modules/.bun") {
         Ok(store_dir) => store_dir,
-        Err(err) if err.get_errno() == sys::Errno::ENOENT => return Ok(names),
+        Err(err) if err.get_errno() == sys::Errno::ENOENT => return Ok(false),
         Err(err) => return Err(err),
     };
     let store_dir = scopeguard::guard(store_dir, |fd| {
@@ -1155,27 +1154,14 @@ fn marked_patch_entries() -> sys::Result<Vec<Box<[u8]>>> {
         if entry.kind == sys::EntryKind::SymLink {
             continue;
         }
-        let name = entry.name.slice_u8();
         marker.set_length(0);
-        marker.append(name).assume_ok();
+        marker.append(entry.name.slice_u8()).assume_ok();
         marker.append(PATCH_COPY_MARKER).assume_ok();
         if sys::exists_at(*store_dir, marker.slice_z()) {
-            names.push(name.into());
+            return Ok(true);
         }
     }
-    Ok(names)
-}
-
-/// `bun patch <path>` makes the entry with the case that the user typed, which a case-insensitive volume accepts.
-fn eql_store_entry_name(on_disk: &[u8], store_path: &[u8]) -> bool {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        on_disk == store_path
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        bun_core::strings::eql_case_insensitive_ascii(on_disk, store_path, true)
-    }
+    Ok(false)
 }
 
 /// Runs on main thread
@@ -1240,8 +1226,8 @@ pub(crate) fn install_isolated_packages(
             let mut states = vec![State::Unvisited; store.entries.len()].into_boxed_slice();
 
             // A missed mark lets this install delete the copy, so the error ends it.
-            let patch_entries = match marked_patch_entries() {
-                Ok(patch_entries) => patch_entries,
+            let has_patch_copy = match has_patch_copy() {
+                Ok(has_patch_copy) => has_patch_copy,
                 Err(err) => {
                     Output::err(
                         err,
@@ -1251,7 +1237,7 @@ pub(crate) fn install_isolated_packages(
                     Global::exit(1);
                 }
             };
-            let mut store_path: Vec<u8> = Vec::new();
+            let mut marker_path: Vec<u8> = Vec::new();
 
             // Iterative DFS so dependency cycles (which the isolated graph permits)
             // can't overflow the stack and are handled deterministically: a back-edge
@@ -1352,18 +1338,17 @@ pub(crate) fn install_isolated_packages(
                                     break 'eligible false;
                                 }
                                 // A package that `bun patch` prepared stays in the project, like a patched one.
-                                if !patch_entries.is_empty() {
-                                    store_path.clear();
+                                if has_patch_copy {
+                                    marker_path.clear();
                                     write!(
-                                        store_path,
-                                        "{}",
+                                        marker_path,
+                                        "node_modules/.bun/{}/",
                                         store::entry::fmt_store_path(id, &store, lockfile)
                                     )
                                     .expect("formatting into a Vec is infallible");
-                                    if patch_entries
-                                        .iter()
-                                        .any(|entry| eql_store_entry_name(entry, &store_path))
-                                    {
+                                    marker_path.extend_from_slice(PATCH_COPY_MARKER);
+                                    // The volume compares the name: `bun patch <path>` makes the entry with the case that the user typed.
+                                    if sys::exists(&marker_path) {
                                         break 'eligible false;
                                     }
                                 }

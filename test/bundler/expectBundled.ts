@@ -270,6 +270,7 @@ export interface BundlerTestInput {
   serverComponents?: boolean;
   reactCompiler?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
+  reactFastRefresh?: boolean;
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -539,6 +540,7 @@ function expectBundled(
     serverComponents = false,
     reactCompiler = false,
     reactCompilerOutputMode,
+    reactFastRefresh = false,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
@@ -894,6 +896,7 @@ function expectBundled(
               minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
+              reactFastRefresh && "--react-fast-refresh",
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,
@@ -1269,6 +1272,7 @@ function expectBundled(
           target,
           reactCompiler,
           reactCompilerOutputMode,
+          reactFastRefresh,
           bytecode,
           bytecodeDepth,
           publicPath,

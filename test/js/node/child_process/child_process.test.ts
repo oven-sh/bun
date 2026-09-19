@@ -906,24 +906,24 @@ describe.skipIf(!isPosix)("exit signals are named with the OS's own numbering", 
 });
 
 // A Linux real-time signal has no name. Bun.spawn reports it as its number, but
-// node:child_process has only names: the number must not reach `signalCode`,
-// the 'exit'/'close' arguments or `spawnSync().signal`. (Node itself reports
-// this death as exit code 0 with no signal, and `signal: ""` from spawnSync.)
-describe.skipIf(!isLinux)("an exit signal with no name is not a number in node:child_process", () => {
+// node:child_process has only names, and it reports this death exactly as node
+// does (v26.3.0): 'exit' and 'close' get (0, null) because libuv's exit status
+// of a signaled process is 0, and spawnSync gives `signal: ""`.
+describe.skipIf(!isLinux)("an exit signal with no name is reported as node reports it", () => {
   it.concurrent.each([40, 64])("spawn: 'exit' and 'close' after signal %d", async signal => {
     const child = spawn("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
     const [exit, close] = await Promise.all([once(child, "exit"), once(child, "close")]);
     expect({ exit, close, exitCode: child.exitCode, signalCode: child.signalCode }).toEqual({
-      exit: [null, null],
-      close: [null, null],
-      exitCode: null,
+      exit: [0, null],
+      close: [0, null],
+      exitCode: 0,
       signalCode: null,
     });
   });
 
   it.concurrent.each([40, 64])("spawnSync: signal after signal %d", signal => {
     const { status, signal: reported } = spawnSync("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
-    expect({ status, signal: reported }).toEqual({ status: null, signal: null });
+    expect({ status, signal: reported }).toEqual({ status: null, signal: "" });
   });
 });
 

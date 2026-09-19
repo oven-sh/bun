@@ -4991,7 +4991,6 @@ class ClientHttp2Session extends Http2Session {
       ) {
         // nghttp2 cancels a promise whose parent is CLOSING or that exceeds the reserved limit:
         // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4613-L4627
-        // A parent the parser already released is not an object and is still accepted: #43479.
         self.#parser?.rstStream(pushId, constants.NGHTTP2_CANCEL);
         return;
       }

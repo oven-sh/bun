@@ -203,6 +203,16 @@ describe("fake node cli", () => {
       });
     });
 
+    test("NODE_PRESERVE_SYMLINKS=1 keeps the path through a symlinked directory", async () => {
+      using temp = tempDir("fake-node-main", {
+        "real/package.json": JSON.stringify({ type: "module" }),
+        "real/entry.js": "console.log(import.meta.filename);",
+      });
+      symlinkSync(join(temp, "real"), join(temp, "link"), "dir");
+      const result = await runAsNode(String(temp), ["./link/entry.js"], { NODE_PRESERVE_SYMLINKS: "1" });
+      expect(result).toEqual({ stdout: join(temp, "link", "entry.js") + "\n", stderr: "", exitCode: 0 });
+    });
+
     test("a package.json that does not parse adds no output", async () => {
       using temp = tempDir("fake-node-main", {
         "pkg/package.json": "{",
@@ -273,11 +283,11 @@ describe("fake node cli", () => {
   });
 });
 
-async function runAsNode(cwd: string, args: string[]) {
+async function runAsNode(cwd: string, args: string[], env?: Record<string, string>) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--bun", "node", ...args],
     cwd,
-    env: { ...bunEnv, NODE_ENV: undefined },
+    env: { ...bunEnv, NODE_ENV: undefined, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });

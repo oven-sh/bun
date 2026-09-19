@@ -100,8 +100,8 @@ pub(crate) enum EntryPath {
     /// The file to run.
     Resolved,
     /// A path as `node` takes it: a directory, or a file without its
-    /// extension, also runs. `boot` resolves it to the file to run and keeps
-    /// the given path as `process.argv[1]`, like Node's `resolveMainPath`:
+    /// extension, also runs. `Run::start` resolves it to the file to run and
+    /// keeps the given path as `process.argv[1]`, like Node's `resolveMainPath`:
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L29-L45
     Unresolved,
 }
@@ -1001,9 +1001,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // so the allocation is process-lifetime by construction.
         let entry: &'static [u8] = Box::leak(entry_path);
         // What `Run::start` passes to `vm.load_entry_point`; `mut` because the
-        // cron-execution branch below may swap in a synthetic `cwd/[eval]` path,
-        // and `EntryPath::Unresolved` the resolved file, while `entry` stays the
-        // user's path for the loader check further down.
+        // cron-execution branch below may swap in a synthetic `cwd/[eval]` path
+        // while `entry` stays the user's path for the loader check further down.
         let mut run_entry = entry;
         vm.set_main(entry);
 
@@ -1081,17 +1080,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::run_main::fail_with_build_error(vm);
         }
 
-        // `vm.main()` must be the key the module loader gives the entry module.
-        if entry_kind == EntryPath::Unresolved
-            && vm.module_loader.eval_source.is_none()
-            && let Some(resolved) = Self::resolve_entry_path(vm, entry)
-            && resolved != entry
-        {
-            vm.set_main_for_argv(entry);
-            vm.set_main(resolved);
-            run_entry = resolved;
-        }
-
         // Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
         // auto-detects the host zone the first time a `Date` is constructed —
         // matching upstream Bun. `.env` files are loaded by
@@ -1136,6 +1124,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: run_entry,
+            entry_kind,
         }
         .start()
     }
@@ -1274,6 +1263,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx,
             vm,
             entry_path: entry,
+            entry_kind: EntryPath::Resolved,
         }
         .start()
     }
@@ -1294,6 +1284,7 @@ pub struct Run<'a> {
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena).
     entry_path: &'static [u8],
+    entry_kind: EntryPath,
 }
 
 // `on_unhandled_rejection_before_close` is a plain fn pointer stored on the
@@ -1343,6 +1334,7 @@ impl Run<'_> {
             ctx,
             vm,
             entry_path: mut entry,
+            entry_kind,
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
 
@@ -1473,6 +1465,18 @@ impl Run<'_> {
             if !tld.is_empty() {
                 entry = tld;
             }
+        }
+
+        // `vm.main()` must be the key the module loader gives the entry module.
+        // Resolve only now: the resolver has its final options and, under
+        // `--watch` and `--hot`, its watcher, as it has for every import.
+        if entry_kind == EntryPath::Unresolved
+            && vm.module_loader.eval_source.is_none()
+            && let Some(resolved) = RunCommand::resolve_entry_path(vm, entry)
+            && resolved != entry
+        {
+            vm.set_main_for_argv(entry);
+            entry = resolved;
         }
 
         match vm.load_entry_point(entry) {

@@ -2249,7 +2249,8 @@ impl NodeHTTPResponse {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             }
             let flags = self.flags.get();
-            if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
+            // end() already dropped this response's reader; by now the slot can be a pipelined request's.
+            if !flags.intersects(Flags::SOCKET_CLOSED | Flags::UPGRADED | Flags::ENDED) {
                 scoped_log!(NodeHTTPResponse, "clearOnData");
                 if let Some(raw_response) = self.raw_response.get() {
                     raw_response.clear_on_data();
@@ -2282,10 +2283,12 @@ impl NodeHTTPResponse {
             self.armed_this_value.set(JSValue::ZERO);
             match self.body_read_state.get() {
                 BodyReadState::Pending | BodyReadState::Done => {
-                    if !flags.contains(Flags::REQUEST_HAS_COMPLETED)
-                        && !flags.contains(Flags::SOCKET_CLOSED)
-                        && !flags.contains(Flags::UPGRADED)
-                    {
+                    if !flags.intersects(
+                        Flags::REQUEST_HAS_COMPLETED
+                            | Flags::ENDED
+                            | Flags::SOCKET_CLOSED
+                            | Flags::UPGRADED,
+                    ) {
                         scoped_log!(NodeHTTPResponse, "clearOnData");
                         if let Some(raw_response) = self.raw_response.get() {
                             raw_response.clear_on_data();

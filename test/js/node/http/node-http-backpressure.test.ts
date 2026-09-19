@@ -678,6 +678,44 @@ describe("backpressure", () => {
       }
     });
 
+    // The second request's body reader is set up while the first response
+    // still drains, and the rest of that body arrives after it. Completing
+    // the first response must not take the reader away. The first request has
+    // a body too: only such a response has a reader of its own to let go of.
+    it("a pipelined request still receives its body after the response ahead of it is out", async () => {
+      const handled = Promise.withResolvers<void>();
+      const dispatched = Promise.withResolvers<void>();
+      await using server = createServer(false, (req, res) => {
+        if (req.url === "/first") {
+          req.resume();
+          req.on("end", () => {
+            writeBody(res);
+            handled.resolve();
+          });
+          return;
+        }
+        dispatched.resolve();
+        const chunks: Buffer[] = [];
+        req.on("data", chunk => chunks.push(chunk));
+        req.on("end", () => res.end(Buffer.concat(chunks)));
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      using client = pausedClient(
+        (server.address() as AddressInfo).port,
+        "POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello",
+      );
+      await Promise.race([handled.promise, client.done]);
+      client.send("POST /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 10\r\n\r\n12345");
+      await Promise.race([dispatched.promise, client.done]);
+      await client.read(1);
+      client.send("67890");
+      client.resume();
+      const { bytes, ended } = await client.done;
+      const second = bytes.subarray(client.headLength + BODY).toString("latin1");
+      expect(second.slice(second.indexOf("\r\n\r\n") + 4)).toBe("1234567890");
+      expect(ended).toBe(true);
+    });
+
     // Both pipelined responses back up. The first one is done once its own
     // bytes are out: its callback must not wait for the second response, which
     // the client has not read yet.

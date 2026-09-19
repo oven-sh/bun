@@ -60,6 +60,7 @@ import {
   getBuildUrl,
   getCommit,
   getFileUrl,
+  getPullRequestFiles,
   getSecret,
   isBuildkite,
   isCI,
@@ -394,15 +395,8 @@ if (options.quiet) {
   isQuiet = true;
 }
 
-/** The fields of GitHub's "list pull request files" response that are read here. */
-interface GithubPullRequestFile {
-  filename: string;
-  status: string;
-}
-
 let allFiles: string[] = [];
 let newFiles: string[] = [];
-let prFileCount = 0;
 if (isBuildkite) {
   // The pipeline-upload step (.buildkite/ci.ts) already fetched the PR file
   // list once and stored it as build meta-data. Read it from there so each of
@@ -414,8 +408,7 @@ if (isBuildkite) {
     try {
       allFiles = JSON.parse(cachedAll) as string[];
       newFiles = cachedNew ? (JSON.parse(cachedNew) as string[]) : [];
-      prFileCount = allFiles.length;
-      console.log(`- PR file list from build meta-data: ${prFileCount} files, ${newFiles.length} new files`);
+      console.log(`- PR file list from build meta-data: ${allFiles.length} files, ${newFiles.length} new files`);
     } catch (e) {
       console.error("Failed to parse pr-*-files meta-data:", e);
       allFiles = [];
@@ -424,30 +417,7 @@ if (isBuildkite) {
   }
   if (allFiles.length === 0) {
     try {
-      console.log("on buildkite: collecting new files from PR");
-      const per_page = 50;
-      const { BUILDKITE_PULL_REQUEST } = process.env;
-      for (let i = 1; i <= 10; i++) {
-        const res = await fetch(
-          `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
-          { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
-        );
-        const doc = (await res.json()) as GithubPullRequestFile[] | Record<string, unknown>;
-        if (!res.ok || !Array.isArray(doc)) {
-          console.error(`-> page ${i}: GitHub API ${res.status} ${res.statusText}:`, JSON.stringify(doc));
-          throw new Error(`GitHub API returned ${res.status}; cannot determine changed files`);
-        }
-        console.log(`-> page ${i}, found ${doc.length} items`);
-        if (doc.length === 0) break;
-        for (const { filename, status } of doc) {
-          prFileCount += 1;
-          allFiles.push(filename);
-          if (status !== "added") continue;
-          newFiles.push(filename);
-        }
-        if (doc.length < per_page) break;
-      }
-      console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+      ({ allFiles, newFiles } = await getPullRequestFiles());
     } catch (e) {
       console.error(e);
     }

@@ -8,7 +8,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
-import { isWindows, output, run } from "../scripts/agent.ts";
+import { output, run } from "../scripts/agent.ts";
 import {
   getBuildMetadata,
   getCommit,
@@ -16,6 +16,7 @@ import {
   getEnv,
   getJson,
   getLastSuccessfulBuild,
+  getPullRequestFiles,
   getRepositoryUrl,
   getSecret,
   isBuildkite,
@@ -41,22 +42,9 @@ function parseGitRepository(url: string | URL): string | undefined {
   return undefined;
 }
 
-function getRepository(cwd?: string): string | undefined {
-  if (!cwd) {
-    if (isGithubAction) {
-      const repository = process.env.GITHUB_REPOSITORY;
-      if (repository) {
-        return repository;
-      }
-    }
-  }
-
-  const url = getRepositoryUrl(cwd);
-  if (url) {
-    return parseGitRepository(url);
-  }
-
-  return undefined;
+function getRepository(): string | undefined {
+  const url = getRepositoryUrl();
+  return url ? parseGitRepository(url) : undefined;
 }
 
 function getBuildNumber(): number | undefined {
@@ -83,23 +71,17 @@ function isBuildManual(): boolean | undefined {
   return undefined;
 }
 
-function getBootstrapVersion(os?: string): number {
-  const scriptPath = join(
-    import.meta.dirname,
-    "..",
-    "scripts",
-    os === "windows" || (!os && isWindows) ? "bootstrap.ps1" : "bootstrap.sh",
-  );
-  const scriptContent = readFileSync(scriptPath, "utf8");
-  const match = /# Version: (\d+)/.exec(scriptContent);
-  if (match) {
-    const version = match[1]!;
-    return parseInt(version);
+/** The `# Version:` of the bootstrap script that images of `os` are baked with. */
+function getBootstrapVersion(os: Os): number {
+  const script = os === "windows" ? "bootstrap.ps1" : "bootstrap.sh";
+  const match = /# Version: (\d+)/.exec(readFileSync(join(import.meta.dirname, "..", "scripts", script), "utf8"));
+  if (!match) {
+    throw new Error(`scripts/${script} has no "# Version:" line`);
   }
-  return 0;
+  return parseInt(match[1]!);
 }
 
-function parseBoolean(value: string): boolean | undefined {
+function parseBoolean(value = ""): boolean | undefined {
   if (/^(true|yes|1|on)$/i.test(value)) {
     return true;
   }
@@ -1596,12 +1578,13 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     const buildPlatformKeys = parseArray(options["build-platforms"]);
     const testPlatformKeys = parseArray(options["test-platforms"]);
     return {
-      canary: parseBoolean(options.canary ?? "") ? canary : 0,
-      skipBuilds: parseBoolean(options["skip-builds"] ?? ""),
-      forceBuilds: parseBoolean(options["force-builds"] ?? ""),
-      skipTests: parseBoolean(options["skip-tests"] ?? ""),
-      buildImages: parseBoolean(options["build-images"] ?? ""),
-      publishImages: parseBoolean(options["publish-images"] ?? ""),
+      canary: parseBoolean(options.canary) ? canary : 0,
+      skipBuilds: parseBoolean(options["skip-builds"]),
+      forceBuilds: parseBoolean(options["force-builds"]),
+      skipTests: parseBoolean(options["skip-tests"]),
+      forceTests: parseBoolean(options["force-tests"]),
+      buildImages: parseBoolean(options["build-images"]),
+      publishImages: parseBoolean(options["publish-images"]),
       testFiles: parseArray(options["test-files"]),
       buildPlatforms: buildPlatformKeys?.length
         ? buildPlatformKeys.flatMap(key =>
@@ -1613,7 +1596,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
             buildProfiles.map(profile => ({ ...getSelectedPlatform(testPlatformsMap, key), profile })),
           )
         : Array.from(testPlatformsMap.values()),
-      dryRun: parseBoolean(options["dry-run"] ?? ""),
+      dryRun: parseBoolean(options["dry-run"]),
     };
   }
 
@@ -2028,12 +2011,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   return { priority, steps: mergedSteps };
 }
 
-/** The fields of GitHub's "list pull requests files" response that are read here. */
-interface GithubPullRequestFile {
-  filename: string;
-  status: string;
-}
-
 async function main() {
   startGroup("Generating options...");
   const options = await getPipelineOptions();
@@ -2045,32 +2022,8 @@ async function main() {
   if (options && isBuildkite && !isMainBranch()) {
     let allFiles: string[] = [];
     let newFiles: string[] = [];
-    let prFileCount = 0;
     try {
-      console.log("on buildkite: collecting new files from PR");
-      const per_page = 50;
-      const { BUILDKITE_PULL_REQUEST } = process.env;
-      for (let i = 1; i <= 10; i++) {
-        const res = await fetch(
-          `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
-          { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
-        );
-        const doc = (await res.json()) as GithubPullRequestFile[] | Record<string, unknown>;
-        if (!Array.isArray(doc)) {
-          console.error(`-> page ${i}, unexpected response:`, JSON.stringify(doc));
-          break;
-        }
-        console.log(`-> page ${i}, found ${doc.length} items`);
-        if (doc.length === 0) break;
-        for (const { filename, status } of doc) {
-          prFileCount += 1;
-          allFiles.push(filename);
-          if (status !== "added") continue;
-          newFiles.push(filename);
-        }
-        if (doc.length < per_page) break;
-      }
-      console.log(`- PR ${BUILDKITE_PULL_REQUEST}, ${prFileCount} files, ${newFiles.length} new files`);
+      ({ allFiles, newFiles } = await getPullRequestFiles());
     } catch (e) {
       console.error(e);
     }

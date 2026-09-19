@@ -425,6 +425,42 @@ export async function getLastSuccessfulBuild(): Promise<BuildkiteBuild | undefin
 /**
  * `filename` is the absolute path to the file to upload.
  */
+/** The fields of GitHub's "list pull request files" response that are read here. */
+interface GithubPullRequestFile {
+  filename: string;
+  status: string;
+}
+
+/** The files of the pull request this Buildkite build is for, and the ones among them that it adds. */
+export async function getPullRequestFiles(): Promise<{ allFiles: string[]; newFiles: string[] }> {
+  const allFiles: string[] = [];
+  const newFiles: string[] = [];
+  const perPage = 50;
+  const pullRequest = process.env.BUILDKITE_PULL_REQUEST;
+  for (let page = 1; page <= 10; page++) {
+    const response = await fetch(
+      `https://api.github.com/repos/oven-sh/bun/pulls/${pullRequest}/files?per_page=${perPage}&page=${page}`,
+      { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
+    );
+    const files = (await response.json()) as GithubPullRequestFile[] | Record<string, unknown>;
+    if (!response.ok || !Array.isArray(files)) {
+      throw new Error(`GitHub API ${response.status} ${response.statusText} on page ${page}: ${JSON.stringify(files)}`);
+    }
+    console.log(`-> page ${page}, found ${files.length} items`);
+    for (const { filename, status } of files) {
+      allFiles.push(filename);
+      if (status === "added") {
+        newFiles.push(filename);
+      }
+    }
+    if (files.length < perPage) {
+      break;
+    }
+  }
+  console.log(`- PR ${pullRequest}, ${allFiles.length} files, ${newFiles.length} new files`);
+  return { allFiles, newFiles };
+}
+
 export async function uploadArtifact(filename: string): Promise<void> {
   if (isBuildkite) {
     await run(["buildkite-agent", "artifact", "upload", basename(filename)], { cwd: dirname(filename) });

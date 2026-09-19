@@ -1241,7 +1241,7 @@ type Pipeline = {
  */
 type Agent = Ec2Agent | QueueAgent;
 
-/** A machine robobun creates for the job from `image-name` and `instance-type`. */
+/** A machine created for the job from `image-name` and `instance-type`. */
 type Ec2Agent = {
   os: Os;
   arch: Arch;

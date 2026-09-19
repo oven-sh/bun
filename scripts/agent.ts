@@ -273,8 +273,8 @@ type AwsRequest = {
 };
 
 /**
- * Signs an AWS API request (SigV4). agent.ts and this file are all that is
- * installed on a CI machine, so there is no SDK to call.
+ * Signs an AWS API request (SigV4). Only this script and the files it imports
+ * are installed on a CI machine, so there is no SDK to call.
  * @returns headers, including Authorization
  */
 function signAwsRequest({
@@ -529,7 +529,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
     // The service runs a copy of this script and the files it imports from
     // the agent's home, so it does not depend on the checkout that ran
     // `install` sticking around. When `install` is run from the home itself
-    // (the Windows image bake uploads both files there first), they are
+    // (the Windows image bake uploads the files there first), they are
     // already in place.
     mkdirSync(homePath, { recursive: true });
     const srcDir = fileURLToPath(new URL(".", import.meta.url));

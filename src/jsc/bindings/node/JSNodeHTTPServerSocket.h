@@ -54,6 +54,13 @@ public:
     unsigned ended : 1 = 0;
     unsigned upgraded : 1 = 0;
     unsigned peer_cert_verified : 1 = 0;
+    /* The two holds on a tunnel's reads (see readStop). The raw socket reads while neither is set. */
+    unsigned tunnelReadsStopped : 1 = 0;
+    unsigned tunnelReadsQueuedFull : 1 = 0;
+    /* onData() got the end of the stream. The task that tells JS can still be queued. */
+    unsigned tunnelReadEnded : 1 = 0;
+    /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
+    size_t queuedTunnelBytes = 0;
     const char* peerCertVerifyErrorCode = nullptr;
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
@@ -115,6 +122,19 @@ public:
      * body deliver it through the request first, like Node 26). */
     void upgradeToTunnelMode(bool afterBody = false);
 
+    /* Read backpressure for a CONNECT/Upgrade tunnel, like net.Socket's handle:
+     * the JS Duplex stops the raw reads when push() reports a full buffer
+     * (tunnelReadsStopped) and starts them again from _read(). Both do nothing
+     * outside tunnel mode, where the request body and flood prevention own the
+     * reads. onData() hands each chunk to JS in a task, so readStop() comes
+     * after the read loop, which reads on while recv() fills its buffer:
+     * tunnelReadsQueuedFull stops that loop until JS has the queued bytes. */
+    void readStop();
+    void readStart();
+    bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
+    /* The WebSocket that adopted the connection reads from here on. */
+    void releaseTunnelReadsForUpgrade();
+
     /* Trailer fields received after the current request's chunked body, as a
      * flat [name, value, ...] JS array preserving wire casing; jsUndefined()
      * when there are none. Clears the captured section. */
@@ -159,6 +179,8 @@ public:
     void onClose();
     void onDrain();
     void onData(const char* data, int length, bool last);
+    void applyTunnelReads();
+    void didDeliverQueuedTunnelBytes(size_t length);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     void finishCreation(JSC::VM& vm);

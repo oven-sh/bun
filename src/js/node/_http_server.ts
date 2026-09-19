@@ -1572,8 +1572,9 @@ function getNodeHTTPServerSocket() {
     }
     #onData(chunk, last) {
       this._unrefTimer();
-      if (chunk) {
-        this.push(chunk);
+      // A full buffer stops the reads: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
+      if (chunk && this.push(chunk) === false && !last) {
+        this[kHandle]?.readStop();
       }
       if (last) {
         const handle = this[kHandle];
@@ -1764,8 +1765,10 @@ function getNodeHTTPServerSocket() {
       return this.connecting;
     }
 
-    #resumeSocket() {
+    #resumeSocket(readStart: boolean) {
       const handle = this[kHandle];
+      // A tunnel reads again: response.resume() below does nothing for it.
+      if (readStart && this[kStreamingEnabled]) handle?.readStart();
       const response = handle?.response;
       const upgradeIncoming = this[kUpgradeIncoming];
       if (upgradeIncoming) {
@@ -1802,8 +1805,8 @@ function getNodeHTTPServerSocket() {
     }
 
     _read(_size) {
-      // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
-      this.#resumeSocket();
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L779-L792
+      this.#resumeSocket(true);
     }
 
     get readyState() {
@@ -1959,7 +1962,8 @@ function getNodeHTTPServerSocket() {
     }
 
     resume() {
-      this.#resumeSocket();
+      // A full buffer keeps the reads of a tunnel stopped: _read() starts them when the reader has made room.
+      this.#resumeSocket(this.readableLength < this.readableHighWaterMark);
       return super.resume();
     }
 

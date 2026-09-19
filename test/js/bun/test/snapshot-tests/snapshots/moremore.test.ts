@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 class Number2 extends Number {
   constructor(value: number) {
@@ -116,5 +116,49 @@ test("test snapshots with Boolean and Number", () => {
         },
       },
     },
+  });
+});
+
+describe("JSX elements with empty children", () => {
+  // The shape the React runtime produces for <div>{[]}</div>, <div>{""}</div>, etc.
+  function jsx(type: unknown, props: Record<string, unknown>, key: string | null = null) {
+    return { $$typeof: Symbol.for("react.element"), type, key, ref: null, props };
+  }
+  function Foo() {}
+
+  test.each([
+    ["children: []", jsx("div", { children: [] }), "<div />"],
+    ['children: ""', jsx("div", { children: "" }), "<div />"],
+    ["attribute and children: []", jsx("div", { id: "x", children: [] }), '<div id="x" />'],
+    ['attribute and children: ""', jsx("div", { id: "x", children: "" }), '<div id="x" />'],
+    ["key and children: []", jsx("div", { children: [] }, "k"), '<div key="k" />'],
+    ["component and children: []", jsx(Foo, { children: [] }), "<Foo />"],
+    ["no children", jsx("div", { id: "x" }), '<div id="x" />'],
+    [
+      "nested single child with children: []",
+      jsx("div", { children: jsx("span", { children: [] }) }),
+      "<div>\n  <span />\n</div>",
+    ],
+    [
+      'nested children with children: [] and children: ""',
+      jsx("div", { children: [jsx("span", { children: [] }), jsx("b", { children: "" })] }),
+      "<div>\n  <span />\n  <b />\n</div>",
+    ],
+  ])("%s prints in expect() failure messages", (_, element, expected) => {
+    let message = "";
+    try {
+      expect(element).not.toEqual(element);
+    } catch (e: any) {
+      message = e.message.replaceAll(/\x1b\[[0-9;]*m/g, "");
+    }
+    expect(message).toContain(`Expected: not ${expected}\n`);
+  });
+
+  test("snapshots", () => {
+    expect(jsx("div", { children: [] })).toMatchInlineSnapshot(`<div />`);
+    expect(jsx("div", { children: "" })).toMatchInlineSnapshot(`<div />`);
+    expect(jsx("div", { id: "x", children: [] })).toMatchInlineSnapshot(`<div id="x" />`);
+    expect(jsx("div", { id: "x", children: "" })).toMatchInlineSnapshot(`<div id="x" />`);
+    expect(jsx(Foo, { children: [] })).toMatchInlineSnapshot(`<Foo />`);
   });
 });

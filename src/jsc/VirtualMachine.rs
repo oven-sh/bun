@@ -5036,13 +5036,15 @@ impl VirtualMachine {
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
-                // SAFETY: PORT — `dir_with_trailing_slash()` returns a
-                // re-slice of `source`, which the caller guarantees outlives
-                // the resolve call (and the resolver only borrows it for the
-                // synchronous `resolve_and_auto_install`).
+                // SAFETY: PORT — `source_dir_for_imports()` returns a
+                // re-slice of `source` (or a static), which the caller
+                // guarantees outlives the resolve call (and the resolver only
+                // borrows it for the synchronous `resolve_and_auto_install`).
                 unsafe {
                     bun_ptr::detach_lifetime(
-                        bun_resolver::fs::PathName::init(source).dir_with_trailing_slash(),
+                        self.transpiler
+                            .resolver
+                            .source_dir_for_imports(&bun_resolver::fs::Path::init(source)),
                     )
                 }
             } else {

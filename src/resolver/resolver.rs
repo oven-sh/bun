@@ -4119,6 +4119,34 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
+    /// Whether `path` is directly in a filesystem root (`/entry.js`) and is not
+    /// a file on disk. Such a path names a virtual module: an in-memory file of
+    /// `Bun.build`, or a path that a plugin made up. It has no directory of its
+    /// own: its imports resolve from the top-level directory, and the bundler
+    /// names its output from there.
+    pub fn is_virtual_module_in_root(&mut self, path: &Fs::Path<'_>) -> bool {
+        let name = path.name();
+        if !name.dir_is_root() {
+            return false;
+        }
+        if !path.is_file() {
+            return true;
+        }
+        let generation = self.generation;
+        !self
+            .read_dir_info_ignore_error(name.dir)
+            .is_some_and(|dir| dir.get_entry(generation, name.filename).is_some())
+    }
+
+    /// The directory that the imports of the module at `path` resolve from,
+    /// with its trailing separator.
+    pub fn source_dir_for_imports<'p>(&mut self, path: &Fs::Path<'p>) -> &'p [u8] {
+        if self.is_virtual_module_in_root(path) {
+            return b"./";
+        }
+        path.source_dir()
+    }
+
     // NOTE: `follow_symlinks` is `true` at every call
     // site, so it's dropped here; `enable_logging` is a plain runtime parameter
     // (it gates one cold error-formatting branch) so this large dir-walk function
@@ -4144,11 +4172,11 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
-        // `PathName::init` leaves `.dir` empty when the separator is the
-        // leading one (e.g. `/a.js`) or the path has no separator at all
-        // (virtual/plugin specifiers). Callers like `finalize_result` pass
-        // that `.dir` straight through and already treat `None` as "skip",
-        // so return it here instead of walking the cache with an empty key.
+        // `PathName::init` leaves `.dir` empty when the path has no separator
+        // at all (virtual/plugin specifiers). Callers like `finalize_result`
+        // pass that `.dir` straight through and already treat `None` as
+        // "skip", so return it here instead of walking the cache with an
+        // empty key.
         // https://github.com/oven-sh/bun/issues/30429
         if input_path.is_empty() {
             return Ok(None);

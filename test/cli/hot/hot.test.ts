@@ -1,5 +1,6 @@
 import { spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { afterAll, beforeEach, expect, it } from "bun:test";
+import { randomBytes } from "crypto";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
@@ -443,6 +444,61 @@ it(
       runner?.unref?.();
       // @ts-ignore
       runner?.kill?.(9);
+    }
+  },
+  timeout,
+);
+
+// `bun --hot app.js` with `WORKDIR /` in a container. This needs a "/" that the test can write to.
+const rootEntry = `/bun-hot-root-${process.pid}-${randomBytes(6).toString("hex")}.js`;
+const rootEntryContents = `globalThis.counter ??= 0;
+console.write(\`[#!root] Reloaded: \${++globalThis.counter}\\n\`);
+setTimeout(() => {}, 9999999);
+`;
+let canWriteRoot = false;
+if (!isWindows) {
+  try {
+    writeFileSync(rootEntry, rootEntryContents, { flag: "wx" });
+    canWriteRoot = true;
+  } catch {}
+}
+afterAll(() => {
+  if (canWriteRoot) rmSync(rootEntry, { force: true });
+});
+
+it.skipIf(!canWriteRoot)(
+  "should hot reload when a file in the filesystem root is deleted and rewritten",
+  async () => {
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", rootEntry],
+      env: bunEnv,
+      cwd: "/",
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    const reader = runner.stdout.getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    // A reload that never comes has to fail the test, not hang it.
+    async function sawReload(count: number) {
+      const deadline = Date.now() + (isDebug ? 30_000 : 5_000);
+      while (!output.includes(`[#!root] Reloaded: ${count}\n`)) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return false;
+        const result = await Promise.race([reader.read(), Bun.sleep(remaining)]);
+        if (!result || result.done) return false;
+        output += decoder.decode(result.value);
+      }
+      return true;
+    }
+
+    expect(await sawReload(1)).toBe(true);
+    for (const count of [2, 3]) {
+      rmSync(rootEntry);
+      writeFileSync(rootEntry, rootEntryContents);
+      expect(await sawReload(count)).toBe(true);
     }
   },
   timeout,

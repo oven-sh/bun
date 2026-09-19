@@ -1013,11 +1013,11 @@ JSCommonJSModule* JSCommonJSModule::create(
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto key = requireMapKey->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    auto index = key->reverseFind(PLATFORM_SEP, key->length());
+    auto length = dirnameLength(key);
 
     JSString* dirname;
-    if (index != WTF::notFound) {
-        dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+    if (length != WTF::notFound) {
+        dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, length);
         RETURN_IF_EXCEPTION(scope, nullptr);
     } else {
         dirname = jsEmptyString(vm);
@@ -1618,11 +1618,11 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+        size_t length = dirnameLength(sourceURL);
         JSString* dirname;
         JSString* filename = requireMapKey;
-        if (index != WTF::notFound) {
-            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+        if (length != WTF::notFound) {
+            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, length);
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             dirname = jsEmptyString(vm);
@@ -1748,11 +1748,11 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+        size_t length = dirnameLength(sourceURL);
         JSString* dirname;
         JSString* filename = requireMapKey;
-        if (index != WTF::notFound) {
-            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, index);
+        if (length != WTF::notFound) {
+            dirname = JSC::jsSubstring(globalObject, requireMapKey, 0, length);
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             dirname = jsEmptyString(vm);
@@ -1788,10 +1788,10 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSString* filename = JSC::jsStringWithCache(vm, pathString);
-    auto index = pathString.reverseFind(PLATFORM_SEP, pathString.length());
+    auto length = dirnameLength(pathString);
     JSString* dirname;
-    if (index != WTF::notFound) {
-        dirname = JSC::jsSubstring(globalObject, filename, 0, index);
+    if (length != WTF::notFound) {
+        dirname = JSC::jsSubstring(globalObject, filename, 0, length);
         RETURN_IF_EXCEPTION(scope, nullptr);
     } else {
         dirname = jsEmptyString(vm);

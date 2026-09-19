@@ -123,6 +123,12 @@ impl MacroContext {
         // SAFETY: `resolver` outlives `self` (see struct comment); uniquely
         // accessed for the duration of this resolve call.
         let resolver = unsafe { &mut *self.resolver };
+        // Same rule as `Resolver::source_dir_for_imports`.
+        let source_dir = if resolver.is_virtual_module_in_root(&source.path) {
+            b"./"
+        } else {
+            source_dir
+        };
 
         let input_specifier: &[u8] = 'brk: {
             if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(

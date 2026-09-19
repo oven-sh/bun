@@ -197,12 +197,14 @@ test("dependency on workspace without version in package.json", async () => {
 
 // pkg2 depends on a package that does not exist, so the install fails if the
 // negated entry does not exclude it. npm accepts each of these spellings.
+// examples/pkg2 has the same basename: a negated entry must never add it.
 test.concurrent.each([
   ["packages/*", "!packages/pkg2"],
   ["./packages/*", "!./packages/pkg2"],
   ["packages/*", "!./packages/pkg2"],
   ["packages/*", "!packages/pkg2/"],
   ["packages/*", "!././packages/pkg2//"],
+  ...(isWindows ? [["packages/*", "!.\\packages\\pkg2\\"]] : []),
 ])("allowing negative workspace patterns: %s, %s", async (...workspaces) => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
@@ -232,6 +234,15 @@ test.concurrent.each([
         },
       }),
     ),
+    write(
+      join(packageDir, "examples", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "example-pkg2",
+        dependencies: {
+          "doesnt-exist-oops": "1.2.3",
+        },
+      }),
+    ),
   ]);
 
   const { exited } = await runBunInstall(env, packageDir);
@@ -244,6 +255,7 @@ test.concurrent.each([
   const lockfile = await file(join(packageDir, "bun.lock")).text();
   expect(lockfile).toContain('"packages/pkg1": {');
   expect(lockfile).not.toContain('"packages/pkg2": {');
+  expect(lockfile).not.toContain('"examples/pkg2": {');
 });
 
 test("dependency on same name as workspace and dist-tag", async () => {

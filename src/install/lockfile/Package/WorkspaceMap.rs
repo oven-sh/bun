@@ -246,23 +246,34 @@ fn relative_workspace_path<'b>(
     &buf[..len]
 }
 
-/// Returns the glob of a negated `workspaces` entry in the shape the matched
-/// paths have: no `./` prefix and no trailing slash. `None` for an entry that
-/// is not negated (`!!foo` is not).
-fn negated_workspace_glob(user_pattern: &[u8]) -> Option<&[u8]> {
-    let mut remain = user_pattern;
-    let mut negated = false;
-    while let Some(rest) = remain.strip_prefix(b"!") {
-        negated = !negated;
-        remain = rest;
+enum WorkspaceGlob {
+    /// The entry as written. It is walked to find members.
+    Include(Box<[u8]>),
+    /// A `!` entry, in the shape of a matched path: posix separators, no `./`
+    /// prefix, no trailing slash. It only removes members that an earlier
+    /// `Include` found.
+    Exclude(Box<[u8]>),
+}
+
+impl WorkspaceGlob {
+    fn parse(input_path: &[u8]) -> Self {
+        let mut remain = input_path;
+        let mut negated = false;
+        while let Some(rest) = remain.strip_prefix(b"!") {
+            negated = !negated;
+            remain = rest;
+        }
+        if !negated {
+            return Self::Include(Box::from(input_path));
+        }
+        let mut glob = remain.to_vec();
+        resolve_path::platform_to_posix_in_place::<u8>(&mut glob);
+        let mut remain: &[u8] = &glob;
+        while let Some(rest) = remain.strip_prefix(b"./") {
+            remain = rest;
+        }
+        Self::Exclude(Box::from(strings::without_trailing_slash(remain)))
     }
-    if !negated {
-        return None;
-    }
-    while let Some(rest) = remain.strip_prefix(b"./") {
-        remain = rest;
-    }
-    Some(strings::without_trailing_slash(remain))
 }
 
 impl WorkspaceMap {
@@ -284,7 +295,7 @@ impl WorkspaceMap {
 
         let orig_msgs_len = log.msgs.len();
 
-        let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
+        let mut workspace_globs: Vec<WorkspaceGlob> = Vec::new();
         let mut filepath_buf_os = path::path_buffer_pool::get();
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
         let mut rel_path_buf = path::path_buffer_pool::get();
@@ -312,7 +323,7 @@ impl WorkspaceMap {
             }
 
             if glob::detect_glob_syntax(input_path) {
-                workspace_globs.push(Box::<[u8]>::from(input_path));
+                workspace_globs.push(WorkspaceGlob::parse(input_path));
                 continue;
             }
 
@@ -430,7 +441,10 @@ impl WorkspaceMap {
 
         if workspace_globs.len() > 0 {
             let mut arena = Arena::new();
-            for (i, user_pattern) in workspace_globs.iter().enumerate() {
+            for (i, workspace_glob) in workspace_globs.iter().enumerate() {
+                let WorkspaceGlob::Include(user_pattern) = workspace_glob else {
+                    continue;
+                };
                 // walker/iter borrow `&arena` and Drop at scope exit,
                 // so resetting here (top of next iter) ensures they drop before invalidation.
                 // Last iter's allocs are freed when `arena` itself drops after the loop.
@@ -525,8 +539,8 @@ impl WorkspaceMap {
                         );
 
                         // check if it's negated by any remaining patterns
-                        for next_pattern in &workspace_globs[i + 1..] {
-                            let Some(negated_glob) = negated_workspace_glob(next_pattern) else {
+                        for next_glob in &workspace_globs[i + 1..] {
+                            let WorkspaceGlob::Exclude(negated_glob) = next_glob else {
                                 continue;
                             };
                             if glob::r#match(negated_glob, matched_path_without_package_json)
@@ -536,7 +550,7 @@ impl WorkspaceMap {
                                     Lockfile,
                                     "skipping negated path: {}, {}\n",
                                     BStr::new(matched_path_without_package_json),
-                                    BStr::new(next_pattern)
+                                    BStr::new(negated_glob)
                                 );
                                 continue 'next_match;
                             }

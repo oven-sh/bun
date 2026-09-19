@@ -666,7 +666,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     // we need to either wrap in :is() or split them into multiple rules.
     let mut incompatible: SmallList<Selector, 1> = if sty.selectors.v.len() > 1
         && context.targets.should_compile_selectors()
-        && !sty.is_compatible(context.targets)
+        && !sty.is_compatible(&context.targets)
     {
         // The :is() selector accepts a forgiving selector list, so use that if possible.
         // Note that :is() does not allow pseudo elements, so we need to check for that.
@@ -691,7 +691,7 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             while i < sty.selectors.v.len() {
                 if selector::is_compatible(
                     &sty.selectors.v.slice()[i as usize..i as usize + 1],
-                    context.targets,
+                    &context.targets,
                 ) {
                     i += 1;
                 } else {
@@ -1108,8 +1108,8 @@ fn merge_style_rules<R>(
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
     // Does not apply if css modules are enabled.
     if src.selectors.eql(&dst.selectors)
-        && cached_is_compatible(src, src_compat, context.targets)
-        && cached_is_compatible(dst, dst_compat, context.targets)
+        && cached_is_compatible(src, src_compat, &context.targets)
+        && cached_is_compatible(dst, dst_compat, &context.targets)
         && src.rules.v.is_empty()
         && dst.rules.v.is_empty()
         && (!context.css_modules || src.loc.source_index == dst.loc.source_index)
@@ -1153,8 +1153,8 @@ fn merge_style_rules<R>(
         }
 
         // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
-        if cached_is_compatible(src, src_compat, context.targets)
-            && cached_is_compatible(dst, dst_compat, context.targets)
+        if cached_is_compatible(src, src_compat, &context.targets)
+            && cached_is_compatible(dst, dst_compat, &context.targets)
         {
             let moved = core::mem::take(&mut src.selectors.v);
             // `reserve` (not `ensure_total_capacity`) so capacity grows
@@ -1219,7 +1219,8 @@ pub(crate) const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 pub struct MinifyContext<'a, 'bump> {
     /// Arena that owns the AST being minified (same arena it was parsed into).
     pub(crate) arena: &'bump bun_alloc::Arena,
-    pub(crate) targets: &'a css::targets::Targets,
+    /// `SupportsRule::minify` narrows these for its block and keeps `handler_context.targets` equal.
+    pub(crate) targets: css::targets::Targets,
     pub(crate) handler: &'a mut css::DeclarationHandler<'bump>,
     pub(crate) important_handler: &'a mut css::DeclarationHandler<'bump>,
     pub(crate) handler_context: css::PropertyHandlerContext<'bump>,

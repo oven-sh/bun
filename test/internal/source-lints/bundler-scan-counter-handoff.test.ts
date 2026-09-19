@@ -48,7 +48,7 @@ const COUNT = /\.increment_scan_counter\(\)/g;
 
 // The hand-off makes another thread owe the unit back: a task on a pool
 // (`schedule`, `schedule_*`) or a plugin dispatch (`dispatch`, `dispatch_*`).
-const HAND_OFF = /\.schedule\w*\(|\.dispatch\w*\(/;
+const HAND_OFF = /\.schedule\w*\(|\.dispatch\w*\(/g;
 // This one hands the task to an `onLoad` plugin only when one matches. When
 // none does, the `schedule` call after it is the hand-off, so the scan goes on
 // to that call.
@@ -58,15 +58,11 @@ const EXIT = /\?|\b(?:return|break|continue)\b/;
 
 // Same length, same newlines, but no char literals, string literals or
 // comments, so that a `?` or a brace in one of them does not count and line
-// numbers stay true.
+// numbers stay true. One pass: the token that starts first wins, so a `/*` in a
+// `//` comment or a `"` in a block comment opens nothing.
+const LITERAL_OR_COMMENT = /b?'(?:[^'\\\n]|\\.)'|\br(#*)"[\s\S]*?"\1|"(?:[^"\\\n]|\\.)*"|\/\*[\s\S]*?\*\/|\/\/.*$/gm;
 function blank(source: string): string {
-  const spaces = (m: string) => m.replace(/[^\n]/g, " ");
-  return source
-    .replace(/b?'(?:[^'\\\n]|\\.)'/g, spaces)
-    .replace(/\br(#*)"[\s\S]*?"\1/g, spaces)
-    .replace(/"(?:[^"\\\n]|\\.)*"/g, spaces)
-    .replace(/\/\*[\s\S]*?\*\//g, spaces)
-    .replace(/\/\/.*$/gm, spaces);
+  return source.replace(LITERAL_OR_COMMENT, m => m.replace(/[^\n]/g, " "));
 }
 
 // The rest of the block that holds the count: up to the `}` that closes it.
@@ -97,15 +93,29 @@ function blocksOpenAt(block: string, index: number): number {
   return open.filter(Boolean).length;
 }
 
-// The body of the block that `if !….enqueue_on_load_plugin_if_needed(…) {` opens,
-// as offsets into `block`, when the onLoad check at `index` has that form.
-function onLoadCheckBody(block: string, index: number): { start: number; end: number } | null {
-  if (!/\bif\s*!\s*[\w.]*$/.test(block.slice(Math.max(0, index - 80), index))) return null;
+// The `)` that closes the call whose `(` is the first one at or after `index`.
+function closeOfCall(block: string, index: number): number {
   let close = block.indexOf("(", index);
   for (let depth = 0; close < block.length; close++) {
     if (block[close] === "(") depth++;
     else if (block[close] === ")" && --depth === 0) break;
   }
+  return close;
+}
+
+// The end of the statement that holds the call at `index`: its `;`, or the end
+// of the block for a tail expression. A `?` in the call's arguments or on its
+// result leaves before the hand-off is done.
+function endOfCallStatement(block: string, index: number): number {
+  const semicolon = block.indexOf(";", closeOfCall(block, index));
+  return semicolon === -1 ? block.length : semicolon;
+}
+
+// The body of the block that `if !….enqueue_on_load_plugin_if_needed(…) {` opens,
+// as offsets into `block`, when the onLoad check at `index` has that form.
+function onLoadCheckBody(block: string, index: number): { start: number; end: number } | null {
+  if (!/\bif\s*!\s*[\w.]*$/.test(block.slice(Math.max(0, index - 80), index))) return null;
+  const close = closeOfCall(block, index);
   const open = block.slice(close + 1).match(/^\s*\{/);
   if (open === null) return null;
   const start = close + 1 + open[0].length;
@@ -125,37 +135,40 @@ function check(source: string, raw: string): { callSites: number; offenders: str
     const block = restOfBlock(content.slice(after));
 
     const why = "a count that no task pays back never lets wait_for_parse() return.";
-    let handOff = firstIndex(HAND_OFF, block);
-
     // The hand-off has to run on every path, so it sits at the level of the
     // count. The one block it may sit in is the body of
     // `if !….enqueue_on_load_plugin_if_needed(…) {`, when that check is itself at
     // the level of the count: on the other path the plugin has the task.
-    let onEveryPath = handOff === -1 || blocksOpenAt(block, handOff) === 0;
     const onLoadCheck = firstIndex(ON_LOAD_CHECK, block);
-    if (onLoadCheck !== -1 && (handOff === -1 || onLoadCheck < handOff) && blocksOpenAt(block, onLoadCheck) === 0) {
-      const body = onLoadCheckBody(block, onLoadCheck);
-      const inBody = body === null ? -1 : firstIndex(HAND_OFF, block.slice(0, body.end), body.start);
-      if (body !== null && inBody !== -1 && blocksOpenAt(block.slice(body.start), inBody - body.start) === 0) {
-        handOff = inBody;
-        onEveryPath = true;
-      }
-    }
-    if (!onEveryPath) {
+    const onLoadBody =
+      onLoadCheck !== -1 && blocksOpenAt(block, onLoadCheck) === 0 ? onLoadCheckBody(block, onLoadCheck) : null;
+    const onEveryPath = (i: number) =>
+      blocksOpenAt(block, i) === 0 ||
+      (onLoadBody !== null &&
+        i >= onLoadBody.start &&
+        i < onLoadBody.end &&
+        blocksOpenAt(block.slice(onLoadBody.start), i - onLoadBody.start) === 0);
+
+    // A `schedule` or `dispatch` call in some other branch is not the hand-off
+    // when one on every path follows it. When every one of them is in a branch,
+    // a path can skip the hand-off.
+    const calls = [...block.matchAll(HAND_OFF)].map(call => call.index);
+    const handOff = calls.find(onEveryPath) ?? -1;
+    if (handOff === -1 && calls.length > 0) {
       offenders.push(
-        `${at}: the hand-off at line ${lineOf(after + handOff)} is inside a block that opens after increment_scan_counter(), so a path can skip it. Hand off on every path: at the level of the count, or directly inside \`if !….enqueue_on_load_plugin_if_needed(…) {\`. ${why[0].toUpperCase()}${why.slice(1)}`,
+        `${at}: the hand-off at line ${lineOf(after + calls[0])} is inside a block that opens after increment_scan_counter(), so a path can skip it. Hand off on every path: at the level of the count, or directly inside \`if !….enqueue_on_load_plugin_if_needed(…) {\`. ${why[0].toUpperCase()}${why.slice(1)}`,
       );
       continue;
     }
 
     // A count with no hand-off in its block moves a unit that is already owed
     // (a deferred load that was answered). Nothing may leave that block either.
-    const exit = block.slice(0, handOff === -1 ? block.length : handOff).match(EXIT);
+    const exit = block.slice(0, handOff === -1 ? block.length : endOfCallStatement(block, handOff)).match(EXIT);
     if (exit === null) continue;
     const leaves = `${at}: \`${exit[0]}\` at line ${lineOf(after + exit.index!)} can leave after increment_scan_counter()`;
     offenders.push(
       handOff !== -1
-        ? `${leaves} and before the hand-off at line ${lineOf(after + handOff)}. Move the count below it: ${why}`
+        ? `${leaves} and before the hand-off at line ${lineOf(after + handOff)} is done. Move the count below it: ${why}`
         : `${leaves}, and this lint finds no hand-off (\`.schedule*(\`, \`.dispatch*(\`) before it. If a call in between pays the unit back, add it to HAND_OFF in ${path.basename(import.meta.path)}. If not, move the count below the exit: ${why}`,
     );
   }
@@ -203,6 +216,12 @@ test("the scan recognizes the shapes it claims to", () => {
       `self.increment_scan_counter();\nif !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {\n    self.graph.pool().schedule(task);\n}\nOk(())`,
     ),
   ).toEqual([]);
+  // A call in a branch is not the hand-off when one on every path follows it.
+  expect(
+    fixture(
+      `self.increment_scan_counter();\nif tracing {\n    self.metrics.dispatch(sample);\n}\nself.graph.pool().schedule(task);`,
+    ),
+  ).toEqual([]);
   // An `unsafe` block always runs, so a hand-off in it is on every path.
   expect(fixture(`self.increment_scan_counter();\nunsafe { (*pool).schedule(task) };\nOk(())`)).toEqual([]);
   // A unit that is already owed moves back into the count: no hand-off, no exit.
@@ -226,6 +245,20 @@ test("the scan recognizes the shapes it claims to", () => {
       `self.increment_scan_counter();\nif !self.enqueue_on_load_plugin_if_needed(task) {\n    files.try_reserve(1)?;\n    self.graph.pool().schedule(task);\n}`,
     ),
   ).toEqual([expect.stringContaining("fixture.rs:2: `?` at line 4 can leave")]);
+
+  // An exit inside the hand-off statement: in the call's arguments, or on its result.
+  expect(fixture(`self.increment_scan_counter();\nself.graph.pool().schedule(self.try_make(task)?);`)).toEqual([
+    expect.stringContaining("fixture.rs:2: `?` at line 3 can leave"),
+  ]);
+  expect(fixture(`self.increment_scan_counter();\nself.graph.pool().schedule(task)?;\nOk(())`)).toEqual([
+    expect.stringContaining("fixture.rs:2: `?` at line 3 can leave"),
+  ]);
+  // A `/*` inside a `//` comment opens no block comment, so the count below it is still seen.
+  expect(
+    fixture(
+      `// see linker_context/* for the rest\nself.increment_scan_counter();\nself.append()?;\nself.graph.pool().schedule(task);\n/* done */`,
+    ),
+  ).toEqual([expect.stringContaining("fixture.rs:3: `?` at line 4 can leave")]);
 
   // A hand-off that a path can skip: in a branch, in a match arm, or behind an
   // onLoad check that is itself in a branch.

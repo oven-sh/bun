@@ -47,7 +47,7 @@ public:
 
     static Ref<CustomEvent> create(const AtomString& type, const Init&, IsTrusted = IsTrusted::No);
 
-    void initCustomEvent(const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue detail = JSC::JSValue::JSUndefined);
+    void initCustomEvent(JSC::VM&, const JSC::JSCell*, const AtomString& type, bool canBubble, bool cancelable, JSC::JSValue detail = JSC::JSValue::JSUndefined);
 
     const JSValueInWrappedObject& detail() const { return m_detail; }
     JSValueInWrappedObject& cachedDetail() { return m_cachedDetail; }

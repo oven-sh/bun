@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { once } from "node:events";
+import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 
 // `until(marker)` reads `stream` until the text read so far contains `marker`; `output()` is that text.
@@ -1061,3 +1063,117 @@ test.concurrent("a size-limited read of stdin takes nothing past its limit", asy
   expect(stdout.trim().split("\n")).toEqual(['CHILD:"0123456789"', 'GRANDCHILD:"abcdefghijabcdefghijabcdefghij\\n"']);
   expect(exitCode).toBe(0);
 });
+
+// A console input handle opened without write access (`CreateFileW("CONIN$", GENERIC_READ)`,
+// cmd.exe's `< CON`) reads, but refuses WriteConsoleInputW. A line read is pending on such a
+// stdin when raw mode is switched on; a key typed after that arrives at once, without Enter.
+test.skipIf(!isWindows)(
+  "setRawMode() takes effect during a line read of a console stdin opened read-only",
+  async () => {
+    using dir = tempDir("stdin-readonly-console", {
+      // Starts `bun child.js` with a read-only CONIN$ handle as its stdin and this process's
+      // stdout and stderr, and exits with its exit code.
+      "launcher.js": `
+      import { dlopen, ptr } from "bun:ffi";
+      const k32 = dlopen("kernel32.dll", {
+        GetStdHandle: { args: ["i32"], returns: "ptr" },
+        GetCurrentProcess: { args: [], returns: "ptr" },
+        DuplicateHandle: { args: ["ptr", "ptr", "ptr", "ptr", "u32", "i32", "u32"], returns: "i32" },
+        CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "ptr" },
+        CreateProcessW: { args: ["ptr", "ptr", "ptr", "ptr", "i32", "u32", "ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+        WaitForSingleObject: { args: ["ptr", "u32"], returns: "u32" },
+        GetExitCodeProcess: { args: ["ptr", "ptr"], returns: "i32" },
+      }).symbols;
+      const GENERIC_READ = 0x80000000;
+      // SECURITY_ATTRIBUTES: nLength @0, bInheritHandle @16.
+      const inheritable = new DataView(new ArrayBuffer(24));
+      inheritable.setUint32(0, 24, true);
+      inheritable.setInt32(16, 1, true);
+      const input = k32.CreateFileW(ptr(Buffer.from("CONIN$\\0", "utf16le")), GENERIC_READ, 3, ptr(new Uint8Array(inheritable.buffer)), 3, 0, null);
+      if (!input || Number(input) === -1) throw new Error("CreateFileW(CONIN$) failed");
+      const me = k32.GetCurrentProcess();
+      const inherit = handle => {
+        const out = new BigUint64Array(1);
+        if (!k32.DuplicateHandle(me, handle, me, ptr(out), 0, 1, 2)) throw new Error("DuplicateHandle failed");
+        return out[0];
+      };
+      // STARTUPINFOW: cb @0, dwFlags @60, hStdInput @80, hStdOutput @88, hStdError @96.
+      const startup = new DataView(new ArrayBuffer(104));
+      startup.setUint32(0, 104, true);
+      startup.setUint32(60, 0x100, true); // STARTF_USESTDHANDLES
+      startup.setBigUint64(80, BigInt(input), true);
+      startup.setBigUint64(88, inherit(k32.GetStdHandle(-11)), true);
+      startup.setBigUint64(96, inherit(k32.GetStdHandle(-12)), true);
+      const info = new BigUint64Array(3);
+      const commandLine = Buffer.from('"' + process.execPath + '" child.js\\0', "utf16le");
+      if (!k32.CreateProcessW(null, ptr(commandLine), null, null, 1, 0, null, null, ptr(new Uint8Array(startup.buffer)), ptr(info)))
+        throw new Error("CreateProcessW failed");
+      k32.WaitForSingleObject(Number(info[0]), 0xffffffff);
+      const code = new Uint32Array(1);
+      k32.GetExitCodeProcess(Number(info[0]), ptr(code));
+      process.exit(code[0]);
+    `,
+      "child.js": `
+      import { connect } from "node:net";
+      let typed = "";
+      process.stdin.on("data", chunk => {
+        typed += chunk.toString();
+        if (!typed.includes("x")) return;
+        console.log("data " + JSON.stringify(typed));
+        process.exit(0);
+      });
+      const socket = connect(Number(process.env.GO_PORT), "127.0.0.1");
+      socket.on("data", () => {
+        process.stdin.setRawMode(true);
+        console.log("raw");
+      });
+      console.log("ready");
+    `,
+    });
+
+    // The console echoes a typed character only while a line read is pending, which is how the
+    // test knows one is before it lets the child switch to raw mode.
+    const go = Promise.withResolvers<void>();
+    await using server = createServer(socket => {
+      socket.on("error", () => {});
+      go.promise.then(() => socket.write("go"));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    let output = "";
+    let step = 0;
+    const endOfOutput = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "launcher.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, GO_PORT: String((server.address() as AddressInfo).port) },
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(terminal, chunk: Uint8Array) {
+          output += Buffer.from(chunk).toString();
+          const shown = Bun.stripANSI(output);
+          if (step === 0 && shown.includes("ready")) {
+            step = 1;
+            terminal.write("Q");
+          } else if (step === 1 && shown.includes("Q")) {
+            step = 2;
+            go.resolve();
+          } else if (step === 2 && shown.includes("raw")) {
+            step = 3;
+            terminal.write("x");
+          }
+        },
+        exit() {
+          endOfOutput.resolve();
+        },
+      },
+    });
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    await endOfOutput.promise;
+    // The character typed during the line read is carried into what raw mode reads.
+    expect(Bun.stripANSI(output)).toContain('data "Qx"');
+    expect(exitCode).toBe(0);
+  },
+);

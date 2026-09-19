@@ -303,7 +303,16 @@ const exports = {
   },
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
-  readdir: asyncWrap(fs.readdir, "readdir"),
+  readdir: async function readdir(path, options) {
+    // The promise form skips fs.readdir's recursive check, which the native parser applies: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1601
+    if (typeof options === "object" && options !== null) {
+      const { recursive } = options;
+      if (recursive != null && typeof recursive !== "boolean") {
+        options = { __proto__: options, recursive: !!recursive };
+      }
+    }
+    return fs.readdir(path, options);
+  },
   readFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);

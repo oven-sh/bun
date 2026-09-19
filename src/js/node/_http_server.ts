@@ -1499,6 +1499,7 @@ function getNodeHTTPServerSocket() {
     [kHandle];
     [kUpgradeIncoming] = undefined;
     [kHandoffResponse] = undefined;
+    [kHandoffWaiter] = undefined;
     server: Server;
     _httpMessage;
     _secureEstablished = false;

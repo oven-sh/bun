@@ -5679,8 +5679,7 @@ class ClientHttp2Session extends Http2Session {
         connectOnNextTick = true;
       }
     } else {
-      // node's https branch runs the server option checks (initializeTLSOptions), its http branch does not:
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3638
+      // Like node, https only: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3638
       if (protocol === "https:") initializeOptions(options);
       socket = connectWithProtocol(
         protocol,

@@ -393,7 +393,7 @@ impl InitCommand {
         }
 
         let _ = Fs::FileSystem::init(None)?;
-        // Empty for a filesystem root (`/`, `C:\`), which has no name.
+        // Empty in `/` and in a drive root (`C:\`). The `project` fallback below covers both.
         let cwd_name = bun_paths::basename(Fs::FileSystem::get().top_level_dir());
         let destination_dir = Fd::cwd();
 

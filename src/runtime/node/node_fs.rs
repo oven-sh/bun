@@ -3703,10 +3703,7 @@ pub mod args {
                             break 'parse;
                         };
                         current = next;
-                        // Node reads this slot with ParseEncoding(args[3], UTF8):
-                        // a name it does not know means UTF-8, and so does a
-                        // value that is not a primitive string.
-                        // https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L2639
+                        // Like Node's ParseEncoding(args[3], UTF8): an unknown value means UTF-8.
                         if current.is_string_literal() {
                             args.encoding =
                                 Encoding::from_js(current, ctx)?.unwrap_or(args.encoding);

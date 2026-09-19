@@ -646,14 +646,14 @@ pub struct Location {
     pub namespace: Cow<'static, [u8]>,
     /// Text on the line, avoiding the need to refetch the source code
     pub line_text: Option<Cow<'static, [u8]>>,
-    /// Number of bytes this location should highlight.
-    /// 0 to just point at a single character
-    pub length: usize,
     // TODO: document or remove
     pub offset: usize,
-    /// 0-based column (UTF-16 units) at which a windowed `line_text` starts.
-    pub line_text_start_column: usize,
 
+    /// Number of bytes this location should highlight.
+    /// 0 to just point at a single character
+    pub length: u32,
+    /// 0-based column (UTF-16 units) at which a windowed `line_text` starts.
+    pub line_text_start_column: u32,
     /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
     // TODO: move to `bun.Ordinal`
@@ -761,7 +761,7 @@ impl Location {
             namespace: Cow::Borrowed(namespace),
             line,
             column,
-            length: length as usize,
+            length,
             line_text: line_text.map(Cow::Borrowed),
             offset: length as usize,
             line_text_start_column: 0,
@@ -826,7 +826,9 @@ impl Location {
                     // Same counter as `column_count`, over the kept bytes only.
                     let mut kept = ErrorPositionState::default();
                     kept.advance(full_line, lo, offset_in_line);
-                    line_text_start_column = data.column_count.saturating_sub(kept.column_number);
+                    line_text_start_column =
+                        u32::try_from(data.column_count.saturating_sub(kept.column_number))
+                            .expect("int cast");
                 }
                 full_line = &full_line[lo..hi];
             }
@@ -837,7 +839,7 @@ impl Location {
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
-                    u32::try_from(r.len).expect("int cast") as usize
+                    u32::try_from(r.len).expect("int cast")
                 } else {
                     1
                 },
@@ -992,7 +994,7 @@ impl Data {
                     let mut line_offset_for_second_line: usize =
                         usize::try_from(location.column - 1)
                             .expect("int cast")
-                            .saturating_sub(location.line_text_start_column)
+                            .saturating_sub(location.line_text_start_column as usize)
                             .min(line_text.len());
 
                     if location.line > -1 {

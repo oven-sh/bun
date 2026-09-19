@@ -5205,7 +5205,7 @@ it("http2 client.request() on a destroyed or closed session uses the right error
   }
 });
 
-describe.concurrent("http2 client.request() options.parent", () => {
+describe.concurrent("http2 options.parent", () => {
   // Resolves with what one GET observed. A stream or session failure rejects it.
   function get(client, path, options) {
     const { promise, resolve, reject } = Promise.withResolvers();
@@ -5230,7 +5230,7 @@ describe.concurrent("http2 client.request() options.parent", () => {
     return server;
   }
 
-  it("accepts 0 and every other non-negative number, like node", async () => {
+  it("request() accepts 0 and every other non-negative number, like node", async () => {
     // node v26.3.0 validates `parent` with a minimum of 0 and nothing else. 0 is the connection
     // root, and the value node fills in when `parent` is unset.
     const server = await echoPathServer();
@@ -5267,7 +5267,7 @@ describe.concurrent("http2 client.request() options.parent", () => {
     }
   });
 
-  it("throws ERR_OUT_OF_RANGE synchronously for a negative or NaN value, like node", async () => {
+  it("request() throws ERR_OUT_OF_RANGE synchronously for a negative or NaN value, like node", async () => {
     const server = await echoPathServer();
     const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
     try {
@@ -5287,7 +5287,11 @@ describe.concurrent("http2 client.request() options.parent", () => {
         });
       // A request made before 'connect' is queued, one made after it is submitted at once.
       const beforeConnect = requestEach();
-      await new Promise(resolve => client.on("connect", resolve));
+      const connected = Promise.withResolvers();
+      client.on("connect", connected.resolve);
+      client.on("error", connected.reject);
+      client.on("close", () => connected.reject(new Error("the session closed before 'connect'")));
+      await connected.promise;
       const afterConnect = requestEach();
 
       const expected = outOfRange.map(parent => ({
@@ -5308,9 +5312,10 @@ describe.concurrent("http2 client.request() options.parent", () => {
     }
   });
 
-  it("sends a PRIORITY field only for a dependency the peer does not already assume", async () => {
-    // Raw-socket h2 server: records the priority field of every HEADERS frame and answers 200.
-    const priorityFields = [];
+  it("request() sends a PRIORITY field only for a dependency the peer does not already assume", async () => {
+    // Raw-socket h2 server: records the stream id and the priority field of every HEADERS frame
+    // and answers 200.
+    const headersFrames = [];
     const server = net.createServer(socket => {
       let buf = Buffer.alloc(0);
       let sawPreface = false;
@@ -5335,9 +5340,11 @@ describe.concurrent("http2 client.request() options.parent", () => {
             socket.write(new http2utils.SettingsFrame(true).data);
           } else if (type === 1) {
             const dependency = flags & 0x20 ? payload.readUInt32BE(0) : null;
-            priorityFields.push(
-              dependency === null ? null : { exclusive: dependency >>> 31 === 1, parent: dependency & 0x7fffffff },
-            );
+            headersFrames.push({
+              streamId,
+              priority:
+                dependency === null ? null : { exclusive: dependency >>> 31 === 1, parent: dependency & 0x7fffffff },
+            });
             // :status: 200 (static table index 8), END_HEADERS | END_STREAM.
             socket.write(new http2utils.HeadersFrame(streamId, Buffer.from([0x88]), 0, true, true).data);
           }
@@ -5357,17 +5364,54 @@ describe.concurrent("http2 client.request() options.parent", () => {
         { parent: 0, exclusive: true },
         { parent: 1 },
         { parent: 2 ** 31 - 1, exclusive: true },
+        // A stream cannot depend on itself (RFC 7540 5.3.1). A node server ends the session for
+        // it. The requests run one at a time, so these two are streams 13 and 15.
+        { parent: 13 },
+        { parent: 15, exclusive: true },
       ]) {
         statuses.push((await get(client, "/", options)).status);
       }
-      expect(statuses).toEqual([200, 200, 200, 200, 200, 200]);
-      expect(priorityFields).toEqual([
-        null,
-        null,
-        null,
-        { exclusive: true, parent: 0 },
-        { exclusive: false, parent: 1 },
-        { exclusive: true, parent: 2 ** 31 - 1 },
+      expect(statuses).toEqual([200, 200, 200, 200, 200, 200, 200, 200]);
+      expect(headersFrames).toEqual([
+        { streamId: 1, priority: null },
+        { streamId: 3, priority: null },
+        { streamId: 5, priority: null },
+        { streamId: 7, priority: { exclusive: true, parent: 0 } },
+        { streamId: 9, priority: { exclusive: false, parent: 1 } },
+        { streamId: 11, priority: { exclusive: true, parent: 2 ** 31 - 1 } },
+        { streamId: 13, priority: null },
+        { streamId: 15, priority: { exclusive: true, parent: 0 } },
+      ]);
+      expect(sessionErrors).toEqual([]);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  it("respond() with parent: 0 sends the response, like node", async () => {
+    // respond() hands its options to the same native HEADERS writer as request(). node's
+    // respond() does not read `parent`.
+    const serverStreamFailed = Promise.withResolvers();
+    serverStreamFailed.promise.catch(() => {}); // only observed through the races below
+    const server = http2.createServer();
+    server.on("stream", (stream, headers) => {
+      stream.on("error", serverStreamFailed.reject);
+      stream.respond({ ":status": 200 }, { parent: 0 });
+      stream.end(headers[":path"]);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const sessionErrors = [];
+      client.on("error", err => sessionErrors.push(err));
+      const results = [];
+      for (const path of ["/first", "/second"]) {
+        results.push(await Promise.race([get(client, path), serverStreamFailed.promise]));
+      }
+      expect(results).toEqual([
+        { status: 200, body: "/first" },
+        { status: 200, body: "/second" },
       ]);
       expect(sessionErrors).toEqual([]);
     } finally {

@@ -6980,8 +6980,12 @@ impl H2FrameParser {
                         );
                         return Ok(JSValue::js_number(stream.id as f64));
                     }
-                    // Every stream starts as a dependant of stream 0 (RFC 7540 5.3.5), so 0 alone
-                    // needs no PRIORITY field.
+                    // A stream cannot depend on itself (RFC 7540 5.3.1): nghttp2 peers answer that
+                    // with a GOAWAY. Stream 0 is the dependency every stream starts with (5.3.5),
+                    // so 0 alone needs no PRIORITY field.
+                    if parent as u32 == stream_id {
+                        parent = 0;
+                    }
                     has_priority |= parent != 0;
                 } else {
                     return Err(global_object.throw_invalid_argument_type_value(

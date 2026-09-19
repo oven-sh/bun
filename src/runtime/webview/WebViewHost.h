@@ -84,9 +84,14 @@ private:
     // Main-frame HTTP status of the navigation in flight, and whether a
     // response policy callback delivered it. A back-forward cache restore
     // has no response: its status is read back from the history item
-    // (objc::WKBackForwardListItem::status).
+    // (objc::WKBackForwardListItem::status). A load that stays on the item
+    // it started on (location.replace, reload) is not a restore.
     uint16_t m_status = 0;
     bool m_responseSeen = false;
+    id m_itemAtStart = nullptr;
+    // Status of the committed document, for the items its same-document
+    // navigations create.
+    uint16_t m_documentStatus = 0;
     bool m_evalPending = false;
     bool m_screenshotPending = false;
     // Stashed by screenshotIPC; read by onScreenshotComplete to pick the

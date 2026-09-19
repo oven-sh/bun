@@ -245,6 +245,8 @@ view.onNavigationFailed = error => {
 
 These fire **before** the corresponding `navigate()` promise settles, so by the time `await view.navigate(...)` returns, your callback has already run. Set to `null` to remove.
 
+With the WebKit backend, `view.status` is already updated when `onNavigated` runs. With the Chrome backend, `onNavigated` fires when the navigation commits, and `view.title` and `view.status` are updated when `navigate()` resolves.
+
 ---
 
 ## Evaluating JavaScript

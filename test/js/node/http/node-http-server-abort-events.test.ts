@@ -49,6 +49,135 @@ test("aborted request body emits 'error' ECONNRESET and res 'close' before req '
   }
 });
 
+// Node.js's end() looks at `finished` before it looks at the socket, so a
+// finished response answers a late end(cb) with ERR_STREAM_ALREADY_FINISHED even
+// after the connection is gone. Once the response is destroyed, only write()
+// reports a write error to its callback: end() hands write_() no callback, and
+// its onError() returns early.
+describe("a late end() or write() answers its callback like Node.js", () => {
+  type Callback = (err?: NodeJS.ErrnoException | null) => void;
+  type Observed = { callbacks: string[]; errorEvents: (string | undefined)[]; returned: unknown };
+
+  const lateCalls = {
+    "end(cb)": (res: ServerResponse, cb: Callback) => res.end(cb),
+    "end(chunk, cb)": (res: ServerResponse, cb: Callback) => res.end("late", cb),
+    "write(chunk, cb)": (res: ServerResponse, cb: Callback) => res.write("late", cb),
+  };
+  type LateCall = keyof typeof lateCalls;
+
+  // Makes the late call and resolves with what it saw. A deferred callback is
+  // queued with process.nextTick(), so it has run by the next immediate.
+  function observe(res: ServerResponse, call: LateCall) {
+    return new Promise<Observed>(resolve => {
+      const callbacks: string[] = [];
+      const errorEvents: (string | undefined)[] = [];
+      res.on("error", err => errorEvents.push((err as NodeJS.ErrnoException).code));
+      let sync = true;
+      const returned = lateCalls[call](res, err => callbacks.push(`${sync ? "sync" : "async"} ${err?.code}`));
+      sync = false;
+      setImmediate(resolve, { callbacks, errorEvents, returned: returned === res ? "res" : returned });
+    });
+  }
+
+  // Serves one GET over a real connection. `respond` answers it and calls `run`
+  // once the response is in the state under test.
+  function overConnection(
+    clientCloses: boolean,
+    respond: (req: IncomingMessage, res: ServerResponse, run: () => void) => void,
+  ) {
+    return async (call: LateCall) => {
+      const observed = Promise.withResolvers<Observed>();
+      const server = createServer((req, res) => respond(req, res, () => observed.resolve(observe(res, call))));
+      let client: ReturnType<typeof connect> | undefined;
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const { port } = server.address() as AddressInfo;
+        client = connect(port, "127.0.0.1");
+        client.on("error", () => {});
+        if (clientCloses) client.once("data", () => client!.destroy());
+        client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+        return await observed.promise;
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    };
+  }
+
+  // Calls `run` once the response and the server side of the connection have
+  // both emitted 'close'.
+  function whenConnectionClosed(req: IncomingMessage, res: ServerResponse, run: () => void) {
+    let open = 2;
+    const closed = () => {
+      if (--open === 0) run();
+    };
+    res.once("close", closed);
+    req.socket.once("close", closed);
+  }
+
+  const alreadyFinished = { callbacks: ["sync ERR_STREAM_ALREADY_FINISHED"], errorEvents: [], returned: "res" };
+  const dropped = { callbacks: [], errorEvents: [], returned: "res" };
+  const writeAfterEnd = { callbacks: ["async ERR_STREAM_WRITE_AFTER_END"], errorEvents: [], returned: false };
+  const destroyed = { callbacks: ["async ERR_STREAM_DESTROYED"], errorEvents: [], returned: false };
+
+  const states: Record<string, { reach(call: LateCall): Promise<Observed>; expected: Record<LateCall, Observed> }> = {
+    "finished, the client closed the connection": {
+      reach: overConnection(true, (req, res, run) => {
+        whenConnectionClosed(req, res, run);
+        res.end("ok");
+      }),
+      expected: { "end(cb)": alreadyFinished, "end(chunk, cb)": dropped, "write(chunk, cb)": writeAfterEnd },
+    },
+    "finished, the connection is still open": {
+      reach: overConnection(false, (req, res, run) => {
+        res.once("close", run);
+        res.end("ok");
+      }),
+      expected: { "end(cb)": alreadyFinished, "end(chunk, cb)": dropped, "write(chunk, cb)": writeAfterEnd },
+    },
+    // The response has not emitted 'close' yet, so it is not destroyed and a
+    // write after end also reaches 'error'.
+    "finished, the handler destroyed the socket in the same tick": {
+      reach: overConnection(false, (req, res, run) => {
+        res.end("ok");
+        req.socket.destroy();
+        run();
+      }),
+      expected: {
+        "end(cb)": alreadyFinished,
+        "end(chunk, cb)": { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"], returned: "res" },
+        "write(chunk, cb)": { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"] },
+      },
+    },
+    "unfinished, the client closed the connection": {
+      reach: overConnection(true, (req, res, run) => {
+        whenConnectionClosed(req, res, run);
+        res.write("ok");
+      }),
+      expected: { "end(cb)": dropped, "end(chunk, cb)": dropped, "write(chunk, cb)": destroyed },
+    },
+    "unfinished, destroyed before it got a socket": {
+      async reach(call) {
+        const res = new ServerResponse(new IncomingMessage(null as any));
+        const closed = once(res, "close");
+        res.destroy();
+        await closed;
+        return observe(res, call);
+      },
+      expected: { "end(cb)": dropped, "end(chunk, cb)": dropped, "write(chunk, cb)": destroyed },
+    },
+  };
+
+  const rows = Object.entries(states).flatMap(([name, state]) =>
+    (Object.keys(lateCalls) as LateCall[]).map(call => [name, call, state] as const),
+  );
+
+  test.concurrent.each(rows)("%s: %s", async (_name, call, state) => {
+    expect(await state.reach(call)).toEqual(state.expected[call]);
+  });
+});
+
 // Like Node.js's OutgoingMessage#destroy, res.destroy() does not emit 'close'
 // itself. A response that still has its socket gets 'close' from the socket
 // teardown (so an ended response still emits 'finish' first); a response

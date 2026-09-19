@@ -5084,6 +5084,274 @@ it("http2 client.request() on a destroyed or closed session uses the right error
   }
 });
 
+// node validates the header block, then options (parent, exclusive, silent, endStream, signal),
+// applies endStream and the signal, and acts on the session state last. Every expectation below
+// holds on node v26.3.0. One channel differs: node reports a closed session on the stream, bun
+// throws the same error, so failureOf() accepts both.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1812-L1937
+describe.concurrent("http2 client.request() validates headers, then options, then looks at the session state", () => {
+  const invalidHeaders = [
+    ["an invalid name", () => ({ "bad name": "x" }), "ERR_INVALID_HTTP_TOKEN"],
+    ["an invalid name in a raw list", () => ["bad name", "x"], "ERR_INVALID_HTTP_TOKEN"],
+    ["an unknown pseudo-header", () => ({ ":foo": "x" }), "ERR_HTTP2_INVALID_PSEUDOHEADER"],
+    ["an unknown pseudo-header in a raw list", () => [":foo", "x"], "ERR_HTTP2_INVALID_PSEUDOHEADER"],
+    ["a repeated single-value header", () => ({ "content-type": ["a", "b"] }), "ERR_HTTP2_HEADER_SINGLE_VALUE"],
+    ["CONNECT without :authority", () => ({ ":method": "CONNECT" }), "ERR_HTTP2_CONNECT_AUTHORITY"],
+    ["CONNECT without :authority in a raw list", () => [":method", "CONNECT"], "ERR_HTTP2_CONNECT_AUTHORITY"],
+    [
+      "CONNECT with :scheme",
+      () => ({ ":method": "CONNECT", ":authority": "a", ":scheme": "http" }),
+      "ERR_HTTP2_CONNECT_SCHEME",
+    ],
+    ["CONNECT with :path", () => ({ ":method": "CONNECT", ":authority": "a", ":path": "/" }), "ERR_HTTP2_CONNECT_PATH"],
+  ];
+  // In the order node validates them.
+  const invalidOptions = [
+    ["parent", "x"],
+    ["exclusive", 1],
+    ["silent", 1],
+    ["endStream", 1],
+    ["signal", {}],
+  ];
+  // Valid for request(). nghttp2 rejects them at send time, and bun reports that on the stream.
+  const rejectedAtSendTime = [{ ":path": "/a b" }, { ":method": "HEAD", "content-length": "1" }];
+
+  // `failure` is the error of a valid request.
+  const sessionStates = {
+    "open": {
+      async enter() {},
+      expected: { closed: false, destroyed: false },
+    },
+    "destroyed": {
+      async enter(client) {
+        client.destroy();
+      },
+      expected: { destroyed: true },
+      failure: "ERR_HTTP2_INVALID_SESSION",
+    },
+    "closed": {
+      async enter(client) {
+        await responseOf(client, "/hang");
+        client.close();
+      },
+      expected: { closed: true, destroyed: false },
+      failure: "ERR_HTTP2_GOAWAY_SESSION",
+    },
+    "closed by a GOAWAY": {
+      async enter(client) {
+        await Promise.all([eventOf(client, "goaway"), responseOf(client, "/goaway")]);
+      },
+      expected: { closed: true, destroyed: false },
+      failure: "ERR_HTTP2_GOAWAY_SESSION",
+    },
+  };
+  const unusableStates = Object.keys(sessionStates).filter(state => sessionStates[state].failure !== undefined);
+
+  // Resolves with the arguments of the event. Rejects on 'error', and on a 'close' that comes first.
+  function eventOf(emitter, name) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    emitter.once(name, (...args) => resolve(args));
+    emitter.once("error", reject);
+    emitter.once("close", () => reject(new Error(`closed before '${name}'`)));
+    return promise;
+  }
+
+  // Resolves once the response headers arrived. The server leaves the stream open, so the
+  // session stays alive after close() or a graceful GOAWAY.
+  async function responseOf(client, path) {
+    const req = client.request({ ":path": path });
+    req.on("error", () => {});
+    req.resume();
+    await eventOf(req, "response");
+  }
+
+  async function sessionIn(state) {
+    const server = http2.createServer();
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      if (headers[":path"] === "/goaway") stream.session.goaway();
+      else if (headers[":path"] !== "/hang") stream.end();
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      await eventOf(client, "connect");
+      await sessionStates[state].enter(client);
+    } catch (e) {
+      client.destroy();
+      server.close();
+      throw e;
+    }
+    return { server, client };
+  }
+
+  // What request() throws, or undefined when it returns a stream.
+  function thrownBy(client, headers, options) {
+    let req;
+    try {
+      req = client.request(headers, options);
+    } catch (e) {
+      return e;
+    }
+    req.on("error", () => {});
+  }
+
+  // Resolves with the error the stream is destroyed with.
+  function errorOf(req) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    req.on("error", resolve);
+    req.on("close", () => reject(new Error("the stream closed without an error")));
+    return promise;
+  }
+
+  // The error of a request that cannot start: thrown by request(), or emitted on its stream.
+  async function failureOf(client, headers, options) {
+    let req;
+    try {
+      req = client.request(headers, options);
+    } catch (e) {
+      return e;
+    }
+    return errorOf(req);
+  }
+
+  // How a stream that cannot start looks when request() returns, and the events that follow.
+  function observe(req) {
+    const seen = { writableEnded: req.writableEnded, sentHeaders: Object.keys(req.sentHeaders), events: [] };
+    req.on("aborted", () => seen.events.push("aborted"));
+    req.on("error", error => seen.events.push(error.name === "AbortError" ? "AbortError" : error.code));
+    const { promise, resolve } = Promise.withResolvers();
+    req.on("close", () => resolve(seen));
+    return promise;
+  }
+
+  it.each(Object.keys(sessionStates))("on a session that is %s", async state => {
+    const { server, client } = await sessionIn(state);
+    try {
+      expect({ closed: client.closed, destroyed: client.destroyed }).toMatchObject(sessionStates[state].expected);
+
+      // A header error wins, with no options and with each invalid option.
+      const headerErrors = {};
+      const expectedHeaderErrors = {};
+      for (const [label, headers, code] of invalidHeaders) {
+        headerErrors[label] = thrownBy(client, headers())?.code;
+        expectedHeaderErrors[label] = code;
+        for (const [name, value] of invalidOptions) {
+          headerErrors[`${label} + options.${name}`] = thrownBy(client, headers(), { [name]: value })?.code;
+          expectedHeaderErrors[`${label} + options.${name}`] = code;
+        }
+      }
+      expect(headerErrors).toEqual(expectedHeaderErrors);
+
+      // With valid headers, the first invalid option in node's order is the one reported. The
+      // properties are inserted in reverse, so the result cannot come from the property order.
+      const options = Object.fromEntries(invalidOptions.toReversed());
+      const optionErrors = [];
+      for (const [name] of invalidOptions) {
+        const error = thrownBy(client, { ":path": "/" }, { ...options });
+        const reported = error?.message.match(/^The "([^"]+)" property must be /)?.[1];
+        optionErrors.push({ code: error?.code, reported });
+        delete options[name];
+      }
+      expect(optionErrors).toEqual(
+        invalidOptions.map(([name]) => ({ code: "ERR_INVALID_ARG_TYPE", reported: `options.${name}` })),
+      );
+
+      // options is read once, and only when the header block is valid.
+      let reads = 0;
+      const counted = {
+        get silent() {
+          reads++;
+          return false;
+        },
+      };
+      expect(thrownBy(client, { "bad name": "x" }, counted)?.code).toBe("ERR_INVALID_HTTP_TOKEN");
+      expect(reads).toBe(0);
+      thrownBy(client, { ":path": "/" }, counted);
+      expect(reads).toBe(1);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it.each(unusableStates)("a session that is %s fails a valid request before nghttp2 can reject it", async state => {
+    const { server, client } = await sessionIn(state);
+    try {
+      const failures = [{ ":path": "/" }, ...rejectedAtSendTime].map(headers => failureOf(client, headers));
+      expect((await Promise.all(failures)).map(error => error.code)).toEqual(
+        Array(failures.length).fill(sessionStates[state].failure),
+      );
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("validates options.signal before nghttp2 can reject the request", async () => {
+    const { server, client } = await sessionIn("open");
+    try {
+      for (const headers of rejectedAtSendTime) {
+        expect(thrownBy(client, headers, { signal: {} })?.code).toBe("ERR_INVALID_ARG_TYPE");
+        const error = await errorOf(client.request(headers, { signal: AbortSignal.abort() }));
+        expect(error.name).toBe("AbortError");
+      }
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("a destroyed session fails a stream that has the header defaults, endStream and the signal applied", async () => {
+    const { server, client } = await sessionIn("destroyed");
+    try {
+      const controller = new AbortController();
+      const requests = [
+        ["GET", observe(client.request({ "x-a": "1" }))],
+        ["GET, raw list", observe(client.request(["x-a", "1"]))],
+        ["POST", observe(client.request({ ":method": "POST" }))],
+        ["aborted signal", observe(client.request({ ":path": "/" }, { signal: AbortSignal.abort() }))],
+        ["signal aborted in the same tick", observe(client.request({ ":path": "/" }, { signal: controller.signal }))],
+      ];
+      controller.abort();
+      const observed = {};
+      for (const [label, seen] of requests) observed[label] = await seen;
+      expect(observed).toEqual({
+        "GET": {
+          writableEnded: true,
+          sentHeaders: ["x-a", ":method", ":authority", ":scheme", ":path"],
+          events: ["ERR_HTTP2_INVALID_SESSION"],
+        },
+        "GET, raw list": {
+          writableEnded: true,
+          sentHeaders: [":method", ":authority", ":scheme", ":path", "x-a"],
+          events: ["ERR_HTTP2_INVALID_SESSION"],
+        },
+        "POST": {
+          writableEnded: false,
+          sentHeaders: [":method", ":authority", ":scheme", ":path"],
+          events: ["aborted", "ERR_HTTP2_INVALID_SESSION"],
+        },
+        "aborted signal": {
+          writableEnded: true,
+          sentHeaders: [":path", ":method", ":authority", ":scheme"],
+          events: ["AbortError"],
+        },
+        "signal aborted in the same tick": {
+          writableEnded: true,
+          sentHeaders: [":path", ":method", ":authority", ":scheme"],
+          events: ["AbortError"],
+        },
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
 function requestOverHttp1(port, headers) {
   const { promise, resolve, reject } = Promise.withResolvers();
   const request = https.request(

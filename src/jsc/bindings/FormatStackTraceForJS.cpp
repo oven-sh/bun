@@ -373,7 +373,6 @@ WTF::String formatStackTrace(
         unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword);
 
         WTF::String functionName = Zig::functionName(vm, frame, &flags);
-        RETURN_IF_EXCEPTION(scope, {});
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
         OrdinalNumber displayLine = {};

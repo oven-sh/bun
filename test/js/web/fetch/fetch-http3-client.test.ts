@@ -833,7 +833,7 @@ describe("aborted upload", () => {
 // in one STREAM frame.
 describe("interim responses ahead of the final response", () => {
   const encoder = new TextEncoder();
-  const listenOrigin = () =>
+  const listenOrigin = (interim: Record<string, string>[]) =>
     listen(
       async (session: any) => {
         session.onstream = (stream: any) => stream.closed.catch(() => {});
@@ -843,8 +843,7 @@ describe("interim responses ahead of the final response", () => {
         sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
         transportParams: { maxIdleTimeout: 5 },
         onheaders(this: any, received: Record<string, string>) {
-          this.sendInformationalHeaders({ ":status": "100" });
-          this.sendInformationalHeaders({ ":status": "103", link: "</style.css>; rel=preload" });
+          for (const headers of interim) this.sendInformationalHeaders(headers);
           if (received[":path"] === "/no-body") {
             this.sendHeaders({ ":status": "204", "x-final": "yes" }, { terminal: true });
             return;
@@ -860,7 +859,7 @@ describe("interim responses ahead of the final response", () => {
     ["/no-body", { status: 204, final: "yes", body: "" }],
     ["/body", { status: 200, final: "yes", body: "hello" }],
   ])("100 and 103, then the final response of %s", async (path, expected) => {
-    const origin = await listenOrigin();
+    const origin = await listenOrigin([{ ":status": "100" }, { ":status": "103", link: "</style.css>; rel=preload" }]);
     try {
       const res = await fetch(`https://127.0.0.1:${origin.address.port}${path}`, h3);
       expect({ status: res.status, final: res.headers.get("x-final"), body: await res.text() }).toEqual(expected);
@@ -868,6 +867,70 @@ describe("interim responses ahead of the final response", () => {
       // Not close(): it waits for the session that fetch() keeps in its pool.
       await origin.destroy();
     }
+  });
+
+  // RFC 9114 section 4.5: HTTP/3 does not support 101 (Switching Protocols), so
+  // a 101 block is malformed. It is not an interim response to wait behind.
+  test("101 fails the request", async () => {
+    const origin = await listenOrigin([{ ":status": "101" }]);
+    try {
+      const result = await fetch(`https://127.0.0.1:${origin.address.port}/body`, h3).then(
+        async res => ({ status: res.status, body: await res.text() }),
+        e => ({ error: e.code }),
+      );
+      expect(result).toEqual({ error: "HTTP3ProtocolError" });
+    } finally {
+      await origin.destroy();
+    }
+  });
+});
+
+// A response `:status` is three digits from 100 to 999, as nghttp3 takes it, and
+// never 101. Any other value makes the response malformed. The origin answers
+// every request with one header block that ends the stream.
+describe("response :status value", () => {
+  async function probe(status: string) {
+    let requests = 0;
+    const origin = await listen(
+      async (session: any) => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+        transportParams: { maxIdleTimeout: 5 },
+        onheaders(this: any) {
+          requests++;
+          this.sendHeaders({ ":status": status }, { terminal: true });
+        },
+      },
+    );
+    try {
+      const result = await fetch(`https://127.0.0.1:${origin.address.port}/`, h3).then(
+        res => ({ status: res.status }),
+        e => ({ error: e.code }),
+      );
+      return { result, requests };
+    } finally {
+      // Not close(): it waits for the session that fetch() keeps in its pool.
+      await origin.destroy();
+    }
+  }
+
+  // A lone 101 taken for an interim response leaves a stream that ends with no
+  // final response, and the client sends such a request a second time.
+  test.each(["101", "99", "099", "20", "1000", "0200", "+200", "2_00"])(
+    "%j fails the request, which the client sends once",
+    async status => {
+      expect(await probe(status)).toEqual({ result: { error: "HTTP3ProtocolError" }, requests: 1 });
+    },
+  );
+
+  test.each([
+    ["200", 200],
+    ["999", 999],
+  ])("%j is delivered", async (status, expected) => {
+    expect(await probe(status)).toEqual({ result: { status: expected }, requests: 1 });
   });
 });
 

@@ -40,3 +40,14 @@ pub fn parse_content_length_strict(value: &[u8]) -> Option<u64> {
     }
     Some(n)
 }
+
+/// The `:status` pseudo-header of an HTTP/2 or HTTP/3 response: three ASCII digits from 100 to
+/// 999, as nghttp2 and nghttp3 take it. `None` (a malformed response) for anything else, and for
+/// 101, which neither protocol has (RFC 9113 §8.6, RFC 9114 §4.5).
+pub fn parse_status_pseudo_header(value: &[u8]) -> Option<u16> {
+    let &[a @ b'1'..=b'9', b @ b'0'..=b'9', c @ b'0'..=b'9'] = value else {
+        return None;
+    };
+    let status = u16::from(a - b'0') * 100 + u16::from(b - b'0') * 10 + u16::from(c - b'0');
+    (status != 101).then_some(status)
+}

@@ -20,6 +20,7 @@ use crate::h2_client::dispatch::{
     is_malformed_response_field, is_malformed_response_value, trim_response_value,
 };
 use crate::h3_client as H3;
+use bun_http_types::parse_status_pseudo_header;
 use bun_picohttp as picohttp;
 
 use crate::h3_client::h3_client;
@@ -232,7 +233,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         let value = h.value_bytes();
         if name.first() == Some(&b':') {
             if name == b":status" {
-                status = bun_core::fmt::parse_int::<u16>(value, 10).unwrap_or(0);
+                status = parse_status_pseudo_header(value).unwrap_or(0);
             }
             i += 1;
             continue;

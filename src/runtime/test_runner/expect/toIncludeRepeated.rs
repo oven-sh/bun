@@ -9,11 +9,9 @@ impl Expect {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // toIncludeRepeated bypasses get_value (reads `captured_value_get_cached` directly,
-        // no `.resolves`/`.rejects` handling), so cannot use the full `matcher_prelude`.
-        let this = self.post_match_guard(global);
+        let (this, expect_string, not) =
+            self.matcher_prelude(global, frame.this(), "toIncludeRepeated", "<green>expected<r>")?;
 
-        let this_value = frame.this();
         let arguments = frame.arguments();
 
         if arguments.len() < 2 {
@@ -21,8 +19,6 @@ impl Expect {
                 "toIncludeRepeated() requires 2 arguments"
             )));
         }
-
-        this.increment_expect_call_counter();
 
         let substring = arguments[0];
         substring.ensure_still_alive();
@@ -44,19 +40,11 @@ impl Expect {
 
         let count_as_num = count.to_u32();
 
-        let Some(expect_string) = super::js::captured_value_get_cached(this_value) else {
-            return Err(global.throw(format_args!(
-                "Internal consistency error: the expect(value) was garbage collected but it should not have been!"
-            )));
-        };
-
         if !expect_string.is_string() {
             return Err(global.throw(format_args!(
                 "toIncludeRepeated() requires the expect(value) to be a string"
             )));
         }
-
-        let not = this.flags.get().not();
 
         let expect_string_as_str_owned = expect_string.to_utf8(global)?;
         let sub_string_as_str_owned = substring.to_utf8(global)?;

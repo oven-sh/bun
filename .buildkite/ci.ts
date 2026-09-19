@@ -6,6 +6,7 @@
  */
 
 import { join } from "node:path";
+import type { Arch, Abi as HostAbi, Os } from "../scripts/utils.ts";
 import {
   getBootstrapVersion,
   getBuildkiteEmoji,
@@ -31,35 +32,29 @@ import {
   writeFile,
 } from "../scripts/utils.ts";
 
-/**
- * @typedef {"linux" | "darwin" | "windows" | "freebsd"} Os
- * @typedef {"aarch64" | "x64"} Arch
- * @typedef {"musl" | "android"} Abi
- * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
- * @typedef {"latest" | "previous" | "oldest" | "eol" | "beta"} Tier
- * @typedef {"release" | "assert" | "debug" | "asan"} Profile
- */
+/** A target's abi. glibc is the absence of one, so "gnu" is never spelled here. */
+type Abi = Exclude<HostAbi, "gnu">;
+type Distro = "debian" | "ubuntu" | "alpine" | "amazonlinux";
+type Tier = "latest" | "previous" | "oldest" | "eol" | "beta";
+type Profile = "release" | "assert" | "debug" | "asan";
 
-/**
- * @typedef Target
- * @property {Os} os
- * @property {Arch} arch
- * @property {Abi} [abi]
- * @property {boolean} [baseline]
- * @property {Profile} [profile]
- * @property {boolean} [crossCompile]
- *   Build on a Linux host for a foreign target OS (currently: darwin and
- *   windows). Agents/images resolve to the Linux build fleet; keys/labels/
- *   artifacts are unaffected — these ARE the darwin/windows build lanes,
- *   there is no native macOS or Windows build. FreeBSD/Android don't set
- *   this — they already imply a Linux host.
- */
+type Target = {
+  os: Os;
+  arch: Arch;
+  abi?: Abi | undefined;
+  baseline?: boolean | undefined;
+  profile?: Profile | undefined;
+  /**
+   * Build on a Linux host for a foreign target OS (currently: darwin and
+   * windows). Agents/images resolve to the Linux build fleet; keys/labels/
+   * artifacts are unaffected — these ARE the darwin/windows build lanes,
+   * there is no native macOS or Windows build. FreeBSD/Android don't set
+   * this — they already imply a Linux host.
+   */
+  crossCompile?: boolean;
+};
 
-/**
- * @param {Target} target
- * @returns {string}
- */
-function getTargetKey(target) {
+function getTargetKey(target: Target): string {
   const { os, arch, abi, baseline, profile } = target;
   let key = `${os}-${arch}`;
   if (abi) {
@@ -74,11 +69,7 @@ function getTargetKey(target) {
   return key;
 }
 
-/**
- * @param {Target} target
- * @returns {string}
- */
-function getTargetLabel(target) {
+function getTargetLabel(target: Target): string {
   const { os, arch, abi, baseline, profile } = target;
   let label = `${getBuildkiteEmoji(os)} ${arch}`;
   if (abi) {
@@ -93,23 +84,18 @@ function getTargetLabel(target) {
   return label;
 }
 
-/**
- * @typedef Platform
- * @property {Os} os
- * @property {Arch} arch
- * @property {Abi} [abi]
- * @property {boolean} [baseline]
- * @property {Profile} [profile]
- * @property {boolean} [crossCompile]
- * @property {Distro} [distro]
- * @property {string} release
- * @property {Tier} [tier]
- * @property {string[]} [features]
- */
+type Platform = Target & {
+  distro?: Distro;
+  release: string;
+  tier?: Tier;
+  features?: string[];
+};
+
+type AzureVmTier = "build" | "test";
 
 // Azure VM sizes for Windows CI runners.
 // DDSv6 = x64, DPSv6 = ARM64 (Cobalt 100). Quota: 100 cores per family in eastus2.
-const azureVmSizes = {
+const azureVmSizes: Partial<Record<`${Os}-${Arch}`, Partial<Record<AzureVmTier, string>>>> = {
   // Windows builds are cross-compiled on the Linux fleet; these sizes are for
   // the steps that still need a real Windows machine (test shards, signing,
   // and the baseline-verification emulator phase).
@@ -122,7 +108,7 @@ const azureVmSizes = {
   },
 };
 
-function getAzureVmSize(os, arch, tier = "build") {
+function getAzureVmSize(os: Os, arch: Arch, tier: AzureVmTier = "build"): string | undefined {
   return azureVmSizes[`${os}-${arch}`]?.[tier];
 }
 
@@ -131,14 +117,10 @@ function getAzureVmSize(os, arch, tier = "build") {
  * linux x64/aarch64 × gnu/musl, darwin, windows, freebsd, android — are
  * cross-compiled from this debian-13 aarch64 box via --target/--sysroot
  * (scripts/build/config.ts + flags.ts) so one AMI serves every build.
- * @type {Platform}
  */
-const buildHostPlatform = { os: "linux", arch: "aarch64", distro: "debian", release: "13" };
+const buildHostPlatform: Platform = { os: "linux", arch: "aarch64", distro: "debian", release: "13" };
 
-/**
- * @type {Platform[]}
- */
-const buildPlatforms = [
+const buildPlatforms: Platform[] = [
   // macOS is cross-compiled from the debian-13 aarch64 host (clang --target +
   // the Apple SDK fetched by xmac + ld64.lld — see scripts/build/macos-sdk.ts
   // and scripts/build/flags.ts). There is no native macOS build lane: the mac
@@ -173,10 +155,7 @@ const buildPlatforms = [
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
 
-/**
- * @type {Platform[]}
- */
-const testPlatforms = [
+const testPlatforms: Platform[] = [
   // Darwin arm64 is targeted by `release-tier` (see getTestAgent): one job on
   // `latest` (current macOS, 26 today) and one on `previous` (anything older
   // — currently 13/14/15). x64 is NOT tier-targeted: a single entry runs on
@@ -204,11 +183,7 @@ const testPlatforms = [
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
 
-/**
- * @param {Platform} platform
- * @returns {string}
- */
-function getPlatformKey(platform) {
+function getPlatformKey(platform: Platform): string {
   const { distro, release } = platform;
   const target = getTargetKey(platform);
   const version = release.replace(/\./g, "");
@@ -218,11 +193,8 @@ function getPlatformKey(platform) {
   return `${target}-${version}`;
 }
 
-/**
- * @param {Platform} platform
- * @returns {string}
- */
-function getPlatformLabel(platform) {
+/** `arch` is only printed here, and placeBinaryCheck() passes `<arch>-<abi>` as one. */
+function getPlatformLabel(platform: Omit<Platform, "arch"> & { arch: string }): string {
   const { os, arch, baseline, profile, distro, release } = platform;
   let label = `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
   if (baseline) {
@@ -234,11 +206,7 @@ function getPlatformLabel(platform) {
   return label;
 }
 
-/**
- * @param {Platform} platform
- * @returns {string}
- */
-function getImageKey(platform) {
+function getImageKey(platform: Platform): string {
   const { os, arch, distro, release, features, abi, crossCompile } = platform;
   // Cross-compiled targets (Android, FreeBSD, macOS-cross) build from a Linux
   // host image — bootstrap.sh installs the NDK / base.txz sysroot on it (the
@@ -260,21 +228,12 @@ function getImageKey(platform) {
   return key;
 }
 
-/**
- * @param {Platform} platform
- * @returns {string}
- */
-function getImageLabel(platform) {
+function getImageLabel(platform: Platform): string {
   const { os, arch, distro, release } = platform;
   return `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
 }
 
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {string}
- */
-function getImageName(platform, options) {
+function getImageName(platform: Platform, options: PipelineOptions): string {
   const { os, distro, crossCompile } = platform;
   const { buildImages, publishImages, imageFilter } = options;
 
@@ -298,7 +257,7 @@ function getImageName(platform, options) {
 /**
  * @link https://buildkite.com/docs/pipelines/configure/retry#retry-attributes-automatic-retry-attributes
  */
-function getRetry() {
+function getRetry(): Retry {
   return {
     manual: {
       permit_on_passed: true,
@@ -322,10 +281,9 @@ function getRetry() {
 }
 
 /**
- * @returns {number}
  * @link https://buildkite.com/docs/pipelines/managing-priorities
  */
-function getPriority() {
+function getPriority(): number {
   if (isFork()) {
     return -1;
   }
@@ -342,19 +300,12 @@ function getPriority() {
  * Agents
  */
 
-/**
- * @typedef {Object} Ec2Options
- * @property {string} instanceType
- * @property {boolean} dryRun
- */
+type Ec2Options = {
+  /** `undefined` when getAzureVmSize() has no size for the machine asked for. */
+  instanceType: string | undefined;
+};
 
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @param {Ec2Options} ec2Options
- * @returns {Agent}
- */
-function getEc2Agent(platform, options, ec2Options) {
+function getEc2Agent(platform: Platform, options: PipelineOptions, ec2Options: Ec2Options): Ec2Agent {
   const { os, arch, abi, distro, release, crossCompile } = platform;
   const { instanceType } = ec2Options;
   // Cross-compiled targets run on a Linux EC2 box; the agent tag must match
@@ -374,12 +325,7 @@ function getEc2Agent(platform, options, ec2Options) {
   };
 }
 
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {string}
- */
-function getBuildAgent(platform, options) {
+function getBuildAgent(platform: Platform, options: PipelineOptions): Ec2Agent {
   // Every build lane runs on the single debian-13 aarch64 host image
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
@@ -393,12 +339,7 @@ function getBuildAgent(platform, options) {
   });
 }
 
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Agent}
- */
-function getTestAgent(platform, options) {
+function getTestAgent(platform: Platform, options: PipelineOptions): Agent {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
@@ -457,17 +398,15 @@ function getTestAgent(platform, options) {
  * Steps
  */
 
+/** The `ci-<mode>` profile of scripts/build.ts a build command runs. */
+type BuildMode = "build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link";
+
 /**
  * Build the scripts/build.ts argument list from a target's properties.
  * Replaces the old getBuildEnv (cmake -D env vars) + getBuildCommand
  * (--target passthrough) with direct build.ts flags.
- *
- * @param {Target} target
- * @param {PipelineOptions} options
- * @param {"build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
- * @returns {string}
  */
-function getBuildArgs(target, options, mode) {
+function getBuildArgs(target: Target, options: PipelineOptions, mode: BuildMode): string {
   const { os, arch, abi, baseline, profile } = target;
   const { canary } = options;
 
@@ -490,13 +429,7 @@ function getBuildArgs(target, options, mode) {
   return args.join(" ");
 }
 
-/**
- * @param {Target} target
- * @param {PipelineOptions} options
- * @param {"build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
- * @returns {string}
- */
-function getBuildCommand(target, options, mode) {
+function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMode): string {
   // Windows code signing is handled by a dedicated 'windows-sign' step after
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
@@ -511,12 +444,8 @@ function getBuildCommand(target, options, mode) {
 
 /**
  * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
- *
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
  */
-function getBuildBunStep(platform, options) {
+function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandStep {
   const { arch } = platform;
   // Best-effort nasm for x64 (BoringSSL win-x64, libjpeg-turbo SIMD); images bake it, and the build's own error is clearer.
   const nasmSetup =
@@ -544,10 +473,8 @@ function getBuildBunStep(platform, options) {
 /**
  * Returns the artifact triplet for a platform, e.g. "bun-linux-aarch64" or "bun-linux-x64-musl-baseline".
  * Matches the naming convention in cmake/targets/BuildBun.cmake.
- * @param {Platform} platform
- * @returns {string}
  */
-function getTargetTriplet(platform) {
+function getTargetTriplet(platform: Target): string {
   const { os, arch, abi, baseline } = platform;
   let triplet = `bun-${os}-${arch}`;
   if (abi === "musl") {
@@ -566,10 +493,8 @@ function getTargetTriplet(platform) {
  * Returns true if a platform needs QEMU-based baseline CPU verification.
  * x64 baseline builds verify no AVX/AVX2 instructions snuck in.
  * aarch64 builds verify no LSE/SVE instructions snuck in.
- * @param {Platform} platform
- * @returns {boolean}
  */
-function needsBaselineVerification(platform) {
+function needsBaselineVerification(platform: Platform): boolean {
   const { os, arch, abi, profile } = platform;
   // asan never ships. x64-android is emulator-only; aarch64-android keeps its
   // static LSE/SVE scan via --skip-emulation in getVerifyBaselineStep().
@@ -598,10 +523,8 @@ const PINNED_QEMU = {
 /**
  * Returns the emulator binary name for the given platform.
  * Linux uses QEMU user-mode; Windows uses Intel SDE.
- * @param {Platform} platform
- * @returns {string}
  */
-function getEmulatorBinary(platform) {
+function getEmulatorBinary(platform: Platform): string {
   const { os, arch } = platform;
   // Intel SDE is baked into the Windows image by scripts/bootstrap.ps1
   // (Install-IntelSde): downloadmirror.intel.com sits behind a bot challenge
@@ -611,12 +534,7 @@ function getEmulatorBinary(platform) {
   return `./${PINNED_QEMU[arch].binary}`;
 }
 
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function hasWebKitChanges(options) {
+function hasWebKitChanges(options: PipelineOptions): boolean {
   const { changedFiles = [] } = options;
   // Kept pointing at the removed SetupWebKit.cmake (always false) until
   // verify-baseline.ts's --jit-stress path is fixed: it runs wasm fixtures
@@ -630,22 +548,15 @@ function hasWebKitChanges(options) {
  * Host platform the verify-baseline step runs on — per-TARGET-arch, not the
  * shared arm64 build host. Reuses test-fleet images (debian-13 / win-2019) so
  * no extra bake is needed; getPipeline() keys its build-image depends_on on this.
- * @param {Platform} platform
- * @returns {Platform}
  */
-function getVerifyBaselineHost(platform) {
+function getVerifyBaselineHost(platform: Platform): Platform {
   const { os, arch, abi } = platform;
   if (os === "windows") return { os: "windows", arch, release: "2019" };
   if (abi === "musl") return { os: "linux", arch, abi: "musl", distro: "alpine", release: "3.23" };
   return { os: "linux", arch, distro: "debian", release: "13" };
 }
 
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getVerifyBaselineStep(platform, options) {
+function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): CommandStep {
   const { os, abi } = platform;
   const targetKey = getTargetKey(platform);
   const triplet = getTargetTriplet(platform);
@@ -729,7 +640,7 @@ function getVerifyBaselineStep(platform, options) {
  * architecture it is running on (scripts/orderfile/functrace-windows.c), so each
  * windows target traces on its own arch's fleet.
  */
-const traceOrderTargets = [
+const traceOrderTargets: { os: Os; arch: Arch; on: Platform }[] = [
   { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
   { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
   { os: "windows", arch: "x64", on: { os: "windows", arch: "x64", release: "2019", tier: "oldest" } },
@@ -756,12 +667,8 @@ const traceOrderTargets = [
  * vs-shell.ps1 provides the latter the same way it does for the test runner.
  * The profile zip carries the two maps the generator resolves addresses with
  * (packageAndUpload in scripts/build/ci.ts; scripts/orderfile/windows-symbols.ts).
- * @param {Target} target
- * @param {Platform} tracePlatform
- * @param {PipelineOptions} options
- * @returns {CommandStep}
  */
-function getTraceOrderStep(target, tracePlatform, options) {
+function getTraceOrderStep(target: Target, tracePlatform: Platform, options: PipelineOptions): CommandStep {
   const { os } = target;
   const targetKey = getTargetKey(target);
   const triplet = getTargetTriplet(target);
@@ -794,20 +701,12 @@ function getTraceOrderStep(target, tracePlatform, options) {
   };
 }
 
-/**
- * @typedef {Object} TestOptions
- * @property {string} [buildId]
- * @property {string[]} [testFiles]
- * @property {boolean} [dryRun]
- */
+type TestOptions = {
+  buildId?: string | undefined;
+  testFiles?: string[] | undefined;
+};
 
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @param {TestOptions} [testOptions]
- * @returns {Step}
- */
-function getTestBunStep(platform, options, testOptions = {}) {
+function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
   const { os, profile } = platform;
   const { buildId, testFiles } = testOptions;
 
@@ -826,7 +725,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     args.push("--exclude=internal/source-lints");
   }
 
-  const depends = [];
+  const depends: string[] = [];
   if (!buildId) {
     depends.push(`${getTargetKey(platform)}-build-bun`);
   }
@@ -903,12 +802,10 @@ function getTestBunStep(platform, options, testOptions = {}) {
  *
  * These tags are ignored on `main` — image bakes happen on the PR only.
  *
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step[]} steps for the `build-images` group; the last one's key is
+ * @returns steps for the `build-images` group; the last one's key is
  *   `${getImageKey(platform)}-build-image`, which is what dependents wait on.
  */
-function getBuildImageSteps(platform, options) {
+function getBuildImageSteps(platform: Platform, options: PipelineOptions): CommandStep[] {
   return platform.os === "windows"
     ? [getWindowsBuildImageStep(platform, options)]
     : getLinuxBuildImageSteps(platform, options);
@@ -916,11 +813,8 @@ function getBuildImageSteps(platform, options) {
 
 /**
  * Windows images bake on Azure through Packer (WinRM) from the hosted queue.
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
  */
-function getWindowsBuildImageStep(platform, options) {
+function getWindowsBuildImageStep(platform: Platform, options: PipelineOptions): CommandStep {
   const { os, arch, release } = platform;
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
@@ -954,12 +848,8 @@ function getWindowsBuildImageStep(platform, options) {
  *     The machine is imaged as `image-name` once the step passes.
  *  2. `…-build-image` (labelled wait-for-image) waits for that image to be
  *     available. It keeps the key the rest of the pipeline depends on.
- *
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step[]}
  */
-function getLinuxBuildImageSteps(platform, options) {
+function getLinuxBuildImageSteps(platform: Platform, options: PipelineOptions): CommandStep[] {
   const { arch, features } = platform;
   const imageKey = getImageKey(platform);
   const imageName = getImageName(platform, options);
@@ -969,7 +859,7 @@ function getLinuxBuildImageSteps(platform, options) {
   const branch = getEnv("BUILDKITE_BRANCH", false);
   const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
 
-  const bakeStep = {
+  const bakeStep: CommandStep = {
     key: `${imageKey}-bake-image`,
     label: `${getImageLabel(platform)} - bake-image`,
     agents: {
@@ -991,7 +881,7 @@ function getLinuxBuildImageSteps(platform, options) {
     timeout_in_minutes: 3 * 60,
   };
 
-  const waitStep = {
+  const waitStep: CommandStep = {
     key: `${imageKey}-build-image`,
     label: `${getImageLabel(platform)} - wait-for-image`,
     depends_on: [bakeStep.key],
@@ -1012,14 +902,11 @@ function getLinuxBuildImageSteps(platform, options) {
  * and silently fails under ARM64 emulation, so signing must happen here instead
  * of inline during each build. Re-uploads signed zips with the same names so
  * the release step picks them up transparently.
- * @param {Platform[]} windowsPlatforms
- * @param {PipelineOptions} options
- * @returns {Step}
  */
-function getWindowsSignStep(windowsPlatforms, options) {
+function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptions): CommandStep {
   // Each build-bun step produces two zips: <triplet>-profile.zip and <triplet>.zip
-  const artifacts = [];
-  const buildSteps = [];
+  const artifacts: string[] = [];
+  const buildSteps: string[] = [];
   for (const platform of windowsPlatforms) {
     const triplet = getTargetTriplet(platform);
     const stepKey = `${getTargetKey(platform)}-build-bun`;
@@ -1052,13 +939,12 @@ function getWindowsSignStep(windowsPlatforms, options) {
  * against the latest main build's binary-sizes.json, and fails if any grew
  * past the threshold. Runs on PR builds (comparison) and main (record-only,
  * to produce the baseline artifact).
- *
- * @param {Platform[]} releasePlatforms
- * @param {PipelineOptions} options
- * @param {{ recordOnly: boolean }} [extra]
- * @returns {Step}
  */
-function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {}) {
+function getBinarySizeStep(
+  releasePlatforms: Platform[],
+  options: PipelineOptions,
+  { recordOnly = false }: { recordOnly?: boolean } = {},
+): CommandStep {
   const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
   const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
   if (recordOnly) args.push("--no-fail");
@@ -1082,13 +968,11 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
 
 const BINARY_SIZE_THRESHOLD_MB = 0.5;
 
-/**
- * @param {Platform[]} releasePlatforms
- * @param {PipelineOptions} options
- * @param {{ signed?: boolean, testStepKeys?: string[] }} [extra]
- * @returns {Step}
- */
-function getReleaseStep(releasePlatforms, options, { signed = false, testStepKeys = [] } = {}) {
+function getReleaseStep(
+  releasePlatforms: Platform[],
+  options: PipelineOptions,
+  { signed = false, testStepKeys = [] }: { signed?: OptionFlag; testStepKeys?: string[] } = {},
+): CommandStep {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
@@ -1118,118 +1002,147 @@ function getReleaseStep(releasePlatforms, options, { signed = false, testStepKey
   };
 }
 
-/**
- * @typedef {Object} Pipeline
- * @property {Step[]} [steps]
- * @property {number} [priority]
- */
+type Pipeline = {
+  steps?: Step[];
+  priority?: number;
+};
 
 /**
- * @typedef {Record<string, string | undefined>} Agent
+ * The agent tags a step targets. toYaml() drops the `undefined` ones.
  */
+type Agent = Ec2Agent | QueueAgent;
+
+/** A machine robobun creates for the job from `image-name` and `instance-type`. */
+type Ec2Agent = {
+  os: Os;
+  arch: Arch;
+  abi: Abi | undefined;
+  distro: Distro | undefined;
+  release: string;
+  robobun: boolean;
+  robobun2: boolean;
+  "image-name": string;
+  "instance-type": string | undefined;
+  preemptible: boolean;
+  /** Image the machine as `image-name` once the step passes (see getLinuxBuildImageSteps). */
+  bake?: boolean;
+};
+
+/** A standing agent: the hosted queues, and the bare-metal darwin test fleet. */
+type QueueAgent = {
+  queue: string | undefined;
+  os?: Os;
+  arch?: Arch;
+  "release-tier"?: Tier;
+};
 
 /**
- * @typedef {GroupStep | CommandStep | BlockStep} Step
+ * @link https://buildkite.com/docs/pipelines/configure/retry
  */
+type Retry = {
+  manual: { permit_on_passed: boolean };
+  automatic: AutomaticRetry[] | false;
+};
+
+type AutomaticRetry = {
+  exit_status?: number | "*";
+  signal_reason?: "none" | "agent_stop" | "process_run_error";
+  limit: number;
+};
+
+type Step = GroupStep | CommandStep | BlockStep;
+
+type GroupStep = {
+  key: string;
+  group: string;
+  steps: CommandStep[];
+  depends_on?: string[];
+};
 
 /**
- * @typedef {Object} GroupStep
- * @property {string} key
- * @property {string} group
- * @property {Step[]} steps
- * @property {string[]} [depends_on]
- */
-
-/**
- * @typedef {Object} CommandStep
- * @property {string} key
- * @property {string} [label]
- * @property {Record<string, string | undefined>} [agents]
- * @property {Record<string, string | undefined>} [env]
- * @property {string} command
- * @property {string[]} [depends_on]
- * @property {Record<string, string | undefined>} [retry]
- * @property {boolean} [cancel_on_build_failing]
- * @property {boolean} [soft_fail]
- * @property {number} [parallelism]
- * @property {number} [concurrency]
- * @property {string} [concurrency_group]
- * @property {number} [priority]
- * @property {number} [timeout_in_minutes]
  * @link https://buildkite.com/docs/pipelines/command-step
  */
+type CommandStep = {
+  key: string;
+  label?: string;
+  agents?: Agent;
+  env?: Record<string, string | number>;
+  command: string | string[];
+  depends_on?: string[];
+  allow_dependency_failure?: boolean;
+  retry?: Retry;
+  cancel_on_build_failing?: boolean;
+  soft_fail?: boolean;
+  parallelism?: number;
+  timeout_in_minutes?: number;
+};
+
+type BlockStep = {
+  key: string;
+  block: string;
+  blocked_state?: "passed" | "failed" | "running";
+  fields?: (SelectInput | TextInput)[];
+};
+
+type TextInput = {
+  key: string;
+  text: string;
+  required?: boolean;
+  hint?: string;
+};
+
+type SelectInput = {
+  key: string;
+  select: string;
+  default?: string | string[];
+  required?: boolean;
+  multiple?: boolean;
+  hint?: string;
+  options?: SelectOption[];
+};
+
+type SelectOption = {
+  label: string;
+  value: string;
+};
 
 /**
- * @typedef {Object} BlockStep
- * @property {string} key
- * @property {string} block
- * @property {string} [prompt]
- * @property {"passed" | "failed" | "running"} [blocked_state]
- * @property {(SelectInput | TextInput)[]} [fields]
+ * An on/off option. From a commit subject it is the text of the `[tag]` that
+ * turned it on, or `false`; from the options step of a manual build it is what
+ * parseBoolean() made of the answer.
  */
+type OptionFlag = string | boolean | undefined;
 
-/**
- * @typedef {Object} TextInput
- * @property {string} key
- * @property {string} text
- * @property {string} [default]
- * @property {boolean} [required]
- * @property {string} [hint]
- */
+type PipelineOptions = {
+  skipEverything?: OptionFlag;
+  skipBuilds?: OptionFlag;
+  skipTests?: OptionFlag;
+  skipSizeCheck?: OptionFlag;
+  forceBuilds?: OptionFlag;
+  forceTests?: OptionFlag;
+  buildImages?: OptionFlag;
+  signWindows?: OptionFlag;
+  publishImages?: OptionFlag;
+  dryRun?: OptionFlag;
+  /** The `windows` or `linux` of a `[build linux images]`-style tag. */
+  imageFilter?: string | undefined;
+  canary?: number;
+  buildPlatforms?: Platform[];
+  testPlatforms?: Platform[];
+  testFiles?: string[] | undefined;
+  changedFiles?: string[];
+};
 
-/**
- * @typedef {Object} SelectInput
- * @property {string} key
- * @property {string} select
- * @property {string | string[]} [default]
- * @property {boolean} [required]
- * @property {boolean} [multiple]
- * @property {string} [hint]
- * @property {SelectOption[]} [options]
- */
-
-/**
- * @typedef {Object} SelectOption
- * @property {string} label
- * @property {string} value
- */
-
-/**
- * @typedef {Object} PipelineOptions
- * @property {string | boolean} [skipEverything]
- * @property {string | boolean} [skipBuilds]
- * @property {string | boolean} [skipTests]
- * @property {string | boolean} [skipSizeCheck]
- * @property {string | boolean} [forceBuilds]
- * @property {string | boolean} [forceTests]
- * @property {string | boolean} [buildImages]
- * @property {string | boolean} [signWindows]
- * @property {string | boolean} [publishImages]
- * @property {number} [canary]
- * @property {Platform[]} [buildPlatforms]
- * @property {Platform[]} [testPlatforms]
- * @property {string[]} [testFiles]
- * @property {string[]} [changedFiles]
- */
-
-/**
- * @param {Step} step
- * @param {(string | undefined)[]} dependsOn
- * @returns {Step}
- */
-function getStepWithDependsOn(step, ...dependsOn) {
+function getStepWithDependsOn<T extends GroupStep | CommandStep>(step: T, ...dependsOn: (string | undefined)[]): T {
   const { depends_on: existingDependsOn = [] } = step;
   return {
     ...step,
-    depends_on: [...existingDependsOn, ...dependsOn.filter(Boolean)],
+    depends_on: [...existingDependsOn, ...dependsOn.filter((key): key is string => Boolean(key))],
   };
 }
 
-/**
- * @returns {BlockStep}
- */
-function getOptionsStep() {
-  const booleanOptions = [
+function getOptionsStep(): BlockStep {
+  const booleanOptions: SelectOption[] = [
     {
       label: `${getEmoji("true")} Yes`,
       value: "true",
@@ -1389,10 +1302,7 @@ function getOptionsStep() {
   };
 }
 
-/**
- * @returns {Step}
- */
-function getOptionsApplyStep() {
+function getOptionsApplyStep(): CommandStep {
   const command = getEnv("BUILDKITE_COMMAND");
   return {
     key: "options-apply",
@@ -1405,10 +1315,7 @@ function getOptionsApplyStep() {
   };
 }
 
-/**
- * @returns {Promise<PipelineOptions | undefined>}
- */
-async function getPipelineOptions() {
+async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
   const isManual = isBuildManual();
   if (isManual && !process.argv.includes("--apply")) {
     return;
@@ -1429,46 +1336,48 @@ async function getPipelineOptions() {
     const values = await Promise.all(keys.map(getBuildMetadata));
     const options = Object.fromEntries(keys.map((key, index) => [key, values[index]]));
 
-    /**
-     * @param {string} value
-     * @returns {string[] | undefined}
-     */
-    const parseArray = value =>
+    const parseArray = (value: string | undefined): string[] | undefined =>
       value
         ?.split("\n")
         ?.map(item => item.trim())
         ?.filter(Boolean);
 
-    const buildProfiles = parseArray(options["build-profiles"]);
+    // The answers to the options step, as Buildkite stored them. "build-profiles"
+    // has a default, so it is always set, and its values are that field's
+    // options; the platform keys are likewise the values of their fields' options.
+    const buildProfiles = parseArray(options["build-profiles"]) as Profile[];
     const buildPlatformKeys = parseArray(options["build-platforms"]);
     const testPlatformKeys = parseArray(options["test-platforms"]);
     return {
-      canary: parseBoolean(options["canary"]) ? canary : 0,
-      skipBuilds: parseBoolean(options["skip-builds"]),
-      forceBuilds: parseBoolean(options["force-builds"]),
-      skipTests: parseBoolean(options["skip-tests"]),
-      buildImages: parseBoolean(options["build-images"]),
-      publishImages: parseBoolean(options["publish-images"]),
+      canary: parseBoolean(options["canary"] ?? "") ? canary : 0,
+      skipBuilds: parseBoolean(options["skip-builds"] ?? ""),
+      forceBuilds: parseBoolean(options["force-builds"] ?? ""),
+      skipTests: parseBoolean(options["skip-tests"] ?? ""),
+      buildImages: parseBoolean(options["build-images"] ?? ""),
+      publishImages: parseBoolean(options["publish-images"] ?? ""),
       testFiles: parseArray(options["test-files"]),
       buildPlatforms: buildPlatformKeys?.length
-        ? buildPlatformKeys.flatMap(key => buildProfiles.map(profile => ({ ...buildPlatformsMap.get(key), profile })))
+        ? buildPlatformKeys.flatMap(key =>
+            buildProfiles.map(profile => ({ ...(buildPlatformsMap.get(key) as Platform), profile })),
+          )
         : Array.from(buildPlatformsMap.values()),
       testPlatforms: testPlatformKeys?.length
-        ? testPlatformKeys.flatMap(key => buildProfiles.map(profile => ({ ...testPlatformsMap.get(key), profile })))
+        ? testPlatformKeys.flatMap(key =>
+            buildProfiles.map(profile => ({ ...(testPlatformsMap.get(key) as Platform), profile })),
+          )
         : Array.from(testPlatformsMap.values()),
-      dryRun: parseBoolean(options["dry-run"]),
+      dryRun: parseBoolean(options["dry-run"] ?? ""),
     };
   }
 
   // BUILDKITE_MESSAGE is the commit subject line only — option tags like
   // [publish images] must appear in the subject, not the commit body.
   const commitMessage = getCommitMessage();
+  if (commitMessage === undefined) {
+    throw new Error("Failed to read the commit message");
+  }
 
-  /**
-   * @param {RegExp} pattern
-   * @returns {string | boolean}
-   */
-  const parseOption = pattern => {
+  const parseOption = (pattern: RegExp): OptionFlag => {
     const match = pattern.exec(commitMessage);
     if (match) {
       const [, value] = match;
@@ -1514,6 +1423,12 @@ async function getPipelineOptions() {
   };
 }
 
+/** The fields of Buildkite's "list agents" response that are read here. */
+type BuildkiteAgent = { connection_state: string; meta_data?: string[] };
+
+/** The fields of Buildkite's "list builds" response that are read here. */
+type BuildkiteBuildJobs = { jobs?: { state: string; agent_query_rules?: string[] }[] };
+
 /**
  * True when the darwin beta queue can take one more job right now: an
  * agent is connected to it, and no live build has a job targeting it in
@@ -1523,9 +1438,8 @@ async function getPipelineOptions() {
  * read_builds and read_agents only); without it, or on any error, the
  * answer is false and the lane is simply not added. Two uploads a few
  * seconds apart can both see "idle"; a queue of two is the worst case.
- * @returns {Promise<boolean>}
  */
-async function darwinBetaQueueIdle() {
+async function darwinBetaQueueIdle(): Promise<boolean> {
   if (!isBuildkite) {
     return false;
   }
@@ -1536,7 +1450,7 @@ async function darwinBetaQueueIdle() {
     if (!token) {
       return false;
     }
-    const api = async path => {
+    const api = async (path: string): Promise<Response | undefined> => {
       const res = await fetch(`https://api.buildkite.com/v2/organizations/bun/${path}`, {
         headers: { Authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(10_000),
@@ -1549,13 +1463,13 @@ async function darwinBetaQueueIdle() {
     // never starts. The org has a few hundred agents and the list pages
     // at 100, so follow `Link: rel="next"`; `stopping` does not count.
     let connected = false;
-    let next = "agents?per_page=100";
+    let next: string | undefined = "agents?per_page=100";
     for (let page = 0; next && page < 10 && !connected; page++) {
       const res = await api(next);
       if (!res) {
         return false;
       }
-      const agents = await res.json();
+      const agents = (await res.json()) as BuildkiteAgent[];
       connected = agents.some(
         ({ connection_state, meta_data = [] }) =>
           connection_state === "connected" && meta_data.includes(`queue=${darwinBetaQueue}`),
@@ -1575,7 +1489,7 @@ async function darwinBetaQueueIdle() {
     if (!res) {
       return false;
     }
-    const builds = await res.json();
+    const builds = (await res.json()) as BuildkiteBuildJobs[];
     const terminal = new Set([
       "passed",
       "failed",
@@ -1603,11 +1517,7 @@ async function darwinBetaQueueIdle() {
 
 const darwinBetaQueue = "test-darwin-beta";
 
-/**
- * @param {PipelineOptions} [options]
- * @returns {Promise<Pipeline | undefined>}
- */
-async function getPipeline(options = {}) {
+async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | undefined> {
   const priority = getPriority();
 
   if (isBuildManual() && !Object.keys(options).length) {
@@ -1626,7 +1536,7 @@ async function getPipeline(options = {}) {
   // Every build lane runs on buildHostPlatform (see getBuildAgent),
   // so the build-image set is exactly {buildHostPlatform} ∪ testPlatforms' native
   // images — buildPlatforms entries encode TARGET os/arch/abi, not a host image.
-  const imagePlatforms = new Map(
+  const imagePlatforms = new Map<string, Platform>(
     buildImages || publishImages
       ? [buildHostPlatform, ...testPlatforms]
           // darwin: no cloud images (bare-metal test fleet only).
@@ -1636,8 +1546,7 @@ async function getPipeline(options = {}) {
       : [],
   );
 
-  /** @type {Step[]} */
-  const steps = [];
+  const steps: Step[] = [];
 
   if (imagePlatforms.size) {
     steps.push({
@@ -1650,8 +1559,7 @@ async function getPipeline(options = {}) {
   let { skipBuilds, forceBuilds, dryRun } = options;
   dryRun = dryRun || !!buildImages;
 
-  /** @type {string | undefined} */
-  let buildId;
+  let buildId: string | undefined;
   if (skipBuilds && !forceBuilds) {
     const lastBuild = await getLastSuccessfulBuild();
     if (lastBuild) {
@@ -1675,20 +1583,15 @@ async function getPipeline(options = {}) {
   // one. Emitted after the test groups so the same-label merge below folds
   // them into the test group and that group keeps its own depends_on.
   // Scheduling is by step key either way: each depends on <target>-build-bun.
-  /** @type {Step[]} */
-  const binaryCheckSteps = [];
+  const binaryCheckSteps: Step[] = [];
   /**
    * The group a binary check is drawn in: the host's test group when the
    * target has a test lane there (returned via binaryCheckSteps, emitted after
    * the test groups), else a lane-style group of its own for that target on
    * that host — `<host distro> <release> <arch>-<abi>` — returned for the
    * caller to emit next to the build group.
-   * @param {Target} target
-   * @param {Platform} host
-   * @param {Step} step
-   * @returns {Step[]}
    */
-  const placeBinaryCheck = (target, host, step) => {
+  const placeBinaryCheck = (target: Target, host: Platform, step: CommandStep): Step[] => {
     const inTestLane = testPlatforms.some(
       p => getPlatformKey(p) === getPlatformKey(host) && (p.abi ?? null) === (target.abi ?? null),
     );
@@ -1718,8 +1621,7 @@ async function getPipeline(options = {}) {
         const imageKey = getImageKey(buildHostPlatform);
         const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
 
-        /** @type {Step[]} */
-        const steps = [
+        const steps: Step[] = [
           getStepWithDependsOn(
             {
               key: getTargetKey(target),
@@ -1755,7 +1657,7 @@ async function getPipeline(options = {}) {
           t =>
             t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
         );
-        if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
+        if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage() ?? ""))) {
           // Darwin has no cloud image.
           const traceImageKey = getImageKey(traceOn.on);
           const traceDeps = imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
@@ -1777,19 +1679,19 @@ async function getPipeline(options = {}) {
   // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
   // on main along with its build.
   // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
-  /** @type {Platform[]} */
-  const prDarwinTestPlatforms = [
+  const prDarwinTestPlatforms: Platform[] = [
     { os: "darwin", arch: "aarch64", release: "any" },
     { os: "darwin", arch: "x64", release: "any" },
   ];
-  const darwinTestsEnabled = isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  const darwinTestsEnabled =
+    isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage() ?? "");
   // The macOS beta lane: a single home-hosted mini on the next macOS,
   // its own queue, soft-fail. PR builds get it only when that queue is
   // idle at upload time, so it is always busy while PRs flow and never
   // has a backlog: a PR that misses it loses nothing.
   // Never on the merge queue: a step that cannot start (box offline) would
   // hold the required check open and stall the queue.
-  const betaDarwinTestPlatforms =
+  const betaDarwinTestPlatforms: Platform[] =
     !darwinTestsEnabled && !isMergeQueue() && (await darwinBetaQueueIdle())
       ? [{ os: "darwin", arch: "aarch64", release: "27", tier: "beta" }]
       : [];
@@ -1799,8 +1701,7 @@ async function getPipeline(options = {}) {
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
     .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
     .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
-  /** @type {string[]} */
-  const testStepKeys = [];
+  const testStepKeys: string[] = [];
   {
     const { skipTests, forceTests, testFiles } = options;
     if (!skipTests || forceTests) {
@@ -1857,10 +1758,8 @@ async function getPipeline(options = {}) {
 
   // Merge same-label groups into their first occurrence, keeping every
   // step's position so the sidebar reads in pipeline order.
-  /** @type {Map<string, GroupStep>} */
-  const stepsByGroup = new Map();
-  /** @type {Step[]} */
-  const mergedSteps = [];
+  const stepsByGroup = new Map<string, GroupStep>();
+  const mergedSteps: Step[] = [];
   for (const step of steps) {
     if (!("group" in step)) {
       mergedSteps.push(step);
@@ -1878,6 +1777,9 @@ async function getPipeline(options = {}) {
   return { priority, steps: mergedSteps };
 }
 
+/** The fields of GitHub's "list pull requests files" response that are read here. */
+type GithubPullRequestFile = { filename: string; status: string };
+
 async function main() {
   startGroup("Generating options...");
   const options = await getPipelineOptions();
@@ -1887,10 +1789,8 @@ async function main() {
 
   startGroup("Querying GitHub for files...");
   if (options && isBuildkite && !isMainBranch()) {
-    /** @type {string[]} */
-    let allFiles = [];
-    /** @type {string[]} */
-    let newFiles = [];
+    let allFiles: string[] = [];
+    let newFiles: string[] = [];
     let prFileCount = 0;
     try {
       console.log("on buildkite: collecting new files from PR");
@@ -1901,7 +1801,7 @@ async function main() {
           `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
           { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
         );
-        const doc = await res.json();
+        const doc = (await res.json()) as GithubPullRequestFile[] | Record<string, unknown>;
         if (!Array.isArray(doc)) {
           console.error(`-> page ${i}, unexpected response:`, JSON.stringify(doc));
           break;

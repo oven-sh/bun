@@ -666,8 +666,8 @@ function finishSocketEnd(self) {
 // so 'end' (and the destroy a TLS handshake hangs on it, onConnectEnd) come
 // before the write failure, as in Node, where the write completes only after
 // the read side reported EOF. The write stays parked until then, so a destroy
-// that runs in between owns it. A write that still holds its chunk in
-// _pendingData never reached the handle: the 'close' listener _write added
+// that runs in between can settle it first. A write that still holds its chunk
+// in _pendingData never reached the handle: the 'close' listener _write added
 // for it reports it.
 function failPendingWriteAfterClose(self, err) {
   const pendingWrite = self[kwriteCallback];
@@ -677,6 +677,14 @@ function failPendingWriteNT(self, callback, err) {
   if (self[kwriteCallback] !== callback) return;
   self[kwriteCallback] = null;
   callback(err ?? $ERR_SOCKET_CLOSED());
+}
+// A close that destroys the socket with the read error cancels the write in
+// flight, like uv_close() does for node: its callback gets ECANCELED, after
+// 'error'. https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L464
+function cancelPendingWriteAfterClose(self) {
+  if (self[kwriteCallback] && self._pendingData == null) {
+    failPendingWriteAfterClose(self, new ErrnoException(uv().UV_ECANCELED, "write"));
+  }
 }
 
 function deferEndForOnreadTail(self) {
@@ -732,6 +740,7 @@ function SocketEmitEndNT(self, _err?) {
       const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
       if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
         self.destroy(er);
+        cancelPendingWriteAfterClose(self);
         return;
       }
     }
@@ -750,6 +759,7 @@ function SocketEmitEndNT(self, _err?) {
       // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
       self.destroy(_err);
     }
+    cancelPendingWriteAfterClose(self);
     return;
   }
   if (!self[kended]) {
@@ -1423,6 +1433,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         // enum values are filtered out in NewSocket::on_close).
         self.destroy(err);
       }
+      cancelPendingWriteAfterClose(self);
       return;
     }
     if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
@@ -2217,6 +2228,11 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   const upgraded = this[kupgraded];
   if (upgraded && !(upgraded instanceof Socket) && !upgraded.destroyed) {
     upgraded.destroy?.();
+  } else if (upgraded && upgraded._handle?.[kAdoptedTLSRaw] && !upgraded.destroyed) {
+    // The net.Socket whose fd this TLS socket adopted goes down with it, as
+    // node's TLSWrap closes its parent. Done here, not from 'end': a destroyed
+    // socket emits no 'end'.
+    this[kCloseRawConnection]();
   }
 
   // Close an fd adopted for synchronous writes (node closes the wrapping

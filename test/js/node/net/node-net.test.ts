@@ -2019,7 +2019,10 @@ describe("socket teardown events (#43381)", () => {
         writes++;
         holder.write(chunk);
       }
-      if (holder.writableLength === 0) throw new Error("no write stayed in flight");
+      if (holder.writableLength === 0) {
+        console.error("no write stayed in flight");
+        process.exit(1);
+      }
       peer.resetAndDestroy();
     }
   `;
@@ -2046,7 +2049,8 @@ describe("socket teardown events (#43381)", () => {
       });
 
       // Linux only: a loopback RST arrives before the close() that sends it returns, so the
-      // reset is seen as a read error. On Windows a writable event wins and settles the write.
+      // reset is seen as a read error. On Windows a writable event wins and settles the write,
+      // and on macOS kqueue reports the failed send first. Those sequences are not pinned here.
       it.concurrent.skipIf(!exe || !isLinux)(
         "a peer reset with a write in flight and no 'error' listener throws the read error",
         async () => {

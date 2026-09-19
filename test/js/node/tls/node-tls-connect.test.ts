@@ -2070,6 +2070,77 @@ describe.each([
   });
 });
 
+// A TLS socket over a net.Socket with allowHalfOpen: true is destroyed locally. The
+// net.Socket must close with it (node's TLSWrap closes its parent), without an 'end'
+// on either socket: a destroyed socket emits 'close' only.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExe()],
+])("destroy() of a TLS socket over an allowHalfOpen net.Socket (%s)", (_runtime, exe) => {
+  const fixture = /* js */ `
+    const net = require("node:net");
+    const tls = require("node:tls");
+    const CERT = { key: process.env.TLS_KEY, cert: process.env.TLS_CERT };
+    const events = [];
+    const report = server => {
+      console.log(JSON.stringify(events));
+      server.close();
+    };
+    const watch = (raw, secure) => {
+      raw.on("end", () => events.push("raw end"));
+      secure.on("end", () => events.push("tls end"));
+      secure.on("close", () => events.push("tls close"));
+    };
+    if (process.env.SIDE === "client") {
+      const server = tls.createServer(CERT, peer => peer.on("error", () => {}));
+      server.listen(0, "127.0.0.1", () => {
+        const raw = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
+        raw.on("close", () => {
+          events.push("raw close");
+          report(server);
+        });
+        raw.on("connect", () => {
+          const secure = tls.connect({ socket: raw, rejectUnauthorized: false });
+          watch(raw, secure);
+          secure.on("secureConnect", () => setImmediate(() => secure.destroy()));
+        });
+      });
+    } else {
+      const server = net.createServer({ allowHalfOpen: true }, raw => {
+        raw.on("close", () => {
+          events.push("raw close", "connections " + server._connections);
+          report(server);
+        });
+        const secure = new tls.TLSSocket(raw, { isServer: true, ...CERT });
+        watch(raw, secure);
+        secure.on("secure", () => setImmediate(() => secure.destroy()));
+      });
+      server.listen(0, "127.0.0.1", () => {
+        tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false }).on("error", () => {});
+      });
+    }
+  `;
+
+  async function run(SIDE: string) {
+    await using proc = Bun.spawn({
+      cmd: [exe!, "-e", fixture],
+      env: { ...bunEnv, SIDE, TLS_KEY: COMMON_CERT_.key, TLS_CERT: COMMON_CERT_.cert },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { events: stdout.trim() ? JSON.parse(stdout) : stdout, stderr, exitCode };
+  }
+
+  it.skipIf(!exe)("closes the wrapped client socket", async () => {
+    expect(await run("client")).toEqual({ events: ["raw close"], stderr: "", exitCode: 0 });
+  });
+
+  it.skipIf(!exe)("closes the wrapped accepted socket", async () => {
+    expect(await run("server")).toEqual({ events: ["raw close", "connections 0"], stderr: "", exitCode: 0 });
+  });
+});
+
 // The peer accepts the TCP connection and never answers the ClientHello (a dead
 // TLS backend, a plaintext service on a TLS port). A caller that gives up must
 // still finish its writable side and send the FIN, as node does:

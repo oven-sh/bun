@@ -1,4 +1,6 @@
-// Compiler output captured from a build step, turned into Buildkite annotations.
+/**
+ * Compiler output captured from a build step, turned into Buildkite annotations.
+ */
 
 import {
   escapeCodeBlock,
@@ -26,7 +28,6 @@ export interface Annotation {
   content: string;
   source?: string | undefined;
   level?: "notice" | "warning" | "error" | undefined;
-  url?: string | undefined;
   filename?: string | undefined;
   line?: number | undefined;
   column?: number | undefined;
@@ -45,13 +46,8 @@ interface AnnotationInput {
   metadata?: Record<string, string | undefined> | undefined;
 }
 
-interface AnnotationContext {
-  cwd?: string;
-  command?: string[];
-}
-
-export function parseAnnotation(options: AnnotationInput, context?: AnnotationContext): Annotation {
-  const cwd = (context?.cwd || process.cwd()).replace(/\\/g, "/");
+export function parseAnnotation(options: AnnotationInput): Annotation {
+  const cwd = process.cwd().replace(/\\/g, "/");
   const source = options.source;
   const level = parseLevel(options.level);
   const title = options.title || (source ? `${source} ${level}` : level);
@@ -99,21 +95,10 @@ export function parseAnnotation(options: AnnotationInput, context?: AnnotationCo
   };
 }
 
-interface AnnotationFormatOptions {
-  concise?: boolean;
-  buildkite?: boolean;
-}
+export function formatAnnotationToHtml(annotation: Annotation): string {
+  const { title, content, filename, line } = annotation;
 
-export function formatAnnotationToHtml(annotation: Annotation, options: AnnotationFormatOptions = {}): string {
-  const { title, content, source, level, filename, line } = annotation;
-  const { concise, buildkite = isBuildkite } = options;
-
-  let html;
-  if (concise) {
-    html = "<li>";
-  } else {
-    html = "<details><summary>";
-  }
+  let html = "<details><summary>";
 
   if (filename) {
     const filePath = filename.replace(/\\/g, "/");
@@ -126,19 +111,7 @@ export function formatAnnotationToHtml(annotation: Annotation, options: Annotati
     html += " - ";
   }
 
-  if (title) {
-    html += title;
-  } else if (source) {
-    if (level) {
-      html += `${source} ${level}`;
-    } else {
-      html += source;
-    }
-  } else if (level) {
-    html += level;
-  } else {
-    html += "unknown error";
-  }
+  html += title;
 
   const buildLabel = getBuildLabel();
   if (buildLabel) {
@@ -151,19 +124,15 @@ export function formatAnnotationToHtml(annotation: Annotation, options: Annotati
     }
   }
 
-  if (concise) {
-    html += "</li>\n";
+  html += "</summary>\n\n";
+  if (isBuildkite) {
+    const preview = escapeCodeBlock(content);
+    html += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
   } else {
-    html += "</summary>\n\n";
-    if (buildkite) {
-      const preview = escapeCodeBlock(content);
-      html += `\`\`\`terminal\n${preview}\n\`\`\`\n`;
-    } else {
-      const preview = escapeHtml(stripAnsi(content));
-      html += `<pre><code>${preview}</code></pre>\n`;
-    }
-    html += "\n\n</details>\n\n";
+    const preview = escapeHtml(stripAnsi(content));
+    html += `<pre><code>${preview}</code></pre>\n`;
   }
+  html += "\n\n</details>\n\n";
 
   return html;
 }

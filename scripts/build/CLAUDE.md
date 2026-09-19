@@ -212,6 +212,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                                                                 |
 | `verify-binary.ts`             | Build-time CLI: static scans of the linked executable (exports, dynamic deps, initializers, hardening, debug info) and the duplicate-definition scan of the link inputs |
 | `binary-expectations.ts`       | What each target's executable must look like for `verify-binary.ts`; serialized to `<exe>.verify.json` at configure                                                     |
+| `annotations.ts`               | Compiler output from a failed step, parsed into Buildkite annotations                                                                                                   |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                                                |

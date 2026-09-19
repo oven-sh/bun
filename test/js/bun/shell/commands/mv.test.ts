@@ -258,8 +258,7 @@ describe("mv", async () => {
       }
     });
 
-    // The copy belongs to the mover until the move gives it its owner. The FIFO
-    // stops the move partway, which shows the mode the copy has until then.
+    // The FIFO stops the move partway, which shows the mode the copy has while the move runs.
     test.skipIf(skip)("a directory in flight across devices is private to the mover", async () => {
       const [src, dst] = crossDevicePair("in-flight");
       try {
@@ -280,10 +279,8 @@ describe("mv", async () => {
       }
     });
 
-    // Needs root: only root can create a file that another user owns. The move
-    // runs as `nobody`, who cannot enter the harness TMPDIR (mode 0700), so both
-    // ends are world-writable mounts.
     const nobody = 65534;
+    // `nobody` runs the move and cannot enter the harness TMPDIR (mode 0700).
     const publicRoots: [string, string] = ["/tmp", "/dev/shm"];
     const publicRootsDiffer = (() => {
       try {
@@ -311,12 +308,9 @@ describe("mv", async () => {
       }
     }
 
-    // The same rule without root, so that a CI lane runs it. A set-id file that
-    // another user owns needs root to create, so this takes one that the system
-    // already has. `mv` copies it first, then fails to remove it, which leaves
-    // the system file in place. Linux only: macOS protects /usr/bin, so the
-    // rename can fail before it reports EXDEV.
+    // Only root can create a set-id file that another user owns, so the non-root case moves one the system has.
     const foreignSetId = (() => {
+      // macOS protects /usr/bin, so the rename can fail before it reports EXDEV.
       if (!isLinux || isRoot) return undefined;
       const mover = process.getuid!();
       for (const path of ["/usr/bin/passwd", "/usr/bin/sudo", "/bin/su", "/usr/bin/chsh", "/usr/bin/gpasswd"]) {
@@ -355,8 +349,7 @@ describe("mv", async () => {
       mkdirSync(dst, { recursive: true });
       try {
         const r = await $`mv ${path} ${join(dst, "copy")}`.quiet();
-        // The copy comes first and the removal last, so a removal that fails
-        // with EACCES still leaves the copy.
+        // `mv` copies first and removes last, so the failed removal leaves the copy.
         expect(r.stderr.toString()).toBe(`mv: ${path}: Permission denied\n`);
         expect(r.exitCode).toBe(13);
         expect(ownerAndMode(dst, ["copy"])).toEqual({
@@ -370,6 +363,7 @@ describe("mv", async () => {
       }
     });
 
+    // Root only: no other user can create a file that someone else owns.
     test.skipIf(!isRoot || !publicRootsDiffer)(
       "set-uid and set-gid are dropped across devices when the owner cannot be kept",
       async () => {

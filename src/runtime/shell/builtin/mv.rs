@@ -507,8 +507,7 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::{Dir, E, File, O, S, Tag};
 
-        // The copy belongs to the mover until `copy_owner_and_mode` runs. Until then
-        // no other user can reach it, and it has no set-id bits (coreutils `omitted_permissions`).
+        // The copy belongs to the mover until `copy_owner_and_mode` runs.
         const OWNER_ONLY: bun_core::Mode = 0o700;
 
         let st = bun_sys::lstatat(src_dir, src)?;
@@ -621,8 +620,7 @@ impl ShellMvBatchedTask {
         bun_sys::unlinkat(src_dir, src)
     }
 
-    /// Gives `fd` the owner and mode of `st`. Without the owner, set-uid and
-    /// set-gid would act for a different user, so they are dropped (POSIX `mv`).
+    /// POSIX `mv`: the copy gets set-uid and set-gid only if it also gets the owner.
     #[cfg(unix)]
     fn copy_owner_and_mode(fd: bun_sys::Fd, st: &bun_sys::Stat) {
         let mut mode = st.st_mode as bun_core::Mode & 0o7777;

@@ -656,8 +656,7 @@ pub mod fs {
             }
         }
 
-        /// Whether `dir` is a filesystem root (`/`, `C:\`): the path names an
-        /// entry directly in the root.
+        /// Whether `dir` is a filesystem root (`/`, `C:\`).
         pub fn dir_is_root(&self) -> bool {
             match *self.dir {
                 [drive, b':', sep] => drive.is_ascii_alphabetic() && is_sep_any(sep),
@@ -665,9 +664,7 @@ pub mod fs {
             }
         }
 
-        /// Whether `dir` is a root with no drive letter (`/`). The paths of
-        /// virtual modules have this form (`/entry.js`): the keys of the
-        /// in-memory files of `Bun.build`, and the paths that plugins make up.
+        /// Whether `dir` is `/`, a root with no drive letter. A virtual module has such a path (`/entry.js`).
         pub fn dir_is_root_without_drive(&self) -> bool {
             matches!(*self.dir, [sep] if is_sep_any(sep))
         }
@@ -738,8 +735,7 @@ pub mod fs {
                 // Stop if we found a non-trailing slash
                 if i + 1 != path.len() && path.len() > i + 1 {
                     base = &path[i + 1..];
-                    // A root keeps its separator: `/a.js` is in `/` and `C:\a.js` is in `C:\`.
-                    // Without it the dir is empty or `C:`, which is relative to the cwd.
+                    // A root keeps its separator: `/a.js` is in `/`, `C:\a.js` in `C:\`.
                     dir = &path_[..disk_designator_len + i.max(1)];
                     filename = &path_[disk_designator_len + i + 1..];
                     break;
@@ -989,8 +985,7 @@ pub mod fs {
         }
     }
 
-    // Run with `cargo test -p bun_paths`. The reverse byte searches reference two
-    // more highway kernels than the stubs in resolve_path.rs cover.
+    // `cargo test -p bun_paths`. These stubs add the two highway kernels that resolve_path.rs does not stub.
     #[cfg(test)]
     mod tests {
         use super::PathName;
@@ -1011,7 +1006,6 @@ pub mod fs {
         }
 
         /// Returns `usize::MAX` when `needle` does not occur, like the kernel.
-        /// Callers pass a `needle` that is not longer than `haystack`.
         #[unsafe(no_mangle)]
         unsafe extern "C" fn highway_memrmem16(
             haystack: *const u16,

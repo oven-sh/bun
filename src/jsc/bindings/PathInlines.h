@@ -52,9 +52,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #endif
 }
 
-/// Length of the directory part of a module's path: the path up to its last
-/// separator. A root keeps its separator, as in path.dirname: "/a.js" is in "/"
-/// and "C:\a.js" is in "C:\". WTF::notFound when `path` has no separator.
+/// Length of the dirname of `path`, or notFound. A root keeps its separator: "/a.js" is in "/", "C:\a.js" in "C:\".
 ALWAYS_INLINE size_t dirnameLength(const WTF::String& path)
 {
     size_t index = path.reverseFind(PLATFORM_SEP);

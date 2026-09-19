@@ -2348,17 +2348,14 @@ pub mod bv2_impl {
             }
         }
 
-        /// Whether `path` is a file on disk directly in a filesystem root. An
-        /// in-memory file is not, also when a file of that name is on disk.
+        /// `Resolver::is_file_in_root`, but a key of the file map is in memory whatever is on disk.
         pub(crate) fn is_file_in_root(&mut self, path: &Fs::Path<'_>) -> bool {
             path.name().dir_is_root()
                 && !self.file_map.is_some_and(|map| map.contains(path.text))
                 && self.transpiler.resolver.is_file_in_root(path)
         }
 
-        /// The directory that the imports of the module at `path` resolve from
-        /// when neither the file map nor a plugin resolves them. See
-        /// `Resolver::source_dir_for_imports`.
+        /// `Resolver::source_dir_for_imports`, with the same exception for the file map.
         fn source_dir_for_imports<'p>(&mut self, path: &Fs::Path<'p>) -> &'p [u8] {
             if path.name().dir_is_root_without_drive()
                 && self.file_map.is_some_and(|map| map.contains(path.text))

@@ -114,8 +114,7 @@ pub struct Options<'a> {
     /// module rather than becoming a redirect to what it re-exports.
     pub is_entry_point: bool,
 
-    /// The source is directly in `/` and is not a file on disk: an in-memory file of `Bun.build` (`/entry.js`), or a
-    /// path that a plugin made up. `__dirname` and `import.meta.dir` inline as the empty string.
+    /// A virtual module directly in `/` (in-memory `/entry.js`): `__dirname` and `import.meta.dir` inline as "".
     pub source_has_no_directory: bool,
 }
 

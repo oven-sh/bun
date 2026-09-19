@@ -4119,8 +4119,7 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
-    /// Whether `path` is a file on disk directly in a filesystem root
-    /// (`/main.js`, `C:\main.js`).
+    /// Whether `path` is a file on disk directly in a filesystem root (`/main.js`).
     pub fn is_file_in_root(&mut self, path: &Fs::Path<'_>) -> bool {
         let name = path.name();
         if !name.dir_is_root() || !path.is_file() {
@@ -4143,14 +4142,7 @@ impl<'a> Resolver<'a> {
         false
     }
 
-    /// The directory that the imports of the module at `path` resolve from,
-    /// with its trailing separator.
-    ///
-    /// Of the paths directly in `/`, only a file on disk resolves from the
-    /// root. The others have no directory of their own and resolve from the
-    /// top-level directory: an in-memory file of `Bun.build` (`/entry.js`), a
-    /// path that a plugin made up, and a top-level directory that a caller
-    /// passes as the importer (`Module._findPath(id, ["/app"])`).
+    /// Where the imports of `path` resolve from. Directly in `/`, that is `/` only for a file on disk (not `/entry.js`, `/app`).
     pub fn source_dir_for_imports<'p>(&mut self, path: &Fs::Path<'p>) -> &'p [u8] {
         if path.name().dir_is_root_without_drive() && !self.is_file_in_root(path) {
             return b"./";
@@ -4183,12 +4175,7 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
-        // `PathName::init` leaves `.dir` empty when the path has no separator
-        // at all (virtual/plugin specifiers). Callers like `finalize_result`
-        // pass that `.dir` straight through and already treat `None` as
-        // "skip", so return it here instead of walking the cache with an
-        // empty key.
-        // https://github.com/oven-sh/bun/issues/30429
+        // `PathName::init` leaves `.dir` empty for a path with no separator (virtual/plugin specifiers). #30429
         if input_path.is_empty() {
             return Ok(None);
         }

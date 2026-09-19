@@ -57,7 +57,6 @@ using namespace JSC;
     macro(bunNativePtr) \
     macro(bytes) \
     macro(cancel) \
-    macro(checkBufferRead) \
     macro(checks) \
     macro(close) \
     macro(cmd) \
@@ -68,7 +67,6 @@ using namespace JSC;
     macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
     macro(data) \
-    macro(dataView) \
     macro(decode) \
     macro(dest) \
     macro(dirname) \
@@ -81,6 +79,7 @@ using namespace JSC;
     macro(esmNamespaceForCjs) \
     macro(esmRegistryDelete) \
     macro(esmRegistryEvaluatedKeys) \
+    macro(esmRegistryHasEvaluated) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
     macro(expires) \
@@ -92,7 +91,6 @@ using namespace JSC;
     macro(filename) \
     macro(flush) \
     macro(format) \
-    macro(fulfillModuleSync) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \
@@ -123,12 +121,14 @@ using namespace JSC;
     macro(makeDOMException) \
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
+    macro(masked) \
     macro(maxAge) \
     macro(metafileJson) \
     macro(method) \
     macro(min) \
     macro(mockedFunction) \
     macro(mode) \
+    macro(moduleGraph) \
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
@@ -146,6 +146,7 @@ using namespace JSC;
     macro(peekPromiseStatus) \
     macro(pokePromiseAsHandled) \
     macro(port) \
+    macro(prev) \
     macro(preventAbort) \
     macro(preventCancel) \
     macro(preventClose) \
@@ -176,6 +177,7 @@ using namespace JSC;
     macro(statusCode) \
     macro(statusMessage) \
     macro(statusText) \
+    macro(storage) \
     macro(stream) \
     macro(syscall) \
     macro(text) \
@@ -204,9 +206,12 @@ class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);
     friend class JSVMClientData;
     explicit BunBuiltinNames(JSC::VM&);
-    ~BunBuiltinNames();
 
 public:
+    ~BunBuiltinNames();
+    // For a VM without JSVMClientData that still needs to parse builtins (ahead-of-time bytecode generation).
+    static std::unique_ptr<BunBuiltinNames> createStandalone(JSC::VM& vm) { return std::unique_ptr<BunBuiltinNames>(new BunBuiltinNames(vm)); }
+
     enum class Name : uint16_t {
 #define BUN_BUILTIN_NAME_ENUM(name) k_##name,
         BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(BUN_BUILTIN_NAME_ENUM)

@@ -3,10 +3,11 @@
 use bun_collections::{ArrayHashMap, MapEntry, StringArrayHashMap};
 use bun_core::{fmt as bun_fmt, scoped_log};
 use bun_http::MimeType::MimeType;
+use bun_ptr::RefPtr;
 
 use super::memory_cost::{memory_cost_array_hash_map, memory_cost_array_list};
-use super::route_bundle::StaticRouteRef;
 use super::{ASSET_PREFIX, DevServer, FileKind, Magic};
+use crate::server::StaticRoute;
 use crate::server::static_route::InitFromBytesOptions;
 use crate::webcore::AnyBlob;
 
@@ -21,7 +22,7 @@ pub struct Assets {
     pub(crate) path_map: StringArrayHashMap<EntryIndex>,
     /// Content-addressable store. Multiple paths can point to the same content
     /// hash, tracked by `refs`.
-    pub(crate) files: ArrayHashMap<u64, StaticRouteRef>,
+    pub(crate) files: ArrayHashMap<u64, RefPtr<StaticRoute>>,
     /// Parallel to `files`. Never `0`.
     pub(crate) refs: Vec<u32>,
     /// When mutating `files`'s keys, the map must be reindexed to function.
@@ -100,15 +101,14 @@ impl Assets {
             // replaced in-place with the new asset.
             if self.refs[entry_index.get_usize()] == 1 {
                 self.files.keys_mut()[entry_index.get_usize()] = content_hash;
-                self.files.values_mut()[entry_index.get_usize()] =
-                    StaticRouteRef::init_from_any_blob(
-                        contents,
-                        InitFromBytesOptions {
-                            mime_type: Some(mime_type),
-                            server,
-                            ..Default::default()
-                        },
-                    );
+                self.files.values_mut()[entry_index.get_usize()] = StaticRoute::init_from_any_blob(
+                    contents,
+                    InitFromBytesOptions {
+                        mime_type: Some(mime_type),
+                        server,
+                        ..Default::default()
+                    },
+                );
                 // `ArrayHashMap<u64, _>` keys the entry on the hash itself.
                 self.needs_reindex = true;
                 debug_assert_eq!(self.files.count(), self.refs.len());
@@ -123,7 +123,7 @@ impl Assets {
         let file_index = match self.files.entry(content_hash) {
             MapEntry::Vacant(vacant) => {
                 let file_index = vacant.index();
-                vacant.insert(StaticRouteRef::init_from_any_blob(
+                vacant.insert(StaticRoute::init_from_any_blob(
                     contents,
                     InitFromBytesOptions {
                         mime_type: Some(mime_type),
@@ -152,7 +152,7 @@ impl Assets {
         debug_assert!(dec_count > 0);
         self.refs[index.get_usize()] -= dec_count;
         if self.refs[index.get_usize()] == 0 {
-            self.files.swap_remove_at(index.get_usize());
+            drop(self.files.swap_remove_at(index.get_usize()));
             self.refs.swap_remove(index.get_usize());
             // `swap_remove` moved the entry that was at the old last index into
             // `index`'s slot. Any `path_map` value that still points at the old
@@ -189,7 +189,7 @@ impl Assets {
     }
 
     /// Look up a `StaticRoute` by content hash.
-    pub(crate) fn get(&self, content_hash: u64) -> Option<&StaticRouteRef> {
+    pub(crate) fn get(&self, content_hash: u64) -> Option<&RefPtr<StaticRoute>> {
         debug_assert_eq!(self.files.count(), self.refs.len());
         self.files.get(&content_hash)
     }

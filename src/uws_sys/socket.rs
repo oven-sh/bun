@@ -21,7 +21,7 @@ use bun_core::{Fd, ZStr};
 use crate::WindowsNamedPipe;
 use crate::{
     CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN,
-    LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
+    LIBUS_SOCKET_DESCRIPTOR, QueuedInput, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
     us_bun_verify_error_t, us_socket_t,
 };
 
@@ -301,6 +301,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         self.is_closed() || self.is_shutdown() || self.get_error() != 0
     }
 
+    /// What the read side holds right now, without waiting for the loop to
+    /// poll. Transports the loop does not `recv()` report nothing queued.
+    pub fn queued_input(&self) -> QueuedInput {
+        on_socket!(self.socket;
+            connected s => s.queued_input(),
+            duplex _d => QueuedInput::None,
+            pipe _p => QueuedInput::None,
+            else => QueuedInput::None,
+        )
+    }
+
     pub fn get_verify_error(&self) -> us_bun_verify_error_t {
         on_socket!(self.socket;
             connected s => s.get_verify_error(),
@@ -458,17 +469,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── timeouts ────────────────────────────────────────────────────────────
 
-    /// Direct seconds timeout (no long-timeout split).
-    pub fn timeout(&self, seconds: c_uint) {
-        on_socket!(self.socket;
-            connected s => s.set_timeout(seconds),
-            connecting c => c.timeout(seconds),
-            detached => {},
-            duplex d => d.set_timeout(seconds),
-            pipe p => p.set_timeout(seconds),
-        )
-    }
-
     /// Splits >240s onto the minute-granularity long-timeout wheel.
     pub fn set_timeout(&self, seconds: c_uint) {
         on_socket!(self.socket;
@@ -492,21 +492,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    pub fn set_timeout_minutes(&self, minutes: c_uint) {
-        on_socket!(self.socket;
-            connected s => { s.set_timeout(0); s.set_long_timeout(minutes); },
-            connecting c => { c.timeout(0); c.long_timeout(minutes); },
-            detached => {},
-            duplex d => d.set_timeout(minutes * 60),
-            pipe p => p.set_timeout(minutes * 60),
-        )
-    }
-
     // ── flow control / sockopts ─────────────────────────────────────────────
 
+    /// A connect that has not completed yet is left alone (like the
+    /// `connecting` arm): the open re-arms reads, so latching a pause here
+    /// would only make the next real `pause()` a no-op.
     pub fn pause_stream(&self) -> bool {
         on_socket!(self.socket;
-            connected s => { s.pause(); true },
+            connected s => if s.is_established() { s.pause(); true } else { false },
             connecting _c => false,
             detached => true,
             duplex _d => false, // TODO: pause/resume upgraded duplex
@@ -516,7 +509,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     pub fn resume_stream(&self) -> bool {
         on_socket!(self.socket;
-            connected s => { s.resume(); true },
+            connected s => if s.is_established() { s.resume(); true } else { false },
             connecting _c => false,
             detached => true,
             duplex _d => false, // TODO: pause/resume upgraded duplex
@@ -580,10 +573,21 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     /// `SSL*` if this is a TLS socket, else `None`.
     #[inline]
     pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        if !IS_SSL {
+        // A connecting socket has no `SSL` yet (its native handle is a
+        // sentinel, not a pointer).
+        if !IS_SSL || matches!(self.socket, InternalSocket::Connecting(_)) {
             return None;
         }
         self.get_native_handle().map(|h| h.cast())
+    }
+
+    /// The socket's `SSL` handle as a borrow (`SSL` is a zero-sized opaque,
+    /// so this is the safe spelling of [`ssl`](Self::ssl)).
+    #[inline]
+    pub fn ssl_mut(&self) -> Option<&mut bun_boringssl_sys::SSL> {
+        self.ssl()
+            .filter(|p| !p.is_null())
+            .map(bun_opaque::opaque_deref_mut)
     }
 
     /// `*SSL` when `IS_SSL`, raw fd-as-ptr otherwise. Type-erased to
@@ -610,6 +614,22 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     // ── ext / fd ────────────────────────────────────────────────────────────
+
+    /// Clear the `Option<NonNull<Owner>>` ext slot written by
+    /// [`connect_group`](Self::connect_group), returning whether it still held
+    /// the owner. Used when the owner tears the socket down itself and must
+    /// reclaim the ref the slot represented.
+    pub fn take_ext_owner<Owner>(&self) -> bool {
+        match self.socket {
+            InternalSocket::Connected(s) => {
+                sock(s).ext::<Option<NonNull<Owner>>>().take().is_some()
+            }
+            InternalSocket::Connecting(s) => {
+                conn(s).ext::<Option<NonNull<Owner>>>().take().is_some()
+            }
+            _ => false,
+        }
+    }
 
     /// Typed ext storage. `None` for non-uSockets transports.
     pub fn ext<T>(&self) -> Option<*mut T> {
@@ -694,13 +714,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             socket: InternalSocket::UpgradedDuplex(d),
         }
     }
-    #[cfg(windows)]
-    #[inline]
-    pub fn from_named_pipe(p: *mut WindowsNamedPipe) -> Self {
-        Self {
-            socket: InternalSocket::Pipe(p),
-        }
-    }
 
     /// Wrap an already-open fd. Ext stores `*mut This`; the socket is linked
     /// into `g` with kind `k`. Port of `NewSocketHandler.fromFd`.
@@ -752,13 +765,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             0
         };
         // getaddrinfo doesn't understand bracketed IPv6 literals; URL parsing
-        // leaves them in (`[::1]`), so strip here like the old connectAnon did.
-        let host =
-            if raw_host.len() > 1 && raw_host[0] == b'[' && raw_host[raw_host.len() - 1] == b']' {
-                &raw_host[1..raw_host.len() - 1]
-            } else {
-                raw_host
-            };
+        // leaves them in (`[::1]`).
+        let host = bun_core::ip_address::strip_ipv6_brackets(raw_host);
         // SocketGroup.connect needs a NUL-terminated host.
         let mut stack = [0u8; 256];
         let heap: Vec<u8>;

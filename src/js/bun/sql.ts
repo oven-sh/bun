@@ -12,6 +12,7 @@ const { SQLHelper, parseOptions } = require("internal/sql/shared");
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 const { validateAbortSignal } = require("internal/validators");
 const { resistStopPropagation } = require("internal/shared");
+const AsyncContextFrame = require("internal/async_context_frame");
 
 const defineProperties = Object.defineProperties;
 
@@ -1085,7 +1086,8 @@ function resetDefaultSQL(sql) {
 
 function ensureDefaultSQL() {
   if (!lazyDefaultSQL) {
-    resetDefaultSQL(SQL(undefined));
+    // Shared by everything in the realm: not owned by whichever Bun.ModuleGraph uses it first.
+    resetDefaultSQL(AsyncContextFrame.run(undefined, SQL, undefined, undefined));
   }
 }
 
@@ -1094,9 +1096,7 @@ var defaultSQLObject: Bun.SQL = function sql(strings, ...values) {
     return SQL(strings);
   }
 
-  if (!lazyDefaultSQL) {
-    resetDefaultSQL(SQL(undefined));
-  }
+  ensureDefaultSQL();
 
   return lazyDefaultSQL(strings, ...values);
 } as Bun.SQL;
@@ -1178,34 +1178,6 @@ SQL.SQLError = SQLError;
 SQL.PostgresError = PostgresError;
 SQL.SQLiteError = SQLiteError;
 SQL.MySQLError = MySQLError;
-
-// // Helper functions for native code to create error instances
-// // These are internal functions used by native code
-// export function $createPostgresError(
-//   message: string,
-//   code: string,
-//   detail: string,
-//   hint: string,
-//   severity: string,
-//   additionalFields?: Record<string, any>,
-// ) {
-//   const options = {
-//     code,
-//     detail,
-//     hint,
-//     severity,
-//     ...additionalFields,
-//   };
-//   return new PostgresError(message, options);
-// }
-
-// export function $createSQLiteError(message: string, code: string, errno: number) {
-//   return new SQLiteError(message, { code, errno });
-// }
-
-// export function $createSQLError(message: string) {
-//   return new SQLError(message);
-// }
 
 export default {
   sql: defaultSQLObject,

@@ -79,7 +79,7 @@ export const libuv: Dependency = {
       "-Wno-int-conversion",
       "/wd4996",
     ],
-    // bun swaps in mimalloc with uv_replace_allocator (src/bun_bin/lib.rs), so
+    // bun swaps in mimalloc with uv_replace_allocator (src/runtime/bin_entry/mod.rs), so
     // everything has to allocate through uv__malloc and friends; uv-common.c
     // is the default table that swap replaces. The one stray CRT call there
     // was got uv__free'd and crashed (oven-sh/libuv#14).

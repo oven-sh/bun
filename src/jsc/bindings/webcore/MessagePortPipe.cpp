@@ -34,6 +34,7 @@ void MessagePortPipe::send(uint8_t fromSide, MessageWithMessagePorts&& message)
     auto& dst = m_sides[1 - fromSide];
 
     ScriptExecutionContextIdentifier wakeCtx = 0;
+    BunLoopKind wakeLoopKind = BunLoopKind::Regular;
     {
         Locker locker { dst.lock };
         uint64_t s = dst.state.load(std::memory_order_relaxed);
@@ -46,21 +47,22 @@ void MessagePortPipe::send(uint8_t fromSide, MessageWithMessagePorts&& message)
         if ((s & Attached) && !(s & DrainScheduled)) {
             ns |= DrainScheduled;
             wakeCtx = dst.ctxId;
+            wakeLoopKind = dst.ctxLoopKind;
         }
         dst.state.store(ns, std::memory_order_release);
     }
 
     if (wakeCtx)
-        scheduleDrain(1 - fromSide, wakeCtx);
+        scheduleDrain(1 - fromSide, wakeCtx, wakeLoopKind);
 }
 
-void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier ctxId)
+void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier ctxId, BunLoopKind ctxLoopKind)
 {
     // The posted task holds a strong ref to the pipe so it can't be destroyed
     // while a wakeup is in flight. The task captures the ctxId it was posted
     // to so drainAndDispatch can detect if the side moved to a different
     // context before the task ran.
-    bool posted = ScriptExecutionContext::postTaskTo(ctxId, [pipe = Ref { *this }, side, ctxId](ScriptExecutionContext&) {
+    bool posted = ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, side, ctxId](ScriptExecutionContext&) {
         pipe->drainAndDispatch(side, ctxId);
     });
     if (!posted) {
@@ -204,14 +206,17 @@ std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)
     return queue.takeFirst();
 }
 
-void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxId, ThreadSafeWeakPtr<MessagePort> port)
+void MessagePortPipe::attach(uint8_t side, ScriptExecutionContext& context, ThreadSafeWeakPtr<MessagePort> port)
 {
     ASSERT(side < 2);
     auto& s = m_sides[side];
+    ScriptExecutionContextIdentifier ctxId = context.identifier();
+    BunLoopKind ctxLoopKind = context.currentLoopKind();
     ScriptExecutionContextIdentifier wakeCtx = 0;
     {
         Locker locker { s.lock };
         s.ctxId = ctxId;
+        s.ctxLoopKind = ctxLoopKind;
         s.port = WTF::move(port);
         uint64_t st = s.state.load(std::memory_order_relaxed);
         uint64_t ns = (st | Attached | ContextKnown) & ~Closed;
@@ -222,7 +227,7 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
         s.state.store(ns, std::memory_order_release);
     }
     if (wakeCtx)
-        scheduleDrain(side, wakeCtx);
+        scheduleDrain(side, wakeCtx, ctxLoopKind);
     // Peer already closed while this side was in transit (detach() cleared
     // ContextKnown so notifyPeerClosed() early-returned): re-deliver to the new
     // owner, or the receiving context's listener loop-ref is never released.
@@ -230,10 +235,12 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
         notifyPeerClosed(side);
 }
 
-void MessagePortPipe::registerCloseContext(uint8_t side, ScriptExecutionContextIdentifier ctxId, ThreadSafeWeakPtr<MessagePort> port)
+void MessagePortPipe::registerCloseContext(uint8_t side, ScriptExecutionContext& context, ThreadSafeWeakPtr<MessagePort> port)
 {
     ASSERT(side < 2);
     auto& s = m_sides[side];
+    ScriptExecutionContextIdentifier ctxId = context.identifier();
+    BunLoopKind ctxLoopKind = context.currentLoopKind();
     {
         Locker locker { s.lock };
         uint64_t st = s.state.load(std::memory_order_relaxed);
@@ -241,6 +248,7 @@ void MessagePortPipe::registerCloseContext(uint8_t side, ScriptExecutionContextI
         if ((st & Closed) || (st & (Attached | ContextKnown)))
             return;
         s.ctxId = ctxId;
+        s.ctxLoopKind = ctxLoopKind;
         s.port = WTF::move(port);
         s.state.store(st | ContextKnown, std::memory_order_release);
     }
@@ -325,16 +333,18 @@ void MessagePortPipe::notifyPeerClosed(uint8_t peerSide)
 {
     auto& s = m_sides[peerSide];
     ScriptExecutionContextIdentifier ctxId = 0;
+    BunLoopKind ctxLoopKind = BunLoopKind::Regular;
     {
         Locker locker { s.lock };
         uint64_t st = s.state.load(std::memory_order_acquire);
         if ((st & Closed) || !(st & ContextKnown))
             return;
         ctxId = s.ctxId;
+        ctxLoopKind = s.ctxLoopKind;
     }
     if (!ctxId)
         return;
-    ScriptExecutionContext::postTaskTo(ctxId, [pipe = Ref { *this }, peerSide, ctxId](ScriptExecutionContext&) {
+    ScriptExecutionContext::postTaskTo(ctxId, ctxLoopKind, [pipe = Ref { *this }, peerSide, ctxId](ScriptExecutionContext&) {
         RefPtr<MessagePort> port;
         {
             Locker locker { pipe->m_sides[peerSide].lock };

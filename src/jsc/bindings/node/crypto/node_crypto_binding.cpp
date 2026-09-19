@@ -190,8 +190,11 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue nameOrNid = callFrame->argument(0);
+    // Read through the validator: asInt32() is not valid for an integral number the
+    // JSValue holds as a double.
+    int32_t nid = 0;
     if (nameOrNid.isNumber()) {
-        Bun::V::validateInt32(scope, lexicalGlobalObject, nameOrNid, "nameOrNid"_s, jsUndefined(), jsUndefined());
+        Bun::V::validateInt32(scope, lexicalGlobalObject, nameOrNid, "nameOrNid"_s, jsUndefined(), jsUndefined(), &nid);
         RETURN_IF_EXCEPTION(scope, {});
     } else if (!nameOrNid.isString()) {
         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "nameOrNid"_s, "string or number"_s, nameOrNid);
@@ -226,7 +229,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
 
     const ncrypto::Cipher cipher = [&] {
         if (nameOrNid.isNumber()) {
-            return ncrypto::Cipher::FromNid(nameOrNid.asInt32());
+            return ncrypto::Cipher::FromNid(nid);
         }
 
         String name = nameOrNid.toWTFString(lexicalGlobalObject);
@@ -364,12 +367,6 @@ __attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* glob
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "KeyObject"_s)),
         globalObject->m_JSKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "SecretKeyObject"_s)),
-        globalObject->m_JSSecretKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "PublicKeyObject"_s)),
-        globalObject->m_JSPublicKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "PrivateKeyObject"_s)),
-        globalObject->m_JSPrivateKeyObjectClassStructure.constructor(globalObject));
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "publicEncrypt"_s)),
         JSFunction::create(vm, globalObject, 2, "publicEncrypt"_s, jsPublicEncrypt, ImplementationVisibility::Public, NoIntrinsic), 0);

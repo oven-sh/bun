@@ -259,7 +259,7 @@ describe("bundler", () => {
         });
         builder.onResolve({ filter: /^magic:.*/ }, args => {
           expect(args.path).toBe("magic:some_string");
-          expect(args.importer).toBe(root + "/index.ts");
+          expect(args.importer).toBe(path.join(root, "index.ts"));
           expect(args.namespace).toBe("file");
           expect(args.kind).toBe("import-statement");
           onResolveCount++;
@@ -441,6 +441,105 @@ describe("bundler", () => {
       },
     };
   });
+  // Like esbuild, an external import is printed with the path that onResolve returned.
+  itBundled("plugin/ResolveExternalRewritesPath", {
+    files: {
+      "index.ts": /* ts */ `
+        import React from "react";
+        import { createRoot } from "react-dom/client";
+        export { h } from "preact";
+        export * from "mobx";
+        console.log(React, createRoot, await import("lodash"));
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^(react|react-dom\/client|preact|mobx|lodash)$/ }, args => {
+        return { path: "https://esm.sh/" + args.path, external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`from "https://esm.sh/react"`);
+      expect(contents).toContain(`from "https://esm.sh/react-dom/client"`);
+      expect(contents).toContain(`from "https://esm.sh/preact"`);
+      expect(contents).toContain(`from "https://esm.sh/mobx"`);
+      expect(contents).toContain(`import("https://esm.sh/lodash")`);
+      for (const original of ["react", "react-dom/client", "preact", "mobx", "lodash"]) {
+        expect(contents).not.toContain(`"${original}"`);
+      }
+    },
+  });
+  itBundled("plugin/ResolveExternalRewritesPathRequire", {
+    files: {
+      "index.ts": /* ts */ `
+        const React = require("react");
+        console.log(React);
+      `,
+    },
+    format: "cjs",
+    plugins(builder) {
+      builder.onResolve({ filter: /^react$/ }, () => {
+        return { path: "./vendor/react.cjs", external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`require("./vendor/react.cjs")`);
+      expect(contents).not.toContain(`require("react")`);
+    },
+  });
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`plugin/ResolveExternalRewritesRelativeImport_${format}`, {
+      files: {
+        "/a.js": /* js */ `
+          import { v } from "./b.js";
+          console.log(v);
+        `,
+        "/b.js": `export const v = "bundled";`,
+      },
+      target: "bun",
+      format,
+      plugins(builder) {
+        builder.onResolve({ filter: /b\.js$/ }, () => {
+          return { path: "/somewhere/else/b.js", external: true };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(
+          format === "esm" ? `import { v } from "/somewhere/else/b.js";` : `require("/somewhere/else/b.js")`,
+        );
+        expect(contents).not.toContain(`"./b.js"`);
+        expect(contents).not.toContain(`"bundled"`);
+      },
+    });
+  }
+  // rewriteExternalWithNamespace and rewriteExternalWithoutNamespace in
+  // https://github.com/evanw/esbuild/blob/f6058f8364fe7ab91ca57a83e02577ed74c9cae4/scripts/plugin-tests.js#L680-L728
+  for (const namespace of ["for-testing", undefined]) {
+    itBundled(`plugin/RewriteExternal${namespace ? "WithNamespace" : "WithoutNamespace"}`, {
+      files: {
+        "/in.js": /* js */ `
+          import { exists } from "extern";
+          export default exists;
+        `,
+        "/check.js": /* js */ `
+          const fs = require("fs");
+          console.log(require("./out.js").default === fs.exists);
+        `,
+      },
+      format: "cjs",
+      plugins(builder) {
+        builder.onResolve({ filter: /^extern$/ }, () => {
+          return { path: "fs", external: true, namespace };
+        });
+      },
+      run: {
+        file: "/check.js",
+        stdout: "true",
+      },
+    });
+  }
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
       files: {
@@ -537,7 +636,7 @@ describe("bundler", () => {
         stdout: "this string should exist once this string should exist once",
       },
       onAfterBundle(api) {
-        expect(importers.sort()).toEqual([root + "/one.ts", root + "/two.ts"].sort());
+        expect(importers.sort()).toEqual([path.join(root, "one.ts"), path.join(root, "two.ts")].sort());
         expect(onResolveCount).toBe(2);
         const contents = api.readFile("/out.js");
         expect([...contents.matchAll(/this string should exist once/g)].length).toBe(1);
@@ -1686,6 +1785,112 @@ describe("bundler", () => {
         stderr: "",
       });
       expect(exitCode).toBe(0);
+    });
+  }
+
+  // An entry point that onResolve leaves without a module used to be dropped
+  // without a log entry: the linker aborted on an empty chunk list when it was
+  // the only entry point, and the build silently emitted only the other entry
+  // points otherwise. A declined entry point that the package.json "browser"
+  // field disables gets the same error as without plugins.
+  test.concurrent("plugin/entry point left without a module by onResolve fails the build", async () => {
+    using dir = tempDir("plugin-entry-point-without-module", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./disabled.js": false } }),
+      "entry.js": `console.log("entry");`,
+      "live.js": `console.log("live");`,
+      "disabled.js": `console.log("disabled");`,
+      "build.mjs": `
+        const declined = [];
+        const plugins = [
+          {
+            name: "externalize-entry",
+            setup(build) {
+              build.onResolve({ filter: /entry\\.js$/ }, args => ({ path: args.path, external: true }));
+            },
+          },
+          {
+            name: "decline-disabled",
+            setup(build) {
+              build.onResolve({ filter: /disabled\\.js$/ }, args => {
+                declined.push(args.path);
+              });
+            },
+          },
+        ];
+        const results = {};
+        for (const [name, entrypoints] of Object.entries({
+          external: ["./entry.js"],
+          externalNextToLiveEntryPoint: ["./entry.js", "./live.js"],
+          declinedThenDisabledByBrowserField: ["./disabled.js"],
+        })) {
+          const result = await Bun.build({ entrypoints, target: "browser", plugins, throw: false });
+          results[name] = {
+            success: result.success,
+            logs: result.logs.map(log => log.message),
+            outputs: result.outputs.map(output => output.path),
+          };
+        }
+        results.declined = declined;
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      external: {
+        success: false,
+        logs: ['The entry point "./entry.js" cannot be marked as external'],
+        outputs: [],
+      },
+      externalNextToLiveEntryPoint: {
+        success: false,
+        logs: ['The entry point "./entry.js" cannot be marked as external'],
+        outputs: [],
+      },
+      declinedThenDisabledByBrowserField: {
+        success: false,
+        logs: ['"./disabled.js" is disabled due to "browser" field in package.json (entry point)'],
+        outputs: [],
+      },
+      declined: ["./disabled.js"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Two entry point names that onResolve maps to one file make one output file.
+  for (const splitting of [false, true]) {
+    test.concurrent(`plugin/two entry points that resolve to one file (splitting: ${splitting})`, async () => {
+      using dir = tempDir("plugin-two-entry-points-one-file", {
+        "entry.ts": `console.log("entry");`,
+      });
+      const result = await Bun.build({
+        entrypoints: ["first-name", "second-name"],
+        outdir: join(String(dir), "out"),
+        splitting,
+        throw: false,
+        plugins: [
+          {
+            name: "alias",
+            setup(build) {
+              build.onResolve({ filter: /-name$/ }, () => ({ path: join(String(dir), "entry.ts") }));
+            },
+          },
+        ],
+      });
+      expect({
+        success: result.success,
+        logs: result.logs.map(log => log.message),
+        outputs: result.outputs.map(output => path.basename(output.path)),
+      }).toEqual({ success: true, logs: [], outputs: ["second-name.js"] });
     });
   }
 });

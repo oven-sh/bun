@@ -298,7 +298,6 @@ macro_rules! css_eql_partialeq {
         }
     )+};
 }
-pub use css_eql_partialeq;
 
 impl CssEql for [u8] {
     #[inline]
@@ -454,17 +453,17 @@ mod inherent_bridge {
     bridge_deep_clone_copy!(UAEnvironmentVariable);
 
     // `Direction` is re-exported from `properties::text` — bridged below as `TextDirection`.
-    use crate::selectors::parser::{ViewTransitionPartName, WebKitScrollbarPseudoElement};
+    use crate::selectors::parser::{ViewTransitionPartSelector, WebKitScrollbarPseudoElement};
     impl CssEql for WebKitScrollbarPseudoElement {
         #[inline]
         fn eql(&self, other: &Self) -> bool {
             WebKitScrollbarPseudoElement::eql(*self, *other)
         }
     }
-    bridge_eql!(ViewTransitionPartName);
+    bridge_eql!(ViewTransitionPartSelector);
     // CssHash for WebKitScrollbarPseudoElement — via #[derive(CssHash)] on the enum.
-    bridge_hash!(ViewTransitionPartName);
-    bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartName);
+    bridge_hash!(ViewTransitionPartSelector);
+    bridge_deep_clone_copy!(WebKitScrollbarPseudoElement, ViewTransitionPartSelector);
 
     // ───────────────────────────────────────────────────────────────────────
     // Property value-type bridges — `Property::deep_clone`/`eql` dispatch via

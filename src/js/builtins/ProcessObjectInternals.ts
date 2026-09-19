@@ -340,18 +340,12 @@ export function getStdinStream(
 
   return stream;
 }
-export function initializeNextTickQueue(
-  process: typeof globalThis.process,
-  nextTickQueue,
-  drainMicrotasksFn,
-  reportUncaughtExceptionFn,
-) {
+export function initializeNextTickQueue(process: typeof globalThis.process, nextTickQueue, drainMicrotasksFn) {
   var queue;
   var tickInitHooks;
   var process;
   var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
-  var reportUncaughtException = reportUncaughtExceptionFn;
 
   const { validateFunction } = require("internal/validators");
 
@@ -370,33 +364,32 @@ export function initializeNextTickQueue(
           var frame = tock.frame;
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame);
-          try {
-            if (args === undefined) {
-              callback();
-            } else {
-              switch (args.length) {
-                case 1:
-                  callback(args[0]);
-                  break;
-                case 2:
-                  callback(args[0], args[1]);
-                  break;
-                case 3:
-                  callback(args[0], args[1], args[2]);
-                  break;
-                case 4:
-                  callback(args[0], args[1], args[2], args[3]);
-                  break;
-                default:
-                  callback(...args);
-                  break;
-              }
+          // No catch and no finally: what a tick throws leaves this function as it was thrown, with
+          // the tick's frame still current. JSNextTickQueue::drain reports it there (so an
+          // uncaughtException handler reads the tick's AsyncLocalStorage stores, as in node), puts the
+          // async context back, and calls in again for the ticks after it.
+          if (args === undefined) {
+            callback();
+          } else {
+            switch (args.length) {
+              case 1:
+                callback(args[0]);
+                break;
+              case 2:
+                callback(args[0], args[1]);
+                break;
+              case 3:
+                callback(args[0], args[1], args[2]);
+                break;
+              case 4:
+                callback(args[0], args[1], args[2], args[3]);
+                break;
+              default:
+                callback(...args);
+                break;
             }
-          } catch (e) {
-            reportUncaughtException(e);
-          } finally {
-            $putInternalField($asyncContext, 0, restore);
           }
+          $putInternalField($asyncContext, 0, restore);
         }
 
         drainMicrotasks();
@@ -491,8 +484,8 @@ export function windowsEnv(
     // name-matching TZ here survives a prior `delete process.env.TZ`.
     const coerced = coerceForWrite(k, value);
     // Track the key for enumeration if it isn't already there. Don't gate on
-    // `k in internalEnv`: the proxy accessors (HTTP_PROXY, ...) always exist
-    // as DontEnum CustomAccessors even when the variable was never set.
+    // `k in internalEnv`: the TZ and NODE_TLS_REJECT_UNAUTHORIZED accessors
+    // always exist as DontEnum CustomAccessors even when the variable was never set.
     if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
       envMapList.push(p);
     }
@@ -502,7 +495,7 @@ export function windowsEnv(
     }
   }
 
-  return new Proxy(internalEnv, {
+  const envProxy = new Proxy(internalEnv, {
     get(_, p) {
       if (typeof p !== "string") {
         // Symbol keys (e.g. Bun.inspect.custom) live on internalEnv as-is.
@@ -519,7 +512,12 @@ export function windowsEnv(
       // matching node where `process.env.hasOwnProperty` is callable.
       return internalEnv[p];
     },
-    set(_, p, value) {
+    set(_, p, value, receiver) {
+      // A write to an object that inherits from process.env is that object's
+      // own: OrdinarySet past a prototype chain that does not have the key.
+      if (receiver !== envProxy) {
+        return Reflect.set({ __proto__: null }, p, value, receiver);
+      }
       // Node's process.env throws a TypeError for symbol keys and symbol
       // values (ToString on a Symbol throws).
       if (typeof p === "symbol" || typeof value === "symbol") {
@@ -611,6 +609,7 @@ export function windowsEnv(
       return envMapList.slice();
     },
   });
+  return envProxy;
 }
 
 export function getChannel() {

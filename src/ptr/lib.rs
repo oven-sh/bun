@@ -29,7 +29,7 @@ pub use js_cell::JsCell;
 // impl moved down to `bun_core::external_shared` (cycle-break for the
 // `bun_string → bun_core` merge); re-exported here unchanged.
 pub use bun_core::external_shared;
-pub use bun_core::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
+pub use bun_core::{ExternalShared, ExternalSharedDescriptor, WTFString};
 // `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
 pub use bun_core::{RawSlice, cast_fn_ptr};
 
@@ -41,8 +41,8 @@ pub use tagged_pointer::TaggedPtr;
 
 pub mod ref_count;
 pub use ref_count::{
-    AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ScopedRef, ThreadSafeRefCount,
-    ThreadSafeRefCounted, destroy_box_with, finalize_js_box, finalize_js_box_noop,
+    AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ThreadSafeRefCount,
+    ThreadSafeRefCounted,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
@@ -51,9 +51,6 @@ pub use bun_core_macros::{CellRefCounted, RefCounted, ThreadSafeRefCounted};
 
 pub mod parent_ref;
 pub use parent_ref::ParentRef;
-// Compat alias for callers that use the pointer-typedef name.
-pub type IntrusiveRc<T> = RefPtr<T>;
-
 pub use raw_ref_count::RawRefCount;
 pub use weak_ptr::WeakPtr;
 
@@ -89,6 +86,10 @@ pub use bun_core::callback_ctx;
 
 pub struct Shared;
 pub struct Mut;
+/// Provenance marker: the back-reference was minted from a [`ThisPtr`] (or a
+/// leaked `Box`), i.e. it is the root pointer of a live heap allocation, so it
+/// may hand a [`ThisPtr`] back out. `BackRef<T, Mut>` (any `&mut T`) may not.
+pub struct Root;
 
 /// Non-owning, non-null back-reference to an object that outlives `self`.
 /// For struct fields where the pointee is the owner/parent and is
@@ -193,6 +194,44 @@ impl<T: ?Sized, P> BackRef<T, P> {
         // SAFETY: BackRef invariant — pointee outlives holder; non-null,
         // aligned, dereferenceable.
         unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T> BackRef<T, Root> {
+    /// View the pointee as a [`ThisPtr`] again for the dispatch entry points
+    /// that take one. Safe under the `BackRef` invariant (the pointee is live
+    /// for as long as this back-reference is held — [`ThisPtr::new`]'s
+    /// precondition) plus what `Root` records: this pointer *is* a heap
+    /// allocation's root, so the callee may release refs through it.
+    #[inline]
+    pub fn this_ptr(&self) -> ThisPtr<T> {
+        // SAFETY: see above.
+        unsafe { ThisPtr::new(self.0.as_ptr()) }
+    }
+
+    /// Wrap the root pointer of a live heap allocation.
+    ///
+    /// # Safety
+    /// [`BackRef::from_raw`]'s contract, and `p` is what `Box::into_raw` /
+    /// `heap::into_raw` returned for an allocation that stays live while the
+    /// result is held.
+    #[inline]
+    pub const unsafe fn from_root(p: *mut T) -> Self {
+        // SAFETY: caller contract — `p` is non-null.
+        BackRef(
+            unsafe { core::ptr::NonNull::new_unchecked(p) },
+            core::marker::PhantomData,
+        )
+    }
+}
+
+impl<T> From<ThisPtr<T>> for BackRef<T, Root> {
+    /// Record a dispatch-time [`ThisPtr`] as a back-reference. The holder takes
+    /// on the `BackRef` invariant: it must drop/clear this before the pointee
+    /// can be freed.
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        BackRef(p.0, core::marker::PhantomData)
     }
 }
 
@@ -525,13 +564,10 @@ impl core::fmt::Debug for Interned {
 // ThisPtr<T> — callback-dispatch self-pointer
 //
 // uSockets / C++ FFI dispatch hands every socket-event handler a raw
-// `*mut Self` recovered from the userdata slot. The original port open-coded
-// `unsafe { (*this).field }` / `unsafe { (&*this).ref_() }` /
-// `scopeguard::guard(this, |p| unsafe { Self::deref(p) })` at ~90 call sites
-// across the websocket-client family. `ThisPtr` centralises that pattern under
-// ONE constructor SAFETY contract: wrap the raw pointer once at fn entry, then
-// read fields via `Deref` and bracket the body with `ref_guard()` (RAII
-// `ScopedRef`) instead of hand-paired `ref_()`/`deref()` at every early-exit.
+// `*mut Self` recovered from the userdata slot. `ThisPtr` wraps it under ONE
+// constructor SAFETY contract: wrap the raw pointer once at fn entry, then
+// read fields via `Deref` and hold `RefPtr::from_this(this)` across any
+// re-entrant call that could drop the last ref.
 //
 // Unlike [`BackRef`] (owner-outlives-holder back-reference), a `ThisPtr` is for
 // the *callee-is-the-allocation* case: the pointee is an intrusively-refcounted
@@ -548,7 +584,7 @@ impl core::fmt::Debug for Interned {
 ///
 /// See the module comment above for the full rationale. Construct once per
 /// handler entry with [`ThisPtr::new`], then use `Deref` for field reads and
-/// [`ThisPtr::ref_guard`] for the keep-alive bracket.
+/// [`RefPtr::from_this`] for the keep-alive bracket.
 #[repr(transparent)]
 pub struct ThisPtr<T>(core::ptr::NonNull<T>);
 
@@ -560,7 +596,7 @@ impl<T> ThisPtr<T> {
     /// `heap::alloc`, intrusively refcounted) that remains live for every
     /// subsequent access through this `ThisPtr` and its copies — i.e. either
     /// the caller already holds a ref, or the first thing it does is take a
-    /// [`ref_guard`](Self::ref_guard). No `&mut T` to `*p` may be live across
+    /// [`RefPtr::from_this`]. No `&mut T` to `*p` may be live across
     /// any `Deref` borrow produced from this `ThisPtr`.
     #[inline]
     pub unsafe fn new(p: *mut T) -> Self {
@@ -603,26 +639,6 @@ impl<T> core::ops::Deref for ThisPtr<T> {
     #[inline]
     fn deref(&self) -> &T {
         self.get()
-    }
-}
-
-impl<T: AnyRefCounted> ThisPtr<T>
-where
-    T::DestructorCtx: Default,
-{
-    /// Bump the intrusive refcount and return an RAII guard that derefs on
-    /// `Drop`. Replaces the hand-rolled
-    /// `this.ref_(); scopeguard::guard(this_ptr, |p| Self::deref(p))` /
-    /// `this.ref_(); … defer this.deref()` bracket: the guard runs the paired
-    /// `deref()` on every exit path, so manual `Self::deref(this)` at each
-    /// early return goes away.
-    ///
-    /// Safe: the [`new`](Self::new) invariant already established that the
-    /// pointee is live, which is exactly [`ScopedRef::new`]'s precondition.
-    #[inline]
-    pub fn ref_guard(self) -> ScopedRef<T> {
-        // SAFETY: `ThisPtr::new` invariant — `self.0` points to a live `T`.
-        unsafe { ScopedRef::new(self.0.as_ptr()) }
     }
 }
 
@@ -744,25 +760,23 @@ impl<T> Default for DetachablePtr<T> {
 // The returned pointer carries **shared (read-only) provenance** — it is
 // derived from `&self`, so writing through it directly is UB. The `*mut`
 // spelling exists purely to match C-shaped signatures (`void *`, uSockets
-// ext slots, `ScopedRef` / `DerefOnDrop` ctx, vtable thunks, intrusive
+// ext slots, `RefPtr::init_ref`, vtable thunks, intrusive
 // `RefCount::deref`). Consumers must deref as `&*p` and route mutation
 // through `Cell` / `JsCell` / `UnsafeCell` interior-mutability fields.
 //
 // Blanket-implemented for all `T`: bring the trait into scope with
 // `use bun_ptr::AsCtxPtr;` and the inherent-looking `self.as_ctx_ptr()`
-// resolves on any type. Replaces 19 identical hand-rolled
-// `fn as_ctx_ptr(&self) -> *mut Self { (self as *const Self).cast_mut() }`
-// inherent methods scattered across runtime JS-class wrappers.
+// resolves on any type.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// `&self` → `*mut Self` with shared provenance, for C-callback / scopeguard
 /// ctx slots. See module-level comment above for the safety contract.
 pub trait AsCtxPtr {
     /// `self`'s address as `*mut Self` for deferred-task / scopeguard /
-    /// `ref_guard` ctx slots. The closures/trampolines deref it as shared
+    /// `RefPtr::init_ref` ctx slots. The closures/trampolines deref it as shared
     /// (`&*p`) — every method they reach is `&self` post-R-2, so no write
     /// provenance is required; the `*mut` spelling is purely to match the
-    /// existing `DerefOnDrop` / `HasAutoFlush` / `RefCount` ABI.
+    /// `HasAutoFlush` / `RefCount` ABI.
     #[inline(always)]
     fn as_ctx_ptr(&self) -> *mut Self
     where

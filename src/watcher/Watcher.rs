@@ -34,11 +34,12 @@ pub const REQUIRES_FILE_DESCRIPTORS: bool = false;
 
 /// Open flags for an fd that exists only to receive kqueue VNODE events.
 /// Darwin has O_EVTONLY (no read/write access requested); FreeBSD has no
-/// equivalent, so the watch fd is a plain O_RDONLY.
+/// equivalent, so the watch fd is a plain O_RDONLY. `O_CLOEXEC` keeps the fd
+/// out of the image that `--watch` and `--hot` `execve` into on reload.
 #[cfg(target_os = "macos")]
-pub const WATCH_OPEN_FLAGS: i32 = libc::O_EVTONLY;
+pub const WATCH_OPEN_FLAGS: i32 = libc::O_EVTONLY | bun_sys::O::CLOEXEC;
 #[cfg(not(target_os = "macos"))]
-pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
+pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 
 pub type Event = WatchEvent;
 pub type WatchList = MultiArrayList<WatchItem>;
@@ -397,7 +398,6 @@ impl Watcher {
             "flush_evictions: caller must hold self.mutex (platform watcher holds it around on_file_update)",
         );
         let evict_list_i = self.evict_list_i as usize;
-        // defer this.evict_list_i = 0 — set at end of fn
 
         // swapRemove messes up the order
         // But, it only messes up the order if any elements in the list appear after the item being removed
@@ -605,7 +605,7 @@ impl Watcher {
         let fd = if stored_fd.is_valid() {
             stored_fd
         } else {
-            bun_sys::open_a(file_path, 0, 0)?
+            bun_sys::open_a(file_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?
         };
 
         // `WatchItem.file_path` is an owning `Cow<'static, [u8]>` column so the
@@ -750,23 +750,21 @@ impl Watcher {
             Ok(FdOwnership::Watcher) => {}
         }
 
-        if true {
-            let cwd_len_with_slash = if self.cwd[self.cwd.len() - 1] == b'/' {
-                self.cwd.len()
+        let cwd_len_with_slash = if self.cwd[self.cwd.len() - 1] == b'/' {
+            self.cwd.len()
+        } else {
+            self.cwd.len() + 1
+        };
+        let display_path =
+            if file_path.len() > cwd_len_with_slash && file_path.starts_with(self.cwd) {
+                &file_path[cwd_len_with_slash..]
             } else {
-                self.cwd.len() + 1
+                file_path
             };
-            let display_path =
-                if file_path.len() > cwd_len_with_slash && file_path.starts_with(self.cwd) {
-                    &file_path[cwd_len_with_slash..]
-                } else {
-                    file_path
-                };
-            log!(
-                "<d>Added <b>{}<r><d> to watch list.<r>",
-                bstr::BStr::new(display_path)
-            );
-        }
+        log!(
+            "<d>Added <b>{}<r><d> to watch list.<r>",
+            bstr::BStr::new(display_path)
+        );
 
         Ok(FdOwnership::Watcher)
     }
@@ -829,7 +827,7 @@ impl Watcher {
         // Only open fd if we might need it
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let fd: Fd = {
-            let mut path_z = bun_paths::PathBuffer::uninit();
+            let mut path_z = bun_paths::path_buffer_pool::get();
             if file_path.len() >= path_z.len() {
                 return false;
             }

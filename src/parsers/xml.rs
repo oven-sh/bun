@@ -128,7 +128,6 @@ impl XML {
         match result {
             Ok(root) => Ok(root),
             Err(PErr::Syntax) => Err(crate::Error::SyntaxError),
-            Err(PErr::Oom) => Err(crate::Error::Alloc(bun_alloc::AllocError)),
             Err(PErr::StackOverflow) => Err(crate::Error::StackOverflow),
             Err(PErr::NeedsWiderEncoding) => Err(crate::Error::NeedsWiderEncoding),
         }
@@ -139,16 +138,9 @@ impl XML {
 enum PErr {
     /// Already logged.
     Syntax,
-    Oom,
     StackOverflow,
     /// See `InputEncoding::Latin1`.
     NeedsWiderEncoding,
-}
-
-impl From<bun_alloc::AllocError> for PErr {
-    fn from(_: bun_alloc::AllocError) -> Self {
-        PErr::Oom
-    }
 }
 
 type PResult<T> = Result<T, PErr>;

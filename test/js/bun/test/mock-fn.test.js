@@ -725,6 +725,59 @@ describe("mock()", () => {
     );
     expect(fn()).toBe("1");
   });
+  if (isBun) {
+    // Bun wraps the value in a promise when mockResolvedValue is called, not when the mock is.
+    test("mockResolvedValue propagates an error thrown while wrapping the value in a promise", () => {
+      const boom = new Error("boom");
+      const value = Promise.resolve(1);
+      Object.defineProperty(value, "constructor", {
+        get() {
+          throw boom;
+        },
+      });
+      const fn = jest.fn();
+      expect(() => fn.mockResolvedValue(value)).toThrow(boom);
+      expect(() => fn.mockResolvedValueOnce(value)).toThrow(boom);
+      // nothing was queued
+      expect(fn()).toBeUndefined();
+    });
+  }
+  test("withImplementation (callback throws)", () => {
+    const fn = jest.fn(() => "1");
+    expect(() =>
+      fn.withImplementation(
+        () => "2",
+        () => {
+          expect(fn()).toBe("2");
+          throw new Error("from callback");
+        },
+      ),
+    ).toThrow("from callback");
+  });
+  test("withImplementation restores a queued mockImplementationOnce chain", () => {
+    const fn = jest.fn(() => "base");
+    fn.mockImplementationOnce(() => "a").mockImplementationOnce(() => "b");
+    fn.withImplementation(
+      () => "temp",
+      () => {
+        expect(fn()).toBe("temp");
+      },
+    );
+    fn.mockImplementationOnce(() => "c");
+    expect([fn(), fn(), fn(), fn()]).toEqual(["a", "b", "c", "base"]);
+  });
+  test("copying name/length from the implementation propagates getter errors", () => {
+    const impl = function () {};
+    Object.defineProperty(impl, "length", {
+      get() {
+        throw new Error("length getter");
+      },
+    });
+    expect(() => jest.fn(impl)).toThrow("length getter");
+    const obj = { method: impl };
+    expect(() => jest.spyOn(obj, "method")).toThrow("length getter");
+    expect(obj.method).toBe(impl);
+  });
   test("withImplementation (async)", async () => {
     const fn = jest.fn(() => "1");
     expect(fn()).toBe("1");

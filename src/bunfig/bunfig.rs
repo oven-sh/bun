@@ -954,8 +954,6 @@ impl<'a> Parser<'a> {
             if let Some(value) = expr.as_string(self.bump) {
                 if value == b"react" {
                     jsx_runtime = api::JsxRuntime::Classic;
-                } else if value == b"solid" {
-                    jsx_runtime = api::JsxRuntime::Solid;
                 } else if value == b"react-jsx" {
                     jsx_runtime = api::JsxRuntime::Automatic;
                     jsx_dev = false;
@@ -965,7 +963,7 @@ impl<'a> Parser<'a> {
                 } else {
                     self.add_error(
                         expr.loc,
-                        b"Invalid jsx runtime, only 'react', 'solid', 'react-jsx', and 'react-jsxDEV' are supported",
+                        b"Invalid jsx runtime, only 'react', 'react-jsx', and 'react-jsxDEV' are supported",
                     )?;
                 }
             }
@@ -1544,9 +1542,7 @@ impl<'a> Parser<'a> {
         let remap = |e: FromExprError| -> crate::Error {
             match e {
                 FromExprError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-                FromExprError::UnexpectedExpr | FromExprError::InvalidRegExp => {
-                    crate::Error::InvalidBunfig
-                }
+                FromExprError::UnexpectedExpr => crate::Error::InvalidBunfig,
             }
         };
         if let Some(public_hoist_pattern_expr) = install_obj.get(b"publicHoistPattern") {
@@ -1563,6 +1559,10 @@ impl<'a> Parser<'a> {
         }
         if let Some(v) = install_obj.get(b"hoist").and_then(|e| e.as_bool()) {
             install.hoist = Some(v);
+        }
+
+        if let Some(v) = install_obj.get(b"offline").and_then(|e| e.as_bool()) {
+            install.offline = Some(v);
         }
 
         Ok(())

@@ -27,8 +27,6 @@
 
 namespace WebCore {
 
-class JSPerformanceObject;
-
 class JSPerformance : public JSEventTarget {
 public:
     using Base = JSEventTarget;
@@ -42,7 +40,6 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static Performance* toWrapped(JSC::VM&, JSC::JSValue);
 
     DECLARE_INFO;
 

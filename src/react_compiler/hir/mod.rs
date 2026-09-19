@@ -156,12 +156,6 @@ impl FloatValue {
     }
 }
 
-impl From<f64> for FloatValue {
-    fn from(value: f64) -> Self {
-        FloatValue::new(value)
-    }
-}
-
 impl From<FloatValue> for f64 {
     fn from(value: FloatValue) -> Self {
         value.value()
@@ -1251,11 +1245,6 @@ impl std::fmt::Display for Effect {
 #[derive(Debug, Clone)]
 pub struct SpreadPattern {
     pub place: Place,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Hole {
-    Hole,
 }
 
 #[derive(Debug, Clone)]

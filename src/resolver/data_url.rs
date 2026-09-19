@@ -152,7 +152,7 @@ impl<'a> DataURL<'a> {
             strings::index_of_char(url, b',').ok_or(ParseDataURLError::InvalidDataURL)? as usize;
 
         let mut parsed = DataURL {
-            url: bun_core::String::empty(),
+            url: bun_core::String::EMPTY,
             mime_type: &url[b"data:".len()..comma],
             data: &url[comma + 1..url.len()],
             is_base64: false,
@@ -173,7 +173,6 @@ impl<'a> DataURL<'a> {
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;
-        // defer: `percent_decoded_owned` drops at scope exit
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
 
         if self.is_base64 {

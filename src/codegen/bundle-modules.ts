@@ -16,7 +16,7 @@ import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
-import { cap, checkAscii, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
+import { cap, checkAscii, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
 
@@ -247,8 +247,7 @@ const outputs = new Map();
 
 for (const entrypoint of bundledEntryPoints) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
-  const file = Bun.file(path.join(TMP_DIR, "modules_out", file_path));
-  const output = await file.text();
+  const output = fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8");
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");
@@ -403,34 +402,113 @@ writeIfNotChanged(
 // frontend ~15s on the release build — millions of integer tokens to parse for
 // ~2 MB of payload.
 //
-// Layout: [builtin functions combined source][\0][module 0][\n\0][module 1][\n\0]...
-// WebCoreJSBuiltins.cpp's internalCombinedSource is the span at offset 0; the
-// internal modules follow at known offsets.
+// The blob lives in its own executable section (`__TEXT,__bun_builtins` /
+// `.bun_builtins` / `.bunblt`) and starts with a header + per-module index, so
+// that a `bun build --compile --bytecode` running on another platform can read a
+// target executable's builtin module sources (and their registry ids) straight out
+// of the file. The runtime reads the same index; nothing is stored twice. The
+// reader is src/exe_format/builtins.rs — keep the two in sync.
 //
-// In debug builds the module sources are read from disk (BUN_DYNAMIC_JS_LOAD_PATH),
-// so every module offset/length is 0. The functions span is still real in debug.
-const moduleSpans: { enumName: string; offset: number; length: number }[] = [];
+// Layout (little-endian u32 unless noted; offsets in the index are relative to `data`):
+//   header:  magic[8] "BUNBLTNS", version, sourceStamp, moduleCount, modulesOffset,
+//            depOffsetsOffset, depsOffset, dataOffset, dataLength, 0, 0
+//   modules: moduleCount × { nameOffset, nameLength, urlOffset, urlLength, codeOffset, codeLength }
+//   depOffsets: u16[moduleCount + 1], deps: u16[]  (see internalModuleDependencyTable)
+//   data:    [builtin functions combined source][\0][module 0][\0][module 1][\0]...[name\0url\0]...
+// WebCoreJSBuiltins.cpp's internalCombinedSource is the span at data offset 0.
+//
+// A debug build's runtime reads the module sources from disk instead (BUN_DYNAMIC_JS_LOAD_PATH), but they are still
+// here so that a debug bun works as a `--compile` target like any other.
+const BUILTINS_FORMAT_VERSION = 1;
+const BUILTINS_HEADER_SIZE = 48;
+
+// Identifies these module sources to bytecode generated from them ahead of time (bun build --compile embeds bytecode for
+// the internal modules an app uses); computed over the bundled outputs so it is meaningful in debug builds too.
+const internalModulesStamp = sourceStamp(
+  moduleList.slice(0, nativeStartIndex).map(id => outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? ""),
+);
+
+// require() edges between JS internal modules (ids are enum order), as offsets into one flat list. `bun build --compile
+// --bytecode` embeds bytecode for the builtins an app imports plus everything reachable through this table.
+const internalModuleDependencyTable = (() => {
+  const jsModules = moduleList.slice(0, nativeStartIndex);
+  const requireRe = /internalModuleRegistry, ?(\d+)/g;
+  const offsets: number[] = [];
+  const flat: number[] = [];
+  jsModules.forEach((id, n) => {
+    offsets.push(flat.length);
+    const src = outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "";
+    const edges = new Set<number>();
+    // Lazy require() calls inside functions count too: internal/util/inspect, internal/fs/watch and friends are only
+    // ever reached that way, and the first is loaded by nearly every program (util.inspect, format, console, error
+    // paths). Carrying bytecode for a module that never loads costs bytes; parsing one that does costs startup time.
+    for (const m of src.matchAll(requireRe)) {
+      const dep = Number(m[1]);
+      if (dep !== n && dep < nativeStartIndex) edges.add(dep);
+    }
+    flat.push(...[...edges].sort((a, b) => a - b));
+  });
+  offsets.push(flat.length);
+  return { offsets, flat };
+})();
+
 let blob: Buffer;
+let blobDataOffset: number;
 {
+  type Span = { offset: number; length: number };
+  const code = new Map<string, Span>();
   const chunks: Buffer[] = [Buffer.from(functionsSource + "\0", "latin1")];
   let offset = chunks[0].length;
+  const push = (text: string): Span => {
+    const bytes = Buffer.from(text, "latin1");
+    const span = { offset, length: bytes.length };
+    chunks.push(bytes);
+    offset += bytes.length;
+    return span;
+  };
   for (const id of layoutOrder(moduleList.slice(0, nativeStartIndex), outputs)) {
-    const enumName = idToEnumName(id);
-    if (debug) {
-      moduleSpans.push({ enumName, offset: 0, length: 0 });
-      continue;
-    }
     const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
     if (!out) throw new Error(`Missing output for ${id}`);
     checkAscii(out);
-    // Trailing "\n\0": the NUL keeps each entry a valid C string should anything
-    // downstream ever strlen into the blob.
-    const bytes = Buffer.from(out + "\n\0", "latin1");
-    chunks.push(bytes);
-    moduleSpans.push({ enumName, offset, length: bytes.length - 1 });
-    offset += bytes.length;
+    // The NUL keeps each entry a valid C string should anything downstream ever strlen into the blob.
+    const span = push(out + "\0");
+    code.set(id, { offset: span.offset, length: span.length - 1 });
   }
-  blob = Buffer.concat(chunks);
+  const records: number[] = [];
+  for (const id of moduleList.slice(0, nativeStartIndex)) {
+    const name = push(idToPublicSpecifierOrEnumName(id) + "\0");
+    const url = push("builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/") + "\0");
+    const { offset: codeOffset, length: codeLength } = code.get(id)!;
+    records.push(name.offset, name.length - 1, url.offset, url.length - 1, codeOffset, codeLength);
+  }
+  const data = Buffer.concat(chunks);
+
+  if (internalModuleDependencyTable.flat.length > 0xffff || nativeStartIndex > 0xffff)
+    throw new Error("builtins section: dependency table no longer fits its u16 entries; widen depOffsets/deps");
+  const align = (n: number, to: number) => (n + to - 1) & ~(to - 1);
+  const modulesOffset = BUILTINS_HEADER_SIZE;
+  const depOffsetsOffset = modulesOffset + records.length * 4;
+  const depsOffset = depOffsetsOffset + internalModuleDependencyTable.offsets.length * 2;
+  blobDataOffset = align(depsOffset + internalModuleDependencyTable.flat.length * 2, 16);
+
+  blob = Buffer.alloc(blobDataOffset + data.length);
+  blob.write("BUNBLTNS", 0, "latin1");
+  [
+    BUILTINS_FORMAT_VERSION,
+    internalModulesStamp,
+    nativeStartIndex,
+    modulesOffset,
+    depOffsetsOffset,
+    depsOffset,
+    blobDataOffset,
+    data.length,
+    0,
+    0,
+  ].forEach((v, i) => blob.writeUInt32LE(v >>> 0, 8 + i * 4));
+  records.forEach((v, i) => blob.writeUInt32LE(v, modulesOffset + i * 4));
+  internalModuleDependencyTable.offsets.forEach((v, i) => blob.writeUInt16LE(v, depOffsetsOffset + i * 2));
+  internalModuleDependencyTable.flat.forEach((v, i) => blob.writeUInt16LE(v, depsOffset + i * 2));
+  data.copy(blob, blobDataOffset);
 }
 
 writeIfNotChangedBinary(path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.bin"), blob);
@@ -439,26 +517,29 @@ writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.S"),
   `// Generated by src/codegen/bundle-modules.ts
 #if defined(__APPLE__)
-.section __TEXT,__const
+.section __TEXT,__bun_builtins,regular,no_dead_strip
 #define BUN_SYM(x) _##x
 #elif defined(_WIN32)
-.section .rdata,"dr"
+.section .bunblt,"dr"
 #define BUN_SYM(x) x
 #else
 .pushsection .note.GNU-stack, "", %progbits
 .popsection
-.section .rodata
+.section .bun_builtins,"a",%progbits
 #define BUN_SYM(x) x
 #endif
 
+.globl BUN_SYM(bun_internal_modules_header)
 .globl BUN_SYM(bun_internal_modules_data)
 .p2align 4
+BUN_SYM(bun_internal_modules_header):
+.incbin "InternalModuleRegistryConstants.bin", 0, ${blobDataOffset}
 BUN_SYM(bun_internal_modules_data):
-.incbin "InternalModuleRegistryConstants.bin"
+.incbin "InternalModuleRegistryConstants.bin", ${blobDataOffset}
 `,
 );
 
-// Offset/length table. Included only by InternalModuleRegistry.cpp.
+// The C++ view of the section header/index above. Included only by InternalModuleRegistry.cpp.
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistryConstants.h"),
   `// clang-format off
@@ -466,55 +547,62 @@ writeIfNotChanged(
 #pragma once
 #include <cstdint>
 
-extern "C" const char bun_internal_modules_data[];
-
 namespace Bun {
 namespace InternalModuleRegistryConstants {
 
-${moduleSpans
-  .map(
-    ({ enumName, offset, length }) =>
-      `static constexpr uint32_t ${enumName}CodeOffset = ${offset};\n` +
-      `static constexpr uint32_t ${enumName}CodeLength = ${length};`,
-  )
-  .join("\n")}
+struct Header {
+  char magic[8];
+  uint32_t version;
+  uint32_t sourceStamp;
+  uint32_t moduleCount;
+  uint32_t modulesOffset;
+  uint32_t depOffsetsOffset;
+  uint32_t depsOffset;
+  uint32_t dataOffset;
+  uint32_t dataLength;
+  uint32_t reserved[2];
+};
+static_assert(sizeof(Header) == ${BUILTINS_HEADER_SIZE});
 
-} // namespace InternalModuleRegistryConstants
-} // namespace Bun
-`,
-);
-
-// This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
-// JS modules (ids below nativeStartIndex, in enum order) come from one table so the
-// per-module code is a row of data rather than a switch arm; native modules keep a switch.
-writeIfNotChanged(
-  path.join(CODEGEN_DIR, "InternalModuleRegistry+createInternalModuleById.h"),
-  `// clang-format off
-struct InternalJSModule {
-  ASCIILiteral moduleId;
-  ASCIILiteral fileName;
-  ASCIILiteral url;
+// Offsets are relative to bun_internal_modules_data. name and url are NUL-terminated.
+struct ModuleRecord {
+  uint32_t nameOffset;
+  uint32_t nameLength;
+  uint32_t urlOffset;
+  uint32_t urlLength;
   uint32_t codeOffset;
   uint32_t codeLength;
 };
 
-static constexpr InternalJSModule internalJSModules[${nativeStartIndex}] = {
+static constexpr uint32_t moduleCount = ${nativeStartIndex};
+
+#ifdef BUN_DYNAMIC_JS_LOAD_PATH
+static constexpr const char* fileNames[moduleCount] = {
   ${moduleList
     .slice(0, nativeStartIndex)
-    .map(id => {
-      const moduleName = idToPublicSpecifierOrEnumName(id);
-      const fileBase = JSON.stringify(id.replace(/\.[mc]?[tj]s$/, ".js"));
-      const urlString = "builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/");
-      return `{ "${moduleName}"_s, ${fileBase}_s, "${urlString}"_s, InternalModuleRegistryConstants::${idToEnumName(id)}CodeOffset, InternalModuleRegistryConstants::${idToEnumName(id)}CodeLength },`;
-    })
-    .join("\n  ")}
+    .map(id => JSON.stringify(id.replace(/\.[mc]?[tj]s$/, ".js")))
+    .join(",\n  ")}
 };
+#endif
 
+} // namespace InternalModuleRegistryConstants
+} // namespace Bun
+
+extern "C" const Bun::InternalModuleRegistryConstants::Header bun_internal_modules_header;
+extern "C" const char bun_internal_modules_data[];
+`,
+);
+
+// This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
+// JS modules (ids below nativeStartIndex, in enum order) are rows of the section index above rather
+// than switch arms; native modules keep a switch.
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "InternalModuleRegistry+createInternalModuleById.h"),
+  `// clang-format off
 JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id)
 {
   if (static_cast<size_t>(id) < ${nativeStartIndex}) {
-    const InternalJSModule& m = internalJSModules[static_cast<size_t>(id)];
-    INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, m.moduleId, m.fileName, m.codeOffset, m.codeLength, m.url);
+    return generateInternalModule(globalObject, vm, static_cast<uint32_t>(id));
   }
   switch (id) {
     // Native modules
@@ -563,6 +651,45 @@ ${Object.entries(nativeModuleEnumToId)
       `    b"${moduleList[nativeStartIndex + i]}" => ResolvedSourceTag(${(1 << 9) | (n + nativeStartIndex)}),`,
   )
   .join("\n")}
+};
+}
+`,
+);
+
+// Module keys with no InternalModuleRegistry entry that the resolver's alias table can still answer with
+// (HardcodedModule.rs). They get ids after the registry range so `builtinModuleKeys` covers every alias target.
+const registryModuleKeys = [
+  ...moduleList.slice(0, nativeStartIndex).map(id => idToPublicSpecifierOrEnumName(id)),
+  ...Object.keys(nativeModuleEnumToId).map((_id, i) => moduleList[nativeStartIndex + i]),
+];
+const builtinModuleKeyList = [
+  ...registryModuleKeys,
+  ...["bun", "bun:main", "bun:wrap", "bun:test", "bun:app", "node:buffer"].filter(k => !registryModuleKeys.includes(k)),
+];
+
+// C++: canonical key string per InternalModuleRegistry id (+ extras), for handing JSC an Identifier without a round
+// trip through the resolver (ZigGlobalObject.cpp moduleLoaderResolve).
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "BuiltinModuleKeys.h"),
+  `// Generated by src/codegen/bundle-modules.ts — do not edit.
+#pragma once
+namespace Bun {
+static constexpr unsigned builtinModuleKeyCount = ${builtinModuleKeyList.length};
+static constexpr ASCIILiteral builtinModuleKeys[builtinModuleKeyCount] = {
+${builtinModuleKeyList.map(k => `    "${k}"_s,`).join("\n")}
+};
+}
+`,
+);
+
+// Rust: the same index for a canonical key (the registry ids are `tag & ~(1 << 9)`; extras follow).
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "generated_builtin_module_key_index.rs"),
+  `// Generated by src/codegen/bundle-modules.ts — do not edit. Index into BuiltinModuleKeys.h.
+bun_core::comptime_string_map! {
+#[allow(dead_code, unreachable_pub, unused)]
+static BUILTIN_MODULE_KEY_INDEX: u16 = {
+${builtinModuleKeyList.map((k, i) => `    b"${k}" => ${i},`).join("\n")}
 };
 }
 `,

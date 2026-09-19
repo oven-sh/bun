@@ -18,8 +18,6 @@ pub enum Error {
     InvalidOriginalColumnValue,
     #[error("InvalidNameIndexDelta")]
     InvalidNameIndexDelta,
-    #[error("Unknown")]
-    Unknown,
     #[error("InvalidBase64")]
     InvalidBase64,
     #[error("UnsupportedFormat")]
@@ -49,7 +47,6 @@ impl Error {
             Self::MissingOriginalColumnValue => "Missing original column value",
             Self::InvalidOriginalColumnValue => "Invalid original column value",
             Self::InvalidNameIndexDelta => "Invalid name index delta",
-            Self::Unknown => "Invalid source map",
             Self::InvalidBase64 => "Invalid base64",
             Self::UnsupportedFormat => "Unsupported source map format",
             Self::InvalidJSON => "Invalid source map JSON",
@@ -72,7 +69,6 @@ impl Error {
             Self::MissingOriginalColumnValue => "MissingOriginalColumnValue",
             Self::InvalidOriginalColumnValue => "InvalidOriginalColumnValue",
             Self::InvalidNameIndexDelta => "InvalidNameIndexDelta",
-            Self::Unknown => "Unknown",
             Self::InvalidBase64 => "InvalidBase64",
             Self::UnsupportedFormat => "UnsupportedFormat",
             Self::InvalidJSON => "InvalidJSON",

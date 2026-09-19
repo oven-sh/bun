@@ -106,8 +106,7 @@ function closeDelimitedExpectation(op: keyof typeof CLOSE_DELIMITED_READ) {
   return JSON.stringify({ length: body.length, head: body.slice(0, 5), tail: body.slice(-3) });
 }
 
-// The S3 client does not honor NO_PROXY, so an inherited proxy would hijack the
-// request to the stub server.
+// An inherited proxy would hijack the request to the stub server.
 const envWithoutProxy = {
   ...bunEnv,
   HTTP_PROXY: undefined,

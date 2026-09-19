@@ -577,36 +577,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_keys, (JSC::JSGlobalObj
     return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_keysCaller>(*lexicalGlobalObject, *callFrame, "keys");
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFetchHeaders_getRawKeys, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    VM& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* thisObject = castThisValue<JSFetchHeaders>(*lexicalGlobalObject, callFrame->thisValue());
-
-    if (!thisObject) {
-        throwTypeError(lexicalGlobalObject, scope, "\"this\" must be an instance of Headers"_s);
-        return {};
-    }
-
-    FetchHeaders& headers = thisObject->wrapped();
-    // HTTPHeaderMap's iterator covers only the common and uncommon segments;
-    // set-cookie values live in their own segment, so size() (which counts
-    // every cookie) used to leave trailing holes in the array. Size for one
-    // entry per unique name and append "set-cookie" explicitly.
-    JSArray* outArray = JSC::JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), headers.sizeAfterJoiningSetCookieHeader());
-
-    unsigned int i = 0;
-    for (const auto& header : headers.internalHeaders()) {
-        outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, header.name()));
-    }
-    if (!headers.internalHeaders().getSetCookieHeaders().isEmpty()) {
-        outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, WTF::httpHeaderNameDefaultCaseStringImpl(HTTPHeaderName::SetCookie)));
-    }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(outArray));
-}
-
 static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_valuesCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)
 {
     return JSValue::encode(iteratorCreate<FetchHeadersIterator>(*thisObject, IterationKind::Values));
@@ -693,6 +663,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
             const auto& name = it.key;
             const auto& value = it.value;
             obj->putDirectMayBeIndex(lexicalGlobalObject, Identifier::fromString(vm, lowercaseHeaderName(name)), jsString(vm, value));
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
 
@@ -710,37 +681,8 @@ void JSFetchHeaders::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(JSFetchHeaders);
 
-#if ENABLE(BINDING_INTEGRITY)
-#if PLATFORM(WIN)
-#pragma warning(disable : 4483)
-extern "C" {
-extern void (*const __identifier("??_7FetchHeaders@WebCore@@6B@")[])();
-}
-#else
-extern "C" {
-extern void* _ZTVN7WebCore12FetchHeadersE[];
-}
-#endif
-#endif
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<FetchHeaders>&& impl)
 {
-    if constexpr (std::is_polymorphic_v<FetchHeaders>) {
-#if ENABLE(BINDING_INTEGRITY)
-        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
-#if PLATFORM(WIN)
-        void* expectedVTablePointer = __identifier("??_7FetchHeaders@WebCore@@6B@");
-#else
-        // void* expectedVTablePointer = &_ZTVN7WebCore12FetchHeadersE[2];
-#endif
-
-        // If you hit this assertion you either have a use after free bug, or
-        // FetchHeaders has subclasses. If FetchHeaders has subclasses that get passed
-        // to toJS() we currently require FetchHeaders you to opt out of binding hardening
-        // by adding the SkipVTableValidation attribute to the interface IDL definition
-        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
-#endif
-    }
     return createWrapper<FetchHeaders>(globalObject, WTF::move(impl));
 }
 

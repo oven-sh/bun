@@ -17,6 +17,7 @@ use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
 use crate::bin::{self, Bin};
+use crate::bun_fs::FileSystem;
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 use crate::{
@@ -159,7 +160,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.entries,
         header_buf,
         b"",
-        None,
         None,
         http::FetchRedirect::Follow,
     );
@@ -375,7 +375,6 @@ pub mod registry {
                 'outer: {
                     if registry.password.is_empty() {
                         let mut pathname: &[u8] = url.pathname;
-                        // defer { url.pathname = pathname; url.path = pathname; } — applied below
                         let mut needs_to_check_slash = true;
                         while let Some(colon) = strings::last_index_of_char(pathname, b':') {
                             let mut segment = &pathname[colon + 1..];
@@ -1076,7 +1075,7 @@ pub mod package_manifest {
             // GetFinalPathnameByHandle is very expensive if called many times
             // We skip calling it when we are giving an absolute file path.
             // This needs many more call sites, doesn't have much impact on this location.
-            let mut realpath_buf = bun_paths::PathBuffer::uninit();
+            let mut realpath_buf = bun_paths::path_buffer_pool::get();
             // SAFETY: `crate::package_manager::get()` returns the live
             // singleton; `get_temporary_directory` only mutates its
             // lazy-init state and is called from the install thread.
@@ -1156,7 +1155,7 @@ pub mod package_manifest {
 
             #[cfg(windows)]
             {
-                let mut realpath2_buf = bun_paths::PathBuffer::uninit();
+                let mut realpath2_buf = bun_paths::path_buffer_pool::get();
                 let cache_dir_abs = &PackageManager::get().cache_directory_path;
                 let cache_path_abs =
                     bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
@@ -1356,22 +1355,10 @@ pub mod package_manifest {
             cache_dir: Fd,
         ) -> Result<(), Error> {
             let file_id = Wyhash11::hash(0, this.name());
-            let mut dest_path_buf = [0u8; 512 + 64];
+            let mut tmp_path_buf = [0u8; 64];
+            let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
             let mut out_path_buf =
                 [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
-            let mut dest_path_stream = bun_io::FixedBufferStream::new_mut(&mut dest_path_buf);
-            let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
-            let hex_timestamp: usize =
-                usize::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
-            let hex_timestamp_fmt = bun_fmt::hex_int_lower::<16>(hex_timestamp as u64);
-            write!(
-                dest_path_stream,
-                "{}.npm-{}",
-                file_id_hex_fmt, hex_timestamp_fmt
-            )?;
-            dest_path_stream.write_byte(0)?;
-            let pos = dest_path_stream.pos;
-            let tmp_path = bun_core::ZStr::from_buf_mut(&mut dest_path_buf, pos - 1);
             let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, scope)?;
             Self::write_file(this, scope, tmp_path, tmpdir, cache_dir, out_path)
         }
@@ -2137,16 +2124,19 @@ impl PackageManifest {
                 let sliced_version = SlicedString::init(version_name, version_name);
                 let parsed_version = Semver::Version::parse(sliced_version);
 
-                debug_assert!(parsed_version.valid);
                 if !parsed_version.valid {
-                    log.add_error_fmt(
-                        Some(&source),
-                        prop.key_loc,
-                        format_args!(
-                            "Failed to parse dependency {}",
-                            bstr::BStr::new(version_name)
-                        ),
-                    );
+                    // Not an error: an error fails the install. npm skips such a key in silence.
+                    if PackageManager::verbose_install() {
+                        log.add_warning_fmt(
+                            Some(&source),
+                            prop.key_loc,
+                            format_args!(
+                                "Skipping version {} of {}: not a valid semver version",
+                                bun_fmt::quote(version_name),
+                                bun_fmt::quote(expected_name),
+                            ),
+                        );
+                    }
                     continue;
                 }
 
@@ -2195,8 +2185,12 @@ impl PackageManifest {
                                 }
                             }
                             JSON::E::JsonValue::String(str_) => {
-                                string_builder.count(str_.slice());
-                                break 'bin;
+                                // The build pass reads `directories.bin` when `bin` is empty.
+                                let str_ = str_.slice();
+                                if !str_.is_empty() {
+                                    string_builder.count(str_);
+                                    break 'bin;
+                                }
                             }
                             _ => {}
                         }
@@ -2399,7 +2393,9 @@ impl PackageManifest {
                 let mut sliced_version = SlicedString::init(version_name, version_name);
                 let mut parsed_version = Semver::Version::parse(sliced_version);
 
-                debug_assert!(parsed_version.valid);
+                if !parsed_version.valid {
+                    continue;
+                }
                 // We only need to copy the version tags if it contains pre and/or build
                 if parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre() {
                     let version_string = string_builder.append::<SemverString>(version_name);
@@ -2410,9 +2406,6 @@ impl PackageManifest {
                         parsed_version.version.tag.has_build()
                             || parsed_version.version.tag.has_pre()
                     );
-                }
-                if !parsed_version.valid {
-                    continue;
                 }
 
                 let version_obj = prop.value.as_object();
@@ -2703,15 +2696,8 @@ impl PackageManifest {
 
                         for item in items {
                             let name_str = item.key.slice();
-                            let version_str = match item.value.as_str() {
-                                Some(s) => s,
-                                None => {
-                                    if cfg!(debug_assertions) {
-                                        unreachable!("non-value Expr from JSON parser")
-                                    } else {
-                                        continue;
-                                    }
-                                }
+                            let Some(version_str) = item.value.as_str() else {
+                                continue;
                             };
 
                             all_extern_strings[names_base + i] =
@@ -2895,7 +2881,7 @@ impl PackageManifest {
                             0 => package_version.dependencies = map,
                             1 => package_version.optional_dependencies = map,
                             2 => package_version.peer_dependencies = map,
-                            _ => unreachable!("non-value Expr from JSON parser"),
+                            _ => unreachable!("DEPENDENCY_GROUPS has 3 entries"),
                         }
 
                         // The dedupe must hand back
@@ -2906,23 +2892,6 @@ impl PackageManifest {
                         #[cfg(debug_assertions)]
                         {
                             let dependencies_list = map;
-                            debug_assert!(
-                                (dependencies_list.name.off as usize) < all_extern_strings.len()
-                            );
-                            debug_assert!(
-                                (dependencies_list.value.off as usize) < all_extern_strings.len()
-                            );
-                            debug_assert!(
-                                dependencies_list.name.off as usize
-                                    + (dependencies_list.name.len as usize)
-                                    < all_extern_strings.len()
-                            );
-                            debug_assert!(
-                                dependencies_list.value.off as usize
-                                    + (dependencies_list.value.len as usize)
-                                    < all_extern_strings.len()
-                            );
-
                             let name_dependencies = dependencies_list.name.get(&all_extern_strings);
                             let value_dependencies =
                                 dependencies_list.value.get(&version_extern_strings);
@@ -2938,19 +2907,26 @@ impl PackageManifest {
                             }
 
                             // Per-element string-content checks against the
-                            // source JSON. Skipped when meta-only
-                            // optional peers may have been synthesised, since
-                            // `items[j]` correspondence no longer holds then.
+                            // source JSON. `stored` is the items the build loop
+                            // kept: it skips a value that is not a string. Skipped
+                            // when meta-only optional peers may have been
+                            // synthesised, since `stored[j]` correspondence no
+                            // longer holds then.
                             if !is_peer || optional_peer_dep_names.is_empty() {
                                 let string_buf: &[u8] = string_builder.allocated_slice();
+                                let stored: Vec<(&[u8], &[u8])> = items
+                                    .iter()
+                                    .filter_map(|item| {
+                                        Some((item.key.slice(), item.value.as_str()?))
+                                    })
+                                    .collect();
+                                debug_assert!(stored.len() == count);
                                 for (j, dep_name) in name_dependencies.iter().enumerate() {
                                     debug_assert!(
                                         dep_name.value.slice(string_buf)
                                             == this_names[j].value.slice(string_buf)
                                     );
-                                    debug_assert!(
-                                        dep_name.value.slice(string_buf) == items[j].key.slice()
-                                    );
+                                    debug_assert!(dep_name.value.slice(string_buf) == stored[j].0);
                                 }
                                 for (j, dep_version) in value_dependencies.iter().enumerate() {
                                     debug_assert!(
@@ -2958,11 +2934,7 @@ impl PackageManifest {
                                             == this_versions[j].value.slice(string_buf)
                                     );
                                     debug_assert!(
-                                        dep_version.value.slice(string_buf)
-                                            == items[j]
-                                                .value
-                                                .as_str()
-                                                .expect("dependency value must be a string")
+                                        dep_version.value.slice(string_buf) == stored[j].1
                                     );
                                 }
                             }
@@ -3170,11 +3142,12 @@ impl PackageManifest {
                         // Sanity check:
                         // When reading the versions, we iterate through the
                         // list backwards to choose the highest matching
-                        // version
+                        // version. Two keys can name one version ("1.0.0" and
+                        // "01.0.0"), so neighbours can be equal.
                         let first = semver_versions_[0];
                         let second = semver_versions_[1];
                         let order = second.order(first, string_bytes, string_bytes);
-                        debug_assert!(order == core::cmp::Ordering::Greater);
+                        debug_assert!(order != core::cmp::Ordering::Less);
                     }
                 }
             }

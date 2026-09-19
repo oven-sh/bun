@@ -339,6 +339,30 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("allows creating a handle scope in the finalizer", async () => {
       await checkSameOutput("test_napi_handle_scope_finalizer", []);
     });
+    it("napi_delete_reference cancels the finalizer the GC already queued", async () => {
+      // Modules built against a released Node-API version get their finalizers
+      // run from the event loop, after the GC. An addon that deletes the
+      // reference in between has usually freed the native object too, so the
+      // finalizer must not run any more (Node dequeues it). Bun used to run it.
+      const output = await checkSameOutput("test_delete_ref_after_collect", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "napi_wrap: collected before delete: true, finalized after delete: 0",
+        "napi_add_finalizer: collected before delete: true, finalized after delete: 0",
+        "resolved to undefined",
+      ]);
+    });
+    it("a parent's queued finalizer can delete the references of children collected by the same GC", async () => {
+      // Whether the children's finalizers are queued before or after the
+      // parent's depends on the order the runtime finds the dead wrappers in,
+      // so the fixture tries both orders. In either, no child's finalizer may
+      // run after the parent deleted the child's reference.
+      const output = await checkSameOutput("test_delete_ref_after_collect_parent_and_children", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "parent created before children: parent collected: true, parent finalized: true, children finalized after delete: 0",
+        "parent created after children: parent collected: true, parent finalized: true, children finalized after delete: 0",
+        "resolved to undefined",
+      ]);
+    });
     it("prevents underflow when unref called on zero refcount", async () => {
       // This tests the fix for napi_reference_unref underflow protection
       await checkSameOutput("test_ref_unref_underflow", []);
@@ -429,6 +453,60 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("status=10");
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
+    });
+  });
+
+  // The finalizer of an external buffer belongs to the env that created it, and that env's
+  // teardown frees the bytes, so the bytes must not be transferred to another thread.
+  describe("external buffers are untransferable", () => {
+    it("every transfer entry point throws DataCloneError and leaves the buffer intact", async () => {
+      const result = await checkSameOutput("test_external_buffer_untransferable", []);
+      const expected = (kind: string) =>
+        [
+          `${kind}: isMarkedAsUntransferable(created)=${kind === "arraybuffer"} isMarkedAsUntransferable(arrayBuffer)=true ownKeys=0`,
+          `${kind}: structuredClone: DataCloneError code=25`,
+          `${kind}: MessagePort.postMessage: DataCloneError code=25`,
+          `${kind}: new Worker transferList: DataCloneError code=25`,
+          `${kind}: structuredClone after a plain ArrayBuffer: DataCloneError code=25`,
+          `${kind}: byteLength=8 plain.byteLength=2`,
+          `${kind}: copy=[1,2,3,4,5,6,7,8] byteLength=8`,
+        ].join("\n");
+      const expectedEmpty = (kind: string) =>
+        [
+          `empty ${kind}: isMarkedAsUntransferable(arrayBuffer)=true`,
+          `empty ${kind}: structuredClone: DataCloneError code=25`,
+        ].join("\n");
+      expect(result).toBe(
+        [
+          expected("arraybuffer"),
+          expected("buffer"),
+          expectedEmpty("arraybuffer"),
+          expectedEmpty("buffer"),
+          'stats: {"finalized":0,"finalizedOffThread":0}',
+        ].join("\n"),
+      );
+    });
+
+    it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
+      const result = await checkSameOutput("test_external_buffer_worker_exit", []);
+      const message = JSON.stringify({
+        transfers: {
+          arraybuffer: "DataCloneError code=25",
+          arraybufferByteLength: 4,
+          buffer: "DataCloneError code=25",
+          bufferByteLength: 4,
+        },
+        copies: { arraybuffer: [1, 2, 3, 4], buffer: [1, 2, 3, 4] },
+        stats: { finalized: 0, finalizedOffThread: 0 },
+      });
+      expect(result).toBe(
+        [
+          "worker exited with 0",
+          `messages: [${message}]`,
+          'stats after exit: {"finalized":2,"finalizedOffThread":0}',
+          "resolved to undefined",
+        ].join("\n"),
+      );
     });
   });
 
@@ -647,6 +725,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toBe("success!");
     });
 
+    it("runs the finalizer before freeing the function, so the finalizer can still use the handle", async () => {
+      // napi_ok = 0, napi_invalid_arg = 1 (no thread reference is left to release).
+      const result = await checkSameOutput("test_threadsafe_function_finalizer_uses_handle", []);
+      expect(result).toContain(
+        "finalizer saw: context: status=0 matches=1, hint is context=1, data matches=1, unref status=0, release status=1",
+      );
+    });
+
     it.each([0, 3])(
       "runs the finalizer and exits when the last reference is released after abort (%d queued items)",
       async queued => {
@@ -658,6 +744,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("wakes blocked producers, runs the finalizer and exits when aborted with a bounded queue", async () => {
       const result = await checkSameOutput("test_threadsafe_function_abort_blocked_producers", []);
       expect(result).toContain("finalized: true");
+    });
+
+    // An abort finalizes from its own dispatch, like Node: it does not wait for
+    // the references other threads still hold (they are told to make no further
+    // calls, so they may never release). The late release of such a reference
+    // reports napi_ok (0) and frees the function.
+    it("runs the finalizer on abort while another thread still holds a reference", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_with_outstanding_ref", []);
+      expect(result).toContain("finalized: true\nreleased after finalize: true status: 0");
     });
 
     // A full bounded queue must not hide that the function is closing: the call
@@ -678,6 +773,60 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("done 3");
     });
 
+    // Items still queued when the function stops being dispatched. Node's
+    // process.exit() leaves them alone; an addon's call_js is usually written
+    // for a live env and aborts when handed a null one at exit (the finalizer
+    // is not printed: bun runs it at exit, node does not).
+    it("drops the queued items at process.exit()", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_queued_items_at_process_exit", []);
+      expect(result).toBe("exiting with 3 items queued");
+    });
+
+    it("does not re-enter call_js when its callback calls process.exit()", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_process_exit_inside_callback", []);
+      expect(result).toBe("call_js: item 1, env live, js_callback set");
+    });
+
+    // A worker's env really goes away while the addon's threads live on, so
+    // each item goes back to call_js the normal way, with the live env (calling
+    // into JS is refused: napi_cannot_run_js, 23, as this addon is built with
+    // NAPI_EXPERIMENTAL), and then the finalizer runs. Node does the same when
+    // its env cleanup turns the loop a last time.
+    it.each([
+      ["exit", 0],
+      ["terminate", 1],
+    ])("delivers the queued items with the live env when the creating worker is gone (%s)", async (how, code) => {
+      const result = await checkSameOutput(`test_threadsafe_function_queued_items_at_worker_${how}`, []);
+      // printf ends its lines with \r\n on Windows.
+      expect(result.replaceAll("\r\n", "\n")).toBe(
+        [
+          ...[1, 2, 3].flatMap(item => [
+            `call_js: item ${item}, env live, js_callback set`,
+            `call_js: item ${item}, call_function 23`,
+          ]),
+          "finalize: env live",
+          `worker exited with ${code}`,
+          "resolved to undefined",
+        ].join("\n"),
+      );
+    });
+
+    // After napi_tsfn_abort nothing queued runs any more: each item goes back
+    // to call_js with a null env and js_callback (the documented "free this"
+    // signal), then the function finalizes.
+    it("hands the queued items back with a null env after abort instead of running them", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_hands_queued_items_back", []);
+      expect(result.replaceAll("\r\n", "\n")).toBe(
+        [
+          "abort: 0",
+          ...[1, 2, 3].map(item => `call_js: item ${item}, env null, js_callback null`),
+          "finalize: env live",
+          "finalized: true",
+          "resolved to undefined",
+        ].join("\n"),
+      );
+    });
+
     // An addon's own threads outlive the worker that created the threadsafe
     // function (next-swc's tokio pool does this): the last call and the last
     // release land after the worker's VM, and its event loop, are gone.
@@ -692,22 +841,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("worker exited with 0\nfinalized=2 call=16 release=0");
     });
 
-    // A finalizer running while a worker's env drains its finalizers can
-    // register another (here: an external buffer with a finalize_cb). Bun runs
-    // that one in the same cleanup rather than leaving it behind the walk. Bun-
-    // only rather than same-output: node hands an external buffer's finalizer to
-    // the BackingStore deleter, not to the env's tracked references, so a buffer
-    // created during teardown dies with the isolate and node prints late=0.
-    it("runs a finalizer that another finalizer registered during env cleanup", async () => {
-      await using proc = spawn({
-        cmd: [bunExe(), join(__dirname, "napi-app/main.js"), "test_finalizer_registered_during_env_cleanup", "[]"],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toContain("worker exited with 0\nlate=1");
-      expect(exitCode).toBe(0);
+    // A finalizer running while a worker's env drains its finalizers tries to
+    // register another (here: an external buffer with a finalize_cb). The env
+    // is torn down with script forbidden, and napi_create_external_buffer is
+    // one of the calls Node refuses there, so the late finalizer never exists
+    // and nothing is left behind the walk: late=0, as in node.
+    it("refuses a finalizer that another finalizer registers during env cleanup", async () => {
+      const result = await checkSameOutput("test_finalizer_registered_during_env_cleanup", []);
+      expect(result).toContain("worker exited with 0\nlate=0");
     });
 
     // A call that reports napi_closing consumes the calling thread's reference
@@ -826,6 +967,233 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         caught: ["addon says: something fatal", 42, { plain: "object" }, "Error: real error"],
       });
       expect(exitCode).toBe(0);
+    });
+  });
+
+  it("completions for a Bun.ModuleGraph run in its context; once it is disposed they still run but may not run its script", async () => {
+    using dir = tempDir("napi-module-graph", {
+      "tenant.mjs": `
+        import { createRequire } from "node:module";
+        const addon = createRequire(import.meta.url)(addonPath);
+        export const ran = [];
+        export function start() {
+          addon.call_back_from_async_work(() => ran.push("async work callback"));
+          addon.resolve_from_async_work().then(() => ran.push("async work promise"));
+          addon.call_back_from_threadsafe_function(() => ran.push("threadsafe function callback"));
+        }
+        export const settleThePromiseTheHostWasGiven = () => addon.settle_that_promise_from_async_work();
+        export function startIntervalFromCompletion(state) {
+          addon.call_back_from_async_work(() => {
+            setInterval(() => state.ticks++, 1);
+            state.started = true;
+          });
+        }
+      `,
+      "fixture.mjs": `
+        import { createRequire } from "node:module";
+        const addonPath = process.argv[2];
+        const addon = createRequire(import.meta.url)(addonPath);
+        const until = async condition => {
+          while (!condition()) await new Promise(resolve => setImmediate(resolve));
+        };
+        const graphs = {};
+        for (const name of ["disposed", "live"]) {
+          const graph = new Bun.ModuleGraph({ globals: { addonPath } });
+          graphs[name] = { graph, app: await graph.import(import.meta.dir + "/tenant.mjs") };
+        }
+        const hostRan = [];
+        graphs.disposed.graph.run(() => graphs.disposed.app.start());
+        graphs.live.graph.run(() => graphs.live.app.start());
+        addon.call_back_from_async_work(() => hostRan.push("async work callback"));
+        addon.resolve_from_async_work().then(() => hostRan.push("async work promise"));
+        addon.call_back_from_threadsafe_function(() => hostRan.push("threadsafe function callback"));
+        // A promise of the host's, settled from a completion of work the graph about to be disposed queues.
+        addon.promise_the_next_async_work_settles().then(() => hostRan.push("promise settled from the disposed graph's completion"));
+        graphs.disposed.graph.run(() => graphs.disposed.app.settleThePromiseTheHostWasGiven());
+        graphs.disposed.graph.dispose();
+        // The addon records every completion, the disposed graph's included.
+        await until(() => addon.completion_statuses().length === 10);
+        await until(() => graphs.live.app.ran.length === 3 && hostRan.length === 4);
+        const statuses = addon.completion_statuses().sort();
+
+        // What a live graph's completion starts is that graph's: dispose() stops it.
+        const state = { ticks: 0, started: false };
+        graphs.live.graph.run(() => graphs.live.app.startIntervalFromCompletion(state));
+        await until(() => state.started && state.ticks > 0);
+        graphs.live.graph.dispose();
+        const ticksAtDispose = state.ticks;
+        let hostTicks = 0;
+        const hostInterval = setInterval(() => hostTicks++, 1);
+        await until(() => hostTicks >= 5);
+        clearInterval(hostInterval);
+
+        console.log(JSON.stringify({
+          statuses,
+          disposed: graphs.disposed.app.ran.sort(),
+          live: graphs.live.app.ran.sort(),
+          host: hostRan.sort(),
+          ticksAfterDispose: state.ticks - ticksAtDispose,
+        }));
+        // (Whatever is still running is in the output above.)
+        process.exit(0);
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "fixture.mjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const everything = ["async work callback", "async work promise", "threadsafe function callback"];
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      // 23 is napi_cannot_run_js: what the addon is also told in a VM that is stopping. Settling a
+      // promise of the disposed graph is accepted (0) and settles nothing; settling the host's
+      // from the disposed graph's completion settles it.
+      statuses: [
+        "async_work_callback:0",
+        "async_work_callback:0",
+        "async_work_callback:23",
+        "async_work_deferred:0",
+        "async_work_deferred:0",
+        "async_work_deferred:0",
+        "async_work_deferred_of_another:0",
+        "threadsafe_function_callback:0",
+        "threadsafe_function_callback:0",
+        "threadsafe_function_callback:23",
+      ],
+      disposed: [],
+      live: everything,
+      host: [
+        "async work callback",
+        "async work promise",
+        "promise settled from the disposed graph's completion",
+        "threadsafe function callback",
+      ],
+      ticksAfterDispose: 0,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["does not keep the process running", [], ["disposed", "it asked to be held again", "ran dry at once"]],
+    // A function is its maker's, whoever asks it to hold the loop: a host that wants a hold that
+    // outlives a tenant asks for it after the tenant is gone, or on a function of its own.
+    [
+      "holds the loop for the host that refs it after the graph was disposed, until the host lets go",
+      ["after the graph was disposed"],
+      ["disposed", "it asked to be held again", "ran dry once the host let go"],
+    ],
+    [
+      "that the host reffed while the graph lived lets go of the loop with the graph",
+      ["while the graph lived"],
+      ["disposed", "it asked to be held again", "ran dry at once"],
+    ],
+    [
+      "that its leftover script made is closed with it, whoever refs it meanwhile",
+      ["that the graph's leftover script made"],
+      ["disposed", "ran dry at once"],
+    ],
+    [
+      "that the host reffed and let go of holds nothing for its own call_js after that",
+      ["and the host had reffed and let go of it"],
+      ["disposed", "it asked to be held again", "ran dry at once"],
+    ],
+    [
+      "that the host reffed and let go of goes with the graph again, whose later ref dispose() lets go of",
+      ["that the host had let go of and the graph reffed again"],
+      ["disposed", "ran dry at once"],
+    ],
+    [
+      "and one the host made, which the graph reffed, holds the loop for the host still",
+      ["that the host made and the graph reffed"],
+      ["disposed", "ran dry once the host let go"],
+    ],
+  ])("a threadsafe function a disposed Bun.ModuleGraph's script created %s", async (_what, args, said) => {
+    // Nobody ever releases this one, and its call_js refs it again, as addons with more work
+    // coming do.
+    using dir = tempDir("napi-module-graph-tsfn", {
+      "tenant.mjs": `
+        import { createRequire } from "node:module";
+        const addon = createRequire(import.meta.url)(addonPath);
+        export const start = () => addon.threadsafe_function_that_refs_itself();
+        // (From a microtask, which still runs once the graph has been disposed.)
+        export const startLater = () => queueMicrotask(startLater.unscheduled);
+        // (One nobody calls.)
+        startLater.unscheduled = () => addon.threadsafe_function_that_refs_itself(false);
+        export const refTheLastOne = () => addon.ref_that_function();
+      `,
+      "fixture.mjs": `
+        import { createRequire } from "node:module";
+        const addon = createRequire(import.meta.url)(process.argv[2]);
+        const graph = new Bun.ModuleGraph({ globals: { addonPath: process.argv[2] } });
+        const app = await graph.import(import.meta.dir + "/tenant.mjs");
+        const when = process.argv[3];
+        if (when === "that the graph's leftover script made") {
+          graph.run(() => app.startLater());
+          graph.dispose();
+          // (The leftover microtask has run by now, and what closes its function has not.)
+          await Promise.resolve();
+          addon.ref_that_function();
+        } else if (when === "that the host had let go of and the graph reffed again") {
+          graph.run(() => app.startLater.unscheduled());
+          addon.ref_that_function();
+          addon.unref_that_function();
+          graph.run(() => app.refTheLastOne());
+          graph.dispose();
+        } else if (when === "that the host made and the graph reffed") {
+          addon.threadsafe_function_that_refs_itself(false);
+          graph.run(() => app.refTheLastOne());
+          graph.dispose();
+        } else {
+          graph.run(() => app.start());
+          if (when === "while the graph lived") addon.ref_that_function();
+          if (when === "and the host had reffed and let go of it") {
+            addon.ref_that_function();
+            addon.unref_that_function();
+          }
+          graph.dispose();
+        }
+        console.log("disposed");
+        if (when?.startsWith("that the ")) {
+          // (Nobody calls that one. What closes what a disposed graph's script opens has run by now.)
+          for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+        } else {
+          // The addon's thread's call arrives now that the graph is gone: the ref is accepted and holds nothing.
+          while (!addon.completion_statuses().includes("threadsafe_function_ref:0")) await new Promise(resolve => setImmediate(resolve));
+          console.log("it asked to be held again");
+        }
+        // 'beforeExit' is the loop running dry. Nothing else of the host's is open.
+        let letGo = false;
+        process.once("beforeExit", () => console.log(letGo ? "ran dry once the host let go" : "ran dry at once"));
+        if (when === "after the graph was disposed") addon.ref_that_function();
+        if (when && !when.includes("let go of")) {
+          // It holds the loop until the host lets go. (The timer holds nothing itself: with the
+          // loop dry it never fires.)
+          setTimeout(() => {
+            letGo = true;
+            addon.unref_that_function();
+          }, 100).unref();
+        }
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "fixture.mjs", join(__dirname, "napi-app/build/Debug/napitests.node"), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect({ said: stdout.trim().split(/\r?\n/), signal: proc.signalCode, exitCode }).toEqual({
+      said,
+      signal: null,
+      exitCode: 0,
     });
   });
 
@@ -1227,6 +1595,69 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  // Node tears the addon envs down with can_call_into_js() false, at a natural
+  // exit of the main thread or of a Worker and at worker.terminate(): cleanup
+  // hooks, the finalizers of live wraps and the instance data finalizer all run
+  // there, and every NAPI_PREAMBLE call is refused with napi_cannot_run_js (23,
+  // NAPI_VERSION >= 10) or napi_pending_exception (10, older). The JS callback
+  // never runs. Ungated calls (value constructors, napi_get_instance_data,
+  // napi_create_error) keep working. See #42793.
+  describe.each([
+    [10, 23],
+    [8, 10],
+  ])("env teardown refuses calls into JS (NAPI_VERSION=%d)", (version, status) => {
+    it.each(["the main thread exits", "a worker exits", "a worker is terminated"])("like Node when %s", async how => {
+      const setup = `
+        const addon = require(${JSON.stringify(
+          join(__dirname, `napi-app/build/Debug/test_env_teardown_cannot_call_js_v${version}.node`),
+        )});
+        globalThis.keep = addon.setup(() => { console.log("JS ran at teardown"); throw new Error("from js"); });
+      `;
+      const code = {
+        "the main thread exits": setup,
+        "a worker exits": `new (require("worker_threads").Worker)(${JSON.stringify(setup)}, { eval: true });`,
+        "a worker is terminated": `
+          const { Worker } = require("worker_threads");
+          const worker = new Worker(${JSON.stringify(
+            setup + `require("worker_threads").parentPort.postMessage("ready"); setInterval(() => {}, 1000);`,
+          )}, { eval: true });
+          worker.on("message", () => worker.terminate());
+        `,
+      }[how];
+      const run = async (exe: string) => {
+        await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
+      };
+      const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+      expect(bun).toEqual(node);
+      const gated = [
+        "get_named_property",
+        "set_named_property",
+        "make_callback",
+        "create_promise",
+        "create_external_buffer",
+        "run_script",
+        "throw_error",
+        "strict_equals",
+      ]
+        .map(name => `${name}=${status}`)
+        .join(" ");
+      expect(bun).toEqual({
+        stdout: [
+          `cleanup hook: call_function=${status} pending=0`,
+          `wrap finalizer: call_function=${status} pending=0`,
+          `wrap finalizer: ${gated}`,
+          "wrap finalizer: create_error=0 typeof=0 is_object=1 get_instance_data=0 data=ours pending=0",
+          "instance data finalizer: data=ours",
+          `instance data finalizer: call_function=${status} pending=0`,
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   describe.each(["buffer", "typedarray"])("napi_is_%s", kind => {
     const tests: Array<[string, boolean]> = [
       ["new Uint8Array()", true],
@@ -1369,68 +1800,54 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("napi_create_error succeeds during env cleanup when a prior finalizer leaked a VM exception (#30286)", async () => {
-    // Reproduces the gitnexus + tree-sitter crash: one finalizer left a
-    // pending JSC exception on the VM, the next finalizer called
-    // napi_create_error, and Bun returned napi_pending_exception. Under
-    // node-addon-api's Error::New that turns into
-    //   NAPI FATAL ERROR: Error::New napi_create_error
-    // during web_worker.exitAndDeinit. After the fix napi_create_error
-    // ignores pre-existing VM exceptions (matching Node.js) so the
-    // finalizer completes cleanly and the process exits 0.
+  // #30286, the tree-sitter shape: node-addon-api's Error::New calls
+  // napi_create_error while the JS exception the addon is about to report is
+  // still pending on the VM, and escalates any failure to napi_fatal_error
+  // ("NAPI FATAL ERROR: Error::New napi_create_error"). Node makes
+  // napi_create_error a pure value-producing call, so it returns napi_ok there.
+  it("napi_create_error succeeds while a JS exception is pending on the VM (#30286)", async () => {
     const code = `
       const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_finalizer_create_error.node"))});
-      // A function that throws -- called from the first-to-run finalizer
-      // so the throw leaves a JSC VM exception pending for the next
-      // finalizer (the one that calls napi_create_error).
-      globalThis.keep = addon.setup(() => { throw new Error("from js"); });
+      addon.createErrorWithPendingException(() => { throw new Error("from js"); });
+      console.log("done");
     `;
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", code],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // napi_ok == 0 -- before the fix this was 10 (napi_pending_exception) in
-    // release builds, or an ASAN abort in debug builds. A panic would leave
-    // stdout empty, so the positive assertion covers both crash modes without
-    // relying on stderr-contains-"panic" (which is unreliable per CLAUDE.md).
-    expect(stdout.trim()).toBe("create_error_status=0");
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe("");
+    const run = async (exe: string) => {
+      await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
+    };
+    const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+    expect(bun).toEqual(node);
+    expect(bun).toEqual({ stdout: ["create_error_status=0", "done"], stderr: "", exitCode: 0 });
   });
 
-  it("the first napi finalizer starts clean when a cleanup hook leaked a VM exception (#30286)", async () => {
-    // The node-canvas shape of #30286 (terminated Workers): a native
-    // teardown callback fails internally, its scheduled exception gets
-    // promoted onto the JSC VM (napi_call_function's prologue does this
-    // before validating arguments), and the exception is still pending
-    // when NapiEnv::cleanup() reaches the FIRST wrap finalizer. That
-    // finalizer's first napi call (napi_create_string_utf8 in
-    // node-addon-api's ObjectWrap teardown) then fails with
-    // napi_pending_exception and the addon escalates to napi_fatal_error
-    // ("Error::Error napi_create_object"). Cleanup hooks run before wrap
-    // finalizers, so the addon's leaking hook reproduces the state
-    // deterministically; the fix clears pending exceptions before the
-    // finalizer phase starts.
-    const code = `
+  // #30286, the node-canvas shape: a Worker is terminate()d, so JSC's
+  // TerminationException is pending on the VM when NapiEnv::cleanup() reaches
+  // the first wrap finalizer. That finalizer's first napi calls
+  // (napi_create_string_utf8, then napi_create_error, as in node-addon-api's
+  // ObjectWrap teardown) must succeed anyway, as they do in node.
+  it("the first napi finalizer of a terminated worker starts clean (#30286)", async () => {
+    const worker = `
+      const { parentPort } = require("worker_threads");
       const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_finalizer_create_error.node"))});
       globalThis.keep = addon.setupSingle();
+      parentPort.postMessage("ready");
+      setInterval(() => {}, 1000);
     `;
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", code],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The wrap finalizer prints the napi_create_error status; 0 == napi_ok.
-    // Before the fix the finalizer's napi_create_string_utf8 failed on the
-    // hook's leaked exception (status -110 on the string step).
-    expect(stdout.trim()).toBe("create_error_status=0");
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe("");
+    const code = `
+      const { Worker } = require("worker_threads");
+      const worker = new Worker(${JSON.stringify(worker)}, { eval: true });
+      worker.on("message", () => worker.terminate());
+      worker.on("exit", code => console.log("worker exited with", code));
+    `;
+    const run = async (exe: string) => {
+      await using proc = spawn({ cmd: [exe, "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split(/\r?\n/), stderr, exitCode };
+    };
+    const [bun, node] = await Promise.all([run(bunExe()), run(await nodeExeMatchingAbi())]);
+    expect(bun).toEqual(node);
+    expect(bun).toEqual({ stdout: ["create_error_status=0", "worker exited with 1"], stderr: "", exitCode: 0 });
   });
 
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
@@ -1506,7 +1923,7 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
   it("does not leak the WTFStringImpl", async () => {
     const fixture = /* js */ `
       const nativeTests = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
-      const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+      const rss = process.memoryUsage.rss;
       const size = 256 * 1024;
       for (let i = 0; i < 20; i++) {
         const s = nativeTests.create_latin1_string(size);
@@ -1621,6 +2038,152 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     it("executes in reverse insertion order like Node.js", async () => {
       // Test that cleanup hooks execute in reverse insertion order (LIFO)
       await checkSameOutput("test_cleanup_hook_order", []);
+    });
+  });
+
+  // Node frees the main thread's environment, which is what runs an addon's
+  // cleanup hooks and the finalizers of everything it still has alive, only
+  // after the event loop runs dry. process.exit() and a fatal error call exit()
+  // instead, so an addon's teardown code never runs on those paths (Node
+  // v26.3.0). Bun used to run it on every exit, calling into addons where Node
+  // does not. Under BUN_DESTRUCT_VM_ON_EXIT (the sanitizer lanes set it for
+  // every child) the main thread's VM is destroyed like a worker's, and the envs
+  // are still torn down first, so these children opt out of it and of the leak
+  // check that goes with it.
+  describe.concurrent("env teardown on the main thread", () => {
+    const noDestruct = {
+      BUN_DESTRUCT_VM_ON_EXIT: "0",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    };
+    const hooksAddon = join(__dirname, "napi-app/build/Debug/test_cleanup_hook_order.node");
+    const wrapsAddon = join(__dirname, "napi-app/build/Debug/test_wrap_cleanup_order.node");
+    // test() prints these two lines when called; each hook prints a line when it
+    // runs. createParentAndChildren() prints "finalize order: ..." from the
+    // parent's napi_wrap finalizer.
+    const setupLines = ["Added hooks in order: 1, 2, 3", "They should execute in reverse order: 3, 2, 1"];
+    const teardownLines = [
+      ...setupLines,
+      "hook3 executed at position 0",
+      "hook2 executed at position 1",
+      "hook1 executed at position 2",
+      "finalize order: 1 0",
+    ];
+    const setup = `
+      const hooks = require(${JSON.stringify(hooksAddon)});
+      const wraps = require(${JSON.stringify(wrapsAddon)});
+      hooks.test();
+      globalThis.keep = wraps.createParentAndChildren(1);
+    `;
+
+    // Returns stdout as a sorted list of lines. The addons print with printf(),
+    // which on Windows ends lines with \r\n and buffers each addon's output in
+    // its own CRT until exit, so only the set of lines is stable there.
+    async function run(code: string, env: Record<string, string>) {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", code],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { lines: stdout.split(/\r?\n/).filter(Boolean).sort(), stderr, exitCode };
+    }
+
+    it("process.exit() skips it, like Node", async () => {
+      await checkSameOutput("test_env_teardown_skipped_by_process_exit", [], noDestruct);
+    });
+
+    it("an uncaught exception while the entry point runs skips it", async () => {
+      const { lines, stderr, exitCode } = await run(`${setup}; throw new Error("fatal");`, noDestruct);
+      expect(stderr).toContain("fatal");
+      expect(lines).toEqual(setupLines.toSorted());
+      expect(exitCode).toBe(1);
+    });
+
+    it("an uncaught exception from the event loop skips it", async () => {
+      const { lines, stderr, exitCode } = await run(
+        `${setup}; setTimeout(() => { throw new Error("fatal"); }, 1);`,
+        noDestruct,
+      );
+      expect(stderr).toContain("fatal");
+      expect(lines).toEqual(setupLines.toSorted());
+      expect(exitCode).toBe(1);
+    });
+
+    // `bun test` ends the process when the last test settles. It does not wait
+    // for the event loop, so what the tests started can still be in flight: that
+    // is process.exit(), not a loop that ran dry. node-sqlite3's Statement
+    // finalizer emits an 'error' event for every call still queued behind a
+    // running one, nothing listens, and node-addon-api turns the throw into
+    // "NAPI FATAL ERROR: Error::ThrowAsJavaScriptException napi_throw" (#34663).
+    const testFile = (name: string) => `
+      ${setup}
+      test(${JSON.stringify(name)}, () => {});
+    `;
+
+    // stdout starts with the "bun test v1.x" banner; the rest is what the addons printed.
+    async function runBunTest(args: string[], files: Record<string, string>, env: Record<string, string>) {
+      using dir = tempDir("napi-bun-test-teardown", files);
+      await using proc = spawn({
+        cmd: [bunExe(), "test", ...args, ...Object.keys(files).map(file => `./${file}`)],
+        env: { ...bunEnv, ...env },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout
+        .split(/\r?\n/)
+        .filter(line => line && !line.startsWith("bun test "))
+        .sort();
+      return { lines, stdout, stderr, exitCode };
+    }
+
+    it("the end of a `bun test` run skips it", async () => {
+      const files = { "addon.test.js": testFile("loads the addons") };
+      const { lines, stderr, exitCode } = await runBunTest([], files, noDestruct);
+      expect(stderr).toContain("1 pass");
+      expect(lines).toEqual(setupLines.toSorted());
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    it("the end of a `bun test --parallel` worker skips it", async () => {
+      const files = { "a.test.js": testFile("loads the addons in a"), "b.test.js": testFile("loads the addons in b") };
+      const { stdout, stderr, exitCode } = await runBunTest(["--parallel=2"], files, noDestruct);
+      // The coordinator relays what a worker prints on its own stderr.
+      const output = stdout + stderr;
+      expect(output).toContain("2 pass");
+      expect(output).not.toContain("executed at position");
+      expect(output).not.toContain("finalize order");
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    it("a `bun test` run that drained the event loop first tears it down", async () => {
+      const files = { "addon.test.js": testFile("loads the addons") };
+      const { lines, stderr, exitCode } = await runBunTest([], files, {
+        ...noDestruct,
+        BUN_TEST_DRAIN_EVENT_LOOP: "1",
+      });
+      expect(stderr).toContain("1 pass");
+      expect(lines).toEqual(teardownLines.toSorted());
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    it("an event loop that runs dry tears it down", async () => {
+      const { lines, stderr, exitCode } = await run(setup, noDestruct);
+      expect(stderr).toBe("");
+      expect(lines).toEqual(teardownLines.toSorted());
+      expect(exitCode).toBe(0);
+    });
+
+    it("process.exit() still tears it down when the VM is destroyed on exit", async () => {
+      const { lines, stderr, exitCode } = await run(`${setup}; process.exit(0);`, { BUN_DESTRUCT_VM_ON_EXIT: "1" });
+      expect(stderr).toBe("");
+      expect(lines).toEqual(teardownLines.toSorted());
+      expect(exitCode).toBe(0);
     });
   });
 

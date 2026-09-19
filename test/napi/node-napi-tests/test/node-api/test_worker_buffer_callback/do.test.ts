@@ -6,8 +6,7 @@ test("build", async () => {
 });
 
 for (const file of Array.from(new Bun.Glob("*.js").scanSync(import.meta.dir))) {
-  // test.js: AssertionError: Missing expected exception (DataCloneError).
-  test.todoIf(["test.js"].includes(file))(file, () => {
+  test(file, () => {
     run(dirname(import.meta.dir), basename(import.meta.dir) + sep + file);
   });
 }

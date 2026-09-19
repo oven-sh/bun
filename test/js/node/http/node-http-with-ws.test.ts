@@ -64,68 +64,89 @@ test.concurrent("WebSocket upgrade should unref poll_ref from response", async (
 // A request that declares a body holds body_read_ref until uWS delivers the
 // last chunk of the body. Once the socket is a WebSocket, uWS parses no more
 // HTTP on it, so a last chunk that it has not delivered by then never comes.
-describe.concurrent("WebSocket upgrade should unref body_read_ref from response", () => {
-  test.each([
-    { when: "inside the 'upgrade' event", later: false, body: "complete", missingBytes: 0 },
-    { when: "inside the 'upgrade' event", later: false, body: "incomplete", missingBytes: 5 },
-    { when: "from a later task", later: true, body: "complete", missingBytes: 0 },
-    { when: "from a later task", later: true, body: "incomplete", missingBytes: 5 },
-  ])("handleUpgrade() $when, request body $body", async ({ later, missingBytes }) => {
+test.concurrent(
+  "WebSocket upgrade should unref body_read_ref from response",
+  async () => {
+    // later: handleUpgrade() runs in a later task, not inside the 'upgrade' event.
+    // missingBytes: how much of the declared body the client never sends.
+    const scenarios = [
+      { later: false, missingBytes: 0 },
+      { later: false, missingBytes: 5 },
+      // Control: the last chunk arrives before the upgrade and releases the ref.
+      { later: true, missingBytes: 0 },
+      { later: true, missingBytes: 5 },
+    ];
+
     const script = /* js */ `
       const http = require("http");
       const net = require("net");
       const { WebSocketServer } = require("ws");
       const { getEventLoopStats } = require("bun:internal-for-testing");
 
-      const body = "hello";
-      const server = http.createServer();
-      const wsServer = new WebSocketServer({ noServer: true });
-      let initialStats;
-      process.exitCode = 1;
+      const activeTasks = () => getEventLoopStats().activeTasks;
 
-      server.on("upgrade", (req, socket, head) => {
-        const upgrade = () => wsServer.handleUpgrade(req, socket, head, ws => wsServer.emit("connection", ws, req));
-        if (${later}) setImmediate(upgrade);
-        else upgrade();
-      });
+      // Resolves with the event loop refs the response holds after the upgrade
+      // and after the WebSocket and the server closed.
+      function upgrade({ later, missingBytes }) {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const before = activeTasks();
+        const body = "hello";
+        const server = http.createServer();
+        const wsServer = new WebSocketServer({ noServer: true });
+        let afterUpgrade;
 
-      wsServer.on("connection", ws => {
-        // With the bug: body_read_ref stays active (activeTasks = 1). After an
-        // upgrade inside the 'upgrade' event nothing releases it until the GC
-        // collects the response, so do not wait for the process to exit.
-        const activeTasks = getEventLoopStats().activeTasks - initialStats.activeTasks;
-        console.log(JSON.stringify({ activeTasks }));
-        if (activeTasks !== 0) process.exit(1);
-
-        ws.on("close", () => {
-          wsServer.close();
-          server.close();
-          process.exitCode = 0;
+        server.on("upgrade", (req, socket, head) => {
+          const handleUpgrade = () =>
+            wsServer.handleUpgrade(req, socket, head, ws => {
+              afterUpgrade = activeTasks() - before;
+              ws.on("close", () => {
+                wsServer.close();
+                server.close(() => resolve({ afterUpgrade, afterClose: activeTasks() - before }));
+              });
+            });
+          if (later) setImmediate(handleUpgrade);
+          else handleUpgrade();
         });
-      });
 
-      initialStats = getEventLoopStats();
-      server.listen(0, "127.0.0.1", () => {
-        const client = net.connect(server.address().port, "127.0.0.1");
-        client.on("error", err => {
-          console.error(err);
-          process.exit(1);
+        server.listen(0, "127.0.0.1", () => {
+          const client = net.connect(server.address().port, "127.0.0.1");
+          client.on("error", reject);
+          client.on("close", () => {
+            if (afterUpgrade === undefined) reject(new Error("the connection closed before the upgrade"));
+          });
+          client.write(
+            [
+              "GET / HTTP/1.1",
+              "Host: localhost",
+              "Connection: Upgrade",
+              "Upgrade: websocket",
+              "Sec-WebSocket-Version: 13",
+              "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+              "Content-Length: " + (body.length + missingBytes),
+              "",
+              body,
+            ].join("\\r\\n"),
+          );
+          // The 101 is all the client waits for.
+          client.once("data", () => client.destroy());
         });
-        client.write(
-          [
-            "GET / HTTP/1.1",
-            "Host: localhost",
-            "Connection: Upgrade",
-            "Upgrade: websocket",
-            "Sec-WebSocket-Version: 13",
-            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
-            "Content-Length: " + (body.length + ${missingBytes}),
-            "",
-            body,
-          ].join("\\r\\n"),
-        );
-        // The 101 is all the client waits for.
-        client.once("data", () => client.destroy());
+
+        return promise;
+      }
+
+      (async () => {
+        let held = false;
+        for (const scenario of ${JSON.stringify(scenarios)}) {
+          const refs = await upgrade(scenario);
+          console.log(JSON.stringify({ ...scenario, ...refs }));
+          held ||= refs.afterUpgrade !== 0 || refs.afterClose !== 0;
+        }
+        // A ref that is still held keeps the process alive, so do not wait for
+        // an exit that does not come.
+        if (held) process.exit(1);
+      })().catch(err => {
+        console.error(err);
+        process.exit(1);
       });
     `;
 
@@ -138,15 +159,20 @@ describe.concurrent("WebSocket upgrade should unref body_read_ref from response"
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // The process exits on its own: no ref of the response is left.
-    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: JSON.stringify({ activeTasks: 0 }),
+    // With the bug: afterUpgrade is 1 in every scenario but the control, and
+    // afterClose is 1 for an upgrade inside the 'upgrade' event.
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: scenarios
+        .map(scenario => JSON.stringify({ ...scenario, afterUpgrade: 0, afterClose: 0 }) + "\n")
+        .join(""),
       stderr: "",
       exitCode: 0,
       signalCode: null,
     });
-  });
-});
+  },
+  // A debug build needs more than 4 s of the default 5 s to load node:http and ws on a busy machine.
+  30_000,
+);
 
 test.concurrent("should not crash when closing sockets after upgrade", async () => {
   const { promise, resolve } = Promise.withResolvers();

@@ -726,6 +726,11 @@ impl NodeHTTPResponse {
         }
         let mut server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
+        // Still held when no last chunk, abort callback or
+        // `maybe_stop_reading_body()` came first: a pipelined response
+        // destroyed mid-body, or a socket close after the handler's promise
+        // settled without `res.end()`.
+        self.body_read_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
 
         server.on_request_complete();

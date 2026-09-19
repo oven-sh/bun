@@ -152,6 +152,10 @@ const rewrittenByInstall: Record<string, Edit> = {
       devDependencies: { "no-deps": "^1.0.0" },
     }),
   },
+  "a workspace drops a dependency that the root still needs": {
+    section: "dependencies",
+    member: json => ({ ...json, dependencies: without(json.dependencies, "a-dep") }),
+  },
   "a workspace adds a dependency that the lockfile already resolves for another workspace": {
     section: "dependencies",
     member: json => ({ ...json, dependencies: { ...json.dependencies, "no-deps": "^1.0.0" } }),

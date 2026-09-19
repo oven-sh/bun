@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 // oven-sh/bun#43477, fixed in oven-sh/WebKit#704. Bun's transpiler rejects these forms itself, so the text goes to
-// JavaScriptCore through `eval` and `new Function`, which do not transpile.
+// JavaScriptCore through `eval`, which does not transpile.
 //
 // ClassStaticBlockBody: it is a Syntax Error if ContainsArguments of the statement list is true. ContainsArguments
 // looks into arrow functions and stops at other functions. A static block is parsed with [+Await], and the
@@ -9,6 +9,8 @@ import { describe, expect, test } from "bun:test";
 // there. The body of the arrow function is [~Await], so `await` is an identifier in it.
 
 const parse = (source: string) => () => (0, eval)(source);
+
+const argumentsError = new SyntaxError("Cannot use 'arguments' as an identifier in static block.");
 
 describe("arguments in an arrow function in a class static block is a SyntaxError", () => {
   test.each([
@@ -20,14 +22,22 @@ describe("arguments in an arrow function in a class static block is a SyntaxErro
     "(class { static { () => () => arguments; } })",
     "(class { static { async () => arguments; } })",
     "(class { static { () => { var arguments; }; } })",
+    "(class { static { () => ({ arguments }); } })",
     "(class { static { if (true) { () => arguments; } } })",
-    // The static block itself, as before.
+    // The static block itself, as before, and the shorthand property there, which is new.
     "(class { static { arguments; } })",
     "(class { static { arguments.length; } })",
+    "(class { static { ({ arguments }); } })",
   ])("%s", source => {
-    expect(parse(source)).toThrow(new SyntaxError("Cannot use 'arguments' as an identifier in static block."));
-    expect(parse(`function f() { ${source} }`)).toThrow(SyntaxError);
-    expect(() => new Function(source)).toThrow(SyntaxError);
+    expect(parse(source)).toThrow(argumentsError);
+    expect(parse(`function f() { ${source} }`)).toThrow(argumentsError);
+    expect(parse(`() => { ${source} }`)).toThrow(argumentsError);
+  });
+
+  test("a shorthand property in a class field initializer", () => {
+    const error = new SyntaxError("Cannot reference 'arguments' in class field initializer.");
+    expect(parse("(class { x = ({ arguments }); })")).toThrow(error);
+    expect(parse("(class { x = () => ({ arguments }); })")).toThrow(error);
   });
 });
 
@@ -41,13 +51,14 @@ describe("arguments in a function that is not an arrow function in a class stati
     "(class { static { () => { function f() { arguments; } }; } })",
     "(class { static { () => function () { arguments; }; } })",
     "(class { static { () => function (a = arguments) {}; } })",
+    "(class { static { () => function () { ({ arguments }); }; } })",
     "(class { static { () => ({ m() { arguments; } }); } })",
     "(class { static { () => this.arguments; } })",
     "(class { static { () => ({ arguments: 1 }); } })",
   ])("%s", source => {
     expect(parse(source)).not.toThrow();
     expect(parse(`function f() { ${source} }`)).not.toThrow();
-    expect(() => new Function(source)).not.toThrow();
+    expect(parse(`() => { ${source} }`)).not.toThrow();
   });
 
   test("the arrow function reads the arguments of the function around it", () => {
@@ -66,6 +77,11 @@ describe("arguments in a function that is not an arrow function in a class stati
   });
 });
 
+const awaitParameterError = new SyntaxError("Cannot use 'await' as a parameter name in a static block.");
+const awaitReferenceError = new SyntaxError(
+  "The 'await' keyword is disallowed in the IdentifierReference position within static block.",
+);
+
 describe("await as a parameter name of an arrow function in a class static block is a SyntaxError", () => {
   test.each([
     "(class { static { ({ await }) => 1; } })",
@@ -74,10 +90,13 @@ describe("await as a parameter name of an arrow function in a class static block
     "(class { static { ([{ await }]) => 1; } })",
     "(class { static { (...await) => 1; } })",
     "(class { static { (a, ...await) => 1; } })",
+    // The arrow function is first parsed, and cached, from a scope that is not the static block.
+    "(class { static { [a = (b = ({ await }) => 1)] = []; } })",
+    "(class { static { [a = (b = (...await) => 1)] = []; } })",
   ])("%s", source => {
-    expect(parse(source)).toThrow(new SyntaxError("Cannot use 'await' as a parameter name in a static block."));
-    expect(parse(`async function f() { ${source} }`)).toThrow(SyntaxError);
-    expect(() => new Function(source)).toThrow(SyntaxError);
+    expect(parse(source)).toThrow(awaitParameterError);
+    expect(parse(`function f() { ${source} }`)).toThrow(awaitParameterError);
+    expect(parse(`async function f() { ${source} }`)).toThrow(awaitParameterError);
   });
 
   // An async arrow function reserves `await` itself.
@@ -98,9 +117,8 @@ describe("await as a parameter name of an arrow function in a class static block
     "(class { static { ([...await]) => 1; } })",
     "(class { static { async (...await) => 1; } })",
   ])("%s", source => {
-    expect(parse(source)).toThrow(
-      new SyntaxError("The 'await' keyword is disallowed in the IdentifierReference position within static block."),
-    );
+    expect(parse(source)).toThrow(awaitReferenceError);
+    expect(parse(`function f() { ${source} }`)).toThrow(awaitReferenceError);
   });
 });
 
@@ -114,11 +132,12 @@ describe("await in the body of an arrow function in a class static block is an i
     "(class { static { () => (...await) => 1; } })",
     "(class { static { () => function ({ await }) {}; } })",
     "(class { static { (a = function (...await) {}) => 1; } })",
+    "(class { static { (a = (a) => { var await; }) => 1; } })",
     "(class { static { function f({ await }) {} } })",
   ])("%s", source => {
     expect(parse(source)).not.toThrow();
+    expect(parse(`function f() { ${source} }`)).not.toThrow();
     expect(parse(`async function f() { ${source} }`)).not.toThrow();
-    expect(() => new Function(source)).not.toThrow();
   });
 
   test("the body runs with await as a variable", () => {

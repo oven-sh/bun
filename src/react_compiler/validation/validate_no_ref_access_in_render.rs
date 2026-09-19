@@ -1,3 +1,5 @@
+use bun_collections::array_hash_map::ArrayHashMap;
+
 use crate::collections::{FxHashMap, FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::{
@@ -120,10 +122,8 @@ impl RefAccessType {
 /// Not in upstream: the nested types, one entry per distinct type.
 #[derive(Default)]
 struct RefAccessTypeInterner {
-    types: Vec<RefAccessType>,
-    ids: FxHashMap<RefAccessType, RefAccessTypeId>,
-    /// For each entry, the first entry that is `ty_equal` to it.
-    ty_equal_ids: Vec<RefAccessTypeId>,
+    /// The index of a type is its id. Its value is the first entry that is `ty_equal` to it.
+    types: ArrayHashMap<RefAccessType, RefAccessTypeId>,
     /// The first entry for each `ty_equal_key`.
     ty_equal_first: FxHashMap<RefAccessType, RefAccessTypeId>,
     /// The joins that made no ref id. Such a join gives the same type each time.
@@ -134,33 +134,32 @@ struct RefAccessTypeInterner {
 
 impl RefAccessTypeInterner {
     fn get(&self, id: RefAccessTypeId) -> RefAccessType {
-        self.types[id.0 as usize]
+        self.types.keys()[id.0 as usize]
     }
 
     fn intern(&mut self, ty: RefAccessType) -> RefAccessTypeId {
-        if let Some(&id) = self.ids.get(&ty) {
-            return id;
+        if let Some(index) = self.types.get_index(&ty) {
+            return RefAccessTypeId(index as u32);
         }
         let id = RefAccessTypeId(self.types.len() as u32);
         let key = self.ty_equal_key(&ty);
         let ty_equal_id = *self.ty_equal_first.entry(key).or_insert(id);
-        self.types.push(ty);
-        self.ty_equal_ids.push(ty_equal_id);
-        self.ids.insert(ty, id);
+        self.types.insert(ty, ty_equal_id);
         id
     }
 
-    /// `ty` without the fields that TS `tyEqual` ignores, and with the `ty_equal_ids` of its
-    /// nested types.
+    /// `ty` without the fields that TS `tyEqual` ignores, and with the first `ty_equal` entry
+    /// in place of each nested type.
     fn ty_equal_key(&self, ty: &RefAccessType) -> RefAccessType {
+        let ty_equal_ids = self.types.values();
         match *ty {
             RefAccessType::Ref { .. } => RefAccessType::Ref { ref_id: 0 },
             RefAccessType::RefValue { loc, .. } => RefAccessType::RefValue { loc, ref_id: None },
             RefAccessType::Structure { value, fn_type } => RefAccessType::Structure {
-                value: value.map(|value| self.ty_equal_ids[value.0 as usize]),
+                value: value.map(|value| ty_equal_ids[value.0 as usize]),
                 fn_type: fn_type.map(|fn_type| RefFnType {
                     read_ref_effect: fn_type.read_ref_effect,
-                    return_type: self.ty_equal_ids[fn_type.return_type.0 as usize],
+                    return_type: ty_equal_ids[fn_type.return_type.0 as usize],
                 }),
             },
             other => other,

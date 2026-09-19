@@ -2529,6 +2529,12 @@ function queuePipelinedResponse(socket, res, isAncient) {
   (socket[kPipelinedResponses] ??= []).push(res);
 }
 
+// Like Node.js's socketOnEnd: the response that gets `_last` after the client's FIN is the last one in the queue.
+function lastPipelinedResponse(socket) {
+  const queue = socket[kPipelinedResponses];
+  return queue?.[queue.length - 1];
+}
+
 // When the connection dies with pipelined responses still queued behind the
 // in-flight one, abort them and their requests, like Node.js's socketOnClose
 // (abortIncoming). Runs from the native socket's close path and from the
@@ -3318,9 +3324,7 @@ function flushPendingFinish(this: ServerResponse) {
   queueResponseFinished(this, callback);
 }
 
-// internal/http1_server_fallback calls this when the bytes of an ended response have left its socket, or
-// when the socket closes with them. Like Node.js's onFinish, 'finish' is emitted right there: a tick
-// later, the socket's 'close' listeners (the response's own among them) would run first.
+// For internal/http1_server_fallback. Like Node.js's onFinish it emits 'finish' in place: a tick later, a closing socket's 'close' listeners would run first.
 function finishDrainedResponse(res) {
   const callback = res[kPendingFinish];
   if (callback === undefined) return;
@@ -3944,6 +3948,7 @@ function storeHTTPOptions(options) {
 http1ServerPipeline.queuePipelinedResponse = queuePipelinedResponse;
 http1ServerPipeline.advanceResponsePipeline = advanceResponsePipeline;
 http1ServerPipeline.abortQueuedPipelinedResponses = abortQueuedPipelinedResponses;
+http1ServerPipeline.lastPipelinedResponse = lastPipelinedResponse;
 http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.finishDrainedResponse = finishDrainedResponse;

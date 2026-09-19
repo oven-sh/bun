@@ -49,6 +49,7 @@ const http1ServerPipeline: {
   queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
   advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
   abortQueuedPipelinedResponses?: (socket: unknown) => void;
+  lastPipelinedResponse?: (socket: unknown) => { _last: boolean } | undefined;
   maybePauseFallbackReads?: (socket: unknown) => void;
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
   finishDrainedResponse?: (res: unknown) => void;

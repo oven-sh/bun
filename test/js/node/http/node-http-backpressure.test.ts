@@ -388,7 +388,8 @@ describe("backpressure", () => {
     }
 
     // A raw client that sends `request` but reads nothing until resume() or read().
-    function pausedClient(port: number, request: string, { tls = false, collect = true } = {}) {
+    // `fin`: the client's FIN follows the request at once.
+    function pausedClient(port: number, request: string, { tls = false, collect = true, fin = false } = {}) {
       const socket = tls
         ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
         : net.connect(port, "127.0.0.1");
@@ -409,7 +410,8 @@ describe("backpressure", () => {
       };
       socket.pause();
       socket.on(tls ? "secureConnect" : "connect", () => {
-        socket.write(request);
+        if (fin) socket.end(request);
+        else socket.write(request);
         if (!reading) socket.pause();
       });
       socket.on("data", chunk => {
@@ -1037,31 +1039,43 @@ describe("backpressure", () => {
       );
 
       // With httpAllowHalfOpen the server keeps its side open after the client's
-      // FIN, for the response in flight, and ends it once that response is out.
-      it("with httpAllowHalfOpen, a FIN during the drain ends the connection once the response is out", async () => {
-        const events: string[] = [];
-        const handled = Promise.withResolvers<void>();
-        const sawFin = Promise.withResolvers<void>();
-        await using server = await listen(
-          (req, res) => {
-            res.on("finish", () => events.push("finish"));
-            res.on("close", () => events.push("close"));
-            req.socket.once("end", () => sawFin.resolve());
-            writeBody(res, () => events.push("end callback"));
-            handled.resolve();
-          },
-          { halfOpen: true },
-        );
-        using client = pausedClient(server.port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", { tls });
-        await Promise.race([handled.promise, client.done]);
-        client.end();
-        await Promise.race([sawFin.promise, client.done]);
-        client.resume();
-        // The client closes when the server's FIN arrives.
-        const { bytes, ended } = await client.done;
-        expect({ body: bytes.length - bytes.indexOf("\r\n\r\n") - 4, ended }).toEqual({ body: BODY, ended: true });
-        expect(events).toEqual(["finish", "end callback", "close"]);
-      });
+      // FIN, for the responses it still owes, and ends it once the last one is out.
+      it.each([
+        ["one request", ["first"]],
+        ["two pipelined requests", ["first", "second"]],
+      ])(
+        "with httpAllowHalfOpen, the FIN after %s ends the connection once every response is out",
+        async (_, names) => {
+          const events: string[] = [];
+          const handled = Promise.withResolvers<void>();
+          await using server = await listen(
+            (req, res) => {
+              const name = req.url!.slice(1);
+              res.on("finish", () => events.push(`finish ${name}`));
+              res.on("close", () => events.push(`close ${name}`));
+              if (name === "first") writeBody(res);
+              else res.end(name);
+              if (name === names.at(-1)) handled.resolve();
+            },
+            { halfOpen: true },
+          );
+          const requests = names.map(name => `GET /${name} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+          using client = pausedClient(server.port, requests.join(""), { tls, fin: true });
+          await Promise.race([handled.promise, client.done]);
+          // The server has seen the FIN by the end of this exchange, with the first response still draining.
+          await ping(server.port, tls);
+          client.resume();
+          // The client closes when the server's FIN arrives.
+          const { bytes, ended } = await client.done;
+          // What follows the first body: nothing, or the second response.
+          const rest = bytes.subarray(bytes.indexOf("\r\n\r\n") + 4 + BODY).toString("latin1");
+          expect({ rest: rest.slice(rest.indexOf("\r\n\r\n") + 4), ended }).toEqual({
+            rest: names.length === 2 ? "second" : "",
+            ended: true,
+          });
+          expect(events).toEqual(names.flatMap(name => [`finish ${name}`, `close ${name}`]));
+        },
+      );
 
       it("a request pipelined behind the unfinished response is answered after it, intact", async () => {
         const events: string[] = [];

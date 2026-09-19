@@ -1069,6 +1069,8 @@ pub trait Colorspace: Copy + Sized + FromAnyColorspace {
 
 /// Gamut behavior — in-gamut check and clipping per color space.
 pub trait ColorGamut: Sized + Copy {
+    /// Whether the space can only hold colors inside its gamut (the lab family and XYZ hold any).
+    const BOUNDED: bool;
     fn in_gamut(&self) -> bool;
     fn clip(&self) -> Self;
 }
@@ -1574,12 +1576,14 @@ macro_rules! define_colorspace {
     // Gamut variants
     (@gamut unbounded $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = false;
             fn in_gamut(&self) -> bool { true }
             fn clip(&self) -> Self { *self }
         }
     };
     (@gamut bounded $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = true;
             fn in_gamut(&self) -> bool {
                 self.$a >= 0.0 && self.$a <= 1.0
                     && self.$b >= 0.0 && self.$b <= 1.0
@@ -1597,6 +1601,7 @@ macro_rules! define_colorspace {
     };
     (@gamut hsl_hwb $name:ident { $h:ident, $a:ident, $b:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = true;
             fn in_gamut(&self) -> bool {
                 self.$a >= 0.0 && self.$a <= 1.0 && self.$b >= 0.0 && self.$b <= 1.0
             }
@@ -1752,6 +1757,14 @@ impl SRGB {
     pub fn into_rgba(&self) -> RGBA {
         let rgb = self.resolve();
         RGBA::from_floats(rgb.r, rgb.g, rgb.b, rgb.alpha)
+    }
+
+    /// `in_gamut()` with room for the ~1e-6 of noise a boundary color picks up converting from another space.
+    fn is_nearly_in_gamut(&self) -> bool {
+        // 0.03 of an 8-bit step.
+        const TOLERANCE: f32 = 1e-4;
+        let nearly = |v: f32| (-TOLERANCE..=1.0 + TOLERANCE).contains(&v);
+        nearly(self.r) && nearly(self.g) && nearly(self.b)
     }
 }
 
@@ -1933,6 +1946,15 @@ impl ComponentParser {
             input.reset(&state);
             let dark = self.parse_from::<T, C, F>(*dark, input, func)?;
             return Ok(C::light_dark_owned(light, dark));
+        }
+
+        // Browsers keep these unclamped and clip when painting (w3c/csswg-drafts#8444); `resolve()` would not match.
+        if T::BOUNDED
+            // In sRGB rather than `T`: the HSL and HWB conversions gamut map on the way in.
+            && !SRGB::try_from_css_color(&from)
+                .is_some_and(|srgb| srgb.resolve_missing().is_nearly_in_gamut())
+        {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
         let new_from = match T::try_from_css_color(&from) {

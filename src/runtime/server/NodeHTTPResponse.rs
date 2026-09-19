@@ -587,6 +587,7 @@ impl NodeHTTPResponse {
             &upgrade_context.sec_websocket_key
         };
 
+        let mut ended_pending_body = false;
         if let Some(raw_response) = self.raw_response.take() {
             self.update_flags(|f| f.insert(Flags::UPGRADED));
             // Unref the poll_ref since the socket is now upgraded to WebSocket
@@ -597,6 +598,7 @@ impl NodeHTTPResponse {
             if self.body_read_state.get() == BodyReadState::Pending {
                 self.body_read_ref.with_mut(|r| r.unref(vm));
                 self.body_read_state.set(BodyReadState::Done);
+                ended_pending_body = true;
             }
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
@@ -616,6 +618,17 @@ impl NodeHTTPResponse {
         // (which would call preserve_web_socket_headers_if_needed) must not run
         // post-upgrade — it would read freed header views.
         self.upgrade_context.with_mut(|c| c.reset());
+
+        if ended_pending_body {
+            // The request's stream has to see the body end. `ondata` runs JS that can abort the
+            // request or close the socket, so it runs last. It gets no bytes buffered during a
+            // pause: their 'data' listeners would run before the caller has the WebSocket.
+            scoped_log!(NodeHTTPResponse, "upgrade: end the pending body");
+            self.buffered_request_body_data_during_pause
+                .with_mut(|b| b.clear_and_free());
+            let _guard = self.ref_guard();
+            self.call_on_data(self.armed_this_value.get(), b"", true, AbortEvent::None);
+        }
 
         true
     }
@@ -1658,26 +1671,8 @@ impl NodeHTTPResponse {
                     f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
                 }
             });
-        } else if let Some(callback) = js::on_data_get_cached(this_value) {
-            if callback.is_cell() {
-                let vm = vm_get();
-                let global_this = vm.global();
-                let event_loop = vm.event_loop_ref();
-
-                let bytes = self.get_bytes(global_this, chunk);
-
-                event_loop.run_callback(
-                    bun_event_loop::ContextId::NONE,
-                    callback,
-                    global_this,
-                    JSValue::UNDEFINED,
-                    &[
-                        bytes,
-                        JSValue::from(last),
-                        JSValue::js_number_from_int32(event as u8 as i32),
-                    ],
-                );
-            }
+        } else {
+            self.call_on_data(this_value, chunk, last, event);
         }
 
         // Deferred tail:
@@ -1687,6 +1682,36 @@ impl NodeHTTPResponse {
                 self.mark_request_as_done_if_necessary();
             }
         }
+    }
+
+    /// Calls the `ondata` callback cached on `this_value`, when one is armed.
+    fn call_on_data(&self, this_value: JSValue, chunk: &[u8], last: bool, event: AbortEvent) {
+        if this_value.is_empty() {
+            return;
+        }
+        let Some(callback) = js::on_data_get_cached(this_value) else {
+            return;
+        };
+        if !callback.is_cell() {
+            return;
+        }
+        let vm = vm_get();
+        let global_this = vm.global();
+        let event_loop = vm.event_loop_ref();
+
+        let bytes = self.get_bytes(global_this, chunk);
+
+        event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
+            callback,
+            global_this,
+            JSValue::UNDEFINED,
+            &[
+                bytes,
+                JSValue::from(last),
+                JSValue::js_number_from_int32(event as u8 as i32),
+            ],
+        );
     }
 
     fn on_data(&self, chunk: &[u8], last: bool) {

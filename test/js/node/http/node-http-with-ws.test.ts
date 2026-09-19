@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tls as options } from "harness";
 import http from "http";
 import https from "https";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import tls from "tls";
 import { WebSocketServer, type WebSocket as WsWebSocket } from "ws";
 
@@ -262,5 +262,100 @@ test("WebSocket upgrade should unref body_read_ref from response", async () => {
     // The script calls process.exit() only for a leak: the process has to exit by itself.
     exitCode: 0,
     signalCode: null,
+  });
+});
+
+// The same handoff, seen from the stream of the request. The body can never arrive, so the stream ends at
+// the upgrade. A reader that already waits for the body gets 'end', like a reader that starts later, and
+// like every reader in Node.js up to 25. (Node.js 26 keeps reading the body from the socket. Here the
+// WebSocket owns the socket.)
+describe.concurrent("a request reader that waits for the body when ws upgrades", () => {
+  async function upgradeWhileReading(listenFor: "upgrade" | "request", upgradeInLaterTask: boolean) {
+    const events: string[] = [];
+    let readerWaitedBeforeUpgrade = false;
+    const request = Promise.withResolvers<http.IncomingMessage>();
+    await using server = http.createServer();
+    const wsServer = new WebSocketServer({ noServer: true });
+    // With no 'upgrade' listener, the server gives the Upgrade request to the 'request' listener.
+    server.on(listenFor, (req: http.IncomingMessage) => {
+      request.resolve(req);
+      let didRead = false;
+      const read = req._read;
+      req._read = function (size) {
+        didRead = true;
+        return read.call(this, size);
+      };
+      // The 'data' listener starts the flow on the next tick.
+      for (const name of ["data", "end", "close", "aborted", "error"]) req.on(name, () => events.push(name));
+      const upgrade = () => {
+        readerWaitedBeforeUpgrade = didRead;
+        wsServer.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
+          events.push("connection");
+          // A later task: the request has ended and closed by then, and the WebSocket still works.
+          setImmediate(() => ws.send("hello"));
+        });
+      };
+      if (upgradeInLaterTask) return setImmediate(upgrade);
+      // read() asks for the body now, so the reader waits before an upgrade in the same tick too.
+      req.read();
+      upgrade();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.setEncoding("latin1");
+    client.write(
+      [
+        "GET / HTTP/1.1",
+        "Host: localhost",
+        "Connection: Upgrade",
+        "Upgrade: websocket",
+        "Sec-WebSocket-Version: 13",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+        // The body is never sent.
+        "Content-Length: 17",
+        "",
+        "",
+      ].join("\r\n"),
+    );
+    // An unmasked text frame: FIN and opcode 1, length 5, "hello".
+    const helloFrame = "810568656c6c6f";
+    const response = Promise.withResolvers<string>();
+    let received = "";
+    client.on("data", chunk => {
+      received += chunk;
+      const headEnd = received.indexOf("\r\n\r\n");
+      if (headEnd !== -1 && received.length >= headEnd + 4 + helloFrame.length / 2) response.resolve(received);
+    });
+    client.on("error", response.reject);
+    client.on("close", () => response.reject(new Error("closed before the upgrade: " + JSON.stringify(received))));
+
+    // The frame left in a task after the upgrade, so the callbacks that the upgrade queued are over.
+    const text = await response.promise;
+    const headEnd = text.indexOf("\r\n\r\n");
+    const result = {
+      status: text.slice(0, text.indexOf("\r\n")),
+      afterHead: Buffer.from(text.slice(headEnd + 4), "latin1").toString("hex"),
+      readerWaitedBeforeUpgrade,
+      events: [...events],
+      complete: (await request.promise).complete,
+    };
+    client.destroy();
+    wsServer.close();
+    return result;
+  }
+
+  test.each([
+    ["in the 'upgrade' event, from a later task", "upgrade", true],
+    ["in the 'upgrade' event, in the same tick as req.read()", "upgrade", false],
+    ["in a 'request' listener, from a later task", "request", true],
+  ] as const)("handleUpgrade() %s", async (_when, listenFor, upgradeInLaterTask) => {
+    expect(await upgradeWhileReading(listenFor, upgradeInLaterTask)).toEqual({
+      status: "HTTP/1.1 101 Switching Protocols",
+      afterHead: "810568656c6c6f",
+      readerWaitedBeforeUpgrade: true,
+      events: ["connection", "end", "close"],
+      complete: true,
+    });
   });
 });

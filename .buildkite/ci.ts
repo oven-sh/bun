@@ -1046,7 +1046,7 @@ function getWindowsBuildImageStep(platform: Platform, options: PipelineOptions):
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: `node ./scripts/machine.ts bake-image --arch=${arch} --name=${getImageName(platform, options)}`,
+    command: `node ./scripts/ci-image.ts bake-image --arch=${arch} --name=${getImageName(platform, options)}`,
     timeout_in_minutes: 3 * 60,
   };
 }
@@ -1102,7 +1102,7 @@ function getLinuxBuildImageSteps(platform: Platform, options: PipelineOptions): 
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: `node ./scripts/machine.ts wait-image --name=${imageName} --build=${getBuildNumber()}`,
+    command: `node ./scripts/ci-image.ts wait-image --name=${imageName} --build=${getBuildNumber()}`,
     timeout_in_minutes: 120,
   };
 

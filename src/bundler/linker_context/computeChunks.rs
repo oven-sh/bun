@@ -674,8 +674,9 @@ pub(crate) fn compute_chunks(
             }
         }
 
-        let output_path = output_paths[chunk.entry_point.entry_point_id() as usize].slice();
-        let pathname = bun_fs::PathName::init(output_path);
+        let pathname = bun_fs::PathName::init(
+            output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
+        );
         chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
 
@@ -687,12 +688,12 @@ pub(crate) fn compute_chunks(
 
         if chunk.template.needs(PlaceholderField::Dir) {
             // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
-            // An in-memory entry point such as `/entry.js` is not in the real `/` either.
+            // An entry point such as `/entry.js` that is not a file on disk is not in the real `/` either.
+            let entry_point_path = &parse_graph.input_files.items_source()
+                [chunk.entry_point.source_index() as usize]
+                .path;
             let dir_path: &[u8] = if pathname.dir.is_empty()
-                || bv2
-                    .transpiler
-                    .resolver
-                    .is_virtual_module_in_root(&bun_fs::Path::init(output_path))
+                || (pathname.dir_is_root() && !bv2.is_file_in_root(entry_point_path))
             {
                 b"."
             } else {

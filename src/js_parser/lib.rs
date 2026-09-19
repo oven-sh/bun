@@ -107,7 +107,6 @@ pub mod Macro {
         safe fn __bun_macro_context_call(
             ctx: &mut MacroContext,
             import_record_path: &[u8],
-            source_dir: &[u8],
             log: &mut bun_ast::Log,
             source: &bun_ast::Source,
             import_range: bun_ast::Range,
@@ -144,7 +143,6 @@ pub mod Macro {
         pub(crate) fn call(
             &mut self,
             import_record_path: &[u8],
-            source_dir: &[u8],
             log: &mut bun_ast::Log,
             source: &bun_ast::Source,
             import_range: bun_ast::Range,
@@ -154,7 +152,6 @@ pub mod Macro {
             __bun_macro_context_call(
                 self,
                 import_record_path,
-                source_dir,
                 log,
                 source,
                 import_range,

@@ -4119,29 +4119,40 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
-    /// Whether `path` is directly in a filesystem root (`/entry.js`) and is not
-    /// a file on disk. Such a path names a virtual module: an in-memory file of
-    /// `Bun.build`, or a path that a plugin made up. It has no directory of its
-    /// own: its imports resolve from the top-level directory, and the bundler
-    /// names its output from there.
-    pub fn is_virtual_module_in_root(&mut self, path: &Fs::Path<'_>) -> bool {
+    /// Whether `path` is a file on disk directly in a filesystem root
+    /// (`/main.js`, `C:\main.js`).
+    pub fn is_file_in_root(&mut self, path: &Fs::Path<'_>) -> bool {
         let name = path.name();
-        if !name.dir_is_root() {
+        if !name.dir_is_root() || !path.is_file() {
             return false;
         }
-        if !path.is_file() {
-            return true;
+        let Some(dir) = self.read_dir_info_ignore_error(name.dir) else {
+            return false;
+        };
+        // The key of a module can end in a `?query`.
+        let without_query = strings::index_of_char_usize(name.filename, b'?')
+            .map_or(name.filename, |i| &name.filename[..i]);
+        for filename in [name.filename, without_query] {
+            if let Some(query) = dir.get_entry(self.generation, filename) {
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
+                return unsafe { query.entry().kind(self.rfs_ptr(), self.store_fd) }
+                    == Fs::file_system::EntryKind::File;
+            }
         }
-        let generation = self.generation;
-        !self
-            .read_dir_info_ignore_error(name.dir)
-            .is_some_and(|dir| dir.get_entry(generation, name.filename).is_some())
+        false
     }
 
     /// The directory that the imports of the module at `path` resolve from,
     /// with its trailing separator.
+    ///
+    /// Of the paths directly in `/`, only a file on disk resolves from the
+    /// root. The others have no directory of their own and resolve from the
+    /// top-level directory: an in-memory file of `Bun.build` (`/entry.js`), a
+    /// path that a plugin made up, and a top-level directory that a caller
+    /// passes as the importer (`Module._findPath(id, ["/app"])`).
     pub fn source_dir_for_imports<'p>(&mut self, path: &Fs::Path<'p>) -> &'p [u8] {
-        if self.is_virtual_module_in_root(path) {
+        if path.name().dir_is_root_without_drive() && !self.is_file_in_root(path) {
             return b"./";
         }
         path.source_dir()

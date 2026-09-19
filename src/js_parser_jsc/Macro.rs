@@ -103,7 +103,6 @@ impl MacroContext {
     pub(crate) fn call(
         &mut self,
         import_record_path: &[u8],
-        source_dir: &[u8],
         log: &mut Log,
         source: &Source,
         import_range: Range,
@@ -123,12 +122,7 @@ impl MacroContext {
         // SAFETY: `resolver` outlives `self` (see struct comment); uniquely
         // accessed for the duration of this resolve call.
         let resolver = unsafe { &mut *self.resolver };
-        // Same rule as `Resolver::source_dir_for_imports`.
-        let source_dir = if resolver.is_virtual_module_in_root(&source.path) {
-            b"./"
-        } else {
-            source_dir
-        };
+        let source_dir = resolver.source_dir_for_imports(&source.path);
 
         let input_specifier: &[u8] = 'brk: {
             if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
@@ -311,7 +305,6 @@ fn __bun_macro_collect_vm_garbage() {
 fn __bun_macro_context_call(
     ctx: &mut js_parser::Macro::MacroContext,
     import_record_path: &[u8],
-    source_dir: &[u8],
     log: &mut Log,
     source: &Source,
     import_range: Range,
@@ -332,7 +325,6 @@ fn __bun_macro_context_call(
     inner
         .call(
             import_record_path,
-            source_dir,
             log,
             source,
             import_range,

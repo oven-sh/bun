@@ -4615,6 +4615,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
+    /// What `__dirname` and `import.meta.dir` inline as.
+    pub(crate) fn source_dirname(&self) -> &'a [u8] {
+        if self.options.source_has_no_directory {
+            return b"";
+        }
+        self.source.path.name().dir
+    }
+
     pub(crate) fn create_default_name(&mut self, loc: bun_ast::Loc) -> js_ast::LocRef {
         let identifier: &'a [u8] = {
             let s = format!("{}_default", self.source.path.name().fmt_identifier());

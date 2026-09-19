@@ -660,10 +660,16 @@ pub mod fs {
         /// entry directly in the root.
         pub fn dir_is_root(&self) -> bool {
             match *self.dir {
-                [sep] => is_sep_any(sep),
                 [drive, b':', sep] => drive.is_ascii_alphabetic() && is_sep_any(sep),
-                _ => false,
+                _ => self.dir_is_root_without_drive(),
             }
+        }
+
+        /// Whether `dir` is a root with no drive letter (`/`). The paths of
+        /// virtual modules have this form (`/entry.js`): the keys of the
+        /// in-memory files of `Bun.build`, and the paths that plugins make up.
+        pub fn dir_is_root_without_drive(&self) -> bool {
+            matches!(*self.dir, [sep] if is_sep_any(sep))
         }
 
         /// `/bar/foo/index.js` → `foo`; `/bar/foo.js` → `foo`.
@@ -1082,6 +1088,20 @@ pub mod fs {
             assert_eq!(parts(b"/"), [&b""[..], b"", b"", b"/", b"./"]);
             assert_eq!(parts(b"C:/"), [&b""[..], b"", b"", b"C:/", b"./"]);
             assert_eq!(parts(b""), [&b""[..], b"", b"", b"", b"./"]);
+        }
+
+        #[test]
+        fn dir_is_root_tells_a_root_from_a_directory() {
+            let is_root = |path: &'static [u8]| {
+                let name = PathName::init(path);
+                [name.dir_is_root(), name.dir_is_root_without_drive()]
+            };
+            assert_eq!(is_root(b"/foo.js"), [true, true]);
+            assert_eq!(is_root(b"C:/foo.js"), [true, false]);
+            assert_eq!(is_root(b"/bar/foo.js"), [false, false]);
+            assert_eq!(is_root(b"C:/bar/foo.js"), [false, false]);
+            assert_eq!(is_root(b"foo.js"), [false, false]);
+            assert_eq!(is_root(b"/"), [false, false]);
         }
 
         #[test]

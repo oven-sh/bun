@@ -740,15 +740,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .macro_context
                             .as_deref_mut()
                             .expect("macro_context")
-                            .call(
-                                record_path_text,
-                                source.path.source_dir(),
-                                log,
-                                source,
-                                record_range,
-                                expr,
-                                name,
-                            )
+                            .call(record_path_text, log, source, record_range, expr, name)
                         else {
                             return;
                         };
@@ -2336,15 +2328,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .macro_context
                     .as_deref_mut()
                     .expect("macro_context")
-                    .call(
-                        record_path_text,
-                        source.path.source_dir(),
-                        log,
-                        source,
-                        record_range,
-                        copied,
-                        name,
-                    ) {
+                    .call(record_path_text, log, source, record_range, copied, name)
+                {
                     Ok(r) => r,
                     Err(_) => {
                         if p.log().msgs.len() == start_error_count {

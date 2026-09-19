@@ -2348,6 +2348,26 @@ pub mod bv2_impl {
             }
         }
 
+        /// Whether `path` is a file on disk directly in a filesystem root. An
+        /// in-memory file is not, also when a file of that name is on disk.
+        pub(crate) fn is_file_in_root(&mut self, path: &Fs::Path<'_>) -> bool {
+            path.name().dir_is_root()
+                && !self.file_map.is_some_and(|map| map.contains(path.text))
+                && self.transpiler.resolver.is_file_in_root(path)
+        }
+
+        /// The directory that the imports of the module at `path` resolve from
+        /// when neither the file map nor a plugin resolves them. See
+        /// `Resolver::source_dir_for_imports`.
+        fn source_dir_for_imports<'p>(&mut self, path: &Fs::Path<'p>) -> &'p [u8] {
+            if path.name().dir_is_root_without_drive()
+                && self.file_map.is_some_and(|map| map.contains(path.text))
+            {
+                return b"./";
+            }
+            self.transpiler.resolver.source_dir_for_imports(path)
+        }
+
         /// This runs on the Bundle Thread.
         pub(crate) fn run_resolver(
             &mut self,
@@ -2362,10 +2382,10 @@ pub mod bv2_impl {
             // direct `self.transpiler.options.*` accesses are shared reads that occur after the
             // last `&mut *transpiler` deref on their control path.
             let transpiler: *mut Transpiler<'a> = self.transpiler_for_target(target);
-            // SAFETY: see `transpiler` note above.
-            let source_dir = unsafe { &mut *transpiler }
-                .resolver
-                .source_dir_for_imports(&Fs::Path::init(&import_record.source_file));
+            let importer = self.graph.input_files.items_source()
+                [import_record.importer_source_index as usize]
+                .path;
+            let source_dir = self.source_dir_for_imports(&importer);
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
@@ -6223,10 +6243,7 @@ pub mod bv2_impl {
         ) -> ResolveImportRecordResult {
             let source = ctx.source;
             let loader = ctx.loader;
-            let source_dir = self
-                .transpiler
-                .resolver
-                .source_dir_for_imports(&source.path);
+            let source_dir = self.source_dir_for_imports(&source.path);
             let only_records = ctx.only_records;
             debug_assert!(only_records.is_none_or(<[u32]>::is_sorted));
             let mut estimated_resolve_queue_count: usize = 0;

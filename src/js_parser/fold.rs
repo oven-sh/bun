@@ -619,9 +619,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir
-                            return Some(
-                                p.new_expr(e_string_init(p.source.path.name().dir), name_loc),
-                            );
+                            return Some(p.new_expr(e_string_init(p.source_dirname()), name_loc));
                         } else if name == b"file" {
                             // Inline import.meta.file (filename only)
                             return Some(

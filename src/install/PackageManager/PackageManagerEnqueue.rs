@@ -776,6 +776,31 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     // an explicit flag instead.
     is_root: bool,
 ) -> crate::Result<()> {
+    enqueue_dependency_impl(
+        this,
+        id,
+        dependency,
+        resolution,
+        install_peer,
+        success_fn,
+        fail_fn,
+        is_root,
+        true,
+    )
+}
+
+fn enqueue_dependency_impl(
+    this: &mut PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+    resolution: PackageID,
+    install_peer: bool,
+    success_fn: SuccessFn,
+    fail_fn: Option<FailFn>,
+    is_root: bool,
+    // `false` only on the second pass, after the alias had no package in the declared range.
+    allow_alias_redirect: bool,
+) -> crate::Result<()> {
     if dependency.behavior.is_optional_peer() {
         return Ok(());
     }
@@ -794,18 +819,24 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     };
 
     let mut version_was_replaced = true;
+    let mut keeps_declared_range = false;
     let version: dependency::Version = 'version: {
         // An `npm:` alias names its registry target explicitly, so only plain
         // dependencies may be redirected to a same-named alias elsewhere in the tree.
-        if dependency.version.tag == dependency::version::Tag::Npm
+        if allow_alias_redirect
+            && dependency.version.tag == dependency::version::Tag::Npm
             && !dependency.version.npm().is_alias
         {
             if let Some(aliased) = this.known_npm_aliases.get(&name_hash) {
                 let group = &dependency.version.npm().version;
                 let buf = this.lockfile.buffers.string_bytes.as_slice();
                 // SAFETY: `aliased` is always tag == Npm (known_npm_aliases only stores npm versions).
-                let mut curr_list: Option<&Semver::semver_query::List> =
-                    Some(&aliased.npm().version.head);
+                // The probes only pick candidates, `declared_range_admits` decides. A peer is not held to its range.
+                let is_peer = dependency.behavior.is_peer();
+                let mut curr_list: Option<&Semver::semver_query::List> = (is_peer
+                    || group.is_star()
+                    || group.intersects(buf, &aliased.npm().version, buf))
+                .then_some(&aliased.npm().version.head);
                 while let Some(queries) = curr_list {
                     let mut curr: Option<&Semver::Query> = Some(&queries.head);
                     while let Some(query) = curr {
@@ -815,6 +846,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             name = aliased.npm().name;
                             name_hash =
                                 Semver::string::Builder::string_hash(this.lockfile.str(&name));
+                            keeps_declared_range = !is_peer;
                             break 'version aliased.clone();
                         }
                         curr = query.next.as_deref();
@@ -894,6 +926,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         break 'version dependency.version.clone();
     };
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
+    let declared_range = keeps_declared_range.then(|| &dependency.version.npm().version);
 
     match version.tag {
         dependency::version::Tag::DistTag
@@ -912,11 +945,16 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     resolution,
                     install_peer,
                     success_fn,
+                    declared_range,
                 );
 
                 'retry_with_new_resolve_result: loop {
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
+                        // The alias has no package for this dependency. The alias reports its own failure.
+                        Err(crate::Error::NoMatchingVersion) if declared_range.is_some() => {
+                            break 'retry_from_manifests_ptr;
+                        }
                         Err(err) => {
                             if err == crate::Error::DistTagNotFound {
                                 if dependency.behavior.is_required() {
@@ -1224,7 +1262,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 let manifest_ref = bun_ptr::BackRef::new(
                                                     loaded_manifest.as_ref().unwrap(),
                                                 );
-                                                if let Some(new_resolve_result) =
+                                                let new_resolve_result =
                                                     get_or_put_resolved_package_with_find_result(
                                                         // SAFETY: see `this_ptr` note above.
                                                         unsafe { &mut *this_ptr },
@@ -1238,11 +1276,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         find_result,
                                                         install_peer,
                                                         success_fn,
-                                                    )
-                                                    .ok()
-                                                    .flatten()
+                                                        declared_range,
+                                                    );
+                                                // A rejected alias package needs no fetch either.
+                                                if matches!(new_resolve_result, Ok(Some(_)))
+                                                    || (declared_range.is_some()
+                                                        && matches!(
+                                                            new_resolve_result,
+                                                            Err(crate::Error::NoMatchingVersion)
+                                                        ))
                                                 {
-                                                    resolve_result_ = Ok(Some(new_resolve_result));
+                                                    resolve_result_ = new_resolve_result;
                                                     let _ =
                                                         this.network_dedupe_map.remove(&task_id);
                                                     continue 'retry_with_new_resolve_result;
@@ -1344,6 +1388,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     return Ok(());
                 }
             }
+
+            // The dependency resolves the package of its own name.
+            enqueue_dependency_impl(
+                this,
+                id,
+                dependency,
+                resolution,
+                install_peer,
+                success_fn,
+                fail_fn,
+                is_root,
+                false,
+            )
         }
         dependency::version::Tag::Git => {
             let dep: Repository = *version.git();
@@ -1609,6 +1666,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 resolution,
                 install_peer,
                 success_fn,
+                None,
             ) {
                 Ok(v) => v,
                 Err(crate::Error::MissingPackageJSON) => None,
@@ -2296,6 +2354,7 @@ fn get_or_put_resolved_package_with_find_result(
     find_result: Npm::FindResult,
     install_peer: bool,
     success_fn: SuccessFn,
+    declared_range: Option<&Semver::query::Group>,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
     // borrows `this.lockfile` and `this` at once. Split via raw root.
@@ -2328,6 +2387,9 @@ fn get_or_put_resolved_package_with_find_result(
     // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it.
     if should_update && !behavior.is_peer() {
         if let Some(id) = patched_package_satisfying(this, name_hash, version) {
+            if !declared_range_admits_package(this, declared_range, id) {
+                return Err(crate::Error::NoMatchingVersion);
+            }
             this.kept_patched.push(id);
             success_fn(this, dependency_id, id);
             return Ok(Some(ResolvedPackageResult {
@@ -2369,6 +2431,9 @@ fn get_or_put_resolved_package_with_find_result(
             url: find_result.package.tarball_url.value,
         })),
     ) {
+        if !declared_range_admits_package(this, declared_range, id) {
+            return Err(crate::Error::NoMatchingVersion);
+        }
         success_fn(this, dependency_id, id);
         return Ok(Some(ResolvedPackageResult {
             package: *this.lockfile.packages.get(id as usize),
@@ -2377,6 +2442,15 @@ fn get_or_put_resolved_package_with_find_result(
         }));
     } else if behavior.is_peer() && !install_peer {
         return Ok(None);
+    }
+
+    if !declared_range_admits(
+        declared_range,
+        find_result.version,
+        this.lockfile.buffers.string_bytes.as_slice(),
+        &manifest.string_buf,
+    ) {
+        return Err(crate::Error::NoMatchingVersion);
     }
 
     // appendPackage sets the PackageID on the package
@@ -2537,6 +2611,7 @@ fn get_or_put_resolved_package(
     resolution: PackageID,
     install_peer: bool,
     success_fn: SuccessFn,
+    declared_range: Option<&Semver::query::Group>,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     if install_peer && behavior.is_peer() {
         if let Some(index) = this.lockfile.package_index.get(&name_hash) {
@@ -2669,6 +2744,9 @@ fn get_or_put_resolved_package(
                     else {
                         break 'resolve_from_workspace;
                     };
+                    if !declared_range_admits_package(this, declared_range, workspace_package_id) {
+                        return Err(crate::Error::NoMatchingVersion);
+                    }
                     // make sure verifyResolutions sees this resolution as a valid package id
                     success_fn(this, dependency_id, workspace_package_id);
                     return Ok(Some(ResolvedPackageResult {
@@ -2885,6 +2963,7 @@ fn get_or_put_resolved_package(
                 find_result,
                 install_peer,
                 success_fn,
+                declared_range,
             )
         }
 
@@ -3153,6 +3232,44 @@ fn resolution_satisfies_dependency(
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     resolution.satisfies_dependency_version(dependency, buf, buf)
+}
+
+/// Whether the range that a dependency declares admits `version` of the alias package it resolves through. `*` admits any version, like npm. `None` admits all.
+fn declared_range_admits(
+    declared_range: Option<&Semver::query::Group>,
+    version: Semver::Version,
+    range_buf: &[u8],
+    version_buf: &[u8],
+) -> bool {
+    declared_range
+        .is_none_or(|range| range.is_star() || range.satisfies(version, range_buf, version_buf))
+}
+
+/// `declared_range_admits` for a package that is in the lockfile.
+fn declared_range_admits_package(
+    this: &PackageManager,
+    declared_range: Option<&Semver::query::Group>,
+    package_id: PackageID,
+) -> bool {
+    let Some(range) = declared_range else {
+        return true;
+    };
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let resolution = &this.lockfile.packages.items_resolution()[package_id as usize];
+    match resolution.tag {
+        ResolutionTag::Npm => {
+            declared_range_admits(declared_range, resolution.npm().version, buf, buf)
+        }
+        // `linked_workspace_path` links the alias to a workspace, which can have no version.
+        ResolutionTag::Workspace => {
+            let name_hash = this.lockfile.packages.items_name_hash()[package_id as usize];
+            match this.lockfile.workspace_versions.get(&name_hash) {
+                Some(&version) => declared_range_admits(declared_range, version, buf, buf),
+                None => range.is_star(),
+            }
+        }
+        _ => false,
+    }
 }
 
 fn patched_package_satisfying(

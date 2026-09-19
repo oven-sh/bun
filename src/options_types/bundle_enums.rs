@@ -47,6 +47,21 @@ impl Format {
         self == Format::Esm
     }
 
+    /// Whether an entry point's `import.meta.main` is printed as written. When
+    /// this is false it is lowered to a `require.main == module` comparison,
+    /// which needs the output to be loaded as CommonJS.
+    ///
+    /// Node has no `import.meta.main`. Output for bun is marked with a `// @bun`
+    /// pragma that makes bun load it as an ES module unless the format is cjs,
+    /// so an iife for bun has `import.meta.main` and no `module` binding.
+    pub fn keeps_import_meta_main(self, target: Target) -> bool {
+        match self {
+            Format::Esm => !target.is_node(),
+            Format::Iife => target.is_bun(),
+            Format::Cjs | Format::InternalBakeDev => false,
+        }
+    }
+
     pub const MAP: __ComptimeStringMap_FORMAT_MAP = __ComptimeStringMap_FORMAT_MAP(());
 
     // `to_js`/`from_js` live as extension-trait methods in the `*_jsc` crate.

@@ -2096,14 +2096,16 @@ describe("a header block over maxSendHeaderBlockLength (node's onFrameError)", (
       const barrier = Buffer.alloc(8, 0xff);
       c.sendFrame(FrameType.PING, 0, 0, barrier);
       await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload.equals(barrier));
-      const resets = () =>
-        c.frames.filter(f => f.streamId === 1).map(f => [FrameType.RST_STREAM === f.type, f.payload.readUInt32BE(0)]);
-      expect(resets()).toEqual([[true, ErrorCode.FRAME_SIZE_ERROR]]);
+      const onStream1 = () =>
+        c.frames
+          .filter(f => f.streamId === 1)
+          .map(f => (f.type === FrameType.RST_STREAM ? ["RST_STREAM", f.payload.readUInt32BE(0)] : [f.type]));
+      expect(onStream1()).toEqual([["RST_STREAM", ErrorCode.FRAME_SIZE_ERROR]]);
 
       await c.waitForGoaway();
       sending = false;
       await c.waitClosed();
-      expect(resets()).toEqual([[true, ErrorCode.FRAME_SIZE_ERROR]]);
+      expect(onStream1()).toEqual([["RST_STREAM", ErrorCode.FRAME_SIZE_ERROR]]);
     } finally {
       sending = false;
       c.destroy();

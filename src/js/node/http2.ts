@@ -5016,6 +5016,9 @@ class ClientHttp2Session extends Http2Session {
     frameError: withStreamFrame(
       (self: ClientHttp2Session, stream: ClientHttp2Stream, frameType: number, errorCode: number) => {
         if (!self || typeof stream !== "object") return;
+        // The refused HEADERS never reached the wire, so the teardown must not write RST_STREAM
+        // for an id the peer considers idle.
+        stream[kNeverAnnounced] = true;
         // Emit the frameError event with the frame type and error code
         process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
       },

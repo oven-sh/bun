@@ -4704,10 +4704,7 @@ describe("request completion (req.complete, socket.parser.incoming)", () => {
       sawComplete = req.complete;
       socket.destroy();
     });
-    const client = rawClient(
-      server,
-      "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
-    );
+    const client = rawClient(server, "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
     const [req] = await once(server, "upgrade");
     expect(sawComplete).toBe(true);
     await new Promise(resolve => process.nextTick(resolve));

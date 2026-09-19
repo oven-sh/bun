@@ -750,7 +750,6 @@ static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char
 }
 
 // Browser-level. newWindow:true is what makes Chrome honour width/height.
-// Without browserContextId the tab lands in the shared default context.
 static Command createTargetCommand(uint32_t id, JSWebView* view)
 {
     Command cmd(id, "Target.createTarget"_s);
@@ -829,11 +828,10 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     switch (entry.method) {
     // --- Attach chain --------------------------------------------------
-    // First navigate() sends Target.createTarget (after
-    // Target.createBrowserContext for a view with its own context); each
-    // response chains into the next command by re-adding to m_pending with
-    // WTFMove'd Weak. The chain carries entry.slot (= Navigate) so errors at
-    // any stage reject the right promise. The promise RESOLVES on
+    // First navigate() sends Target.createTarget; each response chains
+    // into the next command by re-adding to m_pending with WTFMove'd
+    // Weak. The chain carries entry.slot (= Navigate) so errors at any
+    // stage reject the right promise. The promise RESOLVES on
     // Page.loadEventFired — not on any response in this chain.
     case Method::TargetCreateBrowserContext: {
         // {"browserContextId":"<hex>"}
@@ -1830,10 +1828,8 @@ void close(JSWebView* view)
     // continue on a closed view: m_sessions.add re-registers it,
     // PageEnable sends Page.navigate, the tab navigates after dispose.
     // removeIf breaks the chain at the next reply — handleResponse's
-    // find(id)==end() early-return drops it. A Target.createBrowserContext
-    // that reached Chrome stays: its reply is the only copy of the context
-    // id, and handleResponse disposes it. One still queued behind the
-    // WebSocket handshake is never sent, so it goes too.
+    // find(id)==end() early-return drops it.
+    // A sent Target.createBrowserContext stays: handleResponse disposes the context its reply names.
     bool contextRequestSent = t.m_mode != TransportMode::WebSocket || t.m_wsOpen;
     t.m_pending.removeIf([vid = view->m_viewId, contextRequestSent](auto& pair) {
         if (pair.value.viewId != vid) return false;

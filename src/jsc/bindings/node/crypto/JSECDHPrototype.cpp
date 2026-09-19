@@ -298,7 +298,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
     auto keySpan = bufferValue->span();
     ncrypto::BignumPointer privateKey(static_cast<const unsigned char*>(keySpan.data()), keySpan.size());
     if (!privateKey) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to convert buffer to BIGNUM for private key"_s);
+        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to convert Buffer to BN"_s);
         return {};
     }
 

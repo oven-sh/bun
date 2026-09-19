@@ -252,7 +252,7 @@ fn process_jsx_group(
         return None;
     }
 
-    let props = collect_props(func, env, jsx_group)?;
+    let props = collect_props(func, env, context, jsx_group)?;
 
     let outlined_tag = context.generate_globally_unique_identifier_name(None);
     let new_instrs = emit_outlined_jsx(func, env, jsx_group, &props, outlined_tag)?;
@@ -271,6 +271,7 @@ fn process_jsx_group(
 fn collect_props(
     func: &HirFunction,
     env: &mut Environment,
+    context: &mut ProgramContext,
     jsx_group: &[JsxInstrInfo],
 ) -> Option<Vec<OutlinedJsxAttribute>> {
     let mut id_counter = 1u32;
@@ -287,8 +288,9 @@ fn collect_props(
             buf.extend_from_slice(itoa.format(id_counter).as_bytes());
             id_counter += 1;
         }
-        // TS: env.programContext.addNewReference(newName)
-        // We don't have programContext in Rust, but this is needed for unique name tracking
+        if let Ok(name) = core::str::from_utf8(&buf) {
+            context.add_new_reference(name.to_owned());
+        }
         let stored = StoreStr::new(bun_ast::data_store_dupe_str(&buf));
         seen.insert(stored);
         stored

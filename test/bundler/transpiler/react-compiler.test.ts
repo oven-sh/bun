@@ -3356,6 +3356,39 @@ test("react-compiler takes the names of outlined functions from one sequence for
   ]);
 });
 
+// JSX outlining moves the JSX of a callback to a new component, and names the
+// props of that component after the JSX attributes. The port did not record
+// those names, so the component got the name `_temp` next to a prop `_temp`.
+// Codegen keeps one symbol for one name, so the component did not compile and
+// the callback rendered a `_temp` that the output does not declare. JSX
+// outlining is a fixture pragma, which release builds compile out.
+test.skipIf(!isDebug && !isASAN)("react-compiler names an outlined component unlike its props", async () => {
+  using dir = tempDir("react-compiler-outlined-jsx-name", {
+    "entry.jsx": `// @enableJsxOutlining
+      export function Component({ arr }) {
+        const x = useX();
+        return <>{arr.map((i, id) => <Bar key={id} _temp={x}><Baz _temp={i} /></Bar>)}</>;
+      }
+    `,
+  });
+
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    reactCompiler: true,
+    // @ts-expect-error test-only option, not in bun-types
+    reactCompilerParseTestPragmas: true,
+    throw: false,
+  });
+  expect(result.success).toBe(true);
+  const output = await result.outputs[0].text();
+  expect({
+    rendered: output.match(/const T0 = (\w+);/)?.[1],
+    declared: [...output.matchAll(/^function (_temp\d*)\(/gm)].map(match => match[1]),
+  }).toEqual({ rendered: "_temp2", declared: ["_temp2"] });
+});
+
 // RenameVariables reaches a nested function expression through its
 // `visit_value` override. The shared walker for a function body recursed into
 // it a second time, so a function at depth d was walked 2^d times: depth 25

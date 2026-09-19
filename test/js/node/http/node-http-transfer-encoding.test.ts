@@ -1042,6 +1042,42 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
     expect(raw).toEndWith("\r\n\r\nok");
   });
 
+  // The FIN can arrive before the application reads the body. The native body reader is armed
+  // at dispatch (not at the first _read), so the fin is recorded and a later reader still gets
+  // the body and 'end'.
+  test.concurrent("a FIN that arrives before the application reads the body still ends the request", async () => {
+    const events: string[] = [];
+    const ended = Promise.withResolvers<void>();
+    await using server = createServer({ insecureHTTPParser: true }, (req, res) => {
+      events.push(`request ${req.method} ${req.url}`);
+      setImmediate(() => {
+        let body = "";
+        req.on("data", d => (body += d));
+        req.on("end", () => {
+          events.push(`end body=${JSON.stringify(body)}`);
+          res.end("ok");
+          ended.resolve();
+        });
+      });
+    });
+    server.httpAllowHalfOpen = true;
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+      ended.resolve();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    socket.resume();
+    await once(socket, "connect");
+    // Head, body and FIN in one write: the server sees the FIN before the handler's reader exists.
+    socket.end(`POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, gzip\r\n\r\n${rawBody}`);
+    await ended.promise;
+    expect(events).toEqual(["request POST /p", `end body=${JSON.stringify(rawBody)}`]);
+  });
+
   // The message boundary: bytes after the head that spell a whole request are body, never a
   // second request. Before the fix, "chunked, gzip" was framed as no body and these bytes were
   // dispatched as GET /smuggled.

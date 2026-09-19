@@ -327,9 +327,7 @@ function hasServerResponseFinished(self, chunk, callback, fromEnd) {
       if (!destroyed) {
         process.nextTick(emitErrorNt, self, err, callback);
       } else if (!fromEnd && $isCallable(callback)) {
-        // Only write() calls back once the message is destroyed. Node.js's
-        // end() hands write_() no callback, and its onError() returns early.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1086-L1098
+        // Node.js's end() never gives this error to its callback: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1086-L1098
         process.nextTick(callback, err);
       }
 

@@ -49,11 +49,7 @@ test("aborted request body emits 'error' ECONNRESET and res 'close' before req '
   }
 });
 
-// Node.js's end() looks at `finished` before it looks at the socket, so a
-// finished response answers a late end(cb) with ERR_STREAM_ALREADY_FINISHED even
-// after the connection is gone. Once the response is destroyed, only write()
-// reports a write error to its callback: end() hands write_() no callback, and
-// its onError() returns early.
+// The expected values are what Node.js v26.3.0 does (end(), onError() and write_() in lib/_http_outgoing.js).
 describe("a late end() or write() answers its callback like Node.js", () => {
   type Callback = (err?: NodeJS.ErrnoException | null) => void;
   type Observed = { callbacks: string[]; errorEvents: (string | undefined)[]; returned: unknown };
@@ -65,8 +61,6 @@ describe("a late end() or write() answers its callback like Node.js", () => {
   };
   type LateCall = keyof typeof lateCalls;
 
-  // Makes the late call and resolves with what it saw. A deferred callback is
-  // queued with process.nextTick(), so it has run by the next immediate.
   function observe(res: ServerResponse, call: LateCall) {
     return new Promise<Observed>(resolve => {
       const callbacks: string[] = [];
@@ -75,12 +69,12 @@ describe("a late end() or write() answers its callback like Node.js", () => {
       let sync = true;
       const returned = lateCalls[call](res, err => callbacks.push(`${sync ? "sync" : "async"} ${err?.code}`));
       sync = false;
+      // A deferred callback is queued with process.nextTick(), so it has run by the next immediate.
       setImmediate(resolve, { callbacks, errorEvents, returned: returned === res ? "res" : returned });
     });
   }
 
-  // Serves one GET over a real connection. `respond` answers it and calls `run`
-  // once the response is in the state under test.
+  // `respond` answers one GET and calls `run` once the response is in the state under test.
   function overConnection(
     clientCloses: boolean,
     respond: (req: IncomingMessage, res: ServerResponse, run: () => void) => void,
@@ -105,8 +99,6 @@ describe("a late end() or write() answers its callback like Node.js", () => {
     };
   }
 
-  // Calls `run` once the response and the server side of the connection have
-  // both emitted 'close'.
   function whenConnectionClosed(req: IncomingMessage, res: ServerResponse, run: () => void) {
     let open = 2;
     const closed = () => {
@@ -136,8 +128,7 @@ describe("a late end() or write() answers its callback like Node.js", () => {
       }),
       expected: { "end(cb)": alreadyFinished, "end(chunk, cb)": dropped, "write(chunk, cb)": writeAfterEnd },
     },
-    // The response has not emitted 'close' yet, so it is not destroyed and a
-    // write after end also reaches 'error'.
+    // Not destroyed yet (no 'close'), so a write after end also reaches 'error'.
     "finished, the handler destroyed the socket in the same tick": {
       reach: overConnection(false, (req, res, run) => {
         res.end("ok");

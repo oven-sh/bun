@@ -3105,8 +3105,7 @@ ServerResponse.prototype.writeContinue = function (cb) {
 // But we don't want it for the fetch() response version.
 ServerResponse.prototype.end = function (chunk, encoding, callback) {
   const handle = this[kHandle];
-  // Node.js's end() answers a finished response before it reaches the socket.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1086-L1108
+  // Node.js's end() answers a finished response first: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1086-L1108
   if (handle?.aborted && !this.finished) {
     return this;
   }

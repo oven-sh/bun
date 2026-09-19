@@ -2949,6 +2949,20 @@ describe("bun update <name> semantics", () => {
       },
     );
 
+    it.concurrent("bun add -g <package> links only that package when it installs another one again", async () => {
+      const { globalDir, globalBinDir, runGlobal } = await globalRepo(BINS_PINNED, BINS_PINNED);
+      await Promise.all([
+        rm(join(globalDir, "node_modules", "bin-change-dir"), { recursive: true, force: true }),
+        ...binFiles("bin-change-dir").map(name => rm(join(globalBinDir, name))),
+      ]);
+
+      const { stderr, exitCode } = await runGlobal("add", "map-bin-multiple@1.0.2");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await installedVersion(globalDir, "bin-change-dir")).toBe("1.0.0");
+      expect(await readdirSorted(globalBinDir)).toEqual(binFiles("map-bin", "map_bin"));
+    });
+
     // map-bin and map-bin-multiple declare the same two bins. The package the user named last owns them.
     it.concurrent("bun update -g leaves the bins of a package it did not update alone", async () => {
       const { globalBinDir, runGlobal } = await globalRepo(

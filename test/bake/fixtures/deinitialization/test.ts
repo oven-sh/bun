@@ -224,23 +224,16 @@ test("baseline: stopped server wrapper collects", () => {
 });
 
 afterAll(async () => {
-  // Collect until no GC root reaches a JS Server wrapper, so the native NewServer
-  // boxes are freed, not just the embedded dev servers. The turn after each
-  // collection runs the deferred deinit tasks of what it finalized. A leak stays
-  // through every round, so the rounds are bounded by time as well.
-  let retained: string[] = [];
-  const start = performance.now();
-  for (let round = 0; round < 30 && performance.now() - start < 2000; round++) {
-    Bun.gc(true);
-    fullGC();
-    // One live cell is the prototype alone. More is a wrapper or, on libuv
-    // platforms, a second prototype: the snapshot tells which.
-    retained = liveServerWrappers() <= 1 ? [] : retainedServerWrappers();
-    await new Promise(resolve => setImmediate(resolve));
-    if (retained.length === 0) break;
-  }
-  expect(retained).toEqual([]);
-  // The snapshot takes about 3 s on a debug ASAN build, and the default is 5 s.
+  // Collect until only the prototype is left. The turn after each collection
+  // runs the deferred deinit tasks of what it finalized. Then assert nothing
+  // still holds a JS Server wrapper, so the native NewServer boxes are freed,
+  // not just the embedded dev servers.
+  await drainServerWrappers(1);
+  // One live cell is the prototype alone. More is a wrapper or, on libuv
+  // platforms, a second prototype: the snapshot tells which.
+  expect(liveServerWrappers() <= 1 ? [] : retainedServerWrappers()).toEqual([]);
+  // A wrapper that stays costs all 30 rounds and one snapshot. That is 6 to 12 s
+  // on a debug ASAN build, and the default is 5 s.
 }, 30_000);
 
 for (const { closeActiveConnections, sendAnyRequests, websocket } of cases) {

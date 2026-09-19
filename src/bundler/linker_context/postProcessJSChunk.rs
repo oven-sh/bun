@@ -166,7 +166,7 @@ pub(crate) fn post_process_js_chunk(
         ModuleInfo::create(loader.is_type_script())
     });
 
-    // SAFETY: worker.arena is set in Worker::init() before any task runs.
+    // `worker.arena` is set in `Worker::create()`, which `Worker::get` runs first.
     let worker_arena: &Arena = worker.arena();
 
     // An ESM entry point already ends in an `export { }` clause

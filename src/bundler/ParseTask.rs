@@ -358,7 +358,13 @@ unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // provenance covers the full `ParseTask` and the `&mut` is unique per the
     // CONCURRENCY note above.
     let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, io_task, task) };
+    // Captured before the run: after it, a worker thread may own `*parse_task`.
+    // SAFETY: teardown waits for the count this callback holds
+    // (`ThreadPool::wait_for_io_tasks`), so the bundle is live until `finish_io_task`.
+    let pool: *const crate::ThreadPool = unsafe { parse_task.ctx() }.graph.pool();
     parse_worker::run_from_thread_pool(parse_task);
+    // SAFETY: `pool` scheduled this task; this is the last access to the bundle.
+    unsafe { crate::ThreadPool::finish_io_task(pool) };
 }
 
 // CONCURRENCY: see `io_task_callback` — same task, different intrusive field.

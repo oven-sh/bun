@@ -31,6 +31,9 @@ test/js/bun/resolve/xml/xml-utf16be-bom.xml -text
 test/js/bun/resolve/xml/xml-utf8-bom.xml -text
 test/js/bun/resolve/xml/xml-latin1.xml -text
 
+# A C fixture whose CRLF line endings and form feeds are what it tests.
+test/js/bun/ffi/bir/fixtures/preprocessor/source-text-corner-cases-1.c -text
+
 .vscode/launch.json linguist-generated
 fixture.*.c linguist-generated
 *-fixture* linguist-generated

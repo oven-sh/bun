@@ -1,0 +1,5 @@
+f_bool f_char f_double f_enum f_float f_i16 f_i32 f_i64 f_i8 f_ptr f_u16 f_u32 f_u64 f_u8 f_void uses_hidden
+-56 255 4464 65535 5 4294967295
+-2n 18446744073709551615n bigint
+0.75 16777216 true false undefined
+1 null 42 65

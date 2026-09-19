@@ -1,0 +1,5 @@
+[
+["memcmp(p1, \"0123456789abcdef\", 16)", 0],
+["memcmp(p2, \"ghijklmnopqrstuv\", 16)", 0],
+["memcmp(p3, \"wxy\", 3)", 0]
+]

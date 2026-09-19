@@ -2,7 +2,23 @@ import { describe, expect, test } from "bun:test";
 
 // `Loader::from_string` accepts these names (they are real bundler loaders) but
 // `Bun.Transpiler` cannot produce source text for them.
-const unsupported = ["file", "napi", "node", "base64", "dataurl", "sh", "sqlite", "sqlite_embedded", "html"] as const;
+// A name is matched whatever its case, and with or without the dot of a file extension.
+const unsupported = [
+  "file",
+  "napi",
+  "node",
+  "base64",
+  "dataurl",
+  "sh",
+  "sqlite",
+  "sqlite_embedded",
+  "html",
+  "c",
+  "C",
+  ".c",
+  "FILE",
+  ".node",
+] as const;
 
 describe("Bun.Transpiler rejects non-transpilable loaders", () => {
   const t = new Bun.Transpiler({ loader: "ts" });
@@ -18,6 +34,10 @@ describe("Bun.Transpiler rejects non-transpilable loaders", () => {
 
     test("scan", () => {
       expect(() => t.scan("let x = 1", loader as any)).toThrow(TypeError);
+    });
+
+    test("scanImports", () => {
+      expect(() => t.scanImports("let x = 1", loader as any)).toThrow(TypeError);
     });
   });
 

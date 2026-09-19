@@ -1,0 +1,9 @@
+64-bit integer vectors: 11088 checks, 0 wrong
+with widening and narrowing: 15120 checks, 0 wrong
+with saturation: 15504 checks, 0 wrong
+with one 64-bit lane: 16560 checks, 0 wrong
+with tables, reversals and reinterpretation: 17064 checks, 0 wrong
+with floating point: 17736 checks, 0 wrong
+with register shifts, saturating multiplies, lanes and structures of three: 19464 checks, 0 wrong
+with the architecture extensions: 19680 checks, 0 wrong
+with calls: 19685 checks, 0 wrong

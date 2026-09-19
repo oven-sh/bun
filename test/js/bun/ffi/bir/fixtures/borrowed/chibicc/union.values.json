@@ -1,0 +1,15 @@
+[
+["({ union { int a; char b[6]; } x; sizeof(x); })", 8],
+["({ union { int a; char b[4]; } x; x.a = 515; x.b[0]; })", 3],
+["({ union { int a; char b[4]; } x; x.a = 515; x.b[1]; })", 2],
+["({ union { int a; char b[4]; } x; x.a = 515; x.b[2]; })", 0],
+["({ union { int a; char b[4]; } x; x.a = 515; x.b[3]; })", 0],
+["({ union {int a,b;} x,y; x.a=3; y.a=5; y=x; y.a; })", 3],
+["({ union {struct {int a,b;} c;} x,y; x.c.b=3; y.c.b=5; y=x; y.c.b; })", 3],
+["({ union { struct { unsigned char a,b,c,d; }; long e; } x; x.e=0xdeadbeef; x.a; })", 239],
+["({ union { struct { unsigned char a,b,c,d; }; long e; } x; x.e=0xdeadbeef; x.b; })", 190],
+["({ union { struct { unsigned char a,b,c,d; }; long e; } x; x.e=0xdeadbeef; x.c; })", 173],
+["({ union { struct { unsigned char a,b,c,d; }; long e; } x; x.e=0xdeadbeef; x.d; })", 222],
+["({struct { union { int a,b; }; union { int c,d; }; } x; x.a=3; x.b; })", 3],
+["({struct { union { int a,b; }; union { int c,d; }; } x; x.d=5; x.c; })", 5]
+]

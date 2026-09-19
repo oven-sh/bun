@@ -1,0 +1,19 @@
+[
+["KIND(__builtin_huge_val()) == 'd' && KIND(__builtin_huge_valf()) == 'f' && KIND(__builtin_huge_vall()) == 'l'", 1],
+["KIND(__builtin_inf()) == 'd' && KIND(__builtin_inff()) == 'f' && KIND(__builtin_infl()) == 'l'", 1],
+["KIND(__builtin_nan(\"\")) == 'd' && KIND(__builtin_nanf(\"\")) == 'f' && KIND(__builtin_nanl(\"\")) == 'l'", 1],
+["sizeof(__builtin_huge_val()) == sizeof(double) && sizeof(__builtin_huge_valf()) == sizeof(float) && sizeof(__builtin_huge_vall()) == sizeof(long double)", 1],
+["sizeof(__builtin_inf()) == sizeof(double) && sizeof(__builtin_nan(\"\")) == sizeof(double) && sizeof(__builtin_nanl(\"\")) == sizeof(long double)", 1],
+["formatted(text, __builtin_huge_val(), -__builtin_huge_val()) == 8 && strcmp(text, \"inf -inf\") == 0", 1],
+["sprintf(text, \"%g %g\", __builtin_huge_val(), -__builtin_huge_val()) == 8 && strcmp(text, \"inf -inf\") == 0", 1],
+["formatted(text, 1.5, -__builtin_inf()) == 8 && strcmp(text, \"1.5 -inf\") == 0", 1],
+["sprintf(text, \"%g %Lg %g\", __builtin_huge_valf(), __builtin_huge_vall(), __builtin_inff()) == 11 && strcmp(text, \"inf inf inf\") == 0", 1],
+["sprintf(text, \"%Lg\", -__builtin_infl()) == 4 && strcmp(text, \"-inf\") == 0", 1],
+["takes_double(__builtin_huge_val()) == HUGE_VAL && takes_double(__builtin_huge_valf()) == HUGE_VAL && takes_double(-__builtin_inf()) == -HUGE_VAL", 1],
+["__builtin_huge_val() == HUGE_VAL && __builtin_huge_valf() == HUGE_VALF && __builtin_huge_vall() == HUGE_VALL && __builtin_inf() == INFINITY", 1],
+["__builtin_huge_val() > 1e308 && __builtin_huge_valf() > 3e38f && __builtin_huge_vall() > 1e308L && -__builtin_inf() < -1e308", 1],
+["__builtin_nan(\"\") != __builtin_nan(\"\") && __builtin_nanf(\"\") != __builtin_nanf(\"\") && __builtin_nanl(\"\") != __builtin_nanl(\"\")", 1],
+["isnan(__builtin_nan(\"\")) && isnan(__builtin_nanf(\"\")) && isnan(__builtin_nanl(\"\")) && isinf(__builtin_huge_vall()) && !signbit(__builtin_nan(\"\"))", 1],
+["static_huge == HUGE_VAL && static_hugef == HUGE_VALF && static_hugel == HUGE_VALL && static_negative == -HUGE_VAL && static_nan != static_nan", 1],
+["d == f && d == l && d + 1 == d && 1 / d == 0 && d - d != d - d", 1]
+]

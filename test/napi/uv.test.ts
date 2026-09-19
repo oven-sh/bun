@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { constants } from "node:os";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
-import source from "./uv-stub-stuff/uv_impl.c";
+import source from "./uv-stub-stuff/uv_impl.c" with { type: "file" };
 
 const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
 

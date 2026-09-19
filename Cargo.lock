@@ -251,6 +251,7 @@ dependencies = [
  "bun_analytics",
  "bun_ast",
  "bun_base64",
+ "bun_cc",
  "bun_collections",
  "bun_core",
  "bun_css",
@@ -336,6 +337,17 @@ dependencies = [
  "bun_opaque",
  "libc",
  "strum",
+]
+
+[[package]]
+name = "bun_cc"
+version = "0.0.0"
+dependencies = [
+ "bun_ast",
+ "bun_core",
+ "bun_paths",
+ "bun_sys",
+ "bun_zstd",
 ]
 
 [[package]]
@@ -1241,6 +1253,7 @@ dependencies = [
  "bun_bundler_jsc",
  "bun_bunfig",
  "bun_cares_sys",
+ "bun_cc",
  "bun_clap",
  "bun_collections",
  "bun_core",

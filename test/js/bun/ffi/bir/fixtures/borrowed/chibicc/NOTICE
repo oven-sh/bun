@@ -1,0 +1,240 @@
+These files come from chibicc, a small C compiler by Rui Ueyama:
+  https://github.com/rui314/chibicc  at commit 90d1f7f199cc55b13c7fdb5839d1409806633fdb
+  test/*.c, test/include1.h to include4.h, test/test.h and test/common
+chibicc is under the MIT licence; its text is in LICENSE next to this file.
+
+What was changed, in every file:
+- `#include "test.h"` became the standard headers test.h stands for, and the helper translation unit every test
+  is linked with upstream (test/common) is appended to the file, so that one file is one program.
+- ASSERT prints `<expression> => <value>` for every check, as upstream's does, but counts a failed check and goes on
+  instead of ending the program, and the program ends by printing `N checks, 0 wrong` where upstream prints `OK`.
+- Next to each file, `<name>.values.json` lists every ASSERT of the file as `[expression, expected value]`: the first
+  arguments upstream wrote, evaluated by GCC where they are not plain numbers. The test compares what the program
+  printed with that list, value by value.
+- test/function.c is kept as two translation units (../projects/chibicc-function/main.c and common.c), because it
+  declares functions of common with other return types than they are defined with, on purpose. Its own
+  declarations of `va_list`, `sprintf` and `vsprintf`, and its use of chibicc's `__va_area__`, became <stdarg.h>;
+  the call of a plain `inline` function that has no external definition anywhere was removed.
+- test/atomic.c and test/tls.c: the thread start functions return `void *`, as pthread_create requires, not `int`.
+- test/varargs.c: `va_end(buf)`, a slip for the `va_list`, is `va_end(ap2)`.
+- test/macro.c: `#include M13 >` with M13 defined as `< include4.h` needs the test directory on the search path for
+  system headers, which a fixture run as `bun file.c` has no way to ask for; that inclusion was removed.
+
+Left out altogether:
+- test/line.c asserts that the line after `#line 500` is line 501, which is chibicc's own numbering: for GCC, Clang
+  and the standard it is line 500.
+- test/compat.c and test/const.c declare almost everything with implicit `int`, which this compiler refuses.
+- test/asm.c leaves its functions with a `ret` written in assembly, which relies on chibicc's prologue.
+- test/pragma-once.c includes itself as "test/pragma-once.c", which depends on the directory the compiler is run in.
+- test/driver.sh and test/thirdparty test chibicc's command line.
+
+Removed line by line, because GCC or Clang (both were asked, with -std=gnu11) refuses the line or computes another
+value than the one asserted: most of these depend on where chibicc puts locals on its stack, on its accepting
+constants like `100f` or duplicate specifiers, on line numbers and paths of the upstream layout, or on assigning
+pointers of incompatible types, which GCC and Clang now refuse.
+
+alignof.c
+  ASSERT(32, ({ _Alignas(32) int *x, *y; ((char *)&y)-((char *)&x); }));
+      clang computes -32, not 32
+  ASSERT(32, ({ _Alignas(32) char x, y; &y-&x; }));
+      clang computes -32, not 32
+  ASSERT(8, ({ _Alignas(long) char x, y; &y-&x; }));
+      clang computes -8, not 8
+  ASSERT(1, ({ _Alignas(char) char x, y; &y-&x; }));
+      clang computes -1, not 1
+
+alloca.c
+  ASSERT(16, p3 - p4);
+      gcc computes 32, not 16
+  ASSERT(16, p1 - p2);
+      gcc computes 32, not 16
+  ASSERT(16, p2 - p3);
+      clang computes 32, not 16
+
+atomic.c
+  ASSERT(3, ({ int x=3; atomic_exchange(&x, 5); }));
+      clang rejects it: address argument to atomic operation must be a pointer to _Atomic type ('int *' invalid)
+  ASSERT(5, ({ int x=3; atomic_exchange(&x, 5); x; }));
+      clang rejects it: address argument to atomic operation must be a pointer to _Atomic type ('int *' invalid)
+
+bitfield.c
+  ASSERT(4, sizeof(struct {int a:3; int c:1; int c:5;}));
+      gcc rejects it: duplicate member 'c'
+
+builtin.c
+  ASSERT(1, __builtin_types_compatible_p(double (*)(...), double (*)(...)));
+      clang rejects it: ISO C requires a named parameter before '...'
+  ASSERT(0, __builtin_types_compatible_p(double (*)(...), double (*)(void)));
+      clang rejects it: ISO C requires a named parameter before '...'
+
+constexpr.c
+  double g41 = 0.0 ? 55 : (0, 1 + 1 * 5.0 / 2 * (double)2 * (int)2.0);
+      gcc rejects it: initializer element is not constant
+  ASSERT(8, ({ char x[(int*)0+2]; sizeof(x); }));
+      gcc rejects it: size of array 'x' has non-integer type
+  ASSERT(12, ({ char x[(int*)16-1]; sizeof(x); }));
+      gcc rejects it: size of array 'x' has non-integer type
+  ASSERT(1, g41==11);
+      gcc rejects it: 'g41' undeclared (first use in this function); did you mean 'g40'?
+
+control.c
+  ASSERT(5, ({ int i=2, j=3; (i=5,j)=6; i; }));
+      gcc rejects it: lvalue required as left operand of assignment
+  ASSERT(6, ({ int i=2, j=3; (i=5,j)=6; j; }));
+      gcc rejects it: lvalue required as left operand of assignment
+  ASSERT(3, ({ static void *p[]={&&v41,&&v42,&&v43}; int i=0; goto *p[0]; v41:i++; v42:i++; v43:i++; i; }));
+      clang rejects it: cannot jump from this indirect goto statement to one of its possible targets
+  ASSERT(2, ({ static void *p[]={&&v52,&&v52,&&v53}; int i=0; goto *p[1]; v51:i++; v52:i++; v53:i++; i; }));
+      clang rejects it: cannot jump from this indirect goto statement to one of its possible targets
+  ASSERT(1, ({ static void *p[]={&&v62,&&v62,&&v63}; int i=0; goto *p[2]; v61:i++; v62:i++; v63:i++; i; }));
+      clang rejects it: cannot jump from this indirect goto statement to one of its possible targets
+  ASSERT(2, ({ void *p = &&v22; int i=0; goto *p; v21:i++; v22:i++; v23:i++; i; }));
+      clang rejects it: cannot jump from this indirect goto statement to one of its possible targets
+  ASSERT(3, ({ void *p = &&v11; int i=0; goto *p; v11:i++; v12:i++; v13:i++; i; }));
+      clang rejects it: cannot jump from this indirect goto statement to one of its possible targets
+
+float.c
+  ASSERT(-2147483648, (double)(unsigned long)(long)-1);
+      clang computes 35, not -2147483648
+
+generic.c
+  ASSERT(4, _Generic(100f, double: 1, int *: 2, int: 3, float: 4));
+      gcc rejects it: invalid suffix 'f' on integer constant
+
+initializer.c
+  char *g22 = &g17-3;
+      gcc rejects it: initialization of 'char *' from incompatible pointer type 'char (*)[7]' [-Wincompatible-pointer-type
+  int *g28 = &g11[1].a;
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'char *' [-Wincompatible-pointer-types]
+  ASSERT(0, strcmp(g22+3, "foobar"));
+      gcc rejects it: 'g22' undeclared (first use in this function); did you mean 'g29'?
+  ASSERT(3, *g28);
+      gcc rejects it: 'g28' undeclared (first use in this function); did you mean 'g29'?
+  ASSERT(3, ({ int x[2][3]={1,2,3,4,5,6,[0]={7,8},9,10}; x[0][2]; }));
+      gcc computes 0, not 3
+  ASSERT(7, sizeof(g66));
+      gcc computes 1, not 7
+  ASSERT(4, sizeof(g65));
+      gcc computes 1, not 4
+  ASSERT(7, sizeof(g66));
+      gcc computes 1, not 7
+  ASSERT(4, sizeof(g65));
+      gcc computes 1, not 4
+  ASSERT(0, ({ typedef struct { int a,b; } T; T x={1,2}; T y[]={x, [0].b=3}; y[0].a; }));
+      clang computes 1, not 0
+
+literal.c
+  ASSERT(4, sizeof(8f));
+      gcc rejects it: invalid suffix 'f' on integer constant
+  ASSERT(-1, 18446744073709551615>>63);
+      gcc computes 1, not -1
+  ASSERT(8, sizeof(18446744073709551615));
+      gcc computes 16, not 8
+
+macro.c
+  ASSERT(0, strcmp(__BASE_FILE__, "test/macro.c"));
+      gcc computes -1, not 0
+  ASSERT(0, strcmp(include1_filename, "test/include1.h"));
+      gcc computes -69, not 0
+  ASSERT(7, main_line2);
+      gcc computes 19, not 7
+  ASSERT(5, main_line1);
+      gcc computes 17, not 5
+  ASSERT(0, strcmp(main_filename1, "test/macro.c"));
+      gcc computes -69, not 0
+
+pointer.c
+  ASSERT(3, ({ int x[2]; int *y=&x; *y=3; *x; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[2]' [-Wincompatible-pointer-types]
+  ASSERT(0, ({ int x[2][3]; int *y=x; *y=0; **x; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(1, ({ int x[2][3]; int *y=x; *(y+1)=1; *(*x+1); }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(2, ({ int x[2][3]; int *y=x; *(y+2)=2; *(*x+2); }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(3, ({ int x[2][3]; int *y=x; *(y+3)=3; **(x+1); }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(4, ({ int x[2][3]; int *y=x; *(y+4)=4; *(*(x+1)+1); }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(5, ({ int x[2][3]; int *y=x; *(y+5)=5; *(*(x+1)+2); }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(0, ({ int x[2][3]; int *y=x; y[0]=0; x[0][0]; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(1, ({ int x[2][3]; int *y=x; y[1]=1; x[0][1]; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(2, ({ int x[2][3]; int *y=x; y[2]=2; x[0][2]; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(3, ({ int x[2][3]; int *y=x; y[3]=3; x[1][0]; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(4, ({ int x[2][3]; int *y=x; y[4]=4; x[1][1]; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(5, ({ int x[2][3]; int *y=x; y[5]=5; x[1][2]; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[3]' [-Wincompatible-pointer-types]
+  ASSERT(7, ({ int x=3; int y=5; *(&y-2+1)=7; x; }));
+      gcc computes 3, not 7
+  ASSERT(7, ({ int x=3; int y=5; *(&x+1)=7; y; }));
+      gcc computes 5, not 7
+  ASSERT(5, ({ int x=3; int y=5; *(&x-(-1)); }));
+      gcc computes 32767, not 5
+  ASSERT(3, ({ int x=3; int y=5; *(&y-1); }));
+      gcc computes 0, not 3
+  ASSERT(5, ({ int x=3; int y=5; *(&x+1); }));
+      gcc computes 32767, not 5
+
+sizeof.c
+  ASSERT(1, sizeof(signed char signed));
+      gcc rejects it: duplicate 'signed'
+  ASSERT(1, sizeof(unsigned char unsigned));
+      gcc rejects it: duplicate 'unsigned'
+  ASSERT(4, sizeof(signed signed));
+      gcc rejects it: duplicate 'signed'
+  ASSERT(4, sizeof(unsigned unsigned));
+      gcc rejects it: duplicate 'unsigned'
+  ASSERT(4, sizeof(1f+2));
+      gcc rejects it: invalid suffix 'f' on integer constant
+  ASSERT(4, sizeof(1f-2));
+      gcc rejects it: invalid suffix 'f' on integer constant
+  ASSERT(4, sizeof(1f*2));
+      gcc rejects it: invalid suffix 'f' on integer constant
+  ASSERT(4, sizeof(1f/2));
+      gcc rejects it: invalid suffix 'f' on integer constant
+
+struct.c
+  ASSERT(0, ({ struct {char a; char b;} x[3]; char *p=x; p[0]=0; x[0].a; }));
+      gcc rejects it: initialization of 'char *' from incompatible pointer type 'struct <anonymous> *' [-Wincompatible-poi
+  ASSERT(1, ({ struct {char a; char b;} x[3]; char *p=x; p[1]=1; x[0].b; }));
+      gcc rejects it: initialization of 'char *' from incompatible pointer type 'struct <anonymous> *' [-Wincompatible-poi
+  ASSERT(2, ({ struct {char a; char b;} x[3]; char *p=x; p[2]=2; x[1].a; }));
+      gcc rejects it: initialization of 'char *' from incompatible pointer type 'struct <anonymous> *' [-Wincompatible-poi
+  ASSERT(3, ({ struct {char a; char b;} x[3]; char *p=x; p[3]=3; x[1].b; }));
+      gcc rejects it: initialization of 'char *' from incompatible pointer type 'struct <anonymous> *' [-Wincompatible-poi
+  ASSERT(6, ({ struct {char a[3]; char b[5];} x; char *p=&x; x.a[0]=6; p[0]; }));
+      gcc rejects it: initialization of 'char *' from incompatible pointer type 'struct <anonymous> *' [-Wincompatible-poi
+  ASSERT(7, ({ struct {char a[3]; char b[5];} x; char *p=&x; x.b[0]=7; p[3]; }));
+      gcc rejects it: initialization of 'char *' from incompatible pointer type 'struct <anonymous> *' [-Wincompatible-poi
+
+typedef.c
+  ASSERT(1, ({ typedef int t; t t=1; t; }));
+      gcc rejects it: 't' redeclared as different kind of symbol
+  ASSERT(4, ({ typedef t; t x; sizeof(x); }));
+      gcc rejects it: type defaults to 'int' in declaration of 't' [-Wimplicit-int]
+
+unicode.c
+  ASSERT(62307, u'🍣');
+      gcc computes 57187, not 62307
+
+variable.c
+  ASSERT(7, ({ int x; int y; char z; char *a=&y; char *b=&z; b-a; }));
+      gcc rejects it: initialization of 'char *' from incompatible pointer type 'int *' [-Wincompatible-pointer-types]
+  ASSERT(1, ({ int x; char y; int z; char *a=&y; char *b=&z; b-a; }));
+      gcc rejects it: initialization of 'char *' from incompatible pointer type 'int *' [-Wincompatible-pointer-types]
+  ASSERT(4, ({ char x[3]; char (*y)[3]=x; y[0][0]=4; y[0][0]; }));
+      gcc rejects it: initialization of 'char (*)[3]' from incompatible pointer type 'char *' [-Wincompatible-pointer-type
+
+vla.c
+  ASSERT(0, ({ int n=10; int x[n+1][n+6]; int *p=x; for (int i = 0; i<sizeof(x)/4; i++) p[i]=i; x[0][0]; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[n + 6]' [-Wincompatible-pointer-ty
+  ASSERT(5, ({ int n=10; int x[n+1][n+6]; int *p=x; for (int i = 0; i<sizeof(x)/4; i++) p[i]=i; x[0][5]; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[n + 6]' [-Wincompatible-pointer-ty
+  ASSERT(5*16+2, ({ int n=10; int x[n+1][n+6]; int *p=x; for (int i = 0; i<sizeof(x)/4; i++) p[i]=i; x[5][2]; }));
+      gcc rejects it: initialization of 'int *' from incompatible pointer type 'int (*)[n + 6]' [-Wincompatible-pointer-ty

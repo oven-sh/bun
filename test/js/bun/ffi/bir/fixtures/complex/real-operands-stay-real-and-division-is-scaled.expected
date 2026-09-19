@@ -1,0 +1,42 @@
+z / big: 1 1
+fz / fbig: 1 1
+tiny / small: 1 3
+(inf + 1i) * 2: inf 2
+2 * (inf + 1i): inf 2
+(1 + 1i) / 0: inf inf
+w / w: 1 0
+fw / fw: 1 0
+unit / w: 1e-300 0
+w / unit: 1e+300 0
+(1 + 2i) / steep: 2e-300 -1e-300
+steep / (1 + 2i): 4e+299 2e+299
+2 / (0 + 2i): 0 -1
+2f / (0 + 2i): 0 -1
+z + big: 2e+200 1e+200
+big + z: 2e+200 1e+200
+z - big: 0 1e+200
+big - z: 0 -1e+200
+(0 - 0i) + 0: 0 -0
+-0 - (0 + 0i): -0 -0
+z * small: 1 1
+small * z: 1 1
+c *= 2: 6 8
+c /= 2: 3 4
+c += 2: 5 4
+c -= 2: 3 4
+c *= 1 + 1i: -1 7
+c /= 1 + 1i: 3 4
+fc *= 2.0: 6 8
+fc /= 2.0f: 3 4
+fc /= 1 + 1i: 3.5 0.5
+c * n: 9 12
+n / c: 0.36 -0.48
+1 1 0 1
+static (1e200 + 1e200i) / 1e200: 1 1
+static w / w: 1 0
+static tiny / small: 1 3
+static (2 + 3i) * 1e200: 2e+200 3e+200
+static 1 - (2 + 3i): -1 -3
+static 1 / 2i: 0 -0.5
+static float w / w: 1 0
+static (1 + 2i) / steep: 2e-300 -1e-300

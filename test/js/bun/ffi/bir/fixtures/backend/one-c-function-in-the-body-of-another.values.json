@@ -1,0 +1,15 @@
+[
+["calls_them_all(10) == (21 + 32 + 53 + 74) + (11 + 100 - 10 + 3)", 1],
+["factorial(10) == 3628800 && fibonacci(20) == 6765 && is_even(1000) && is_odd(999) && !is_odd(1000)", 1],
+["loops_over_stack_takers(1000000) == expected", 1],
+["returns_twice(3) == (700 + 30 + 2) + (700 + 40 + 2)", 1],
+["adds_up(5, 1, 2.5, 3, 4.5, 5) == 1 + 2 + 3 + 4 + 5 && adds_up(0) == 0", 1],
+["counts_its_calls() == 1 && counts_its_calls() == 2 && counts_its_calls() == 3", 1],
+["counts_its_calls_inlined() == 1 && counts_its_calls_inlined() == 2 && counts_its_calls_inlined() == 3", 1],
+["w.a == 30 && w.b == 20 && w.c == 30 && w.d == 10.0 && w.tag[0] == 'X' && w.tag[1] == 'b' && reads_a_structure(w) == 30 + 20 + 30 + 10 + 'X'", 1],
+["reads_a_structure(makes_a_structure(4)) == 4 + 8 + 12 + 2 + 'a'", 1],
+["addressed(1) == 1001 && through(2) == 1002 && through == addressed && (through)(3) == addressed(3)", 1],
+["hides(41) == 42", 1],
+["chain_1(5) == by_hand + 20", 1],
+["enormous(12345) == enormous_not_inlined(12345) && enormous(1) == enormous_not_inlined(1)", 1]
+]

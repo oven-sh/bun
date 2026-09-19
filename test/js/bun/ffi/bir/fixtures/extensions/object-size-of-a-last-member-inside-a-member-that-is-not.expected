@@ -1,0 +1,13 @@
+gn.in.z                      5 3 5 3
+gn.in.y                      11 6 11 6
+gn.last                      2 2 2 2
+gn.x                         15 4 15 4
+&gn.in.z[1]                  4 2 4 2
+gd.middle.innermost.d        5 5 5 5
+gd.middle.innermost.c        7 2 7 2
+gh.first.middle.innermost.d  16 5 16 5
+gh.second.middle.innermost.d 5 5 5 5
+gu.n.in.z                    22 3 22 3
+several[0].in.z              20 3 20 3
+several[1].last              2 2 2 2
+abc

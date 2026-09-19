@@ -1,0 +1,1320 @@
+s8
+ ffffffffffffffff 1
+  load               ffffffffffffffff -> ffffffffffffffff
+  store              0 -> 1
+  exchange           1 -> ffffffffffffffff
+  fetch_add          ffffffffffffffff -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     ffffffffffffffff -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          ffffffffffffffff -> fffffffffffffffe
+  sub_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_sub     ffffffffffffffff -> fffffffffffffffe
+  sync sub_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_and          ffffffffffffffff -> 1
+  and_fetch          1 -> 1
+  sync fetch_and     ffffffffffffffff -> 1
+  sync and_fetch     1 -> 1
+  fetch_or           ffffffffffffffff -> ffffffffffffffff
+  or_fetch           ffffffffffffffff -> ffffffffffffffff
+  sync fetch_or      ffffffffffffffff -> ffffffffffffffff
+  sync or_fetch      ffffffffffffffff -> ffffffffffffffff
+  fetch_xor          ffffffffffffffff -> fffffffffffffffe
+  xor_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_xor     ffffffffffffffff -> fffffffffffffffe
+  sync xor_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_nand         ffffffffffffffff -> fffffffffffffffe
+  nand_fetch         fffffffffffffffe -> fffffffffffffffe
+  sync fetch_nand    ffffffffffffffff -> fffffffffffffffe
+  sync nand_fetch    fffffffffffffffe -> fffffffffffffffe
+  fetch_min          ffffffffffffffff -> ffffffffffffffff
+  fetch_max          ffffffffffffffff -> 1
+  cas                11 -> 1
+  cas stale          1 -> 1
+  load to            ffffffffffffffff -> ffffffffffffffff
+  store from         0 -> 1
+  exchange through   1 -> ffffffffffffffff
+  cas through        1 -> 1
+  sync bool          1 -> ffffffffffffffff
+  sync bool stale    0 -> ffffffffffffffff
+  sync val           ffffffffffffffff -> 1
+  sync test and set  1 -> ffffffffffffffff
+  sync release       0 -> 0
+ 0 1
+  load               0 -> 0
+  store              0 -> 1
+  exchange           1 -> 0
+  fetch_add          0 -> 1
+  add_fetch          1 -> 1
+  sync fetch_add     0 -> 1
+  sync add_fetch     1 -> 1
+  fetch_sub          0 -> ffffffffffffffff
+  sub_fetch          ffffffffffffffff -> ffffffffffffffff
+  sync fetch_sub     0 -> ffffffffffffffff
+  sync sub_fetch     ffffffffffffffff -> ffffffffffffffff
+  fetch_and          0 -> 0
+  and_fetch          0 -> 0
+  sync fetch_and     0 -> 0
+  sync and_fetch     0 -> 0
+  fetch_or           0 -> 1
+  or_fetch           1 -> 1
+  sync fetch_or      0 -> 1
+  sync or_fetch      1 -> 1
+  fetch_xor          0 -> 1
+  xor_fetch          1 -> 1
+  sync fetch_xor     0 -> 1
+  sync xor_fetch     1 -> 1
+  fetch_nand         0 -> ffffffffffffffff
+  nand_fetch         ffffffffffffffff -> ffffffffffffffff
+  sync fetch_nand    0 -> ffffffffffffffff
+  sync nand_fetch    ffffffffffffffff -> ffffffffffffffff
+  fetch_min          0 -> 0
+  fetch_max          0 -> 1
+  cas                11 -> 1
+  cas stale          11 -> 8
+  load to            0 -> 0
+  store from         0 -> 1
+  exchange through   1 -> 0
+  cas through        1 -> 1
+  sync bool          1 -> 0
+  sync bool stale    0 -> 0
+  sync val           0 -> 1
+  sync test and set  1 -> 0
+  sync release       0 -> 0
+ 7f ffffffffffffff81
+  load               7f -> 7f
+  store              0 -> ffffffffffffff81
+  exchange           ffffffffffffff81 -> 7f
+  fetch_add          7f -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     7f -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          7f -> fffffffffffffffe
+  sub_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_sub     7f -> fffffffffffffffe
+  sync sub_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_and          7f -> 1
+  and_fetch          1 -> 1
+  sync fetch_and     7f -> 1
+  sync and_fetch     1 -> 1
+  fetch_or           7f -> ffffffffffffffff
+  or_fetch           ffffffffffffffff -> ffffffffffffffff
+  sync fetch_or      7f -> ffffffffffffffff
+  sync or_fetch      ffffffffffffffff -> ffffffffffffffff
+  fetch_xor          7f -> fffffffffffffffe
+  xor_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_xor     7f -> fffffffffffffffe
+  sync xor_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_nand         7f -> fffffffffffffffe
+  nand_fetch         fffffffffffffffe -> fffffffffffffffe
+  sync fetch_nand    7f -> fffffffffffffffe
+  sync nand_fetch    fffffffffffffffe -> fffffffffffffffe
+  fetch_min          7f -> ffffffffffffff81
+  fetch_max          7f -> 7f
+  cas                11 -> ffffffffffffff81
+  cas stale          1 -> ffffffffffffff81
+  load to            7f -> 7f
+  store from         0 -> ffffffffffffff81
+  exchange through   ffffffffffffff81 -> 7f
+  cas through        1 -> ffffffffffffff81
+  sync bool          1 -> 7f
+  sync bool stale    0 -> 7f
+  sync val           7f -> ffffffffffffff81
+  sync test and set  ffffffffffffff81 -> 7f
+  sync release       0 -> 0
+ fffffffffffffff0 10
+  load               fffffffffffffff0 -> fffffffffffffff0
+  store              0 -> 10
+  exchange           10 -> fffffffffffffff0
+  fetch_add          fffffffffffffff0 -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     fffffffffffffff0 -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          fffffffffffffff0 -> ffffffffffffffe0
+  sub_fetch          ffffffffffffffe0 -> ffffffffffffffe0
+  sync fetch_sub     fffffffffffffff0 -> ffffffffffffffe0
+  sync sub_fetch     ffffffffffffffe0 -> ffffffffffffffe0
+  fetch_and          fffffffffffffff0 -> 10
+  and_fetch          10 -> 10
+  sync fetch_and     fffffffffffffff0 -> 10
+  sync and_fetch     10 -> 10
+  fetch_or           fffffffffffffff0 -> fffffffffffffff0
+  or_fetch           fffffffffffffff0 -> fffffffffffffff0
+  sync fetch_or      fffffffffffffff0 -> fffffffffffffff0
+  sync or_fetch      fffffffffffffff0 -> fffffffffffffff0
+  fetch_xor          fffffffffffffff0 -> ffffffffffffffe0
+  xor_fetch          ffffffffffffffe0 -> ffffffffffffffe0
+  sync fetch_xor     fffffffffffffff0 -> ffffffffffffffe0
+  sync xor_fetch     ffffffffffffffe0 -> ffffffffffffffe0
+  fetch_nand         fffffffffffffff0 -> ffffffffffffffef
+  nand_fetch         ffffffffffffffef -> ffffffffffffffef
+  sync fetch_nand    fffffffffffffff0 -> ffffffffffffffef
+  sync nand_fetch    ffffffffffffffef -> ffffffffffffffef
+  fetch_min          fffffffffffffff0 -> fffffffffffffff0
+  fetch_max          fffffffffffffff0 -> 10
+  cas                11 -> 10
+  cas stale          1 -> 10
+  load to            fffffffffffffff0 -> fffffffffffffff0
+  store from         0 -> 10
+  exchange through   10 -> fffffffffffffff0
+  cas through        1 -> 10
+  sync bool          1 -> fffffffffffffff0
+  sync bool stale    0 -> fffffffffffffff0
+  sync val           fffffffffffffff0 -> 10
+  sync test and set  10 -> fffffffffffffff0
+  sync release       0 -> 0
+u8
+ ff 1
+  load               ff -> ff
+  store              0 -> 1
+  exchange           1 -> ff
+  fetch_add          ff -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     ff -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          ff -> fe
+  sub_fetch          fe -> fe
+  sync fetch_sub     ff -> fe
+  sync sub_fetch     fe -> fe
+  fetch_and          ff -> 1
+  and_fetch          1 -> 1
+  sync fetch_and     ff -> 1
+  sync and_fetch     1 -> 1
+  fetch_or           ff -> ff
+  or_fetch           ff -> ff
+  sync fetch_or      ff -> ff
+  sync or_fetch      ff -> ff
+  fetch_xor          ff -> fe
+  xor_fetch          fe -> fe
+  sync fetch_xor     ff -> fe
+  sync xor_fetch     fe -> fe
+  fetch_nand         ff -> fe
+  nand_fetch         fe -> fe
+  sync fetch_nand    ff -> fe
+  sync nand_fetch    fe -> fe
+  fetch_min          ff -> 1
+  fetch_max          ff -> ff
+  cas                11 -> 1
+  cas stale          1 -> 1
+  load to            ff -> ff
+  store from         0 -> 1
+  exchange through   1 -> ff
+  cas through        1 -> 1
+  sync bool          1 -> ff
+  sync bool stale    0 -> ff
+  sync val           ff -> 1
+  sync test and set  1 -> ff
+  sync release       0 -> 0
+ 0 1
+  load               0 -> 0
+  store              0 -> 1
+  exchange           1 -> 0
+  fetch_add          0 -> 1
+  add_fetch          1 -> 1
+  sync fetch_add     0 -> 1
+  sync add_fetch     1 -> 1
+  fetch_sub          0 -> ff
+  sub_fetch          ff -> ff
+  sync fetch_sub     0 -> ff
+  sync sub_fetch     ff -> ff
+  fetch_and          0 -> 0
+  and_fetch          0 -> 0
+  sync fetch_and     0 -> 0
+  sync and_fetch     0 -> 0
+  fetch_or           0 -> 1
+  or_fetch           1 -> 1
+  sync fetch_or      0 -> 1
+  sync or_fetch      1 -> 1
+  fetch_xor          0 -> 1
+  xor_fetch          1 -> 1
+  sync fetch_xor     0 -> 1
+  sync xor_fetch     1 -> 1
+  fetch_nand         0 -> ff
+  nand_fetch         ff -> ff
+  sync fetch_nand    0 -> ff
+  sync nand_fetch    ff -> ff
+  fetch_min          0 -> 0
+  fetch_max          0 -> 1
+  cas                11 -> 1
+  cas stale          11 -> 8
+  load to            0 -> 0
+  store from         0 -> 1
+  exchange through   1 -> 0
+  cas through        1 -> 1
+  sync bool          1 -> 0
+  sync bool stale    0 -> 0
+  sync val           0 -> 1
+  sync test and set  1 -> 0
+  sync release       0 -> 0
+ 7f 81
+  load               7f -> 7f
+  store              0 -> 81
+  exchange           81 -> 7f
+  fetch_add          7f -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     7f -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          7f -> fe
+  sub_fetch          fe -> fe
+  sync fetch_sub     7f -> fe
+  sync sub_fetch     fe -> fe
+  fetch_and          7f -> 1
+  and_fetch          1 -> 1
+  sync fetch_and     7f -> 1
+  sync and_fetch     1 -> 1
+  fetch_or           7f -> ff
+  or_fetch           ff -> ff
+  sync fetch_or      7f -> ff
+  sync or_fetch      ff -> ff
+  fetch_xor          7f -> fe
+  xor_fetch          fe -> fe
+  sync fetch_xor     7f -> fe
+  sync xor_fetch     fe -> fe
+  fetch_nand         7f -> fe
+  nand_fetch         fe -> fe
+  sync fetch_nand    7f -> fe
+  sync nand_fetch    fe -> fe
+  fetch_min          7f -> 7f
+  fetch_max          7f -> 81
+  cas                11 -> 81
+  cas stale          1 -> 81
+  load to            7f -> 7f
+  store from         0 -> 81
+  exchange through   81 -> 7f
+  cas through        1 -> 81
+  sync bool          1 -> 7f
+  sync bool stale    0 -> 7f
+  sync val           7f -> 81
+  sync test and set  81 -> 7f
+  sync release       0 -> 0
+ f0 10
+  load               f0 -> f0
+  store              0 -> 10
+  exchange           10 -> f0
+  fetch_add          f0 -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     f0 -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          f0 -> e0
+  sub_fetch          e0 -> e0
+  sync fetch_sub     f0 -> e0
+  sync sub_fetch     e0 -> e0
+  fetch_and          f0 -> 10
+  and_fetch          10 -> 10
+  sync fetch_and     f0 -> 10
+  sync and_fetch     10 -> 10
+  fetch_or           f0 -> f0
+  or_fetch           f0 -> f0
+  sync fetch_or      f0 -> f0
+  sync or_fetch      f0 -> f0
+  fetch_xor          f0 -> e0
+  xor_fetch          e0 -> e0
+  sync fetch_xor     f0 -> e0
+  sync xor_fetch     e0 -> e0
+  fetch_nand         f0 -> ef
+  nand_fetch         ef -> ef
+  sync fetch_nand    f0 -> ef
+  sync nand_fetch    ef -> ef
+  fetch_min          f0 -> 10
+  fetch_max          f0 -> f0
+  cas                11 -> 10
+  cas stale          1 -> 10
+  load to            f0 -> f0
+  store from         0 -> 10
+  exchange through   10 -> f0
+  cas through        1 -> 10
+  sync bool          1 -> f0
+  sync bool stale    0 -> f0
+  sync val           f0 -> 10
+  sync test and set  10 -> f0
+  sync release       0 -> 0
+s16
+ ffffffffffffffff 1
+  load               ffffffffffffffff -> ffffffffffffffff
+  store              0 -> 1
+  exchange           1 -> ffffffffffffffff
+  fetch_add          ffffffffffffffff -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     ffffffffffffffff -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          ffffffffffffffff -> fffffffffffffffe
+  sub_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_sub     ffffffffffffffff -> fffffffffffffffe
+  sync sub_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_and          ffffffffffffffff -> 1
+  and_fetch          1 -> 1
+  sync fetch_and     ffffffffffffffff -> 1
+  sync and_fetch     1 -> 1
+  fetch_or           ffffffffffffffff -> ffffffffffffffff
+  or_fetch           ffffffffffffffff -> ffffffffffffffff
+  sync fetch_or      ffffffffffffffff -> ffffffffffffffff
+  sync or_fetch      ffffffffffffffff -> ffffffffffffffff
+  fetch_xor          ffffffffffffffff -> fffffffffffffffe
+  xor_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_xor     ffffffffffffffff -> fffffffffffffffe
+  sync xor_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_nand         ffffffffffffffff -> fffffffffffffffe
+  nand_fetch         fffffffffffffffe -> fffffffffffffffe
+  sync fetch_nand    ffffffffffffffff -> fffffffffffffffe
+  sync nand_fetch    fffffffffffffffe -> fffffffffffffffe
+  fetch_min          ffffffffffffffff -> ffffffffffffffff
+  fetch_max          ffffffffffffffff -> 1
+  cas                11 -> 1
+  cas stale          1 -> 1
+  load to            ffffffffffffffff -> ffffffffffffffff
+  store from         0 -> 1
+  exchange through   1 -> ffffffffffffffff
+  cas through        1 -> 1
+  sync bool          1 -> ffffffffffffffff
+  sync bool stale    0 -> ffffffffffffffff
+  sync val           ffffffffffffffff -> 1
+  sync test and set  1 -> ffffffffffffffff
+  sync release       0 -> 0
+ 0 1
+  load               0 -> 0
+  store              0 -> 1
+  exchange           1 -> 0
+  fetch_add          0 -> 1
+  add_fetch          1 -> 1
+  sync fetch_add     0 -> 1
+  sync add_fetch     1 -> 1
+  fetch_sub          0 -> ffffffffffffffff
+  sub_fetch          ffffffffffffffff -> ffffffffffffffff
+  sync fetch_sub     0 -> ffffffffffffffff
+  sync sub_fetch     ffffffffffffffff -> ffffffffffffffff
+  fetch_and          0 -> 0
+  and_fetch          0 -> 0
+  sync fetch_and     0 -> 0
+  sync and_fetch     0 -> 0
+  fetch_or           0 -> 1
+  or_fetch           1 -> 1
+  sync fetch_or      0 -> 1
+  sync or_fetch      1 -> 1
+  fetch_xor          0 -> 1
+  xor_fetch          1 -> 1
+  sync fetch_xor     0 -> 1
+  sync xor_fetch     1 -> 1
+  fetch_nand         0 -> ffffffffffffffff
+  nand_fetch         ffffffffffffffff -> ffffffffffffffff
+  sync fetch_nand    0 -> ffffffffffffffff
+  sync nand_fetch    ffffffffffffffff -> ffffffffffffffff
+  fetch_min          0 -> 0
+  fetch_max          0 -> 1
+  cas                11 -> 1
+  cas stale          11 -> 8
+  load to            0 -> 0
+  store from         0 -> 1
+  exchange through   1 -> 0
+  cas through        1 -> 1
+  sync bool          1 -> 0
+  sync bool stale    0 -> 0
+  sync val           0 -> 1
+  sync test and set  1 -> 0
+  sync release       0 -> 0
+ 7f7f 181
+  load               7f7f -> 7f7f
+  store              0 -> 181
+  exchange           181 -> 7f7f
+  fetch_add          7f7f -> ffffffffffff8100
+  add_fetch          ffffffffffff8100 -> ffffffffffff8100
+  sync fetch_add     7f7f -> ffffffffffff8100
+  sync add_fetch     ffffffffffff8100 -> ffffffffffff8100
+  fetch_sub          7f7f -> 7dfe
+  sub_fetch          7dfe -> 7dfe
+  sync fetch_sub     7f7f -> 7dfe
+  sync sub_fetch     7dfe -> 7dfe
+  fetch_and          7f7f -> 101
+  and_fetch          101 -> 101
+  sync fetch_and     7f7f -> 101
+  sync and_fetch     101 -> 101
+  fetch_or           7f7f -> 7fff
+  or_fetch           7fff -> 7fff
+  sync fetch_or      7f7f -> 7fff
+  sync or_fetch      7fff -> 7fff
+  fetch_xor          7f7f -> 7efe
+  xor_fetch          7efe -> 7efe
+  sync fetch_xor     7f7f -> 7efe
+  sync xor_fetch     7efe -> 7efe
+  fetch_nand         7f7f -> fffffffffffffefe
+  nand_fetch         fffffffffffffefe -> fffffffffffffefe
+  sync fetch_nand    7f7f -> fffffffffffffefe
+  sync nand_fetch    fffffffffffffefe -> fffffffffffffefe
+  fetch_min          7f7f -> 181
+  fetch_max          7f7f -> 7f7f
+  cas                11 -> 181
+  cas stale          1 -> 181
+  load to            7f7f -> 7f7f
+  store from         0 -> 181
+  exchange through   181 -> 7f7f
+  cas through        1 -> 181
+  sync bool          1 -> 7f7f
+  sync bool stale    0 -> 7f7f
+  sync val           7f7f -> 181
+  sync test and set  181 -> 7f7f
+  sync release       0 -> 0
+ ffffffffffffdef0 3210
+  load               ffffffffffffdef0 -> ffffffffffffdef0
+  store              0 -> 3210
+  exchange           3210 -> ffffffffffffdef0
+  fetch_add          ffffffffffffdef0 -> 1100
+  add_fetch          1100 -> 1100
+  sync fetch_add     ffffffffffffdef0 -> 1100
+  sync add_fetch     1100 -> 1100
+  fetch_sub          ffffffffffffdef0 -> fffffffffffface0
+  sub_fetch          fffffffffffface0 -> fffffffffffface0
+  sync fetch_sub     ffffffffffffdef0 -> fffffffffffface0
+  sync sub_fetch     fffffffffffface0 -> fffffffffffface0
+  fetch_and          ffffffffffffdef0 -> 1210
+  and_fetch          1210 -> 1210
+  sync fetch_and     ffffffffffffdef0 -> 1210
+  sync and_fetch     1210 -> 1210
+  fetch_or           ffffffffffffdef0 -> fffffffffffffef0
+  or_fetch           fffffffffffffef0 -> fffffffffffffef0
+  sync fetch_or      ffffffffffffdef0 -> fffffffffffffef0
+  sync or_fetch      fffffffffffffef0 -> fffffffffffffef0
+  fetch_xor          ffffffffffffdef0 -> ffffffffffffece0
+  xor_fetch          ffffffffffffece0 -> ffffffffffffece0
+  sync fetch_xor     ffffffffffffdef0 -> ffffffffffffece0
+  sync xor_fetch     ffffffffffffece0 -> ffffffffffffece0
+  fetch_nand         ffffffffffffdef0 -> ffffffffffffedef
+  nand_fetch         ffffffffffffedef -> ffffffffffffedef
+  sync fetch_nand    ffffffffffffdef0 -> ffffffffffffedef
+  sync nand_fetch    ffffffffffffedef -> ffffffffffffedef
+  fetch_min          ffffffffffffdef0 -> ffffffffffffdef0
+  fetch_max          ffffffffffffdef0 -> 3210
+  cas                11 -> 3210
+  cas stale          1 -> 3210
+  load to            ffffffffffffdef0 -> ffffffffffffdef0
+  store from         0 -> 3210
+  exchange through   3210 -> ffffffffffffdef0
+  cas through        1 -> 3210
+  sync bool          1 -> ffffffffffffdef0
+  sync bool stale    0 -> ffffffffffffdef0
+  sync val           ffffffffffffdef0 -> 3210
+  sync test and set  3210 -> ffffffffffffdef0
+  sync release       0 -> 0
+u16
+ ffff 1
+  load               ffff -> ffff
+  store              0 -> 1
+  exchange           1 -> ffff
+  fetch_add          ffff -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     ffff -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          ffff -> fffe
+  sub_fetch          fffe -> fffe
+  sync fetch_sub     ffff -> fffe
+  sync sub_fetch     fffe -> fffe
+  fetch_and          ffff -> 1
+  and_fetch          1 -> 1
+  sync fetch_and     ffff -> 1
+  sync and_fetch     1 -> 1
+  fetch_or           ffff -> ffff
+  or_fetch           ffff -> ffff
+  sync fetch_or      ffff -> ffff
+  sync or_fetch      ffff -> ffff
+  fetch_xor          ffff -> fffe
+  xor_fetch          fffe -> fffe
+  sync fetch_xor     ffff -> fffe
+  sync xor_fetch     fffe -> fffe
+  fetch_nand         ffff -> fffe
+  nand_fetch         fffe -> fffe
+  sync fetch_nand    ffff -> fffe
+  sync nand_fetch    fffe -> fffe
+  fetch_min          ffff -> 1
+  fetch_max          ffff -> ffff
+  cas                11 -> 1
+  cas stale          1 -> 1
+  load to            ffff -> ffff
+  store from         0 -> 1
+  exchange through   1 -> ffff
+  cas through        1 -> 1
+  sync bool          1 -> ffff
+  sync bool stale    0 -> ffff
+  sync val           ffff -> 1
+  sync test and set  1 -> ffff
+  sync release       0 -> 0
+ 0 1
+  load               0 -> 0
+  store              0 -> 1
+  exchange           1 -> 0
+  fetch_add          0 -> 1
+  add_fetch          1 -> 1
+  sync fetch_add     0 -> 1
+  sync add_fetch     1 -> 1
+  fetch_sub          0 -> ffff
+  sub_fetch          ffff -> ffff
+  sync fetch_sub     0 -> ffff
+  sync sub_fetch     ffff -> ffff
+  fetch_and          0 -> 0
+  and_fetch          0 -> 0
+  sync fetch_and     0 -> 0
+  sync and_fetch     0 -> 0
+  fetch_or           0 -> 1
+  or_fetch           1 -> 1
+  sync fetch_or      0 -> 1
+  sync or_fetch      1 -> 1
+  fetch_xor          0 -> 1
+  xor_fetch          1 -> 1
+  sync fetch_xor     0 -> 1
+  sync xor_fetch     1 -> 1
+  fetch_nand         0 -> ffff
+  nand_fetch         ffff -> ffff
+  sync fetch_nand    0 -> ffff
+  sync nand_fetch    ffff -> ffff
+  fetch_min          0 -> 0
+  fetch_max          0 -> 1
+  cas                11 -> 1
+  cas stale          11 -> 8
+  load to            0 -> 0
+  store from         0 -> 1
+  exchange through   1 -> 0
+  cas through        1 -> 1
+  sync bool          1 -> 0
+  sync bool stale    0 -> 0
+  sync val           0 -> 1
+  sync test and set  1 -> 0
+  sync release       0 -> 0
+ 7f7f 181
+  load               7f7f -> 7f7f
+  store              0 -> 181
+  exchange           181 -> 7f7f
+  fetch_add          7f7f -> 8100
+  add_fetch          8100 -> 8100
+  sync fetch_add     7f7f -> 8100
+  sync add_fetch     8100 -> 8100
+  fetch_sub          7f7f -> 7dfe
+  sub_fetch          7dfe -> 7dfe
+  sync fetch_sub     7f7f -> 7dfe
+  sync sub_fetch     7dfe -> 7dfe
+  fetch_and          7f7f -> 101
+  and_fetch          101 -> 101
+  sync fetch_and     7f7f -> 101
+  sync and_fetch     101 -> 101
+  fetch_or           7f7f -> 7fff
+  or_fetch           7fff -> 7fff
+  sync fetch_or      7f7f -> 7fff
+  sync or_fetch      7fff -> 7fff
+  fetch_xor          7f7f -> 7efe
+  xor_fetch          7efe -> 7efe
+  sync fetch_xor     7f7f -> 7efe
+  sync xor_fetch     7efe -> 7efe
+  fetch_nand         7f7f -> fefe
+  nand_fetch         fefe -> fefe
+  sync fetch_nand    7f7f -> fefe
+  sync nand_fetch    fefe -> fefe
+  fetch_min          7f7f -> 181
+  fetch_max          7f7f -> 7f7f
+  cas                11 -> 181
+  cas stale          1 -> 181
+  load to            7f7f -> 7f7f
+  store from         0 -> 181
+  exchange through   181 -> 7f7f
+  cas through        1 -> 181
+  sync bool          1 -> 7f7f
+  sync bool stale    0 -> 7f7f
+  sync val           7f7f -> 181
+  sync test and set  181 -> 7f7f
+  sync release       0 -> 0
+ def0 3210
+  load               def0 -> def0
+  store              0 -> 3210
+  exchange           3210 -> def0
+  fetch_add          def0 -> 1100
+  add_fetch          1100 -> 1100
+  sync fetch_add     def0 -> 1100
+  sync add_fetch     1100 -> 1100
+  fetch_sub          def0 -> ace0
+  sub_fetch          ace0 -> ace0
+  sync fetch_sub     def0 -> ace0
+  sync sub_fetch     ace0 -> ace0
+  fetch_and          def0 -> 1210
+  and_fetch          1210 -> 1210
+  sync fetch_and     def0 -> 1210
+  sync and_fetch     1210 -> 1210
+  fetch_or           def0 -> fef0
+  or_fetch           fef0 -> fef0
+  sync fetch_or      def0 -> fef0
+  sync or_fetch      fef0 -> fef0
+  fetch_xor          def0 -> ece0
+  xor_fetch          ece0 -> ece0
+  sync fetch_xor     def0 -> ece0
+  sync xor_fetch     ece0 -> ece0
+  fetch_nand         def0 -> edef
+  nand_fetch         edef -> edef
+  sync fetch_nand    def0 -> edef
+  sync nand_fetch    edef -> edef
+  fetch_min          def0 -> 3210
+  fetch_max          def0 -> def0
+  cas                11 -> 3210
+  cas stale          1 -> 3210
+  load to            def0 -> def0
+  store from         0 -> 3210
+  exchange through   3210 -> def0
+  cas through        1 -> 3210
+  sync bool          1 -> def0
+  sync bool stale    0 -> def0
+  sync val           def0 -> 3210
+  sync test and set  3210 -> def0
+  sync release       0 -> 0
+s32
+ ffffffffffffffff 1
+  load               ffffffffffffffff -> ffffffffffffffff
+  store              0 -> 1
+  exchange           1 -> ffffffffffffffff
+  fetch_add          ffffffffffffffff -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     ffffffffffffffff -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          ffffffffffffffff -> fffffffffffffffe
+  sub_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_sub     ffffffffffffffff -> fffffffffffffffe
+  sync sub_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_and          ffffffffffffffff -> 1
+  and_fetch          1 -> 1
+  sync fetch_and     ffffffffffffffff -> 1
+  sync and_fetch     1 -> 1
+  fetch_or           ffffffffffffffff -> ffffffffffffffff
+  or_fetch           ffffffffffffffff -> ffffffffffffffff
+  sync fetch_or      ffffffffffffffff -> ffffffffffffffff
+  sync or_fetch      ffffffffffffffff -> ffffffffffffffff
+  fetch_xor          ffffffffffffffff -> fffffffffffffffe
+  xor_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_xor     ffffffffffffffff -> fffffffffffffffe
+  sync xor_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_nand         ffffffffffffffff -> fffffffffffffffe
+  nand_fetch         fffffffffffffffe -> fffffffffffffffe
+  sync fetch_nand    ffffffffffffffff -> fffffffffffffffe
+  sync nand_fetch    fffffffffffffffe -> fffffffffffffffe
+  fetch_min          ffffffffffffffff -> ffffffffffffffff
+  fetch_max          ffffffffffffffff -> 1
+  cas                11 -> 1
+  cas stale          1 -> 1
+  load to            ffffffffffffffff -> ffffffffffffffff
+  store from         0 -> 1
+  exchange through   1 -> ffffffffffffffff
+  cas through        1 -> 1
+  sync bool          1 -> ffffffffffffffff
+  sync bool stale    0 -> ffffffffffffffff
+  sync val           ffffffffffffffff -> 1
+  sync test and set  1 -> ffffffffffffffff
+  sync release       0 -> 0
+ 0 1
+  load               0 -> 0
+  store              0 -> 1
+  exchange           1 -> 0
+  fetch_add          0 -> 1
+  add_fetch          1 -> 1
+  sync fetch_add     0 -> 1
+  sync add_fetch     1 -> 1
+  fetch_sub          0 -> ffffffffffffffff
+  sub_fetch          ffffffffffffffff -> ffffffffffffffff
+  sync fetch_sub     0 -> ffffffffffffffff
+  sync sub_fetch     ffffffffffffffff -> ffffffffffffffff
+  fetch_and          0 -> 0
+  and_fetch          0 -> 0
+  sync fetch_and     0 -> 0
+  sync and_fetch     0 -> 0
+  fetch_or           0 -> 1
+  or_fetch           1 -> 1
+  sync fetch_or      0 -> 1
+  sync or_fetch      1 -> 1
+  fetch_xor          0 -> 1
+  xor_fetch          1 -> 1
+  sync fetch_xor     0 -> 1
+  sync xor_fetch     1 -> 1
+  fetch_nand         0 -> ffffffffffffffff
+  nand_fetch         ffffffffffffffff -> ffffffffffffffff
+  sync fetch_nand    0 -> ffffffffffffffff
+  sync nand_fetch    ffffffffffffffff -> ffffffffffffffff
+  fetch_min          0 -> 0
+  fetch_max          0 -> 1
+  cas                11 -> 1
+  cas stale          11 -> 8
+  load to            0 -> 0
+  store from         0 -> 1
+  exchange through   1 -> 0
+  cas through        1 -> 1
+  sync bool          1 -> 0
+  sync bool stale    0 -> 0
+  sync val           0 -> 1
+  sync test and set  1 -> 0
+  sync release       0 -> 0
+ 7f7f7f7f 1010181
+  load               7f7f7f7f -> 7f7f7f7f
+  store              0 -> 1010181
+  exchange           1010181 -> 7f7f7f7f
+  fetch_add          7f7f7f7f -> ffffffff80808100
+  add_fetch          ffffffff80808100 -> ffffffff80808100
+  sync fetch_add     7f7f7f7f -> ffffffff80808100
+  sync add_fetch     ffffffff80808100 -> ffffffff80808100
+  fetch_sub          7f7f7f7f -> 7e7e7dfe
+  sub_fetch          7e7e7dfe -> 7e7e7dfe
+  sync fetch_sub     7f7f7f7f -> 7e7e7dfe
+  sync sub_fetch     7e7e7dfe -> 7e7e7dfe
+  fetch_and          7f7f7f7f -> 1010101
+  and_fetch          1010101 -> 1010101
+  sync fetch_and     7f7f7f7f -> 1010101
+  sync and_fetch     1010101 -> 1010101
+  fetch_or           7f7f7f7f -> 7f7f7fff
+  or_fetch           7f7f7fff -> 7f7f7fff
+  sync fetch_or      7f7f7f7f -> 7f7f7fff
+  sync or_fetch      7f7f7fff -> 7f7f7fff
+  fetch_xor          7f7f7f7f -> 7e7e7efe
+  xor_fetch          7e7e7efe -> 7e7e7efe
+  sync fetch_xor     7f7f7f7f -> 7e7e7efe
+  sync xor_fetch     7e7e7efe -> 7e7e7efe
+  fetch_nand         7f7f7f7f -> fffffffffefefefe
+  nand_fetch         fffffffffefefefe -> fffffffffefefefe
+  sync fetch_nand    7f7f7f7f -> fffffffffefefefe
+  sync nand_fetch    fffffffffefefefe -> fffffffffefefefe
+  fetch_min          7f7f7f7f -> 1010181
+  fetch_max          7f7f7f7f -> 7f7f7f7f
+  cas                11 -> 1010181
+  cas stale          1 -> 1010181
+  load to            7f7f7f7f -> 7f7f7f7f
+  store from         0 -> 1010181
+  exchange through   1010181 -> 7f7f7f7f
+  cas through        1 -> 1010181
+  sync bool          1 -> 7f7f7f7f
+  sync bool stale    0 -> 7f7f7f7f
+  sync val           7f7f7f7f -> 1010181
+  sync test and set  1010181 -> 7f7f7f7f
+  sync release       0 -> 0
+ ffffffff9abcdef0 76543210
+  load               ffffffff9abcdef0 -> ffffffff9abcdef0
+  store              0 -> 76543210
+  exchange           76543210 -> ffffffff9abcdef0
+  fetch_add          ffffffff9abcdef0 -> 11111100
+  add_fetch          11111100 -> 11111100
+  sync fetch_add     ffffffff9abcdef0 -> 11111100
+  sync add_fetch     11111100 -> 11111100
+  fetch_sub          ffffffff9abcdef0 -> 2468ace0
+  sub_fetch          2468ace0 -> 2468ace0
+  sync fetch_sub     ffffffff9abcdef0 -> 2468ace0
+  sync sub_fetch     2468ace0 -> 2468ace0
+  fetch_and          ffffffff9abcdef0 -> 12141210
+  and_fetch          12141210 -> 12141210
+  sync fetch_and     ffffffff9abcdef0 -> 12141210
+  sync and_fetch     12141210 -> 12141210
+  fetch_or           ffffffff9abcdef0 -> fffffffffefcfef0
+  or_fetch           fffffffffefcfef0 -> fffffffffefcfef0
+  sync fetch_or      ffffffff9abcdef0 -> fffffffffefcfef0
+  sync or_fetch      fffffffffefcfef0 -> fffffffffefcfef0
+  fetch_xor          ffffffff9abcdef0 -> ffffffffece8ece0
+  xor_fetch          ffffffffece8ece0 -> ffffffffece8ece0
+  sync fetch_xor     ffffffff9abcdef0 -> ffffffffece8ece0
+  sync xor_fetch     ffffffffece8ece0 -> ffffffffece8ece0
+  fetch_nand         ffffffff9abcdef0 -> ffffffffedebedef
+  nand_fetch         ffffffffedebedef -> ffffffffedebedef
+  sync fetch_nand    ffffffff9abcdef0 -> ffffffffedebedef
+  sync nand_fetch    ffffffffedebedef -> ffffffffedebedef
+  fetch_min          ffffffff9abcdef0 -> ffffffff9abcdef0
+  fetch_max          ffffffff9abcdef0 -> 76543210
+  cas                11 -> 76543210
+  cas stale          1 -> 76543210
+  load to            ffffffff9abcdef0 -> ffffffff9abcdef0
+  store from         0 -> 76543210
+  exchange through   76543210 -> ffffffff9abcdef0
+  cas through        1 -> 76543210
+  sync bool          1 -> ffffffff9abcdef0
+  sync bool stale    0 -> ffffffff9abcdef0
+  sync val           ffffffff9abcdef0 -> 76543210
+  sync test and set  76543210 -> ffffffff9abcdef0
+  sync release       0 -> 0
+u32
+ ffffffff 1
+  load               ffffffff -> ffffffff
+  store              0 -> 1
+  exchange           1 -> ffffffff
+  fetch_add          ffffffff -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     ffffffff -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          ffffffff -> fffffffe
+  sub_fetch          fffffffe -> fffffffe
+  sync fetch_sub     ffffffff -> fffffffe
+  sync sub_fetch     fffffffe -> fffffffe
+  fetch_and          ffffffff -> 1
+  and_fetch          1 -> 1
+  sync fetch_and     ffffffff -> 1
+  sync and_fetch     1 -> 1
+  fetch_or           ffffffff -> ffffffff
+  or_fetch           ffffffff -> ffffffff
+  sync fetch_or      ffffffff -> ffffffff
+  sync or_fetch      ffffffff -> ffffffff
+  fetch_xor          ffffffff -> fffffffe
+  xor_fetch          fffffffe -> fffffffe
+  sync fetch_xor     ffffffff -> fffffffe
+  sync xor_fetch     fffffffe -> fffffffe
+  fetch_nand         ffffffff -> fffffffe
+  nand_fetch         fffffffe -> fffffffe
+  sync fetch_nand    ffffffff -> fffffffe
+  sync nand_fetch    fffffffe -> fffffffe
+  fetch_min          ffffffff -> 1
+  fetch_max          ffffffff -> ffffffff
+  cas                11 -> 1
+  cas stale          1 -> 1
+  load to            ffffffff -> ffffffff
+  store from         0 -> 1
+  exchange through   1 -> ffffffff
+  cas through        1 -> 1
+  sync bool          1 -> ffffffff
+  sync bool stale    0 -> ffffffff
+  sync val           ffffffff -> 1
+  sync test and set  1 -> ffffffff
+  sync release       0 -> 0
+ 0 1
+  load               0 -> 0
+  store              0 -> 1
+  exchange           1 -> 0
+  fetch_add          0 -> 1
+  add_fetch          1 -> 1
+  sync fetch_add     0 -> 1
+  sync add_fetch     1 -> 1
+  fetch_sub          0 -> ffffffff
+  sub_fetch          ffffffff -> ffffffff
+  sync fetch_sub     0 -> ffffffff
+  sync sub_fetch     ffffffff -> ffffffff
+  fetch_and          0 -> 0
+  and_fetch          0 -> 0
+  sync fetch_and     0 -> 0
+  sync and_fetch     0 -> 0
+  fetch_or           0 -> 1
+  or_fetch           1 -> 1
+  sync fetch_or      0 -> 1
+  sync or_fetch      1 -> 1
+  fetch_xor          0 -> 1
+  xor_fetch          1 -> 1
+  sync fetch_xor     0 -> 1
+  sync xor_fetch     1 -> 1
+  fetch_nand         0 -> ffffffff
+  nand_fetch         ffffffff -> ffffffff
+  sync fetch_nand    0 -> ffffffff
+  sync nand_fetch    ffffffff -> ffffffff
+  fetch_min          0 -> 0
+  fetch_max          0 -> 1
+  cas                11 -> 1
+  cas stale          11 -> 8
+  load to            0 -> 0
+  store from         0 -> 1
+  exchange through   1 -> 0
+  cas through        1 -> 1
+  sync bool          1 -> 0
+  sync bool stale    0 -> 0
+  sync val           0 -> 1
+  sync test and set  1 -> 0
+  sync release       0 -> 0
+ 7f7f7f7f 1010181
+  load               7f7f7f7f -> 7f7f7f7f
+  store              0 -> 1010181
+  exchange           1010181 -> 7f7f7f7f
+  fetch_add          7f7f7f7f -> 80808100
+  add_fetch          80808100 -> 80808100
+  sync fetch_add     7f7f7f7f -> 80808100
+  sync add_fetch     80808100 -> 80808100
+  fetch_sub          7f7f7f7f -> 7e7e7dfe
+  sub_fetch          7e7e7dfe -> 7e7e7dfe
+  sync fetch_sub     7f7f7f7f -> 7e7e7dfe
+  sync sub_fetch     7e7e7dfe -> 7e7e7dfe
+  fetch_and          7f7f7f7f -> 1010101
+  and_fetch          1010101 -> 1010101
+  sync fetch_and     7f7f7f7f -> 1010101
+  sync and_fetch     1010101 -> 1010101
+  fetch_or           7f7f7f7f -> 7f7f7fff
+  or_fetch           7f7f7fff -> 7f7f7fff
+  sync fetch_or      7f7f7f7f -> 7f7f7fff
+  sync or_fetch      7f7f7fff -> 7f7f7fff
+  fetch_xor          7f7f7f7f -> 7e7e7efe
+  xor_fetch          7e7e7efe -> 7e7e7efe
+  sync fetch_xor     7f7f7f7f -> 7e7e7efe
+  sync xor_fetch     7e7e7efe -> 7e7e7efe
+  fetch_nand         7f7f7f7f -> fefefefe
+  nand_fetch         fefefefe -> fefefefe
+  sync fetch_nand    7f7f7f7f -> fefefefe
+  sync nand_fetch    fefefefe -> fefefefe
+  fetch_min          7f7f7f7f -> 1010181
+  fetch_max          7f7f7f7f -> 7f7f7f7f
+  cas                11 -> 1010181
+  cas stale          1 -> 1010181
+  load to            7f7f7f7f -> 7f7f7f7f
+  store from         0 -> 1010181
+  exchange through   1010181 -> 7f7f7f7f
+  cas through        1 -> 1010181
+  sync bool          1 -> 7f7f7f7f
+  sync bool stale    0 -> 7f7f7f7f
+  sync val           7f7f7f7f -> 1010181
+  sync test and set  1010181 -> 7f7f7f7f
+  sync release       0 -> 0
+ 9abcdef0 76543210
+  load               9abcdef0 -> 9abcdef0
+  store              0 -> 76543210
+  exchange           76543210 -> 9abcdef0
+  fetch_add          9abcdef0 -> 11111100
+  add_fetch          11111100 -> 11111100
+  sync fetch_add     9abcdef0 -> 11111100
+  sync add_fetch     11111100 -> 11111100
+  fetch_sub          9abcdef0 -> 2468ace0
+  sub_fetch          2468ace0 -> 2468ace0
+  sync fetch_sub     9abcdef0 -> 2468ace0
+  sync sub_fetch     2468ace0 -> 2468ace0
+  fetch_and          9abcdef0 -> 12141210
+  and_fetch          12141210 -> 12141210
+  sync fetch_and     9abcdef0 -> 12141210
+  sync and_fetch     12141210 -> 12141210
+  fetch_or           9abcdef0 -> fefcfef0
+  or_fetch           fefcfef0 -> fefcfef0
+  sync fetch_or      9abcdef0 -> fefcfef0
+  sync or_fetch      fefcfef0 -> fefcfef0
+  fetch_xor          9abcdef0 -> ece8ece0
+  xor_fetch          ece8ece0 -> ece8ece0
+  sync fetch_xor     9abcdef0 -> ece8ece0
+  sync xor_fetch     ece8ece0 -> ece8ece0
+  fetch_nand         9abcdef0 -> edebedef
+  nand_fetch         edebedef -> edebedef
+  sync fetch_nand    9abcdef0 -> edebedef
+  sync nand_fetch    edebedef -> edebedef
+  fetch_min          9abcdef0 -> 76543210
+  fetch_max          9abcdef0 -> 9abcdef0
+  cas                11 -> 76543210
+  cas stale          1 -> 76543210
+  load to            9abcdef0 -> 9abcdef0
+  store from         0 -> 76543210
+  exchange through   76543210 -> 9abcdef0
+  cas through        1 -> 76543210
+  sync bool          1 -> 9abcdef0
+  sync bool stale    0 -> 9abcdef0
+  sync val           9abcdef0 -> 76543210
+  sync test and set  76543210 -> 9abcdef0
+  sync release       0 -> 0
+s64
+ ffffffffffffffff 1
+  load               ffffffffffffffff -> ffffffffffffffff
+  store              0 -> 1
+  exchange           1 -> ffffffffffffffff
+  fetch_add          ffffffffffffffff -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     ffffffffffffffff -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          ffffffffffffffff -> fffffffffffffffe
+  sub_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_sub     ffffffffffffffff -> fffffffffffffffe
+  sync sub_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_and          ffffffffffffffff -> 1
+  and_fetch          1 -> 1
+  sync fetch_and     ffffffffffffffff -> 1
+  sync and_fetch     1 -> 1
+  fetch_or           ffffffffffffffff -> ffffffffffffffff
+  or_fetch           ffffffffffffffff -> ffffffffffffffff
+  sync fetch_or      ffffffffffffffff -> ffffffffffffffff
+  sync or_fetch      ffffffffffffffff -> ffffffffffffffff
+  fetch_xor          ffffffffffffffff -> fffffffffffffffe
+  xor_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_xor     ffffffffffffffff -> fffffffffffffffe
+  sync xor_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_nand         ffffffffffffffff -> fffffffffffffffe
+  nand_fetch         fffffffffffffffe -> fffffffffffffffe
+  sync fetch_nand    ffffffffffffffff -> fffffffffffffffe
+  sync nand_fetch    fffffffffffffffe -> fffffffffffffffe
+  fetch_min          ffffffffffffffff -> ffffffffffffffff
+  fetch_max          ffffffffffffffff -> 1
+  cas                11 -> 1
+  cas stale          1 -> 1
+  load to            ffffffffffffffff -> ffffffffffffffff
+  store from         0 -> 1
+  exchange through   1 -> ffffffffffffffff
+  cas through        1 -> 1
+  sync bool          1 -> ffffffffffffffff
+  sync bool stale    0 -> ffffffffffffffff
+  sync val           ffffffffffffffff -> 1
+  sync test and set  1 -> ffffffffffffffff
+  sync release       0 -> 0
+ 0 1
+  load               0 -> 0
+  store              0 -> 1
+  exchange           1 -> 0
+  fetch_add          0 -> 1
+  add_fetch          1 -> 1
+  sync fetch_add     0 -> 1
+  sync add_fetch     1 -> 1
+  fetch_sub          0 -> ffffffffffffffff
+  sub_fetch          ffffffffffffffff -> ffffffffffffffff
+  sync fetch_sub     0 -> ffffffffffffffff
+  sync sub_fetch     ffffffffffffffff -> ffffffffffffffff
+  fetch_and          0 -> 0
+  and_fetch          0 -> 0
+  sync fetch_and     0 -> 0
+  sync and_fetch     0 -> 0
+  fetch_or           0 -> 1
+  or_fetch           1 -> 1
+  sync fetch_or      0 -> 1
+  sync or_fetch      1 -> 1
+  fetch_xor          0 -> 1
+  xor_fetch          1 -> 1
+  sync fetch_xor     0 -> 1
+  sync xor_fetch     1 -> 1
+  fetch_nand         0 -> ffffffffffffffff
+  nand_fetch         ffffffffffffffff -> ffffffffffffffff
+  sync fetch_nand    0 -> ffffffffffffffff
+  sync nand_fetch    ffffffffffffffff -> ffffffffffffffff
+  fetch_min          0 -> 0
+  fetch_max          0 -> 1
+  cas                11 -> 1
+  cas stale          11 -> 8
+  load to            0 -> 0
+  store from         0 -> 1
+  exchange through   1 -> 0
+  cas through        1 -> 1
+  sync bool          1 -> 0
+  sync bool stale    0 -> 0
+  sync val           0 -> 1
+  sync test and set  1 -> 0
+  sync release       0 -> 0
+ 7f7f7f7f7f7f7f7f 101010101010181
+  load               7f7f7f7f7f7f7f7f -> 7f7f7f7f7f7f7f7f
+  store              0 -> 101010101010181
+  exchange           101010101010181 -> 7f7f7f7f7f7f7f7f
+  fetch_add          7f7f7f7f7f7f7f7f -> 8080808080808100
+  add_fetch          8080808080808100 -> 8080808080808100
+  sync fetch_add     7f7f7f7f7f7f7f7f -> 8080808080808100
+  sync add_fetch     8080808080808100 -> 8080808080808100
+  fetch_sub          7f7f7f7f7f7f7f7f -> 7e7e7e7e7e7e7dfe
+  sub_fetch          7e7e7e7e7e7e7dfe -> 7e7e7e7e7e7e7dfe
+  sync fetch_sub     7f7f7f7f7f7f7f7f -> 7e7e7e7e7e7e7dfe
+  sync sub_fetch     7e7e7e7e7e7e7dfe -> 7e7e7e7e7e7e7dfe
+  fetch_and          7f7f7f7f7f7f7f7f -> 101010101010101
+  and_fetch          101010101010101 -> 101010101010101
+  sync fetch_and     7f7f7f7f7f7f7f7f -> 101010101010101
+  sync and_fetch     101010101010101 -> 101010101010101
+  fetch_or           7f7f7f7f7f7f7f7f -> 7f7f7f7f7f7f7fff
+  or_fetch           7f7f7f7f7f7f7fff -> 7f7f7f7f7f7f7fff
+  sync fetch_or      7f7f7f7f7f7f7f7f -> 7f7f7f7f7f7f7fff
+  sync or_fetch      7f7f7f7f7f7f7fff -> 7f7f7f7f7f7f7fff
+  fetch_xor          7f7f7f7f7f7f7f7f -> 7e7e7e7e7e7e7efe
+  xor_fetch          7e7e7e7e7e7e7efe -> 7e7e7e7e7e7e7efe
+  sync fetch_xor     7f7f7f7f7f7f7f7f -> 7e7e7e7e7e7e7efe
+  sync xor_fetch     7e7e7e7e7e7e7efe -> 7e7e7e7e7e7e7efe
+  fetch_nand         7f7f7f7f7f7f7f7f -> fefefefefefefefe
+  nand_fetch         fefefefefefefefe -> fefefefefefefefe
+  sync fetch_nand    7f7f7f7f7f7f7f7f -> fefefefefefefefe
+  sync nand_fetch    fefefefefefefefe -> fefefefefefefefe
+  fetch_min          7f7f7f7f7f7f7f7f -> 101010101010181
+  fetch_max          7f7f7f7f7f7f7f7f -> 7f7f7f7f7f7f7f7f
+  cas                11 -> 101010101010181
+  cas stale          1 -> 101010101010181
+  load to            7f7f7f7f7f7f7f7f -> 7f7f7f7f7f7f7f7f
+  store from         0 -> 101010101010181
+  exchange through   101010101010181 -> 7f7f7f7f7f7f7f7f
+  cas through        1 -> 101010101010181
+  sync bool          1 -> 7f7f7f7f7f7f7f7f
+  sync bool stale    0 -> 7f7f7f7f7f7f7f7f
+  sync val           7f7f7f7f7f7f7f7f -> 101010101010181
+  sync test and set  101010101010181 -> 7f7f7f7f7f7f7f7f
+  sync release       0 -> 0
+ 123456789abcdef0 fedcba9876543210
+  load               123456789abcdef0 -> 123456789abcdef0
+  store              0 -> fedcba9876543210
+  exchange           fedcba9876543210 -> 123456789abcdef0
+  fetch_add          123456789abcdef0 -> 1111111111111100
+  add_fetch          1111111111111100 -> 1111111111111100
+  sync fetch_add     123456789abcdef0 -> 1111111111111100
+  sync add_fetch     1111111111111100 -> 1111111111111100
+  fetch_sub          123456789abcdef0 -> 13579be02468ace0
+  sub_fetch          13579be02468ace0 -> 13579be02468ace0
+  sync fetch_sub     123456789abcdef0 -> 13579be02468ace0
+  sync sub_fetch     13579be02468ace0 -> 13579be02468ace0
+  fetch_and          123456789abcdef0 -> 1214121812141210
+  and_fetch          1214121812141210 -> 1214121812141210
+  sync fetch_and     123456789abcdef0 -> 1214121812141210
+  sync and_fetch     1214121812141210 -> 1214121812141210
+  fetch_or           123456789abcdef0 -> fefcfef8fefcfef0
+  or_fetch           fefcfef8fefcfef0 -> fefcfef8fefcfef0
+  sync fetch_or      123456789abcdef0 -> fefcfef8fefcfef0
+  sync or_fetch      fefcfef8fefcfef0 -> fefcfef8fefcfef0
+  fetch_xor          123456789abcdef0 -> ece8ece0ece8ece0
+  xor_fetch          ece8ece0ece8ece0 -> ece8ece0ece8ece0
+  sync fetch_xor     123456789abcdef0 -> ece8ece0ece8ece0
+  sync xor_fetch     ece8ece0ece8ece0 -> ece8ece0ece8ece0
+  fetch_nand         123456789abcdef0 -> edebede7edebedef
+  nand_fetch         edebede7edebedef -> edebede7edebedef
+  sync fetch_nand    123456789abcdef0 -> edebede7edebedef
+  sync nand_fetch    edebede7edebedef -> edebede7edebedef
+  fetch_min          123456789abcdef0 -> fedcba9876543210
+  fetch_max          123456789abcdef0 -> 123456789abcdef0
+  cas                11 -> fedcba9876543210
+  cas stale          1 -> fedcba9876543210
+  load to            123456789abcdef0 -> 123456789abcdef0
+  store from         0 -> fedcba9876543210
+  exchange through   fedcba9876543210 -> 123456789abcdef0
+  cas through        1 -> fedcba9876543210
+  sync bool          1 -> 123456789abcdef0
+  sync bool stale    0 -> 123456789abcdef0
+  sync val           123456789abcdef0 -> fedcba9876543210
+  sync test and set  fedcba9876543210 -> 123456789abcdef0
+  sync release       0 -> 0
+u64
+ ffffffffffffffff 1
+  load               ffffffffffffffff -> ffffffffffffffff
+  store              0 -> 1
+  exchange           1 -> ffffffffffffffff
+  fetch_add          ffffffffffffffff -> 0
+  add_fetch          0 -> 0
+  sync fetch_add     ffffffffffffffff -> 0
+  sync add_fetch     0 -> 0
+  fetch_sub          ffffffffffffffff -> fffffffffffffffe
+  sub_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_sub     ffffffffffffffff -> fffffffffffffffe
+  sync sub_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_and          ffffffffffffffff -> 1
+  and_fetch          1 -> 1
+  sync fetch_and     ffffffffffffffff -> 1
+  sync and_fetch     1 -> 1
+  fetch_or           ffffffffffffffff -> ffffffffffffffff
+  or_fetch           ffffffffffffffff -> ffffffffffffffff
+  sync fetch_or      ffffffffffffffff -> ffffffffffffffff
+  sync or_fetch      ffffffffffffffff -> ffffffffffffffff
+  fetch_xor          ffffffffffffffff -> fffffffffffffffe
+  xor_fetch          fffffffffffffffe -> fffffffffffffffe
+  sync fetch_xor     ffffffffffffffff -> fffffffffffffffe
+  sync xor_fetch     fffffffffffffffe -> fffffffffffffffe
+  fetch_nand         ffffffffffffffff -> fffffffffffffffe
+  nand_fetch         fffffffffffffffe -> fffffffffffffffe
+  sync fetch_nand    ffffffffffffffff -> fffffffffffffffe
+  sync nand_fetch    fffffffffffffffe -> fffffffffffffffe
+  fetch_min          ffffffffffffffff -> 1
+  fetch_max          ffffffffffffffff -> ffffffffffffffff
+  cas                11 -> 1
+  cas stale          1 -> 1
+  load to            ffffffffffffffff -> ffffffffffffffff
+  store from         0 -> 1
+  exchange through   1 -> ffffffffffffffff
+  cas through        1 -> 1
+  sync bool          1 -> ffffffffffffffff
+  sync bool stale    0 -> ffffffffffffffff
+  sync val           ffffffffffffffff -> 1
+  sync test and set  1 -> ffffffffffffffff
+  sync release       0 -> 0
+ 0 1
+  load               0 -> 0
+  store              0 -> 1
+  exchange           1 -> 0
+  fetch_add          0 -> 1
+  add_fetch          1 -> 1
+  sync fetch_add     0 -> 1
+  sync add_fetch     1 -> 1
+  fetch_sub          0 -> ffffffffffffffff
+  sub_fetch          ffffffffffffffff -> ffffffffffffffff
+  sync fetch_sub     0 -> ffffffffffffffff
+  sync sub_fetch     ffffffffffffffff -> ffffffffffffffff
+  fetch_and          0 -> 0
+  and_fetch          0 -> 0
+  sync fetch_and     0 -> 0
+  sync and_fetch     0 -> 0
+  fetch_or           0 -> 1
+  or_fetch           1 -> 1
+  sync fetch_or      0 -> 1
+  sync or_fetch      1 -> 1
+  fetch_xor          0 -> 1
+  xor_fetch          1 -> 1
+  sync fetch_xor     0 -> 1
+  sync xor_fetch     1 -> 1
+  fetch_nand         0 -> ffffffffffffffff
+  nand_fetch         ffffffffffffffff -> ffffffffffffffff
+  sync fetch_nand    0 -> ffffffffffffffff
+  sync nand_fetch    ffffffffffffffff -> ffffffffffffffff
+  fetch_min          0 -> 0
+  fetch_max          0 -> 1
+  cas                11 -> 1
+  cas stale          11 -> 8
+  load to            0 -> 0
+  store from         0 -> 1
+  exchange through   1 -> 0
+  cas through        1 -> 1
+  sync bool          1 -> 0
+  sync bool stale    0 -> 0
+  sync val           0 -> 1
+  sync test and set  1 -> 0
+  sync release       0 -> 0
+ 7f7f7f7f7f7f7f7f 101010101010181
+  load               7f7f7f7f7f7f7f7f -> 7f7f7f7f7f7f7f7f
+  store              0 -> 101010101010181
+  exchange           101010101010181 -> 7f7f7f7f7f7f7f7f
+  fetch_add          7f7f7f7f7f7f7f7f -> 8080808080808100
+  add_fetch          8080808080808100 -> 8080808080808100
+  sync fetch_add     7f7f7f7f7f7f7f7f -> 8080808080808100
+  sync add_fetch     8080808080808100 -> 8080808080808100
+  fetch_sub          7f7f7f7f7f7f7f7f -> 7e7e7e7e7e7e7dfe
+  sub_fetch          7e7e7e7e7e7e7dfe -> 7e7e7e7e7e7e7dfe
+  sync fetch_sub     7f7f7f7f7f7f7f7f -> 7e7e7e7e7e7e7dfe
+  sync sub_fetch     7e7e7e7e7e7e7dfe -> 7e7e7e7e7e7e7dfe
+  fetch_and          7f7f7f7f7f7f7f7f -> 101010101010101
+  and_fetch          101010101010101 -> 101010101010101
+  sync fetch_and     7f7f7f7f7f7f7f7f -> 101010101010101
+  sync and_fetch     101010101010101 -> 101010101010101
+  fetch_or           7f7f7f7f7f7f7f7f -> 7f7f7f7f7f7f7fff
+  or_fetch           7f7f7f7f7f7f7fff -> 7f7f7f7f7f7f7fff
+  sync fetch_or      7f7f7f7f7f7f7f7f -> 7f7f7f7f7f7f7fff
+  sync or_fetch      7f7f7f7f7f7f7fff -> 7f7f7f7f7f7f7fff
+  fetch_xor          7f7f7f7f7f7f7f7f -> 7e7e7e7e7e7e7efe
+  xor_fetch          7e7e7e7e7e7e7efe -> 7e7e7e7e7e7e7efe
+  sync fetch_xor     7f7f7f7f7f7f7f7f -> 7e7e7e7e7e7e7efe
+  sync xor_fetch     7e7e7e7e7e7e7efe -> 7e7e7e7e7e7e7efe
+  fetch_nand         7f7f7f7f7f7f7f7f -> fefefefefefefefe
+  nand_fetch         fefefefefefefefe -> fefefefefefefefe
+  sync fetch_nand    7f7f7f7f7f7f7f7f -> fefefefefefefefe
+  sync nand_fetch    fefefefefefefefe -> fefefefefefefefe
+  fetch_min          7f7f7f7f7f7f7f7f -> 101010101010181
+  fetch_max          7f7f7f7f7f7f7f7f -> 7f7f7f7f7f7f7f7f
+  cas                11 -> 101010101010181
+  cas stale          1 -> 101010101010181
+  load to            7f7f7f7f7f7f7f7f -> 7f7f7f7f7f7f7f7f
+  store from         0 -> 101010101010181
+  exchange through   101010101010181 -> 7f7f7f7f7f7f7f7f
+  cas through        1 -> 101010101010181
+  sync bool          1 -> 7f7f7f7f7f7f7f7f
+  sync bool stale    0 -> 7f7f7f7f7f7f7f7f
+  sync val           7f7f7f7f7f7f7f7f -> 101010101010181
+  sync test and set  101010101010181 -> 7f7f7f7f7f7f7f7f
+  sync release       0 -> 0
+ 123456789abcdef0 fedcba9876543210
+  load               123456789abcdef0 -> 123456789abcdef0
+  store              0 -> fedcba9876543210
+  exchange           fedcba9876543210 -> 123456789abcdef0
+  fetch_add          123456789abcdef0 -> 1111111111111100
+  add_fetch          1111111111111100 -> 1111111111111100
+  sync fetch_add     123456789abcdef0 -> 1111111111111100
+  sync add_fetch     1111111111111100 -> 1111111111111100
+  fetch_sub          123456789abcdef0 -> 13579be02468ace0
+  sub_fetch          13579be02468ace0 -> 13579be02468ace0
+  sync fetch_sub     123456789abcdef0 -> 13579be02468ace0
+  sync sub_fetch     13579be02468ace0 -> 13579be02468ace0
+  fetch_and          123456789abcdef0 -> 1214121812141210
+  and_fetch          1214121812141210 -> 1214121812141210
+  sync fetch_and     123456789abcdef0 -> 1214121812141210
+  sync and_fetch     1214121812141210 -> 1214121812141210
+  fetch_or           123456789abcdef0 -> fefcfef8fefcfef0
+  or_fetch           fefcfef8fefcfef0 -> fefcfef8fefcfef0
+  sync fetch_or      123456789abcdef0 -> fefcfef8fefcfef0
+  sync or_fetch      fefcfef8fefcfef0 -> fefcfef8fefcfef0
+  fetch_xor          123456789abcdef0 -> ece8ece0ece8ece0
+  xor_fetch          ece8ece0ece8ece0 -> ece8ece0ece8ece0
+  sync fetch_xor     123456789abcdef0 -> ece8ece0ece8ece0
+  sync xor_fetch     ece8ece0ece8ece0 -> ece8ece0ece8ece0
+  fetch_nand         123456789abcdef0 -> edebede7edebedef
+  nand_fetch         edebede7edebedef -> edebede7edebedef
+  sync fetch_nand    123456789abcdef0 -> edebede7edebedef
+  sync nand_fetch    edebede7edebedef -> edebede7edebedef
+  fetch_min          123456789abcdef0 -> 123456789abcdef0
+  fetch_max          123456789abcdef0 -> fedcba9876543210
+  cas                11 -> fedcba9876543210
+  cas stale          1 -> fedcba9876543210
+  load to            123456789abcdef0 -> 123456789abcdef0
+  store from         0 -> fedcba9876543210
+  exchange through   fedcba9876543210 -> 123456789abcdef0
+  cas through        1 -> fedcba9876543210
+  sync bool          1 -> 123456789abcdef0
+  sync bool stale    0 -> 123456789abcdef0
+  sync val           123456789abcdef0 -> fedcba9876543210
+  sync test and set  fedcba9876543210 -> 123456789abcdef0
+  sync release       0 -> 0

@@ -20,6 +20,7 @@ enum-map.workspace = true
 bitflags.workspace = true
 thiserror.workspace = true
 bun_base64.workspace = true
+bun_cc.workspace = true
 bun_alloc.workspace = true
 bun_errno.workspace = true
 bun_exe_format.workspace = true

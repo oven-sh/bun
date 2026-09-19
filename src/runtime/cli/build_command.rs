@@ -377,6 +377,10 @@ impl BuildCommand {
             }
         }
 
+        if ctx.bundler_options.compile {
+            this_transpiler.options.compile_target = Some(ctx.bundler_options.compile_target);
+        }
+
         if ctx.bundler_options.outdir.is_empty()
             && !ctx.bundler_options.compile
             && fetcher.is_none()

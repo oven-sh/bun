@@ -1,0 +1,9 @@
+[
+["__builtin___stpcpy_chk(buffer, \"end\", UNKNOWN) == buffer + 3 && strcmp(buffer, \"end\") == 0", 1],
+["__builtin___stpcpy_chk(buffer + 3, \" of it\", 61) == buffer + 9 && strcmp(buffer, \"end of it\") == 0", 1],
+["__builtin___stpcpy_chk(other, \"xy\", sixty_four) == other + 2 && strcmp(other, \"xy\") == 0", 1],
+["__builtin___stpncpy_chk(buffer, \"abc\", 6, UNKNOWN) == buffer + 3 && memcmp(buffer, \"abc\\0\\0\\0 i\", 8) == 0", 1],
+["__builtin___stpncpy_chk(buffer, \"0123456789\", 4, 64) == buffer + 4 && memcmp(buffer, \"0123\\0\\0 i\", 8) == 0", 1],
+["__builtin___stpncpy_chk(other, \"short\", 8, sixty_four) == other + 5 && memcmp(other, \"short\\0\\0\\0\", 8) == 0 && other[8] == '#'", 1],
+["1", 1]
+]

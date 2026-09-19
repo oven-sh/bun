@@ -1,0 +1,17 @@
+S foo ;
+S foo = { 1 };
+a ;
+a ;
+a b
+a b
+aEMPTY;
+a
+a
+a ;
+a b
+a b
+a ;
+;
+f (1)
+--
+- -

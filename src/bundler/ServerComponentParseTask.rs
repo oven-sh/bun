@@ -99,6 +99,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         value,
         external: ExternalFreeFunction::NONE,
         watcher_data: WatcherData::NONE,
+        also_depends_on: Vec::new(),
     });
     let result = bun_core::heap::into_raw(result);
 

@@ -44,6 +44,10 @@ const patterns = {
   nodeFallbacks: {
     paths: ["src/node-fallbacks/*.js"],
   },
+  /** the C compiler's own headers, embedded compressed */
+  ccHeaders: {
+    paths: ["src/cc/include/*"],
+  },
   /** `*.classes.ts` — input to generate-classes codegen */
   zigGeneratedClasses: {
     paths: ["src/**/*.classes.ts"],

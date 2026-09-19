@@ -1,0 +1,1 @@
+int counter_elsewhere;

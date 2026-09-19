@@ -1,0 +1,7 @@
+[
+["({ typedef int t; t x=1; x; })", 1],
+["({ typedef struct {int a;} t; t x; x.a=1; x.a; })", 1],
+["({ typedef struct {int a;} t; { typedef int t; } t x; x.a=2; x.a; })", 2],
+["({ MyInt x=3; x; })", 3],
+["({ MyInt2 x; sizeof(x); })", 16]
+]

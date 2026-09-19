@@ -1,0 +1,40 @@
+zero_i128: 0:0 0:0 0:0 0:0
+zero_u128: 0:0 0:0 0:0 0:0
+zero_long_double: 0 0 0 0
+zero_float_complex: 0+0i 0+0i 0+0i 0+0i
+zero_double_complex: 0+0i 0+0i 0+0i 0+0i
+value_i128: ffffffffffffffff:fffffffffffffffb 0:0 0:0
+value_u128: 1c0:0 0:0 0:0
+value_long_double: 2.5 0 0
+value_float_complex: 1+2i 0+0i 0+0i
+value_double_complex: 1+2i 0+0i 0+0i
+designated_element: 0:0 0:0 0:9 0:0
+two_dimensions: 0:0 0:0 0:0 0:0
+two_dimensions_second_row: 1 0 2 0
+struct_first_i128: 0:0 0 0 0 0
+struct_first_long_double: 0 0 0 0 0
+struct_first_complex: 0+0i 0 0 0 0
+struct_first_float_complex: 1.5+0i 0 0 0 0
+struct_value_i128: 0:b 0
+struct_value_long_double: 2.5 0
+struct_value_complex: 1+2i 0
+union_first_i128: 0 0 0 0
+union_smaller_struct_first: 3 4
+struct_covers_first_member: 3 4 0 0 0 0 0
+struct_designates_first_member: 3 4 0 0 0 0 0
+struct_from_a_call: 3 4 0 0 0 0 0
+struct_designates_last_member: 0 0 0 3 4
+struct_then_more: 3 4 5 6 0 0 0
+array_of_structs: 3 4 0 0 0 0 0 0 0 0 0 0 0 0
+array_of_structs_elided: 3 4 0 0 0 0
+array_of_structs_second: 0 0 3 4 0 0
+literal_i128: 0:0 0:0 0:0 0:0
+literal_long_double: 2.5 0 0
+literal_complex: 1+2i 0+0i 0+0i
+literal_struct_covers_first: 3 4 0 0 0 0 0
+literal_struct_designates_first: 3 4 0 0 0 0 0
+literal_struct_from_a_call: 3 4 0 0 0 0 0
+literal_struct_first_long_double: 0 0 0 0 0
+whole_struct: 3 4 3 4 5 6 7 8 9
+whole_struct_from_a_literal: 3 4 5 6 0 0 0 3 4
+scalars_in_braces: 0:5 2.5 1+2i

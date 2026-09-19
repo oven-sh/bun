@@ -437,9 +437,7 @@ function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMo
   // Literal `node` — ci.ts generates pipeline YAML that runs on a
   // different agent later, so process.execPath (the generator's path)
   // is wrong. PATH on the agent has node via bootstrap.sh.
-  // --experimental-strip-types for Node 24's .ts support (unflagged in
-  // 25+; drop once CI bumps past the ABI-141 blocker).
-  return `node --experimental-strip-types scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  return `node scripts/build.ts ${getBuildArgs(target, options, mode)}`;
 }
 
 /**
@@ -822,8 +820,6 @@ function getBuildImageSteps(platform: Platform, options: PipelineOptions): Comma
  */
 function getWindowsBuildImageStep(platform: Platform, options: PipelineOptions): CommandStep {
   const { arch } = platform;
-  const { publishImages } = options;
-  const action = publishImages ? "publish-image" : "create-image";
   return {
     key: `${getImageKey(platform)}-build-image`,
     label: `${getImageLabel(platform)} - build-image`,
@@ -840,7 +836,7 @@ function getWindowsBuildImageStep(platform: Platform, options: PipelineOptions):
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: `node ./scripts/machine.ts ${action} --arch=${arch}`,
+    command: `node ./scripts/machine.ts bake-image --arch=${arch} --name=${getImageName(platform, options)}`,
     timeout_in_minutes: 3 * 60,
   };
 }
@@ -879,7 +875,7 @@ function getLinuxBuildImageSteps(platform: Platform, options: PipelineOptions): 
     cancel_on_build_failing: isMergeQueue(),
     // `install` copies agent.ts and the utils.ts it imports out of this
     // checkout into the agent's home, so the unit outlives the build directory.
-    // ($ is a literal $ after pipeline-upload interpolation.)
+    // ($$ is a literal $ after pipeline-upload interpolation.)
     command: [
       `sh ./scripts/bootstrap.sh ${bootstrapArgs.join(" ")}`,
       `$$([ "$$(id -u)" = 0 ] || echo sudo -n) node ./scripts/agent.ts install`,
@@ -1321,6 +1317,21 @@ function getOptionsApplyStep(): CommandStep {
   };
 }
 
+/**
+ * The platform behind a key picked in a manual build's options step. The step
+ * offers every build platform, but main does not build asan, so a picked key
+ * can be one this build does not have.
+ */
+function getSelectedPlatform(platforms: Map<string, Platform>, key: string): Platform {
+  const platform = platforms.get(key);
+  if (!platform) {
+    throw new Error(
+      `Platform "${key}" is not available in this build (available: ${[...platforms.keys()].join(", ")})`,
+    );
+  }
+  return platform;
+}
+
 async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
   const isManual = isBuildManual();
   if (isManual && !process.argv.includes("--apply")) {
@@ -1349,8 +1360,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
         ?.filter(Boolean);
 
     // The answers to the options step, as Buildkite stored them. "build-profiles"
-    // has a default, so it is always set, and its values are that field's
-    // options; the platform keys are likewise the values of their fields' options.
+    // has a default, so it is always set, and its values are that field's options.
     const buildProfiles = parseArray(options["build-profiles"]) as Profile[];
     const buildPlatformKeys = parseArray(options["build-platforms"]);
     const testPlatformKeys = parseArray(options["test-platforms"]);
@@ -1364,12 +1374,12 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
       testFiles: parseArray(options["test-files"]),
       buildPlatforms: buildPlatformKeys?.length
         ? buildPlatformKeys.flatMap(key =>
-            buildProfiles.map(profile => ({ ...(buildPlatformsMap.get(key) as Platform), profile })),
+            buildProfiles.map(profile => ({ ...getSelectedPlatform(buildPlatformsMap, key), profile })),
           )
         : Array.from(buildPlatformsMap.values()),
       testPlatforms: testPlatformKeys?.length
         ? testPlatformKeys.flatMap(key =>
-            buildProfiles.map(profile => ({ ...(testPlatformsMap.get(key) as Platform), profile })),
+            buildProfiles.map(profile => ({ ...getSelectedPlatform(testPlatformsMap, key), profile })),
           )
         : Array.from(testPlatformsMap.values()),
       dryRun: parseBoolean(options["dry-run"] ?? ""),

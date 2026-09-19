@@ -5,7 +5,7 @@
 // .buildkite/ci.ts). They only work in CI: the cloud credentials are Buildkite
 // cluster secrets.
 //
-//   create-image | publish-image --arch=<x64|aarch64>
+//   bake-image --arch=<x64|aarch64> --name=<image name>
 //     Bake the Windows image on Azure with Packer (scripts/packer/).
 //   wait-image --name=<ami name> --build=<build number> [--timeout-minutes=N]
 //     Block until the Linux AMI a `…-bake-image` step produced is available.
@@ -16,10 +16,9 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { getBootstrapVersion, getBranch, getBuildNumber, getSecret, spawnSafe, which } from "./utils.ts";
+import { getBranch, getSecret, spawnSafe, which } from "./utils.ts";
 
 type Arch = "x64" | "aarch64";
-type ImageCommand = "create-image" | "publish-image";
 
 const PACKER_VERSION = "1.15.0";
 
@@ -38,7 +37,7 @@ async function getAzureToken(tenantId: string, clientId: string, clientSecret: s
  * Packer handles VM creation, bootstrap, sysprep and gallery capture over
  * WinRM.
  */
-async function buildWindowsImage(command: ImageCommand, arch: Arch): Promise<void> {
+async function buildWindowsImage(arch: Arch, imageDefName: string): Promise<void> {
   const templateName = arch === "aarch64" ? "windows-arm64" : "windows-x64";
   const templateDir = resolve(import.meta.dirname, "packer");
 
@@ -47,17 +46,9 @@ async function buildWindowsImage(command: ImageCommand, arch: Arch): Promise<voi
   const subscriptionId = getSecret("AZURE_SUBSCRIPTION_ID");
   const tenantId = getSecret("AZURE_TENANT_ID");
   const resourceGroup = getSecret("AZURE_RESOURCE_GROUP");
-  const location = getSecret("AZURE_LOCATION", { required: false }) || "eastus2";
-  const galleryName = getSecret("AZURE_GALLERY_NAME", { required: false }) || "bunCIGallery2";
+  const location = getSecret("AZURE_LOCATION");
+  const galleryName = getSecret("AZURE_GALLERY_NAME");
 
-  // Image naming must match getImageName() in ci.ts:
-  //   [publish images] / normal CI: "windows-x64-2019-v13"
-  //   [build images]:               "windows-x64-2019-build-37194"
-  const imageKey = arch === "aarch64" ? "windows-aarch64-11" : "windows-x64-2019";
-  const imageDefName =
-    command === "publish-image"
-      ? `${imageKey}-v${getBootstrapVersion("windows")}`
-      : `${imageKey}-build-${getBuildNumber()}`;
   const galleryArch = arch === "aarch64" ? "Arm64" : "x64";
   console.log(`[packer] Ensuring gallery image definition: ${imageDefName}`);
   const galleryPath = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}`;
@@ -240,10 +231,9 @@ async function describeImages(filters: string[]): Promise<AwsImage[]> {
     [aws, "ec2", "describe-images", "--owners", "self", "--filters", ...filters, "--output", "json"],
     {
       env: {
-        ...process.env,
         AWS_ACCESS_KEY_ID: getSecret("EC2_ACCESS_KEY_ID"),
         AWS_SECRET_ACCESS_KEY: getSecret("EC2_SECRET_ACCESS_KEY"),
-        AWS_REGION: getSecret("EC2_REGION", { required: false }) || "us-east-1",
+        AWS_REGION: getSecret("EC2_REGION"),
       },
     },
   );
@@ -313,18 +303,18 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (command === "create-image" || command === "publish-image") {
-    const { arch } = values;
-    if (arch !== "x64" && arch !== "aarch64") {
-      throw new Error(`${command} needs --arch=<x64|aarch64>`);
+  if (command === "bake-image") {
+    const { arch, name } = values;
+    if ((arch !== "x64" && arch !== "aarch64") || !name) {
+      throw new Error("bake-image needs --arch=<x64|aarch64> --name=<image name>");
     }
-    await buildWindowsImage(command, arch);
+    await buildWindowsImage(arch, name);
     return;
   }
 
   const scriptPath = relative(process.cwd(), fileURLToPath(import.meta.url));
   throw new Error(
-    `Usage: ./${scriptPath} <create-image|publish-image> --arch=<x64|aarch64>\n` +
+    `Usage: ./${scriptPath} bake-image --arch=<x64|aarch64> --name=<image name>\n` +
       `       ./${scriptPath} wait-image --name=<ami name> --build=<build number> [--timeout-minutes=N]`,
   );
 }

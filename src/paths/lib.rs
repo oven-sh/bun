@@ -1020,7 +1020,10 @@ pub mod fs {
                     core::slice::from_raw_parts(needle, needle_len),
                 )
             };
-            (0..=haystack_len - needle_len)
+            let Some(last) = haystack_len.checked_sub(needle_len) else {
+                return usize::MAX;
+            };
+            (0..=last)
                 .rev()
                 .find(|&i| haystack[i..i + needle_len] == *needle)
                 .unwrap_or(usize::MAX)

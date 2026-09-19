@@ -105,6 +105,7 @@ impl MacroContext {
         import_record_path: &[u8],
         log: &mut Log,
         source: &Source,
+        source_has_no_directory: bool,
         import_range: Range,
         caller: Expr,
         function_name: &[u8],
@@ -122,7 +123,11 @@ impl MacroContext {
         // SAFETY: `resolver` outlives `self` (see struct comment); uniquely
         // accessed for the duration of this resolve call.
         let resolver = unsafe { &mut *self.resolver };
-        let source_dir = resolver.source_dir_for_imports(&source.path);
+        let source_dir = if source_has_no_directory {
+            b"./"
+        } else {
+            resolver.source_dir_for_imports(&source.path)
+        };
 
         let input_specifier: &[u8] = 'brk: {
             if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
@@ -307,6 +312,7 @@ fn __bun_macro_context_call(
     import_record_path: &[u8],
     log: &mut Log,
     source: &Source,
+    source_has_no_directory: bool,
     import_range: Range,
     caller: Expr,
     function_name: &[u8],
@@ -327,6 +333,7 @@ fn __bun_macro_context_call(
             import_record_path,
             log,
             source,
+            source_has_no_directory,
             import_range,
             caller,
             function_name,

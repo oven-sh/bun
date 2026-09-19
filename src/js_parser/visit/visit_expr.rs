@@ -735,12 +735,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // borrowck.
                         let log = p.lexer.log();
                         let source = p.source;
+                        let source_has_no_directory = p.options.source_has_no_directory;
                         let Ok(macro_result) = p
                             .options
                             .macro_context
                             .as_deref_mut()
                             .expect("macro_context")
-                            .call(record_path_text, log, source, record_range, expr, name)
+                            .call(
+                                record_path_text,
+                                log,
+                                source,
+                                source_has_no_directory,
+                                record_range,
+                                expr,
+                                name,
+                            )
                         else {
                             return;
                         };
@@ -2323,13 +2332,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // borrowck.
                 let log = p.lexer.log();
                 let source = p.source;
+                let source_has_no_directory = p.options.source_has_no_directory;
                 let macro_result = match p
                     .options
                     .macro_context
                     .as_deref_mut()
                     .expect("macro_context")
-                    .call(record_path_text, log, source, record_range, copied, name)
-                {
+                    .call(
+                        record_path_text,
+                        log,
+                        source,
+                        source_has_no_directory,
+                        record_range,
+                        copied,
+                        name,
+                    ) {
                     Ok(r) => r,
                     Err(_) => {
                         if p.log().msgs.len() == start_error_count {

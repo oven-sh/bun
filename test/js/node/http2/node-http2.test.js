@@ -5078,7 +5078,7 @@ describe.concurrent("http2 headers and options arguments are checked like node's
     });
   }
 
-  it("client.request() throws before it opens a stream, also on a destroyed session", async () => {
+  it("client.request() throws before it opens a stream", async () => {
     const server = http2.createServer();
     server.on("stream", stream => {
       stream.respond({ ":status": 200 });
@@ -5091,27 +5091,75 @@ describe.concurrent("http2 headers and options arguments are checked like node's
       expect({
         "request(headers)": errorsOf(nonObjects, value => client.request(value)),
         "request({}, options)": errorsOf(nonObjectsAndArray, value => client.request({}, value)),
-        // node checks the headers first.
-        "request(null, null)": errorOf(() => client.request(null, null)),
+        // node checks the headers first: their type, then their content, and then the options.
+        "request(null, null)": errorOf(() => client.request(null, null)).message,
+        'request({ ":foo": "x" }, null)': errorOf(() => client.request({ ":foo": "x" }, null)).code,
+        'request({ "bad name": "x" }, 5)': errorOf(() => client.request({ "bad name": "x" }, 5)).code,
+        'request({ ":method": "CONNECT" }, { endStream: 1 })': errorOf(() =>
+          client.request({ ":method": "CONNECT" }, { endStream: 1 }),
+        ).code,
+        'request([":foo", "x"], "str")': errorOf(() => client.request([":foo", "x"], "str")).code,
       }).toEqual({
         "request(headers)": invalidArgTypes(nonObjects, "headers", arrayOrObject),
         "request({}, options)": invalidArgTypes(nonObjectsAndArray, "options", ofTypeObject),
-        "request(null, null)": invalidArgType("headers", arrayOrObject, "null"),
+        "request(null, null)": invalidArgType("headers", arrayOrObject, "null").message,
+        'request({ ":foo": "x" }, null)': "ERR_HTTP2_INVALID_PSEUDOHEADER",
+        'request({ "bad name": "x" }, 5)': "ERR_INVALID_HTTP_TOKEN",
+        'request({ ":method": "CONNECT" }, { endStream: 1 })': "ERR_HTTP2_CONNECT_AUTHORITY",
+        'request([":foo", "x"], "str")': "ERR_HTTP2_INVALID_PSEUDOHEADER",
       });
 
       // No rejected call took a stream id: the first real request is stream 1.
       const req = client.request({ ":path": "/" });
       expect(await responseOf(req)).toMatchObject({ headers: { ":status": 200 }, body: "ok" });
       expect(req.id).toBe(1);
-
+    } finally {
       client.destroy();
-      expect({
-        "request(null)": errorOf(() => client.request(null)),
-        "request({}, null)": errorOf(() => client.request({}, null)),
-      }).toEqual({
-        "request(null)": invalidArgType("headers", arrayOrObject, "null"),
-        "request({}, null)": invalidArgType("options", ofTypeObject, "null"),
+      server.close();
+    }
+  });
+
+  it("client.request() checks its arguments before it looks at the session state", async () => {
+    const server = http2.createServer();
+    let endResponse;
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      endResponse = () => stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`http://localhost:${server.address().port}`);
+    client.on("error", () => {});
+    function badArguments() {
+      return {
+        "request(null)": errorOf(() => client.request(null)).message,
+        "request({}, null)": errorOf(() => client.request({}, null)).message,
+        'request({ "bad name": "x" })': errorOf(() => client.request({ "bad name": "x" })).code,
+      };
+    }
+    const expected = {
+      "request(null)": invalidArgType("headers", arrayOrObject, "null").message,
+      "request({}, null)": invalidArgType("options", ofTypeObject, "null").message,
+      'request({ "bad name": "x" })': "ERR_INVALID_HTTP_TOKEN",
+    };
+    try {
+      // close() with a stream still open leaves the session closed and not destroyed.
+      const req = client.request({ ":path": "/" });
+      const response = responseOf(req);
+      await new Promise((resolve, reject) => {
+        req.on("response", resolve);
+        response.catch(reject);
       });
+      client.close();
+      expect({ closed: client.closed, destroyed: client.destroyed, ...badArguments() }).toEqual({
+        closed: true,
+        destroyed: false,
+        ...expected,
+      });
+
+      endResponse();
+      expect(await response).toMatchObject({ headers: { ":status": 200 }, body: "ok" });
+      client.destroy();
+      expect({ destroyed: client.destroyed, ...badArguments() }).toEqual({ destroyed: true, ...expected });
     } finally {
       client.destroy();
       server.close();
@@ -5153,14 +5201,25 @@ describe.concurrent("http2 headers and options arguments are checked like node's
           errorOf(() => stream.respondWithFD(fd, null, { offset: "x" })),
         ],
       });
+      // No rejected call reserved a stream id: this push is stream 2.
+      stream.pushStream({ ":path": "/pushed" }, (err, push) => {
+        if (err) return stream.destroy(err);
+        push.respond({ ":status": 200 });
+        push.end();
+      });
       stream.respond({ ":status": 200, "x-after": "yes" });
       stream.end("ok");
     });
     await new Promise(resolve => server.listen(0, resolve));
     const client = http2.connect(`http://localhost:${server.address().port}`);
     client.on("error", () => {});
-    const pushed = mock();
-    client.on("stream", pushed);
+    const pushed = [];
+    const pushClosed = Promise.withResolvers();
+    client.on("stream", (push, headers) => {
+      pushed.push({ id: push.id, path: headers[":path"] });
+      push.on("close", pushClosed.resolve);
+      push.resume();
+    });
     try {
       const response = responseOf(client.request({ ":path": "/" }));
       // A request that fails before the server sees it must not leave `errors` pending.
@@ -5185,7 +5244,8 @@ describe.concurrent("http2 headers and options arguments are checked like node's
       });
       expect(await response).toMatchObject({ headers: { ":status": 200, "x-after": "yes" }, body: "ok" });
       expect(pushCallback).not.toHaveBeenCalled();
-      expect(pushed).not.toHaveBeenCalled();
+      expect(pushed).toEqual([{ id: 2, path: "/pushed" }]);
+      await pushClosed.promise;
     } finally {
       client.destroy();
       server.close();
@@ -5223,6 +5283,36 @@ describe.concurrent("http2 headers and options arguments are checked like node's
       client.destroy();
       server.close();
     }
+  });
+
+  it("the other callers of assertIsObject() reject a function", () => {
+    // An unfixed build returns a session or a server here: do not leave it open.
+    function errorAfterCleanup(invoke) {
+      return errorOf(() => {
+        const made = invoke();
+        made.on("error", () => {});
+        made.destroy?.();
+      });
+    }
+    function f() {}
+    const settingsProperty = {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "options.settings" property must be of type object. Received function f',
+    };
+    expect({
+      "connect(f)": errorAfterCleanup(() => http2.connect(f)),
+      "createServer({ settings: f })": errorAfterCleanup(() => http2.createServer({ settings: f })),
+      "performServerHandshake(socket, f)": errorAfterCleanup(() => http2.performServerHandshake(new net.Socket(), f)),
+      "performServerHandshake(socket, { settings: f })": errorAfterCleanup(() =>
+        http2.performServerHandshake(new net.Socket(), { settings: f }),
+      ),
+    }).toEqual({
+      "connect(f)": invalidArgType("authority", "of type string or an instance of URL or Object", "function f"),
+      "createServer({ settings: f })": settingsProperty,
+      "performServerHandshake(socket, f)": invalidArgType("options", ofTypeObject, "function f"),
+      "performServerHandshake(socket, { settings: f })": settingsProperty,
+    });
   });
 
   it("undefined, a null-prototype object and a class instance still pass", async () => {

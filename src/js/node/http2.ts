@@ -5865,39 +5865,9 @@ class ClientHttp2Session extends Http2Session {
     // throws before that point must not decrement.
     let connectionsCounted = false;
     try {
-      // node validates arguments synchronously and only defers session-state failures
-      // (destroyed/closed/GOAWAY) to the returned stream, so bad options throw even on
-      // a destroyed session (lib/internal/http2/core.js request()).
-      if (!$isArray(headers)) assertIsObject(headers, "headers", ["Object", "Array"]);
-      assertIsObject(options, "options");
-      if (options !== undefined) {
-        if (options.endStream !== undefined) validateBoolean(options.endStream, "options.endStream");
-        if (options.parent !== undefined) validateNumber(options.parent, "options.parent");
-        if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
-        if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
-      }
-      if (this.destroyed) {
-        const req = new ClientHttp2Stream(undefined, this, headers);
-        process.nextTick(destroyWithInvalidSessionNT, req);
-        return req;
-      }
-      if (this[kReceivedGoaway]) {
-        const err = new Error("New streams cannot be created after receiving a GOAWAY");
-        err.code = "ERR_HTTP2_GOAWAY_SESSION";
-        throw err;
-      }
-      if (this.closed) {
-        // node: a closed (close() called / GOAWAY pending) session reports
-        // ERR_HTTP2_GOAWAY_SESSION on the stream (verified node v26.3.0); the test
-        // contract accepts a synchronous throw of the same error.
-        const err = new Error("New streams cannot be created after receiving a GOAWAY");
-        err.code = "ERR_HTTP2_GOAWAY_SESSION";
-        throw err;
-      }
-
-      if (this.sentTrailers) {
-        throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
-      }
+      // node validates the headers, then the options, and only then looks at the session
+      // state: it defers those failures (destroyed/closed/GOAWAY) to the returned stream. So a
+      // bad argument throws even on a destroyed session (lib/internal/http2/core.js request()).
 
       // Raw (flat [name, value, ...] array) headers form: missing pseudo-header
       // defaults are prepended and the pairs are encoded on the wire in their
@@ -5965,28 +5935,8 @@ class ClientHttp2Session extends Http2Session {
         }
         headers = headersObject;
       } else {
+        assertIsObject(headers, "headers", ["Object", "Array"]);
         headers = { ...headers };
-      }
-
-      // Copy options so user-supplied getters run now, before the header block
-      // is encoded — a getter that re-entrantly calls request() would otherwise
-      // reorder header blocks on the wire (Node does the same).
-      if ($isObject(options)) {
-        options = { ...options };
-      }
-
-      if ($isObject(options) && "weight" in options) {
-        // RFC 9113 deprecated priority signalling: node emits DEP0194 when the option is present
-        // and ignores it (the request always goes out with the default weight).
-        if (!priorityWeightDeprecationWarned) {
-          priorityWeightDeprecationWarned = true;
-          process.emitWarning(
-            "Priority signaling has been deprecated as of RFC 9113.",
-            "DeprecationWarning",
-            "DEP0194",
-          );
-        }
-        delete options.weight;
       }
 
       const sensitives = headers[sensitiveHeaders];
@@ -6075,6 +6025,57 @@ class ClientHttp2Session extends Http2Session {
         if (headers[":path"] == undefined) {
           headers[":path"] = "/";
         }
+      }
+
+      assertIsObject(options, "options");
+      if (options !== undefined) {
+        if (options.endStream !== undefined) validateBoolean(options.endStream, "options.endStream");
+        if (options.parent !== undefined) validateNumber(options.parent, "options.parent");
+        if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
+        if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
+      }
+      if (this.destroyed) {
+        const req = new ClientHttp2Stream(undefined, this, headers);
+        process.nextTick(destroyWithInvalidSessionNT, req);
+        return req;
+      }
+      if (this[kReceivedGoaway]) {
+        const err = new Error("New streams cannot be created after receiving a GOAWAY");
+        err.code = "ERR_HTTP2_GOAWAY_SESSION";
+        throw err;
+      }
+      if (this.closed) {
+        // node: a closed (close() called / GOAWAY pending) session reports
+        // ERR_HTTP2_GOAWAY_SESSION on the stream (verified node v26.3.0); the test
+        // contract accepts a synchronous throw of the same error.
+        const err = new Error("New streams cannot be created after receiving a GOAWAY");
+        err.code = "ERR_HTTP2_GOAWAY_SESSION";
+        throw err;
+      }
+
+      if (this.sentTrailers) {
+        throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
+      }
+
+      // Copy options so user-supplied getters run now, before the header block
+      // is encoded — a getter that re-entrantly calls request() would otherwise
+      // reorder header blocks on the wire (Node does the same).
+      if ($isObject(options)) {
+        options = { ...options };
+      }
+
+      if ($isObject(options) && "weight" in options) {
+        // RFC 9113 deprecated priority signalling: node emits DEP0194 when the option is present
+        // and ignores it (the request always goes out with the default weight).
+        if (!priorityWeightDeprecationWarned) {
+          priorityWeightDeprecationWarned = true;
+          process.emitWarning(
+            "Priority signaling has been deprecated as of RFC 9113.",
+            "DeprecationWarning",
+            "DEP0194",
+          );
+        }
+        delete options.weight;
       }
 
       let rejectContentLengthOnNoPayload = false;

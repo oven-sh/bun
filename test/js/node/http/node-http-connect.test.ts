@@ -463,13 +463,18 @@ describe("HTTP server CONNECT", () => {
       const payload = "hello tunnel";
 
       const { promise, resolve, reject } = Promise.withResolvers<{ request: string; tunneled: string }>();
+      let tunnelClosed = false;
       proxyServer.on("connect", async (req, socket, head) => {
         try {
           socket.on("error", reject);
+          socket.once("close", () => (tunnelClosed = true));
           if (paused) socket.pause();
           socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
           // Paused: every tunnel byte arrives before anything reads the request or the socket.
           while (paused && socket.readableLength < payload.length) {
+            if (tunnelClosed) {
+              throw new Error(`tunnel closed with ${socket.readableLength} of ${payload.length} bytes buffered`);
+            }
             await new Promise(tick => setImmediate(tick));
           }
 
@@ -485,6 +490,8 @@ describe("HTTP server CONNECT", () => {
             tunneled: Buffer.concat(tunnelChunks).toString(),
           });
         } catch (err) {
+          // The server's dispose waits for this socket, and a timeout would hide the error.
+          socket.destroy();
           reject(err);
         }
       });
@@ -496,6 +503,7 @@ describe("HTTP server CONNECT", () => {
         client.write(`CONNECT ${target} HTTP/1.1\r\nHost: example.com:80\r\n${framing}\r\n\r\n`);
       });
       client.on("error", reject);
+      client.once("close", () => (tunnelClosed = true));
       client.once("data", () => client.end(payload));
 
       expect(await promise).toEqual({ request: "", tunneled: payload });

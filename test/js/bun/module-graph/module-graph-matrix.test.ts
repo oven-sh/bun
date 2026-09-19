@@ -10,7 +10,7 @@
 // are not: they count recompiles of code every instance shares and call Bun.shrink(), and both are
 // process-wide. Section 6 is not: each of its tests is already many instances at once.
 //
-import { reoptimizationRetryCount } from "bun:jsc";
+import { numberOfDFGCompiles, reoptimizationRetryCount } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
@@ -519,7 +519,8 @@ describe("ModuleGraph matrix: hot code across instances", () => {
   // installed right now, and a first compile is concurrent: d2() gets hot by calls alone, reaches its
   // first one about when the first count is taken, and it lands before or after that count.
   // The shared code is instance-generic only after several recompiles, each with twice the warm-up of
-  // the one before. A debug build has no time for those loops, so it checks the reads and not the counts.
+  // the one before. A debug build has no time for those loops, so a late one can still land there: it
+  // checks that the counts grow by less than one per added instance, which a recompile cycle does not.
   for (const order of ["heatFirstInstanceThenAdd", "heatEachInstance"] as const) {
     test(`shared optimized code is stable across instances × ${order}`, async () => {
       const log: string[] = [];
@@ -537,6 +538,15 @@ describe("ModuleGraph matrix: hot code across instances", () => {
       mods[0].d0(HOT);
       mods[0].d2(HOT);
       mods[0].viaNamespace(HOT);
+      // A first compile runs on a JIT thread, and d2() gets hot by calls alone, so its first one starts about
+      // here. Wait until each counted function has its optimized code, so that the first count comes after.
+      const counted = ["d0", "d2", "viaNamespace"] as const;
+      const optimized = (f: (typeof counted)[number]) =>
+        numberOfDFGCompiles(mods[0][f]) > reoptimizationRetryCount(mods[0][f]);
+      for (let turn = 0; turn < 1000 && !counted.every(optimized); turn++) {
+        for (const m of mods) for (const f of counted) for (let k = 0; k < 100; k++) m[f](1);
+        await new Promise<void>(r => setImmediate(r));
+      }
       const recompilesAfterTwo = {
         d0: reoptimizationRetryCount(mods[0].d0),
         d2: reoptimizationRetryCount(mods[0].d2),
@@ -556,9 +566,11 @@ describe("ModuleGraph matrix: hot code across instances", () => {
       };
       expect({ reads, recompilesAfterEight, firstTwo: [mods[0].d0(3), mods[1].d0(3)] }).toEqual({
         reads: whos.slice(2).map((w, k) => [`${w}:0|K:${w}`, `${w}:0|K:${w}`, `${w}:0|K:${w}`, `${w}:${k + 2}|K:${w}`]),
-        recompilesAfterEight: isDebug ? expect.anything() : recompilesAfterTwo,
+        recompilesAfterEight: isDebug ? recompilesAfterEight : recompilesAfterTwo,
         firstTwo: [`${whos[0]}:0|K:${whos[0]}`, `${whos[1]}:0|K:${whos[1]}`],
       });
+      if (isDebug)
+        for (const f of counted) expect(recompilesAfterEight[f] - recompilesAfterTwo[f]).toBeLessThan(whos.length - 2);
       for (const g of graphs) g.dispose();
     });
   }

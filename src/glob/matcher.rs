@@ -132,8 +132,9 @@ struct Wildcard {
 ///     Matches zero or more characters, except for path separators ('/' or '\').
 /// "**"
 ///     Matches zero or more characters, including path separators.
-///     Must match a complete path segment, i.e. followed by a path separator or
-///     at the end of the pattern.
+///     Must be a complete path segment, i.e. preceded by a path separator (or the
+///     start of the pattern or of a brace branch) and followed by one (or the end
+///     of the pattern). Anywhere else (`a**`, `**b`) it behaves like "*".
 /// "[ab]"
 ///     Matches one of the characters contained in the brackets.
 ///     Character ranges (e.g. "[a-z]") are also supported.
@@ -150,28 +151,19 @@ struct Wildcard {
 ///     Used to escape any of the special characters above.
 // TODO: consider just taking arena and resetting to initial state,
 // all usages of this function pass in Arena.arena()
-pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
-    let mut state = State::default();
-
+pub fn r#match(mut glob: &[u8], path: &[u8]) -> MatchResult {
+    // Strip the `!` prefix so that index 0 of `glob` is the start of the pattern
+    // proper, which is what `is_segment_start` checks a leading `**` against.
     let mut negated = false;
-    while (state.glob_index as usize) < glob.len() && glob[state.glob_index as usize] == b'!' {
+    while let [b'!', rest @ ..] = glob {
         negated = !negated;
-        state.glob_index += 1;
+        glob = rest;
     }
 
+    let mut state = State::default();
     let mut brace_stack = BraceStack::default();
     let mut brace_budget = BRACE_BRANCH_BUDGET;
-    // glob_start must point past the consumed `!` prefix so that a pattern-initial
-    // `**` is still recognized as being at the start of a path segment.
-    let glob_start = state.glob_index;
-    let matched = glob_match_impl(
-        &mut state,
-        glob,
-        glob_start,
-        path,
-        &mut brace_stack,
-        &mut brace_budget,
-    );
+    let matched = glob_match_impl(&mut state, glob, path, &mut brace_stack, &mut brace_budget);
 
     MatchResult {
         matches: matched != negated,
@@ -179,13 +171,11 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
     }
 }
 
-// `glob_start` is the index where the glob pattern starts
 #[inline(always)]
 // PERF: `inline(always)` on a fn that recurses through match_brace_branch — profile if hot.
 fn glob_match_impl(
     state: &mut State,
     glob: &[u8],
-    glob_start: u32,
     path: &[u8],
     brace_stack: &mut BraceStack,
     brace_budget: &mut u32,
@@ -199,8 +189,12 @@ fn glob_match_impl(
                 'to_else: {
                     match ch {
                         b'*' => {
+                            // A `**` that does not begin a path segment (`a**`) is two
+                            // ordinary `*`s: it must neither swallow the `/**` segments
+                            // after it nor take the globstar path below.
                             let is_globstar = (state.glob_index as usize) + 1 < glob.len()
-                                && glob[state.glob_index as usize + 1] == b'*';
+                                && glob[state.glob_index as usize + 1] == b'*'
+                                && is_segment_start(glob, brace_stack, state.glob_index);
                             if is_globstar {
                                 skip_globstars(glob, &mut state.glob_index);
                             }
@@ -232,13 +226,7 @@ fn glob_match_impl(
                                     continue 'main_loop;
                                 }
 
-                                // subtract glob_start from glob index before checking if length is less than 3. Given the pattern:
-                                // {**/a,**/b}
-                                // if we start at index 6 (start of **/b pattern), we don't want to index into the pattern before it
-                                if (state.glob_index.saturating_sub(glob_start) < 3
-                                    || glob[state.glob_index as usize - 3] == b'/')
-                                    && (!is_end_invalid || glob[state.glob_index as usize] == b'/')
-                                {
+                                if !is_end_invalid || glob[state.glob_index as usize] == b'/' {
                                     if is_end_invalid {
                                         state.glob_index += 1;
                                     }
@@ -533,14 +521,7 @@ fn match_brace_branch(
     branch_state.glob_index = branch_index;
     branch_state.brace_depth = u8::try_from(brace_stack.len()).expect("int cast");
 
-    let matched = glob_match_impl(
-        &mut branch_state,
-        glob,
-        branch_index,
-        path,
-        brace_stack,
-        brace_budget,
-    );
+    let matched = glob_match_impl(&mut branch_state, glob, path, brace_stack, brace_budget);
 
     let _ = brace_stack.pop();
 
@@ -673,6 +654,25 @@ fn get_unicode(c: &mut u32, clen: &mut u8, glob: &[u8], glob_index: &mut u32) ->
     }
 
     true
+}
+
+/// Does the `**` at `glob_index` begin a path segment (`a/**/b`, `{**/a,b}`), as
+/// opposed to continuing one (`a**/b`)? The caller checks the other half of the
+/// whole-segment rule, that a `/` or the end of the pattern follows.
+///
+/// This is decided from the `**`'s own surroundings rather than from where the current
+/// `glob_match_impl` call started, because backtracking into an enclosing globstar from
+/// inside a brace branch re-runs the pattern from before the group. The branches we
+/// are inside are the frames on `brace_stack`, so a `**` opening one of them is found
+/// there instead of by looking at the `{` or `,` before it, which may be a literal.
+#[inline(always)]
+fn is_segment_start(glob: &[u8], brace_stack: &BraceStack, glob_index: u32) -> bool {
+    glob_index == 0
+        || glob[glob_index as usize - 1] == b'/'
+        || brace_stack
+            .as_slice()
+            .iter()
+            .any(|brace| brace.branch_idx == glob_index)
 }
 
 #[inline(always)]

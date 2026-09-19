@@ -33,8 +33,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   let chunked = false;
   let noBody = false;
   let closeDelimited = false;
-  // The callback of a write() that reported backpressure, until the socket's 'drain', and the async context of
-  // that write. Native's onwritable slot keeps both the same way.
+  // The drain callback of a write() that reported backpressure, and its async context (native's onwritable slot).
   let onwritable = null;
   let onwritableFrame;
 
@@ -191,8 +190,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       onwritable = callback;
       onwritableFrame = callback ? AsyncContextFrame.current() : undefined;
     },
-    // ServerResponse#writableNeedDrain reads a non-zero value as "a 'drain' will come". The socket's bytes count only
-    // while this response waits for one: a socket below its high water mark emits no 'drain'.
+    // Non-zero tells writableNeedDrain that a 'drain' will come. A socket under its high water mark emits none.
     get bufferedAmount() {
       return onwritable ? socket.writableLength : 0;
     },
@@ -248,12 +246,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       const buf = toBuffer(chunk, encoding);
       writeHeadToSocket(null);
       const length = writeBody(buf);
-      // Node's rule: write() reports backpressure when the socket's own write() returned false. A chunk that
-      // ServerResponse discarded (HEAD, 204, 304) never reaches the socket.
+      // Node's rule: the socket's own write() reports the backpressure. A discarded chunk (HEAD, 204, 304) is null.
       if (buf === null || !socket.writableNeedDrain) return length;
-      // Like native write_or_end: a negative result, and the callback waits for the drain. A write without a
-      // callback (_send) keeps the one that already waits. An empty write has no length to negate.
+      // Like native write_or_end: a negative result, and the callback waits for the drain.
       if (callback) this.onwritable = callback;
+      // An empty write has no length to negate.
       return length > 0 ? -length : -1;
     },
     end(chunk, encoding, _callback, _strictContentLength) {
@@ -535,10 +532,10 @@ function connectionListenerHTTP1(server, socket, options) {
     }
   }
   // Node's socketOnDrain: a transport-backpressure pause lifts when the
-  // socket drains (a queued-bytes pause lifts from the pipeline advance), and
-  // the response whose write() reported backpressure emits 'drain'.
+  // socket drains (a queued-bytes pause lifts from the pipeline advance).
   function onHttp1SocketDrain() {
     resumeFallbackReadsOnDrain(socket);
+    // Node's socketOnDrain then emits 'drain' on the response that waits for it.
     socket._httpMessage?.[kHttp1ResponseHandle]?.socketDrained();
   }
   socket.on("data", onHttp1SocketData);

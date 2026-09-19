@@ -927,10 +927,11 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
       "package.json": JSON.stringify({
         name: "p",
         // Handshake via a file (extra fds don't survive bun run's spawn):
-        // the script touching `$OUT/ready` proves it's past `give()`, so
+        // the script writing `$OUT/ready` proves it's past `give()`, so
         // perl's `tcgetpgrp` probe is sequenced after the point a regressing
-        // build would have stolen the foreground.
-        scripts: { dev: `perl -e 'open F,">","$ENV{OUT}/ready"; close F; sleep 1 while 1'` },
+        // build would have stolen the foreground. The file holds the script's
+        // pgid so `finally` can kill it.
+        scripts: { dev: `perl -e 'open F,">","$ENV{OUT}/ready"; print F getpgrp; close F; sleep 1 while 1'` },
       }),
     });
     const env: Record<string, string> = { ...bunEnv, BUN_EXE: bunExe(), OUT: String(dir) };
@@ -944,7 +945,7 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
       `  exec($ENV{BUN_EXE}, "run", "--no-orphans", "--silent", "dev") or die $!; } ` +
       `setpgid($bun, $bun); ` +
       // Deliberately NO tcsetpgrp — bun is a background job (`&`).
-      `select undef,undef,undef,0.01 until -e "$ENV{OUT}/ready"; ` +
+      `select undef,undef,undef,0.01 until -s "$ENV{OUT}/ready"; ` +
       `my $fg = tcgetpgrp(0); my $me = getpgrp(); ` +
       `printf "FG %d ME %d BUN %d %s\\n", $fg, $me, $bun, ` +
       `  ($fg == $me ? "FG_OK" : "FG_STOLEN"); ` +
@@ -983,6 +984,19 @@ test.concurrent.skipIf(!isPosix || !hasPerl)(
       proc.kill("SIGKILL");
       await proc.exited;
       proc.terminal?.close();
+      // The script is in its own pgroup, so perl's `kill -$bun` misses it, and
+      // a SIGKILLed `bun run` cannot clean up after itself. On Linux PDEATHSIG
+      // still kills the script. macOS has no equivalent.
+      let scriptPgid = 0;
+      try {
+        scriptPgid = Number(readFileSync(`${dir}/ready`, "utf8"));
+      } catch {}
+      // kill(0) and kill(-1) reach far more than the script.
+      if (scriptPgid > 1) {
+        try {
+          process.kill(-scriptPgid, "SIGKILL");
+        } catch {}
+      }
     }
   },
 );

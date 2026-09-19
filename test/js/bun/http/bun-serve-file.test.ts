@@ -108,6 +108,12 @@ describe("Bun.file in serve routes", () => {
       // If-Range tests: the same validators on a file route and on a handler response.
       "/if-range-route": new Response(Bun.file(join(tempDir, "partial.txt")), { headers: ifRangeValidators }),
       "/if-range-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")), { headers: ifRangeValidators }),
+      // Responds after the request callback returned, when the server no longer has the request's header buffer.
+      "/if-range-async-handler": async () => {
+        const file = Bun.file(join(tempDir, "partial.txt"));
+        await file.exists();
+        return new Response(file, { headers: ifRangeValidators });
+      },
       "/if-range-weak-route": new Response(Bun.file(join(tempDir, "partial.txt")), { headers: { ETag: 'W/"v1"' } }),
       "/if-range-weak-handler": () =>
         new Response(Bun.file(join(tempDir, "partial.txt")), { headers: { ETag: 'W/"v1"' } }),
@@ -957,6 +963,7 @@ describe("Bun.file in serve routes", () => {
   describe.concurrent.each([
     ["FileRoute", "/if-range-route", "/if-range-weak-route"],
     ["fetch handler", "/if-range-handler", "/if-range-weak-handler"],
+    ["async fetch handler", "/if-range-async-handler", "/if-range-weak-handler"],
   ])("If-Range via %s", (_label, path, weakPath) => {
     const partial = { status: 206, contentRange: "bytes 4-7/16", body: "4567" };
     const full = { status: 200, contentRange: null, body: files["partial.txt"] };
@@ -974,7 +981,7 @@ describe("Bun.file in serve routes", () => {
       ["a date after Last-Modified", "Wed, 21 Oct 2015 07:28:01 GMT", full],
       ["a date before Last-Modified", "Wed, 21 Oct 2015 07:27:59 GMT", full],
       ["neither an entity-tag nor a date", "v1", full],
-    ])("%s", async (_name, ifRange, expected) => {
+    ])("If-Range is %s", async (_name, ifRange, expected) => {
       expect(await get(path, { "Range": "bytes=4-7", "If-Range": ifRange })).toEqual(expected);
     });
 

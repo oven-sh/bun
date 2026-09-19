@@ -193,6 +193,18 @@ impl MacroContext {
                 hash,
             ) {
                 Ok(m) => m,
+                Err(crate::Error::MacroLoadStalled) => {
+                    *macro_entry.value_ptr = Macro::disabled_sentinel();
+                    log.add_range_error_fmt(
+                        Some(source),
+                        import_range,
+                        format_args!(
+                            "macro \"{}\" never finished loading: its top-level await is pending and nothing is keeping the event loop alive",
+                            bstr::BStr::new(import_record_path)
+                        ),
+                    );
+                    return Err(crate::Error::MacroFailed);
+                }
                 Err(e) => {
                     *macro_entry.value_ptr = Macro::disabled_sentinel();
                     return Err(e);
@@ -208,7 +220,16 @@ impl MacroContext {
         let macro_vm = macro_entry.value_ptr.vm;
         let macro_: *const Macro = macro_entry.value_ptr;
         if macro_disabled {
-            return Ok(caller);
+            // Its load failed earlier; returning `caller` would leave an unbound call in the output.
+            log.add_error_fmt(
+                Some(source),
+                caller.loc,
+                format_args!(
+                    "macro \"{}\" failed to load",
+                    bstr::BStr::new(import_record_path)
+                ),
+            );
+            return Err(crate::Error::MacroFailed);
         }
         // SAFETY: `Some` for every non-disabled Macro; see `Macro` struct comment.
         let vm = macro_vm
@@ -457,7 +478,7 @@ impl Macro {
         }
 
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
-        let loaded_result = unsafe {
+        let (loaded_result, waited) = unsafe {
             (*vm).load_macro_entry_point(input_specifier, function_name, specifier, hash)
         }?;
 
@@ -466,13 +487,21 @@ impl Macro {
         let unwrapped = unsafe {
             (*loaded_result).unwrap(&*(*vm).jsc_vm, jsc::PromiseUnwrapMode::LeaveUnhandled)
         };
-        if let jsc::PromiseResult::Rejected(result) = unwrapped {
-            // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
-            // is a live promise cell.
-            unsafe {
-                (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+        match unwrapped {
+            jsc::PromiseResult::Rejected(result) => {
+                // SAFETY: `vm` is the live per-thread VM.
+                unsafe { (*vm).run_error_handler(result, None) };
+                return Err(crate::Error::MacroLoadError);
             }
-            return Err(crate::Error::MacroLoadError);
+            // A `Macro` returned here would leave its first call in the output as an
+            // unbound reference.
+            jsc::PromiseResult::Pending => {
+                return Err(match waited {
+                    Err(jsc::Unsettled::Idle) => crate::Error::MacroLoadStalled,
+                    _ => crate::Error::JSError,
+                });
+            }
+            jsc::PromiseResult::Fulfilled(_) => {}
         }
 
         Ok(Macro {
@@ -544,6 +573,8 @@ pub(crate) struct Run<'a> {
     pub(crate) source: &'a Source,
     pub(crate) visited: VisitMap,
     pub(crate) is_top_level: bool,
+    /// `run` recurses once per nesting level of the returned value, on a bundler pool thread's stack.
+    pub(crate) stack_check: bun_core::StackCheck,
 }
 
 impl<'a> Run<'a> {
@@ -563,11 +594,17 @@ impl<'a> Run<'a> {
         };
 
         let global = vm.global();
-        let result = vm.run_with_api_lock(|| {
-            macro_callback
-                .call(global, JSValue::ZERO, args)
-                .unwrap_or_else(|_| global.try_take_exception().unwrap_or_default())
-        });
+        let result = match vm.run_with_api_lock(|| macro_callback.call(global, JSValue::ZERO, args))
+        {
+            Ok(result) => result,
+            // Printed, not `uncaught_exception`: in a `require()`ing program's VM that path is fatal.
+            Err(JsError::Thrown) => {
+                let err = global.take_exception(JsError::Thrown);
+                vm.as_mut().run_error_handler(err, None);
+                return Err(MacroError::MacroFailed);
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         let mut runner = Run {
             caller,
@@ -578,15 +615,32 @@ impl<'a> Run<'a> {
             source,
             visited: VisitMap::default(),
             is_top_level: false,
+            stack_check: bun_core::StackCheck::init(),
         };
 
         // `runner.visited` dropped at scope exit (was `defer runner.visited.deinit(allocator)`)
 
-        runner.run(result)
+        match runner.run(result) {
+            // A throw while converting the result (a getter) is reported like a throw from the macro.
+            Err(MacroError::Js(JsError::Thrown)) => {
+                let err = global.take_exception(JsError::Thrown);
+                vm.as_mut().run_error_handler(err, None);
+                Err(MacroError::MacroFailed)
+            }
+            other => other,
+        }
     }
 
     pub(crate) fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
         use ConsoleObject::formatter::Tag as T;
+        if !self.stack_check.is_safe_to_recurse() {
+            self.log.add_error_fmt(
+                Some(self.source),
+                self.caller.loc,
+                format_args!("macro return value is too deeply nested"),
+            );
+            return Err(MacroError::MacroFailed);
+        }
         // `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
         // collapse the payload to its discriminant via `.tag()`.
         match T::get(value, self.global)?.tag.tag() {
@@ -629,10 +683,10 @@ impl<'a> Run<'a> {
         use ConsoleObject::formatter::Tag as T;
         match tag {
             T::Error => {
+                // Returning `self.caller` would leave the call in the output with its import gone.
                 // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                let _ =
-                    unsafe { (*self.macro_.vm()).uncaught_exception(self.global, value, false) };
-                return Ok(self.caller);
+                unsafe { (*self.macro_.vm()).run_error_handler(value, None) };
+                return Err(MacroError::MacroFailed);
             }
             T::Undefined => {
                 if self.is_top_level {
@@ -666,9 +720,7 @@ impl<'a> Run<'a> {
                         || value.as_::<BuildMessage>().is_some()
                     {
                         // SAFETY: `vm()` is the per-thread VM; uniquely accessed here.
-                        let _ = unsafe {
-                            (*self.macro_.vm()).uncaught_exception(self.global, value, false)
-                        };
+                        unsafe { (*self.macro_.vm()).run_error_handler(value, None) };
                         return Err(MacroError::MacroFailed);
                     }
                 }
@@ -702,6 +754,30 @@ impl<'a> Run<'a> {
                 }
 
                 let mut iter = JSArrayIterator::init(value, self.global)?;
+
+                // Every index below `length` becomes an element (holes as `undefined`), so
+                // `[,,1]` with `length = 1e9` would be a billion `undefined`s.
+                if let Err(stored) = value.indexed_storage_covers(iter.len) {
+                    self.log.add_range_error_fmt_with_notes(
+                        Some(self.source),
+                        Range {
+                            loc: self.caller.loc,
+                            ..Default::default()
+                        },
+                        Box::new([bun_ast::range_data(
+                            None,
+                            Range::NONE,
+                            b"return a dense array",
+                        )]),
+                        format_args!(
+                            "cannot coerce a sparse array to Bun's AST: its length is {} but it holds {} element{}",
+                            iter.len,
+                            stored,
+                            if stored == 1 { "" } else { "s" },
+                        ),
+                    );
+                    return Err(MacroError::MacroFailed);
+                }
 
                 // Process all array items
                 let mut array = ExprNodeList::init_capacity(iter.len as usize);
@@ -841,10 +917,26 @@ impl<'a> Run<'a> {
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();
-                // The VM stopped before the macro's promise settled: throw its termination and unwind.
-                vm.as_mut()
-                    .wait_for_promise(promise)
-                    .map_err(|stopped| MacroError::Js(stopped.throw(self.global)))?;
+                // This wait handles the promise: the rejection tracker must not report it too.
+                promise.set_handled(vm.jsc_vm());
+                match vm.as_mut().wait_for_promise_until_idle(promise) {
+                    Ok(()) => {}
+                    // The VM stopped before the macro's promise settled: throw its termination and unwind.
+                    Err(jsc::Unsettled::Stopped(stopped)) => {
+                        return Err(MacroError::Js(stopped.throw(self.global)));
+                    }
+                    // Node's exit-13 condition: the wait would never end.
+                    Err(jsc::Unsettled::Idle) => {
+                        self.log.add_error_fmt(
+                            Some(self.source),
+                            self.caller.loc,
+                            format_args!(
+                                "macro returned a promise that never settles: no timer, I/O, or task is keeping the event loop alive"
+                            ),
+                        );
+                        return Err(MacroError::MacroFailed);
+                    }
+                }
 
                 let promise_result = promise.result(vm.jsc_vm());
                 let rejected = promise.status() == jsc::js_promise::Status::Rejected;
@@ -863,11 +955,7 @@ impl<'a> Run<'a> {
                     || promise_result
                         .is_exception(std::ptr::from_ref::<jsc::VM>(self.global.vm()).cast_mut())
                 {
-                    vm.as_mut().unhandled_rejection(
-                        self.global,
-                        promise_result,
-                        promise.as_value(),
-                    );
+                    vm.as_mut().run_error_handler(promise_result, None);
                     return Err(MacroError::MacroFailed);
                 }
                 self.is_top_level = false;

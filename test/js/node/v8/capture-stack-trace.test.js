@@ -298,6 +298,51 @@ test("capture stack trace edge cases", () => {
   expect(Error.captureStackTrace({}, true)).toBe(undefined);
 });
 
+test("Error.captureStackTrace heads the stack of any target with its name and message", () => {
+  class Named {
+    message = "from the instance";
+  }
+  Named.prototype.name = "ProtoName";
+  const targets = {
+    "Error": {},
+    "Custom: boom": { name: "Custom", message: "boom" },
+    "Error: boom": { message: "boom" },
+    "Custom": { name: "Custom" },
+    "boom": { name: "", message: "boom" },
+    "named": function named() {},
+    "ProtoName: from the instance": new Named(),
+    "FromGetter: m": {
+      get name() {
+        return "FromGetter";
+      },
+      message: "m",
+    },
+    "42: 7": { name: 42, message: 7 },
+    "TypeError: boom": new TypeError("boom"),
+  };
+  const headers = {};
+  for (const [expected, target] of Object.entries(targets)) {
+    Error.captureStackTrace(target);
+    headers[expected] = target.stack.split("\n")[0];
+    expect(target.stack.split("\n")[1]).toStartWith("    at ");
+  }
+  expect(headers).toEqual(Object.fromEntries(Object.keys(targets).map(header => [header, header])));
+
+  // A name that cannot be read reaches the caller, as it does for an Error.
+  const stackOf = target => {
+    Error.captureStackTrace(target);
+    return target.stack;
+  };
+  expect(() =>
+    stackOf({
+      get name() {
+        throw new RangeError("from name");
+      },
+    }),
+  ).toThrow("from name");
+  expect(() => stackOf({ name: Symbol("n") })).toThrow(TypeError);
+});
+
 test("Error.captureStackTrace installs .stack as non-enumerable", () => {
   // V8 installs .stack with enumerable: false regardless of target type.
   const expectNonEnumerableStack = target => {

@@ -486,14 +486,19 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     WTF::String message;
 
     if (errorInstance) {
-        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
+        if (!lexicalGlobalObject) {
+            lexicalGlobalObject = errorInstance->globalObject();
+        }
         if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
-            if (!lexicalGlobalObject) {
-                lexicalGlobalObject = errorInstance->globalObject();
-            }
             name = instance->sanitizedNameString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
             message = instance->sanitizedMessageString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        } else {
+            // Error.captureStackTrace() on any other object: Error.prototype.toString() of it, as V8 heads it.
+            name = stackTraceHeaderName(vm, lexicalGlobalObject, errorInstance);
+            RETURN_IF_EXCEPTION(scope, {});
+            message = stackTraceHeaderMessage(vm, lexicalGlobalObject, errorInstance);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }

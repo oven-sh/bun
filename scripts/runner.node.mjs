@@ -3365,6 +3365,39 @@ function escapeXml(str) {
     .replace(/'/g, "&apos;");
 }
 
+/**
+ * Windows 11 ships Smart App Control in evaluation mode. In that mode the kernel
+ * hashes every unsigned executable on its first launch and asks the cloud for
+ * its reputation, which costs 2 to 3.5 seconds for a 77 MB `bun build --compile`
+ * output. bundler_compile.test.ts launches about 85 of those, which puts the file
+ * at 220 to 290 seconds against the 300 second per-file cap. Turning the policy
+ * off takes effect at once and needs no reboot. scripts/bootstrap.ps1 does the
+ * same at image bake time; this covers images baked before that change.
+ *
+ * Only on Buildkite: the policy cannot be turned on again without a reinstall,
+ * so a developer's machine running with CI=true must not get this.
+ */
+async function disableSmartAppControl() {
+  if (!isBuildkite) return;
+  const script = [
+    "$p = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy'",
+    "if (-not (Test-Path $p)) { exit 0 }",
+    "$state = (Get-ItemProperty $p).VerifiedAndReputablePolicyState",
+    "if ($null -eq $state -or $state -eq 0) { exit 0 }",
+    "Set-ItemProperty $p -Name VerifiedAndReputablePolicyState -Value 0 -Type DWord",
+    "if (Get-Command CiTool -ErrorAction SilentlyContinue) { CiTool --refresh -json | Out-Null }",
+    'Write-Output "Smart App Control: state $state -> 0"',
+  ].join("; ");
+  const { ok, error } = await spawnSafe({
+    command: "pwsh",
+    args: ["-NoProfile", "-Command", script],
+    timeout: 60_000,
+  });
+  if (!ok) {
+    console.warn(`Failed to disable Smart App Control: ${error}`);
+  }
+}
+
 export async function main() {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => onExit(signal));
@@ -3382,6 +3415,7 @@ export async function main() {
       "-Command",
       "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
     ]);
+    await disableSmartAppControl();
   }
 
   let doRunTests = true;

@@ -1138,4 +1138,148 @@ describe("Bun.build compile optimize", () => {
     expect(stdout).toBe("42\n");
     expect(exitCode).toBe(0);
   });
+
+  // The bytecode optimizer deletes the jmp that closes a try body once the empty catch has been threaded to the loop
+  // header, so that try range falls through into the next one. DFG then has to keep the locals that are live only at
+  // the first catch (loop-only state) alive across the call that throws.
+  describe("locals live only at a catch inside a loop", () => {
+    const fixture = `
+      let sink = 0;
+      function touch() { sink++; }
+
+      function forOfResultDiscarded(kind) {
+        for (let name of ["a", "b"]) {
+          try { return JSON.parse(kind === "k" && name === "b" ? "1" : "{bad"), true; } catch {}
+        }
+        return false;
+      }
+      function forOfResultUsed(kind) {
+        for (let name of ["a", "b"]) {
+          try { return JSON.parse(kind === "k" && name === "b" ? "1" : "{bad"); } catch {}
+        }
+        return false;
+      }
+      function whileInsideFinally(kind) {
+        let n = 0, limit = { value: 3 }, log = [];
+        try {
+          while (true) {
+            n++;
+            log.push(n);
+            if (n > limit.value) { sink += log.length; break; }
+            try { return JSON.parse(kind === "k" && n >= 2 ? "1" : "{bad"), true; } catch {}
+          }
+        } finally {
+          try { touch(); } catch {}
+        }
+        return false;
+      }
+      function labelledBreakIntoTry(kind) {
+        let result = false, n = 0, limit = { value: 3 }, log = [];
+        done: {
+          for (;;) {
+            n++;
+            log.push(n);
+            if (n > limit.value) { sink += log.length; break; }
+            try { JSON.parse(kind === "k" && n >= 2 ? "1" : "{bad"); result = true; break done; } catch {}
+          }
+        }
+        try { touch(); } catch {}
+        return result;
+      }
+      // Nothing throws when this one goes wrong: the lost local silently becomes NaN.
+      let observed = 0;
+      function loopOnlyNumber(kind) {
+        let result = false, n = 0, doubled = 1;
+        done: {
+          for (;;) {
+            n++;
+            doubled = doubled * 2;
+            observed = doubled;
+            if (n > 3) break;
+            try { JSON.parse(kind === "k" && n >= 2 ? "1" : "{bad"); result = true; break done; } catch {}
+          }
+        }
+        try { touch(); } catch {}
+        return result + ":" + n + ":" + observed;
+      }
+      // Inlining the recursive call reaches one exception handler through two inline call frames.
+      function recursive(depth) {
+        let saved = 0;
+        try {
+          saved = depth * 3 + 1;
+          if (depth > 0) sink += recursive(depth - 1);
+          JSON.parse("{bad");
+          return -1;
+        } catch {
+          return saved;
+        }
+      }
+      function forOfFromCaller(kind) { return forOfResultDiscarded(kind); }
+
+      const cases = [
+        [forOfResultDiscarded, "true", "false"],
+        [forOfResultUsed, "1", "false"],
+        [whileInsideFinally, "true", "false"],
+        [labelledBreakIntoTry, "true", "false"],
+        [loopOnlyNumber, "true:2:4", "false:4:16"],
+      ];
+      for (let i = 0; i < 300; i++) {
+        const hit = i % 3 === 0;
+        const kind = hit ? "k" : "x";
+        for (const [f, whenHit, whenMiss] of cases) {
+          const result = String(f(kind));
+          if (result !== (hit ? whenHit : whenMiss)) throw new Error(f.name + ": got " + result + " at " + i);
+        }
+        if (forOfFromCaller(kind) !== hit) throw new Error("forOfFromCaller: bad result at " + i);
+        if (recursive(2) !== 7) throw new Error("recursive: bad result at " + i);
+      }
+      console.log("ok");
+    `;
+    // Compile on the main thread so the tier-up points do not depend on scheduling, and reach the DFG after about a
+    // hundred calls: every case throws several exceptions per call, which is slow in debug builds. With these settings
+    // each case goes wrong within 70 iterations when the locals are lost.
+    const jit = {
+      BUN_JSC_useConcurrentJIT: "0",
+      BUN_JSC_useFTLJIT: "0",
+      BUN_JSC_thresholdForJITAfterWarmUp: "10",
+      BUN_JSC_thresholdForJITSoon: "10",
+      BUN_JSC_thresholdForOptimizeAfterWarmUp: "100",
+      BUN_JSC_thresholdForOptimizeSoon: "100",
+    };
+    const inlineMore = { ...jit, BUN_JSC_maximumFunctionForCallInlineCandidateBytecodeCostForDFG: "1000" };
+
+    test.concurrent.each([
+      ["optimized bytecode", true, jit],
+      ["optimized bytecode, inlined", true, inlineMore],
+      // The recursive case does not need the optimizer.
+      ["source, inlined", false, inlineMore],
+    ])("%s", async (tag, bytecode, env) => {
+      using dir = tempDir("build-optimize-bytecode-catch-liveness", { "index.js": fixture });
+      let entry = join(String(dir), "index.js");
+      if (bytecode) {
+        await using build = Bun.spawn({
+          cmd: [bunExe(), "build", "--bytecode", "--format=cjs", "--target=bun", "index.js", "--outdir", "out"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+        expect(buildStderr).not.toContain("error");
+        expect(buildExit).toBe(0);
+        entry = join(String(dir), "out", "index.js");
+        expect(existsSync(entry + ".jsc")).toBe(true);
+      }
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), entry],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("ok\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

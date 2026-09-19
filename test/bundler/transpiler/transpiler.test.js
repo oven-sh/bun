@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -3045,6 +3045,45 @@ console.log(<div {...obj} key="after" />);`),
       );
     });
 
+    it("first token of the output", async () => {
+      // The printer tracks "position after the previous operator / number /
+      // regexp" to decide when a space or parentheses are required. Those
+      // positions start out as "none", which must not match the empty output.
+      expectPrintedNoTrim("++x;", "++x;\n");
+      expectPrintedNoTrim("--x;", "--x;\n");
+      expectPrintedNoTrim("+x;", "+x;\n");
+      expectPrintedNoTrim("-x;", "-x;\n");
+      expectPrintedNoTrim("let;", "let;\n");
+      expectPrintedNoTrim("delete x.y;", "delete x.y;\n");
+      expectPrintedNoTrim("/a/.test(x);", "/a/.test(x);\n");
+
+      // The same statements later in the output
+      expectPrintedNoTrim("x;\n++x;", "x;\n++x;\n");
+      expectPrintedNoTrim("x;\nlet;", "x;\nlet;\n");
+
+      // The async form uses the printer's returned byte count to decide whether the output is empty
+      const plain = new Bun.Transpiler({ loader: "js" });
+      expect(await plain.transform("++x;")).toBe("++x;\n");
+      expect(await plain.transform("x;")).toBe("x;\n");
+      expect(await plain.transform("1;")).toBe("");
+
+      // The rules themselves still apply between two tokens
+      const minify = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+      const print = code => minify.transformSync(code);
+      expect(print("++x;")).toBe("++x;");
+      expect(print("+x;")).toBe("+x;");
+      expect(print("x + ++y;")).toBe("x+ ++y;");
+      expect(print("x - --y;")).toBe("x- --y;");
+      expect(print("x + +y;")).toBe("x+ +y;");
+      expect(print("x - -y;")).toBe("x- -y;");
+      expect(print("x < !--y;")).toBe("x<! --y;");
+      expect(print("x-- > y;")).toBe("x-- >y;");
+      expect(print("x instanceof y;")).toBe("x instanceof y;");
+      expect(print("a / /b/;")).toBe("a/ /b/;");
+      expect(print("/a/ in b;")).toBe("/a/ in b;");
+      expect(print("x = 1..toString();")).toBe("x=1 .toString();");
+    });
+
     it("await", () => {
       expectPrinted("await x", "await x");
       expectPrinted("await +x", "await +x");
@@ -3103,6 +3142,22 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`export { z as "" } from "m"`, `export { z as "" } from "m"`);
       expectPrinted_(`export { "" as "" } from "m"`, `export { "" } from "m"`);
       expectPrinted_(`export * as "" from "m"`, `export * as "" from "m"`);
+    });
+
+    it("import clause with more than 65535 names", () => {
+      // "a0000, a0001, ... affff": 65536 distinct names. Byte writes into one
+      // Buffer keep this fast on debug builds, where per-name string concat is slow.
+      const hex = Buffer.from("0123456789abcdef");
+      const names = Buffer.alloc(65536 * 7, "a0000, ");
+      for (let i = 0; i < 65536; i++) {
+        names[i * 7 + 1] = hex[i >> 12];
+        names[i * 7 + 2] = hex[(i >> 8) & 15];
+        names[i * 7 + 3] = hex[(i >> 4) & 15];
+        names[i * 7 + 4] = hex[i & 15];
+      }
+      const list = names.toString("latin1", 0, names.length - 2);
+      const out = new Bun.Transpiler({ loader: "js" }).transformSync("import def, {" + list + '} from "./m.js";');
+      expect(out).toBe("import def, { " + list + ' } from "./m.js";\n');
     });
 
     it("string quote selection", () => {
@@ -5160,6 +5215,45 @@ it("does not crash with --minify-syntax and revisiting dot expressions", () => {
   expect(stderr.toString()).toBe("");
   expect(stdout.toString()).toBe("undefined\n");
   expect(exitCode).toBe(0);
+});
+
+// The printer aborted the process on these inputs, so they run in subprocesses.
+describe.concurrent("minify.identifiers on an empty source or a data loader", () => {
+  const printed = stdout => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+  const minified = "var key=1;export{key};export default {key};";
+
+  it.each([
+    [`new Bun.Transpiler({ minify: { identifiers: true } }).transformSync("")`, ""],
+    [`new Bun.Transpiler({ minify: true }).transformSync(" ")`, ""],
+    [`new Bun.Transpiler({ minify: true }).transformSync('{"key":1}', "json")`, minified],
+    [`await new Bun.Transpiler({ minify: true }).transform('{"key":1}', "json")`, minified],
+  ])("%s", async (expression, output) => {
+    const result = await bunRun(["-e", `console.log(JSON.stringify(${expression}))`]);
+    expect(result).toEqual(printed(JSON.stringify(output)));
+  });
+
+  it("the toml, yaml and text loaders", async () => {
+    const result = await bunRun([
+      "-e",
+      `const browser = new Bun.Transpiler({ minify: true });
+      const bun = new Bun.Transpiler({ minify: true, target: "bun" });
+      console.log(JSON.stringify([
+        browser.transformSync("key = 1", "toml"),
+        bun.transformSync("key: 1", "yaml"),
+        browser.transformSync("key", "text"),
+      ]));`,
+    ]);
+    expect(result).toEqual(printed(JSON.stringify([minified, minified, 'export default "key";'])));
+  });
+
+  it.each([
+    ["--minify", "data.json", '{"key":1}\n', minified],
+    ["--minify-identifiers", "empty.js", "", ""],
+  ])("bun build --no-bundle %s %s", async (flag, file, contents, output) => {
+    using dir = tempDir("minify-identifiers-no-char-freq", { [file]: contents });
+    const result = await bunRun(["build", "--no-bundle", flag, join(String(dir), file)]);
+    expect(result).toEqual(printed(output));
+  });
 });
 
 it("runtime transpiler stack overflows", async () => {

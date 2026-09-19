@@ -294,8 +294,9 @@ void readableStreamClearSourceBarriers(JSReadableStream*); // userJS: no — Rea
 // Bun helper used by every consumer teardown: closes the stream iff its state still allows
 // it. Callers: BunStreamConsumers.cpp, BunStreamSource.cpp, JSDirectStreamController.cpp.
 void readableStreamCloseIfPossible(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — ReadableStreamOperations.cpp
-void readableStreamAddReadRequest(JSC::VM&, JSReadableStream*, JSReadRequest*); // userJS: no — ReadableStreamOperations.cpp
-void readableStreamAddReadIntoRequest(JSC::VM&, JSReadableStream*, JSReadIntoRequest*); // userJS: no — ReadableStreamOperations.cpp
+bool readableStreamReadRequestsFull(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
+void readableStreamAddReadRequest(JSC::JSGlobalObject*, JSReadableStream*, JSReadRequest*); // userJS: no (throws when the request deque is full) — ReadableStreamOperations.cpp
+void readableStreamAddReadIntoRequest(JSC::JSGlobalObject*, JSReadableStream*, JSReadIntoRequest*); // userJS: no (throws when the request deque is full) — ReadableStreamOperations.cpp
 void readableStreamFulfillReadRequest(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue chunk, bool done); // userJS: yes (read-request dispatch) — ReadableStreamOperations.cpp
 void readableStreamFulfillReadIntoRequest(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSArrayBufferView* chunk, bool done); // userJS: yes (read-into dispatch) — ReadableStreamOperations.cpp
 size_t readableStreamGetNumReadRequests(JSReadableStream*); // userJS: no — ReadableStreamOperations.cpp
@@ -421,7 +422,7 @@ void readableByteStreamControllerClose(JSC::JSGlobalObject*, JSReadableByteStrea
 void readableByteStreamControllerCommitPullIntoDescriptor(JSC::JSGlobalObject*, JSReadableStream*, JSPullIntoDescriptor*); // userJS: yes (fulfill dispatch) — JSReadableByteStreamController.cpp
 JSC::JSArrayBufferView* readableByteStreamControllerConvertPullIntoDescriptor(JSC::JSGlobalObject*, JSPullIntoDescriptor*); // userJS: no (intrinsic view construction only) — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSArrayBufferView* chunk); // userJS: yes; throws — JSReadableByteStreamController.cpp
-void readableByteStreamControllerEnqueueChunkToQueue(JSReadableByteStreamController*, RefPtr<JSC::ArrayBuffer>&&, size_t byteOffset, size_t byteLength); // userJS: no — JSReadableByteStreamController.cpp
+void readableByteStreamControllerEnqueueChunkToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, RefPtr<JSC::ArrayBuffer>&&, size_t byteOffset, size_t byteLength); // userJS: yes (a full queue errors the controller and throws) — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueueClonedChunkToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::ArrayBuffer&, size_t byteOffset, size_t byteLength); // userJS: yes (per spec a clone failure errors the controller and is rethrown) — JSReadableByteStreamController.cpp
 void readableByteStreamControllerEnqueueDetachedPullIntoToQueue(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSPullIntoDescriptor*); // userJS: yes; throws — JSReadableByteStreamController.cpp
 void readableByteStreamControllerError(JSC::JSGlobalObject*, JSReadableByteStreamController*, JSC::JSValue error); // userJS: yes — JSReadableByteStreamController.cpp
@@ -721,8 +722,9 @@ void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::Glo
 void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: yes
 bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 void ReadableStream__markConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+void ReadableStream__closeConsumedAsBody(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
 JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject*); // userJS: no
-JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*); // userJS: no
+JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*, bool consumed); // userJS: no
 JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: no
 JSC::EncodedJSValue ReadableStream__fromDecodedText(Zig::GlobalObject*, JSC::EncodedJSValue string); // userJS: no
 JSC::EncodedJSValue ReadableStream__textDecodeFrom(Zig::GlobalObject*, JSC::EncodedJSValue source); // userJS: yes

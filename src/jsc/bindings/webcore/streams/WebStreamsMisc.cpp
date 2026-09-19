@@ -95,10 +95,16 @@ static size_t incompleteTrailingUTF8(std::span<const uint8_t> data)
 
 JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const uint8_t> chunk, StreamingUTF8DecodeState& state, bool flush)
 {
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::Vector<uint8_t> joinedStorage;
     std::span<const uint8_t> joined = chunk;
     if (unsigned pendingLen = state.pendingLen()) {
-        joinedStorage.reserveInitialCapacity(pendingLen + chunk.size());
+        // Script picks the chunk length, and reserveInitialCapacity CRASH()es past INT32_MAX bytes.
+        if (!joinedStorage.tryReserveInitialCapacity(pendingLen + chunk.size())) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
         joinedStorage.append(std::span<const uint8_t> { state.pending, pendingLen });
         joinedStorage.append(chunk);
         joined = joinedStorage.span();
@@ -125,8 +131,6 @@ JSC::JSString* streamingUTF8Decode(JSGlobalObject* globalObject, std::span<const
     if (toDecode.empty())
         return nullptr;
 
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     if (exceedsStringLimit(toDecode.size())) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;

@@ -1,8 +1,7 @@
 //! Drop-in `IndexMap` / `IndexSet` for the React Compiler port.
 //!
-//! Newtype wrappers over [`bun_collections::ArrayHashMap`]. Method surface
-//! mirrors `indexmap::IndexMap` / `indexmap::IndexSet` closely enough that
-//! upstream call sites need only swap the `use` line.
+//! Newtype wrappers over [`bun_collections::ArrayHashMap`] that mirror `indexmap`
+//! closely enough that upstream call sites need only swap the `use` line.
 //!
 //! Semantic notes vs `indexmap`:
 //!   * lookups take `&K` (no `Borrow<Q>` adapter) — every key type in this

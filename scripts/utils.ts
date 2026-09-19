@@ -107,7 +107,6 @@ export type SpawnOptions = {
   retryOnError?: (error: Error) => boolean;
   stdin?: string;
   stdio?: StdioOptions;
-  privileged?: boolean;
 };
 
 export type SpawnResult = {
@@ -118,46 +117,8 @@ export type SpawnResult = {
   error: Error | undefined;
 };
 
-function parseCommand(command: string[], options: SpawnOptions): string[] {
-  if (options?.privileged) {
-    return [...getPrivilegedCommand(), ...command];
-  }
-  return command;
-}
-
-let priviledgedCommand: string[] | undefined;
-
-function getPrivilegedCommand(): string[] {
-  if (typeof priviledgedCommand !== "undefined") {
-    return priviledgedCommand;
-  }
-
-  // Already root (the image bake step runs bootstrap and `agent.ts install`
-  // as root on a fresh machine): no wrapper. In particular not
-  // `su -s sh root -c`, which takes ONE command string — prefixing it to an
-  // argv drops every argument after the first (`rc-update add …` became a
-  // bare `rc-update`).
-  if (isWindows || process.getuid?.() === 0) {
-    return (priviledgedCommand = []);
-  }
-
-  const sudo = ["sudo", "-n"];
-  const { error: sudoError } = spawnSync([...sudo, "true"]);
-  if (!sudoError) {
-    return (priviledgedCommand = sudo);
-  }
-
-  const doas = ["doas", "-u", "root"];
-  const { error: doasError } = spawnSync([...doas, "true"]);
-  if (!doasError) {
-    return (priviledgedCommand = doas);
-  }
-
-  return (priviledgedCommand = []);
-}
-
 export async function spawn(command: string[], options: SpawnOptions = {}): Promise<SpawnResult> {
-  const [cmd, ...args] = parseCommand(command, options);
+  const [cmd, ...args] = command;
   debugLog("$", cmd, ...args);
 
   const stdin = options["stdin"];
@@ -266,7 +227,7 @@ export async function spawnSafe(command: string[], options: SpawnOptions = {}): 
 export function spawnSync(command: string[], options?: SpawnOptions & { retryOnError?: never }): SpawnResult;
 export function spawnSync(command: string[], options: SpawnOptions): SpawnResult | Promise<SpawnResult>;
 export function spawnSync(command: string[], options: SpawnOptions = {}): SpawnResult | Promise<SpawnResult> {
-  const [cmd, ...args] = parseCommand(command, options);
+  const [cmd, ...args] = command;
   debugLog("$", cmd, ...args);
 
   const stdin = options["stdin"];

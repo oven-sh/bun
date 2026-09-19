@@ -589,7 +589,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
         }
       `;
       writeFile(servicePath, service, { mode: 0o755 });
-      await spawnSafe(["rc-update", "add", "buildkite-agent", "default"], { stdio: "inherit", privileged: true });
+      await spawnSafe(["rc-update", "add", "buildkite-agent", "default"], { stdio: "inherit" });
     }
 
     // cfgPath is set exactly when isMacOS is; the second check is for the type checker.
@@ -700,7 +700,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
       // not loaded, which is fine.
       for (const p of [plistPath, cleanupPlistPath]) {
         await spawnSafe(["launchctl", "bootout", "system", p], { stdio: "inherit" }).catch(() => {});
-        await spawnSafe(["launchctl", "bootstrap", "system", p], { stdio: "inherit", privileged: true });
+        await spawnSafe(["launchctl", "bootstrap", "system", p], { stdio: "inherit" });
       }
       return;
     }
@@ -729,8 +729,8 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
         WantedBy=multi-user.target
       `;
       writeFile(servicePath, service);
-      await spawnSafe(["systemctl", "daemon-reload"], { stdio: "inherit", privileged: true });
-      await spawnSafe(["systemctl", "enable", "buildkite-agent"], { stdio: "inherit", privileged: true });
+      await spawnSafe(["systemctl", "daemon-reload"], { stdio: "inherit" });
+      await spawnSafe(["systemctl", "enable", "buildkite-agent"], { stdio: "inherit" });
     }
   }
 

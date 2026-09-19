@@ -235,6 +235,32 @@ test.concurrent("allowing negative workspace patterns", async () => {
   });
 });
 
+test.concurrent("a negative workspace pattern adds no members", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["packages/**", "!packages/**/test/**"],
+      }),
+    ),
+    write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1" })),
+    write(
+      join(packageDir, "packages", "pkg1", "test", "fixture", "package.json"),
+      JSON.stringify({ name: "pkg1-fixture" }),
+    ),
+    // Outside `packages/**`. `!packages` is not a glob for "any directory but packages".
+    write(join(packageDir, "examples", "test", "fixture", "package.json"), JSON.stringify({ name: "example-fixture" })),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  expect(Object.values(parseLockfile(packageDir).workspace_paths)).toEqual(["packages/pkg1"]);
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["pkg1"]);
+});
+
 test("dependency on same name as workspace and dist-tag", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

@@ -6,6 +6,7 @@ use bun_core::Global;
 use bun_core::Output;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
+use bun_install::lockfile::package::workspace_map;
 use bun_install::package_manager::workspace_selection::{
     self, Candidate, RootSelection, WorkspaceGraph,
 };
@@ -107,13 +108,7 @@ fn get_candidate_package_patterns<'a>(
             for item in json_array.get().items() {
                 match item {
                     bun_ast::e::JsonValue::String(pattern_str) => {
-                        let pattern_bytes = pattern_str.slice();
-                        let size = pattern_bytes.len() + b"/package.json".len();
-                        let mut pattern = vec![0u8; size].into_boxed_slice();
-                        pattern[0..pattern_bytes.len()].copy_from_slice(pattern_bytes);
-                        pattern[pattern_bytes.len()..size].copy_from_slice(b"/package.json");
-
-                        out_patterns.push(pattern);
+                        out_patterns.push(Box::from(pattern_str.slice()));
                     }
                     _ => {
                         bun_core::pretty_errorln!(
@@ -136,7 +131,7 @@ fn get_candidate_package_patterns<'a>(
     }
 
     // if we were not able to find a workspace root, we simply glob for all package.json files
-    out_patterns.push(Box::<[u8]>::from(b"**/package.json".as_slice()));
+    out_patterns.push(Box::<[u8]>::from(b"**".as_slice()));
     let root_dir = strings::without_trailing_slash(workdir_);
     root_buf[0..root_dir.len()].copy_from_slice(root_dir);
     Ok(&root_buf[0..root_dir.len()])
@@ -332,6 +327,7 @@ struct ActiveWalk {
 }
 
 struct PackageFilterIterator<'a> {
+    /// The `workspaces` entries, or `**` when no package.json above the cwd has any.
     patterns: &'a [Box<[u8]>],
     pattern_idx: usize,
     root_dir: &'a [u8],
@@ -354,11 +350,12 @@ impl<'a> PackageFilterIterator<'a> {
 
     fn start_walk(&self) -> Result<ActiveWalk, crate::Error> {
         // pattern_idx < patterns.len() checked by caller.
-        let pattern: &[u8] = &self.patterns[self.pattern_idx];
+        let mut pattern: Vec<u8> = self.patterns[self.pattern_idx].to_vec();
+        pattern.extend_from_slice(b"/package.json");
         // bun_glob copies `pattern`/`cwd` internally.
         // outer `?` propagates the error, inner converts `Maybe(Self)` to a Result.
         let walker = OwnedWalker(bun_core::heap::alloc_nn(GlobWalker::init_with_cwd(
-            pattern,
+            &pattern,
             self.root_dir,
             true,
             true,
@@ -379,17 +376,37 @@ impl<'a> PackageFilterIterator<'a> {
         })
     }
 
+    /// As in `bun install`, a later `!` entry removes a glob match but never a path listed as is.
+    fn is_excluded(&self, package_json_path: &[u8]) -> bool {
+        if !glob::detect_glob_syntax(&self.patterns[self.pattern_idx]) {
+            return false;
+        }
+        let dir = resolve_path::relative_platform::<platform::Auto, false>(
+            self.root_dir,
+            resolve_path::dirname::<platform::Auto>(package_json_path),
+        );
+        workspace_map::negated_by(&self.patterns[self.pattern_idx + 1..], dir).is_some()
+    }
+
     fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
         loop {
             let Some(active) = &mut self.active else {
-                if self.pattern_idx >= self.patterns.len() {
+                let Some(pattern) = self.patterns.get(self.pattern_idx) else {
                     return Ok(None);
+                };
+                if workspace_map::is_negated_pattern(pattern) {
+                    self.pattern_idx += 1;
+                    continue;
                 }
                 self.active = Some(self.start_walk()?);
                 continue;
             };
             match active.iter.next()? {
-                Ok(Some(path)) => return Ok(Some(path)),
+                Ok(Some(path)) => {
+                    if !self.is_excluded(&path) {
+                        return Ok(Some(path));
+                    }
+                }
                 Ok(None) => {
                     self.active = None;
                     self.pattern_idx += 1;

@@ -60,7 +60,7 @@ struct Selector {
     base: Base,
 }
 
-fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
+pub(crate) fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
     let mut remain = raw;
     let mut negated = false;
     while let Some(rest) = remain.strip_prefix(b"!") {

@@ -62,7 +62,8 @@ describe("require(specifier)", () => {
 
     async function runEntry(files: Record<string, string>) {
       using dir = tempDir("require-throwing-module", files);
-      const { stdout, stderr, exitCode } = await bunRun(path.join(String(dir), "entry.js"));
+      const entry = "entry.cjs" in files ? "entry.cjs" : "entry.js";
+      const { stdout, stderr, exitCode } = await bunRun(path.join(String(dir), entry));
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
       return JSON.parse(stdout);
@@ -246,24 +247,30 @@ describe("require(specifier)", () => {
       expect(result).toEqual({ outcomes: ["attempt 1", "attempt 2", "ok", "ok"], evaluations: 3 });
     });
 
-    // Only require() retries, and only what Node runs as CommonJS. A file with
-    // ES module syntax that threw is not evaluated again: as in Node, every
-    // later require() and import() of it gets the error it threw.
-    it("an ES module is not evaluated again", async () => {
+    // Only require() retries, and only what Node runs as CommonJS. An ES module
+    // that threw is not evaluated again: as in Node, every later require() and
+    // import() of it gets the error it threw. Node decides by the extension,
+    // then package.json "type", then the syntax.
+    it.each([
+      ["ES module syntax", { "bad.mjs": flakyModule(1) + `export const attempt = globalThis.evaluations;` }],
+      [".mjs without module syntax", { "bad.mjs": flakyModule(1) }],
+      ['"type": "module" without module syntax', { "package.json": `{ "type": "module" }`, "bad.js": flakyModule(1) }],
+    ])("an ES module is not evaluated again: %s", async (_, files) => {
+      const specifier = "./" + Object.keys(files).find(name => name.startsWith("bad."));
       const result = await runEntry({
-        "bad.mjs": flakyModule(1) + `export const attempt = globalThis.evaluations;`,
-        "entry.js": /* js */ `
+        ...files,
+        "entry.cjs": /* js */ `
           (async () => {
             const errors = [];
             for (let i = 0; i < 2; i++) {
               try {
-                require("./bad.mjs");
+                require(${JSON.stringify(specifier)});
               } catch (e) {
                 errors.push(e);
               }
             }
             try {
-              await import("./bad.mjs");
+              await import(${JSON.stringify(specifier)});
             } catch (e) {
               errors.push(e);
             }

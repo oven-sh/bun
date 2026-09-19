@@ -643,27 +643,34 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// The syntax that makes Node run a file as an ES module when its extension
-// and package.json do not decide.
-static bool hasESModuleSyntax(JSC::AbstractModuleRecord* record)
+// What Node runs as an ES module: a .mjs/.mts file, a file under a package.json
+// with "type": "module" (the provider's tag), or a file with import, export,
+// top-level await or import.meta.
+static bool isESModule(const WTF::String& specifier, JSC::AbstractModuleRecord* record)
 {
     auto* module = dynamicDowncast<JSC::JSModuleRecord>(record);
     if (!module)
         return false;
+    if (specifier.endsWith(".mjs"_s) || specifier.endsWith(".mts"_s))
+        return true;
+    // Every JSModuleRecord in the registry is parsed from a Zig::SourceProvider.
+    auto* provider = static_cast<Zig::SourceProvider*>(module->sourceCode().provider());
+    if (provider && provider->m_tag == ResolvedSourceTagPackageJSONTypeModule)
+        return true;
     return !module->requestedModules().isEmpty() || !module->exportEntries().isEmpty() || module->hasTLA() || (module->features() & JSC::ImportMetaFeature);
 }
 
-// The module threw while it was evaluated, and Node runs it as CommonJS (no ES
-// module syntax, or no JSModuleRecord at all). Node re-runs such a module on the
+// The module threw while it was evaluated, and Node runs it as CommonJS (not an
+// ES module, or no JSModuleRecord at all). Node re-runs such a module on the
 // next require(). An ES module keeps its error.
-static bool threwAsCommonJS(JSC::ModuleRegistryEntry* entry)
+static bool threwAsCommonJS(const WTF::String& specifier, JSC::ModuleRegistryEntry* entry)
 {
     auto* record = entry->record();
     bool threw = entry->status() == JSC::ModuleRegistryEntry::Status::EvaluationFailed;
     // A dependency that threw inside another module's graph keeps Status::Fetched.
     if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
         threw = threw || cyclic->evaluationError();
-    return threw && !hasESModuleSyntax(record);
+    return threw && !isESModule(specifier, record);
 }
 
 // A failed require() drops its module from the require map, but the registry
@@ -675,7 +682,7 @@ static void evictFailedModuleRegistryEntry(JSC::VM& vm, JSC::JSModuleLoader* loa
 {
     auto key = JSC::Identifier::fromString(vm, specifier);
     auto* entry = loader->registryEntry(key);
-    if (!entry || !threwAsCommonJS(entry))
+    if (!entry || !threwAsCommonJS(specifier, entry))
         return;
     loader->removeEntry(key);
     Bun::IsolatedModuleCache::evict(vm, specifier);

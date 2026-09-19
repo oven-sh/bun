@@ -610,8 +610,12 @@ function assertValidHeader(name, value) {
     connectionHeaderMessageWarn();
   }
 }
-function assertIsObject(value: any, name: string, types?: string | string[]): asserts value is object {
-  if (value !== undefined && (!$isObject(value) || $isArray(value))) {
+function assertIsObject(
+  value: any,
+  name: string,
+  types?: string | string[],
+): asserts value is Record<PropertyKey, any> | undefined {
+  if (value !== undefined && (value === null || typeof value !== "object" || $isArray(value))) {
     throw $ERR_INVALID_ARG_TYPE(name, $isArray(types) ? types : [types || "Object"], value);
   }
 }
@@ -2378,13 +2382,8 @@ class Http2Stream extends Duplex {
       throw $ERR_HTTP2_TRAILERS_NOT_READY();
     }
 
-    if (headers == undefined) {
-      headers = {};
-    } else if (!$isObject(headers) || $isArray(headers)) {
-      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
-    } else {
-      headers = { ...headers };
-    }
+    assertIsObject(headers, "headers");
+    headers = { ...headers };
     const sensitives = headers[sensitiveHeaders];
     if (sensitives !== undefined && !$isArray(sensitives)) {
       throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
@@ -3225,6 +3224,8 @@ class ServerHttp2Stream extends Http2Stream {
     if (!parser) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
+    assertIsObject(options, "options");
+    assertIsObject(headers, "headers");
     headers = { ...headers };
     assertNoConnectionHeaders(headers);
     // Thrown synchronously like node, before a promised stream id is reserved.
@@ -3316,24 +3317,25 @@ class ServerHttp2Stream extends Http2Stream {
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
-    if ($isArray(headers)) {
-      // node rejects the raw-array form here (only respond() accepts it) - same
-      // ERR_INVALID_ARG_TYPE shape as node v26.3.0, contradictory wording included.
-      throw $ERR_INVALID_ARG_TYPE("headers", ["Array", "Object"], headers);
+    assertIsObject(options, "options");
+    options = { ...options };
+    if (options.offset !== undefined && typeof options.offset !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
     }
-    if (headers == undefined) {
-      headers = {};
-    } else if (!$isObject(headers)) {
-      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
-    } else {
-      headers = { ...headers };
+    if (options.length !== undefined && typeof options.length !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
+    }
+    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
+      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
 
+    // node's message names Array, yet only respond() accepts the raw-array form.
+    assertIsObject(headers, "headers", ["Object", "Array"]);
+    headers = { ...headers };
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
     const statusCode = headers[HTTP2_HEADER_STATUS];
-    options = { ...options };
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -3343,16 +3345,6 @@ class ServerHttp2Stream extends Http2Stream {
       this.headRequest
     ) {
       throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
-    }
-
-    if (options.offset !== undefined && typeof options.offset !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
-    }
-    if (options.length !== undefined && typeof options.length !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
-    }
-    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
-      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
     this[kOwnsFd] = true;
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
@@ -3376,19 +3368,21 @@ class ServerHttp2Stream extends Http2Stream {
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
-    if ($isArray(headers)) {
-      // node rejects the raw-array form here (only respond() accepts it) - same
-      // ERR_INVALID_ARG_TYPE shape as node v26.3.0, contradictory wording included.
-      throw $ERR_INVALID_ARG_TYPE("headers", ["Array", "Object"], headers);
+    assertIsObject(options, "options");
+    options = { ...options };
+    if (options.offset !== undefined && typeof options.offset !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
     }
-    if (headers == undefined) {
-      headers = {};
-    } else if (!$isObject(headers)) {
-      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
-    } else {
-      headers = { ...headers };
+    if (options.length !== undefined && typeof options.length !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
+    }
+    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
+      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
 
+    // node's message names Array, yet only respond() accepts the raw-array form.
+    assertIsObject(headers, "headers", ["Object", "Array"]);
+    headers = { ...headers };
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
@@ -3402,16 +3396,6 @@ class ServerHttp2Stream extends Http2Stream {
       this.headRequest
     ) {
       throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
-    }
-    options = { ...options };
-    if (options.offset !== undefined && typeof options.offset !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
-    }
-    if (options.length !== undefined && typeof options.length !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
-    }
-    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
-      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
     // The caller owns this fd; clear any stale flag left by a prior respondWithFile()
     // on the same stream so doSendFileFD will not close it (node semantics).
@@ -3440,13 +3424,8 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_HEADERS_AFTER_RESPOND();
     }
 
-    if (headers == undefined) {
-      headers = {};
-    } else if (!$isObject(headers) || $isArray(headers)) {
-      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
-    } else {
-      headers = { ...headers };
-    }
+    assertIsObject(headers, "headers");
+    headers = { ...headers };
 
     for (const name in headers) {
       if (name.startsWith(":") && name !== HTTP2_HEADER_STATUS) {
@@ -3508,6 +3487,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
+    assertIsObject(options, "options");
 
     // Raw (flat [name, value, ...] array) headers form: the pairs are encoded
     // on the wire in their given order; a default :status is prepended and a
@@ -3515,9 +3495,7 @@ class ServerHttp2Stream extends Http2Stream {
     // keys, array values for duplicates) backs sentHeaders.
     let rawHeadersList: any[] | null = null;
     let statusCode;
-    if (headers == undefined) {
-      headers = {};
-    } else if ($isArray(headers)) {
+    if ($isArray(headers)) {
       statusCode = 0;
       let statusFound = false;
       let isDateSet = false;
@@ -3559,9 +3537,8 @@ class ServerHttp2Stream extends Http2Stream {
         headersObject[sensitiveHeaders] = rawHeadersList[sensitiveHeaders];
       }
       headers = headersObject;
-    } else if (!$isObject(headers)) {
-      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
+      assertIsObject(headers, "headers", ["Object", "Array"]);
       headers = { ...headers };
     }
 
@@ -3613,7 +3590,7 @@ class ServerHttp2Stream extends Http2Stream {
       // noTrailers → sendData("", true) and emits a spurious DATA frame on
       // the already-half-closed stream (RFC 9113 §5.1 violation). Strip
       // waitForTrailers here so the native never fires that path; the JS
-      // guard further down (`options?.waitForTrailers && !endStream`) only
+      // guard further down (`options.waitForTrailers && !endStream`) only
       // covers the `_final` side and runs AFTER the native call.
       options = { ...options, endStream: true, waitForTrailers: false };
       endStream = true;
@@ -3637,9 +3614,8 @@ class ServerHttp2Stream extends Http2Stream {
       // request() already wrote END_STREAM on the HEADERS frame — driving
       // the wantTrailers path from `_final` on such a stream would call
       // `noTrailers`/`emit("wantTrailers")` on an already-half-closed
-      // stream and corrupt state. Use optional chaining: `options` may be
-      // `null` here (typeof null === "object" enters this else branch).
-      if (options?.waitForTrailers && !endStream) {
+      // stream and corrupt state.
+      if (options.waitForTrailers && !endStream) {
         this[bunHTTP2WaitForTrailers] = true;
       }
     }
@@ -5892,6 +5868,8 @@ class ClientHttp2Session extends Http2Session {
       // node validates arguments synchronously and only defers session-state failures
       // (destroyed/closed/GOAWAY) to the returned stream, so bad options throw even on
       // a destroyed session (lib/internal/http2/core.js request()).
+      if (!$isArray(headers)) assertIsObject(headers, "headers", ["Object", "Array"]);
+      assertIsObject(options, "options");
       if (options !== undefined) {
         if (options.endStream !== undefined) validateBoolean(options.endStream, "options.endStream");
         if (options.parent !== undefined) validateNumber(options.parent, "options.parent");
@@ -5926,9 +5904,7 @@ class ClientHttp2Session extends Http2Session {
       // given order. The derived object form (original-case keys, array values
       // for duplicates) backs sentHeaders.
       let rawHeadersList: any[] | null = null;
-      if (headers == undefined) {
-        headers = {};
-      } else if ($isArray(headers)) {
+      if ($isArray(headers)) {
         const raw = headers;
         let method, scheme, authority, path, protocol;
         for (let i = 0; i < raw.length; i += 2) {
@@ -5988,8 +5964,6 @@ class ClientHttp2Session extends Http2Session {
           headersObject[sensitiveHeaders] = raw[sensitiveHeaders];
         }
         headers = headersObject;
-      } else if (!$isObject(headers)) {
-        throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
       } else {
         headers = { ...headers };
       }

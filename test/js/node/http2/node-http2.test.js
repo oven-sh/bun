@@ -5116,7 +5116,7 @@ describe.concurrent("http2 client.request() validates headers, then options, the
   // Valid for request(). nghttp2 rejects them at send time, and bun reports that on the stream.
   const rejectedAtSendTime = [{ ":path": "/a b" }, { ":method": "HEAD", "content-length": "1" }];
 
-  // `failure` is the error of a valid request.
+  // `failure` is the error of a valid request, as a string.
   const sessionStates = {
     "open": {
       async enter() {},
@@ -5127,7 +5127,7 @@ describe.concurrent("http2 client.request() validates headers, then options, the
         client.destroy();
       },
       expected: { destroyed: true },
-      failure: "ERR_HTTP2_INVALID_SESSION",
+      failure: "Error [ERR_HTTP2_INVALID_SESSION]: The session has been destroyed",
     },
     "closed": {
       async enter(client) {
@@ -5135,14 +5135,14 @@ describe.concurrent("http2 client.request() validates headers, then options, the
         client.close();
       },
       expected: { closed: true, destroyed: false },
-      failure: "ERR_HTTP2_GOAWAY_SESSION",
+      failure: "Error [ERR_HTTP2_GOAWAY_SESSION]: New streams cannot be created after receiving a GOAWAY",
     },
     "closed by a GOAWAY": {
       async enter(client) {
         await Promise.all([eventOf(client, "goaway"), responseOf(client, "/goaway")]);
       },
       expected: { closed: true, destroyed: false },
-      failure: "ERR_HTTP2_GOAWAY_SESSION",
+      failure: "Error [ERR_HTTP2_GOAWAY_SESSION]: New streams cannot be created after receiving a GOAWAY",
     },
   };
   const unusableStates = Object.keys(sessionStates).filter(state => sessionStates[state].failure !== undefined);
@@ -5169,7 +5169,7 @@ describe.concurrent("http2 client.request() validates headers, then options, the
     const server = http2.createServer();
     server.on("stream", (stream, headers) => {
       stream.on("error", () => {});
-      stream.respond({ ":status": 200 });
+      stream.respond({ ":status": 200, "x-method": headers[":method"] });
       if (headers[":path"] === "/goaway") stream.session.goaway();
       else if (headers[":path"] !== "/hang") stream.end();
     });
@@ -5277,13 +5277,49 @@ describe.concurrent("http2 client.request() validates headers, then options, the
     }
   });
 
-  it.each(unusableStates)("a session that is %s fails a valid request before nghttp2 can reject it", async state => {
+  it.each(unusableStates)("a session that is %s fails every request that has valid arguments", async state => {
     const { server, client } = await sessionIn(state);
     try {
-      const failures = [{ ":path": "/" }, ...rejectedAtSendTime].map(headers => failureOf(client, headers));
-      expect((await Promise.all(failures)).map(error => error.code)).toEqual(
-        Array(failures.length).fill(sessionStates[state].failure),
-      );
+      // A :method that is not a string is valid, node sends String(value). nghttp2 rejects the
+      // last two at send time, which is after the session state.
+      const valid = [{ ":path": "/" }, { ":method": 1 }, [":method", 1], ...rejectedAtSendTime];
+      const failures = valid.map(headers => failureOf(client, headers));
+      expect((await Promise.all(failures)).map(String)).toEqual(Array(valid.length).fill(sessionStates[state].failure));
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("fails a request that a closing session never sent with the same error", async () => {
+    const server = http2.createServer();
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      // Queued behind the connect, then the session closes before it connects.
+      const failure = errorOf(client.request({ ":path": "/" }));
+      client.close();
+      expect(String(await failure)).toBe(sessionStates.closed.failure);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("sends a :method that is not a string as String(value)", async () => {
+    const { server, client } = await sessionIn("open");
+    try {
+      const methods = [];
+      for (const headers of [{ ":method": 1 }, [":method", 1]]) {
+        const req = client.request(headers);
+        req.on("error", () => {});
+        req.resume();
+        req.end();
+        const [response] = await eventOf(req, "response");
+        methods.push(response["x-method"]);
+      }
+      expect(methods).toEqual(["1", "1"]);
     } finally {
       client.destroy();
       server.close();

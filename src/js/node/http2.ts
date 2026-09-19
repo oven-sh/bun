@@ -4902,7 +4902,7 @@ function streamSocketClosed(stream: Http2Stream) {
   }
 }
 // A stream whose session was close()d before the socket finished connecting never reached the
-// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION (no $ERR intrinsic exists for this code).
+// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION.
 function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream) {
   if (typeof stream?.id === "number" && stream.id > lastStreamId) {
     streamRejectedByGoawaySession(stream);
@@ -4910,12 +4910,10 @@ function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream
 }
 function streamRejectedByGoawaySession(stream: Http2Stream) {
   if (!stream.destroyed) {
-    const err = new Error("New streams cannot be created after receiving a GOAWAY");
-    err.code = "ERR_HTTP2_GOAWAY_SESSION";
     // nghttp2 closes unprocessed streams with REFUSED_STREAM, the signal clients (grpc) treat
     // as safely retryable on a fresh connection.
     stream.rstCode = constants.NGHTTP2_REFUSED_STREAM;
-    stream.destroy(err);
+    stream.destroy($ERR_HTTP2_GOAWAY_SESSION());
   }
 }
 class ClientHttp2Session extends Http2Session {
@@ -6084,7 +6082,7 @@ class ClientHttp2Session extends Http2Session {
       }
 
       let rejectContentLengthOnNoPayload = false;
-      if (NoPayloadMethods.has(method.toUpperCase())) {
+      if (typeof method === "string" && NoPayloadMethods.has(method.toUpperCase())) {
         // Like Node, a payload-meaningless method only defaults endStream to
         // true when the caller expressed no preference; an explicit endStream
         // (validated above) is honored, so { endStream: false } stays open.
@@ -6139,18 +6137,11 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(destroyWithInvalidSessionNT, req);
         return req;
       }
-      if (this[kReceivedGoaway]) {
-        const err = new Error("New streams cannot be created after receiving a GOAWAY");
-        err.code = "ERR_HTTP2_GOAWAY_SESSION";
-        throw err;
-      }
-      if (this.closed) {
+      if (this[kReceivedGoaway] || this.closed) {
         // node: a closed (close() called / GOAWAY pending) session reports
         // ERR_HTTP2_GOAWAY_SESSION on the stream (verified node v26.3.0); the test
         // contract accepts a synchronous throw of the same error.
-        const err = new Error("New streams cannot be created after receiving a GOAWAY");
-        err.code = "ERR_HTTP2_GOAWAY_SESSION";
-        throw err;
+        throw $ERR_HTTP2_GOAWAY_SESSION();
       }
 
       {

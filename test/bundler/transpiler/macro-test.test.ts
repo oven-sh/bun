@@ -532,12 +532,16 @@ test("a FinalizationRegistry cleanup scheduled by the GC after a Bun.build() run
       `import { getEventLoopStats } from "bun:internal-for-testing";`,
       `import { readdirSync, writeFileSync } from "node:fs";`,
       // The cleanup runs outside a macro. A Bun.Transpiler call deinits a macro context of its own, and a
-      // module load after it still needs this thread's source code printer.
+      // module load after it still needs this thread's source code printer. The marker file tells build.ts
+      // that this thread's cleanup ran.
       `let cleanups = 0;`,
       `const registry = new FinalizationRegistry(() => {`,
       `  if (cleanups++ > 0) return;`,
       `  new Bun.Transpiler({ loader: "ts" }).transformSync("let x: number = 1;");`,
-      `  import("./late.ts").then(m => console.log("cleanup loaded", m.late));`,
+      `  import("./late.ts").then(m => {`,
+      `    console.log("cleanup loaded", m.late);`,
+      `    writeFileSync(import.meta.dir + "/cleanup-" + crypto.randomUUID(), "");`,
+      `  });`,
       `});`,
       `export function arrive(round) {`,
       `  const prefix = "arrived-" + round + "-";`,
@@ -564,12 +568,20 @@ test("a FinalizationRegistry cleanup scheduled by the GC after a Bun.build() run
     "a2.ts": entry(2, ``),
     "b2.ts": entry(2, ``),
     "build.ts": [
+      `import { readdirSync } from "node:fs";`,
       `async function counts(entrypoints) {`,
       `  const result = await Bun.build({ entrypoints, target: "bun" });`,
       `  const texts = await Promise.all(result.outputs.map(output => output.text()));`,
       `  return texts.map(text => Number(text.match(/count = (\\d+)/)[1])).sort();`,
       `}`,
       `const baseline = await counts(["./a1.ts", "./b1.ts"]);`,
+      // A worker tears down its build through an idle task, after its task queue is empty. Wait for both
+      // cleanups, or a worker that is late to wake would parse the probe before it tears down the first build.
+      `const deadline = Date.now() + 3_000;`,
+      `while (readdirSync(import.meta.dir).filter(name => name.startsWith("cleanup-")).length < 2) {`,
+      `  if (Date.now() > deadline) break;`,
+      `  await Bun.sleep(1);`,
+      `}`,
       `const probe = await counts(["./a2.ts", "./b2.ts"]);`,
       `console.log(JSON.stringify({ baseline, probe }));`,
       ``,
@@ -589,9 +601,10 @@ test("a FinalizationRegistry cleanup scheduled by the GC after a Bun.build() run
     .trim()
     .split("\n")
     .filter(line => !line.startsWith("[macro]"));
-  const { baseline, probe } = JSON.parse(lines.pop()!);
+  const result = lines.find(line => line.startsWith("{")) ?? "{}";
+  const { baseline, probe } = JSON.parse(result);
   // One cleanup per worker thread, at the end of the first build.
-  expect({ probe, lines, stderr }).toEqual({
+  expect({ probe, lines: lines.filter(line => line !== result), stderr }).toEqual({
     probe: baseline,
     lines: ["cleanup loaded late", "cleanup loaded late"],
     stderr: "",

@@ -516,6 +516,39 @@ devTest("importing a package before the first node_modules exists", {
     await c.expectMessage("value: late");
   },
 });
+devTest("importing a package that is installed in a new node_modules below the root", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["src/deep/index.ts"],
+    }),
+    "src/deep/index.ts": `
+      import { late } from "late-pkg";
+      console.log("value: " + late);
+    `,
+    "node_modules/early-pkg/package.json": JSON.stringify({ name: "early-pkg", version: "1.0.0", main: "index.js" }),
+    "node_modules/early-pkg/index.js": `export const early = "early";`,
+    ...latePackage("staging/node_modules/late-pkg"),
+  },
+  async test(dev) {
+    // The first build fails. It caches `src` as a level without `node_modules`.
+    await dev.fetch("/");
+
+    // No watch covers `src`: the root has a `node_modules`, so only that one is
+    // watched. The next build of the importer has to drop the stale levels.
+    renameSync(dev.join("staging/node_modules"), dev.join("src/node_modules"));
+    await dev.write(
+      "src/deep/index.ts",
+      `
+        import { late } from "late-pkg";
+        console.log("value: " + late + "!");
+      `,
+    );
+
+    await using c = await dev.client("/");
+    await c.expectMessage("value: late!");
+  },
+});
 devTest("deleting imported file shows error then recovers", {
   skip: [
     "win32", // unlinkSync is having weird behavior

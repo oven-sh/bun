@@ -779,9 +779,7 @@ pub(super) fn remove_leftover_node_modules(
     }
 
     if manager.options.global {
-        // `bin_path` is the global bin dir, and only the packages a command names link there.
-        // Every other top-level package links into the `node_modules/.bin` of the global dir.
-        // Sweep only `.bin`: the global `node_modules` is also the `bun link` registry.
+        // `bin_path` is the global bin dir, so the sweep above misses `node_modules/.bin`.
         if let Ok(node_modules) = cwd.open_at(b"node_modules") {
             crate::prune::prune_bins(&node_modules);
         }

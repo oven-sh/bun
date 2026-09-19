@@ -134,6 +134,7 @@ pub(crate) fn relation_graph(
                         Semver::string::Builder::string_hash(npm.name.slice(sbuf)),
                         &npm.version,
                         sbuf,
+                        sbuf,
                     )
                     .and_then(|path| index_by_path.get(path.slice(sbuf)).copied())
                 }

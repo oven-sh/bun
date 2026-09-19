@@ -5027,13 +5027,15 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
 it("http2 ServerHttp2Stream validates :status like node (integer conversion, 1xx only in additionalHeaders)", async () => {
   // Verified on node v26.3.0: additionalHeaders() converts :status with `| 0` before it checks it
   // and adds no default; respond() rejects 1xx; respondWithFile()/respondWithFD() convert before
-  // the 204/205/304 check.
+  // the 204/205/304 check and reject a status outside 200..599 synchronously.
   const calls = {
     "/info-101-string": stream => stream.additionalHeaders({ ":status": "101" }),
     "/info-no-status": stream => stream.additionalHeaders({ "x-foo": "bar" }),
     "/respond-102": stream => stream.respond({ ":status": 102 }),
     "/file-204-string": stream => stream.respondWithFile(import.meta.path, { ":status": "204" }),
     "/fd-204-string": stream => stream.respondWithFD(fd, { ":status": "204" }),
+    "/file-102": stream => stream.respondWithFile(import.meta.path, { ":status": 102 }),
+    "/fd-102": stream => stream.respondWithFD(fd, { ":status": 102 }),
   };
   const fd = fs.openSync(import.meta.path, "r");
   const serverResults = {};
@@ -5078,6 +5080,8 @@ it("http2 ServerHttp2Stream validates :status like node (integer conversion, 1xx
       "/respond-102": "ERR_HTTP2_STATUS_INVALID",
       "/file-204-string": "ERR_HTTP2_PAYLOAD_FORBIDDEN",
       "/fd-204-string": "ERR_HTTP2_PAYLOAD_FORBIDDEN",
+      "/file-102": "ERR_HTTP2_STATUS_INVALID",
+      "/fd-102": "ERR_HTTP2_STATUS_INVALID",
     });
     // A HEADERS block without :status is a protocol error for the client, as with node. Only the
     // stream error is asserted: node's client emits no 'response' for it, bun's client does.
@@ -5089,6 +5093,8 @@ it("http2 ServerHttp2Stream validates :status like node (integer conversion, 1xx
       "/respond-102": [["response", 200]],
       "/file-204-string": [["response", 200]],
       "/fd-204-string": [["response", 200]],
+      "/file-102": [["response", 200]],
+      "/fd-102": [["response", 200]],
     });
   } finally {
     fs.closeSync(fd);

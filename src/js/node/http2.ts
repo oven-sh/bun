@@ -3333,6 +3333,9 @@ class ServerHttp2Stream extends Http2Stream {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
     const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
+    if (statusCode < 200 || statusCode > 599) {
+      throw $ERR_HTTP2_STATUS_INVALID(statusCode);
+    }
     options = { ...options };
 
     // Payload/DATA frames are not permitted in these cases
@@ -3393,6 +3396,9 @@ class ServerHttp2Stream extends Http2Stream {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
     const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
+    if (statusCode < 200 || statusCode > 599) {
+      throw $ERR_HTTP2_STATUS_INVALID(statusCode);
+    }
 
     // Payload/DATA frames are not permitted in these cases
     if (

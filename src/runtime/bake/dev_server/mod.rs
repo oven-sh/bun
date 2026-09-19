@@ -422,6 +422,12 @@ impl HotReloadEvent {
 
         // First handle directories, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {
+            // A bare import (a package, a tsconfig alias) is watched in more than
+            // one directory, and for a package those directories follow what is
+            // on disk. Both lists are handled once the chains below are rebuilt.
+            let mut still_failing: Vec<(bun_ptr::RawSlice<u8>, Box<[u8]>, Graph)> = Vec::new();
+            let mut now_resolved: Vec<(bun_ptr::RawSlice<u8>, Box<[u8]>)> = Vec::new();
+
             for changed_dir_with_slash in self.dirs.keys() {
                 let changed_dir = bun_paths::string_paths::without_trailing_slash_windows_path(
                     changed_dir_with_slash,
@@ -444,25 +450,24 @@ impl HotReloadEvent {
                     while let Some(index) = it {
                         // Note: reshaped for borrowck — re-index per iteration instead of
                         // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
-                        let (source_file_path, specifier, next) = {
+                        let (source_file_path, specifier, graph, next) = {
                             let dep = &dev.directory_watchers.dependencies[index as usize];
-                            (dep.source_file_path, &raw const *dep.specifier, dep.next)
+                            (
+                                dep.source_file_path,
+                                &raw const *dep.specifier,
+                                dep.graph,
+                                dep.next,
+                            )
                         };
                         it = next;
 
                         // `specifier` points into the dep's owned `Box<[u8]>`, which is
                         // not mutated until after `resolve` returns.
                         // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
-                            .resolver
-                            .resolve(
-                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                    source_file_path.slice(),
-                                ),
-                                unsafe { &*specifier },
-                                bun_ast::ImportKind::Stmt,
-                            )
-                            .is_ok();
+                        let specifier: &[u8] = unsafe { &*specifier };
+                        let is_bare = bun_paths::is_package_path(specifier);
+                        let resolved =
+                            dev.retry_failed_import(source_file_path.slice(), specifier, graph);
 
                         if resolved {
                             // this resolution result is not preserved as passing it
@@ -471,8 +476,20 @@ impl HotReloadEvent {
                             // Note: inlined `append_file` body for disjoint borrow
                             // (`self.dirs.keys()` is held immutably across this loop).
                             bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
+                            if is_bare {
+                                now_resolved.push((source_file_path, Box::from(specifier)));
+                            }
                             dev.directory_watchers.free_dependency_index(index);
                         } else {
+                            if is_bare
+                                && !still_failing.iter().any(|(file, other, other_graph)| {
+                                    file.slice().as_ptr() == source_file_path.slice().as_ptr()
+                                        && **other == *specifier
+                                        && *other_graph == graph
+                                })
+                            {
+                                still_failing.push((source_file_path, Box::from(specifier), graph));
+                            }
                             // rebuild a new linked list for unaffected files
                             dev.directory_watchers.dependencies[index as usize].next = new_chain;
                             new_chain = Some(index);
@@ -487,6 +504,31 @@ impl HotReloadEvent {
                         dev.directory_watchers.free_entry(watcher_index);
                     }
                 }
+            }
+
+            for (source_file_path, specifier, graph) in still_failing {
+                // An install creates a package directory, then fills it. Each
+                // retry that fails watches the directories that exist by then.
+                // The watch is in place before the retry after it reads the
+                // disk, so no change between the two is lost.
+                let mut resolved = false;
+                while !resolved
+                    && bun_core::handle_oom(dev.directory_watchers.watch_node_modules_dirs(
+                        source_file_path,
+                        &specifier,
+                        graph,
+                    ))
+                {
+                    resolved = dev.retry_failed_import(source_file_path.slice(), &specifier, graph);
+                }
+                if resolved {
+                    bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
+                    now_resolved.push((source_file_path, specifier));
+                }
+            }
+            for (source_file_path, specifier) in &now_resolved {
+                dev.directory_watchers
+                    .remove_dependencies(source_file_path.slice(), Some(specifier));
             }
         }
 
@@ -1097,6 +1139,9 @@ pub mod directory_watch_store {
         pub(crate) source_file_path: bun_ptr::RawSlice<u8>,
         /// The specifier that failed. Allocated memory.
         pub(crate) specifier: Box<[u8]>,
+        /// The graph that imports it. Its resolver retries the specifier: a
+        /// package can resolve for one target and not for another.
+        pub(crate) graph: super::Graph,
     }
     impl Default for Dep {
         fn default() -> Self {
@@ -1104,6 +1149,7 @@ pub mod directory_watch_store {
                 next: None,
                 source_file_path: bun_ptr::RawSlice::EMPTY,
                 specifier: Box::default(),
+                graph: super::Graph::Server,
             }
         }
     }
@@ -1190,6 +1236,32 @@ impl DevServer {
     /// Length of `configuration_hash_key`.
     pub(crate) const CONFIGURATION_HASH_KEY_LEN: usize = 16;
 
+    /// Resolves a failed import again, with the resolver of the graph that
+    /// imports it.
+    fn retry_failed_import(&mut self, source_file: &[u8], specifier: &[u8], graph: Graph) -> bool {
+        let separate_ssr_graph = self
+            .framework
+            .server_components
+            .as_ref()
+            .is_some_and(|sc| sc.separate_ssr_graph);
+        let transpiler = match graph {
+            Graph::Client => self.client_transpiler_mut(),
+            Graph::Ssr if separate_ssr_graph => self.ssr_transpiler_mut(),
+            Graph::Server | Graph::Ssr => self.server_transpiler_mut(),
+        };
+        let source_dir =
+            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(source_file);
+        // A package directory that did not exist is cached as missing, and the
+        // event names only the directory above it.
+        let _ = transpiler
+            .resolver
+            .bust_node_modules_lookups(source_dir, specifier);
+        transpiler
+            .resolver
+            .resolve(source_dir, specifier, bun_ast::ImportKind::Stmt)
+            .is_ok()
+    }
+
     /// Construct the erased handle the bundler stores in
     /// `Transpiler.options.dev_server` / `LinkerContext.dev_server`.
     #[inline]
@@ -1267,6 +1339,7 @@ impl DirectoryWatchStore {
                                 }
                             },
                         );
+                    self.push_node_modules_watch_dirs(source_dir, specifier, &mut dirs);
                     if dirs.is_empty() {
                         return Ok(());
                     }
@@ -1329,24 +1402,74 @@ impl DirectoryWatchStore {
             }
         };
 
-        for dir in &dirs {
-            match self.insert(dir, owned_file_path, &specifier_to_resolve) {
-                Ok(()) => {}
+        self.insert_all(&dirs, owned_file_path, &specifier_to_resolve, renderer)?;
+        Ok(())
+    }
+
+    /// Watches the directories whose change can make the bare package
+    /// `specifier` resolve, as they are on disk now. Returns whether a watch
+    /// was added. The caller holds `graph_safety_lock`.
+    pub(crate) fn watch_node_modules_dirs(
+        &mut self,
+        source_file: bun_ptr::RawSlice<u8>,
+        specifier: &[u8],
+        graph: Graph,
+    ) -> Result<bool, bun_alloc::AllocError> {
+        let mut dirs: Vec<Box<[u8]>> = Vec::new();
+        self.push_node_modules_watch_dirs(
+            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(source_file.slice()),
+            specifier,
+            &mut dirs,
+        );
+        self.insert_all(&dirs, source_file, specifier, graph)
+    }
+
+    fn push_node_modules_watch_dirs(
+        &mut self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        dirs: &mut Vec<Box<[u8]>>,
+    ) {
+        let dev = self.owner();
+        // SAFETY: `owner()` recovers the heap-allocated DevServer. `root` is
+        // set once in `init()` and is disjoint from `directory_watchers`.
+        let root: &[u8] = unsafe { &(*dev).root };
+        bun_resolver::for_each_node_modules_watch_dir(source_dir, specifier, root, &mut |dir| {
+            if !dirs.iter().any(|d| **d == *dir) {
+                dirs.push(Box::from(dir));
+            }
+        });
+    }
+
+    /// Returns whether a watch was added.
+    fn insert_all(
+        &mut self,
+        dirs: &[Box<[u8]>],
+        file_path: bun_ptr::RawSlice<u8>,
+        specifier: &[u8],
+        graph: Graph,
+    ) -> Result<bool, bun_alloc::AllocError> {
+        let mut added = false;
+        for dir in dirs {
+            match self.insert(dir, file_path, specifier, graph) {
+                Ok(inserted) => added |= inserted,
                 Err(DirectoryWatchInsertError::Ignore) => {} // ignoring watch errors.
                 Err(DirectoryWatchInsertError::OutOfMemory) => return Err(bun_alloc::AllocError),
             }
         }
-        Ok(())
+        Ok(added)
     }
 
     /// `dir_name_to_watch` is cloned; `file_path` must outlive the watch;
-    /// `specifier` is cloned.
+    /// `specifier` is cloned. Returns false when `dir_name_to_watch` already
+    /// retries `specifier` for `file_path`.
     fn insert(
         &mut self,
         dir_name_to_watch: &[u8],
         file_path: bun_ptr::RawSlice<u8>,
         specifier: &[u8],
-    ) -> Result<(), DirectoryWatchInsertError> {
+        graph: Graph,
+    ) -> Result<bool, DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
         // Note: take a raw pointer so the &mut self borrow from owner() does
@@ -1373,17 +1496,27 @@ impl DirectoryWatchStore {
         let gop_index = gop.index;
         let found_existing = gop.found_existing;
 
-        let specifier_cloned: Box<[u8]> = Box::<[u8]>::from(specifier);
-
         if found_existing {
             let prev_first = Some(self.watches.values()[gop_index].first_dep);
+            let mut it = prev_first;
+            while let Some(index) = it {
+                let dep = &self.dependencies[index as usize];
+                if dep.source_file_path.slice().as_ptr() == file_path.slice().as_ptr()
+                    && dep.graph == graph
+                    && *dep.specifier == *specifier
+                {
+                    return Ok(false);
+                }
+                it = dep.next;
+            }
             let dep = self.append_dep_assume_capacity(directory_watch_store::Dep {
                 next: prev_first,
                 source_file_path: file_path,
-                specifier: specifier_cloned,
+                specifier: Box::<[u8]>::from(specifier),
+                graph,
             });
             self.watches.values_mut()[gop_index].first_dep = dep;
-            return Ok(());
+            return Ok(true);
         }
 
         // Note: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
@@ -1435,8 +1568,9 @@ impl DirectoryWatchStore {
                             // TODO: implement that. for now it ignores (BUN-10968)
                             return Err(DirectoryWatchInsertError::Ignore);
                         }
-                        bun_sys::E::ENOTDIR => return Err(DirectoryWatchInsertError::Ignore),
-                        _ => bun_core::todo_panic!("log watcher error"),
+                        // A `node_modules` above the project can be unreadable.
+                        // A directory that does not open gets no watch.
+                        _ => return Err(DirectoryWatchInsertError::Ignore),
                     },
                 }
             }
@@ -1473,7 +1607,8 @@ impl DirectoryWatchStore {
         let dep = self.append_dep_assume_capacity(directory_watch_store::Dep {
             next: None,
             source_file_path: file_path,
-            specifier: specifier_cloned,
+            specifier: Box::<[u8]>::from(specifier),
+            graph,
         });
         self.watches.values_mut()[gop_index] = directory_watch_store::Entry {
             dir: fd,
@@ -1481,7 +1616,7 @@ impl DirectoryWatchStore {
             first_dep: dep,
             watch_index,
         };
-        Ok(())
+        Ok(true)
     }
 
     /// Appends a dependency into the first free slot, returning its index.
@@ -1502,14 +1637,21 @@ impl DirectoryWatchStore {
     /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph
     /// frees a file's key string so no `Dep` is left holding a dangling pointer.
     pub(crate) fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
+        self.remove_dependencies(file_path, None);
+    }
+
+    /// With a `specifier`, removes only the dependencies of `file_path` that
+    /// retry it: an import that resolved leaves no watch on another directory.
+    pub(crate) fn remove_dependencies(&mut self, file_path: &[u8], specifier: Option<&[u8]>) {
         if self.watches.count() == 0 {
             return;
         }
 
         bun_core::scoped_log!(
             DevServer,
-            "DirectoryWatchStore.removeDependenciesForFile({:?})",
+            "DirectoryWatchStore.removeDependencies({:?}, {:?})",
             bstr::BStr::new(file_path),
+            specifier.map(bstr::BStr::new),
         );
 
         // Iterate in reverse since `free_entry` uses `swap_remove_at`.
@@ -1525,7 +1667,9 @@ impl DirectoryWatchStore {
                 let dep_path = self.dependencies[index as usize].source_file_path;
                 it = dep_next;
                 // Pointer-identity comparison.
-                if dep_path.slice().as_ptr() == file_path.as_ptr() {
+                if dep_path.slice().as_ptr() == file_path.as_ptr()
+                    && specifier.is_none_or(|s| *self.dependencies[index as usize].specifier == *s)
+                {
                     self.free_dependency_index(index);
                 } else {
                     self.dependencies[index as usize].next = new_chain;

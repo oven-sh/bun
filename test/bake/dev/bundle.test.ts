@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import { mkdirSync, renameSync } from "node:fs";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -391,6 +392,128 @@ devTest("tsconfig paths alias to a directory that ends in a slash (#43391)", {
       );
     });
     await c.expectMessage("value: 789!");
+  },
+});
+// A bare package that is installed while the dev server runs. The resolver
+// keeps the package directory cached as missing, and no watch covered
+// `node_modules`, so the page stayed on the error until a restart.
+const latePackage = (dir: string) => ({
+  [`${dir}/package.json`]: JSON.stringify({ name: "late-pkg", version: "1.0.0", main: "index.js" }),
+  [`${dir}/index.js`]: `export const late = "late";`,
+});
+const latePackageError = `error: Could not resolve: "late-pkg". Maybe you need to "bun install"?`;
+devTest("importing a package before it is installed", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { early } from "early-pkg";
+      import { late } from "late-pkg";
+      console.log(early + " " + late);
+    `,
+    "node_modules/early-pkg/package.json": JSON.stringify({ name: "early-pkg", version: "1.0.0", main: "index.js" }),
+    "node_modules/early-pkg/index.js": `export const early = "early";`,
+    ...latePackage("staging/late-pkg"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:2:22: ${latePackageError}`],
+    });
+
+    // An installer that links a complete package: one event on `node_modules`.
+    await c.expectReload(async () => {
+      renameSync(dev.join("staging/late-pkg"), dev.join("node_modules/late-pkg"));
+    });
+    await c.expectMessage("early late");
+  },
+});
+devTest("importing a package whose directory is created, then filled", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { early } from "early-pkg";
+      import { late } from "late-pkg";
+      console.log(early + " " + late);
+    `,
+    "node_modules/early-pkg/package.json": JSON.stringify({ name: "early-pkg", version: "1.0.0", main: "index.js" }),
+    "node_modules/early-pkg/index.js": `export const early = "early";`,
+    ...latePackage("staging"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:2:22: ${latePackageError}`],
+    });
+
+    // An installer that creates the package directory and then links each
+    // file. The event on `node_modules` can arrive before the files do. The
+    // retry that fails then watches the package directory.
+    await c.expectReload(async () => {
+      mkdirSync(dev.join("node_modules/late-pkg"));
+      renameSync(dev.join("staging/package.json"), dev.join("node_modules/late-pkg/package.json"));
+      renameSync(dev.join("staging/index.js"), dev.join("node_modules/late-pkg/index.js"));
+    });
+    await c.expectMessage("early late");
+  },
+});
+devTest("importing a scoped package before it is installed", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { early } from "@scope/early-pkg";
+      import { late } from "@scope/late-pkg";
+      console.log(early + " " + late);
+    `,
+    "node_modules/@scope/early-pkg/package.json": JSON.stringify({
+      name: "@scope/early-pkg",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "node_modules/@scope/early-pkg/index.js": `export const early = "early";`,
+    ...latePackage("staging/late-pkg"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:2:22: error: Could not resolve: "@scope/late-pkg". Maybe you need to "bun install"?`],
+    });
+
+    // The new entry appears in `node_modules/@scope`, not in `node_modules`.
+    await c.expectReload(async () => {
+      renameSync(dev.join("staging/late-pkg"), dev.join("node_modules/@scope/late-pkg"));
+    });
+    await c.expectMessage("early late");
+  },
+});
+devTest("importing a package before the first node_modules exists", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["src/index.ts"],
+    }),
+    "src/index.ts": `
+      import { late } from "late-pkg";
+      console.log("value: " + late);
+    `,
+    ...latePackage("staging/node_modules/late-pkg"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`src/index.ts:1:22: ${latePackageError}`],
+    });
+
+    // The directory above `src` was read when it had no `node_modules`, and
+    // `src` reaches it through a cached parent link.
+    await c.expectReload(async () => {
+      renameSync(dev.join("staging/node_modules"), dev.join("node_modules"));
+    });
+    await c.expectMessage("value: late");
   },
 });
 devTest("deleting imported file shows error then recovers", {

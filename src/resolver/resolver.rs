@@ -2456,6 +2456,7 @@ impl<'a> Resolver<'a> {
                 busted |= this.bust_dir_cache(dir);
                 busted |= this.bust_dir_cache(abs);
             });
+            busted |= self.bust_node_modules_lookups(source_dir, specifier);
             return busted;
         }
 
@@ -2465,6 +2466,84 @@ impl<'a> Resolver<'a> {
         let a = self.bust_dir_cache(dir);
         let b = self.bust_dir_cache(joined);
         a || b
+    }
+
+    /// Evicts what the `node_modules` search of a bare package cached, at each
+    /// level where the package directory is on disk: the package directory, the
+    /// listings above it that lack it, and the walked levels when their parent
+    /// links predate that `node_modules`. A level without the package on disk
+    /// costs one `access()`.
+    pub fn bust_node_modules_lookups(&mut self, source_dir: &[u8], specifier: &[u8]) -> bool {
+        let Some(name) = node_modules_package_name(specifier) else {
+            return false;
+        };
+        if !bun_paths::is_absolute(source_dir) {
+            return false;
+        }
+        let source_dir = strings::without_trailing_slash_windows_path(source_dir);
+        let mut busted = false;
+        for_each_node_modules_level(source_dir, name, &mut |level, node_modules, package_dir| {
+            if !bun_sys::exists(package_dir) {
+                return;
+            }
+            busted |= self.bust_dir_cache(package_dir);
+
+            // `node_modules`, and below it the scope directory of a scoped package.
+            let mut child = package_dir;
+            while child.len() > node_modules.len() {
+                let dir = bun_paths::dirname_platform(child, bun_paths::Platform::AUTO);
+                if !self.cached_listing_has(dir, bun_paths::basename(child)) {
+                    busted |= self.bust_dir_cache(dir);
+                }
+                child = dir;
+            }
+
+            // `load_node_modules` reaches `level` through the parent links below
+            // it, so every level from the importer up to it is read again.
+            if self.cached_level_lacks_node_modules(source_dir, level) {
+                let mut dir = source_dir;
+                loop {
+                    busted |= self.bust_dir_cache(dir);
+                    if dir.len() <= level.len() {
+                        break;
+                    }
+                    dir = strings::without_trailing_slash_windows_path(Dirname::dirname(dir));
+                }
+            }
+        });
+        busted
+    }
+
+    /// Whether the cached listing of `dir` has an entry `name`. False when `dir`
+    /// is not cached or is cached as missing.
+    fn cached_listing_has(&mut self, dir: &[u8], name: &[u8]) -> bool {
+        let rfs = self.rfs_ptr();
+        // SAFETY: `rfs` is the process-global RealFS singleton. `entries` is
+        // read under `entries_mutex`, which `bust_dir_cache` takes on its own.
+        let rfs = unsafe { &mut *rfs };
+        let _lock = rfs.entries_mutex.lock_guard();
+        match rfs.entries.get(dir) {
+            Some(Fs::file_system::real_fs::EntriesOption::Entries(entries)) => {
+                entries.get(name).is_some()
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the cached parent links from `source_dir` reach `level` as a
+    /// directory without `node_modules`.
+    fn cached_level_lacks_node_modules(&mut self, source_dir: &[u8], level: &[u8]) -> bool {
+        let mut info = self
+            .dir_cache_mut()
+            .get(source_dir)
+            .map(DirInfoRef::from_slot);
+        while let Some(dir_info) = info {
+            if strings::without_trailing_slash_windows_path(dir_info.abs_path) == level {
+                return !dir_info.has_node_modules();
+            }
+            info = dir_info.get_parent();
+        }
+        false
     }
 
     pub(crate) fn load_node_modules(
@@ -6801,6 +6880,81 @@ fn rewritten_file_extensions(
         b".cjs" => &[b".cts"],
         _ => &[],
     }
+}
+
+/// The package name of a bare specifier, when a `node_modules` directory can hold it.
+fn node_modules_package_name(specifier: &[u8]) -> Option<&[u8]> {
+    let name = crate::package_json::Package::parse_name(specifier)?;
+    // `is_npm_package_name` accepts an empty scope (`@/x` is a tsconfig alias)
+    // and a scoped `.` or `..`, which a path join would collapse.
+    (strings::is_npm_package_name(name)
+        && !name.starts_with(b"@/")
+        && !matches!(bun_paths::basename(name), b"." | b".."))
+    .then_some(name)
+}
+
+/// Visits each level of the `node_modules` search of the package `name`, from
+/// `source_dir` up to the root: the level, its `node_modules`, and the package
+/// directory below that.
+fn for_each_node_modules_level(
+    source_dir: &[u8],
+    name: &[u8],
+    visit: &mut dyn FnMut(&[u8], &[u8], &[u8]),
+) {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut level = strings::without_trailing_slash_windows_path(source_dir);
+    loop {
+        if bun_paths::basename(level) != b"node_modules" {
+            let package_dir = bun_paths::join_abs_string_buf(
+                level,
+                &mut buf.0,
+                &[b"node_modules", name],
+                bun_paths::Platform::AUTO,
+            );
+            let node_modules = &package_dir[..package_dir.len() - name.len() - 1];
+            visit(level, node_modules, package_dir);
+        }
+        let parent = strings::without_trailing_slash_windows_path(Dirname::dirname(level));
+        if parent.len() >= level.len() {
+            break;
+        }
+        level = parent;
+    }
+}
+
+/// Visits the directories whose change can make the bare package `specifier`
+/// resolve from `source_dir`. At each level of the `node_modules` search that is
+/// the deepest directory on disk of `node_modules`, the scope directory, and the
+/// package directory. `root` is where an install creates `node_modules`: when it
+/// is a level and has none, it is visited itself.
+pub fn for_each_node_modules_watch_dir(
+    source_dir: &[u8],
+    specifier: &[u8],
+    root: &[u8],
+    visit: &mut dyn FnMut(&[u8]),
+) {
+    let Some(name) = node_modules_package_name(specifier) else {
+        return;
+    };
+    if !bun_paths::is_absolute(source_dir) {
+        return;
+    }
+    for_each_node_modules_level(source_dir, name, &mut |level, node_modules, package_dir| {
+        let mut dir = package_dir;
+        loop {
+            if bun_sys::exists(dir) {
+                visit(dir);
+                return;
+            }
+            if dir.len() <= node_modules.len() {
+                break;
+            }
+            dir = bun_paths::dirname_platform(dir, bun_paths::Platform::AUTO);
+        }
+        if level == root {
+            visit(root);
+        }
+    });
 }
 
 pub struct Dirname;

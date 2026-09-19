@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, mkdirSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -79,6 +79,48 @@ test.concurrent.skipIf(isWindows || process.getuid?.() === 0).each([
   } finally {
     chmodSync(secret, 0o755);
   }
+});
+
+// `bun add` walks the glob again when it writes package.json back. The registry removes the
+// directory between the two walks.
+test.concurrent("glob entry that fails when bun add writes package.json back is reported", async () => {
+  using dir = tempDir("bad-workspace-glob-write-back", { "extra/.keep": "" });
+  const extra = join(String(dir), "extra");
+  const entry = `${String(dir).replaceAll("\\", "/")}/extra/*`;
+  let tarballRequested = false;
+  await using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (req.url.endsWith(".tgz")) {
+        tarballRequested = true;
+        return new Response(Bun.file(join(import.meta.dir, "baz-0.0.3.tgz")));
+      }
+      rmSync(extra, { recursive: true, force: true });
+      return Response.json({
+        name: "baz",
+        versions: { "0.0.3": { name: "baz", version: "0.0.3", dist: { tarball: `${registry.url}baz-0.0.3.tgz` } } },
+        "dist-tags": { latest: "0.0.3" },
+      });
+    },
+  });
+  writeFileSync(join(String(dir), "package.json"), rootPackageJson([entry]));
+  writeFileSync(join(String(dir), "bunfig.toml"), `[install]\ncache = false\nregistry = "${registry.url}"\n`);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "baz"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // bun asked for the tarball, so the first walk passed.
+  expect(tarballRequested).toBe(true);
+  expect(errorLines(stderr)).toEqual([
+    `error: Failed to run workspace pattern ${entry} due to error ENOENT (open "${extra}")`,
+  ]);
+  expect(exitCode).toBe(1);
 });
 
 test("non-string workspaces entry prints the error without literal markup", async () => {

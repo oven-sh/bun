@@ -2384,6 +2384,10 @@ pub mod parse_worker {
         // disjoint `options` field — never the whole struct — so the raw `resolver`
         // pointer (which targets `(*transpiler).resolver`) remains valid.
         let topts = unsafe { &(*transpiler).options };
+        // `None` for CLI `--server-components` builds (no framework); directive files error below.
+        let framework_server_components = topts
+            .framework
+            .and_then(|framework| framework.server_components.as_ref());
         let use_directive: UseDirective = if !is_empty && topts.server_components {
             UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
         } else {
@@ -2392,15 +2396,7 @@ pub mod parse_worker {
 
         if (use_directive == UseDirective::Client
         && task.known_target != options::Target::ServerComponentsSsr
-        && worker_ctx.framework.is_some()
-        && worker_ctx
-            .framework
-            .as_ref()
-            .unwrap()
-            .server_components
-            .as_ref()
-            .unwrap()
-            .separate_ssr_graph)
+        && framework_server_components.is_some_and(|sc| sc.separate_ssr_graph))
         ||
         // set the target to the client when bundling client-side files
         ((topts.server_components || topts.has_dev_server())
@@ -2452,14 +2448,7 @@ pub mod parse_worker {
         })
         .unwrap_or_else(|| {
             if task.known_target == options::Target::ServerComponentsSsr
-                && topts
-                    .framework
-                    .as_ref()
-                    .unwrap()
-                    .server_components
-                    .as_ref()
-                    .unwrap()
-                    .separate_ssr_graph
+                && framework_server_components.is_some_and(|sc| sc.separate_ssr_graph)
             {
                 options::Target::ServerComponentsSsr
             } else {
@@ -2565,15 +2554,7 @@ pub mod parse_worker {
                 _ => match use_directive {
                     UseDirective::None => SC::WrapAnonServerFunctions,
                     UseDirective::Client => {
-                        if topts
-                            .framework
-                            .as_ref()
-                            .unwrap()
-                            .server_components
-                            .as_ref()
-                            .unwrap()
-                            .separate_ssr_graph
-                        {
+                        if framework_server_components.is_some_and(|sc| sc.separate_ssr_graph) {
                             SC::ClientSide
                         } else {
                             SC::WrapExportsForClientReference
@@ -2666,27 +2647,42 @@ pub mod parse_worker {
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
-        let ast_result: core::result::Result<JSAst, AnyError> =
-            if !is_empty || loader.handles_empty_file() {
-                get_ast(
-                    log,
-                    transpiler,
-                    opts,
-                    bump,
-                    resolver,
-                    source,
-                    loader,
-                    task_ctx.unique_key,
-                    &mut unique_key_for_additional_file,
-                    &task_ctx.linker.has_any_css_locals,
-                )
-            } else if loader.is_css() {
-                get_empty_css_ast(log, transpiler, opts, bump, source)
-            } else if module_type == options::ModuleType::Esm {
-                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
+        let directive_without_framework =
+            use_directive != UseDirective::None && framework_server_components.is_none();
+        let ast_result: core::result::Result<JSAst, AnyError> = if directive_without_framework {
+            let directive = if use_directive == UseDirective::Client {
+                "use client"
             } else {
-                get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
+                "use server"
             };
+            log.add_error_fmt(
+                Some(source),
+                Loc::EMPTY,
+                format_args!(
+                    "\"{directive}\" requires a framework with server components configured; \"bun build --server-components\" does not configure one"
+                ),
+            );
+            Err(crate::Error::ParserError)
+        } else if !is_empty || loader.handles_empty_file() {
+            get_ast(
+                log,
+                transpiler,
+                opts,
+                bump,
+                resolver,
+                source,
+                loader,
+                task_ctx.unique_key,
+                &mut unique_key_for_additional_file,
+                &task_ctx.linker.has_any_css_locals,
+            )
+        } else if loader.is_css() {
+            get_empty_css_ast(log, transpiler, opts, bump, source)
+        } else if module_type == options::ModuleType::Esm {
+            get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
+        } else {
+            get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
+        };
         let mut ast = match ast_result {
             Ok(a) => a,
             Err(e) => {

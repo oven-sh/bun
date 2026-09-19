@@ -3161,6 +3161,111 @@ test("react-compiler keeps one copy of each dependency of a phi", async () => {
   expect(ladder.peakMB - empty.peakMB).toBeLessThan(100);
 });
 
+// MergeReactiveScopesThatInvalidateTogether collects the declarations of every
+// scope that it merges into one. They were a list: for each scope it merged,
+// the pass searched the list, ran `retain` over it, and scanned it once per
+// dependency of that scope. Each pair below is two scopes, and all of them
+// merge into one. Every `<i>` stays declared until the `<div>` reads it, so N
+// pairs took N^2 steps.
+//
+// The time of a whole build depends on every other pass too, so the test reads
+// the time of this pass from BUN_REACT_COMPILER_TIMING. Only debug and ASAN
+// builds have that report, and the test needs a debug build: optimized code
+// needs several times as many pairs for the same ratio, and other passes
+// recurse once per block, which overflows the stack at 1750 pairs on a debug
+// build and at 8000 on a release build.
+test.skipIf(!isDebug)(
+  "react-compiler MergeReactiveScopesThatInvalidateTogether time does not grow with the square of the scopes it merges into one",
+  async () => {
+    const pairs = 800;
+    const perComponent = 10;
+    const pair = "<i><b id={props.x} /></i>";
+    const source = (components: number, pairsEach: number) =>
+      Array.from(
+        { length: components },
+        (_, c) =>
+          `export function App${c}(props) {\n  return <div>${Buffer.alloc(pair.length * pairsEach, pair)}</div>;\n}\n`,
+      ).join("");
+    using dir = tempDir("react-compiler-merge-scopes", {
+      "control.jsx": source(pairs / perComponent, perComponent),
+      "large.jsx": source(1, pairs),
+    });
+
+    // The milliseconds that the pass took in all the components of `entry`.
+    const passTime = async (entry: string, components: number) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+        env: { ...bunEnv, BUN_REACT_COMPILER_TIMING: "1" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [, ms, calls] =
+        stderr.match(/([\d.]+)ms +[\d.]+% +(\d+)× +MergeReactiveScopesThatInvalidateTogether$/m) ?? [];
+      // Every component compiled, and each one is a single scope: one slot for
+      // `props.x` and one for the `<div>`.
+      expect({ calls: calls ?? stderr, scopes: stdout.match(/\b_c\(\d+\)/g), exitCode }).toEqual({
+        calls: String(components),
+        scopes: Array(components).fill("_c(2)"),
+        exitCode: 0,
+      });
+      return Number(ms);
+    };
+
+    // Both builds merge the same scopes, so the pass takes about as long in one
+    // as in the other. Without the fix the large component takes 5 to 7 times
+    // as long. The times are wall time. The two builds of a round run at the
+    // same time, under the same load, and the test takes the best of up to
+    // three rounds.
+    let control = Infinity;
+    let large = Infinity;
+    for (let round = 0; round < 3; round++) {
+      const [controlTime, largeTime] = await Promise.all([
+        passTime("control.jsx", pairs / perComponent),
+        passTime("large.jsx", 1),
+      ]);
+      control = Math.min(control, controlTime);
+      large = Math.min(large, largeTime);
+      if (large / control < 3) break;
+    }
+    expect(large / control).toBeLessThan(3);
+  },
+  // A round takes 5 seconds, and the test takes three rounds when it fails.
+  60_000,
+);
+
+// The scopes that merge into one keep their declarations in the order in which
+// they merged, and RenameVariables names the declarations in that order. Each
+// odd value is a nested array: its inner array is a declaration of the merged
+// scope until the outer array merges and is its last use.
+test("react-compiler names the declarations of a merged scope in source order", async () => {
+  const count = 64;
+  const values = Array.from({ length: count }, (_, i) => (i % 2 ? `{[["v${i}"]]}` : `{["v${i}"]}`));
+  using dir = tempDir("react-compiler-merge-order", {
+    "entry.jsx": `
+      export function App(props) {
+        return <div title={props.t}>${values.join("")}</div>;
+      }
+    `,
+  });
+
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    reactCompiler: true,
+  });
+  const output = await result.outputs[0].text();
+
+  // `t7 = [["v7"]]`
+  const names = Array.from(output.matchAll(/\bt(\d+) = \[\s*\[?\s*"v(\d+)"/g), ([, name, value]) => [name, value]);
+  expect(names).toEqual(Array.from({ length: count }, (_, i) => [String(i), String(i)]));
+  // One scope declares every value. The other one declares the `<div>` and
+  // depends on `props.t`.
+  expect(output).toContain(`_c(${count + 2})`);
+});
+
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)
 // records the locals a component's closures capture while walking the
 // component body, and reports a nested function that assigns to one of them,

@@ -876,8 +876,9 @@ describe("Bun.Archive", () => {
         [0o4755, "0755", "0755"],
         [0o2755, "0755", "0755"],
         [0o1755, "0755", "0755"],
-        // No permission bits at all: the mode Bun.Archive itself writes.
+        // No permission bits, with or without a special bit: the mode Bun.Archive itself writes.
         [0, "0644", "0644"],
+        [0o4000, "0644", "0644"],
       ] as const;
       const name = (mode: number) => "f" + mode.toString(8).padStart(4, "0");
       using dir = tempDir("archive-extract-file-modes", {
@@ -896,7 +897,6 @@ describe("Bun.Archive", () => {
               readdirSync(root, { recursive: true })
                 .map(name => [String(name), statSync(root + "/" + name)] as const)
                 .filter(([, stat]) => stat.isFile())
-                .sort(([a], [b]) => (a < b ? -1 : 1))
                 .map(([name, stat]) => [name, (stat.mode & 0o7777).toString(8).padStart(4, "0")]),
             );
           const result: Record<string, unknown> = {};
@@ -950,8 +950,13 @@ describe("Bun.Archive", () => {
         console.log(JSON.stringify(result));
       `,
     });
+    // Every user can read the fixture files, whatever the umask of the test run is.
     const giveTo = (user: User, dir: string) => {
-      for (const entry of ["", ...readdirSync(dir)]) fs.chownSync(join(dir, entry), user.uid, user.gid);
+      fs.chownSync(dir, user.uid, user.gid);
+      for (const entry of readdirSync(dir)) {
+        fs.chownSync(join(dir, entry), user.uid, user.gid);
+        fs.chmodSync(join(dir, entry), 0o644);
+      }
     };
     const extracted = (content: string, mode: string, uid: number) => {
       const one = { count: 1, content, mode, uid };

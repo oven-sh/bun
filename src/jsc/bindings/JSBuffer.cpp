@@ -2599,11 +2599,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // Node's utf8Write, latin1Write and asciiWrite check the bounds in JS, then the native writer
-    // checks the value. The other encodings only have the native writer: it checks the value, then
-    // `offset`, and clamps `length` (writeToBuffer clamps here).
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L962-L990
-    // https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L737-L772
+    // Node's utf8, latin1 and ascii writers check the bounds before the value. Its other writers check the value first.
     const bool boundsBeforeValue = encoding == WebCore::BufferEncodingType::utf8
         || encoding == WebCore::BufferEncodingType::latin1
         || encoding == WebCore::BufferEncodingType::ascii;

@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "InternalModuleRegistryConstants.h"
+#include "ModuleGraph.h"
 #include "wtf/Forward.h"
 
 #include "NativeModuleImpl.h"
@@ -130,6 +131,9 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
         globalObject->debugger()->sourceParsed(globalObject, source.provider(), -1, ""_s);
     }
 
+    // A builtin module is the realm's, whichever script is first to load it: what its top level
+    // makes (an http Agent, say) is not the Bun.ModuleGraph's that happened to need it first.
+    Bun::ModuleGraphContextScope realmContext(*defaultGlobalObject(globalObject)->scriptExecutionContext());
     JSC::MarkedArgumentBuffer argList;
     JSValue result = JSC::profiledCall(
         globalObject,

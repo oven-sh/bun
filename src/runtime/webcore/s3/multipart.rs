@@ -137,6 +137,11 @@ pub struct MultiPartUpload {
     pub(crate) request_payer: bool,
     pub(crate) credentials: RefPtr<S3Credentials>,
     pub poll_ref: JsCell<KeepAlive>,
+    /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
+    /// was disposed never does: the graph's context fails it.
+    pub(crate) abort_handle: bun_jsc::AbortHandle,
+    /// The context of the script that started the upload: its requests are that script's.
+    pub(crate) context: bun_jsc::ContextId,
     pub(crate) vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
     pub global_this: GlobalRef,
@@ -166,6 +171,19 @@ pub struct MultiPartUpload {
     pub(crate) callback_context: Cell<*mut c_void>,
 }
 
+bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| {
+    // SAFETY: trait contract — `this` is live (armed ⇒ not dropped); the scoped ref keeps it so
+    // while the completion callback releases others.
+    unsafe {
+        let _guard = RefPtr::init_ref(this);
+        // (What its callback settles is settled in the stopped context: for nobody.)
+        let _ = (*this).fail(S3Error {
+            code: b"AbortError",
+            message: b"The operation was aborted",
+        });
+    }
+});
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -178,6 +196,10 @@ pub enum State {
 }
 
 impl MultiPartUpload {
+    fn context(&self) -> &bun_jsc::ScriptExecutionContext {
+        self.vm.context_of(self.context)
+    }
+
     const MAX_QUEUE_SIZE: usize = MultiPartUploadOptions::MAX_QUEUE_SIZE as usize;
     const MAX_UPLOAD_ID_LEN: usize = 2000;
     // `const AWS = S3Credentials;` — type alias unused in this file; dropped.
@@ -338,6 +360,7 @@ impl UploadPart {
         let search_params = &params_buffer[..written];
         execute_simple_s3_request(
             &ctx.credentials,
+            ctx.context(),
             s3_simple_request::S3RequestOptions {
                 path: &ctx.path,
                 method: bun_http::Method::PUT,
@@ -418,6 +441,7 @@ impl MultiPartUpload {
                     self_.ref_();
                     execute_simple_s3_request(
                         &self_.credentials,
+                        self_.context(),
                         s3_simple_request::S3RequestOptions {
                             path: &self_.path,
                             method: bun_http::Method::PUT,
@@ -573,11 +597,19 @@ impl MultiPartUpload {
         }
         if self.state.get() != State::Finished {
             let old_state = self.state.replace(State::Finished);
+            self.abort_handle.leave();
             (self.callback)(
                 self,
                 S3UploadResult::Failure(err),
                 self.callback_context.get(),
             )?;
+            // Nothing more is expected for this upload (a rollback request keeps the loop alive
+            // itself), and whoever still holds a ref may hold it for as long as the collector likes.
+            self.poll_ref.with_mut(|poll_ref| {
+                poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+                    bun_io::AllocatorType::Js,
+                ))
+            });
 
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
@@ -728,7 +760,9 @@ impl MultiPartUpload {
         match result {
             S3CommitResult::Failure(err) => {
                 let mut options = self_.options.get();
-                if options.retry > 0 {
+                // (Retried in the context of the script that uploads: once that has stopped the
+                // request would only be aborted again.)
+                if options.retry > 0 && !self_.context().is_stopped() {
                     options.retry -= 1;
                     self_.options.set(options);
                     // retry commit
@@ -736,14 +770,14 @@ impl MultiPartUpload {
                     return Ok(());
                 }
                 self_.state.set(State::Finished);
-                // The deref must run after the callback:
                 let r = (self_.callback)(
                     self_,
                     S3UploadResult::Failure(err),
                     self_.callback_context.get(),
                 );
-                MultiPartUpload::deref_(this);
-                r
+                // The store still holds the parts. Derefs after the rollback, so after the callback.
+                let rolled_back = self_.rollback_multi_part_request();
+                r.and(rolled_back)
             }
             S3CommitResult::Success => {
                 self_.state.set(State::Finished);
@@ -806,6 +840,7 @@ impl MultiPartUpload {
 
         execute_simple_s3_request(
             &self.credentials,
+            self.context(),
             s3_simple_request::S3RequestOptions {
                 path: &self.path,
                 method: bun_http::Method::POST,
@@ -836,6 +871,9 @@ impl MultiPartUpload {
 
         execute_simple_s3_request(
             &self.credentials,
+            // Not the script's request: it tells the store to drop the parts it holds (they are billed
+            // until they expire), and has to go out when the upload fails because its context stopped.
+            self.vm.root_context(),
             s3_simple_request::S3RequestOptions {
                 path: &self.path,
                 method: bun_http::Method::DELETE,
@@ -866,6 +904,7 @@ impl MultiPartUpload {
             self.ref_();
             execute_simple_s3_request(
                 &self.credentials,
+                self.context(),
                 s3_simple_request::S3RequestOptions {
                     path: &self.path,
                     method: bun_http::Method::POST,
@@ -986,6 +1025,13 @@ impl MultiPartUpload {
     }
 
     fn process_buffered(&self, part_size: usize) {
+        // The upload of a context that has stopped sends nothing (its writer is a disposed
+        // `Bun.ModuleGraph`'s leftover script): what stops a context aborts it, a turn later for
+        // one that was made in a context already stopped. Not refused request by request: a
+        // refusal is a completion, and this can be running inside the sink's write.
+        if self.abort_handle.context_stopped() {
+            return;
+        }
         if self.ended.get()
             && self.buffered.get().size() < self.part_size_in_bytes()
             && self.state.get() == State::NotStarted
@@ -1000,6 +1046,7 @@ impl MultiPartUpload {
             self.ref_();
             let _ = execute_simple_s3_request(
                 &self.credentials,
+                self.context(),
                 s3_simple_request::S3RequestOptions {
                     path: &self.path,
                     method: bun_http::Method::PUT,
@@ -1074,6 +1121,11 @@ impl MultiPartUpload {
     ) -> Result<UploadBackpressure, AllocError> {
         if self.ended.get() {
             return Ok(UploadBackpressure::Done); // no backpressure since we are done
+        }
+        // Nothing of a context that has stopped will be sent (`process_buffered`), so nothing is
+        // taken either: whoever is writing waits, for the abort that comes with what stopped it.
+        if self.abort_handle.context_stopped() {
+            return Ok(UploadBackpressure::Backpressure);
         }
         // we may call done inside processBuffered so we ensure that we keep a ref until we are done
         // SAFETY: `self` is live; `root_ptr()` carries the allocation's provenance.

@@ -13,6 +13,7 @@
 #include "JavaScriptCore/JSType.h"
 
 #include "JSSQLStatement.h"
+#include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <limits>
 #include <wtf/text/ExternalStringImpl.h>
@@ -212,6 +213,8 @@ public:
     // The VM (main thread or worker) that opened this connection; only that VM's exit closes it
     // (Bun__closeAllSQLiteDatabasesForTermination).
     JSC::VM* const vm;
+    // The Bun.ModuleGraph context whose script opened it (0: none): closed when that graph is disposed.
+    WebCore::ScriptExecutionContextIdentifier graphContext = 0;
     std::atomic<uint64_t> version;
     size_t reference_count;
     WTF::HashSet<WebCore::JSSQLStatement*> statements;
@@ -226,8 +229,10 @@ public:
             sqlite3_close_v2(std::exchange(db, nullptr));
     }
 
-    // Defined after JSSQLStatement: needs its definition to inspect `stmt`.
+    // Defined after JSSQLStatement: they need its definition to inspect `stmt`.
     void closeIfDrained();
+    // close(true): every statement is finalized, so the file is released now.
+    int closeWithStatements();
 
     void release()
     {
@@ -315,6 +320,23 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* 
             db->db = nullptr;
         }
     }
+}
+
+// The databases script of a Bun.ModuleGraph opened, when that graph is disposed: as close(true).
+extern "C" void Bun__closeSQLiteDatabasesOfGraphContext(WebCore::ScriptExecutionContextIdentifier graphContext)
+{
+    if (!_instance)
+        return;
+    Vector<VersionSqlite3*> owned;
+    {
+        WTF::Locker locker { databasesLock };
+        for (auto& db : _instance->databases) {
+            if (db->graphContext == graphContext && db->db)
+                owned.append(db);
+        }
+    }
+    for (auto* db : owned)
+        db->closeWithStatements();
 }
 
 namespace WebCore {
@@ -1334,7 +1356,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 
-    auto count = registerDatabase(new VersionSqlite3(db, &vm));
+    auto* versionDB = new VersionSqlite3(db, &vm);
+    versionDB->graphContext = WebCore::ScriptExecutionContext::ownerOfSQLiteDatabase(lexicalGlobalObject);
+    auto count = registerDatabase(versionDB);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
 }
 
@@ -1819,6 +1843,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         // TODO: log a warning here that defensive mode is unsupported.
     }
     auto* versionDB = new VersionSqlite3(db, &vm);
+    versionDB->graphContext = WebCore::ScriptExecutionContext::ownerOfSQLiteDatabase(lexicalGlobalObject);
     auto index = registerDatabase(versionDB);
     if (finalizationTarget.isObject()) {
         vm.heap.addFinalizer(finalizationTarget.getObject(), [versionDB](JSC::JSCell* ptr) -> void {
@@ -1870,12 +1895,21 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
+    if (force) {
+        int statusCode = versionDB->closeWithStatements();
+        if (statusCode != SQLITE_OK) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(statusCode))));
+            return {};
+        }
+        return JSValue::encode(jsUndefined());
+    }
+
     // close(false) keeps db.prepare() statements usable and defers sqlite3_close until they drain; everything else bun owns is finalized now.
     bool keptAny = false;
     for (auto* statement : versionDB->statements) {
         if (!statement->stmt)
             continue;
-        if (!force && !statement->ownedByDatabase) {
+        if (!statement->ownedByDatabase) {
             keptAny = true;
             continue;
         }
@@ -1893,17 +1927,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
     // finalize their cached statements during disconnect inside sqlite3_close*,
     // and a re-entrant close() from a bound-parameter getter leaves db.run()'s
     // transient statement live on this stack (close_v2 defers until it drains).
-    int statusCode = force ? sqlite3_close(db) : sqlite3_close_v2(db);
-    if (statusCode == SQLITE_BUSY) {
-        sqlite3_close_v2(db);
-        statusCode = SQLITE_OK;
-    }
+    sqlite3_close_v2(db);
     versionDB->db = nullptr;
-
-    if (statusCode != SQLITE_OK && force) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(statusCode))));
-        return {};
-    }
     return JSValue::encode(jsUndefined());
 }
 
@@ -3014,6 +3039,29 @@ JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
 }
 
 } // namespace WebCore
+
+int VersionSqlite3::closeWithStatements()
+{
+    for (auto* statement : statements) {
+        if (!statement->stmt)
+            continue;
+        sqlite3_finalize(statement->stmt);
+        statement->stmt = nullptr;
+        statement->finalizedByClose = true;
+    }
+    closed = true;
+    // Remaining statements are not bun's to finalize: vtab modules (FTS5)
+    // finalize their cached statements during disconnect inside sqlite3_close*,
+    // and a re-entrant close() from a bound-parameter getter leaves db.run()'s
+    // transient statement live on this stack (close_v2 defers until it drains).
+    int statusCode = sqlite3_close(db);
+    if (statusCode == SQLITE_BUSY) {
+        sqlite3_close_v2(db);
+        statusCode = SQLITE_OK;
+    }
+    db = nullptr;
+    return statusCode;
+}
 
 // Drained = every bun-tracked statement finalized. Statements sqlite3 still
 // holds (vtab modules' cached ones) don't count; close_v2 finalizes those.

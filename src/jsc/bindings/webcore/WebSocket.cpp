@@ -575,6 +575,11 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         m_connectionType = is_secure ? ConnectionType::TLS : ConnectionType::Plain;
     }
 
+    // What script of a disposed Bun.ModuleGraph starts does not start: nothing is dialed, nothing
+    // keeps this alive, and it stays CONNECTING.
+    if (auto* context = scriptExecutionContext(); context->isForModuleGraph() && context->isStopped())
+        return {};
+
     m_pendingActivity = makePendingActivity(*this);
 
     // Prepare proxy parameters (use local variables, not member fields).
@@ -1790,6 +1795,13 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, WebCor
 extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
 {
     return webSocket->rejectUnauthorized();
+}
+
+// The Rust half of the context of the script that made the WebSocket. Called from connect(),
+// which has the context.
+extern "C" void* WebSocket__bunContext(WebCore::WebSocket* webSocket)
+{
+    return webSocket->scriptExecutionContext()->bunContext();
 }
 
 // The native client keeps this object (and its wrapper) alive across work it has queued that will

@@ -16,6 +16,13 @@ const { kDestroyOnRead } = require("internal/net/symbols");
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
 const kRequestAsyncResource = Symbol("requestAsyncResource");
+// The frame of the Bun.ModuleGraph an Agent was made in, if any. Its sockets are opened in that
+// graph's context (or the host's), not in that of whichever request needed one: a disposed graph's
+// sockets close without a word, and an agent of the host's that a graph had used would wait on
+// them for ever.
+const kOwnerFrame = Symbol("ownerFrame");
+const AsyncContextFrame = require("internal/async_context_frame");
+const ObjectDefineProperty = Object.defineProperty;
 
 function freeSocketErrorListener(err) {
   const socket = this;
@@ -31,6 +38,9 @@ function Agent(options): void {
   EventEmitter.$call(this);
 
   this.options = { __proto__: null, ...options };
+  // (Only an Agent made inside a graph has one.)
+  const ownerFrame = AsyncContextFrame.currentGraphFrame();
+  if (ownerFrame !== undefined) ObjectDefineProperty(this, kOwnerFrame, { __proto__: null, value: ownerFrame });
 
   this.defaultPort = this.options.defaultPort || 80;
   this.protocol = this.options.protocol || "http:";
@@ -321,7 +331,18 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
   $debug("createConnection", name);
   options.encoding = null;
 
-  const oncreate = once((err, s) => {
+  // The socket is opened as the Agent's owner (below), but the request that is waiting for it is
+  // its requester's: a proxy tunnel answers from the proxy connection's callbacks, which run as
+  // the owner. When that is another Bun.ModuleGraph's context than the requester's (or the host's),
+  // what follows runs in the requester's frame; otherwise wherever the answer came in, as in node.
+  const requesterFrame = AsyncContextFrame.current();
+  const requesterGraph = AsyncContextFrame.currentGraph();
+  const oncreate = once((err, s) =>
+    requesterGraph === AsyncContextFrame.currentGraph()
+      ? onSocketReady.$call(this, err, s)
+      : AsyncContextFrame.run(requesterFrame, onSocketReady, this, err, s),
+  );
+  function onSocketReady(err, s) {
     // `cb` is onSocketCreated.bind(this, req); release it from this closure's
     // scope so retaining this arrow past its call cannot retain req.
     const done = cb;
@@ -337,14 +358,18 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     $debug("sockets", name, this.sockets[name].length, this.totalSocketCount);
     installListeners(this, s, options);
     done(null, s);
-  });
+  }
   const keepAlive = this.keepAlive;
   if (keepAlive) {
     options.keepAlive = keepAlive;
     options.keepAliveInitialDelay = this.keepAliveMsecs;
   }
 
-  const newSocket = this.createConnection(options, oncreate);
+  const ownerFrame = this[kOwnerFrame];
+  const newSocket =
+    AsyncContextFrame.graphOf(ownerFrame) === AsyncContextFrame.currentGraph()
+      ? this.createConnection(options, oncreate)
+      : AsyncContextFrame.run(ownerFrame, this.createConnection, this, options, oncreate);
   if (newSocket && !newSocket[kWaitForProxyTunnel]) oncreate(null, newSocket);
 };
 

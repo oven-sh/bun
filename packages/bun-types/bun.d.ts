@@ -5386,6 +5386,128 @@ declare module "bun" {
    */
   function color(input: ColorInput, outputFormat: "number"): number | null;
 
+  interface ModuleGraphOptions {
+    /**
+     * Values for free identifiers in all of the graph's module code
+     * (e.g. `{ process: myProcess, fetch: myFetch }`). Graphs constructed
+     * with the same set of names share their ES modules' compiled code with
+     * each other.
+     */
+    globals?: Record<string, unknown> | undefined;
+    /**
+     * Called with the uncaught exceptions and unhandled rejections that happen
+     * in this graph's context, instead of the process-wide
+     * `uncaughtException` / `unhandledRejection` handling. `kind` says which.
+     *
+     * An error is the graph's when it happens in the graph's context, whoever
+     * wrote the code that threw: the graph's modules and what they start, and
+     * what the host calls through {@link ModuleGraph.run}. A function of the
+     * graph's that the host calls directly runs in the host's context, and
+     * its errors are the host's. The promise {@link ModuleGraph.import}
+     * returns is its caller's.
+     *
+     * The handler runs in the context the graph was made in, so what it throws
+     * or rejects is that context's: the host's, when the host made the graph.
+     *
+     * Without an `onError`, errors go to the `onError` of the graph in whose
+     * context this graph was made, and to the process-wide path when the host
+     * made it.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#errors
+     */
+    onError?: ((error: unknown, kind: "uncaughtException" | "unhandledRejection") => void) | undefined;
+  }
+
+  /**
+   * A further instantiation of ES module graphs in **this** global object.
+   *
+   * Every graph that loads a file shares that file's parsed code and
+   * bytecode with every other graph and with the host, and for ES modules
+   * the JIT-compiled code too; each graph gets its own module-level state
+   * (top-level bindings, classes, closures), its own module registry for
+   * `import` / `import()`, its own `require.cache` (`require()`,
+   * `import.meta.require()` and `createRequire()` called from the graph's
+   * code load into it), its own `import.meta`, and its own values for the
+   * names in `globals`. Everything else — `globalThis`, `process`,
+   * intrinsics, builtin modules (so `require("node:module")._cache` is the
+   * host's cache), native
+   * addons, the event loop — is the global object's, shared: this runs
+   * instances of a program side by side, it is not a sandbox.
+   *
+   * A graph has a context of its own for timers and I/O. Everything its
+   * code opens — timers, `Bun.serve` / `Bun.listen` servers, sockets,
+   * `fetch()` requests, watchers, child processes — belongs to the graph,
+   * and {@link ModuleGraph.dispose} closes all of it. The context follows
+   * the graph's code through `await`, timers, socket handlers and the
+   * listeners of what it made, the way `AsyncLocalStorage` stores do
+   * (creating the first graph turns that tracking on for the process). Code
+   * of the graph that the host calls directly runs in the host's context;
+   * use {@link ModuleGraph.run} to call it in the graph's.
+   *
+   * @experimental
+   * @example
+   * ```ts
+   * const graph = new Bun.ModuleGraph({
+   *   globals: { process: Object.create(process, { env: { value: { NAME: "a" } } }) },
+   *   onError: (err, kind) => console.error(kind, err),
+   * });
+   * const app = await graph.import("./app.mjs"); // app.mjs's exports, for this graph
+   * graph.run(() => app.start()); // what start() opens is the graph's
+   * graph.dispose(); // and is closed here
+   * ```
+   */
+  class ModuleGraph {
+    constructor(options?: ModuleGraphOptions);
+    /**
+     * The graph whose context the calling code is running in
+     * (what it opens now would belong to that graph), or `undefined` in the
+     * host's context. For host functions shared by several graphs, and for
+     * asserting that a call went through {@link ModuleGraph.run}.
+     */
+    static readonly current: ModuleGraph | undefined;
+    /**
+     * Load `specifier` (resolved against `process.cwd()` when relative) and
+     * instantiate it and its dependencies into this graph, evaluating what
+     * has not been evaluated in this graph yet.
+     *
+     * The first module imported into a graph is its main module:
+     * `import.meta.main` is true in it and in no other module of the graph.
+     *
+     * @param specifier module specifier, as for `import()`
+     * @returns the module's namespace object for this graph
+     */
+    import<T = any>(specifier: string): Promise<T>;
+    /**
+     * Call `fn` inside the graph's context: what `fn` and everything it
+     * starts open belongs to the graph.
+     *
+     * Throws `ERR_INVALID_STATE` once the graph is disposed.
+     *
+     * @returns what `fn` returns
+     */
+    run<A extends unknown[], R>(fn: (...args: A) => R, ...args: A): R;
+    /**
+     * Closes everything the graph's code opened (and disposes any graph its
+     * code made), and drops the graph's modules: `graph.import()` and
+     * `graph.run()` fail from here on, the graph's `require()` throws, and
+     * modules that had not run yet never will.
+     *
+     * The graph is told nothing, like a worker that was terminated: no
+     * `close` handler, `onExit` or `'error'` event is called, and no promise
+     * is settled — one waiting on the graph's work (a `fetch()`, a child's
+     * `exited`, an `import()` still loading) stays pending. Microtasks and
+     * `process.nextTick` callbacks it had already queued still run once; what
+     * they start reports nothing either. Objects the graph's code made (a
+     * socket, a worker, a stream) no longer work, for the host either.
+     *
+     * Not a sandbox: synchronous calls run to completion. Idempotent.
+     *
+     * @see https://bun.com/docs/runtime/module-graph#disposing
+     */
+    dispose(): void;
+    [Symbol.dispose](): void;
+  }
+
   /**
    * Bun.semver parses and compares version numbers.
    */

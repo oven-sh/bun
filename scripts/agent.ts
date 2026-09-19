@@ -47,7 +47,9 @@ const AZURE_TOKEN_SECRET = "buildkite-agent-token";
 const LATEST_DARWIN_RELEASE = 26;
 const PREVIOUS_DARWIN_RELEASE = 14;
 
-function darwinReleaseTier(distroVersion) {
+type DarwinReleaseTier = "beta" | "latest" | "previous" | "oldest";
+
+function darwinReleaseTier(distroVersion: string | undefined): DarwinReleaseTier {
   const major = parseInt(distroVersion?.split(".")[0] || "0");
   if (major > LATEST_DARWIN_RELEASE) return "beta";
   if (major >= LATEST_DARWIN_RELEASE) return "latest";
@@ -55,40 +57,70 @@ function darwinReleaseTier(distroVersion) {
   return "oldest";
 }
 
-/**
- * @param {"install" | "start"} action
- * @param {{ queue?: string }} [cliOptions]
- */
-async function doBuildkiteAgent(action, cliOptions = {}) {
-  const username = "buildkite-agent";
-  const command = which("buildkite-agent", { required: true });
+type AgentAction = "install" | "start";
 
-  let homePath, cachePath, logsPath, agentLogPath, pidPath, cfgPath;
+type AgentCliOptions = {
+  queue?: string;
+};
+
+type AgentPaths = {
+  homePath: string;
+  cachePath: string;
+  logsPath: string;
+  agentLogPath: string;
+  // Not set on Windows or macOS.
+  pidPath?: string;
+  // Only set on macOS.
+  cfgPath?: string;
+};
+
+function getAgentPaths(): AgentPaths {
   if (isWindows) {
-    homePath = "C:\\buildkite-agent";
-    cachePath = join(homePath, "cache");
-    logsPath = join(homePath, "logs");
-    agentLogPath = join(logsPath, "buildkite-agent.log");
+    const homePath = "C:\\buildkite-agent";
+    const logsPath = join(homePath, "logs");
+    return {
+      homePath,
+      cachePath: join(homePath, "cache"),
+      logsPath,
+      agentLogPath: join(logsPath, "buildkite-agent.log"),
+    };
   } else if (isMacOS) {
     // Match what's already deployed on the macOS CI fleet so install/start are
     // idempotent against existing boxes.
     const library = join(homedir(), "Library");
-    homePath = join(library, "Services", "buildkite-agent");
-    cachePath = join(library, "Caches", "buildkite-agent");
-    logsPath = join(library, "Logs", "buildkite-agent");
-    agentLogPath = join(logsPath, "buildkite-agent.log");
-    cfgPath = join(library, "Preferences", "buildkite-agent.cfg");
+    const logsPath = join(library, "Logs", "buildkite-agent");
+    return {
+      homePath: join(library, "Services", "buildkite-agent"),
+      cachePath: join(library, "Caches", "buildkite-agent"),
+      logsPath,
+      agentLogPath: join(logsPath, "buildkite-agent.log"),
+      cfgPath: join(library, "Preferences", "buildkite-agent.cfg"),
+    };
   } else {
-    homePath = "/var/lib/buildkite-agent";
-    cachePath = "/var/cache/buildkite-agent";
-    logsPath = "/var/log/buildkite-agent";
-    agentLogPath = join(logsPath, "buildkite-agent.log");
-    pidPath = join(logsPath, "buildkite-agent.pid");
+    const logsPath = "/var/log/buildkite-agent";
+    return {
+      homePath: "/var/lib/buildkite-agent",
+      cachePath: "/var/cache/buildkite-agent",
+      logsPath,
+      agentLogPath: join(logsPath, "buildkite-agent.log"),
+      pidPath: join(logsPath, "buildkite-agent.pid"),
+    };
   }
+}
 
-  async function install() {
+async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions = {}): Promise<void> {
+  const username = "buildkite-agent";
+  const command = which("buildkite-agent", { required: true });
+
+  const { homePath, cachePath, logsPath, agentLogPath, pidPath, cfgPath } = getAgentPaths();
+
+  async function install(): Promise<void> {
     const command = process.execPath;
-    const args = [realpathSync(process.argv[1]), "start"];
+    const scriptPath = process.argv[1];
+    if (scriptPath === undefined) {
+      throw new Error("process.argv[1] is not set");
+    }
+    const args = [realpathSync(scriptPath), "start"];
 
     if (isWindows) {
       mkdir(logsPath);
@@ -131,7 +163,8 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       await spawnSafe(["rc-update", "add", "buildkite-agent", "default"], { stdio: "inherit", privileged: true });
     }
 
-    if (isMacOS) {
+    // cfgPath is set exactly when isMacOS is; the second check is for the type checker.
+    if (isMacOS && cfgPath !== undefined) {
       const queue = cliOptions.queue || getEnv("BUILDKITE_AGENT_QUEUE", false) || "test-darwin";
       const token = getEnv("BUILDKITE_AGENT_TOKEN", false);
       if (!token && !existsSync(cfgPath)) {
@@ -161,7 +194,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
 
       // Preserve an existing token line if we're re-installing on a box that
       // already has one and BUILDKITE_AGENT_TOKEN wasn't supplied this time.
-      let tokenLine = token ? `token=${escape(token)}` : undefined;
+      let tokenLine: string | undefined = token ? `token=${escape(token)}` : undefined;
       if (!tokenLine) {
         const existing = readFileSync(cfgPath, "utf8");
         tokenLine = existing.split("\n").find(l => l.startsWith("token="));
@@ -284,7 +317,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
     }
   }
 
-  async function start() {
+  async function start(): Promise<void> {
     const cloud = await getCloud();
 
     let token = getEnv("BUILDKITE_AGENT_TOKEN", false);
@@ -299,14 +332,14 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       token = await getCloudMetadataTag("buildkite:token");
     }
 
-    const hasCfg = isMacOS && existsSync(cfgPath);
+    const hasCfg = isMacOS && cfgPath !== undefined && existsSync(cfgPath);
     if (!token && !hasCfg) {
       throw new Error(
         "Buildkite token not found: set BUILDKITE_AGENT_TOKEN or grant this machine access to the buildkite agent-token secret",
       );
     }
 
-    let shell;
+    let shell: string;
     if (isWindows) {
       // Command Prompt has a faster startup time than PowerShell.
       // Also, it propogates the exit code of the command, which PowerShell does not.
@@ -319,7 +352,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
 
     const distroVersion = getDistroVersion();
     const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];
-    const options = {
+    const options: Record<string, string> = {
       // On macOS the hostname is often a meaningless asset ID (e.g. 66783.local),
       // so name the agent by what it actually is. %spawn yields the existing
       // fleet's "-1" suffix at spawn=1.
@@ -341,7 +374,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       options["token"] = token || "xxx";
     }
 
-    let ephemeral;
+    let ephemeral: boolean | undefined;
     if (cloud) {
       const jobId = await getCloudMetadataTag("buildkite:job-uuid");
       if (jobId) {
@@ -358,7 +391,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       options["git-mirrors-path"] = join(cachePath, "git");
     }
 
-    const tags = {
+    const tags: Record<string, string | boolean | undefined> = {
       "os": getOs(),
       "arch": getArch(),
       "posix": isPosix,
@@ -412,25 +445,19 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
   }
 }
 
-/**
- * @returns {boolean}
- */
-function isSystemd() {
+function isSystemd(): boolean {
   return !!which("systemctl");
 }
 
-/**
- * @returns {boolean}
- */
-function isOpenRc() {
+function isOpenRc(): boolean {
   return !!which("rc-service");
 }
 
-function escape(string) {
+function escape(string: string | undefined): string | undefined {
   return JSON.stringify(string);
 }
 
-async function main() {
+async function main(): Promise<void> {
   const { positionals: args, values } = parseArgs({
     allowPositionals: true,
     options: {

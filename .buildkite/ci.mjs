@@ -1878,7 +1878,62 @@ async function getPipeline(options = {}) {
   return { priority, steps: mergedSteps };
 }
 
+/**
+ * TEST ONLY, not for merging: what does the hosted `build-image` queue run
+ * jobs on, and can a job there pick its own container image? Uploads three
+ * probe steps and nothing else (no builds, no tests).
+ */
+async function probeHostedRunner() {
+  startGroup("Pipeline runner");
+  console.log("node:", process.version);
+  console.log("process.features.typescript:", process.features?.typescript);
+
+  /** @param {string} label @param {string | undefined} image */
+  const probe = (label, image) => ({
+    key: `probe-${label}`,
+    label: `:mag: probe ${label}`,
+    agents: { queue: "build-image" },
+    ...(image ? { image } : {}),
+    checkout: { sparse: { paths: [".buildkite/"] } },
+    timeout_in_minutes: 10,
+    command: [
+      "head -2 /etc/os-release",
+      "whoami",
+      "node --version",
+      'node -p "process.features.typescript"',
+      "echo 'const x: number = 1; console.log(\"typescript ran:\", x);' > /tmp/probe.ts",
+      'node /tmp/probe.ts || echo "typescript did not run"',
+      "git --version",
+      "bash --version | head -1",
+      'npx --version || echo "no npx"',
+      'aws --version || echo "no aws"',
+      'curl --version | head -1 || echo "no curl"',
+    ],
+  });
+
+  const pipeline = {
+    steps: [
+      probe("default-image", undefined),
+      probe("node-26", "docker.io/library/node:26"),
+      probe("node-26.3.0", "docker.io/library/node:26.3.0"),
+    ],
+  };
+  const content = toYaml(pipeline);
+  const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
+  writeFile(contentPath, content);
+  console.log(content);
+  if (isBuildkite) {
+    startGroup("Uploading pipeline...");
+    await spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath], { stdio: "inherit" });
+  }
+}
+
 async function main() {
+  if (process.env.BUILDKITE_BRANCH === "claude/ci-hosted-image-probe" || !isBuildkite) {
+    await probeHostedRunner();
+    return;
+  }
+
   startGroup("Generating options...");
   const options = await getPipelineOptions();
   if (options) {

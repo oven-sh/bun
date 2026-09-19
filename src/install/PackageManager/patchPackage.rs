@@ -1279,14 +1279,15 @@ fn pkg_info_for_name_and_version(
         folder_name.to_vec()
     };
 
-    for (dep_id, dep) in dependencies.iter().enumerate() {
-        let pkg_id = lockfile.buffers.resolutions.as_slice()[dep_id];
-        if pkg_id == invalid_package_id {
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    for (dep_id, (dep, &pkg_id)) in dependencies.iter().zip(resolutions).enumerate() {
+        // `invalid_package_id` and any other id past the end: the dependency did not resolve.
+        let Some(&pkg_name_hash) = pkg_name_hashes.get(pkg_id as usize) else {
             continue;
-        }
+        };
         let matches = if dep.name_hash == name_hash {
             &mut pairs
-        } else if pkg_name_hashes[pkg_id as usize] == name_hash {
+        } else if pkg_name_hash == name_hash {
             &mut aliased
         } else {
             continue;

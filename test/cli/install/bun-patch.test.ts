@@ -1387,6 +1387,38 @@ describe("an npm: aliased dependency", () => {
     },
   );
 
+  // `bun.lockb` is read as is. One resolution id past the end of the package list used to be an
+  // index out of bounds when the id belonged to the named dependency. The name lookup now reads
+  // the id of every dependency, so it must not trust any of them.
+  test.concurrent.each([
+    ["another dependency", 0, "failed to resolve"],
+    ["the named dependency", 1, "error: package no-deps not found"],
+  ])("bun patch --commit <name> with a resolution id past the end for %s", async (_, index, message) => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted", saveTextLockfile: false },
+      files: {
+        "package.json": JSON.stringify({ name: "root", dependencies: { "a-dep": "1.0.1", "no-deps": "1.0.0" } }),
+      },
+    });
+    expect((await runBun(packageDir, "install")).exitCode).toBe(0);
+    await expectPrepared(packageDir, "no-deps", "node_modules/no-deps");
+
+    // `buffers.resolutions` is the second u32 array. Its [start, end) offsets come before the prefix.
+    const lockb = Buffer.from(await Bun.file(join(packageDir, "bun.lockb")).arrayBuffer());
+    const prefix = "\n<u32> 4 sizeof, 4 alignof\n";
+    const at = lockb.indexOf(prefix, lockb.indexOf(prefix) + 1);
+    const start = Number(lockb.readBigUInt64LE(at - 16));
+    const end = Number(lockb.readBigUInt64LE(at - 8));
+    expect((end - start) / 4).toBe(2);
+    lockb.writeUInt32LE(0x7fffffff, start + 4 * index);
+    await Bun.write(join(packageDir, "bun.lockb"), lockb);
+
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "--commit", "no-deps");
+    expect(stderr).toContain(message);
+    expect(stdout).not.toContain("To patch");
+    expect(exitCode).toBe(1);
+  });
+
   // The alias names the folder. `bun install` refuses to write `node_modules/a/b`, because only
   // `@scope/name` can have a `/`, so `bun patch` does not create that folder either.
   test.concurrent.each(["no-deps", "a/b"])("bun patch %s refuses an alias that bun install refuses", async argument => {

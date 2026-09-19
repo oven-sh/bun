@@ -6144,7 +6144,7 @@ describe.concurrent("a peer that answers from inside a user-supplied Duplex tran
   // overflowed it went to the transport from inside the call, and the answer reached a stream
   // nobody listened to yet.
   const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
-  const FRAME = { HEADERS: 1, SETTINGS: 4, CONTINUATION: 9 };
+  const FRAME = { HEADERS: 1, SETTINGS: 4, PING: 6, CONTINUATION: 9 };
   const END_HEADERS = 0x4;
   const END_STREAM = 0x1;
   const ACK = 0x1;
@@ -6156,6 +6156,8 @@ describe.concurrent("a peer that answers from inside a user-supplied Duplex tran
     header.writeUInt32BE(streamId, 5);
     return Buffer.concat([header, payload]);
   }
+  // Larger than the cork once HPACK has encoded it.
+  const largeHeaderValue = Buffer.alloc(40000, "v").toString();
 
   // Answers every complete request header block with ":status: 200" (0x88, HPACK static index 8)
   // and END_STREAM, from inside _write. `onRequest` runs first, still inside _write.
@@ -6181,7 +6183,7 @@ describe.concurrent("a peer that answers from inside a user-supplied Duplex tran
           buffered = buffered.subarray(9 + length);
           if (type === FRAME.SETTINGS && !(flags & ACK)) this.push(frame(FRAME.SETTINGS, ACK, 0));
           if ((type === FRAME.HEADERS || type === FRAME.CONTINUATION) && flags & END_HEADERS) {
-            onRequest(streamId);
+            onRequest(streamId, this);
             this.push(frame(FRAME.HEADERS, END_HEADERS | END_STREAM, streamId, Buffer.from([0x88])));
           }
         }
@@ -6190,44 +6192,61 @@ describe.concurrent("a peer that answers from inside a user-supplied Duplex tran
     });
   }
 
-  async function connect(onRequest) {
-    const client = http2.connect("http://localhost", { createConnection: () => answeringTransport(onRequest) });
+  // `errors` collects every session and stream error, and each test asserts that it is empty.
+  async function connect(onRequest, options) {
+    const errors = [];
+    const client = http2.connect("http://localhost", {
+      ...options,
+      createConnection: () => answeringTransport(onRequest),
+    });
     await new Promise((resolve, reject) => {
       client.once("remoteSettings", resolve);
       client.once("error", reject);
     });
+    client.on("error", err => errors.push(err.code ?? err.message));
     // 'remoteSettings' fires inside the session's own write of the preface. Leave that write
     // before making requests, so each test starts with nothing of the session on the stack.
     await new Promise(resolve => setImmediate(resolve));
-    return client;
+    const request = (headers, requestOptions) => {
+      const req = client.request({ ":method": "POST", ":path": "/", ...headers }, requestOptions);
+      req.on("error", err => errors.push(err.code ?? err.message));
+      return req;
+    };
+    return { client, request, errors };
   }
 
   // An answer the client is ever going to dispatch has been dispatched once the peer has sent it
-  // and the event loop has turned: it is parsed inside the same _write that produced it.
-  async function answered(predicate) {
-    while (!predicate()) await new Promise(resolve => setImmediate(resolve));
+  // and the event loop has turned: it is parsed inside the same _write that produced it. The
+  // answer is due on the first turn, so a run that needs MAX_TURNS has lost the request.
+  const MAX_TURNS = 1000;
+  async function answered(predicate, state) {
+    for (let turn = 0; !predicate(); turn++) {
+      if (turn === MAX_TURNS) throw new Error("the peer is still waiting: " + JSON.stringify(state()));
+      await new Promise(resolve => setImmediate(resolve));
+    }
     await new Promise(resolve => setImmediate(resolve));
   }
 
   it("request() with a header block larger than the cork", async () => {
     let during = "idle";
     const seenDuring = [];
-    const client = await connect(() => seenDuring.push(during));
+    const { client, request, errors } = await connect(() => seenDuring.push(during));
     try {
-      const pad = Buffer.alloc(40000, "v").toString();
       during = "request()";
-      const req = client.request({ ":method": "POST", ":path": "/", "x-pad": pad }, { endStream: false });
+      const req = request({ "x-pad": largeHeaderValue }, { endStream: false });
       during = "idle";
       let status;
       req.on("response", headers => {
         status = headers[":status"];
         req.end();
       });
-      req.on("error", () => {});
       req.resume();
 
-      await answered(() => seenDuring.length === 1);
-      expect({ status, seenDuring }).toEqual({ status: 200, seenDuring: ["idle"] });
+      await answered(
+        () => seenDuring.length === 1,
+        () => ({ errors }),
+      );
+      expect({ status, seenDuring, errors }).toEqual({ status: 200, seenDuring: ["idle"], errors: [] });
     } finally {
       client.destroy();
     }
@@ -6236,19 +6255,21 @@ describe.concurrent("a peer that answers from inside a user-supplied Duplex tran
   it("end(chunk) with a body larger than the cork, before 'response' is attached", async () => {
     let during = "idle";
     const seenDuring = [];
-    const client = await connect(() => seenDuring.push(during));
+    const { client, request, errors } = await connect(() => seenDuring.push(during));
     try {
-      const req = client.request({ ":method": "POST", ":path": "/" });
+      const req = request();
       during = "end(chunk)";
       req.end(Buffer.alloc(60000, "b"));
       during = "idle";
       let status;
       req.on("response", headers => (status = headers[":status"]));
-      req.on("error", () => {});
       req.resume();
 
-      await answered(() => seenDuring.length === 1);
-      expect({ status, seenDuring }).toEqual({ status: 200, seenDuring: ["idle"] });
+      await answered(
+        () => seenDuring.length === 1,
+        () => ({ errors }),
+      );
+      expect({ status, seenDuring, errors }).toEqual({ status: 200, seenDuring: ["idle"], errors: [] });
     } finally {
       client.destroy();
     }
@@ -6257,32 +6278,32 @@ describe.concurrent("a peer that answers from inside a user-supplied Duplex tran
   // The cork slot is per thread. A second session that takes it uncorks the first one, which
   // must neither write from inside the second session's call nor lose its deferred flush.
   it.each([
-    ["its HEADERS are in the cork", 0],
-    ["its header block was larger than the cork", 40000],
-  ])("another session takes the cork slot in the same tick, when %s", async (_, padSize) => {
+    ["its HEADERS are in the cork", {}],
+    ["its header block was larger than the cork", { "x-pad": largeHeaderValue }],
+  ])("another session takes the cork slot in the same tick, when %s", async (_, headers) => {
     let during = "idle";
     const seenDuring = [];
-    const client = await connect(() => seenDuring.push(during));
+    const { client, request, errors } = await connect(() => seenDuring.push(during));
     const other = await connect(() => {});
     try {
-      const headers = { ":method": "POST", ":path": "/" };
-      if (padSize > 0) headers["x-pad"] = Buffer.alloc(padSize, "v").toString();
       during = "request()";
-      const req = client.request(headers, { endStream: false });
+      const req = request(headers, { endStream: false });
       during = "other.ping()";
-      other.ping(() => {});
+      other.client.ping(() => {});
       during = "idle";
       let status;
       req.on("response", responseHeaders => (status = responseHeaders[":status"]));
-      req.on("error", () => {});
       // No resume() and no end(): each of them flushes the session, and the deferred flush
       // is the one under test.
 
-      await answered(() => seenDuring.length === 1);
-      expect({ status, seenDuring }).toEqual({ status: 200, seenDuring: ["idle"] });
+      await answered(
+        () => seenDuring.length === 1,
+        () => ({ errors, otherErrors: other.errors }),
+      );
+      expect({ status, seenDuring, errors }).toEqual({ status: 200, seenDuring: ["idle"], errors: [] });
     } finally {
       client.destroy();
-      other.destroy();
+      other.client.destroy();
     }
   });
 
@@ -6291,7 +6312,7 @@ describe.concurrent("a peer that answers from inside a user-supplied Duplex tran
     let insideRequest = false;
     let answers = 0;
     const sentInsideRequest = [];
-    const client = await connect(streamId => {
+    const { client, request, errors } = await connect(streamId => {
       answers++;
       if (insideRequest) sentInsideRequest.push(streamId);
     });
@@ -6300,19 +6321,110 @@ describe.concurrent("a peer that answers from inside a user-supplied Duplex tran
       const unanswered = new Set();
       for (let i = 0; i < COUNT; i++) {
         insideRequest = true;
-        const req = client.request({ ":method": "POST", ":path": "/" + i, "x-pad": pad + i }, { endStream: false });
+        const req = request({ ":path": "/" + i, "x-pad": pad + i }, { endStream: false });
         insideRequest = false;
         unanswered.add(i);
         req.on("response", () => {
           unanswered.delete(i);
           req.end();
         });
-        req.on("error", () => {});
         req.resume();
       }
 
-      await answered(() => answers === COUNT);
-      expect({ unanswered: [...unanswered], sentInsideRequest }).toEqual({ unanswered: [], sentInsideRequest: [] });
+      await answered(
+        () => answers === COUNT,
+        () => ({ answers, errors }),
+      );
+      expect({ unanswered: [...unanswered], sentInsideRequest, errors }).toEqual({
+        unanswered: [],
+        sentInsideRequest: [],
+        errors: [],
+      });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The transport has not refused what the session holds for its flush, so those bytes are not
+  // session memory: 40 blocks of about 35 KB stay under the 1 MiB limit only if they do not count.
+  it("header blocks held for the flush do not count against maxSessionMemory", async () => {
+    const COUNT = 40;
+    let answers = 0;
+    const { client, request, errors } = await connect(() => answers++, { maxSessionMemory: 1 });
+    try {
+      const statuses = [];
+      for (let i = 0; i < COUNT; i++) {
+        const req = request({ ":path": "/" + i, "x-pad": largeHeaderValue }, { endStream: false });
+        req.on("response", headers => statuses.push(headers[":status"]));
+      }
+
+      await answered(
+        () => answers === COUNT,
+        () => ({ answers, errors }),
+      );
+      expect({ statuses, errors }).toEqual({ statuses: Array(COUNT).fill(200), errors: [] });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // Every link is answered inside the write that carries it, and its handler makes the next
+  // one. A flush hands over a bounded number of links and then returns to the event loop. A
+  // microtask queued under the first link runs once it has returned, whatever else is running.
+  it("a chain of requests made from 'response' handlers returns to the event loop before it ends", async () => {
+    const LINKS = 140;
+    let completed = 0;
+    let completedWhenMicrotaskRan = -1;
+    const { client, request, errors } = await connect(() => {});
+    try {
+      const overCork = Buffer.alloc(20000, "v").toString();
+      const next = () => {
+        const req = request({ "x-pad": overCork }, { endStream: false });
+        req.on("response", () => {
+          if (completed === 0) queueMicrotask(() => (completedWhenMicrotaskRan = completed));
+          if (++completed < LINKS) next();
+        });
+      };
+      next();
+
+      await answered(
+        () => completed === LINKS,
+        () => ({ completed, errors }),
+      );
+      expect(completedWhenMicrotaskRan).toBeGreaterThan(0);
+      expect(completedWhenMicrotaskRan).toBeLessThan(LINKS);
+      expect(errors).toEqual([]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  // The session ACKs every PING and counts ACKs that a peer does not read (1000 is a flood).
+  // A peer that sends its PINGs from inside the write of held bytes is reading.
+  it("PINGs that arrive while held bytes are handed over are not an outbound flood", async () => {
+    const REQUESTS = 11;
+    const PINGS_PER_ANSWER = 100;
+    let answers = 0;
+    const { client, request, errors } = await connect((_streamId, transport) => {
+      answers++;
+      for (let i = 0; i < PINGS_PER_ANSWER; i++) transport.push(frame(FRAME.PING, 0, 0, Buffer.alloc(8, i)));
+    });
+    try {
+      const statuses = [];
+      for (let i = 0; i < REQUESTS; i++) {
+        const req = request({ ":path": "/" + i, "x-pad": largeHeaderValue }, { endStream: false });
+        req.on("response", headers => statuses.push(headers[":status"]));
+      }
+
+      await answered(
+        () => answers === REQUESTS,
+        () => ({ answers, errors }),
+      );
+      expect({ statuses, errors, destroyed: client.destroyed }).toEqual({
+        statuses: Array(REQUESTS).fill(200),
+        errors: [],
+        destroyed: false,
+      });
     } finally {
       client.destroy();
     }

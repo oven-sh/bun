@@ -391,7 +391,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
     case JSC::JSType::InternalFunctionType:
     case JSC::JSType::JSFunctionType: {
         auto& vm = JSC::getVM(globalObject);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+        auto name = Zig::functionName(vm, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append("[Function: "_s);
@@ -469,7 +469,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
     }
     if (cell->isCallable()) {
         builder.append("function "_s);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+        auto name = Zig::functionName(vm, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append(name);

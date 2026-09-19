@@ -234,9 +234,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (chunked && !noBody) socket.write("0\r\n\r\n");
       this.ended = true;
       // Like Node's OutgoingMessage#end(): while the socket holds bytes, the response has finished
-      // when an empty write queued behind them completes.
+      // when an empty write queued behind them completes. A socket that was ended (after the
+      // client's FIN) takes no more writes: its own 'finish' says that the bytes are out.
       if (socket.writableLength > 0 && !socket.destroyed) {
-        socket.write("", "latin1", onEndWritten);
+        if (socket.writableEnded) socket.once("finish", onEndWritten);
+        else socket.write("", "latin1", onEndWritten);
       } else {
         this.finished = true;
       }

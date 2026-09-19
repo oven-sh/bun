@@ -433,6 +433,8 @@ describe("backpressure", () => {
       const destroy = () => void socket.destroy();
       return {
         send: (data: string) => socket.write(data),
+        // Sends the FIN. The client still receives.
+        end: () => void socket.end(),
         resume,
         // Reads until `count` whole responses (each one a head of the same
         // length plus BODY bytes) have arrived, then stops reading again.
@@ -979,6 +981,47 @@ describe("backpressure", () => {
         const completed = ["finish", "end callback", "close"];
         const destroyed = ["destroy()", "destroy() returned"];
         expect(events).toEqual(backlog ? [...destroyed, ...completed] : [...completed, ...destroyed]);
+      });
+
+      // The server answers the client's FIN by ending its own side, and an ended
+      // socket takes no more writes. An end() that comes after that, with the
+      // body still draining, must leave that body alone. (Node never emits
+      // 'finish' here: the response only closes.)
+      it("an end() after the client's FIN does not cut the body that still drains", async () => {
+        const events: string[] = [];
+        const errors: unknown[] = [];
+        let socket!: net.Socket;
+        const handled = Promise.withResolvers<void>();
+        const ended = Promise.withResolvers<void>();
+        const closed = Promise.withResolvers<void>();
+        await using server = await listen((req, res) => {
+          socket = req.socket;
+          socket.on("error", err => errors.push(err));
+          res.on("finish", () => events.push("finish"));
+          res.on("close", () => {
+            events.push("close");
+            closed.resolve();
+          });
+          res.setHeader("Content-Length", BODY);
+          res.write(Buffer.alloc(BODY, "a"));
+          // The server's own 'end' listener is older than this one, so it has run.
+          socket.once("end", () => {
+            res.end(() => events.push("end callback"));
+            ended.resolve();
+          });
+          handled.resolve();
+        });
+        using client = pausedClient(server.port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", { tls });
+        await Promise.race([handled.promise, client.done]);
+        client.end();
+        await Promise.race([ended.promise, client.done]);
+        await ping(server.port, tls);
+        // The client has not read anything yet.
+        if (socket.writableLength > 0) expect(events).toEqual([]);
+        client.resume();
+        const [{ bytes }] = await Promise.all([client.done, closed.promise]);
+        expect({ body: bytes.length - bytes.indexOf("\r\n\r\n") - 4, errors }).toEqual({ body: BODY, errors: [] });
+        expect(events.at(-1)).toBe("close");
       });
 
       it("a request pipelined behind the unfinished response is answered after it, intact", async () => {

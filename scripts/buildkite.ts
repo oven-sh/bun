@@ -6,7 +6,7 @@ import { spawnSync as nodeSpawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
-import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getKernel, getOs } from "./host.ts";
+import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getKernel, getOs } from "./agent.ts";
 import {
   debugLog,
   getEnv,
@@ -403,6 +403,8 @@ export async function curl(url: string | URL, options: CurlOptions = {}): Promis
     }
 
     if (response["ok"]) {
+      // An earlier attempt's failure is not this request's.
+      error = undefined;
       break;
     }
 

@@ -56,11 +56,7 @@ export function debugLog(...args: unknown[]): void {
 
 type SpawnOptions = {
   cwd?: string | undefined;
-  timeout?: number;
   env?: Record<string, string | undefined>;
-  throwOnError?: boolean | ((error: Error) => boolean);
-  retryOnError?: (error: Error) => boolean;
-  stdin?: string;
   stdio?: StdioOptions;
 };
 
@@ -76,12 +72,10 @@ export async function spawn(command: string[], options: SpawnOptions = {}): Prom
   const [cmd, ...args] = command;
   debugLog("$", cmd, ...args);
 
-  const stdin = options["stdin"];
   const spawnOptions: NodeSpawnOptions = {
     cwd: options["cwd"] ?? process.cwd(),
-    timeout: options["timeout"] ?? undefined,
     env: options["env"] ?? undefined,
-    stdio: stdin === "inherit" ? "inherit" : [stdin ? "pipe" : "ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe"],
     ...options,
   };
 
@@ -97,16 +91,6 @@ export async function spawn(command: string[], options: SpawnOptions = {}): Prom
       throw new TypeError("The command is empty");
     }
     const subprocess = nodeSpawn(cmd, args, spawnOptions);
-
-    if (typeof stdin !== "undefined") {
-      subprocess.stdin?.on("error", error => {
-        if (!("code" in error) || error.code !== "EPIPE") {
-          reject(error);
-        }
-      });
-      subprocess.stdin?.write(stdin);
-      subprocess.stdin?.end();
-    }
 
     subprocess.stdout?.on("data", chunk => {
       stdout += chunk;
@@ -147,24 +131,6 @@ export async function spawn(command: string[], options: SpawnOptions = {}): Prom
     }
   }
 
-  if (error) {
-    const retryOnError = options["retryOnError"];
-    if (typeof retryOnError === "function") {
-      if (retryOnError(error)) {
-        return spawn(command, options);
-      }
-    }
-
-    const throwOnError = options["throwOnError"];
-    if (typeof throwOnError === "function") {
-      if (throwOnError(error)) {
-        throw error;
-      }
-    } else if (throwOnError) {
-      throw error;
-    }
-  }
-
   return {
     exitCode,
     signalCode,
@@ -174,26 +140,23 @@ export async function spawn(command: string[], options: SpawnOptions = {}): Prom
   };
 }
 
+/** spawn(), but a command that cannot be run, is killed or exits with non-zero is thrown. */
 export async function spawnSafe(command: string[], options: SpawnOptions = {}): Promise<SpawnResult> {
-  return spawn(command, { throwOnError: true, ...options });
+  const result = await spawn(command, options);
+  if (result.error) {
+    throw result.error;
+  }
+  return result;
 }
 
-// With `retryOnError`, a retry goes through the asynchronous spawn(), so the result is a promise.
-export function spawnSync(command: string[], options?: SpawnOptions & { retryOnError?: never }): SpawnResult;
-
-export function spawnSync(command: string[], options: SpawnOptions): SpawnResult | Promise<SpawnResult>;
-
-export function spawnSync(command: string[], options: SpawnOptions = {}): SpawnResult | Promise<SpawnResult> {
+export function spawnSync(command: string[], options: SpawnOptions = {}): SpawnResult {
   const [cmd, ...args] = command;
   debugLog("$", cmd, ...args);
 
-  const stdin = options["stdin"];
   const spawnOptions: NodeSpawnSyncOptions = {
     cwd: options["cwd"] ?? process.cwd(),
-    timeout: options["timeout"] ?? undefined,
     env: options["env"] ?? undefined,
-    stdio: stdin === "inherit" ? "inherit" : [typeof stdin === "undefined" ? "ignore" : "pipe", "pipe", "pipe"],
-    input: stdin,
+    stdio: ["ignore", "pipe", "pipe"],
     ...options,
   };
 
@@ -242,24 +205,6 @@ export function spawnSync(command: string[], options: SpawnOptions = {}): SpawnR
       error = new Error(`Command killed with ${signalCode}: ${description}`, { cause });
     } else {
       error = new Error(`Command exited with code ${exitCode}: ${description}`, { cause });
-    }
-  }
-
-  if (error) {
-    const retryOnError = options["retryOnError"];
-    if (typeof retryOnError === "function") {
-      if (retryOnError(error)) {
-        return spawn(command, options);
-      }
-    }
-
-    const throwOnError = options["throwOnError"];
-    if (typeof throwOnError === "function") {
-      if (throwOnError(error)) {
-        throw error;
-      }
-    } else if (throwOnError) {
-      throw error;
     }
   }
 

@@ -8,6 +8,8 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
+    // runner.node.ts imports test/docker/prestart-map.mjs.
+    "allowJs": true,
     "noEmit": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,

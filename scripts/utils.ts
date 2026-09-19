@@ -969,7 +969,7 @@ export function getBootstrapVersion(os?: string): number {
   return 0;
 }
 
-export function getFileUrl(filename?: string, line?: number): URL | string | undefined {
+export function getFileUrl(filename?: string, line?: number | string): URL | string | undefined {
   let cwd: string | undefined;
   if (filename?.startsWith("vendor")) {
     const parentPath = resolve(dirname(filename));

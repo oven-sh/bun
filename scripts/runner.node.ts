@@ -7,7 +7,7 @@
 // - It cannot use Bun APIs, since it is run using Node.js.
 // - It does not import dependencies, so it's faster to start.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessByStdio } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   accessSync,
@@ -28,13 +28,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
+import type { Socket } from "node:net";
 import { availableParallelism, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
-import pLimit from "./p-limit.mjs";
 import {
   createLiveOutputFilter,
   getAbi,
@@ -71,6 +71,7 @@ import {
   tmpdir,
   unzip,
   uploadArtifact,
+  type JunitFileSuite,
 } from "./utils.ts";
 
 let isQuiet = false;
@@ -96,7 +97,7 @@ const resolutionGatingFlags = new Set([
   "--no-warnings",
 ]);
 
-function getNodeParallelTestTimeout(testPath) {
+function getNodeParallelTestTimeout(testPath: string): number {
   if (testPath.includes("test-dns")) return 60_000;
   if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
   if (testPath.includes("-docker-")) return 60_000;
@@ -209,7 +210,7 @@ if (cliOptions.junit) {
     cliOptions["junit-temp-dir"] = mkdtempSync(join(tmpdir(), cliOptions["junit-temp-dir"]));
   } catch (err) {
     cliOptions.junit = false;
-    console.error(`Error creating JUnit temp directory: ${err.message}`);
+    console.error(`Error creating JUnit temp directory: ${err instanceof Error ? err.message : err}`);
   }
 }
 
@@ -217,10 +218,11 @@ if (options["quiet"]) {
   isQuiet = true;
 }
 
-/** @type {string[]} */
-let allFiles = [];
-/** @type {string[]} */
-let newFiles = [];
+/** The fields of GitHub's "list pull request files" response that are read here. */
+type GithubPullRequestFile = { filename: string; status: string };
+
+let allFiles: string[] = [];
+let newFiles: string[] = [];
 let prFileCount = 0;
 if (isBuildkite) {
   // The pipeline-upload step (.buildkite/ci.mjs) already fetched the PR file
@@ -231,8 +233,8 @@ if (isBuildkite) {
   const cachedNew = await getBuildMetadata("pr-new-files");
   if (cachedAll) {
     try {
-      allFiles = JSON.parse(cachedAll);
-      newFiles = cachedNew ? JSON.parse(cachedNew) : [];
+      allFiles = JSON.parse(cachedAll) as string[];
+      newFiles = cachedNew ? (JSON.parse(cachedNew) as string[]) : [];
       prFileCount = allFiles.length;
       console.log(`- PR file list from build meta-data: ${prFileCount} files, ${newFiles.length} new files`);
     } catch (e) {
@@ -251,7 +253,7 @@ if (isBuildkite) {
           `https://api.github.com/repos/oven-sh/bun/pulls/${BUILDKITE_PULL_REQUEST}/files?per_page=${per_page}&page=${i}`,
           { headers: { Authorization: `Bearer ${getSecret("GITHUB_TOKEN")}` } },
         );
-        const doc = await res.json();
+        const doc = (await res.json()) as GithubPullRequestFile[] | Record<string, unknown>;
         if (!res.ok || !Array.isArray(doc)) {
           console.error(`-> page ${i}: GitHub API ${res.status} ${res.statusText}:`, JSON.stringify(doc));
           throw new Error(`GitHub API returned ${res.status}; cannot determine changed files`);
@@ -273,7 +275,8 @@ if (isBuildkite) {
   }
 }
 
-let coresDir;
+// Set whenever options["coredump-upload"] is on, which is also the only time it is read.
+let coresDir: string | undefined;
 
 if (options["coredump-upload"]) {
   // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
@@ -290,29 +293,24 @@ if (options["coredump-upload"]) {
   }
 }
 
-let remapPort = undefined;
+let remapPort: number | undefined = undefined;
 
-/**
- * @typedef {Object} TestExpectation
- * @property {string} filename
- * @property {string[]} expectations
- * @property {string[] | undefined} bugs
- * @property {string[] | undefined} modifiers
- * @property {string | undefined} comment
- */
+type TestExpectation = {
+  filename: string;
+  expectations: string[];
+  bugs: string[] | undefined;
+  modifiers: string[] | undefined;
+  comment: string | undefined;
+};
 
-/**
- * @returns {TestExpectation[]}
- */
-function getTestExpectations() {
+function getTestExpectations(): TestExpectation[] {
   const expectationsPath = join(cwd, "test", "expectations.txt");
   if (!existsSync(expectationsPath)) {
     return [];
   }
   const lines = readFileSync(expectationsPath, "utf-8").split(/\r?\n/);
 
-  /** @type {TestExpectation[]} */
-  const expectations = [];
+  const expectations: TestExpectation[] = [];
 
   for (const line of lines) {
     const content = line.trim();
@@ -320,7 +318,7 @@ function getTestExpectations() {
       continue;
     }
 
-    let comment;
+    let comment: string | undefined;
     const commentIndex = content.indexOf("#");
     let cleanLine = content;
     if (commentIndex !== -1) {
@@ -328,18 +326,20 @@ function getTestExpectations() {
       cleanLine = content.substring(0, commentIndex).trim();
     }
 
-    let modifiers = [];
+    let modifiers: string[] = [];
     let remaining = cleanLine;
     let modifierMatch = remaining.match(/^\[(.*?)\]/);
     if (modifierMatch) {
-      modifiers = modifierMatch[1].trim().split(/\s+/);
+      // The group of the pattern is not optional.
+      modifiers = modifierMatch[1]!.trim().split(/\s+/);
       remaining = remaining.substring(modifierMatch[0].length).trim();
     }
 
     let expectationValues = ["Skip"];
     const expectationMatch = remaining.match(/\[(.*?)\]$/);
     if (expectationMatch) {
-      expectationValues = expectationMatch[1].trim().split(/\s+/);
+      // The group of the pattern is not optional.
+      expectationValues = expectationMatch[1]!.trim().split(/\s+/);
       remaining = remaining.substring(0, remaining.length - expectationMatch[0].length).trim();
     }
 
@@ -383,27 +383,33 @@ const skipsForLeaksan = (() => {
 // Informational: a file that passes only on a retry and is not listed here is annotated as a new flake.
 const flakyTests = (() => {
   const path = join(cwd, "test/flaky-tests.txt");
-  if (!existsSync(path)) return new Set();
+  if (!existsSync(path)) return new Set<string>();
   return new Set(
     readFileSync(path, "utf-8")
       .split("\n")
-      .map(line => line.split("#")[0].trim())
+      // split() returns at least one element.
+      .map(line => line.split("#")[0]!.trim())
       .filter(line => line.length > 0),
   );
 })();
-const isKnownFlakyTest = title => flakyTests.has(title.replaceAll("\\", "/"));
+const isKnownFlakyTest = (title: string) => flakyTests.has(title.replaceAll("\\", "/"));
+
+/** The fields of test/parallel-allowlist.json that are read here. */
+type ParallelAllowlist = { dirs: string[]; excludeFiles: string[] };
 
 const parallelAllowlist = (() => {
   try {
-    const { dirs, excludeFiles } = JSON.parse(readFileSync(join(cwd, "test", "parallel-allowlist.json"), "utf-8"));
+    const { dirs, excludeFiles } = JSON.parse(
+      readFileSync(join(cwd, "test", "parallel-allowlist.json"), "utf-8"),
+    ) as ParallelAllowlist;
     return { dirs: new Set(dirs), excludeFiles: new Set(excludeFiles) };
   } catch (error) {
-    console.warn("test/parallel-allowlist.json not loaded:", error?.message || error);
-    return { dirs: new Set(), excludeFiles: new Set() };
+    console.warn("test/parallel-allowlist.json not loaded:", (error instanceof Error && error.message) || error);
+    return { dirs: new Set<string>(), excludeFiles: new Set<string>() };
   }
 })();
 
-const isParallelAllowlisted = testPath => {
+const isParallelAllowlisted = (testPath: string) => {
   const path = testPath.replaceAll("\\", "/");
   const slash = path.lastIndexOf("/");
   return (
@@ -412,17 +418,15 @@ const isParallelAllowlisted = testPath => {
 };
 
 const dockerServicePrefixes = Object.keys(dockerPrestartMap);
-const needsDockerService = testPath => {
+const needsDockerService = (testPath: string) => {
   const path = testPath.replaceAll("\\", "/");
   return dockerServicePrefixes.some(prefix => path.startsWith(prefix));
 };
 
 /**
  * Returns whether we should validate exception checks running the given test
- * @param {string} test
- * @returns {boolean}
  */
-const shouldValidateExceptions = test => {
+const shouldValidateExceptions = (test: string): boolean => {
   // Skip-list entries use `/`; on Windows callers pass `\`-separated paths
   // (path.relative) which never match. Normalize before lookup.
   const t = test.replaceAll(sep, "/");
@@ -431,18 +435,12 @@ const shouldValidateExceptions = test => {
 
 /**
  * Returns whether we should validate exception checks running the given test
- * @param {string} test
- * @returns {boolean}
  */
-const shouldValidateLeakSan = test => {
+const shouldValidateLeakSan = (test: string): boolean => {
   return !(skipsForLeaksan.includes(test) || skipsForLeaksan.includes("test/" + test));
 };
 
-/**
- * @param {string} testPath
- * @returns {string[]}
- */
-function getTestModifiers(testPath) {
+function getTestModifiers(testPath: string): string[] {
   const ext = extname(testPath);
   const filename = basename(testPath, ext);
   const modifiers = filename.split("-").filter(value => value !== "bun");
@@ -496,7 +494,7 @@ function assertExpectedPlatform() {
     return; // step does not declare expectations (e.g. local runs)
   }
 
-  const checks = [
+  const checks: [key: string, expected: string | undefined, actual: string | undefined][] = [
     ["os", expectedOs, getOs()],
     ["arch", process.env["EXPECTED_PLATFORM_ARCH"], getArch()],
     ["abi", process.env["EXPECTED_PLATFORM_ABI"], getAbi()],
@@ -533,13 +531,37 @@ function assertExpectedPlatform() {
     );
 }
 
+type Limit = <T>(fn: () => Promise<T>) => Promise<T>;
+
 /**
- * @returns {Promise<TestResult[]>}
+ * Returns a function that runs at most `concurrency` of the functions passed to it at once.
+ * The rest start in the order they were passed, each when an earlier one settles, whether
+ * that one resolved or rejected.
  */
-async function runTests() {
+function createLimit(concurrency: number): Limit {
+  const waiting: (() => void)[] = [];
+  let running = 0;
+  return async fn => {
+    if (running < concurrency) {
+      running++;
+    } else {
+      await new Promise<void>(resolve => waiting.push(resolve));
+    }
+    try {
+      return await fn();
+    } finally {
+      // The slot goes straight to the next in line, so that a later caller cannot take it first.
+      const next = waiting.shift();
+      if (next) next();
+      else running--;
+    }
+  };
+}
+
+async function runTests(): Promise<TestResult[]> {
   assertExpectedPlatform();
 
-  let execPath;
+  let execPath: string;
   if (options["step"]) {
     execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);
   } else {
@@ -573,17 +595,17 @@ async function runTests() {
     const coordinator = spawn(execPath, [join(cwd, "test", "docker", "coordinator.ts"), ...tests], {
       stdio: ["pipe", "pipe", "inherit"],
       env: { ...process.env, BUN_DOCKER_COORDINATOR_SOCKET: coordinatorSocket },
-    });
+    }) as ChildProcessByStdio<Socket, Socket, null>; // see SpawnedProcess
     coordinator.on("error", err => console.warn("docker coordinator spawn failed:", err.message));
     process.once("exit", () => coordinator.kill());
 
     // Don't point tests at the socket until it's actually listening; if the
     // coordinator never gets there, tests use the direct-compose fallback.
-    const ready = await new Promise(resolve => {
+    const ready = await new Promise<boolean>(resolve => {
       const timer = setTimeout(() => resolve(false), 15_000);
       timer.unref?.();
-      let buffered = "";
-      coordinator.stdout.on("data", chunk => {
+      let buffered: string | null = "";
+      coordinator.stdout.on("data", (chunk: Buffer) => {
         process.stdout.write(chunk);
         if (buffered !== null) {
           buffered += chunk;
@@ -616,10 +638,12 @@ async function runTests() {
     coordinator.stdout?.unref?.();
   }
 
-  /** @type {VendorTest[] | undefined} */
-  let vendorTests;
+  let vendorTests: VendorTest[] | undefined;
   let vendorTotal = 0;
-  if (/true|1|yes|on/i.test(options["vendor"]) || (isCI && typeof options["vendor"] === "undefined")) {
+  if (
+    (options["vendor"] !== undefined && /true|1|yes|on/i.test(options["vendor"])) ||
+    (isCI && typeof options["vendor"] === "undefined")
+  ) {
     vendorTests = await getVendorTests(cwd);
     if (vendorTests.length) {
       vendorTotal = vendorTests.reduce((total, { testPaths }) => total + testPaths.length + 1, 0);
@@ -630,16 +654,16 @@ async function runTests() {
   let i = 0;
   let total = vendorTotal + tests.length + 2;
 
-  const okResults = [];
-  const flakyResults = [];
-  const flakyResultsTitles = [];
-  const failedResults = [];
-  const failedResultsTitles = [];
+  const okResults: TestResult[] = [];
+  const flakyResults: TestResult[] = [];
+  const flakyResultsTitles: string[] = [];
+  const failedResults: TestResult[] = [];
+  const failedResultsTitles: string[] = [];
   const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
 
   const parallelism = options["parallel"] ? availableParallelism() : 1;
   console.log("parallelism", parallelism);
-  const limit = pLimit(parallelism);
+  const limit = createLimit(parallelism);
 
   // Test paths that are process-parallel safe by naming convention
   // (js/node/test/parallel/, js/bun/test/parallel/): ~2.8k files with a ~50ms
@@ -655,8 +679,8 @@ async function runTests() {
   const parallelSafeCap = isMacOS ? 4 : Infinity;
   const parallelSafeWidth =
     parallelism > 1 ? parallelism : Math.min(parallelSafeCap, Math.max(availableParallelism() - 1, 1));
-  const parallelSafeLimit = parallelism > 1 ? limit : pLimit(parallelSafeWidth);
-  const isParallelSafeTest = testPath => {
+  const parallelSafeLimit = parallelism > 1 ? limit : createLimit(parallelSafeWidth);
+  const isParallelSafeTest = (testPath: string) => {
     const p = testPath.replaceAll("\\", "/");
     if (!p.includes("js/node/test/parallel/") && !p.includes("js/bun/test/parallel/")) return false;
     // test-fs-read-stream-pos.js arms a common.mustCallAtLeast per stream; under
@@ -671,15 +695,16 @@ async function runTests() {
   const validationApplies = basename(execPath).includes("asan") || !isCI;
 
   /**
-   * @param {string} title
-   * @param {function} fn
-   * @param {boolean} [concurrent] this call may overlap with other runTest calls
-   * @returns {Promise<TestResult>}
+   * @param concurrent this call may overlap with other runTest calls
    */
-  const runTest = async (title, fn, concurrent = parallelism > 1) => {
+  const runTest = async (
+    title: string,
+    fn: (index: number) => Promise<TestResult>,
+    concurrent = parallelism > 1,
+  ): Promise<TestResult | undefined> => {
     const index = ++i;
 
-    let result, failure, flaky;
+    let result: TestResult | undefined, failure: TestResult | undefined, flaky: boolean | undefined;
     let attempt = 1;
     for (; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
@@ -775,9 +800,10 @@ async function runTests() {
     }
   }
 
-  const isNapiAddonTest = t => /napi[\\/]node-napi-tests[\\/].*[\\/]do\.test\.ts$/.test(t);
+  const isNapiAddonTest = (t: string) => /napi[\\/]node-napi-tests[\\/].*[\\/]do\.test\.ts$/.test(t);
   const napiAddonDirs = [...new Set(tests.filter(isNapiAddonTest).map(t => dirname(join(testsPath, t))))];
-  let napiPrebuild = null;
+  let napiPrebuild: Promise<{ ok: boolean; error: SpawnResult["error"]; output: string; seconds: number }> | null =
+    null;
   if (napiAddonDirs.length) {
     let output = "";
     const started = Date.now();
@@ -789,7 +815,7 @@ async function runTests() {
       stderr: chunk => (output += chunk),
     }).then(({ ok, error }) => ({ ok, error, output, seconds: (Date.now() - started) / 1000 }));
   }
-  const awaitNapiPrebuild = async testPath => {
+  const awaitNapiPrebuild = async (testPath: string) => {
     if (napiPrebuild && isNapiAddonTest(testPath)) {
       const { ok, error, output, seconds } = await napiPrebuild;
       napiPrebuild = null;
@@ -802,11 +828,11 @@ async function runTests() {
   if (!failedResults.length) {
     // TODO: remove windows exclusion here
     if (isCI && !isWindows && (await installCiRemapServer(execPath))) {
-      const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
-      const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
+      const { promise: portPromise, resolve: portResolve } = Promise.withResolvers<{ port: number }>();
+      const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers<Error | string>();
       let exiting = false;
 
-      const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
+      const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, String(getCommit())], {
         stdio: ["ignore", "pipe", "inherit"],
         cwd: ciRemapServerPath,
         env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
@@ -818,8 +844,8 @@ async function runTests() {
       });
       function onBeforeExit() {
         exiting = true;
-        server.off("error");
-        server.off("exit");
+        server.removeAllListeners("error");
+        server.removeAllListeners("exit");
         server.kill?.();
       }
       process.once("beforeExit", onBeforeExit);
@@ -828,8 +854,12 @@ async function runTests() {
         portResolve({ port: parseInt(line) });
       });
 
-      const result = await Promise.race([portPromise, errorPromise.catch(e => e), setTimeoutPromise(5000, "timeout")]);
-      if (typeof result?.port != "number") {
+      const result: unknown = await Promise.race([
+        portPromise,
+        errorPromise.catch((e: unknown) => e),
+        setTimeoutPromise(5000, "timeout"),
+      ]);
+      if (typeof result !== "object" || result === null || !("port" in result) || typeof result.port != "number") {
         process.off("beforeExit", onBeforeExit);
         server.kill?.();
         console.warn("ci-remap server did not start:", result);
@@ -839,7 +869,7 @@ async function runTests() {
       }
     }
 
-    const runOneTest = async (testPath, concurrent) => {
+    const runOneTest = async (testPath: string, concurrent: boolean) => {
       await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
@@ -847,7 +877,8 @@ async function runTests() {
         const testContent = readFileSync(absoluteTestPath, "utf-8");
         const flagsMatch = /^\/\/ Flags:[^\S\r\n]+(--[^\r\n]*)$/m.exec(testContent);
         const testFlags = flagsMatch
-          ? flagsMatch[1].split(/\s+/).filter(flag => resolutionGatingFlags.has(flag.split("=")[0]))
+          ? // The group of the pattern is not optional, and split() returns at least one element.
+            flagsMatch[1]!.split(/\s+/).filter(flag => resolutionGatingFlags.has(flag.split("=")[0]!))
           : [];
         let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
         // don't wanna have a filter for includes("bun:test") but these need our mocks
@@ -877,7 +908,7 @@ async function runTests() {
         // The needs-test filename opt-in wins over this heuristic.
         if (isRunDriver && !title.includes("needs-test")) runWithBunTest = false;
         const subcommand = runWithBunTest ? "test" : "run";
-        const env = {
+        const env: SpawnEnv = {
           FORCE_COLOR: "0",
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
@@ -969,7 +1000,7 @@ async function runTests() {
       }
     };
 
-    const runParallelBucket = async bucketFiles => {
+    const runParallelBucket = async (bucketFiles: string[]) => {
       for (const t of bucketFiles) await awaitNapiPrebuild(t);
       const width = parallelSafeWidth;
       const label = `${bucketFiles.length} files in parallel (${width}×)`;
@@ -980,7 +1011,7 @@ async function runTests() {
       );
       const isAsan = basename(execPath).includes("asan");
       const perTestTimeout = Math.ceil(testTimeout / 2) * (isAsan ? 3 : 1);
-      const env = {};
+      const env: SpawnEnv = {};
       if (validationApplies) {
         env.BUN_JSC_validateExceptionChecks = "1";
         env.BUN_JSC_dumpSimulatedThrows = "1";
@@ -991,7 +1022,7 @@ async function runTests() {
       if (isAsan) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
 
       const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
-      const norm = p =>
+      const norm = (p: string) =>
         byPath.get(
           p
             .trim()
@@ -1025,15 +1056,15 @@ async function runTests() {
       );
       if (crashes) process.stderr.write(crashes);
 
-      let suites = new Map(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
+      let suites = new Map<string, JunitFileSuite>(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
       try {
         suites = parseJunitFileSuites(readFileSync(junitPath, "utf-8"));
       } catch {}
       if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
       else rmSync(junitPath, { force: true });
 
-      const failed = new Set(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
-      const incomplete = new Set(); // never finished/started — re-run quietly
+      const failed = new Set<string>(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
+      const incomplete = new Set<string>(); // never finished/started — re-run quietly
       let evidence = suites.size > 0;
       if (!ok && suites.size) {
         for (const t of bucketFiles) {
@@ -1042,7 +1073,7 @@ async function runTests() {
           else if (suite.failures > 0) failed.add(t);
         }
       } else if (!ok) {
-        let list = null; // "running" | "not-started" while inside an interrupt report list
+        let list: "running" | "not-started" | null = null; // while inside an interrupt report list
         for (const line of stripAnsi(stdout).split(/\r?\n/)) {
           if (line.startsWith("Interrupted while still running:")) {
             list = "running";
@@ -1059,8 +1090,9 @@ async function runTests() {
           }
           list = null;
           const ended = /^✗ (.+?) \((worker crashed|aborted:|no live workers)/.exec(line);
-          const testPath = ended && norm(ended[1]);
-          if (testPath) (ended[2] === "worker crashed" ? failed : incomplete).add(testPath);
+          // The groups of the pattern are not optional, and testPath is only set when it matched.
+          const testPath = ended && norm(ended[1]!);
+          if (testPath) (ended![2] === "worker crashed" ? failed : incomplete).add(testPath);
         }
         evidence = failed.size + incomplete.size > 0;
       }
@@ -1131,8 +1163,8 @@ async function runTests() {
     const modifiedTests = new Set(
       allFiles.filter(filename => filename.startsWith("test/")).map(filename => filename.slice("test/".length)),
     );
-    const isModified = t => modifiedTests.has(t.replaceAll("\\", "/"));
-    const isBucketCandidate = t =>
+    const isModified = (t: string) => modifiedTests.has(t.replaceAll("\\", "/"));
+    const isBucketCandidate = (t: string) =>
       parallelism === 1 &&
       isTestStrict(t) &&
       !isNodeTest(t) &&
@@ -1145,7 +1177,7 @@ async function runTests() {
     const parallelSafeTests = tests.filter(t => isParallelSafeTest(t));
     const modifiedSerialTests = serialTests.filter(t => isModified(t));
     const bucketCandidates = serialTests.filter(t => !isModified(t) && isBucketCandidate(t));
-    const bucketable = bucketCandidates.length >= 8 ? new Set(bucketCandidates) : new Set();
+    const bucketable = bucketCandidates.length >= 8 ? new Set(bucketCandidates) : new Set<string>();
     const restSerialTests = serialTests.filter(t => !isModified(t) && !bucketable.has(t));
 
     await Promise.all(modifiedSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
@@ -1168,8 +1200,8 @@ async function runTests() {
 
       const packageJson = join(relative(cwd, vendorPath), "package.json").replace(/\\/g, "/");
       if (packageManager === "bun") {
-        const { ok } = await runTest(packageJson, () => spawnBunInstall(execPath, { cwd: vendorPath }));
-        if (!ok) {
+        const installResult = await runTest(packageJson, () => spawnBunInstall(execPath, { cwd: vendorPath }));
+        if (!installResult?.ok) {
           continue;
         }
       } else {
@@ -1191,7 +1223,7 @@ async function runTests() {
 
         if (testRunner === "bun") {
           await runTest(title, index =>
-            spawnBunTest(execPath, testPath, { cwd: vendorPath, env: { TEST_SERIAL_ID: index } }),
+            spawnBunTest(execPath, testPath, { cwd: vendorPath, env: { TEST_SERIAL_ID: String(index) } }),
           );
         } else {
           const testRunnerPath = join(cwd, "test", "runners", `${testRunner}.ts`);
@@ -1249,7 +1281,10 @@ async function runTests() {
             unlinkSync(nonBunTestJunitPath);
             !isQuiet && console.log(`Uploaded and deleted non-bun test JUnit report`);
           } catch (unlinkError) {
-            !isQuiet && console.log(`Uploaded but failed to delete non-bun test JUnit report: ${unlinkError.message}`);
+            !isQuiet &&
+              console.log(
+                `Uploaded but failed to delete non-bun test JUnit report: ${unlinkError instanceof Error ? unlinkError.message : unlinkError}`,
+              );
           }
         } else {
           !isQuiet && console.log(`Failed to upload non-bun test JUnit report to BuildKite`);
@@ -1284,7 +1319,10 @@ async function runTests() {
                     unlinkSync(filePath);
                     uploadedCount++;
                   } catch (unlinkError) {
-                    !isQuiet && console.log(`Uploaded but failed to delete ${file}: ${unlinkError.message}`);
+                    !isQuiet &&
+                      console.log(
+                        `Uploaded but failed to delete ${file}: ${unlinkError instanceof Error ? unlinkError.message : unlinkError}`,
+                      );
                   }
                 }
               } catch (err) {
@@ -1309,16 +1347,16 @@ async function runTests() {
 
   if (options["coredump-upload"]) {
     try {
-      const coresDirBase = dirname(coresDir);
-      const coresDirName = basename(coresDir);
-      const coreFileNames = readdirSync(coresDir);
+      const coresDirBase = dirname(coresDir!);
+      const coresDirName = basename(coresDir!);
+      const coreFileNames = readdirSync(coresDir!);
 
       if (coreFileNames.length > 0) {
         console.log(`found ${coreFileNames.length} cores in ${coresDir}`);
         let totalBytes = 0;
         let totalBlocks = 0;
         for (const f of coreFileNames) {
-          const stat = statSync(join(coresDir, f));
+          const stat = statSync(join(coresDir!, f));
           totalBytes += stat.size;
           totalBlocks += stat.blocks;
         }
@@ -1410,35 +1448,47 @@ async function runTests() {
   return [...okResults, ...failedResults];
 }
 
-/**
- * @typedef {object} SpawnOptions
- * @property {string} command
- * @property {string[]} [args]
- * @property {string} [cwd]
- * @property {number} [timeout]
- * @property {object} [env]
- * @property {((chunk: string) => void) & { end?: () => void }} [stdout] called per chunk; `end` when the stream closes
- * @property {((chunk: string) => void) & { end?: () => void }} [stderr]
- */
+type SpawnEnv = Record<string, string | undefined>;
+
+/** Called per chunk; `end` when the stream closes. */
+type SpawnOutputHandler = ((chunk: string) => void) & { end?: () => void };
+
+type SpawnOptions = {
+  command: string;
+  args: string[];
+  cwd?: string | undefined;
+  timeout?: number | undefined;
+  env?: SpawnEnv | undefined;
+  stdout?: SpawnOutputHandler | undefined;
+  stderr?: SpawnOutputHandler | undefined;
+  /** On timeout send SIGTERM, and SIGKILL 15 seconds later, instead of killing at once (not on Windows). */
+  gracefulTimeout?: boolean | undefined;
+  /** Milliseconds without any output after which the process counts as timed out ("stalled"). */
+  idleTimeout?: number | undefined;
+  /** How many times spawning has already been retried after EBUSY or UNKNOWN. */
+  retries?: number;
+};
+
+type SpawnResult = {
+  ok: boolean;
+  error: string | undefined;
+  spawnError: NodeJS.ErrnoException | undefined;
+  /** On Windows, the name of the NTSTATUS code when the exit code is one. */
+  exitCode: number | string | null | undefined;
+  signalCode: NodeJS.Signals | null | undefined;
+  timestamp: number;
+  duration: number;
+  stdout: string;
+  pid: number | undefined;
+};
 
 /**
- * @typedef {object} SpawnResult
- * @property {boolean} ok
- * @property {string} [error]
- * @property {Error} [spawnError]
- * @property {number} [exitCode]
- * @property {number} [signalCode]
- * @property {number} timestamp
- * @property {number} duration
- * @property {string} stdout
- * @property {number} [pid]
+ * Node creates the "pipe" streams of a child process as net.Socket, which is what has
+ * unref(). Its type declarations only say Readable and Writable.
  */
+type SpawnedProcess = ChildProcessByStdio<null, Socket, Socket>;
 
-/**
- * @param {SpawnOptions} options
- * @returns {Promise<SpawnResult>}
- */
-async function spawnSafe(options) {
+async function spawnSafe(options: SpawnOptions): Promise<SpawnResult> {
   const {
     command,
     args,
@@ -1448,46 +1498,46 @@ async function spawnSafe(options) {
     stdout = process.stdout.write.bind(process.stdout),
     stderr = process.stderr.write.bind(process.stderr),
     retries = 0,
-  } = options;
-  let exitCode;
-  let signalCode;
-  let spawnError;
-  let timestamp;
+  }: SpawnOptions = options;
+  let exitCode: SpawnResult["exitCode"];
+  let signalCode: SpawnResult["signalCode"];
+  let spawnError: SpawnResult["spawnError"];
+  let timestamp: number | undefined;
   let timedOut = false;
   let idledOut = false;
-  let duration;
-  let subprocess;
-  let timer;
-  let idleTimer;
-  let armIdleTimer;
+  let duration: number | undefined;
+  let subprocess: SpawnedProcess | undefined;
+  let timer: NodeJS.Timeout | undefined;
+  let idleTimer: NodeJS.Timeout | undefined;
+  let armIdleTimer: (() => void) | undefined;
   let buffer = "";
   let doneCalls = 0;
-  const beforeDone = resolve => {
+  const beforeDone = (resolve: () => void) => {
     // TODO: wait for stderr as well, spawn.test currently causes it to hang
     if (doneCalls++ === 1) {
       done(resolve);
     }
   };
-  const done = resolve => {
+  const done = (resolve: () => void) => {
     if (timer) {
       clearTimeout(timer);
     }
     clearTimeout(idleTimer);
-    subprocess.stderr.unref();
-    subprocess.stdout.unref();
-    subprocess.unref();
+    subprocess?.stderr.unref();
+    subprocess?.stdout.unref();
+    subprocess?.unref();
     if (!signalCode && exitCode === undefined) {
-      subprocess.stdout.destroy();
-      subprocess.stderr.destroy();
-      if (!subprocess.killed) {
-        subprocess.kill(9);
+      subprocess?.stdout.destroy();
+      subprocess?.stderr.destroy();
+      if (!subprocess?.killed) {
+        subprocess?.kill(9);
       }
     }
     resolve();
   };
-  await new Promise(resolve => {
+  await new Promise<void>(resolve => {
     try {
-      function unsafeBashEscape(str) {
+      function unsafeBashEscape(str: string | undefined) {
         if (!str) return "";
         if (str.includes(" ")) return JSON.stringify(str);
         return str;
@@ -1497,7 +1547,7 @@ async function spawnSafe(options) {
           "SPAWNING COMMAND:\n" +
             [
               "echo -n | " +
-                Object.entries(env)
+                Object.entries(env ?? {})
                   .map(([key, value]) => `${unsafeBashEscape(key)}=${unsafeBashEscape(value)}`)
                   .join(" "),
               unsafeBashEscape(command),
@@ -1511,16 +1561,16 @@ async function spawnSafe(options) {
         timeout: options.gracefulTimeout ? undefined : timeout,
         cwd,
         env,
-      });
+      }) as SpawnedProcess;
       subprocess.on("spawn", () => {
         timestamp = Date.now();
         const expire = () => {
           timedOut = true;
           clearTimeout(idleTimer);
           if (options.gracefulTimeout && !isWindows) {
-            subprocess.kill("SIGTERM");
+            subprocess?.kill("SIGTERM");
             timer = setTimeout(() => {
-              subprocess.kill(9);
+              subprocess?.kill(9);
               done(resolve);
             }, 15_000);
             return;
@@ -1544,7 +1594,8 @@ async function spawnSafe(options) {
         done(resolve);
       });
       subprocess.on("exit", (code, signal) => {
-        duration = Date.now() - timestamp;
+        // "exit" is only emitted after "spawn", which set the timestamp.
+        duration = Date.now() - timestamp!;
         exitCode = code;
         signalCode = signal;
         if (signalCode || exitCode !== 0) {
@@ -1556,14 +1607,14 @@ async function spawnSafe(options) {
       subprocess.stdout.on("end", () => {
         beforeDone(resolve);
       });
-      subprocess.stdout.on("data", chunk => {
+      subprocess.stdout.on("data", (chunk: Buffer) => {
         armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stdout?.(text);
         buffer += text;
       });
       subprocess.stdout.on("close", () => stdout?.end?.());
-      subprocess.stderr.on("data", chunk => {
+      subprocess.stderr.on("data", (chunk: Buffer) => {
         armIdleTimer?.();
         const text = chunk.toString("utf-8");
         stderr?.(text);
@@ -1571,7 +1622,7 @@ async function spawnSafe(options) {
       });
       subprocess.stderr.on("close", () => stderr?.end?.());
     } catch (error) {
-      spawnError = error;
+      spawnError = error instanceof Error ? error : new Error(String(error));
       resolve();
     }
   });
@@ -1585,7 +1636,7 @@ async function spawnSafe(options) {
       });
     }
   }
-  let error;
+  let error: string | RegExpMatchArray | null | undefined = undefined;
   if (exitCode === 0) {
     // ...
   } else if (spawnError) {
@@ -1602,7 +1653,7 @@ async function spawnSafe(options) {
     // __FILE__ is relative to the cmake build dir (e.g. ../../src/...) — strip leading ../ for a repo-relative path.
     // JSC crashes immediately after printing, so >1 block means multiple subprocesses crashed.
     const count = error.length;
-    const repoRel = p => p?.replace(/^(?:\.\.?[\\/])+/, "");
+    const repoRel = (p: string | undefined) => p?.replace(/^(?:\.\.?[\\/])+/, "");
     const thrown = /This scope can throw a JS exception: (\S+) @ (\S+)/.exec(buffer);
     const unchecked = /But the exception was unchecked as of this scope: (\S+) @ (\S+)/.exec(buffer);
     error = "unchecked exception";
@@ -1620,25 +1671,27 @@ async function spawnSafe(options) {
         buffer,
       );
     if (leak) {
+      // None of the groups of the pattern is optional.
       const [, kind, bytes, objects, stack] = leak;
-      error = `${kind.toLowerCase()} leak of ${bytes}b${objects === "1" ? "" : ` in ${objects} objects`}`;
-      const frames = stack
+      error = `${kind!.toLowerCase()} leak of ${bytes}b${objects === "1" ? "" : ` in ${objects} objects`}`;
+      const frames = stack!
         .split("\n")
         .map(line => /#\d+ 0x[0-9a-f]+ in ([^\n]+)/i.exec(line)?.[1]?.trim())
-        .filter(Boolean);
-      const isAlloc = f =>
+        .filter((frame): frame is string => Boolean(frame));
+      const isAlloc = (f: string) =>
         /^(?:__interceptor_|__sanitizer|_?malloc\b|_?malloc_zone|calloc|realloc|posix_memalign|operator new|mi_|bmalloc|bun_alloc|WTF::fast(?:Zeroed)?Malloc|WTF::Malloc)/i.test(
           f,
         );
-      const ownTree = f => {
+      const ownTree = (f: string) => {
         const loc = /(\S+):\d+$/.exec(f)?.[1];
         return !!loc && loc.replace(/^(?:\.\.?[\\/])+/, "").startsWith("src/");
       };
       const where = frames.find(f => !isAlloc(f) && ownTree(f)) ?? frames.find(f => !isAlloc(f));
       if (where) {
+        // Neither group of the pattern is optional, and the fallback has both elements.
         const [, symbol, loc] = /^(.*?)\s+(\S+:\d+)$/.exec(where) ?? [null, where, ""];
-        const file = loc.replace(/^(?:\.\.?[\\/])+/, "");
-        error += ` in ${symbol.replace(/\(.*$/, "")}${file ? ` (${file})` : ""}`.slice(0, 160);
+        const file = loc!.replace(/^(?:\.\.?[\\/])+/, "");
+        error += ` in ${symbol!.replace(/\(.*$/, "")}${file ? ` (${file})` : ""}`.slice(0, 160);
       }
     }
     const leaks = buffer.match(/(?:Direct|Indirect) leak of/g)?.length ?? 1;
@@ -1655,11 +1708,13 @@ async function spawnSafe(options) {
     (error = /(SIGABRT)/.exec(buffer))
   ) {
     const [, message] = error || [];
-    error = message ? message.split("\n")[0].toLowerCase() : "crash";
+    // split() returns at least one element.
+    error = message ? message.split("\n")[0]!.toLowerCase() : "crash";
     error = error.indexOf("\\n") !== -1 ? error.substring(0, error.indexOf("\\n")) : error;
-    error = `pid ${subprocess.pid} ${error}`;
+    error = `pid ${subprocess?.pid} ${error}`;
   } else if (signalCode) {
-    if (signalCode === "SIGTERM" && duration >= timeout) {
+    // The "exit" handler that set signalCode set the duration as well.
+    if (signalCode === "SIGTERM" && duration! >= timeout) {
       error = "timeout";
     } else {
       error = signalCode;
@@ -1674,23 +1729,25 @@ async function spawnSafe(options) {
     const lines = stripAnsi(buffer).split(/\r?\n/);
     const failAt = lines.findIndex(line => /^\(fail\) /.test(line.trim()));
     if (failAt === -1) {
+      // k - 1 is an index of `lines` because k > 0, and so is at - 1.
       const at = lines.findIndex(
-        (line, k) => k > 0 && /^\s+at /.test(line) && lines[k - 1].trim() && !/^\s+at /.test(lines[k - 1]),
+        (line, k) => k > 0 && /^\s+at /.test(line) && lines[k - 1]!.trim() && !/^\s+at /.test(lines[k - 1]!),
       );
       if (at !== -1) {
-        const message = lines[at - 1].trim();
+        const message = lines[at - 1]!.trim();
         error += `: ${message.length > 100 ? `${message.slice(0, 97)}…` : message}`;
       }
     } else {
-      const name = lines[failAt]
-        .trim()
+      // failAt and every k below are indices of `lines`.
+      const name = lines[failAt]!.trim()
         .replace(/^\(fail\) /, "")
         .replace(/ \[[\d.]+m?s\]$/, "");
       let reason = "";
       for (let k = failAt - 1; k >= Math.max(0, failAt - 40); k--) {
-        const m = /^\s*error: (.+)$/.exec(lines[k]);
+        const m = /^\s*error: (.+)$/.exec(lines[k]!);
         if (m) {
-          reason = m[1].trim();
+          // The group of the pattern is not optional.
+          reason = m[1]!.trim();
           break;
         }
       }
@@ -1699,8 +1756,8 @@ async function spawnSafe(options) {
     }
   } else if (exitCode === undefined) {
     error = "timeout";
-  } else if (exitCode !== 0) {
-    if (isWindows) {
+  } else {
+    if (isWindows && typeof exitCode !== "string") {
       const winCode = getWindowsExitReason(exitCode);
       if (winCode) {
         exitCode = winCode;
@@ -1724,7 +1781,7 @@ async function spawnSafe(options) {
 }
 
 let _combinedPath = "";
-function getCombinedPath(execPath) {
+function getCombinedPath(execPath: string): string {
   if (!_combinedPath) {
     _combinedPath = addPath(realpathSync(dirname(execPath)), process.env.PATH);
     // If we're running bun-profile.exe, try to make a symlink to bun.exe so
@@ -1748,23 +1805,25 @@ function getCombinedPath(execPath) {
   return _combinedPath;
 }
 
-/**
- * @typedef {object} SpawnBunResult
- * @extends SpawnResult
- * @property {string} [crashes]
- */
+type SpawnBunOptions = Omit<SpawnOptions, "command">;
+
+type SpawnBunResult = SpawnResult & { crashes?: string };
+
+/** One entry of the response of the ci-remap server to `/traces`. */
+type RemappedTrace = { failed_parse?: string; failed_remap?: unknown; remap?: string };
 
 /**
- * @param {string} execPath Path to bun binary
- * @param {SpawnOptions} options
- * @returns {Promise<SpawnBunResult>}
+ * @param execPath Path to bun binary
  */
-async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }) {
+async function spawnBun(
+  execPath: string,
+  { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }: SpawnBunOptions,
+): Promise<SpawnBunResult> {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
-  const bunEnv = {
+  const bunEnv: SpawnEnv = {
     ...process.env,
     PATH: path,
     TMPDIR: tmpdirPath,
@@ -1808,8 +1867,8 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
     timeout = spawnBunTimeout;
   }
   try {
-    const existingCores = options["coredump-upload"] ? readdirSync(coresDir) : [];
-    const result = await spawnSafe({
+    const existingCores = options["coredump-upload"] ? readdirSync(coresDir!) : [];
+    const result: SpawnBunResult = await spawnSafe({
       command: execPath,
       args,
       cwd,
@@ -1820,7 +1879,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
       stdout,
       stderr,
     });
-    const newCores = options["coredump-upload"] ? readdirSync(coresDir).filter(c => !existingCores.includes(c)) : [];
+    const newCores = options["coredump-upload"] ? readdirSync(coresDir!).filter(c => !existingCores.includes(c)) : [];
     let crashes = "";
     if (options["coredump-upload"] && (result.signalCode !== null || newCores.length > 0)) {
       // warn if the main PID crashed and we don't have a core
@@ -1834,7 +1893,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
       }
 
       for (const coreName of newCores) {
-        const corePath = join(coresDir, coreName);
+        const corePath = join(coresDir!, coreName);
         let out = "";
         const gdb = await spawnSafe({
           command: "gdb",
@@ -1876,7 +1935,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
         await setTimeoutPromise(500);
         const response = await fetch(`http://localhost:${remapPort}/traces`);
         if (!response.ok || response.status !== 200) throw new Error(`server responded with code ${response.status}`);
-        const traces = await response.json();
+        const traces = (await response.json()) as RemappedTrace[];
         if (traces.length > 0) {
           result.ok = false;
           if (!isAlwaysFailure(result.error)) result.error = "crash reported";
@@ -1896,7 +1955,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
           }
         }
       } catch (e) {
-        crashes += "failed to fetch traces: " + e.toString() + "\n";
+        crashes += "failed to fetch traces: " + String(e) + "\n";
       }
     }
     if (crashes.length > 0) result.crashes = crashes;
@@ -1910,49 +1969,57 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
   }
 }
 
-/**
- * @typedef {object} TestResult
- * @property {string} testPath
- * @property {boolean} ok
- * @property {string} status
- * @property {string} [error]
- * @property {TestEntry[]} tests
- * @property {string} stdout
- * @property {string} stdoutPreview
- */
+type TestResult = {
+  testPath: string;
+  ok: boolean;
+  status: string;
+  error?: string | undefined;
+  errors: TestError[];
+  tests: TestEntry[];
+  stdout: string;
+  stdoutPreview: string;
+  // Read for --results-json and the JUnit report; nothing sets them.
+  exitCode?: SpawnResult["exitCode"];
+  signalCode?: SpawnResult["signalCode"];
+  duration?: number;
+};
 
-/**
- * @typedef {object} TestEntry
- * @property {string} [url]
- * @property {string} file
- * @property {string} test
- * @property {string} status
- * @property {TestError} [error]
- * @property {number} [duration]
- */
+type TestEntry = {
+  url?: URL | string | undefined;
+  file: string | undefined;
+  test: string;
+  status: string;
+  /** Read by formatTestToMarkdown; nothing sets it. */
+  error?: TestError;
+  errors?: TestError[];
+  duration?: number | undefined;
+};
 
-/**
- * @typedef {object} TestError
- * @property {string} [url]
- * @property {string} file
- * @property {number} line
- * @property {number} col
- * @property {string} name
- * @property {string} stack
- */
+/** A `::error` workflow command printed by `bun test`; its properties are strings as printed. */
+type TestError = {
+  url?: URL | string | undefined;
+  file: string | undefined;
+  line: string | undefined;
+  col: string | undefined;
+  name: string | undefined;
+  stack: string;
+  /** the name of the test the error belongs to */
+  test?: string;
+};
 
-/**
- * @param {string} execPath
- * @param {string} testPath
- * @param {object} [opts]
- * @param {string} [opts.cwd]
- * @param {string[]} [opts.args]
- * @param {object} [opts.env]
- * @param {(chunk: string) => void} [opts.stdout]
- * @param {(chunk: string) => void} [opts.stderr]
- * @returns {Promise<TestResult>}
- */
-async function spawnBunTest(execPath, testPath, opts = { cwd }) {
+type SpawnBunTestOptions = {
+  cwd: string;
+  args?: string[];
+  env?: SpawnEnv;
+  stdout?: SpawnOutputHandler;
+  stderr?: SpawnOutputHandler;
+};
+
+async function spawnBunTest(
+  execPath: string,
+  testPath: string,
+  opts: SpawnBunTestOptions = { cwd },
+): Promise<TestResult> {
   const timeout = getTestTimeout(testPath);
   const isAsan = basename(execPath).includes("asan");
   const perTestTimeout = Math.ceil(timeout / 2) * (isAsan ? 3 : 1);
@@ -1963,7 +2030,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`, "--reporter=dots"];
 
   // This will be set if a JUnit file is generated
-  let junitFilePath = null;
+  let junitFilePath: string | null = null;
 
   // In CI, we want to use JUnit for all tests
   // Create a unique filename for each test run using a hash of the test path
@@ -1982,7 +2049,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
 
   testArgs.push(absPath);
 
-  const env = {
+  const env: SpawnEnv = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
     ...opts["env"],
   };
@@ -2040,11 +2107,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
   };
 }
 
-/**
- * @param {string} testPath
- * @returns {number}
- */
-function getTestTimeout(testPath) {
+function getTestTimeout(testPath: string): number {
   if (
     /integration|3rd_party|docker|bun-install-registry|bun-security-scanner-matrix|v8|bundler_compile|tonic|test[\\/]napi/i.test(
       testPath,
@@ -2059,13 +2122,10 @@ function getTestTimeout(testPath) {
  * Streams the output of one child process stream to `io`, without the workflow
  * commands bun test prints because GITHUB_ACTIONS is set (see createLiveOutputFilter).
  * spawnSafe calls `end()` when the stream closes.
- *
- * @param {NodeJS.WritableStream} io
- * @returns {((chunk: string) => void) & { end: () => void }}
  */
-function pipeTestStdout(io) {
+function pipeTestStdout(io: NodeJS.WritableStream): ((chunk: string) => void) & { end: () => void } {
   const filter = createLiveOutputFilter();
-  const write = chunk => {
+  const write = (chunk: string) => {
     const text = filter(chunk);
     if (text) io.write(text);
   };
@@ -2076,26 +2136,20 @@ function pipeTestStdout(io) {
   return write;
 }
 
-/**
- * @typedef {object} TestOutput
- * @property {string} stdout
- * @property {TestResult[]} tests
- * @property {TestError[]} errors
- */
+type TestOutput = {
+  stdout: string;
+  tests: TestEntry[];
+  errors: TestError[];
+};
 
-/**
- * @param {string} stdout
- * @param {string} [testPath]
- * @returns {TestOutput}
- */
-function parseTestStdout(stdout, testPath) {
-  const tests = [];
-  const errors = [];
+function parseTestStdout(stdout: string, testPath?: string): TestOutput {
+  const tests: TestEntry[] = [];
+  const errors: TestError[] = [];
 
-  let lines = [];
+  let lines: string[] = [];
   let skipCount = 0;
-  let testErrors = [];
-  let done;
+  let testErrors: TestError[] = [];
+  let done: boolean | undefined;
   for (const chunk of stdout.split("\n")) {
     const string = stripAnsi(chunk);
 
@@ -2127,7 +2181,7 @@ function parseTestStdout(stdout, testPath) {
     if (string.startsWith("::error")) {
       const eol = string.indexOf("::", 8);
       const message = unescapeGitHubAction(string.substring(eol + 2));
-      const { file, line, col, title } = Object.fromEntries(
+      const { file, line, col, title }: Record<string, string | undefined> = Object.fromEntries(
         string
           .substring(8, eol)
           .split(",")
@@ -2135,7 +2189,7 @@ function parseTestStdout(stdout, testPath) {
       );
 
       const errorPath = file || testPath;
-      const error = {
+      const error: TestError = {
         url: getFileUrl(errorPath, line),
         file: errorPath,
         line,
@@ -2195,12 +2249,10 @@ function parseTestStdout(stdout, testPath) {
   };
 }
 
-/**
- * @param {string} execPath
- * @param {SpawnOptions} options
- * @returns {Promise<TestResult>}
- */
-async function spawnBunInstall(execPath, options) {
+async function spawnBunInstall(
+  execPath: string,
+  options: Partial<SpawnBunOptions> & { cwd: string },
+): Promise<TestResult> {
   // spawnBun sets BUN_INSTALL_CACHE_DIR to a fresh tmpdir so per-test installs
   // are hermetic. This function only runs the runner's own dependency setup
   // (root, test/, scripts/ci-remap-server, vendor), which should hit the
@@ -2251,37 +2303,23 @@ async function spawnBunInstall(execPath, options) {
  * it would otherwise put GitHub on the critical path of the root `bun install`
  * every GitHub Actions workflow and every build runs. Best-effort, like starting
  * the server itself: without it crash reports are not remapped, the tests still run.
- * @param {string} execPath
- * @returns {Promise<boolean>}
  */
-async function installCiRemapServer(execPath) {
+async function installCiRemapServer(execPath: string): Promise<boolean> {
   const title = relative(cwd, join(ciRemapServerPath, "package.json")).replaceAll(sep, "/");
   const { ok, error } = await startGroup(title, () => spawnBunInstall(execPath, { cwd: ciRemapServerPath }));
   if (!ok) console.warn(`ci-remap server not installed (${title}: ${error}), crash reports will not be remapped`);
   return ok;
 }
 
-/**
- * @param {string} path
- * @returns {boolean}
- */
-function isJavaScript(path) {
+function isJavaScript(path: string): boolean {
   return /\.(c|m)?(j|t)sx?$/.test(basename(path));
 }
 
-/**
- * @param {string} path
- * @returns {boolean}
- */
-function isJavaScriptTest(path) {
+function isJavaScriptTest(path: string): boolean {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 
-/**
- * @param {string} path
- * @returns {boolean}
- */
-function isNodeTest(path) {
+function isNodeTest(path: string): boolean {
   // Do not run node tests on macOS x64 in CI, those machines are slow and expensive.
   if (isCI && isMacOS && isX64) {
     return false;
@@ -2297,45 +2335,25 @@ function isNodeTest(path) {
   );
 }
 
-/**
- * @param {string} path
- * @returns {boolean}
- */
-function isClusterTest(path) {
+function isClusterTest(path: string): boolean {
   const unixPath = path.replaceAll(sep, "/");
   return unixPath.includes("js/node/cluster/test-") && unixPath.endsWith(".ts");
 }
 
-/**
- * @param {string} path
- * @returns {boolean}
- */
-function isTest(path) {
+function isTest(path: string): boolean {
   return isNodeTest(path) || isClusterTest(path) ? true : isTestStrict(path);
 }
 
-/**
- * @param {string} path
- * @returns {boolean}
- */
-function isTestStrict(path) {
+function isTestStrict(path: string): boolean {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 
-/**
- * @param {string} path
- * @returns {boolean}
- */
-function isHidden(path) {
+function isHidden(path: string): boolean {
   return /node_modules|node.js/.test(dirname(path)) || /^\./.test(basename(path));
 }
 
-/**
- * @param {string} cwd
- * @returns {string[]}
- */
-function getTests(cwd) {
-  function* getFiles(cwd, path) {
+function getTests(cwd: string): string[] {
+  function* getFiles(cwd: string, path: string): Generator<string> {
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
@@ -2355,50 +2373,43 @@ function getTests(cwd) {
   return [...getFiles(cwd, "")].sort();
 }
 
-/**
- * @typedef {object} Vendor
- * @property {string} package
- * @property {string} repository
- * @property {string} tag
- * @property {string} [packageManager]
- * @property {string} [testPath]
- * @property {string} [testRunner]
- * @property {string[]} [testExtensions]
- * @property {boolean | Record<string, boolean | string>} [skipTests]
- */
+/** An entry of test/vendor.json. */
+type Vendor = {
+  package: string;
+  repository: string;
+  tag: string;
+  packageManager?: string;
+  testPath?: string;
+  testRunner?: string;
+  testExtensions?: string[];
+  skipTests?: boolean | Record<string, boolean | string>;
+};
 
-/**
- * @typedef {object} VendorTest
- * @property {string} cwd
- * @property {string} packageManager
- * @property {string} testRunner
- * @property {string[]} testPaths
- */
+type VendorTest = {
+  cwd: string;
+  packageManager: string;
+  testRunner: string;
+  testPaths: string[];
+};
 
-/**
- * @param {string} cwd
- * @returns {Promise<VendorTest[]>}
- */
-async function getVendorTests(cwd) {
+async function getVendorTests(cwd: string): Promise<VendorTest[]> {
   const vendorPath = join(cwd, "test", "vendor.json");
   if (!existsSync(vendorPath)) {
     throw new Error(`Did not find vendor.json: ${vendorPath}`);
   }
 
-  /** @type {Vendor[]} */
-  const vendors = JSON.parse(readFileSync(vendorPath, "utf-8")).sort(
+  const vendors = (JSON.parse(readFileSync(vendorPath, "utf-8")) as Vendor[]).sort(
     (a, b) => a.package.localeCompare(b.package) || a.tag.localeCompare(b.tag),
   );
 
   const shardId = parseInt(options["shard"]);
   const maxShards = parseInt(options["max-shards"]);
 
-  /** @type {Vendor[]} */
-  let relevantVendors = [];
+  let relevantVendors: Vendor[] = [];
   if (maxShards > 1) {
     for (let i = 0; i < vendors.length; i++) {
       if (i % maxShards === shardId) {
-        relevantVendors.push(vendors[i]);
+        relevantVendors.push(vendors[i]!); // i < vendors.length
       }
     }
   } else {
@@ -2447,7 +2458,7 @@ async function getVendorTests(cwd) {
           throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
         }
 
-        const isTest = path => {
+        const isTest = (path: string) => {
           if (!isJavaScriptTest(path)) {
             return false;
           }
@@ -2493,13 +2504,14 @@ async function getVendorTests(cwd) {
 /**
  * Checked-in median wall-clock duration per test file for this lane, from
  * expected-durations.json (see scripts/update-test-durations.mjs).
- * @param {string} cwd
- * @returns {Record<string, number>}
  */
-function loadExpectedDurations(cwd) {
-  const durations = {};
+function loadExpectedDurations(cwd: string): Record<string, number> {
+  const durations: Record<string, number> = {};
   try {
-    const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
+    const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8")) as Record<
+      string,
+      Record<string, unknown>
+    >;
     const step = options["step"] || "";
     // Most specific column first, then the nearest lane, then anything.
     const columns = step.includes("asan")
@@ -2518,31 +2530,25 @@ function loadExpectedDurations(cwd) {
       if (typeof ms === "number") durations[path] = ms;
     }
   } catch (e) {
-    console.warn("expected-durations.json not loaded:", e?.message || e);
+    console.warn("expected-durations.json not loaded:", (e instanceof Error && e.message) || e);
   }
   return durations;
 }
 
-/**
- * @param {string} cwd
- * @param {string[]} testModifiers
- * @param {TestExpectation[]} testExpectations
- * @returns {string[]}
- */
-function getRelevantTests(cwd, testModifiers, testExpectations) {
+function getRelevantTests(cwd: string, testModifiers: string[], testExpectations: TestExpectation[]): string[] {
   let tests = getTests(cwd);
-  const availableTests = [];
-  const filteredTests = [];
+  const availableTests: string[] = [];
+  const filteredTests: string[] = [];
 
   if (options["node-tests"]) {
     tests = tests.filter(isNodeTest);
   }
 
-  const isMatch = (testPath, filter) => {
+  const isMatch = (testPath: string, filter: string) => {
     return testPath.replace(/\\/g, "/").includes(filter);
   };
 
-  const getFilter = filter => {
+  const getFilter = (filter: string) => {
     return (
       filter
         ?.split(",")
@@ -2600,10 +2606,10 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
   } else if (options["smoke"] !== undefined) {
     const smokePercent = parseFloat(options["smoke"]) || 0.01;
     const smokeCount = Math.ceil(availableTests.length * smokePercent);
-    const smokeTests = new Set();
+    const smokeTests = new Set<string>();
     for (let i = 0; i < smokeCount; i++) {
       const randomIndex = Math.floor(Math.random() * availableTests.length);
-      smokeTests.add(availableTests[randomIndex]);
+      smokeTests.add(availableTests[randomIndex]!); // randomIndex < availableTests.length
     }
     filteredTests.push(...Array.from(smokeTests));
     !isQuiet && console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
@@ -2617,25 +2623,27 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     // they spread across shards instead of all landing on shard 0.
     const durations = loadExpectedDurations(cwd);
     const known = Object.values(durations).sort((a, b) => a - b);
-    const unknownCost = known.length ? known[Math.floor(known.length / 2)] : 100;
-    const costOf = testPath => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
+    const unknownCost = known.length ? known[Math.floor(known.length / 2)]! : 100;
+    const costOf = (testPath: string) => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;
 
     // Stable order for equal costs so the packing is reproducible.
     const order = availableTests
       .map((testPath, originalIndex) => ({ testPath, originalIndex, cost: costOf(testPath) }))
       .sort((a, b) => b.cost - a.cost || a.originalIndex - b.originalIndex);
     const load = new Float64Array(maxShards);
-    const assigned = Array.from({ length: maxShards }, () => []);
+    const assigned = Array.from({ length: maxShards }, (): { testPath: string; originalIndex: number }[] => []);
     for (const { testPath, originalIndex, cost } of order) {
+      // `load` and `assigned` have maxShards elements, and s and bin are less than that.
       let bin = 0;
-      for (let s = 1; s < maxShards; s++) if (load[s] < load[bin]) bin = s;
-      load[bin] += cost;
-      assigned[bin].push({ testPath, originalIndex });
+      for (let s = 1; s < maxShards; s++) if (load[s]! < load[bin]!) bin = s;
+      load[bin]! += cost;
+      assigned[bin]!.push({ testPath, originalIndex });
     }
     // Restore the within-shard order the rest of the pipeline expects
     // (docker-last / modified-first sorts below are stable over this).
-    assigned[shardId].sort((a, b) => a.originalIndex - b.originalIndex);
-    for (const { testPath } of assigned[shardId]) filteredTests.push(testPath);
+    // --shard is less than --max-shards: Buildkite numbers parallel jobs from 0.
+    assigned[shardId]!.sort((a, b) => a.originalIndex - b.originalIndex);
+    for (const { testPath } of assigned[shardId]!) filteredTests.push(testPath);
     !isQuiet &&
       console.log(
         "Sharding tests (LPT):",
@@ -2647,7 +2655,7 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
         "/",
         availableTests.length,
         "est",
-        Math.round(load[shardId] / 1000) + "s",
+        Math.round(load[shardId]! / 1000) + "s",
         "of",
         Math.round(Math.max(...load) / 1000) + "s max",
       );
@@ -2688,20 +2696,16 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
   return filteredTests;
 }
 
-/**
- * @param {string} bunExe
- * @returns {string}
- */
-function getExecPath(bunExe) {
-  let execPath;
-  let error;
+function getExecPath(bunExe: string): string {
+  let execPath: string | undefined;
+  let error: unknown;
   try {
     const { error, stdout } = spawnSync(bunExe, ["--print", "process.argv[0]"], {
       encoding: "utf-8",
       timeout: spawnTimeout,
       env: {
         PATH: process.env.PATH,
-        BUN_DEBUG_QUIET_LOGS: 1,
+        BUN_DEBUG_QUIET_LOGS: "1",
       },
     });
     if (error) {
@@ -2722,12 +2726,7 @@ function getExecPath(bunExe) {
   throw new Error(`Could not find executable: ${bunExe}`, { cause: error });
 }
 
-/**
- * @param {string} target
- * @param {string} [buildId]
- * @returns {Promise<string>}
- */
-async function getExecPathFromBuildKite(target, buildId) {
+async function getExecPathFromBuildKite(target: string, buildId?: string): Promise<string> {
   if (existsSync(target) || target.includes("/")) {
     return getExecPath(target);
   }
@@ -2735,7 +2734,7 @@ async function getExecPathFromBuildKite(target, buildId) {
   const releasePath = join(cwd, "release");
   mkdirSync(releasePath, { recursive: true });
 
-  let zipPath;
+  let zipPath: string | undefined;
   downloadLoop: for (let i = 0; i < 10; i++) {
     // build-bun also uploads libbun-*.a / libbun_runtime.a / dep libs; only the zips are wanted here.
     const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
@@ -2758,7 +2757,7 @@ async function getExecPathFromBuildKite(target, buildId) {
     zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
       .filter(filename => /^bun.*\.zip$/i.test(filename))
       .map(filename => join(releasePath, filename))
-      .sort((a, b) => b.includes("profile") - a.includes("profile"))
+      .sort((a, b) => Number(b.includes("profile")) - Number(a.includes("profile")))
       .at(0);
 
     if (zipPath) {
@@ -2787,18 +2786,14 @@ async function getExecPathFromBuildKite(target, buildId) {
   throw new Error(`Could not find executable from BuildKite: ${releasePath}`);
 }
 
-/**
- * @param {string} execPath
- * @returns {string}
- */
-function getRevision(execPath) {
+function getRevision(execPath: string): string {
   try {
     const { error, stdout } = spawnSync(execPath, ["--revision"], {
       encoding: "utf-8",
       timeout: spawnTimeout,
       env: {
         PATH: process.env.PATH,
-        BUN_DEBUG_QUIET_LOGS: 1,
+        BUN_DEBUG_QUIET_LOGS: "1",
       },
     });
     if (error) {
@@ -2811,32 +2806,26 @@ function getRevision(execPath) {
   }
 }
 
-/**
- * @param  {...string} paths
- * @returns {string}
- */
-function addPath(...paths) {
+function addPath(...paths: (string | undefined)[]): string {
   if (isWindows) {
     return paths.join(";");
   }
   return paths.join(":");
 }
 
-/**
- * @returns {string | undefined}
- */
-function getTestLabel() {
+function getTestLabel(): string | undefined {
   return getBuildLabel()?.replace(" - test-bun", "");
 }
 
 /**
- * @param  {TestResult | TestResult[]} result
- * @param  {boolean} concise
- * @param  {number} retries
- * @param  {boolean} [unlisted] passed on a retry but test/flaky-tests.txt does not list it
- * @returns {string}
+ * @param unlisted passed on a retry but test/flaky-tests.txt does not list it
  */
-function formatTestToMarkdown(result, concise, retries, unlisted = false) {
+function formatTestToMarkdown(
+  result: TestResult | TestResult[],
+  concise: boolean,
+  retries: number,
+  unlisted = false,
+): string {
   const results = Array.isArray(result) ? result : [result];
   const buildLabel = getTestLabel();
   const buildUrl = getBuildUrl();
@@ -2848,7 +2837,7 @@ function formatTestToMarkdown(result, concise, retries, unlisted = false) {
       continue;
     }
 
-    let errorLine;
+    let errorLine: TestError["line"];
     for (const { error } of tests) {
       if (!error) {
         continue;
@@ -2908,10 +2897,7 @@ function formatTestToMarkdown(result, concise, retries, unlisted = false) {
   return markdown;
 }
 
-/**
- * @param {string} glob
- */
-function uploadArtifactsToBuildKite(glob) {
+function uploadArtifactsToBuildKite(glob: string): void {
   spawn("buildkite-agent", ["artifact", "upload", glob], {
     stdio: ["ignore", "ignore", "ignore"],
     timeout: spawnTimeout,
@@ -2919,11 +2905,7 @@ function uploadArtifactsToBuildKite(glob) {
   });
 }
 
-/**
- * @param {string} name
- * @param {string} value
- */
-function reportOutputToGitHubAction(name, value) {
+function reportOutputToGitHubAction(name: string, value: string | number): void {
   const outputPath = process.env["GITHUB_OUTPUT"];
   if (!outputPath) {
     return;
@@ -2933,11 +2915,7 @@ function reportOutputToGitHubAction(name, value) {
   appendFileSync(outputPath, content);
 }
 
-/**
- * @param {string} color
- * @returns {string}
- */
-function getAnsi(color) {
+function getAnsi(color: string): string {
   switch (color) {
     case "red":
       return "\x1b[31m";
@@ -2956,27 +2934,15 @@ function getAnsi(color) {
   }
 }
 
-/**
- * @param {string} string
- * @returns {string}
- */
-function stripAnsi(string) {
+function stripAnsi(string: string): string {
   return string.replace(/\u001b\[\d+m/g, "");
 }
 
-/**
- * @param {string} string
- * @returns {string}
- */
-function unescapeGitHubAction(string) {
+function unescapeGitHubAction(string: string): string {
   return string.replace(/%25/g, "%").replace(/%0D/g, "\r").replace(/%0A/g, "\n");
 }
 
-/**
- * @param {string} string
- * @returns {string}
- */
-function escapeHtml(string) {
+function escapeHtml(string: string): string {
   return string
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -2986,32 +2952,21 @@ function escapeHtml(string) {
     .replace(/`/g, "&#96;");
 }
 
-/**
- * @param {string} string
- * @returns {string}
- */
-function escapeCodeBlock(string) {
+function escapeCodeBlock(string: string): string {
   return string.replace(/`/g, "\\`");
 }
 
-/**
- * @param {string} string
- * @returns {number | undefined}
- */
-function parseDuration(duration) {
-  const match = /(\d+\.\d+)(m?s)/.exec(duration);
+function parseDuration(duration: string | number | undefined): number | undefined {
+  const match = /(\d+\.\d+)(m?s)/.exec(String(duration));
   if (!match) {
     return undefined;
   }
+  // Neither group of the pattern is optional.
   const [, value, unit] = match;
-  return parseFloat(value) * (unit === "ms" ? 1 : 1000);
+  return parseFloat(value!) * (unit === "ms" ? 1 : 1000);
 }
 
-/**
- * @param {string} execPath
- * @returns {boolean}
- */
-function isExecutable(execPath) {
+function isExecutable(execPath: string): boolean {
   if (!existsSync(execPath) || !statSync(execPath).isFile()) {
     return false;
   }
@@ -3023,10 +2978,7 @@ function isExecutable(execPath) {
   return true;
 }
 
-/**
- * @param {"pass" | "fail" | "cancel"} [outcome]
- */
-function getExitCode(outcome) {
+function getExitCode(outcome?: "pass" | "fail" | "cancel"): number {
   if (outcome === "pass") {
     return 0;
   }
@@ -3047,7 +2999,7 @@ function getExitCode(outcome) {
 // A flaky segfault, sigtrap, or sigkill must never be ignored.
 // If it happens in CI, it will happen to our users.
 // Flaky AddressSanitizer errors cannot be ignored since they still represent real bugs.
-function isAlwaysFailure(error) {
+function isAlwaysFailure(error: string | undefined): boolean {
   error = ((error || "") + "").toLowerCase().trim();
   return (
     error.includes("segmentation fault") ||
@@ -3063,10 +3015,7 @@ function isAlwaysFailure(error) {
   );
 }
 
-/**
- * @param {string} signal
- */
-function onExit(signal) {
+function onExit(signal: NodeJS.Signals): void {
   const label = `${getAnsi("red")}Received ${signal}, exiting...${getAnsi("reset")}`;
   startGroup(label, () => {
     markBuildkiteStepReported();
@@ -3080,12 +3029,32 @@ let getBuildkiteAnalyticsToken = () => {
   return token;
 };
 
+type JUnitTestCase = {
+  name: string;
+  classname: string;
+  time: number;
+  failure?: { message: string; type: string; content: string | undefined };
+  skipped?: { message: string };
+};
+
+type JUnitTestSuite = {
+  name: string;
+  tests: JUnitTestCase[];
+  failures: number;
+  errors: number;
+  skipped: number;
+  time: number;
+  timestamp: string;
+  hostname: string;
+  stdout: string;
+};
+
 /**
  * Generate a JUnit XML report from test results
- * @param {string} outfile - The path to write the JUnit XML report to
- * @param {TestResult[]} results - The test results to include in the report
+ * @param outfile - The path to write the JUnit XML report to
+ * @param results - The test results to include in the report
  */
-function generateJUnitReport(outfile, results) {
+function generateJUnitReport(outfile: string, results: TestResult[]): void {
   !isQuiet && console.log(`Generating JUnit XML report: ${outfile}`);
 
   // Start the XML document
@@ -3108,7 +3077,7 @@ function generateJUnitReport(outfile, results) {
   xml += `<testsuites name="${escapeXml(packageName)}" tests="${totalTests}" failures="${totalFailures}" time="${totalTime.toFixed(3)}" timestamp="${timestamp}">\n`;
 
   // Group results by test file
-  const testSuites = new Map();
+  const testSuites = new Map<string, JUnitTestSuite>();
 
   for (const result of results) {
     const { testPath, ok, status, error, tests, stdoutPreview, stdout, duration = 0 } = result;
@@ -3127,7 +3096,7 @@ function generateJUnitReport(outfile, results) {
       });
     }
 
-    const suite = testSuites.get(testPath);
+    const suite = testSuites.get(testPath)!; // set just above
 
     // For test suites with granular test information
     if (tests.length > 0) {
@@ -3136,7 +3105,7 @@ function generateJUnitReport(outfile, results) {
 
         suite.time += testDuration / 1000; // Convert to seconds
 
-        const testCase = {
+        const testCase: JUnitTestCase = {
           name: testName,
           classname: `${packageName}.${testPath.replace(/[\/\\]/g, ".")}`,
           time: testDuration / 1000, // Convert to seconds
@@ -3148,10 +3117,10 @@ function generateJUnitReport(outfile, results) {
           // Collect error details
           let errorMessage = "Test failed";
           let errorType = "AssertionError";
-          let errorContent = "";
+          let errorContent: string | undefined = "";
 
           if (testErrors && testErrors.length > 0) {
-            const primaryError = testErrors[0];
+            const primaryError = testErrors[0]!; // testErrors.length > 0
             errorMessage = primaryError.name || "Test failed";
             errorType = primaryError.name || "AssertionError";
             errorContent = primaryError.stack || primaryError.name;
@@ -3186,7 +3155,7 @@ function generateJUnitReport(outfile, results) {
       // For test suites without granular test information (e.g., bun install tests)
       suite.time += duration / 1000; // Convert to seconds
 
-      const testCase = {
+      const testCase: JUnitTestCase = {
         name: basename(testPath),
         classname: `${packageName}.${testPath.replace(/[\/\\]/g, ".")}`,
         time: duration / 1000, // Convert to seconds
@@ -3244,8 +3213,8 @@ function generateJUnitReport(outfile, results) {
 }
 
 let isUploadingToBuildKite = false;
-const junitUploadQueue = [];
-async function addToJunitUploadQueue(junitFilePath) {
+const junitUploadQueue: string[] = [];
+async function addToJunitUploadQueue(junitFilePath: string): Promise<void> {
   junitUploadQueue.push(junitFilePath);
 
   if (!isUploadingToBuildKite) {
@@ -3253,10 +3222,10 @@ async function addToJunitUploadQueue(junitFilePath) {
   }
 }
 
-async function drainJunitUploadQueue() {
+async function drainJunitUploadQueue(): Promise<void> {
   isUploadingToBuildKite = true;
   while (junitUploadQueue.length > 0) {
-    const testPath = junitUploadQueue.shift();
+    const testPath = junitUploadQueue.shift()!; // junitUploadQueue.length > 0
     await uploadJUnitToBuildKite(testPath)
       .then(uploadSuccess => {
         unlink(testPath, () => {
@@ -3274,10 +3243,10 @@ async function drainJunitUploadQueue() {
 
 /**
  * Upload JUnit XML report to BuildKite Test Analytics
- * @param {string} junitFile - Path to the JUnit XML file to upload
- * @returns {Promise<boolean>} - Whether the upload was successful
+ * @param junitFile - Path to the JUnit XML file to upload
+ * @returns Whether the upload was successful
  */
-async function uploadJUnitToBuildKite(junitFile) {
+async function uploadJUnitToBuildKite(junitFile: string): Promise<boolean> {
   const fileName = basename(junitFile);
   !isQuiet && console.log(`Uploading JUnit file "${fileName}" to BuildKite Test Analytics...`);
 
@@ -3352,10 +3321,10 @@ async function uploadJUnitToBuildKite(junitFile) {
 
 /**
  * Escape XML special characters
- * @param {string} str - String to escape
- * @returns {string} - Escaped string
+ * @param str - String to escape
+ * @returns Escaped string
  */
-function escapeXml(str) {
+function escapeXml(str: string): string {
   if (typeof str !== "string") return "";
   return str
     .replace(/&/g, "&amp;")
@@ -3377,7 +3346,7 @@ function escapeXml(str) {
  * Only on Buildkite: the policy cannot be turned on again without a reinstall,
  * so a developer's machine running with CI=true must not get this.
  */
-async function disableSmartAppControl() {
+async function disableSmartAppControl(): Promise<void> {
   if (!isBuildkite) return;
   const script = [
     "$p = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy'",
@@ -3398,8 +3367,8 @@ async function disableSmartAppControl() {
   }
 }
 
-export async function main() {
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+export async function main(): Promise<void> {
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => onExit(signal));
   }
 

@@ -793,6 +793,78 @@ describe("minimum-release-age", () => {
           return Response.json(packageData);
         }
 
+        // TEST PACKAGE 14: snapshot-package (prerelease tag longer than the 8 bytes a
+        // semver string stores inline; every published version is younger than the
+        // filters used in the tests, so nothing can be selected)
+        if (url.pathname === "/snapshot-package") {
+          const packageData = {
+            name: "snapshot-package",
+            "dist-tags": {
+              latest: "1.0.0",
+              snapshot: "1.0.0-snapshot.20240101",
+            },
+            versions: {
+              "1.0.0-snapshot.20240101": {
+                name: "snapshot-package",
+                version: "1.0.0-snapshot.20240101",
+                dist: {
+                  tarball: `${mockRegistryUrl}/snapshot-package/-/snapshot-package-1.0.0-snapshot.20240101.tgz`,
+                  integrity: "sha512-snapshot==",
+                },
+              },
+              "1.0.0": {
+                name: "snapshot-package",
+                version: "1.0.0",
+                dist: {
+                  tarball: `${mockRegistryUrl}/snapshot-package/-/snapshot-package-1.0.0.tgz`,
+                  integrity: "sha512-stable==",
+                },
+              },
+            },
+            time: {
+              "1.0.0-snapshot.20240101": daysAgo(2),
+              "1.0.0": daysAgo(1),
+            },
+          };
+
+          return Response.json(packageData);
+        }
+
+        // TEST PACKAGE 15: nightly-package (prerelease tags longer than the inline
+        // limit; the older nightly passes a 5 day filter, the newer one does not)
+        if (url.pathname === "/nightly-package") {
+          const packageData = {
+            name: "nightly-package",
+            "dist-tags": {
+              latest: "1.0.0-nightly.20240102",
+            },
+            versions: {
+              "1.0.0-nightly.20240101": {
+                name: "nightly-package",
+                version: "1.0.0-nightly.20240101",
+                dist: {
+                  tarball: `${mockRegistryUrl}/nightly-package/-/nightly-package-1.0.0-nightly.20240101.tgz`,
+                  integrity: "sha512-nightly1==",
+                },
+              },
+              "1.0.0-nightly.20240102": {
+                name: "nightly-package",
+                version: "1.0.0-nightly.20240102",
+                dist: {
+                  tarball: `${mockRegistryUrl}/nightly-package/-/nightly-package-1.0.0-nightly.20240102.tgz`,
+                  integrity: "sha512-nightly2==",
+                },
+              },
+            },
+            time: {
+              "1.0.0-nightly.20240101": daysAgo(30),
+              "1.0.0-nightly.20240102": daysAgo(1),
+            },
+          };
+
+          return Response.json(packageData);
+        }
+
         // TEST PACKAGE: many-versions-package (large version count, time entries
         // in reverse order relative to versions). Exercises the publish-time
         // index built during manifest parse.
@@ -1759,6 +1831,123 @@ describe("minimum-release-age", () => {
       expect(stdout).not.toContain("3.0.0");
       // Should show note about minimum release age
       expect(stdout.toLowerCase()).toContain("minimum release age");
+    });
+  });
+
+  // Semver strings longer than 8 bytes are not stored inline: they are offsets into
+  // the string buffer they were parsed from, and the lockfile and each package
+  // manifest have their own buffer. The prerelease tags of snapshot-package and
+  // nightly-package are long enough to live in those buffers, so these tests
+  // notice when a version is printed through the other side's buffer.
+  describe("prerelease tags longer than an inline semver string", () => {
+    const minimumReleaseAge = `${5 * SECONDS_PER_DAY}`;
+
+    async function run(cmd: string[], cwd: string, env: NodeJS.Dict<string> = bunEnv) {
+      await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test("bun outdated sizes the Update and Latest columns by the current version when nothing passes the filter", async () => {
+      using dir = tempDir("outdated-long-prerelease", {
+        "package.json": JSON.stringify({
+          dependencies: {
+            // Already on their latest versions, so they stay out of the table. They
+            // sort before snapshot-package in bun.lock, so their names and tarball
+            // URLs fill the lockfile string buffer first and snapshot-package's
+            // prerelease tag ends up at an offset past the end of its (much smaller)
+            // manifest buffer. Closer to the start of the buffer, a read through the
+            // wrong buffer returns wrong bytes of the right length and the table
+            // lines up by accident.
+            "bugfix-package": "1.0.3",
+            "exact-threshold-package": "2.0.0",
+            "regular-package": "3.0.0",
+            "snapshot-package": "snapshot",
+          },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      // Installed without the filter: the snapshot is only two days old.
+      const install = await run([bunExe(), "install", "--no-verify"], String(dir));
+      expect(install).toMatchObject({ exitCode: 0 });
+
+      // With the filter, neither the `snapshot` tag nor `latest` has a version old
+      // enough, so both columns fall back to showing the current version.
+      const { stdout, exitCode } = await run(
+        [bunExe(), "outdated", "--minimum-release-age", minimumReleaseAge],
+        String(dir),
+      );
+      const table = stdout.slice(stdout.indexOf("\n") + 1);
+      expect(table).toMatchInlineSnapshot(`
+        "|----------------------------------------------------------------------------------------------------|
+        | Package          | Current                 | Update                    | Latest                    |
+        |------------------|-------------------------|---------------------------|---------------------------|
+        | snapshot-package | 1.0.0-snapshot.20240101 | 1.0.0-snapshot.20240101 * | 1.0.0-snapshot.20240101 * |
+        |----------------------------------------------------------------------------------------------------|
+        Note: The * indicates that version isn't true latest due to minimum release age
+        "
+      `);
+      const widths = table
+        .split("\n")
+        .filter(line => line.startsWith("|"))
+        .map(line => line.length);
+      expect(new Set(widths).size).toBe(1);
+      expect(exitCode).toBe(0);
+    });
+
+    test("--verbose prints the dependency's range from the lockfile", async () => {
+      using dir = tempDir("verbose-long-prerelease", {
+        "package.json": JSON.stringify({
+          dependencies: { "nightly-package": "^1.0.0-nightly.20240101" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      const { stderr, exitCode } = await run(
+        [bunExe(), "install", "--minimum-release-age", minimumReleaseAge, "--no-verify", "--verbose"],
+        String(dir),
+      );
+      expect(stderr.split("\n").filter(line => line.includes("[minimum-release-age]"))).toEqual([
+        "[minimum-release-age] nightly-package@>=1.0.0-nightly.20240101 <2.0.0 selected 1.0.0-nightly.20240101 instead of 1.0.0-nightly.20240102 due to 432000-second filter",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("an exact pin rejected from a cached manifest is reported with the manifest's version", async () => {
+      using dir = tempDir("cached-manifest-long-prerelease", {
+        "package.json": JSON.stringify({
+          dependencies: { "nightly-package": "^1.0.0-nightly.20240101" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      // Puts nightly-package's manifest, including publish times, in the cache.
+      const first = await run(
+        [bunExe(), "install", "--minimum-release-age", minimumReleaseAge, "--no-verify"],
+        String(dir),
+      );
+      expect(first).toMatchObject({ exitCode: 0 });
+
+      await Bun.write(
+        `${dir}/package.json`,
+        JSON.stringify({ dependencies: { "nightly-package": "1.0.0-nightly.20240102" } }),
+      );
+      // BUN_MANIFEST_CACHE=1 treats every cached manifest as stale, which is how a
+      // manifest cached more than a few minutes ago looks. Exact pins are then
+      // checked against the cached manifest instead of a fresh download, and that
+      // check is what reports the rejected version.
+      const second = await run(
+        [bunExe(), "install", "--minimum-release-age", minimumReleaseAge, "--no-verify"],
+        String(dir),
+        { ...bunEnv, BUN_MANIFEST_CACHE: "1" },
+      );
+      expect(second.stderr).toMatchInlineSnapshot(`
+        "error: Version "nightly-package@1.0.0-nightly.20240102" was published within minimum release age of 432000 seconds
+        error: nightly-package@1.0.0-nightly.20240102 failed to resolve
+        "
+      `);
+      expect(second.exitCode).toBe(1);
     });
   });
 

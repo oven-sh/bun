@@ -929,6 +929,25 @@ private:
                 return s;
             }
 
+            /* A request body with no framing (HttpParser::nodeHttpBodyUntilEof) ends
+             * here: the FIN completes the message, like Node's parser.finish() on
+             * socketOnEnd. Deliver the fin the data handler in onData would. */
+            if (httpResponseData->nodeHttpBodyUntilEof && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)) {
+                httpResponseData->nodeHttpBodyUntilEof = false;
+                auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
+                nodeHttpResponseData->lastMessageStartMs = 0;
+                nodeHttpResponseData->headersCompleted = false;
+                nodeHttpResponseData->requestTimeoutReported = false;
+                if (httpResponseData->inStream) {
+                    us_socket_timeout(s, 0);
+                    httpResponseData->inStream((HttpResponse<SSL> *) s, nullptr, 0, true, httpResponseData->userData);
+                    if (us_socket_is_closed(s)) {
+                        return s;
+                    }
+                    httpResponseData->inStream = nullptr;
+                }
+            }
+
             if (httpContextData->onClientError && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED)
                 && (httpResponseData->hasBufferedPartialRequestHeaders()
                     || httpResponseData->hasIncompleteRequestBody())) {

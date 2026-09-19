@@ -342,6 +342,11 @@ struct HttpResponseData;
              * field values are all empty or whitespace-only as if the header
              * were absent (no error, Content-Length framing applies). */
             bool nonEmptyValue: 1 = false;
+            /* llhttp's F_CHUNKED under LENIENT_TRANSFER_ENCODING, where a coding
+             * after "chunked" is not an error: the last list element of the last
+             * field that has a non-whitespace byte is "chunked". An element after a
+             * trailing comma is empty ("chunked," is not chunked). */
+            bool lenientChunked: 1 = false;
         };
 
         TransferEncoding getTransferEncoding()
@@ -355,18 +360,34 @@ struct HttpResponseData;
             bool seenAnyCoding = false;
             for (Header *h = headers; (++h)->key.length();) {
                 if (h->key.length() == 17 && !strncasecmp(h->key.data(), "transfer-encoding", 17)) {
+                    /* Present even when the value names no transfer coding: treating
+                     * an empty/whitespace-only field as absent would fall back to
+                     * Content-Length framing (request smuggling; RFC 9112 6.3). */
+                    te.has = true;
+
                     /* An earlier Transfer-Encoding field already named "chunked": any
                      * later TE field (even one with an empty value) is invalid. The
                      * per-token guard below handles the non-empty case too; this catches
                      * the empty one so the change is strictly tightening. */
                     if (te.chunked) [[unlikely]] {
                         te.invalid = true;
-                        return te;
                     }
 
                     // Parse comma-separated values, ensuring "chunked" is last if present
                     const auto value = h->value;
                     size_t pos = 0;
+
+                    const size_t lastComma = value.rfind(',');
+                    std::string_view lastElement = lastComma == std::string_view::npos ? value : value.substr(lastComma + 1);
+                    while (lastElement.length() && (lastElement.front() == ' ' || lastElement.front() == '\t')) {
+                        lastElement.remove_prefix(1);
+                    }
+                    while (lastElement.length() && (lastElement.back() == ' ' || lastElement.back() == '\t')) {
+                        lastElement.remove_suffix(1);
+                    }
+                    if (lastElement.length() || lastComma != std::string_view::npos) {
+                        te.lenientChunked = lastElement.length() == 7 && !strncasecmp(lastElement.data(), "chunked", 7);
+                    }
 
                     while (pos < value.length()) {
                         // Skip leading whitespace
@@ -403,7 +424,6 @@ struct HttpResponseData;
                              * rejects here too, for "chunked, chunked" as well. */
                             if (te.chunked) [[unlikely]] {
                                 te.invalid = true;
-                                return te;
                             }
                             if (seenAnyCoding) {
                                 te.multipleCodings = true;
@@ -417,11 +437,6 @@ struct HttpResponseData;
                             pos++;
                         }
                     }
-
-                    /* Present even when the value names no transfer coding: treating
-                     * an empty/whitespace-only field as absent would fall back to
-                     * Content-Length framing (request smuggling; RFC 9112 6.3). */
-                    te.has = true;
                 }
             }
 
@@ -638,6 +653,11 @@ struct HttpResponseData;
          * at the next request boundary and park the rest", cleared for replay so it can make progress. */
         bool nodeHttpParkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
+        /* node:http under LENIENT_TRANSFER_ENCODING: the current request's
+         * Transfer-Encoding has no chunked final coding, so its body has no
+         * framing. Every byte until the peer's FIN is body (llhttp's
+         * body_identity_eof); onEnd delivers the fin and clears this. */
+        bool nodeHttpBodyUntilEof = false;
         /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
         bool sawConnectionClose = false;
         WTF::Vector<char> nodeHttpPausedSpill;
@@ -1270,27 +1290,38 @@ struct HttpResponseData;
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING);
             }
 
+            /* llhttp LENIENT_TRANSFER_ENCODING (kLenientAll / "insecure", never "relaxed")
+             * accepts chunked with another value after it, and its chunked verdict is
+             * then the last element's. It does not relax the TE+CL conflict, so only
+             * the coding-shape verdict is cleared; conflicts below still reject. */
+            if (useLenientTransferEncoding) {
+                transferEncoding.invalid = false;
+                transferEncoding.chunked = transferEncoding.lenientChunked;
+            }
+
             /* node:http compat: a Transfer-Encoding that names no chunked coding (e.g.
              * "chunkedchunked") and no Content-Length is rejected by llhttp only after
              * the request head completes - Node dispatches the 'request' first and the
              * error then surfaces through 'clientError'. The error is deferred until
-             * after the request handler below; no body data is ever emitted. */
-            bool deferredTransferEncodingError = IsNodeHttp && transferEncoding.has
+             * after the request handler below; no body data is ever emitted.
+             * Under LENIENT_TRANSFER_ENCODING llhttp__after_headers_complete instead
+             * reads the body until EOF (return 4), like a response body. It takes
+             * its upgrade verdict first, so a CONNECT or Upgrade request never
+             * enters that mode: an accepted upgrade would wait for a body that
+             * ends only at the FIN. */
+            const bool nodeHttpUnframedBody = IsNodeHttp && transferEncoding.has
                 && !transferEncoding.invalid && !transferEncoding.chunked && !contentLengthStringLen;
+            bool bodyUntilEof = nodeHttpUnframedBody && useLenientTransferEncoding
+                && !isConnectRequest && !req->getHeader("upgrade").data();
+            bool deferredTransferEncodingError = nodeHttpUnframedBody && !bodyUntilEof;
 
-            /* llhttp LENIENT_TRANSFER_ENCODING (kLenientAll / "insecure", never "relaxed")
-             * accepts chunked with another value after it. It does not relax the TE+CL
-             * conflict, so only the coding-shape verdict is cleared; conflicts below still reject. */
-            if (useLenientTransferEncoding) {
-                transferEncoding.invalid = false;
-            }
             /* Bun.serve: no transfer coding other than chunked is implemented, so a
              * list that ends in chunked but also names another coding ("gzip, chunked",
              * "x, chunked", two TE fields) would hand the still-encoded body to the
              * app. Reject it. node:http keeps llhttp's behaviour (accepts the list,
              * body remains un-decoded for the other coding). */
             transferEncoding.invalid = transferEncoding.invalid
-                || (transferEncoding.has && (contentLengthStringLen || !transferEncoding.chunked))
+                || (transferEncoding.has && (contentLengthStringLen || (!transferEncoding.chunked && !bodyUntilEof)))
                 || (!IsNodeHttp && transferEncoding.multipleCodings);
 
             if (transferEncoding.invalid && !deferredTransferEncodingError) [[unlikely]] {
@@ -1375,6 +1406,21 @@ struct HttpResponseData;
                 // Mark remaining data as consumed and break - it's not HTTP
                 consumedTotal += length;
                 break;
+            } else if (bodyUntilEof) {
+                /* No framing: the body is every byte up to the peer's FIN, never a
+                 * pipelined request. consumePostPadded routes later reads here and
+                 * HttpContext::onEnd delivers the fin. */
+                nodeHttpBodyUntilEof = true;
+                if constexpr (!ConsumeMinimally) {
+                    if (length) {
+                        void *returnedUser = dataHandler(user, std::string_view(data, length), false);
+                        consumedTotal += length;
+                        length = 0;
+                        if (returnedUser != user) {
+                            return HttpParserResult::success(consumedTotal, returnedUser);
+                        }
+                    }
+                }
             } else if (transferEncoding.has) {
                 /* We already validated that chunked is last if present, before calling the handler */
                 remainingStreamingBytes = STATE_IS_CHUNKED;
@@ -1467,7 +1513,10 @@ public:
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
-        if (remainingStreamingBytes) {
+        if (IsNodeHttp && nodeHttpBodyUntilEof) {
+            void *returnedUser = dataHandler(user, std::string_view(data, length), false);
+            return HttpParserResult::success(0, returnedUser);
+        } else if (remainingStreamingBytes) {
             if (isConnectRequest) {
                 dataHandler(user, std::string_view(data, length), false);
                 return HttpParserResult::success(0, user);
@@ -1557,7 +1606,13 @@ public:
                 data += consumedBytes - had;
                 length -= consumedBytes - had;
 
-                if (remainingStreamingBytes) {
+                if (IsNodeHttp && nodeHttpBodyUntilEof) {
+                    if (length) {
+                        void *returnedUser = dataHandler(user, std::string_view(data, length), false);
+                        return HttpParserResult::success(0, returnedUser);
+                    }
+                    return HttpParserResult::success(0, user);
+                } else if (remainingStreamingBytes) {
                     if(isConnectRequest) {
                         dataHandler(user, std::string_view(data, length), false);
                         return HttpParserResult::success(0, user);

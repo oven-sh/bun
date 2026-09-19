@@ -3198,8 +3198,7 @@ function serverStreamOnFinish(this: ServerHttp2Stream) {
 function callStreamClose(stream: ServerHttp2Stream) {
   if (!stream.destroyed && !stream.closed) stream.close();
 }
-// respond() ended the writable side from inside a write dispatch (a HEAD response has no body).
-// Writable finishes the stream only if that write completes on a later turn, like any other.
+// Completes later: respond() ended the writable side inside this write, and Writable finishes it only then.
 function dropBodyOfHeadResponse(callback: () => void) {
   process.nextTick(callback);
 }

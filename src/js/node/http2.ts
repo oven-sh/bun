@@ -80,6 +80,7 @@ const StringPrototypeTrim = String.prototype.trim;
 const ArrayPrototypePush = Array.prototype.push;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
@@ -3657,10 +3658,14 @@ class ServerHttp2Stream extends Http2Stream {
 }
 
 function connectWithProtocol(protocol: string, options: Http2ConnectOptions | string | URL, listener?: Function) {
-  if (protocol === "http:") {
-    return net.connect(options, listener);
+  switch (protocol) {
+    case "http:":
+      return net.connect(options, listener);
+    case "https:":
+      return tls.connect(options, listener);
+    default:
+      throw $ERR_HTTP2_UNSUPPORTED_PROTOCOL(protocol);
   }
-  return tls.connect(options, listener);
 }
 
 function emitConnectNT(self, socket) {
@@ -4932,7 +4937,7 @@ class ClientHttp2Session extends Http2Session {
 
   #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
-  #url: URL;
+  #defaultScheme: string;
   #authority: string;
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = null;
@@ -5607,16 +5612,11 @@ class ClientHttp2Session extends Http2Session {
       this.#strictFieldWhitespaceValidation = false;
     }
     this[kStrictSingleValueFields] = options.strictSingleValueFields !== false;
-    this.#url = url;
 
     const protocol = url.protocol || options?.protocol || "https:";
-    switch (protocol) {
-      case "http:":
-      case "https:":
-        break;
-      default:
-        throw $ERR_HTTP2_UNSUPPORTED_PROTOCOL(protocol);
-    }
+    // node: request() defaults :scheme to session[kProtocol].slice(0, -1).
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L667
+    this.#defaultScheme = StringPrototypeSlice.$call(protocol, 0, -1);
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
 
     let host = "localhost";
@@ -5962,8 +5962,7 @@ class ClientHttp2Session extends Http2Session {
             additionalPseudoHeaders.push(HTTP2_HEADER_AUTHORITY, authority);
           }
           if (scheme === undefined) {
-            const urlProtocol: string = this.#url?.protocol || options?.protocol || "https:";
-            scheme = urlProtocol === "http:" ? "http" : urlProtocol === "https:" ? "https" : urlProtocol;
+            scheme = this.#defaultScheme;
             additionalPseudoHeaders.push(HTTP2_HEADER_SCHEME, scheme);
           }
           if (path === undefined) {
@@ -6049,7 +6048,6 @@ class ClientHttp2Session extends Http2Session {
       // node keeps the never-index list visible on the request's sentHeaders (symbol keys are
       // not iterated by the wire-encoding path, so re-attaching is safe).
       if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
-      const url = this.#url;
 
       // RFC 9113 §8.5: CONNECT must carry an explicit :authority and no :scheme/:path — validated
       // before any defaults are applied.
@@ -6082,20 +6080,8 @@ class ClientHttp2Session extends Http2Session {
       }
 
       if (method !== HTTP2_METHOD_CONNECT || headers[":protocol"] !== undefined) {
-        let scheme = headers[":scheme"];
-        if (!scheme) {
-          let protocol: string = url.protocol || options?.protocol || "https:";
-          switch (protocol) {
-            case "https:":
-              scheme = "https";
-              break;
-            case "http:":
-              scheme = "http";
-              break;
-            default:
-              scheme = protocol;
-          }
-          headers[":scheme"] = scheme;
+        if (!headers[":scheme"]) {
+          headers[":scheme"] = this.#defaultScheme;
         }
 
         if (headers[":path"] == undefined) {

@@ -942,10 +942,8 @@ impl Connection {
                 .entry(hdr.stream_id)
                 .or_insert_with(|| Stream::new(send_init, recv_init))
                 .state;
-            // The END_STREAM half of the transition waits for the block to complete
-            // (finish_header_block), like END_STREAM on a streamed DATA frame. Applied here, a
-            // pushed stream would reach Closed while its CONTINUATION is still in flight and the
-            // end-of-read eviction would drop the entry before on_stream_end fires.
+            // RecvEndStream is applied in finish_header_block once the block is complete (as
+            // finish_streamed_data does for DATA), so a mid-block eviction never sees Closed.
             match stream::transition(cur_state, stream::Event::RecvHeaders) {
                 Ok(next) => {
                     if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
@@ -2316,8 +2314,7 @@ mod tests {
         let csink = CaptureSink::default();
         let mut client = Connection::new(false, Settings::default());
         client.preface_received = wire::CONNECTION_PREFACE.len();
-        // First read: the PUSH_PROMISE and the pushed response HEADERS [:status 200] with
-        // END_STREAM but without END_HEADERS.
+        // First read: PUSH_PROMISE, then HEADERS [:status 200] with END_STREAM, no END_HEADERS.
         let mut first = promise;
         first.extend_from_slice(&frame(
             FrameType::Headers,
@@ -2329,8 +2326,7 @@ mod tests {
         assert!(!fed.fatal);
         assert_eq!(fed.consumed, first.len());
         assert!(csink.ended.borrow().is_empty());
-        // The END_STREAM half of the transition waits for the block, so the end-of-read
-        // eviction does not see a Closed entry.
+        // Not Closed yet, so the end-of-read eviction keeps the entry.
         assert_eq!(
             client.streams.get(&2).map(|s| s.state),
             Some(State::HalfClosedLocal)

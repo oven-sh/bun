@@ -5663,17 +5663,14 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
         return;
       }
-      // node validates at this point unless the session is destroyed by then. Its close() destroys
-      // a session with no live request at once. close() here only schedules that destroy.
+      // node's close() destroys an idle session at once. close() here only schedules the destroy.
       const destroyedInNode = this.destroyed || (this.#closed && !hasLivePendingRequest(this.#pendingRequests));
       if (settingsRejected && !destroyedInNode) {
-        // node destroys the socket with the error. Here #onError drops a socket error once close()
-        // was called, so destroy the session.
+        // Not socket.destroy(error) as in node: #onError drops a socket error once close() was called.
         try {
           this.destroy(settingsError);
         } catch (e) {
-          // An 'error' with no listener. The socket layer reports a throw from its connect
-          // callback on the socket, where this destroyed session no longer listens.
+          // No 'error' listener. A throw from a socket callback goes to the socket's 'error', which is ignored now.
           process.nextTick(rethrowUncaught, e);
         }
         return;
@@ -5703,8 +5700,7 @@ class ClientHttp2Session extends Http2Session {
         connectOnNextTick = true;
       }
     } else {
-      // node builds the tls.connect() options with initializeTLSOptions, which throws for an
-      // options.settings that is not an object. No socket exists yet at that point.
+      // node's initializeTLSOptions rejects a non-object options.settings before the socket exists.
       if (protocol === "https:") assertIsObject(options.settings, "options.settings");
       socket = connectWithProtocol(
         protocol,
@@ -5728,24 +5724,20 @@ class ClientHttp2Session extends Http2Session {
     const nativeSocket = socket._handle;
     this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
 
-    // node reads options.settings in setupHandle, which runs once the socket is connected. It
-    // ignores a value that is not an object. A throw from validation there destroys the socket
-    // with that error, so the session emits 'error' and then 'close'. For a socket that is
-    // already connected, setupHandle runs inline and connect() throws.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1147
+    // node reads options.settings at the connect event (setupHandle) and ignores a non-object value.
     let settings = typeof options.settings === "object" ? options.settings : undefined;
     if (settings !== undefined) {
       try {
         validateSettings(settings);
       } catch (e) {
+        // node sets an already connected socket up inline, so its connect() throws here too.
         if (connectOnNextTick) throw e;
         settingsRejected = true;
         settingsError = e;
         settings = undefined;
       }
     }
-    // The parser validates again and its throw leaves connect(), so it gets `settings` and never
-    // the raw options.settings.
+    // The parser validates again, and its throw leaves connect(): give it `settings`, never options.settings.
     const nativeSettings = { ...options, ...settings };
     this.#localSettings = initialLocalSettings(nativeSettings);
     // #onConnect attaches the native socket; frames written before that (the preface) queue.

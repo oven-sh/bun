@@ -97,8 +97,7 @@ public:
     /* Make a previously queued pipelined response the connection's current
      * response: reset the per-response uWS state (the part the request handler
      * normally resets per parsed request) and, when the queue drained, resume
-     * socket reads. Returns false when the connection is already gone, or when
-     * the response is not the next one in the queue. */
+     * socket reads. Returns false when the connection is already gone. */
     bool startPipelinedResponse(JSC::VM& vm, WebCore::JSNodeHTTPResponse* response, bool isAncient, bool connectionClose);
     /* Stop parsing further HTTP requests on this connection (Node frees the
      * parser when 'close' is emitted on the socket). */
@@ -108,6 +107,12 @@ public:
      * uWS's send buffer, a shutdown now would put the FIN ahead of them and
      * truncate the response. Returns true after handing the close to uWS. */
     bool shutdownAfterResponseDrains();
+
+    /* node:http pipelining: the next queued response can never be sent, so the
+     * response that just ended was the last one. Close the connection once its
+     * bytes have left: now when none are buffered, otherwise from uWS's close
+     * gate. close() would discard them, and end() would wait for the peer's FIN. */
+    void closeWhenDrained();
 
     /* Switch the connection into CONNECT-style tunnel mode after an accepted
      * Upgrade: subsequent bytes bypass the HTTP parser and stream to the

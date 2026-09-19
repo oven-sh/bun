@@ -281,6 +281,31 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
 }
 
 template<bool SSL>
+static void closeWhenDrainedImpl(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
+    /* What a response that closes the connection leaves behind: the close gates
+     * (here, or HttpContext<SSL>::onWritable once the send buffer has flushed)
+     * shut down and close a connection marked like this with no response pending. */
+    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+    /* A response that ended inside the read being parsed is still in the cork buffer. */
+    reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->uncork();
+    reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->closeIfDoneAndMarked(httpResponseData);
+}
+
+void JSNodeHTTPServerSocket::closeWhenDrained()
+{
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
+        return;
+    }
+    if (is_ssl) {
+        closeWhenDrainedImpl<true>(socket);
+    } else {
+        closeWhenDrainedImpl<false>(socket);
+    }
+}
+
+template<bool SSL>
 static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs, uint64_t requestTimeoutMs)
 {
     /* node:http compat connections always carry the derived ext block. */
@@ -586,13 +611,7 @@ bool JSNodeHTTPServerSocket::startPipelinedResponse(JSC::VM& vm, WebCore::JSNode
     bool hasMoreQueued = false;
     {
         Locker locker { m_pipelinedResponsesLock };
-        // Responses leave in request order. Another one first means JS never
-        // queued it (its dispatch threw before that), and its turn cannot be
-        // given to this one: the client would read this as the answer to that.
-        if (m_pipelinedResponses.isEmpty() || m_pipelinedResponses.first().get() != response) {
-            return false;
-        }
-        m_pipelinedResponses.removeAt(0);
+        m_pipelinedResponses.removeFirstMatching([&](auto& entry) { return entry.get() == response; });
         hasMoreQueued = !m_pipelinedResponses.isEmpty();
     }
 

@@ -2907,7 +2907,7 @@ describe("a dispatch that throws while an earlier response on the connection is 
     return { result: stdout ? JSON.parse(stdout) : undefined, exitCode };
   }
 
-  // node v26.3.0 gives the same result for the tests in these three loops.
+  // node v26.3.0 gives the same result for the tests in these four loops.
   for (const emitted of ["request", "checkContinue", "checkExpectation"]) {
     it.concurrent(`'${emitted}' listener: the response ahead still completes`, async () => {
       expect(await run(emitted)).toEqual({
@@ -2947,6 +2947,23 @@ describe("a dispatch that throws while an earlier response on the connection is 
     });
   }
 
+  // The throw comes before node:http has a response to queue. The turn of /second is still held:
+  // the connection closes when it comes, and no later response goes out in its place. Node ends
+  // with the same result, because it answers the next request with a 400 and closes.
+  for (const thrower of ["ServerResponse", "IncomingMessage"]) {
+    it.concurrent(`a throw from the ${thrower} constructor closes the connection at its turn`, async () => {
+      const mode = thrower === "ServerResponse" ? "constructor-response" : "constructor-request";
+      expect(await run(mode)).toEqual({
+        result: {
+          events: ["request /first", `${thrower} /second`, `uncaught: ${thrower} threw`],
+          bodies: ["first-done"],
+          closed: true,
+        },
+        exitCode: 0,
+      });
+    });
+  }
+
   // The tests below wait for a close. Node never makes it: it answers nothing and keeps the
   // connection, which then waits forever. Bun answers a throw with a close. For a queued response
   // that happens when its turn comes, after the responses ahead of it. The requests behind it are
@@ -2958,19 +2975,6 @@ describe("a dispatch that throws while an earlier response on the connection is 
         bodies: ["first-done", "second"],
         closed: true,
         serverSideCloses: ["/fourth", "/fourth", "/second", "/second", "/third", "/third"],
-      },
-      exitCode: 0,
-    });
-  });
-
-  // The throw comes before node:http queued a response, so nothing holds the turn of /second.
-  // A later response must not go out in its place.
-  it.concurrent("a throw from the ServerResponse constructor does not let a later response take the turn", async () => {
-    expect(await run("constructor")).toEqual({
-      result: {
-        events: ["request /first", "constructor /second", "uncaught: constructor threw", "request /third"],
-        bodies: ["first-done"],
-        closed: true,
       },
       exitCode: 0,
     });

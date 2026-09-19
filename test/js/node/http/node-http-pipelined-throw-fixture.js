@@ -1,8 +1,7 @@
 // The dispatch of a request throws while an earlier response on the connection is still pending.
 // MODE selects the scenario. The only line of stdout is the result as JSON.
-// Under Node.js (`MODE=request node <this file>`) the modes request, checkContinue,
-// checkExpectation, ended, ended-later, large and large-destroyed print the same result. The
-// others wait for a close that Node never makes.
+// Under Node.js (`MODE=request node <this file>`) every mode prints the same result, except
+// unfinished and not-pipelined: they wait for a close that Node never makes.
 const http = require("node:http");
 const net = require("node:net");
 
@@ -37,10 +36,13 @@ function report(extra) {
   process.exit(0);
 }
 
-// "unfinished" waits for the client, and for each request and response behind /first, to close.
-// server.close() calls back only when no request is pending, the one that threw included.
+// "unfinished" waits for the end of the connection, and for each request and response behind
+// /first to close. server.close() calls back only when no request is pending, the one that threw
+// included.
+let closingServer = false;
 function reportUnfinished() {
-  if (clientClosed && serverSideCloses.length === 6) {
+  if (clientClosed && serverSideCloses.length === 6 && !closingServer) {
+    closingServer = true;
     server.close(() => report({ serverSideCloses: serverSideCloses.sort() }));
   }
 }
@@ -54,18 +56,34 @@ function fail(thrower, req) {
   throw new Error(`${thrower} threw`);
 }
 
-// node:http queues a response only after it constructed it.
+// node:http queues a response only after it constructed the request and the response.
 class ResponseThatThrows extends http.ServerResponse {
   constructor(req, options) {
     super(req, options);
     if (req.url === "/second") {
       setImmediate(finishFirst);
-      fail("constructor", req);
+      fail("ServerResponse", req);
     }
   }
 }
+// The url is not known yet in this constructor: the second request is the one that throws.
+let requests = 0;
+class RequestThatThrows extends http.IncomingMessage {
+  constructor(...args) {
+    super(...args);
+    if (++requests === 2) {
+      setImmediate(finishFirst);
+      events.push("IncomingMessage /second");
+      throw new Error("IncomingMessage threw");
+    }
+  }
+}
+const serverOptions = new Map([
+  ["constructor-response", { ServerResponse: ResponseThatThrows }],
+  ["constructor-request", { IncomingMessage: RequestThatThrows }],
+]);
 
-const server = http.createServer(mode === "constructor" ? { ServerResponse: ResponseThatThrows } : {}, (req, res) => {
+const server = http.createServer(serverOptions.get(mode) ?? {}, (req, res) => {
   if (req.url === "/first") {
     events.push(`request ${req.url}`);
     if (mode === "not-pipelined") return void res.end("first-done");
@@ -87,7 +105,8 @@ const server = http.createServer(mode === "constructor" ? { ServerResponse: Resp
       res.end(req.url.slice(1));
       if (req.url === "/fourth") setImmediate(finishFirst);
       return;
-    case "constructor":
+    case "constructor-response":
+    case "constructor-request":
       events.push(`request ${req.url}`);
       return void res.end(req.url.slice(1));
     case "large-destroyed":
@@ -122,15 +141,18 @@ for (const eventName of ["checkContinue", "checkExpectation"]) {
 }
 
 server.listen(0, "127.0.0.1", () => {
-  const client = net.connect(server.address().port, "127.0.0.1");
+  // This client never answers a FIN, so the server has to close the connection on its own.
+  const client = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
   let wroteAgain = false;
   let head = "";
-  client.on("error", () => {});
-  client.on("close", () => {
+  const onServerClosedConnection = () => {
     clientClosed = true;
     if (mode === "unfinished") reportUnfinished();
     else report();
-  });
+  };
+  client.on("error", () => {});
+  client.on("end", onServerClosedConnection);
+  client.on("close", onServerClosedConnection);
   client.on("data", chunk => {
     if (isLarge) {
       // Count the body of /first: no other response can follow it.
@@ -157,7 +179,8 @@ server.listen(0, "127.0.0.1", () => {
       case "ended-later":
         if (received.includes("second")) report();
         break;
-      case "constructor":
+      case "constructor-response":
+      case "constructor-request":
         // A response that took the turn of /second would show up here.
         if (received.includes("third")) report();
       // fallthrough
@@ -165,7 +188,7 @@ server.listen(0, "127.0.0.1", () => {
         // One more request, after the first response is complete.
         if (received.includes("first-done") && !wroteAgain) {
           wroteAgain = true;
-          client.write(get(mode === "constructor" ? "/third" : "/second"));
+          client.write(get(mode === "not-pipelined" ? "/second" : "/third"));
         }
         break;
     }

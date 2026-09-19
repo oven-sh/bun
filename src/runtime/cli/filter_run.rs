@@ -343,6 +343,28 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
+    /// Writes one child line with the `<package> <script>: ` prefix. Under
+    /// GitHub Actions an annotation command goes out bare, because the runner
+    /// only parses it at column 0.
+    fn write_prefixed_line(
+        draw_buf: &mut Vec<u8>,
+        config: &ScriptConfig,
+        line: &[u8],
+    ) -> crate::Result<()> {
+        if Output::is_github_action() && Output::is_github_annotation_line(line) {
+            draw_buf.extend_from_slice(line);
+            return Ok(());
+        }
+        write!(
+            draw_buf,
+            "{} {}: {}",
+            bstr::BStr::new(&config.package_name),
+            bstr::BStr::new(&config.script_name),
+            bstr::BStr::new(line),
+        )?;
+        Ok(())
+    }
+
     fn read_chunk(&mut self, handle: &mut ProcessHandle<'a>, chunk: &[u8]) -> crate::Result<()> {
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
@@ -355,13 +377,7 @@ impl<'a> State<'a> {
                     let i = i as usize;
                     handle.buffer.extend_from_slice(&content[0..i + 1]);
                     content = &content[i + 1..];
-                    write!(
-                        &mut self.draw_buf,
-                        "{} {}: {}",
-                        bstr::BStr::new(&handle.config.package_name),
-                        bstr::BStr::new(&handle.config.script_name),
-                        bstr::BStr::new(&handle.buffer),
-                    )?;
+                    Self::write_prefixed_line(&mut self.draw_buf, handle.config, &handle.buffer)?;
                     handle.buffer.clear();
                 } else {
                     handle.buffer.extend_from_slice(content);
@@ -371,13 +387,7 @@ impl<'a> State<'a> {
             while let Some(i) = strings::index_of_char(content, b'\n') {
                 let i = i as usize;
                 let line = &content[0..i + 1];
-                write!(
-                    &mut self.draw_buf,
-                    "{} {}: {}",
-                    bstr::BStr::new(&handle.config.package_name),
-                    bstr::BStr::new(&handle.config.script_name),
-                    bstr::BStr::new(line),
-                )?;
+                Self::write_prefixed_line(&mut self.draw_buf, handle.config, line)?;
                 content = &content[i + 1..];
             }
             if !content.is_empty() {
@@ -422,12 +432,17 @@ impl<'a> State<'a> {
             self.draw_buf.clear();
             // flush any remaining buffer
             if !handle.buffer.is_empty() {
-                writeln!(
-                    &mut self.draw_buf,
-                    "{}: {}",
-                    bstr::BStr::new(&handle.config.package_name),
-                    bstr::BStr::new(&handle.buffer),
-                )?;
+                if Output::is_github_action() && Output::is_github_annotation_line(&handle.buffer) {
+                    self.draw_buf.extend_from_slice(&handle.buffer);
+                    self.draw_buf.push(b'\n');
+                } else {
+                    writeln!(
+                        &mut self.draw_buf,
+                        "{}: {}",
+                        bstr::BStr::new(&handle.config.package_name),
+                        bstr::BStr::new(&handle.buffer),
+                    )?;
+                }
                 handle.buffer.clear();
             }
             // print exit status
@@ -961,7 +976,10 @@ pub(crate) fn run_scripts_with_filter(
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,
-        pretty_output: {
+        // `FORCE_COLOR=1` on a pipe selects the redraw renderer. A GitHub
+        // Actions log is a pipe, and the runner only sees an annotation that
+        // is a plain line, so the line renderer is used there.
+        pretty_output: !Output::is_github_action() && {
             #[cfg(windows)]
             {
                 windows_is_terminal() && Output::enable_ansi_colors_stdout()

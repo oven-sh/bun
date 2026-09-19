@@ -867,6 +867,19 @@ pub fn is_github_action() -> bool {
     false
 }
 
+/// Whether `line` is a GitHub Actions annotation command (`::error`,
+/// `::warning`, `::notice`, `::debug`). The runner only parses a workflow
+/// command at column 0, so a relay that prefixes child output must write
+/// these lines bare. `::group::` and `::endgroup::` are deliberately not
+/// matched: concurrent children interleave, so bare group markers would be
+/// unpaired.
+pub fn is_github_annotation_line(line: &[u8]) -> bool {
+    const COMMANDS: [&[u8]; 4] = [b"::error", b"::warning", b"::notice", b"::debug"];
+    COMMANDS
+        .iter()
+        .any(|cmd| line.starts_with(cmd) && matches!(line.get(cmd.len()), Some(b' ') | Some(b':')))
+}
+
 pub fn is_ai_agent() -> bool {
     static VALUE: AtomicBool = AtomicBool::new(false);
     static ONCE: std::sync::Once = std::sync::Once::new();

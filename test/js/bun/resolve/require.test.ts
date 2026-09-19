@@ -84,13 +84,13 @@ describe("require(specifier)", () => {
 
     // The transpiler rewrites `require.main === module`. The rewrite must keep
     // the precedence of the original expression.
-    it("keeps its precedence inside a unary expression", async () => {
+    it.each(["index.cjs", "index.mjs"])("keeps its precedence inside a larger expression (%s)", async file => {
       using dir = tempDir("require-main-precedence", {
-        "index.cjs": `console.log(typeof (require.main === module), [require.main !== module]);`,
+        [file]: `console.log(typeof (require.main === module), typeof (require.main !== module).toString(), [require.main !== module]);`,
       });
-      const { stdout, stderr, exitCode } = await bunRun(path.join(String(dir), "index.cjs"));
+      const { stdout, stderr, exitCode } = await bunRun(path.join(String(dir), file));
       expect(stderr).toBeEmpty();
-      expect(stdout).toBe("boolean [ false ]");
+      expect(stdout).toBe("boolean string [ false ]");
       expect(exitCode).toBe(0);
     });
   });

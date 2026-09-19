@@ -398,6 +398,14 @@ const kGoawayCode = Symbol("goawayCode");
 const kGoawayLastStreamID = Symbol("goawayLastStreamID");
 const kReleaseUnannouncedStream = Symbol("releaseUnannouncedStream");
 const kGoawaySent = Symbol("goawaySent");
+// RFC 9113 6.6 allows a PUSH_PROMISE only before its parent's END_STREAM, and node's pushStream()
+// works for the rest of the turn after end(): nghttp2 serializes PUSH_PROMISE ahead of pending
+// DATA when the session flushes. Frames here are serialized as they are submitted, so while the
+// peer accepts pushes, the operation that carries a request stream's END_STREAM (the final DATA
+// frame, the empty END_STREAM frame, the trailers _final drives) waits for the engine's
+// end-of-turn flush. On a stream: undefined = never held, a function = the held operation,
+// null = released. On a server session: the streams held this turn.
+const kHeldEndOfStream = Symbol("heldEndOfStream");
 
 // Node's socketOnError: once a GOAWAY has been received the peer is fully
 // within its rights to drop the connection, so an ECONNRESET behind it is
@@ -3168,8 +3176,55 @@ function serverStreamOnFinish(this: ServerHttp2Stream) {
 function callStreamClose(stream: ServerHttp2Stream) {
   if (!stream.destroyed && !stream.closed) stream.close();
 }
+// See kHeldEndOfStream. Only a request stream (odd id) whose local half is still open can carry
+// a PUSH_PROMISE, and only while the peer accepts pushes.
+function canHoldEndOfStream(stream: ServerHttp2Stream) {
+  return (
+    stream[kHeldEndOfStream] === undefined &&
+    (stream.id & 1) === 1 &&
+    (stream[bunHTTP2StreamStatus] & (StreamState.EndStreamSent | StreamState.WritableClosed)) === 0 &&
+    stream.pushAllowed
+  );
+}
+function holdEndOfStream(stream: ServerHttp2Stream, run: () => void) {
+  const session = stream[bunHTTP2Session] as ServerHttp2Session;
+  const held = session[kHeldEndOfStream];
+  if (held !== undefined) {
+    held.push(stream);
+  } else if (session[bunHTTP2Native]?.requestBeforeFlush()) {
+    session[kHeldEndOfStream] = [stream];
+  } else {
+    // Already inside the engine's flush phase: no later flush is due this turn.
+    stream[kHeldEndOfStream] = null;
+    run();
+    return;
+  }
+  stream[kHeldEndOfStream] = run;
+}
+function releaseHeldEndOfStream(stream: ServerHttp2Stream) {
+  const run = stream[kHeldEndOfStream];
+  if (typeof run === "function") {
+    stream[kHeldEndOfStream] = null;
+    run();
+  }
+}
+function releaseAllHeldEndOfStream(session: ServerHttp2Session) {
+  const held = session[kHeldEndOfStream];
+  if (held === undefined) return;
+  session[kHeldEndOfStream] = undefined;
+  releaseHeldEndOfStreamFrom(held, 0);
+}
+// An operation that throws (a 'wantTrailers' listener, say) must not strand the ones behind it.
+function releaseHeldEndOfStreamFrom(held: ServerHttp2Stream[], index: number) {
+  try {
+    while (index < held.length) releaseHeldEndOfStream(held[index++]);
+  } finally {
+    if (index < held.length) releaseHeldEndOfStreamFrom(held, index);
+  }
+}
 class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
+  [kHeldEndOfStream]: (() => void) | null | undefined = undefined;
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
   }
@@ -3178,6 +3233,14 @@ class ServerHttp2Stream extends Http2Stream {
   // user-facing writable while the file is still being written natively, so it must
   // never install the hook - the early 'finish' would RST and truncate the transfer.
   _final(callback) {
+    if (canHoldEndOfStream(this)) {
+      // Not through this._final: a file response sets that property to null.
+      holdEndOfStream(this, () => this.#finalNow(callback));
+      return;
+    }
+    this.#finalNow(callback);
+  }
+  #finalNow(callback) {
     this.once("finish", serverStreamOnFinish);
     super._final(callback);
   }
@@ -3189,13 +3252,35 @@ class ServerHttp2Stream extends Http2Stream {
     if (!this.headersSent && !this.destroyed && !this.closed && this.session !== undefined) {
       this.respond();
     }
+    if (isFinalWrite(this, chunk.length) && canHoldEndOfStream(this)) {
+      holdEndOfStream(this, () => super._write(chunk, encoding, callback));
+      return;
+    }
     super._write(chunk, encoding, callback);
   }
   _writev(data, callback) {
     if (!this.headersSent && !this.destroyed && !this.closed && this.session !== undefined) {
       this.respond();
     }
+    if (canHoldEndOfStream(this)) {
+      let batchLength = 0;
+      for (let i = 0; i < data.length; i++) {
+        batchLength += data[i].chunk.length;
+      }
+      if (isFinalWrite(this, batchLength)) {
+        holdEndOfStream(this, () => super._writev(data, callback));
+        return;
+      }
+    }
     super._writev(data, callback);
+  }
+  // node purges the session's pending frames before it resets a stream, so what end() submitted
+  // still reaches the peer when destroy() follows it in the same turn. Nothing is held from here
+  // on: the base _destroy ends a writable that is still open, and that end() has nothing to send.
+  _destroy(err, callback) {
+    releaseHeldEndOfStream(this);
+    this[kHeldEndOfStream] = null;
+    super._destroy(err, callback);
   }
   pushStream(headers, options, callback) {
     if (typeof options === "function") {
@@ -3992,9 +4077,14 @@ class ServerHttp2Session extends Http2Session {
   // Client-initiated (odd-id) streams currently open: RFC 9113 5.1.2 - only these count against
   // the limit this server advertised; its own pushed streams count against the client's setting.
   #peerInitiatedStreams: number = 0;
+  [kHeldEndOfStream]: ServerHttp2Stream[] | undefined = undefined;
 
   static #Handlers = {
     binaryType: "buffer",
+    beforeFlush(self: ServerHttp2Session) {
+      if (!self) return;
+      releaseAllHeldEndOfStream(self);
+    },
     streamStart(self: ServerHttp2Session, stream_id: number) {
       if (!self) return;
       // RFC 9113 §5.1.2: refuse peer-initiated streams that would exceed the advertised
@@ -4549,7 +4639,17 @@ class ServerHttp2Session extends Http2Session {
     return this.#socket_proxy;
   }
   get state() {
-    return this.#parser?.getCurrentState();
+    const state = this.#parser?.getCurrentState();
+    const held = this[kHeldEndOfStream];
+    if (state !== undefined && held !== undefined) {
+      // A held END_STREAM operation is submitted and not yet sent, which is what node's
+      // outboundQueueSize counts. The native counter cannot see it. Entries released early
+      // (destroy) stay in the list until the flush clears it, so only live holds count.
+      for (let i = 0; i < held.length; i++) {
+        if (typeof held[i][kHeldEndOfStream] === "function") state.outboundQueueSize++;
+      }
+    }
+    return state;
   }
 
   get [bunHTTP2Native]() {
@@ -4668,6 +4768,10 @@ class ServerHttp2Session extends Http2Session {
     if (typeof callback === "function") {
       this.once("close", callback);
     }
+    // What end() submitted this turn goes out ahead of the GOAWAY, as it did before the hold. A
+    // held operation must not run once the shutdown has started: the socket can be gone by the
+    // end-of-turn flush, and a write to it then is an error nothing handles.
+    releaseAllHeldEndOfStream(this);
     // node submits a graceful GOAWAY as soon as close() is called; the peer observes the shutdown
     // ('goaway' event) while in-flight streams are still allowed to finish. The session is only
     // destroyed once there is nothing in flight, and never before the GOAWAY had a chance to leave.
@@ -4702,6 +4806,8 @@ class ServerHttp2Session extends Http2Session {
     this.#destroying = true;
     emitHttp2SessionPerf(this, this.#parser, this[bunHTTP2Socket]);
     try {
+      // What end() submitted this turn goes out ahead of the GOAWAY and the socket's FIN.
+      releaseAllHeldEndOfStream(this);
       const server = this[kServer];
       if (server) {
         server[kSessions].delete(this);

@@ -65,7 +65,8 @@ pub mod JSH2FrameParser {
         onAltSvc,
         onOrigin,
         onFrameError,
-        onStreamPush
+        onStreamPush,
+        onBeforeFlush
     );
 
     // `Gc` enum + `get`/`set`/`clear` impl — emitted by
@@ -796,6 +797,7 @@ impl Handlers {
         handler_pair!(onOrigin, "origin");
         handler_pair!(onFrameError, "frameError");
         handler_pair!(onStreamPush, "streamPush");
+        handler_pair!(onBeforeFlush, "beforeFlush");
 
         if let Some(callback_value) = opts.fast_get(global_object, bun_jsc::BuiltinName::Error)? {
             if !callback_value.is_cell() || !callback_value.is_callable() {
@@ -1150,6 +1152,9 @@ pub struct H2FrameParser {
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
     pending_header_compression_error: Cell<bool>,
+    /// `requestBeforeFlush()` asked for one `onBeforeFlush` dispatch ahead of this turn's
+    /// deferred flush. Keeps the auto-flush task registered until `on_auto_flush` consumes it.
+    before_flush_requested: Cell<bool>,
     /// Frames written by the legacy outbound encoder (perf_hooks http2 session stats).
     frames_sent_legacy: Cell<u64>,
     /// Engine counters mirrored at the end of each rewrite_read batch, so reading them
@@ -2920,7 +2925,8 @@ impl H2FrameParser {
         }
         // A write that drains the buffer must not cancel the deferred tick a pending session
         // error is waiting on; on_auto_flush releases the registration once it has reported it.
-        if self.pending_header_compression_error.get() {
+        // The same holds for a requested onBeforeFlush dispatch.
+        if self.pending_header_compression_error.get() || self.before_flush_requested.get() {
             return;
         }
         debug_assert!(self.auto_flusher.get().registered.get());
@@ -3000,6 +3006,14 @@ impl H2FrameParser {
 
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
+        let before_flush = self.before_flush_requested.get();
+        if before_flush {
+            // What the handler writes joins the frames already corked, in one flush. The latch
+            // stays set across the dispatch so a flush() inside it leaves this task registered
+            // for the arms below.
+            self.dispatch(JSH2FrameParser::Gc::onBeforeFlush, JSValue::UNDEFINED);
+            self.before_flush_requested.set(false);
+        }
         if self.transport_write_fatal.get() {
             // Returning `false` makes DeferredTaskQueue::run remove the entry
             // itself, so only the registration's flag and ref are released here
@@ -3041,6 +3055,13 @@ impl H2FrameParser {
             return false;
         }
         let _ = self.flush();
+        if before_flush
+            && Self::corked() != Some(self.as_ctx_ptr())
+            && !self.transport_write_fatal.get()
+        {
+            // requestBeforeFlush() registered this task without a cork, so no uncork() ends it.
+            self.unregister_auto_flush();
+        }
         // we will unregister ourselves when the buffer is empty
         true
     }
@@ -6039,6 +6060,23 @@ impl H2FrameParser {
         let Some(headers_obj) = headers_arg.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
         };
+        // RFC 9113 §6.6: a PUSH_PROMISE goes only on a stream this side can still send on.
+        // Refused before the block is encoded, so the HPACK table stays in step with the peer.
+        let parent_can_send = this
+            .streams
+            .get()
+            .get(&parent_id)
+            .copied()
+            // SAFETY: *mut Stream from self.streams; valid while the map entry exists
+            .is_some_and(|parent| unsafe { (*parent).can_send_data() });
+        if !parent_can_send {
+            return Err(global_object
+                .err(
+                    JscErrorCode::HTTP2_INVALID_STREAM,
+                    format_args!("The stream has been destroyed"),
+                )
+                .throw());
+        }
 
         let mut name_buffer = [0u8; 4096];
         let mut encoded_headers: Vec<u8> = Vec::new();
@@ -6448,6 +6486,23 @@ impl H2FrameParser {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         Ok(JSValue::js_number(this.flush() as f64))
+    }
+
+    /// Asks for one `beforeFlush` dispatch at the start of this turn's deferred flush, after
+    /// every nextTick and microtask of the turn. Returns false when the caller already runs
+    /// inside the deferred task queue: the next run of it belongs to a later turn.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn request_before_flush(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if this.global_this.bun_vm().is_inside_deferred_task_queue.get() {
+            return Ok(JSValue::FALSE);
+        }
+        this.before_flush_requested.set(true);
+        this.register_auto_flush();
+        Ok(JSValue::TRUE)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -7476,6 +7531,7 @@ impl H2FrameParser {
             js_socket_flushing: Cell::new(false),
             transport_write_fatal: Cell::new(false),
             pending_header_compression_error: Cell::new(false),
+            before_flush_requested: Cell::new(false),
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),
             engine_frames_sent: Cell::new(0),
@@ -7736,7 +7792,9 @@ impl H2FrameParser {
             CORK_OFFSET.with(|c| c.set(0));
             Self::set_corked(None);
         }
-        // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
+        // Removes the deferred task (its ctx is `self`) and releases the ref it holds. The
+        // onBeforeFlush dispatch it may still be registered for can never run.
+        self.before_flush_requested.set(false);
         self.unregister_auto_flush();
         let stranded = self.native_keepalives.replace(0);
         for _ in 0..stranded {

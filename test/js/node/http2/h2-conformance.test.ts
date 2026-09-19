@@ -800,6 +800,249 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   });
 });
 
+// Server side: RFC 9113 §6.6 allows a PUSH_PROMISE only on a stream the server can still send
+// on. In node, pushStream() works for the rest of the turn after end(), because nghttp2
+// serializes PUSH_PROMISE ahead of the pending END_STREAM when the session flushes.
+describe("PUSH_PROMISE and the parent's END_STREAM (RFC 9113 §6.6)", () => {
+  const END_STREAM = 0x1;
+  const frameNames: Record<number, string> = {
+    [FrameType.DATA]: "DATA",
+    [FrameType.HEADERS]: "HEADERS",
+    [FrameType.RST_STREAM]: "RST_STREAM",
+    [FrameType.PUSH_PROMISE]: "PUSH_PROMISE",
+  };
+  const endsStream = (f: Frame) =>
+    (f.type === FrameType.DATA || f.type === FrameType.HEADERS) && (f.flags & END_STREAM) !== 0;
+
+  /** The frames each stream got so far, in wire order. */
+  function framesPerStream(raw: RawH2) {
+    const streams: Record<number, string[]> = {};
+    for (const f of raw.frames) {
+      if (f.streamId === 0) continue;
+      (streams[f.streamId] ??= []).push((frameNames[f.type] ?? String(f.type)) + (endsStream(f) ? "+END_STREAM" : ""));
+    }
+    return streams;
+  }
+
+  async function withServer<T>(handler: (stream: any) => void, run: (raw: RawH2) => Promise<T>): Promise<T> {
+    const server = http2.createServer();
+    server.on("stream", handler);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const raw = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      raw.sendPreface();
+      raw.sendEmptySettings();
+      return await run(raw);
+    } finally {
+      raw.destroy();
+      server.close();
+    }
+  }
+
+  const pushErrors: string[] = [];
+  function push(stream: any, path: string, then?: () => void) {
+    stream.pushStream({ ":path": path }, (err: any, pushed: any) => {
+      if (err) return void pushErrors.push(`${path}: ${err.code}`);
+      pushed.on("error", () => {});
+      pushed.respond({ ":status": 200 });
+      pushed.end(path);
+      then?.();
+    });
+  }
+
+  const pushedResponse = ["HEADERS", "DATA+END_STREAM"];
+  test.each([
+    {
+      name: "end() then pushStream()",
+      handler(stream: any) {
+        stream.respond({ ":status": 200 });
+        stream.end();
+        push(stream, "/a");
+      },
+      expected: { 1: ["HEADERS", "PUSH_PROMISE", "DATA+END_STREAM"], 2: pushedResponse },
+    },
+    {
+      name: "end(body) then pushStream()",
+      handler(stream: any) {
+        stream.respond({ ":status": 200 });
+        stream.end("body");
+        push(stream, "/a");
+      },
+      expected: { 1: ["HEADERS", "PUSH_PROMISE", "DATA+END_STREAM"], 2: pushedResponse },
+    },
+    {
+      name: "end(body) then pushStream() from a later microtask",
+      async handler(stream: any) {
+        stream.respond({ ":status": 200 });
+        stream.end("body");
+        await null;
+        push(stream, "/a");
+      },
+      expected: { 1: ["HEADERS", "PUSH_PROMISE", "DATA+END_STREAM"], 2: pushedResponse },
+    },
+    {
+      name: "end(body) then a second pushStream() from the callback of the first",
+      handler(stream: any) {
+        stream.respond({ ":status": 200 });
+        stream.end("body");
+        push(stream, "/a", () => push(stream, "/b"));
+      },
+      expected: {
+        1: ["HEADERS", "PUSH_PROMISE", "PUSH_PROMISE", "DATA+END_STREAM"],
+        2: pushedResponse,
+        4: pushedResponse,
+      },
+    },
+    {
+      name: "end() with trailers then pushStream()",
+      handler(stream: any) {
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "1" }));
+        stream.end();
+        push(stream, "/a");
+      },
+      expected: { 1: ["HEADERS", "PUSH_PROMISE", "HEADERS+END_STREAM"], 2: pushedResponse },
+    },
+  ])("the PUSH_PROMISE precedes the END_STREAM: $name", async ({ handler, expected }) => {
+    pushErrors.length = 0;
+    const streams = await withServer(handler, async raw => {
+      raw.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      for (const id of Object.keys(expected)) {
+        await raw.waitFor(f => f.streamId === Number(id) && endsStream(f));
+      }
+      return framesPerStream(raw);
+    });
+    expect({ pushErrors, streams }).toEqual({ pushErrors: [], streams: expected });
+  });
+
+  test.each([
+    {
+      name: "the response HEADERS carried END_STREAM",
+      handler(stream: any, pushed: (err: any) => void) {
+        stream.respond({ ":status": 204 });
+        stream.pushStream({ ":path": "/a" }, pushed);
+      },
+      expected: { 1: ["HEADERS+END_STREAM"] },
+    },
+    {
+      name: "the END_STREAM left on an earlier turn and the request is still open",
+      handler(stream: any, pushed: (err: any) => void) {
+        stream.respond({ ":status": 200 });
+        stream.on("finish", () => stream.pushStream({ ":path": "/a" }, pushed));
+        stream.end("body");
+      },
+      expected: { 1: ["HEADERS", "DATA+END_STREAM"] },
+    },
+  ])("pushStream() fails and writes no PUSH_PROMISE once $name", async ({ handler, expected }) => {
+    const { promise: pushed, resolve } = Promise.withResolvers<any>();
+    const streams = await withServer(
+      stream => handler(stream, resolve),
+      async raw => {
+        // END_HEADERS only: the request stays open, so only its END_STREAM state can refuse the push.
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+        expect((await pushed)?.code).toBe("ERR_HTTP2_INVALID_STREAM");
+        // Everything the server wrote before this PING ACK has arrived.
+        raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+        await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+        return framesPerStream(raw);
+      },
+    );
+    expect(streams).toEqual(expected);
+  });
+
+  test.each([
+    { name: "stream.destroy()", teardown: (stream: any) => stream.destroy() },
+    { name: "session.destroy()", teardown: (stream: any) => stream.session.destroy() },
+  ])("end(body) followed by $name in the same turn still sends the body", async ({ teardown }) => {
+    const body = await withServer(
+      stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("body");
+        teardown(stream);
+      },
+      async raw => {
+        raw.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+        const data = await raw.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
+        return data.payload.toString();
+      },
+    );
+    expect(body).toBe("body");
+  });
+
+  // The peer leaves and the server closes in the turn in which the handler ended the response,
+  // before the end-of-turn flush. Nothing may write to the dead socket after the shutdown has
+  // started: that error has no listener, so it would end the process before 'close' is reported.
+  test.concurrent("end() followed by the peer leaving and server.close() in the same turn ends cleanly", async () => {
+    const fixture = /* js */ `
+      const http2 = require("node:http2");
+      const net = require("node:net");
+      const frame = (type, flags, id, payload = Buffer.alloc(0)) => {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(id, 5);
+        return Buffer.concat([header, payload]);
+      };
+      const handled = Promise.withResolvers();
+      const server = http2.createServer();
+      server.on("session", session => session.on("close", () => console.log("session closed")));
+      server.on("stream", stream => {
+        handled.resolve();
+        stream.respond({ ":status": 200 });
+        stream.end();
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = net.connect(server.address().port, "127.0.0.1", () => {
+          const authority = Buffer.from("localhost");
+          client.write(Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n", "latin1"));
+          client.write(frame(4, 0, 0));
+          const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, authority.length]), authority]);
+          client.write(frame(1, 0x5, 1, block));
+        });
+        client.on("error", () => {});
+        handled.promise.then(() => {
+          client.destroy();
+          server.close();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "session closed\n", stderr: "", exitCode: 0 });
+  }, 30_000);
+
+  // A stream the peer resets is destroyed with its writable still open. That teardown has
+  // nothing to send, so it must not show up as a pending outbound frame.
+  test("a request stream the peer resets leaves no pending outbound frame", async () => {
+    const { promise: queuedAtClose, resolve } = Promise.withResolvers<number>();
+    const { promise: opened, resolve: onOpened } = Promise.withResolvers<void>();
+    await withServer(
+      stream => {
+        const session = stream.session;
+        stream.on("error", () => {});
+        stream.on("close", () => resolve(session.state.outboundQueueSize));
+        stream.resume();
+        onOpened();
+      },
+      async raw => {
+        raw.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+        await opened;
+        const cancel = Buffer.alloc(4);
+        cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+        raw.sendFrame(FrameType.RST_STREAM, 0, 1, cancel);
+        expect(await queuedAtClose).toBe(0);
+      },
+    );
+  });
+});
+
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
   // Regression coverage for the test-http2-pipe failure mode: the server responds and ends its
   // side before the request body arrives, the request body is piped into a backpressured

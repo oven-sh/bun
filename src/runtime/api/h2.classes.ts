@@ -53,6 +53,10 @@ export default [
         fn: "flushFromJS",
         length: 0,
       },
+      requestBeforeFlush: {
+        fn: "requestBeforeFlush",
+        length: 0,
+      },
       detach: {
         fn: "detachFromJS",
         length: 0,
@@ -146,6 +150,7 @@ export default [
       "onOrigin",
       "onFrameError",
       "onStreamPush",
+      "onBeforeFlush",
     ],
   }),
 ];

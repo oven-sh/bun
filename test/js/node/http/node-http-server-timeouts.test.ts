@@ -349,14 +349,20 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
-  test("a request that stream.pipeline() destroyed does not keep the idle keep-alive socket open", async () => {
-    // The destination fails mid-upload, so pipeline() destroys req and leaves
-    // the connection open for the 500. The client then finishes the upload and
-    // idles. That request never completes in JS, and its response has finished,
-    // so its 'timeout' listener must not veto the keep-alive timeout.
+  test("a pipelined request that stream.pipeline() destroyed does not keep the idle keep-alive socket open", async () => {
+    // POST /b is pipelined behind GET /a. Its destination fails, so pipeline()
+    // destroys the request and leaves the connection open for the 500. Both
+    // responses go out, the client finishes the upload and idles. The destroyed
+    // request never completes in JS. Its response has finished, so its
+    // 'timeout' listener must not veto the keep-alive timeout.
     const events: string[] = [];
     const { promise: settled, resolve: onSettled } = Promise.withResolvers<void>();
+    let resA: http.ServerResponse | undefined;
     const server = http.createServer((req, res) => {
+      if (req.url === "/a") {
+        resA = res;
+        return;
+      }
       req.setTimeout(30_000, () => {
         events.push(`req 'timeout' destroyed=${req.destroyed}`);
         onSettled();
@@ -369,6 +375,7 @@ describe("node:http server timeout enforcement", () => {
       pipeline(req, failing, () => {
         res.statusCode = 500;
         res.end("failed");
+        resA!.end("a");
       });
     });
     server.keepAliveTimeout = 200;
@@ -377,20 +384,38 @@ describe("node:http server timeout enforcement", () => {
     const client = net.connect(port, "127.0.0.1");
     try {
       const body = Buffer.alloc(100, "a").toString();
+      let received = "";
+      let sentRest = false;
       client.on("error", () => {});
       client.on("connect", () => {
-        client.write("POST /upload HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n" + body.slice(0, 10));
+        client.write(
+          "GET /a HTTP/1.1\r\nHost: a\r\n\r\n" +
+            "POST /b HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n" +
+            body.slice(0, 10),
+        );
       });
-      client.once("data", chunk => {
-        events.push(chunk.toString("latin1").split("\r\n")[0]);
-        client.write(body.slice(10));
+      client.on("data", chunk => {
+        received += chunk.toString("latin1");
+        // "failed" ends the second response: the client now finishes its upload and idles.
+        if (!sentRest && received.endsWith("failed")) {
+          sentRest = true;
+          client.write(body.slice(10));
+        }
       });
       client.on("close", () => {
         events.push("closed by the server");
         onSettled();
       });
       await settled;
-      expect(events).toEqual(["HTTP/1.1 500 Internal Server Error", "closed by the server"]);
+      expect({
+        responses: received.match(/HTTP\/1\.1 \d+ [^\r]*/g),
+        keepAlive: received.match(/^connection: keep-alive\r$/gim)?.length,
+        events,
+      }).toEqual({
+        responses: ["HTTP/1.1 200 OK", "HTTP/1.1 500 Internal Server Error"],
+        keepAlive: 2,
+        events: ["closed by the server"],
+      });
     } finally {
       client.destroy();
       server.closeAllConnections();

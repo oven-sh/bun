@@ -3465,13 +3465,13 @@ class ServerHttp2Stream extends Http2Stream {
     // Pre-validate single-value headers in JS so a throwing additionalHeaders() leaves no partial
     // state in the shared HPACK table (same rule request() applies).
     if (this[bunHTTP2Session]?.[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
-    let hasStatus = true;
-    if (headers[HTTP2_HEADER_STATUS] === undefined) {
-      headers[HTTP2_HEADER_STATUS] = 200;
-      hasStatus = false;
-    }
     const statusCode = headers[HTTP2_HEADER_STATUS];
-    if (hasStatus) {
+    if (statusCode === undefined) {
+      // Unlike respond(), node adds no default :status here. It sends the block as is:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3197-L3204
+      // An explicit undefined is absent to node too, but the native header walk throws on one.
+      delete headers[HTTP2_HEADER_STATUS];
+    } else {
       if (statusCode === HTTP_STATUS_SWITCHING_PROTOCOLS) throw $ERR_HTTP2_STATUS_101();
       if (statusCode < 100 || statusCode >= 200) {
         throw $ERR_HTTP2_INVALID_INFO_STATUS(statusCode);

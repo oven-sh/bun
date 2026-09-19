@@ -608,6 +608,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
             manager,
             lockfile,
             parent_pkg_id,
+            dep,
             pkg_id,
         )
     {
@@ -736,11 +737,12 @@ impl Tree {
                     continue;
                 }
 
-                // Only a peer gets here, and an ancestor's copy of it is already placed.
+                // Only a peer is skipped here, and an ancestor's copy of it is already placed.
                 if pruned_workspaces::skips_link_to_pruned_workspace(
                     manager,
                     lockfile,
                     parent_pkg_id,
+                    &dependencies[dep_id as usize],
                     pkg_id,
                 ) {
                     continue;

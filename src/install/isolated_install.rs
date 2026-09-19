@@ -831,6 +831,7 @@ pub(crate) fn build_store(
                 manager,
                 lockfile,
                 entry.pkg_id,
+                &dependencies[peer_dep_id as usize],
                 resolved_pkg_id,
             ) {
                 continue;
@@ -1171,6 +1172,20 @@ pub(crate) fn install_isolated_packages(
         packages_to_install,
         timings,
     )?;
+
+    if !manager.summary.pruned_workspaces.is_empty() {
+        let mut planned = DynamicBitSet::init_empty(lockfile.packages.len())?;
+        for &pkg_id in store.nodes.items_pkg_id() {
+            planned.set(pkg_id as usize);
+        }
+        lockfile::pruned_workspaces::exit_if_install_links_missing(
+            &*manager,
+            &*lockfile,
+            &planned,
+            workspace_filters,
+            install_root_dependencies,
+        );
+    }
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {

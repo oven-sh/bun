@@ -3394,7 +3394,7 @@ pub(crate) fn resolve_peer_dep_version_based(
 }
 
 /// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
-fn may_stay_unresolved(dep: &Dependency) -> bool {
+pub(crate) fn may_stay_unresolved(dep: &Dependency) -> bool {
     dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
 }
 

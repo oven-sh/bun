@@ -337,8 +337,12 @@ describe("upgrade request whose whole body arrived with its head", () => {
     };
   }
 
-  for (const readInListener of [true, false]) {
-    it(`a paused request keeps its body when the upgrade socket is read ${readInListener ? "in" : "after"} the listener`, async () => {
+  it.each([
+    { when: "in", readInListener: true },
+    { when: "after", readInListener: false },
+  ])(
+    "a paused request keeps its body when the upgrade socket is read $when the listener",
+    async ({ readInListener }) => {
       const tunnel = tunnelReader();
       const { watch, orFail } = failureWatcher();
       const { promise: handedOff, resolve: onUpgrade } = Promise.withResolvers<[IncomingMessage, Duplex]>();
@@ -379,8 +383,8 @@ describe("upgrade request whose whole body arrived with its head", () => {
         server.closeAllConnections();
         if (server.listening) server.close();
       }
-    });
-  }
+    },
+  );
 
   it("the upgrade socket gets the bytes after a body that paused the connection", async () => {
     // As above, the first chunk fills the request's buffer, and the end of the body is

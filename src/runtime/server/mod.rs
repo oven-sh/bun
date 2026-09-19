@@ -1498,8 +1498,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let nhr_flags = nhr.flags.get();
             if !nhr_flags.contains(NhrFlags::UPGRADED) {
                 if let Some(raw) = nhr.raw_response.get() {
-                    // A tunnel keeps its WebSocket upgrade context: ws adopts
-                    // it only once the responses ahead of it are complete.
+                    // A tunnel keeps its upgrade context: ws adopts it later.
                     if nhr_flags.contains(NhrFlags::TUNNELED)
                         || (!nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                             && raw.state().is_response_pending())

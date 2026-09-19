@@ -900,8 +900,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // writes are buffered until the in-flight response finishes and the
           // pipeline assigns it the socket (advanceResponsePipeline).
           if (is_upgrade) {
-            // The listener gets the socket now, like Node. Its writes wait for their turn in the
-            // pipeline, so the 101 follows the responses ahead of it on the wire.
+            // The listener gets the socket now, like Node; its writes follow the responses ahead.
             socketHandle.upgradeToTunnel(hasBody, handle);
             socket[kHandoffResponse] = handle;
             socket[kEnableStreaming](true);

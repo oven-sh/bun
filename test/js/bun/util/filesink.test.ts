@@ -2,6 +2,8 @@ import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
+import { once } from "node:events";
+import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 
 describe("FileSink", () => {
@@ -460,6 +462,99 @@ if (isWindows) {
         syscall: "open",
       }),
     );
+  });
+
+  // fs.openSync gives a synchronous pipe end, which is written from a helper thread. In PIPE_NOWAIT
+  // mode a write with no room takes what fits and says so by succeeding short, and the writer sends
+  // the rest again. Bun puts an end it takes over in blocking mode, but whoever shares the end can
+  // change that at any time: here the child does, once its first write has been through.
+  it("a writer to a synchronous pipe sends the rest of a write that came back short", async () => {
+    const pipe = `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}`;
+    const received = Promise.withResolvers<number>();
+    const connected = Promise.withResolvers<Socket>();
+    await using server = createServer(conn => {
+      let total = 0;
+      conn.pause();
+      conn.on("data", chunk => (total += chunk.length));
+      conn.on("error", received.reject);
+      conn.on("close", () => received.resolve(total));
+      connected.resolve(conn);
+    });
+    await once(server.listen(pipe), "listening");
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { dlopen, ptr } from "bun:ffi";
+        import fs from "node:fs";
+        const k32 = dlopen("kernel32.dll", {
+          GetFileType: { args: ["ptr"], returns: "u32" },
+          GetFileInformationByHandleEx: { args: ["ptr", "i32", "ptr", "u32"], returns: "i32" },
+          SetNamedPipeHandleState: { args: ["ptr", "ptr", "ptr", "ptr"], returns: "i32" },
+        });
+        const fd = fs.openSync(process.argv[1], "w");
+        // The open handle whose file name is this pipe's.
+        const name = process.argv[1].slice(process.argv[1].lastIndexOf("\\\\") + 1);
+        const info = new Uint8Array(4 + 1024);
+        let end = 0;
+        for (let h = 4; h < 0x4000 && !end; h += 4) {
+          if (k32.symbols.GetFileType(h) !== 3 /* FILE_TYPE_PIPE */) continue;
+          if (!k32.symbols.GetFileInformationByHandleEx(h, 2 /* FileNameInfo */, ptr(info), info.length)) continue;
+          const length = new DataView(info.buffer).getUint32(0, true);
+          if (new TextDecoder("utf-16le").decode(info.subarray(4, 4 + length)).endsWith(name)) end = h;
+        }
+        if (!end) throw new Error("the pipe's handle was not found");
+
+        const writer = Bun.file(fd).writer();
+        writer.write("first");
+        await writer.flush();
+        const nowait = new Uint32Array([1]);
+        if (!k32.symbols.SetNamedPipeHandleState(end, ptr(nowait), null, null)) throw new Error("SetNamedPipeHandleState");
+
+        const chunk = Buffer.alloc(64 * 1024, 120);
+        for (let i = 0; i < 32; i++) writer.write(chunk);
+        const flushed = writer.flush();
+        console.log(flushed instanceof Promise ? "pending" : "flushed at once");
+        // More is written while the rest of a short write is out.
+        for (let i = 0; i < 20; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+          writer.write("y");
+        }
+        console.log("wrote more");
+        await flushed;
+        await writer.end();
+        console.log("done");
+        `,
+        pipe,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const conn = await connected.promise;
+    // The server reads only once the child has written into the stall.
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    while (!stdout.includes("wrote more")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += new TextDecoder().decode(value);
+    }
+    conn.resume();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stdout += new TextDecoder().decode(value);
+    }
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr: stderr.trim() }).toEqual({
+      stdout: ["pending", "wrote more", "done"],
+      stderr: "",
+    });
+    expect(await received.promise).toBe("first".length + 32 * 64 * 1024 + 20);
+    expect(exitCode).toBe(0);
   });
 }
 

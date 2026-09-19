@@ -1658,9 +1658,11 @@ pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub outgoing: StreamBuffer,
     // the bytes of the write in flight must not move, so the buffers are swapped
     pub(crate) current_payload: StreamBuffer,
-    /// The bytes of `current_payload` while its `list` is with a write, which
-    /// gives it back; 0 otherwise.
+    /// The bytes of `current_payload` while a write has it (its list, which
+    /// the write gives back, and its cursor, kept in `lent_cursor`); 0
+    /// otherwise. `current_payload` itself is empty meanwhile.
     lent_len: usize,
+    lent_cursor: usize,
     // we preserve the last write result for simplicity
     pub(crate) last_write_result: WriteResult,
     // Set only by `close_without_reporting()` (i.e. `Drop`) to suppress
@@ -1679,6 +1681,7 @@ impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Pa
             outgoing: StreamBuffer::default(),
             current_payload: StreamBuffer::default(),
             lent_len: 0,
+            lent_cursor: 0,
             last_write_result: WriteResult::Wrote(0),
             closed_without_reporting: false,
         }
@@ -1870,7 +1873,13 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 Some(Source::Pipe(pipe)) => pipe.take_lent_buffer(),
                 _ => None,
             };
-            Self::r(this).current_payload.list = returned.unwrap_or_default();
+            let cursor = mem::take(&mut Self::r(this).lent_cursor);
+            // A list that does not come back (a thread that could not be
+            // stopped still has it) leaves nothing for the cursor to be in.
+            Self::r(this).current_payload = match returned {
+                Some(list) if cursor <= list.len() => StreamBuffer { list, cursor },
+                _ => StreamBuffer::default(),
+            };
         }
         let submitted = Self::r(this).current_payload.size();
         let written = match result {
@@ -1968,17 +1977,21 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             // A write this pipe could not recall has to own its bytes: the
             // payload is lent to it, and `on_write_result` takes it back.
             Source::Pipe(pipe) if pipe.writes_outlive_cancel() => {
-                let payload = &mut Self::r(this).current_payload;
-                let lent_len = payload.size();
-                let (list, cursor) = (mem::take(&mut payload.list), payload.cursor);
+                // The list and its cursor leave together: what stays behind
+                // is an empty buffer, whose size is 0.
+                let StreamBuffer { list, cursor } = mem::take(&mut Self::r(this).current_payload);
+                let lent_len = list.len() - cursor;
                 match pipe.write_lent(list, cursor, Refusal::Returned, this, Self::on_write_result)
                 {
                     Ok(()) => {
                         Self::r(this).lent_len = lent_len;
+                        Self::r(this).lent_cursor = cursor;
                         sys::Result::Ok(())
                     }
                     Err((err, list)) => {
-                        Self::r(this).current_payload.list = list;
+                        if cursor <= list.len() {
+                            Self::r(this).current_payload = StreamBuffer { list, cursor };
+                        }
                         sys::Result::Err(err)
                     }
                 }

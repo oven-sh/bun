@@ -1194,10 +1194,18 @@ pub(crate) fn edit(
                     bun_ast::Loc::EMPTY,
                 ));
 
+                // Read by the `workspace:` arm of the write-back below; every other arm overwrites it.
+                let declared: &[u8] = match new_dependencies[k]
+                    .value
+                    .as_ref()
+                    .and_then(Expr::as_utf8_string_literal)
+                {
+                    Some(literal) => arena_dup(arena, literal),
+                    None => b"",
+                };
                 new_dependencies[k].value = Some(Expr::allocate(
                     arena,
-                    // we set it later
-                    E::EString::init(b""),
+                    E::EString::init(declared),
                     bun_ast::Loc::EMPTY,
                 ));
 
@@ -1477,7 +1485,11 @@ pub(crate) fn edit(
                     arena_dup(arena, installed)
                 }
 
-                resolution::Tag::Workspace => b"workspace:*",
+                // Not the bound row: an unchanged resolution keeps the old lockfile row and its previous literal.
+                resolution::Tag::Workspace => match dependency::Tag::infer(e_string.data.slice()) {
+                    dependency::Tag::Workspace => e_string.data.slice(),
+                    _ => b"workspace:*",
+                },
                 _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
             };
             if e_string.data.slice() != new_literal {

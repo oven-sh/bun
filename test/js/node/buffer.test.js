@@ -2684,6 +2684,156 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(h3.lastIndexOf("a", 3, "utf16le")).toBe(2);
       });
 
+      describe("indexOf/lastIndexOf/includes argument order", () => {
+        // Node's lib/buffer.js coerces byteOffset, then looks up the encoding and
+        // checks the type of the value. It hands `end` to the native search last.
+        const methods = ["indexOf", "lastIndexOf", "includes"];
+        const throwing = name => ({
+          valueOf() {
+            throw new Error(name);
+          },
+          toString() {
+            throw new Error(name);
+          },
+        });
+        const thrown = fn => {
+          try {
+            fn();
+          } catch (e) {
+            return e.code ?? e.message;
+          }
+          return "did not throw";
+        };
+
+        it.each(methods)("%s throws for the argument Node reads first", method => {
+          // [arguments, what Node v26.3.0 throws]
+          const rows = {
+            "byteOffset before end, string value": [["a", throwing("byteOffset"), throwing("end")], "byteOffset"],
+            "byteOffset before end, number value": [[97, throwing("byteOffset"), throwing("end")], "byteOffset"],
+            "byteOffset before end, Uint8Array value": [
+              [new Uint8Array([97]), throwing("byteOffset"), throwing("end")],
+              "byteOffset",
+            ],
+            "byteOffset before end, invalid value": [[null, throwing("byteOffset"), throwing("end")], "byteOffset"],
+            "encoding before end, string value": [["a", 0, throwing("end"), throwing("encoding")], "encoding"],
+            "encoding before end, Uint8Array value": [
+              [new Uint8Array([97]), 0, throwing("end"), throwing("encoding")],
+              "encoding",
+            ],
+            "encoding before end, invalid value": [[null, 0, throwing("end"), throwing("encoding")], "encoding"],
+            "unknown encoding before end": [["a", 0, throwing("end"), "bogus"], "ERR_UNKNOWN_ENCODING"],
+            "unknown encoding in the byteOffset position before end": [
+              ["a", "bogus", throwing("end")],
+              "ERR_UNKNOWN_ENCODING",
+            ],
+            "invalid value type before end": [[null, 0, throwing("end")], "ERR_INVALID_ARG_TYPE"],
+            "byteOffset before an unknown encoding": [["a", throwing("byteOffset"), 4, "bogus"], "byteOffset"],
+            "unknown encoding in the end position": [["", 0, "bogus"], "ERR_UNKNOWN_ENCODING"],
+          };
+          const actual = {};
+          const expected = {};
+          for (const [name, [args, error]] of Object.entries(rows)) {
+            actual[name] = thrown(() => Buffer.from("abcd")[method](...args));
+            expected[name] = error;
+          }
+          expect(actual).toEqual(expected);
+        });
+
+        it.each(methods)("%s coerces byteOffset, then the encoding, then end", method => {
+          // Node aborts on an `end` that is not a number once it reaches the native
+          // search. Bun coerces it there instead.
+          const found = method === "includes" ? true : 2;
+          const notFound = method === "includes" ? false : -1;
+          let order;
+          // Records the first coercion of each argument. Node coerces byteOffset three times.
+          const logging = (name, value) => {
+            const coerce = () => {
+              if (!order.includes(name)) order.push(name);
+              return value;
+            };
+            return { valueOf: coerce, toString: coerce };
+          };
+          const search = (value, end) => {
+            order = [];
+            const result = Buffer.from("abcd")[method](
+              value,
+              logging("byteOffset", method === "lastIndexOf" ? 3 : 0),
+              logging("end", end),
+              logging("encoding", "utf8"),
+            );
+            return { order, result };
+          };
+
+          for (const value of ["c", new Uint8Array([99])]) {
+            expect(search(value, 4)).toEqual({ order: ["byteOffset", "encoding", "end"], result: found });
+            expect(search(value, 2)).toEqual({ order: ["byteOffset", "encoding", "end"], result: notFound });
+          }
+          // A number value never reads the encoding.
+          expect(search(99, 4)).toEqual({ order: ["byteOffset", "end"], result: found });
+          expect(search(99, 2)).toEqual({ order: ["byteOffset", "end"], result: notFound });
+
+          // With every other argument valid, the error from `end` is the one that throws.
+          for (const value of ["c", 99, new Uint8Array([99])]) {
+            expect(thrown(() => Buffer.from("abcd")[method](value, 0, throwing("end"), "utf8"))).toBe("end");
+          }
+        });
+
+        it("a number or Uint8Array value ignores an unknown encoding", () => {
+          const buf = Buffer.from("abcd");
+          expect(buf.indexOf(97, 0, "bogus")).toBe(0);
+          expect(buf.indexOf(Buffer.from("b"), 0, "bogus")).toBe(1);
+          expect(buf.lastIndexOf(97, 3, "bogus")).toBe(0);
+          expect(buf.lastIndexOf(Buffer.from("b"), 3, "bogus")).toBe(1);
+          expect(buf.includes(97, 0, "bogus")).toBe(true);
+          expect(buf.includes(Buffer.from("b"), 0, "bogus")).toBe(true);
+        });
+
+        it.each(methods)("%s re-reads the buffer after end is coerced", method => {
+          const notFound = method === "includes" ? false : -1;
+
+          // `end` detaches the haystack: nothing is found.
+          for (const value of [0x42, "B", Buffer.from("B")]) {
+            const ab = new ArrayBuffer(64);
+            const buf = Buffer.from(ab).fill(0x42);
+            const end = {
+              valueOf() {
+                ab.transfer(2048);
+                return 64;
+              },
+            };
+            expect(buf[method](value, undefined, end)).toBe(notFound);
+            expect(buf.byteLength).toBe(0);
+          }
+
+          // `end` shrinks the haystack: the only 0 byte is now past its end.
+          for (const value of [0, "\0", Buffer.from([0])]) {
+            const ab = new ArrayBuffer(8, { maxByteLength: 8 });
+            const buf = Buffer.from(ab).fill(0x61);
+            buf[6] = 0;
+            const end = {
+              valueOf() {
+                ab.resize(4);
+                return 8;
+              },
+            };
+            expect(buf[method](value, undefined, end)).toBe(notFound);
+            expect(buf.byteLength).toBe(4);
+          }
+
+          // `end` detaches the needle: it reads as empty and matches at min(byteOffset, end).
+          const needleAb = new ArrayBuffer(3);
+          const needle = Buffer.from(needleAb).fill(0x62);
+          const end = {
+            valueOf() {
+              needleAb.transfer(2048);
+              return 3;
+            },
+          };
+          expect(Buffer.from("abcdef")[method](needle, 5, end)).toBe(method === "includes" ? true : 3);
+          expect(needle.byteLength).toBe(0);
+        });
+      });
+
       for (let fn of [Buffer.prototype.slice, Buffer.prototype.subarray]) {
         it(`Buffer.${fn.name}`, () => {
           const buf = new Buffer("buffer");

@@ -49,6 +49,114 @@ test("aborted request body emits 'error' ECONNRESET and res 'close' before req '
   }
 });
 
+// The 'request' listener destroys the response in the tick in which the request
+// starts to be read, so the request's first _read() finds a connection that is
+// already gone. The request emits 'end' only if its whole body reaches it.
+describe("res.destroy() in the tick in which the request starts to be read", () => {
+  async function recordRequest(
+    wire: string,
+    listener: (req: IncomingMessage, res: ServerResponse) => void,
+    options: { highWaterMark?: number } = {},
+  ) {
+    const events: string[] = [];
+    const reqClosed = Promise.withResolvers<void>();
+    const resClosed = Promise.withResolvers<void>();
+    const server = createServer(options, (req, res) => {
+      req.on("aborted", () => events.push("req.aborted"));
+      req.on("error", e => events.push("req.error:" + (e as NodeJS.ErrnoException).code));
+      req.on("end", () => events.push("req.end"));
+      req.on("close", () => {
+        events.push(`req.close (complete: ${req.complete})`);
+        reqClosed.resolve();
+      });
+      res.on("close", () => {
+        events.push("res.close");
+        resClosed.resolve();
+      });
+      listener(req, res);
+    });
+    let client: ReturnType<typeof connect> | undefined;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      client = connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      client.write(wire);
+      await Promise.all([reqClosed.promise, resClosed.promise]);
+      return events;
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  }
+
+  // Only 3 of the 10 body bytes ever arrive: the request is aborted like any
+  // other truncated body, not ended as if its body were complete (and empty).
+  const truncatedPost = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc";
+  const aborted = ["req.aborted", "res.close", "req.error:ECONNRESET", "req.close (complete: false)"];
+
+  const consumers: Record<string, (req: IncomingMessage) => void> = {
+    "a 'data' listener": req => req.on("data", () => {}),
+    "resume()": req => req.resume(),
+    "a 'readable' listener": req =>
+      req.on("readable", () => {
+        while (req.read() !== null);
+      }),
+  };
+
+  test.concurrent.each(Object.keys(consumers))("truncated body read with %s: aborted, no 'end'", async consumer => {
+    const events = await recordRequest(truncatedPost, (req, res) => {
+      consumers[consumer](req);
+      res.destroy();
+    });
+    expect(events).toEqual(aborted);
+  });
+
+  test.concurrent("truncated body: for await rejects instead of finishing with an empty body", async () => {
+    const iteration = Promise.withResolvers<string>();
+    const events = await recordRequest(truncatedPost, (req, res) => {
+      res.destroy();
+      (async () => {
+        let received = 0;
+        for await (const chunk of req) received += chunk.length;
+        return `finished with ${received} bytes`;
+      })().then(iteration.resolve, e => iteration.resolve("rejected: " + e.code));
+    });
+    expect({ events, iteration: await iteration.promise }).toEqual({
+      events: aborted,
+      iteration: "rejected: ECONNRESET",
+    });
+  });
+
+  // The first chunk alone overflows the 1 KiB highWaterMark, so the connection
+  // is paused while the rest of the segment (the second chunk and the
+  // terminating chunk) is still being parsed. By the time setImmediate runs the
+  // whole body has been received, but only its first chunk has reached the
+  // request's buffer.
+  test.concurrent("complete body whose tail was received while paused: delivered in full, then 'end'", async () => {
+    const head = Buffer.alloc(2048, "x").toString();
+    const chunkedPost =
+      "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n" +
+      `${head.length.toString(16)}\r\n${head}\r\n4\r\ntail\r\n0\r\n\r\n`;
+    let received = "";
+    const events = await recordRequest(
+      chunkedPost,
+      (req, res) => {
+        setImmediate(() => {
+          req.on("data", chunk => (received += chunk));
+          res.destroy();
+        });
+      },
+      { highWaterMark: 1024 },
+    );
+    expect({ events, received }).toEqual({
+      events: ["req.end", "req.close (complete: true)", "res.close"],
+      received: head + "tail",
+    });
+  });
+});
+
 // Like Node.js's OutgoingMessage#destroy, res.destroy() does not emit 'close'
 // itself. A response that still has its socket gets 'close' from the socket
 // teardown (so an ended response still emits 'finish' first); a response

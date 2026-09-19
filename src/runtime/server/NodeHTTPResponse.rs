@@ -95,6 +95,10 @@ bitflags! {
         /// node:http handed this connection to a raw 'upgrade'/'connect'
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
         const TUNNELED                            = 1 << 8;
+        /// The connection went away while the request body was still arriving.
+        /// The teardown moves `body_read_state` to `Done` (nothing more to
+        /// read), which on its own is indistinguishable from a body that ended.
+        const REQUEST_BODY_TRUNCATED              = 1 << 9;
     }
 }
 
@@ -711,11 +715,12 @@ impl NodeHTTPResponse {
 
         // A body whose fin was buffered during a pause is still owed to the
         // IncomingMessage, which drains it through `drainRequestBody` when it
-        // next reads (possibly only after the response has ended). Keep it while
-        // JS can still get at it; `set_on_data` frees it once the reader lets go.
+        // next reads. That can be after the response has ended, and after
+        // res.destroy() closed the connection: `hasBody` still reports that
+        // body as done, so a freed tail would surface as 'end' with bytes
+        // missing. `set_on_data` frees it once the reader lets go.
         let flags = self.flags.get();
         let tail_still_readable = flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-            && !flags.contains(Flags::SOCKET_CLOSED)
             && !flags.contains(Flags::UPGRADED);
         if !tail_still_readable {
             self.buffered_request_body_data_during_pause
@@ -778,7 +783,17 @@ impl NodeHTTPResponse {
 
     pub(crate) fn get_has_body(&self, _global: &JSGlobalObject) -> JSValue {
         let mut result: i32 = 0;
-        match self.body_read_state.get() {
+        let flags = self.flags.get();
+        // IncomingMessage._read() takes the done bit for EOF and emits 'end'.
+        // A truncated body stays pending for JS: that request ends when
+        // NodeHTTPServerSocket#onClose destroys it with ECONNRESET. The LAST
+        // flag below is never set together with REQUEST_BODY_TRUNCATED.
+        let body_read_state = if flags.contains(Flags::REQUEST_BODY_TRUNCATED) {
+            BodyReadState::Pending
+        } else {
+            self.body_read_state.get()
+        };
+        match body_read_state {
             BodyReadState::None => {}
             BodyReadState::Pending => result |= 1 << 1,
             BodyReadState::Done => result |= 1 << 2,
@@ -786,11 +801,7 @@ impl NodeHTTPResponse {
         if self.buffered_request_body_data_during_pause.get().len() > 0 {
             result |= 1 << 3;
         }
-        if self
-            .flags
-            .get()
-            .contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-        {
+        if flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST) {
             result |= 1 << 2;
         }
 
@@ -1219,6 +1230,24 @@ pub enum AbortEvent {
 }
 
 impl NodeHTTPResponse {
+    /// The only place that sets SOCKET_CLOSED (the connection closed, or JS
+    /// called abort()), so a body that had not finished arriving is recorded
+    /// as truncated before the teardown that follows moves `body_read_state`
+    /// to `Done`. A fin buffered during a pause (LAST) is a complete body.
+    fn mark_socket_closed(&self) {
+        let body_truncated = self.body_read_state.get() == BodyReadState::Pending
+            && !self
+                .flags
+                .get()
+                .contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
+        self.update_flags(|f| {
+            f.insert(Flags::SOCKET_CLOSED);
+            if body_truncated {
+                f.insert(Flags::REQUEST_BODY_TRUNCATED);
+            }
+        });
+    }
+
     fn handle_abort_or_timeout<const EVENT: AbortEvent>(&self, js_value: JSValue) {
         if self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             if EVENT == AbortEvent::Abort {
@@ -1242,7 +1271,7 @@ impl NodeHTTPResponse {
         }
 
         if EVENT == AbortEvent::Abort {
-            self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
+            self.mark_socket_closed();
         }
 
         let _guard = self.ref_guard();
@@ -1298,7 +1327,7 @@ impl NodeHTTPResponse {
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]
     pub(crate) fn set_closed(&self) {
-        self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
+        self.mark_socket_closed();
     }
 
     /// Flag-only: the pending-request release happens deterministically in
@@ -1541,7 +1570,7 @@ impl NodeHTTPResponse {
         // still reachable via the socket (get_this_value() returns ZERO once
         // SOCKET_CLOSED is set).
         self.clear_pending_pinned_write(global_object, JSValue::ZERO);
-        self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
+        self.mark_socket_closed();
         if let Some(raw_response) = self.raw_response.get() {
             let state = raw_response.state();
             if state.is_http_end_called() {

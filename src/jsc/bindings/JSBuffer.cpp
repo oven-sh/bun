@@ -331,9 +331,24 @@ static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JS
     return encoded.value();
 }
 
+// Node's getEncodingOps coerces with `encoding += ''`: ToPrimitive with the default
+// hint (valueOf before toString), then ToString. Plain ToString would ask toString first.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L790-L791
+static JSString* encodingToString(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSValue encoding)
+{
+    if (encoding.isString()) [[likely]]
+        return asString(encoding);
+
+    JSValue primitive = encoding.toPrimitive(lexicalGlobalObject, NoPreference);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* str = primitive.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return str;
+}
+
 static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg, bool validateUnknown)
 {
-    auto arg_ = arg.toString(lexicalGlobalObject);
+    auto arg_ = encodingToString(scope, lexicalGlobalObject, arg);
     RETURN_IF_EXCEPTION(scope, {});
     return parseEncoding(scope, lexicalGlobalObject, arg_, arg, validateUnknown);
 }
@@ -824,26 +839,29 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlo
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
-
     EnsureStillAliveScope arg0 = callFrame->argument(0);
     EnsureStillAliveScope arg1 = callFrame->argument(1);
 
-    if (callFrame->argumentCount() > 1) {
+    if (arg0.value().isString()) [[likely]] {
+        auto* str = asString(arg0.value());
+        WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
-        if (arg1.value().isString()) {
-            std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
+        // Node returns 0 for an empty string before it reads the encoding, and
+        // treats every falsy encoding as utf8 without coercing it.
+        if (str->length() && arg1.value().toBoolean(lexicalGlobalObject)) {
+            auto* encodingString = encodingToString(scope, lexicalGlobalObject, arg1.value());
+            RETURN_IF_EXCEPTION(scope, {});
+            const auto& view = encodingString->view(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
             // this one doesn't fail
-            if (encoded) {
+            if (std::optional<BufferEncodingType> encoded = parseEnumerationFromView<BufferEncodingType>(view)) {
                 encoding = encoded.value();
             }
         }
-    }
 
-    if (arg0.value().isString()) [[likely]]
-        RELEASE_AND_RETURN(scope, jsBufferByteLengthFromStringAndEncoding(lexicalGlobalObject, asString(arg0.value()), encoding));
+        RELEASE_AND_RETURN(scope, jsBufferByteLengthFromStringAndEncoding(lexicalGlobalObject, str, encoding));
+    }
 
     if (auto* arrayBufferView = dynamicDowncast<JSC::JSArrayBufferView>(arg0.value())) {
         return JSValue::encode(jsNumber(arrayBufferView->byteLength()));
@@ -1841,7 +1859,9 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
 
     WTF::String encodingString;
     if (!encodingValue.isUndefined()) {
-        encodingString = encodingValue.toWTFString(lexicalGlobalObject);
+        auto* encodingJSString = encodingToString(scope, lexicalGlobalObject, encodingValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        encodingString = encodingJSString->value(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
         encoding = parseEnumerationFromString<BufferEncodingType>(encodingString);
     } else {

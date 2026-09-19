@@ -5143,6 +5143,139 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
   },
 );
 
+// Node's getEncodingOps coerces the encoding with `encoding += ''`: ToPrimitive with the default
+// hint (valueOf before toString), then ToString. Buffer.byteLength, buf.toString, buf.write and
+// the indexOf family all resolve their encoding through it. buf.fill and Buffer.alloc do not.
+describe("an encoding that is not a string", () => {
+  // A Date is the one built-in whose default hint means "string".
+  class HexDate extends Date {
+    toString() {
+      return "hex";
+    }
+    valueOf() {
+      return "latin1";
+    }
+  }
+
+  // Each value is "hex" after `encoding += ''`. "latin1" is what the wrong hint would give.
+  const hexEncodings = [
+    ["an array", ["hex"]],
+    ["a String object", new String("hex")],
+    ["toString()", { toString: () => "hex" }],
+    ["valueOf()", { valueOf: () => "hex" }],
+    ["valueOf() before toString()", { valueOf: () => "hex", toString: () => "latin1" }],
+    ["toString() when valueOf() returns an object", { valueOf: () => ({}), toString: () => "hex" }],
+    [
+      "Symbol.toPrimitive with the default hint",
+      { [Symbol.toPrimitive]: hint => (hint === "default" ? "hex" : "latin1") },
+    ],
+    ["a Date, which prefers toString()", new HexDate(0)],
+  ];
+
+  it.each(hexEncodings)("is coerced like Node's getEncodingOps: %s", (_, encoding) => {
+    const written = Buffer.alloc(4);
+    expect({
+      byteLength: Buffer.byteLength("abcd", encoding),
+      toString: Buffer.from("abc").toString(encoding),
+      toStringRange: Buffer.from("abc").toString(encoding, 1, 2),
+      write: [written.write("6162", 0, 4, encoding), written.toString("hex")],
+      indexOf: Buffer.from("abcab").indexOf("6162", 0, undefined, encoding),
+      lastIndexOf: Buffer.from("abcab").lastIndexOf("6162", undefined, undefined, encoding),
+      includes: Buffer.from("abc").includes("6162", 0, undefined, encoding),
+    }).toEqual({
+      byteLength: 2,
+      toString: "616263",
+      toStringRange: "62",
+      write: [2, "61620000"],
+      indexOf: 0,
+      lastIndexOf: 3,
+      includes: true,
+    });
+  });
+
+  it("is coerced for a Uint8Array needle too", () => {
+    // A ucs2 search only matches at an even offset, so the needle at offset 1 is not found.
+    const encoding = { valueOf: () => "ucs2", toString: () => "utf8" };
+    expect(Buffer.from("abcdef").indexOf(Buffer.from("bc"), 0, undefined, encoding)).toBe(-1);
+    expect(Buffer.from("abcdef").indexOf(Buffer.from("cd"), 0, undefined, encoding)).toBe(2);
+  });
+
+  it("is coerced once per call", () => {
+    let valueOfCalls = 0;
+    const encoding = {
+      valueOf() {
+        valueOfCalls++;
+        return "hex";
+      },
+    };
+    const callsAfter = fn => (fn(), valueOfCalls);
+    expect([
+      callsAfter(() => Buffer.byteLength("abcd", encoding)),
+      callsAfter(() => Buffer.from("abc").toString(encoding)),
+      callsAfter(() => Buffer.alloc(4).write("6162", 0, 4, encoding)),
+      callsAfter(() => Buffer.from("abc").indexOf("6162", 0, undefined, encoding)),
+      callsAfter(() => Buffer.from("abc").lastIndexOf("6162", undefined, undefined, encoding)),
+      callsAfter(() => Buffer.from("abc").includes("6162", 0, undefined, encoding)),
+    ]).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+
+  it("propagates what the coercion throws", () => {
+    const toStringThrows = {
+      toString() {
+        throw new Error("from toString");
+      },
+    };
+    const valueOfThrows = {
+      valueOf() {
+        throw new Error("from valueOf");
+      },
+    };
+    // The last two are JavaScriptCore's own messages. ERR_UNKNOWN_ENCODING is a TypeError too,
+    // so the class alone does not show that the coercion threw.
+    for (const [encoding, expected] of [
+      [toStringThrows, "from toString"],
+      [valueOfThrows, "from valueOf"],
+      [Symbol("hex"), "Cannot convert a symbol to a string"],
+      [Object.create(null), "No default value"],
+    ]) {
+      expect(() => Buffer.byteLength("abcd", encoding)).toThrow(expected);
+      expect(() => Buffer.from("abc").toString(encoding)).toThrow(expected);
+      expect(() => Buffer.alloc(4).write("6162", 0, 4, encoding)).toThrow(expected);
+      expect(() => Buffer.from("abc").indexOf("6162", 0, undefined, encoding)).toThrow(expected);
+      expect(() => Buffer.from("abc").indexOf(Buffer.from("ab"), 0, undefined, encoding)).toThrow(expected);
+    }
+  });
+
+  it("Buffer.byteLength does not read the encoding of an empty string or of a buffer", () => {
+    const encoding = {
+      toString() {
+        throw new Error("the encoding must not be coerced");
+      },
+    };
+    expect(Buffer.byteLength("", encoding)).toBe(0);
+    expect(Buffer.byteLength("", Symbol("hex"))).toBe(0);
+    expect(Buffer.byteLength(Buffer.alloc(3), encoding)).toBe(3);
+    expect(Buffer.byteLength(new ArrayBuffer(3), encoding)).toBe(3);
+    expect(() => Buffer.byteLength(123, encoding)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  it("Buffer.byteLength uses utf8 for a falsy encoding and for an unknown name", () => {
+    const utf8 = [undefined, null, false, 0, NaN, 0n, "", true, 1, 1n, {}, [], ["bogus"], new Date(0), () => {}];
+    expect(utf8.map(encoding => Buffer.byteLength("h\u00e9", encoding))).toEqual(utf8.map(() => 3));
+    expect(Buffer.byteLength("h\u00e9", ["latin1"])).toBe(2);
+    expect(Buffer.byteLength("h\u00e9", ["ucs2"])).toBe(4);
+  });
+
+  it("throws ERR_UNKNOWN_ENCODING for an unknown name outside Buffer.byteLength", () => {
+    const unknownEncoding = expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" });
+    for (const encoding of [{}, ["bogus"], { valueOf: () => "bogus", toString: () => "hex" }, new Date(0), 1]) {
+      expect(() => Buffer.from("abc").toString(encoding)).toThrow(unknownEncoding);
+      expect(() => Buffer.alloc(4).write("6162", 0, 4, encoding)).toThrow(unknownEncoding);
+      expect(() => Buffer.from("abc").indexOf("6162", 0, undefined, encoding)).toThrow(unknownEncoding);
+    }
+  });
+});
+
 // The fixed-width read* / write* accessors are C++ host functions that JSC's DFG/FTL compile into
 // bounds-checked loads / stores (JSBuffer.cpp + JavaScriptCore's BufferAccessorRegistry). They must
 // keep agreeing with a DataView reference after tier-up, and everything the JIT does not speculate

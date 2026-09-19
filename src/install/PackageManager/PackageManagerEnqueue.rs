@@ -826,8 +826,6 @@ fn enqueue_manifest_network_task(
     needs_extended_manifest: bool,
 ) -> crate::Result<()> {
     let this_ptr: *mut PackageManager = this;
-    // `get_network_task` touches only the preallocated pool, not
-    // `string_bytes`, so `name` (an owned copy at every caller) stays valid.
     let network_task = this.get_network_task();
     // SAFETY: `network_task` is the unique handle to a freshly-vended pool
     // slot. `write_init` resets every defaulted field (callback is

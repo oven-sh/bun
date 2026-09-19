@@ -33,6 +33,7 @@ const {
   serverSymbol,
   kHandle,
   kHandoffResponse,
+  kOnHandoffActive,
   kRealListen,
   tlsSymbol,
   optionsSymbol,
@@ -736,6 +737,26 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         socketParser[kParserOnTimeout] = serverParserShimOnTimeout;
 
         const isPipelined = !!isPipelinedDispatch;
+        socket[kEnableStreaming](false);
+
+        // The builtin ServerResponse consumes its options synchronously, so a
+        // reusable scratch object avoids one allocation per request. User
+        // subclasses (options.ServerResponse) might retain options, so they
+        // keep getting a fresh object.
+        let http_res;
+        if (ResponseClass === ServerResponse) {
+          scratchResponseOptions[kHandle] = handle;
+          scratchResponseOptions.highWaterMark = socket.writableHighWaterMark;
+          scratchResponseOptions[kRejectNonStandardBodyWrites] = server.rejectNonStandardBodyWrites;
+          http_res = new ResponseClass(http_req, scratchResponseOptions);
+          scratchResponseOptions[kHandle] = undefined;
+        } else {
+          http_res = new ResponseClass(http_req, {
+            [kHandle]: handle,
+            highWaterMark: socket.writableHighWaterMark,
+            [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
+          });
+        }
         // Pipelined or not, like Node.js: the native parser is in tunnel mode from this request on.
         if (method === "CONNECT") {
           // Handle CONNECT method for HTTP tunneling/proxy
@@ -759,6 +780,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.upgrade = true;
             // Node frees the parser before handing the raw socket to 'connect'.
             releaseServerParserShim(socket, http_req);
+            // Behind responses that are still in flight, the listener gets the socket now (like
+            // Node) but what it writes waits for its turn in the pipeline.
+            if (isPipelined) queuePipelinedHandoff(server, socket, http_res, !!isAncientHTTP);
             try {
               server.emit("connect", http_req, socket, head);
             } catch (err) {
@@ -778,26 +802,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socketHandle.close();
           }
           return;
-        }
-        socket[kEnableStreaming](false);
-
-        // The builtin ServerResponse consumes its options synchronously, so a
-        // reusable scratch object avoids one allocation per request. User
-        // subclasses (options.ServerResponse) might retain options, so they
-        // keep getting a fresh object.
-        let http_res;
-        if (ResponseClass === ServerResponse) {
-          scratchResponseOptions[kHandle] = handle;
-          scratchResponseOptions.highWaterMark = socket.writableHighWaterMark;
-          scratchResponseOptions[kRejectNonStandardBodyWrites] = server.rejectNonStandardBodyWrites;
-          http_res = new ResponseClass(http_req, scratchResponseOptions);
-          scratchResponseOptions[kHandle] = undefined;
-        } else {
-          http_res = new ResponseClass(http_req, {
-            [kHandle]: handle,
-            highWaterMark: socket.writableHighWaterMark,
-            [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
-          });
         }
         http_res._keepAliveTimeout = server.keepAliveTimeout;
         // Only stamp the symbol when the server actually set `uniqueHeaders`:
@@ -883,13 +887,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // token; the server then consults shouldUpgradeCallback (default: an
         // 'upgrade' listener is installed) and otherwise dispatches the
         // request normally.
-        // Not when pipelined: the builtin ws answers through the socket's current response, the one in flight.
         let is_upgrade = false;
-        if (
-          !isPipelined &&
-          (dispatchBits & DISPATCH_HAS_UPGRADE) !== 0 &&
-          (dispatchBits & DISPATCH_CONN_UPGRADE) !== 0
-        ) {
+        if ((dispatchBits & DISPATCH_HAS_UPGRADE) !== 0 && (dispatchBits & DISPATCH_CONN_UPGRADE) !== 0) {
           is_upgrade = !!server.shouldUpgradeCallback(http_req);
         }
         // Like Node.js's parserOnIncoming: req.upgrade is true inside the
@@ -901,14 +900,20 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // Node.js, this response is queued (res.socket === null) and its
           // writes are buffered until the in-flight response finishes and the
           // pipeline assigns it the socket (advanceResponsePipeline).
-          queuePipelinedResponse(socket, http_res, !!isAncientHTTP);
-          // A pipelined dispatch can arrive after the previous response finished and detached
-          // (bytes still flushing keep it pending), leaving nothing in flight to advance the
-          // queue. Kick the pipeline once this dispatch settles.
-          if (socket._httpMessage == null && !socket[kPipelineKickScheduled]) {
-            socket[kPipelineKickScheduled] = true;
-            process.nextTick(advancePipelineIfIdleNT, server, socket);
+          if (is_upgrade) {
+            // The connection leaves HTTP here: nothing after this request head is
+            // parsed as a request. The listener gets the socket now, like Node,
+            // but what it writes waits for its turn in the pipeline, so the 101
+            // follows the responses ahead of it on the wire.
+            socketHandle.upgradeToTunnel(hasBody, handle);
+            socket[kHandoffResponse] = handle;
+            socket[kEnableStreaming](true);
+            queuePipelinedHandoff(server, socket, http_res, !!isAncientHTTP);
+            emitUpgradeHandoff(server, socket, http_req, !hasBody && connectHead ? connectHead : kEmptyBuffer, hasBody);
+            return;
           }
+          queuePipelinedResponse(socket, http_res, !!isAncientHTTP);
+          kickPipelineIfIdle(server, socket);
           // Node's parserOnIncoming stops reading the connection once the bytes
           // queued on responses that do not own the socket yet reach the
           // socket's high water mark, so pipelined requests cannot flood it.
@@ -976,28 +981,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           socketHandle.upgradeToTunnel(hasBody, handle);
           socket[kHandoffResponse] = handle;
           socket[kEnableStreaming](true);
-          detachSocketListenersForHandoff(socket);
-          // Node frees the parser before emitting 'upgrade' (socket.parser === null there).
-          releaseServerParserShim(socket, http_req);
-          if (hasBody) {
-            socket[kUpgradeIncoming] = http_req;
-            http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
-          }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
-          let upgradeHandled;
-          try {
-            upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
-          } catch (err) {
-            // A throwing 'upgrade' listener surfaces as an uncaught
-            // exception, like Node.js (the emit happens outside any JS try
-            // frame there).
-            process.nextTick(rethrowUncaught, err);
-            upgradeHandled = true;
-          }
-          if (!upgradeHandled) {
-            // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
-            // listener is installed: Node.js destroys the socket.
-            socket.destroy();
+          if (!emitUpgradeHandoff(server, socket, http_req, upgradeHead, hasBody)) {
             return;
           }
           // Like CONNECT: the connection is detached from the HTTP request
@@ -1343,6 +1328,37 @@ function detachSocketListenersForHandoff(socket) {
 function resolveHandoffPromise(promise) {
   $resolvePromise(promise, undefined);
 }
+
+// Hand the raw socket to the 'upgrade' listeners, like Node.js's
+// onParserExecuteCommon. Returns false when the socket was destroyed because
+// shouldUpgradeCallback accepted the upgrade but no listener is installed.
+function emitUpgradeHandoff(server, socket, req, upgradeHead, hasBody) {
+  detachSocketListenersForHandoff(socket);
+  // Node frees the parser before emitting 'upgrade' (socket.parser === null there).
+  releaseServerParserShim(socket, req);
+  // A read of a request ahead may have set the socket flowing. Flowing with no
+  // reader drops pushed bytes, so stop the flow (Node: onParserExecuteCommon).
+  if (socket.readableFlowing === true) socket.readableFlowing = null;
+  if (hasBody && !req.complete) {
+    socket[kUpgradeIncoming] = req;
+    req.once("end", clearUpgradeIncoming.bind(undefined, socket));
+  }
+  let upgradeHandled;
+  try {
+    upgradeHandled = server.emit("upgrade", req, socket, upgradeHead);
+  } catch (err) {
+    // A throwing 'upgrade' listener surfaces as an uncaught
+    // exception, like Node.js (the emit happens outside any JS try
+    // frame there).
+    process.nextTick(rethrowUncaught, err);
+    upgradeHandled = true;
+  }
+  if (!upgradeHandled) {
+    socket.destroy();
+    return false;
+  }
+  return true;
+}
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
 // Scratch options object for the builtin ServerResponse (see the dispatcher).
@@ -1369,6 +1385,9 @@ const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
 // responses. Reads are paused while it is at or above the high water mark.
 const kOutgoingData = Symbol("kOutgoingData");
 const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
+// On a server socket handed to 'connect'/'upgrade' behind responses still in flight:
+// { write, final, ready } parked until the pipeline reaches the hand-off (undefined otherwise).
+const kPendingHandoff = Symbol("kPendingHandoff");
 const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
 // Set when the dispatcher already detached a synchronously-finished response,
 // so the 'finish' listener does not detach/advance the pipeline a second time.
@@ -1498,6 +1517,7 @@ function getNodeHTTPServerSocket() {
     [kHandle];
     [kUpgradeIncoming] = undefined;
     [kHandoffResponse] = undefined;
+    [kPendingHandoff] = undefined;
     server: Server;
     _httpMessage;
     _secureEstablished = false;
@@ -1753,6 +1773,11 @@ function getNodeHTTPServerSocket() {
     }
 
     _final(callback) {
+      const pending = this[kPendingHandoff];
+      if (pending !== undefined) {
+        pending.final = callback;
+        return;
+      }
       const handle = this[kHandle];
       if (!handle) {
         callback();
@@ -1760,6 +1785,15 @@ function getNodeHTTPServerSocket() {
       }
       handle.end();
       callback();
+    }
+
+    [kOnHandoffActive](callback) {
+      const pending = this[kPendingHandoff];
+      if (pending !== undefined) {
+        pending.ready.push(callback);
+      } else {
+        callback();
+      }
     }
 
     get localAddress() {
@@ -1942,6 +1976,12 @@ function getNodeHTTPServerSocket() {
     }
 
     _write(_chunk, _encoding, _callback) {
+      const pending = this[kPendingHandoff];
+      if (pending !== undefined) {
+        // Writable issues one _write at a time: holding its callback holds everything after it.
+        pending.write = { chunk: _chunk, encoding: _encoding, callback: _callback };
+        return;
+      }
       const handle = this[kHandle];
       let err;
       this._unrefTimer();
@@ -1978,7 +2018,9 @@ function getNodeHTTPServerSocket() {
     }
 
     get [kInternalSocketData]() {
-      return this[kHandle]?.response;
+      // After a 'connect'/'upgrade' hand-off the response of that request, which behind a
+      // pipeline is not the socket's current response yet.
+      return this[kHandoffResponse] ?? this[kHandle]?.response;
     }
   } as unknown as typeof import("node:net").Socket;
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
@@ -2532,8 +2574,44 @@ function queuePipelinedResponse(socket, res, isAncient) {
     ended: false,
     isAncient,
     socket,
+    // A CONNECT/Upgrade hand-off: its turn in the pipeline releases what the
+    // listener wrote to the socket instead of replaying a response.
+    handoff: false,
   };
   (socket[kPipelinedResponses] ??= []).push(res);
+}
+
+// A pipelined dispatch can arrive after the previous response finished and detached
+// (bytes still flushing keep it pending), leaving nothing in flight to advance the
+// queue. Kick the pipeline once this dispatch settles.
+function kickPipelineIfIdle(server, socket) {
+  if (socket._httpMessage == null && !socket[kPipelineKickScheduled]) {
+    socket[kPipelineKickScheduled] = true;
+    process.nextTick(advancePipelineIfIdleNT, server, socket);
+  }
+}
+
+// A CONNECT/Upgrade behind responses still in flight. The listener gets the socket at
+// once, like Node, but the socket parks what it writes (_write/_final) and what must
+// run once it is the connection's current exchange (kOnHandoffActive) until the
+// pipeline reaches this entry, so the responses ahead keep their place on the wire.
+function queuePipelinedHandoff(server, socket, res, isAncient) {
+  queuePipelinedResponse(socket, res, isAncient);
+  res[kPipelinedQueuedState].handoff = true;
+  socket[kPendingHandoff] = { write: undefined, final: undefined, ready: [] };
+  kickPipelineIfIdle(server, socket);
+}
+
+function activatePipelinedHandoff(socket) {
+  const pending = socket[kPendingHandoff];
+  socket[kPendingHandoff] = undefined;
+  if (pending === undefined) return;
+  const write = pending.write;
+  if (write !== undefined) socket._write(write.chunk, write.encoding, write.callback);
+  const final = pending.final;
+  if (final !== undefined) socket._final(final);
+  const ready = pending.ready;
+  for (let i = 0; i < ready.length; i++) ready[i]();
 }
 
 // When the connection dies with pipelined responses still queued behind the
@@ -2547,6 +2625,8 @@ function abortQueuedPipelinedResponses(socket) {
     socket[kPipelinedResponses] = undefined;
     for (let i = 0; i < pipelinedLength; i++) {
       const queuedRes = pipelined[i];
+      // The request was handed to 'connect'/'upgrade': Node's socketOnClose is gone there.
+      if (queuedRes[kPipelinedQueuedState]?.handoff) continue;
       const queuedReq = queuedRes.req;
       if (queuedReq && !queuedReq.destroyed) {
         queuedReq[kHandle] = undefined;
@@ -2571,7 +2651,8 @@ function advanceResponsePipeline(server, socket) {
   // the pipeline is mutually exclusive with closing the socket - the queued
   // responses are aborted by the socket close path instead of being replayed
   // onto a half-closed connection.
-  if (!socket || socket.writableEnded || socket.destroyed) {
+  // (A socket.end() from a 'connect'/'upgrade' listener is parked, not ended yet.)
+  if (!socket || socket.destroyed || (socket.writableEnded && socket[kPendingHandoff] === undefined)) {
     return;
   }
   const queue = socket[kPipelinedResponses];
@@ -2608,6 +2689,13 @@ function advanceResponsePipeline(server, socket) {
       if (!res.destroyed) {
         res.destroy();
       }
+      return;
+    }
+
+    if (queued.handoff) {
+      // The responses ahead have finished and this request's native response
+      // is now the socket's current one: the tunnel owns the connection.
+      activatePipelinedHandoff(socket);
       return;
     }
 

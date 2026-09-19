@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tls as options } from "harness";
 import http from "http";
 import https from "https";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import tls from "tls";
 import { WebSocketServer, type WebSocket as WsWebSocket } from "ws";
 
@@ -161,4 +161,79 @@ describe.concurrent("request handlers run to completion before the callbacks the
     await closed;
     expect(order).toEqual(["rest of handler", "nextTick", "microtask"]);
   });
+});
+
+test.concurrent("a WebSocket upgrade pipelined behind a pending response completes the handshake", async () => {
+  // The 'upgrade' listener gets the socket once the response ahead has finished, so the
+  // WebSocketServer answers through the upgrade request's own response and not through the
+  // response that was still in flight.
+  const events: string[] = [];
+  let first: http.ServerResponse | undefined;
+  const { promise: finished, resolve: onFinished, reject: onFailure } = Promise.withResolvers<void>();
+  await using server = http.createServer((req, res) => {
+    events.push(`request ${req.url}`);
+    if (req.headers.upgrade !== undefined) {
+      onFailure(new Error(`dispatched as a request: ${events}`));
+      return;
+    }
+    first = res;
+    res.write("first");
+  });
+  server.on("clientError", onFailure);
+  const wsServer = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    events.push(`upgrade ${req.url} upgrade=${req.upgrade}`);
+    wsServer.handleUpgrade(req, socket, head, ws => {
+      events.push("connection");
+      ws.on("message", data => {
+        events.push(`message ${data}`);
+        ws.close();
+      });
+      ws.on("close", onFinished);
+    });
+    // The handshake completes only once the response ahead has finished.
+    events.push("first end()");
+    first!.end();
+  });
+  server.shouldUpgradeCallback = req => {
+    events.push(`shouldUpgradeCallback ${req.url}`);
+    return true;
+  };
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  const port = (server.address() as AddressInfo).port;
+  const client = net.connect(port, "127.0.0.1");
+  try {
+    let received = Buffer.alloc(0);
+    client.on("data", chunk => {
+      received = Buffer.concat([received, chunk]);
+      if (received.includes("\r\n\r\n", received.indexOf("HTTP/1.1 101"))) {
+        // A masked text frame "hi" (RFC 6455 5.7), sent once the handshake is complete.
+        client.write(Buffer.from([0x81, 0x82, 0x01, 0x02, 0x03, 0x04, 0x68 ^ 0x01, 0x69 ^ 0x02]));
+        client.removeAllListeners("data");
+        client.resume();
+      }
+    });
+    client.on("error", onFailure);
+    client.write(
+      `GET /first HTTP/1.1\r\nHost: localhost:${port}\r\n\r\n` +
+        `GET /ws HTTP/1.1\r\nHost: localhost:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`,
+    );
+    await finished;
+    expect(events).toEqual([
+      "request /first",
+      "shouldUpgradeCallback /ws",
+      "upgrade /ws upgrade=true",
+      "first end()",
+      "connection",
+      "message hi",
+    ]);
+    const text = received.toString("latin1");
+    // The response ahead is complete before the 101 starts.
+    expect(text.indexOf("5\r\nfirst\r\n0\r\n\r\n")).toBeGreaterThan(0);
+    expect(text.indexOf("HTTP/1.1 101")).toBeGreaterThan(text.indexOf("5\r\nfirst\r\n0\r\n\r\n"));
+  } finally {
+    client.destroy();
+    wsServer.close();
+  }
 });

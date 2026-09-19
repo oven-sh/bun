@@ -937,7 +937,7 @@ function socketOnError() {
   this.destroy();
 }
 
-function abortHandshake(socket, code, message, headers) {
+function abortHandshake(socket, code, message, headers, req) {
   const { STATUS_CODES } = lazyHttp();
   message = message || STATUS_CODES[code];
   headers = {
@@ -948,7 +948,9 @@ function abortHandshake(socket, code, message, headers) {
   };
 
   // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
-  const response = socket._httpMessage;
+  let response = socket._httpMessage;
+  // After an 'upgrade' hand-off behind a pipeline, that response belongs to a request ahead.
+  if (response && response.req && response.req !== req) response = undefined;
   if (response) {
     response.writeHead(code, headers);
     response.write(message);
@@ -978,7 +980,7 @@ function abortHandshakeOrEmitwsClientError(server, req, socket, code, message, h
 
     server.emit("wsClientError", err, socket, req);
   } else {
-    abortHandshake(socket, code, message, headers);
+    abortHandshake(socket, code, message, headers, req);
   }
 }
 
@@ -1544,7 +1546,7 @@ class WebSocketServer extends EventEmitter {
       );
     }
 
-    if (this._state > RUNNING) return abortHandshake(socket, 503);
+    if (this._state > RUNNING) return abortHandshake(socket, 503, undefined, undefined, request);
 
     const server = socket.server[kBunInternals];
 
@@ -1562,26 +1564,37 @@ class WebSocketServer extends EventEmitter {
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);
 
-    if (
-      server.upgrade(req, {
-        data: ws[kBunInternals],
-        headers: protocol ? { "sec-websocket-protocol": protocol } : undefined,
-      })
-    ) {
-      const clients = this.clients;
-      if (clients) {
-        clients.add(ws);
-        ws.on("close", () => {
-          clients.delete(ws);
+    const upgrade = () => {
+      if (socket.destroyed) return;
+      if (
+        server.upgrade(req, {
+          data: ws[kBunInternals],
+          headers: protocol ? { "sec-websocket-protocol": protocol } : undefined,
+        })
+      ) {
+        const clients = this.clients;
+        if (clients) {
+          clients.add(ws);
+          ws.on("close", () => {
+            clients.delete(ws);
 
-          if (this._shouldEmitClose && !clients.size) {
-            process.nextTick(wsEmitClose, this);
-          }
-        });
+            if (this._shouldEmitClose && !clients.size) {
+              process.nextTick(wsEmitClose, this);
+            }
+          });
+        }
+        cb(ws, request);
+      } else {
+        abortHandshake(socket, 500, undefined, undefined, request);
       }
-      cb(ws, request);
+    };
+    // node:http hands a socket to 'upgrade' while earlier responses on the connection can still
+    // be in flight. The native upgrade takes the connection over, so it waits for them.
+    const onHandoffActive = socket[require("internal/http").kOnHandoffActive];
+    if (onHandoffActive !== undefined) {
+      onHandoffActive.$call(socket, upgrade);
     } else {
-      abortHandshake(socket, 500);
+      upgrade();
     }
   }
   /**
@@ -1631,7 +1644,7 @@ class WebSocketServer extends EventEmitter {
     }
 
     if (!this.shouldHandle(req)) {
-      abortHandshake(socket, 400);
+      abortHandshake(socket, 400, undefined, undefined, req);
       return;
     }
 
@@ -1665,7 +1678,7 @@ class WebSocketServer extends EventEmitter {
       if (this.options.verifyClient.length === 2) {
         this.options.verifyClient(info, (verified, code, message, headers) => {
           if (!verified) {
-            return abortHandshake(socket, code || 401, message, headers);
+            return abortHandshake(socket, code || 401, message, headers, req);
           }
 
           this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);
@@ -1673,7 +1686,7 @@ class WebSocketServer extends EventEmitter {
         return;
       }
 
-      if (!this.options.verifyClient(info)) return abortHandshake(socket, 401);
+      if (!this.options.verifyClient(info)) return abortHandshake(socket, 401, undefined, undefined, req);
     }
 
     this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);

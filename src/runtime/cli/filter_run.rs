@@ -344,9 +344,7 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
-    /// Writes one child line with the `<package> <script>: ` prefix. Under
-    /// GitHub Actions an annotation command goes out bare, because the runner
-    /// only parses it at column 0.
+    /// Writes one child line with the `<package> <script>: ` prefix.
     fn write_prefixed_line(
         draw_buf: &mut Vec<u8>,
         handle: &ProcessHandle<'a>,
@@ -968,9 +966,7 @@ pub(crate) fn run_scripts_with_filter(
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,
-        // `FORCE_COLOR=1` on a pipe selects the redraw renderer. A GitHub
-        // Actions log is a pipe, and the runner only sees an annotation that
-        // is a plain line, so the line renderer is used there.
+        // The redraw renderer never writes a line at column 0.
         pretty_output: !Output::is_github_action() && {
             #[cfg(windows)]
             {

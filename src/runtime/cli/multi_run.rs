@@ -391,8 +391,6 @@ impl<'a> State<'a> {
         line: &[u8],
         writer: &mut OutputWriter,
     ) -> Result<(), Error> {
-        // The GitHub Actions runner only parses an annotation command at
-        // column 0, so it gets neither the label nor the color escape.
         if !(Output::is_github_action() && handle.github_relay.is_bare_line(line)) {
             self.write_prefix(handle, writer)?;
         }

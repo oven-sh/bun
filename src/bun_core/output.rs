@@ -867,19 +867,12 @@ pub fn is_github_action() -> bool {
     false
 }
 
-/// Decides which lines of one child process a relay that prefixes output
-/// (`bun run --filter`, `--parallel`) must write bare under GitHub Actions.
-///
-/// The runner trims leading whitespace and then parses a workflow command
-/// only when the line starts with `::`. Only the stateless one-line commands
-/// go bare: `::error`, `::warning`, `::notice`, `::debug` and `::add-mask`.
-/// `::group::` and `::endgroup::` stay prefixed because concurrent children
-/// interleave and bare markers would be unpaired.
-///
-/// A child that prints untrusted text wraps it in `::stop-commands::<token>`
-/// and `::<token>::`. The runner never sees those markers (they are
-/// prefixed), so this tracks them per child and keeps every line in between
-/// prefixed.
+/// Per-child filter for a relay that prefixes output (`bun run --filter`,
+/// `--parallel`) under GitHub Actions. The runner parses a workflow command
+/// only at column 0, so the stateless commands go out bare. `::group::` and
+/// `::endgroup::` stay prefixed: concurrent children would leave them
+/// unpaired. Lines between `::stop-commands::<token>` and `::<token>::` stay
+/// prefixed too.
 #[derive(Default)]
 pub struct GithubCommandRelay {
     stop_token: std::cell::Cell<Option<Box<[u8]>>>,
@@ -894,8 +887,7 @@ impl GithubCommandRelay {
         b"::add-mask",
     ];
 
-    /// Whether `line` (with or without its trailing newline) must go out at
-    /// column 0.
+    /// Whether `line` must go out at column 0.
     pub fn is_bare_line(&self, line: &[u8]) -> bool {
         let line = line.trim_ascii();
         if let Some(token) = self.stop_token.take() {

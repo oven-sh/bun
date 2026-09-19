@@ -4680,6 +4680,78 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
   });
 });
 
+// Node checks the value in the native writer (THROW_AND_RETURN_IF_NOT_STRING in
+// src/node_buffer.cc): one static message, nothing read from the value, and the
+// check runs after write() resolves the encoding.
+describe("write() with a non-string value", () => {
+  const NOT_A_STRING = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: "argument must be a string",
+  });
+  const UNKNOWN_ENCODING = expect.objectContaining({
+    code: "ERR_UNKNOWN_ENCODING",
+    message: "Unknown encoding: bogus",
+  });
+  const values = [123, undefined, null, new String("ab"), Symbol("s"), { toString: () => "ab" }];
+
+  it("throws ERR_INVALID_ARG_TYPE with Node's message in every form", () => {
+    for (const value of values) {
+      const buf = Buffer.alloc(8, 0xcc);
+      expect(() => buf.write(value)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, "utf8")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, "hex")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, 4)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, 4, "hex")).toThrow(NOT_A_STRING);
+      expect(buf.toString("hex")).toBe("cccccccccccccccc");
+    }
+  });
+
+  it("resolves the encoding before it checks the value", () => {
+    const buf = Buffer.alloc(8);
+    expect(() => buf.write(123, "bogus")).toThrow(UNKNOWN_ENCODING);
+    expect(() => buf.write(123, 0, "bogus")).toThrow(UNKNOWN_ENCODING);
+    expect(() => buf.write(123, 0, 4, "bogus")).toThrow(UNKNOWN_ENCODING);
+  });
+
+  it("checks the offset and length before the value", () => {
+    const OUT_OF_RANGE = expect.objectContaining({ code: "ERR_OUT_OF_RANGE" });
+    const buf = Buffer.alloc(8);
+    expect(() => buf.write(123, 9)).toThrow(OUT_OF_RANGE);
+    expect(() => buf.write(123, 0, 9)).toThrow(OUT_OF_RANGE);
+    expect(() => buf.write(123, 9, "hex")).toThrow(OUT_OF_RANGE);
+    expect(() => buf.write(123, 8, "hex")).toThrow(NOT_A_STRING);
+  });
+
+  it("reads nothing from the rejected value", () => {
+    const ran = [];
+    const proxy = new Proxy(
+      {},
+      {
+        get(_, key) {
+          ran.push(`get ${String(key)}`);
+        },
+      },
+    );
+    class Named {
+      static get name() {
+        ran.push("constructor.name getter");
+        return "Named";
+      }
+    }
+    const buf = Buffer.alloc(8);
+    for (const value of [proxy, new Named()]) {
+      expect(() => buf.write(value)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, "hex")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0)).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, "hex")).toThrow(NOT_A_STRING);
+      expect(() => buf.write(value, 0, 4, "hex")).toThrow(NOT_A_STRING);
+    }
+    expect(ran).toEqual([]);
+  });
+});
+
 // Node reads a detached view's length (0) like any other buffer's: it sorts before any
 // non-empty buffer, equals any other empty one, swapNN() has nothing to swap, and as a fill
 // value it is rejected the way an empty one is. The expected values below are Node v26's.

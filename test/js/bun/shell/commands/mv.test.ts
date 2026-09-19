@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -256,6 +256,73 @@ describe("mv", async () => {
         }),
       );
     }
+
+    function canAccess(path: string, mode: number) {
+      try {
+        accessSync(path, mode);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    // The same rule without root, so that a CI lane runs it. A set-id file that
+    // another user owns needs root to create, so this takes one that the system
+    // already has. `mv` copies it first, then fails to remove it, which leaves
+    // the system file in place. Linux only: macOS protects /usr/bin, so the
+    // rename can fail before it reports EXDEV.
+    const foreignSetId = (() => {
+      if (!isLinux || isRoot) return undefined;
+      const mover = process.getuid!();
+      for (const path of ["/usr/bin/passwd", "/usr/bin/sudo", "/bin/su", "/usr/bin/chsh", "/usr/bin/gpasswd"]) {
+        let uid: number;
+        let mode: number;
+        try {
+          ({ uid, mode } = statSync(path));
+        } catch {
+          continue;
+        }
+        mode &= 0o7777;
+        // `fchown` fails only for an owner that this user cannot set.
+        if ((mode & (0o4000 | 0o2000)) === 0 || uid === mover) continue;
+        if (!canAccess(path, constants.R_OK)) continue;
+        // A writable parent would let `mv` delete the system file.
+        if (canAccess(join(path, ".."), constants.W_OK)) continue;
+        const { dev } = statSync(path);
+        for (const root of [other, "/dev/shm", tmp]) {
+          if (root === undefined) continue;
+          try {
+            if (statSync(root).dev === dev) continue;
+          } catch {
+            continue;
+          }
+          if (canAccess(root, constants.W_OK | constants.X_OK)) return { path, uid, mode, root };
+        }
+      }
+      return undefined;
+    })();
+
+    test.skipIf(!foreignSetId)("set-uid is dropped across devices for a file that another user owns", async () => {
+      const { path, uid, mode, root } = foreignSetId!;
+      const dst = join(root, `bun-mv-xdev-${process.pid}-foreign`);
+      rmSync(dst, { recursive: true, force: true });
+      mkdirSync(dst, { recursive: true });
+      try {
+        const r = await $`mv ${path} ${join(dst, "copy")}`.quiet();
+        // The copy comes first and the removal last, so a removal that fails
+        // with EACCES still leaves the copy.
+        expect(r.stderr.toString()).toBe(`mv: ${path}: Permission denied\n`);
+        expect(r.exitCode).toBe(13);
+        expect(ownerAndMode(dst, ["copy"])).toEqual({
+          copy: `${(mode & ~(0o4000 | 0o2000)).toString(8)} uid=${process.getuid!()}`,
+        });
+        expect(ownerAndMode(join(path, ".."), [path.slice(path.lastIndexOf("/") + 1)])).toEqual({
+          [path.slice(path.lastIndexOf("/") + 1)]: `${mode.toString(8)} uid=${uid}`,
+        });
+      } finally {
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
 
     test.skipIf(!isRoot || !publicRootsDiffer)(
       "set-uid and set-gid are dropped across devices when the owner cannot be kept",

@@ -1,15 +1,22 @@
+import { $ } from "bun";
 import { join } from "node:path";
-import { config, toolchain } from "./config";
+import { config, guestImage, toolchain } from "./config";
 import { ensureHostKey, guest } from "./guest";
-import { fail, log } from "./shell";
+import { fail, log, output } from "./shell";
 import { tart } from "./tart";
 
-type BakeOptions = { base: string; ref: string };
+type BakeOptions = { release: number; base: string; ref: string };
 
-export async function bake({ base, ref }: BakeOptions): Promise<void> {
-  const { image, cpu, memoryMb } = config.tart;
+export async function bake({ release, base, ref }: BakeOptions): Promise<void> {
+  const { cpu, memoryMb } = config.tart;
+  const image = guestImage(release);
   const staging = `${image}-new`;
   const publicKey = await ensureHostKey();
+
+  const hostMajor = Number((await output($`sw_vers -productVersion`)).split(".")[0]);
+  if (hostMajor < release) {
+    fail(`this host runs macOS ${hostMajor} and cannot boot a macOS ${release} guest; pass --release <= ${hostMajor}`);
+  }
 
   log(`pull ${base}`);
   await tart.pull(base);
@@ -31,6 +38,13 @@ export async function bake({ base, ref }: BakeOptions): Promise<void> {
   );
 
   const g = guest(ip);
+  // the agents for this image advertise release=<release> (lib/agent.ts), and the latest lane asserts it
+  const major = (await g.capture("sw_vers -productVersion")).trim().split(".")[0];
+  if (major !== String(release)) {
+    await tart.destroy(staging);
+    fail(`${base} is macOS ${major}, not ${release}; pass the matching --base or --release`);
+  }
+
   await g.push(join(import.meta.dir, "..", "guest", "bake.sh"), "/tmp/bake.sh");
 
   log(`bootstrap toolchain in guest (${config.bun.repo}@${ref})`);

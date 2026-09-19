@@ -13,7 +13,7 @@
 import { reoptimizationRetryCount } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 type ModuleGraphOptions = NonNullable<ConstructorParameters<typeof Bun.ModuleGraph>[0]>;
@@ -420,7 +420,9 @@ describe("ModuleGraph matrix: hot code across instances", () => {
       export const makeClosure = () => { let c = 0; return () => ++c + ":" + obj.who; };
       export const identity = { C, obj };`,
   });
-  const N = 20_000; // enough for baseline+DFG on release builds; correctness does not depend on tiering
+  // Enough for baseline+DFG on release builds; correctness does not depend on tiering. A debug build is
+  // about a hundred times slower here (each `ns.x` read in these loops is a call into C++), so it loops less.
+  const N = isDebug ? 2_000 : 20_000;
   for (const order of ["hotFirstThenOthers", "allCreatedThenHot", "interleaved", "othersFirstThenHot"] as const) {
     for (const count of [2, 3, 4]) {
       test(`${order} × ${count} instances`, async () => {
@@ -516,13 +518,15 @@ describe("ModuleGraph matrix: hot code across instances", () => {
   // The count is of optimized code thrown away. numberOfDFGCompiles() adds whether optimized code is
   // installed right now, and a first compile is concurrent: d2() gets hot by calls alone, reaches its
   // first one about when the first count is taken, and it lands before or after that count.
+  // The shared code is instance-generic only after several recompiles, each with twice the warm-up of
+  // the one before. A debug build has no time for those loops, so it checks the reads and not the counts.
   for (const order of ["heatFirstInstanceThenAdd", "heatEachInstance"] as const) {
     test(`shared optimized code is stable across instances × ${order}`, async () => {
       const log: string[] = [];
       const whos = Array.from({ length: 8 }, (_, i) => `j${i}`);
       const graphs: Graph[] = [];
       const mods: any[] = [];
-      const HOT = 200_000;
+      const HOT = isDebug ? 2_000 : 200_000;
       for (let i = 0; i < 2; i++) {
         graphs[i] = graph(whos[i], log);
         mods[i] = await graphs[i].import(join(dir, "hot.mjs"));
@@ -552,7 +556,7 @@ describe("ModuleGraph matrix: hot code across instances", () => {
       };
       expect({ reads, recompilesAfterEight, firstTwo: [mods[0].d0(3), mods[1].d0(3)] }).toEqual({
         reads: whos.slice(2).map((w, k) => [`${w}:0|K:${w}`, `${w}:0|K:${w}`, `${w}:0|K:${w}`, `${w}:${k + 2}|K:${w}`]),
-        recompilesAfterEight: recompilesAfterTwo,
+        recompilesAfterEight: isDebug ? expect.anything() : recompilesAfterTwo,
         firstTwo: [`${whos[0]}:0|K:${whos[0]}`, `${whos[1]}:0|K:${whos[1]}`],
       });
       for (const g of graphs) g.dispose();
@@ -867,7 +871,7 @@ describe("ModuleGraph matrix: dependency edits and code deletion between instanc
     // bindings removed/reordered
     v3: `export const shape = 3; export let x = "x3";`,
   } as const;
-  const HOT = 100_000;
+  const HOT = isDebug ? 5_000 : 100_000;
 
   for (const sequence of [
     ["v1", "v2", "v2"],

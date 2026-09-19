@@ -236,6 +236,10 @@ private:
 enum class Method : uint8_t {
     // Internal attach chain — responses chain into the next command.
     TargetCreateBrowserContext,
+    // A TargetCreateBrowserContext whose view was close()d before Chrome
+    // replied (Ops::close retags it). The handler disposes the context the
+    // reply names and nothing else.
+    TargetCreateBrowserContextOrphaned,
     TargetCreateTarget,
     TargetAttachToTarget,
     PageEnable,
@@ -493,6 +497,14 @@ public:
         auto it = m_views.find(viewId);
         if (it == m_views.end()) return nullptr;
         return it->value.get();
+    }
+
+    // True while the command is still parked behind the WebSocket
+    // handshake: Chrome hasn't seen it, so erasing its m_pending entry
+    // cancels it (the wsOnOpen drain skips it).
+    bool isQueuedUnsent(uint32_t cdpId) const
+    {
+        return m_wsPending.containsIf([cdpId](auto& cmd) { return cmd.id == cdpId; });
     }
 
     // Register a fresh view. Returns its viewId and stores one Weak.

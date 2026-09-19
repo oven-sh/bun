@@ -98,7 +98,8 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // Chrome: a browser context of the view's own (cookies, storage, proxy).
+    // Chrome: a browser context of the view's own (cookies, storage, proxy),
+    // instead of the default context of the one Chrome process.
     bool m_ownBrowserContext = false;
     WTF::String m_browserContextId;
     WTF::String m_proxyServer;

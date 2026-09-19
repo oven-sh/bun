@@ -792,15 +792,22 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     auto entry = WTF::move(it->value);
     m_pending.remove(it);
 
+    if (entry.method == Method::TargetCreateBrowserContextOrphaned) {
+        // The view is gone; an error reply made no context. Fire-and-forget
+        // like Ops::close. This entry may have been the last thing holding
+        // the keep-alive ref, so re-evaluate now it's gone.
+        auto cid = jsonString(jsonField(result, { "browserContextId", 16 }));
+        if (!cid.empty()) disposeBrowserContext(*this, WTF::String::fromUTF8(cid));
+        updateKeepAlive();
+        return;
+    }
+
     auto* g = m_global;
     auto& vm = g->vm();
     JSWebView* view = viewFor(entry.viewId);
     if (!view) {
-        // The view is closed or collected. A context it asked for has no other owner.
-        if (entry.method == Method::TargetCreateBrowserContext && error.empty())
-            disposeBrowserContext(*this, WTF::String::fromUTF8(jsonString(jsonField(result, { "browserContextId", 16 }))));
         updateKeepAlive(); // that entry may have been the last thing holding the loop
-        return;
+        return; // user dropped both view and the awaited promise
     }
 
     if (!error.empty()) {
@@ -810,7 +817,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         if (errStr.isEmpty()) errStr = "CDP error"_s;
         switch (entry.method) {
         case Method::TargetCreateBrowserContext:
-            errStr = makeString("Chrome refused a browser context for this view (incognito may be disabled by policy; omit dataStore to share the default context): "_s, errStr);
+            errStr = makeString("Chrome refused a browser context for this view (incognito may be disabled by policy; pass dataStore: { directory } to share Chrome's default context): "_s, errStr);
             break;
         case Method::TargetCreateTarget:
             // The context has no tab; a retry creates a fresh one.
@@ -891,10 +898,13 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     }
     case Method::RuntimeEnable:
     case Method::TargetCloseTarget:
+    case Method::TargetCreateBrowserContextOrphaned:
         // Untracked fire-and-forget — close() sends TargetCloseTarget
         // without adding to m_pending (the view is going away). Chrome's
         // reply finds no entry, handleResponse's find()==end() drops it.
-        // This case arm is unreachable; present for switch completeness.
+        // TargetCreateBrowserContextOrphaned is handled before the view
+        // lookup above. These arms are unreachable; present for switch
+        // completeness.
         return;
 
     case Method::PageNavigate: {
@@ -1827,11 +1837,19 @@ void close(JSWebView* view)
     // PageEnable sends Page.navigate, the tab navigates after dispose.
     // removeIf breaks the chain at the next reply — handleResponse's
     // find(id)==end() early-return drops it.
-    // A sent Target.createBrowserContext stays: handleResponse disposes the context its reply names.
-    bool contextRequestSent = t.m_mode != TransportMode::WebSocket || t.m_wsOpen;
-    t.m_pending.removeIf([vid = view->m_viewId, contextRequestSent](auto& pair) {
+    //
+    // Exception: a Target.createBrowserContext Chrome has already received.
+    // Its reply is the only place the new context's id appears, so retag
+    // it and let handleResponse dispose the context. One still parked
+    // behind the WebSocket handshake is dropped like the rest: the drain
+    // skips it and no context is made.
+    t.m_pending.removeIf([&t, vid = view->m_viewId](auto& pair) {
         if (pair.value.viewId != vid) return false;
-        return !(contextRequestSent && pair.value.method == Method::TargetCreateBrowserContext);
+        if (pair.value.method == Method::TargetCreateBrowserContext && !t.isQueuedUnsent(pair.key)) {
+            pair.value.method = Method::TargetCreateBrowserContextOrphaned;
+            return false;
+        }
+        return true;
     });
     // Target.closeTarget — fire-and-forget. targetId is stashed at
     // TargetCreateTarget's reply (before sessionId) so it's populated

@@ -126,16 +126,16 @@ test.concurrent("many views interleave their commands on the one transport", asy
   });
 });
 
-// Chrome has one default browser context (one cookie jar) per process. A
-// view constructed with dataStore: "ephemeral", or with a proxy, gets a
-// context of its own: Target.createBrowserContext precedes its
-// Target.createTarget, the tab is created inside that context, and close()
-// disposes it. A view without either lands in the default context.
-test.concurrent("dataStore: ephemeral and proxy give the view its own browser context", async () => {
+// Chrome has one default browser context (one cookie jar) per process. An
+// ephemeral view (the default) gets a context of its own:
+// Target.createBrowserContext precedes its Target.createTarget, the tab is
+// created inside that context, and close() disposes it. A proxy rides on
+// that context. A view with dataStore.directory lands in the default context.
+test.concurrent("an ephemeral or proxied view gets its own browser context", async () => {
   const result = await runScenario(`
-    const shared = newView();
+    const shared = new Bun.WebView({ backend, width: 100, height: 100, dataStore: { directory: "/tmp/unused" } });
     await shared.navigate("http://fake/shared");
-    const own = new Bun.WebView({ backend, width: 100, height: 100, dataStore: "ephemeral" });
+    const own = newView();
     await own.navigate("http://fake/own");
     const proxied = new Bun.WebView({
       backend,
@@ -176,10 +176,10 @@ test.concurrent("dataStore: ephemeral and proxy give the view its own browser co
 // in-flight entry must not hold the event loop open after the reply.
 test.concurrent("close() before the browser context reply still disposes the context", async () => {
   const result = await runScenario(`
-    const own = new Bun.WebView({ backend, width: 100, height: 100, dataStore: "ephemeral" });
+    const own = newView();
     const navigation = outcome(own.navigate("http://fake/own"));
     own.close();
-    const shared = newView();
+    const shared = new Bun.WebView({ backend, width: 100, height: 100, dataStore: { directory: "/tmp/unused" } });
     await shared.navigate("http://fake/shared");
     print({ navigation: await navigation, targets: await shared.evaluate("__fake_targets()") });
     shared.close();

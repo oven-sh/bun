@@ -9707,22 +9707,18 @@ declare module "bun" {
       /**
        * Storage backing for cookies, localStorage, IndexedDB, etc.
        *
-       * - `"ephemeral"`: in-memory only, nothing written to disk. The
-       *   view's cookies and storage are shared with no other view and
+       * - `"ephemeral"` (default): in-memory only, nothing written to disk.
+       *   The view's cookies and storage are shared with no other view and
        *   are discarded when it closes.
        * - `{ directory }`: persistent storage rooted at the given path.
        *   Multiple views with the same directory share state.
        *
-       * The default when omitted depends on the backend. **WebKit**:
-       * `"ephemeral"`. **Chrome**: the shared default context of the one
-       * Chrome process, so views that omit `dataStore` share cookies and
-       * storage with each other. Pass `"ephemeral"` explicitly for a
-       * browser context of the view's own (a CDP
-       * `Target.createBrowserContext`).
-       *
        * **Chrome backend**: `directory` is per-Chrome-process
        * (`--user-data-dir`), not per-view. The first view's directory
-       * applies to all views spawned in the same Bun process.
+       * applies to all views with a `directory` in the same Bun process,
+       * and they all share that Chrome's default context. An ephemeral
+       * view gets a browser context of its own (a CDP
+       * `Target.createBrowserContext`) inside that one Chrome.
        */
       dataStore?: "ephemeral" | { directory: string };
       /**

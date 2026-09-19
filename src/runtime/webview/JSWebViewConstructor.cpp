@@ -122,8 +122,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     bool stderrInherit = false;
     bool consoleIsGlobal = false;
     JSObject* consoleCallback = nullptr;
-    // Chrome: explicit "ephemeral" (or a proxy) means a browser context of the view's own.
-    bool explicitEphemeral = false;
     bool persistDirGiven = false;
     WTF::String proxyServer;
     WTF::StringBuilder proxyBypass; // comma-joined, CDP's proxyBypassList shape
@@ -329,7 +327,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
                     "dataStore must be \"ephemeral\" or { directory: string }"_s);
             }
-            explicitEphemeral = true;
         }
 
         // proxy: "scheme://host:port" | { server, bypass? }. Chrome-only.
@@ -421,7 +418,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
-        view->m_ownBrowserContext = explicitEphemeral || !proxyServer.isEmpty();
+        // Ephemeral (the default) is per view: a browser context of its own.
+        // { directory } shares the one Chrome's default context.
+        view->m_ownBrowserContext = !persistDirGiven;
         view->m_proxyServer = WTF::move(proxyServer);
         view->m_proxyBypass = proxyBypass.toString();
         // No user code ever holds this promise; handled, so a rejection

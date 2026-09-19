@@ -562,24 +562,14 @@ impl ShellMvBatchedTask {
                 O::RDONLY | O::DIRECTORY | O::NOFOLLOW,
                 0,
             )?);
-            // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
-            let mut iter = Box::new(bun_sys::dir_iterator::iterate(sd.fd()));
-            let mut nbuf = bun_paths::path_buffer_pool::get();
-            while let Some(entry) = iter.next()? {
-                let name = entry.name.slice_u8();
-                if name.len() >= bun_paths::MAX_PATH_BYTES {
-                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
-                }
-                nbuf[..name.len()].copy_from_slice(name);
-                nbuf[name.len()] = 0;
-                let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z)?;
-            }
+            let moved = Self::move_entries_across_devices(sd.fd(), dd.fd());
+            // Also after a failure: the entries already moved exist only in the copy.
             #[cfg(unix)]
             Self::copy_owner_and_mode(dd.fd(), &st);
             #[cfg(windows)]
             let _ = bun_sys::fchmod(dd.fd(), st.st_mode as bun_core::Mode & 0o7777);
             drop((sd, dd));
+            moved?;
             return bun_sys::rmdirat(src_dir, src);
         }
 
@@ -618,6 +608,29 @@ impl ShellMvBatchedTask {
         Self::copy_owner_and_mode(out.fd(), &st);
         drop((in_, out));
         bun_sys::unlinkat(src_dir, src)
+    }
+
+    fn move_entries_across_devices(
+        src_dir: bun_sys::Fd,
+        dst_dir: bun_sys::Fd,
+    ) -> Result<(), bun_sys::Error> {
+        // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
+        let mut iter = Box::new(bun_sys::dir_iterator::iterate(src_dir));
+        let mut nbuf = bun_paths::path_buffer_pool::get();
+        while let Some(entry) = iter.next()? {
+            let name = entry.name.slice_u8();
+            if name.len() >= bun_paths::MAX_PATH_BYTES {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENAMETOOLONG,
+                    bun_sys::Tag::rename,
+                ));
+            }
+            nbuf[..name.len()].copy_from_slice(name);
+            nbuf[name.len()] = 0;
+            let name_z = ZStr::from_buf(&nbuf[..], name.len());
+            Self::move_across_devices(src_dir, name_z, dst_dir, name_z)?;
+        }
+        Ok(())
     }
 
     /// POSIX `mv`: the copy gets set-uid and set-gid only if it also gets the owner.

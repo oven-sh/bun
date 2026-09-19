@@ -258,21 +258,55 @@ describe("mv", async () => {
       }
     });
 
-    // The FIFO stops the move partway, which shows the mode the copy has while the move runs.
+    // What moved before the failure exists only in the copy, so the copy must not keep its private in-flight mode.
+    test.skipIf(skip)("a directory move that fails partway across devices gives the copy its mode", async () => {
+      const [src, dst] = crossDevicePair("partial");
+      const dirs = [join(src, "tree"), join(dst, "tree")];
+      try {
+        mkdirSync(dirs[0]);
+        const { exitCode: mk } = Bun.spawnSync({ cmd: ["mkfifo", join(dirs[0], "pipe")] });
+        expect(mk).toBe(0);
+        chmodSync(dirs[0], 0o555);
+
+        const r = await $`mv ${dirs[0]} ${dst}`.quiet();
+        expect(r.stderr.toString()).toContain("not supported");
+        expect(r.exitCode).not.toBe(0);
+        expect((statSync(dirs[1]).mode & 0o7777).toString(8)).toBe("555");
+        expect(lstatSync(join(dirs[0], "pipe")).isFIFO()).toBe(true);
+      } finally {
+        for (const dir of dirs) if (existsSync(dir)) chmodSync(dir, 0o700);
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
+    // The copy gets its mode only after the last entry moves, so a sample can never fail on a correct build.
     test.skipIf(skip)("a directory in flight across devices is private to the mover", async () => {
       const [src, dst] = crossDevicePair("in-flight");
       try {
         const srcDir = join(src, "tree");
         mkdirSync(srcDir);
+        const entries = Array.from({ length: 200 }, (_, i) => join(srcDir, `f${i}`));
+        for (const entry of entries) writeFileSync(entry, "");
         chmodSync(srcDir, 0o755);
-        const { exitCode: mk } = Bun.spawnSync({ cmd: ["mkfifo", join(srcDir, "pipe")] });
-        expect(mk).toBe(0);
 
-        const r = await $`mv ${srcDir} ${dst}`.quiet();
-        expect(r.stderr.toString()).toContain("not supported");
-        expect(r.exitCode).not.toBe(0);
-        expect((statSync(join(dst, "tree")).mode & 0o7777).toString(8)).toBe("700");
-        expect(lstatSync(join(srcDir, "pipe")).isFIFO()).toBe(true);
+        let done = false;
+        const moving = $`mv ${srcDir} ${dst}`.quiet().then(r => ((done = true), r));
+        const otherModes = new Set<string>();
+        let next = 0;
+        while (!done) {
+          const copy = statSync(join(dst, "tree"), { throwIfNoEntry: false });
+          // An entry that is still in the source after the sample proves that the move was in flight.
+          while (next < entries.length && !existsSync(entries[next])) next++;
+          if (copy && next < entries.length && (copy.mode & 0o7777) !== 0o700) {
+            otherModes.add((copy.mode & 0o7777).toString(8));
+          }
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        const r = await moving;
+        expect(r.stderr.toString()).toBe("");
+        expect(r.exitCode).toBe(0);
+        expect([...otherModes]).toEqual([]);
       } finally {
         rmSync(src, { recursive: true, force: true });
         rmSync(dst, { recursive: true, force: true });

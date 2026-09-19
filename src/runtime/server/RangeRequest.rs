@@ -125,9 +125,7 @@ pub(crate) fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 
-/// Resolve the request's `Range` against `total`. `etag` and
-/// `last_modified_ms` are the validators of the representation being served:
-/// an `If-Range` that does not match them turns the `Range` off.
+/// `None` too when the request's `If-Range` does not match `etag` / `last_modified_ms`.
 // `bun_uws::AnyRequest::header` borrows `&self` and returns `&[u8]` tied to
 // it, so take `&AnyRequest` here.
 pub(crate) fn from_request(
@@ -156,9 +154,7 @@ pub(crate) fn raw_from_request(req: &AnyRequest) -> Raw {
     parse_raw(h)
 }
 
-/// The `If-Range` header, copied out of the uWS request buffer for a request
-/// context that learns the response's validators after the request is gone.
-/// `None` without a usable `Range`: there is nothing for it to guard.
+/// Owned `If-Range` for a context that outlives the uWS request. `None` without a usable `Range`.
 pub(crate) fn if_range_from_request(req: &AnyRequest, range: Raw) -> Option<Box<[u8]>> {
     if range == Raw::None {
         return None;
@@ -166,27 +162,20 @@ pub(crate) fn if_range_from_request(req: &AnyRequest, range: Raw) -> Option<Box<
     req.header(b"if-range").map(Box::from)
 }
 
-/// RFC 9110 §13.1.5: whether the `If-Range` validator matches the selected
-/// representation. `false` means the client's partial copy is of another
-/// version, so the server ignores `Range` and sends the full 200 body.
-///
-/// An entity-tag matches by strong comparison. An HTTP-date matches only the
-/// exact `Last-Modified`, not an older or a newer one.
+/// RFC 9110 §13.1.5. `false` means: ignore `Range` and send the full 200 body.
 pub(crate) fn if_range_matches(
     if_range: &[u8],
     etag: Option<&[u8]>,
     last_modified_ms: Option<u64>,
 ) -> bool {
-    // An entity-tag (`"..."` or `W/"..."`) has a DQUOTE in its first three
-    // bytes; an HTTP-date has none.
+    // An entity-tag has a DQUOTE in its first three bytes (`"` or `W/"`). An HTTP-date has none.
     if strings::contains_char(&if_range[..if_range.len().min(3)], b'"') {
         return ETag::if_range(etag, if_range);
     }
     let Some(last_modified_ms) = last_modified_ms else {
         return false;
     };
-    // An HTTP-date is GMT, but `parse_http_date` is `Date.parse`: it reads a
-    // date with no zone (the obsolete asctime form) in the server's local time.
+    // `parse_http_date` is `Date.parse`, which reads a date with no zone (asctime) as local time.
     if !if_range.ends_with(b"GMT") {
         return false;
     }

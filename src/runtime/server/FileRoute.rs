@@ -482,8 +482,8 @@ impl Drop for FileRoute {
 /// Order: (1) If-Match, else (2) If-Unmodified-Since; then (3) If-None-Match,
 /// else (4) If-Modified-Since. Steps 1/2 yield 412 on failure and must run
 /// before steps 3/4 can yield 304. Preconditions only apply when the selected
-/// representation would otherwise be 200 (§13.1.1). Step 5, If-Range, is
-/// already applied to `range` by `RangeRequest::from_request`.
+/// representation would otherwise be 200 (§13.1.1).
+/// Step 5, If-Range, is already applied to `range` by `RangeRequest::from_request`.
 pub(crate) fn status_for_preconditions(
     req: &AnyRequest,
     method: Method,

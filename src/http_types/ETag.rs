@@ -134,9 +134,7 @@ pub fn if_match(
     false
 }
 
-/// RFC 9110 §13.1.5: evaluate an `If-Range` entity-tag using the strong
-/// comparison (§8.8.3.2), so a weak tag on either side never matches. `false`
-/// means ignore `Range` and send the whole representation.
+/// RFC 9110 §13.1.5 strong comparison: a weak tag on either side never matches.
 pub fn if_range(
     // Stored `ETag` header, `None` when the representation has none.
     etag: Option<&[u8]>,

@@ -1,0 +1,12 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const t = (label, src, fl, str) => { try { const m = new RegExp(src, fl).exec(str); out(label.padEnd(30) + s(m && [...m])); } catch (e) { out(label.padEnd(30) + "THREW " + e.message.slice(0,20)); } };
+t("10076 (y{1,3}\\w){2,}?\\w", "(y{1,3}\\w){2,}?\\w", "iv", "yyayybyyc");
+t("A (ya){2,}?y", "(ya){2,}?y", "", "yayayay");
+t("B (ya){2,}y greedy", "(ya){2,}y", "", "yayayay");
+t("C (ya){2,3}?y", "(ya){2,3}?y", "", "yayayay");
+t("D (a){2,}?", "(a){2,}?", "", "aaaa");
+t("E (a){2,}", "(a){2,}", "", "aaaa");
+t("F (a){2,3}?b", "(a){2,3}?b", "", "aaab");
+t("G (a){1,3}?b", "(a){1,3}?b", "", "aaab");
+t("H (a)+?b", "(a)+?b", "", "aaab");
+t("I (ab){2,}?c", "(ab){2,}?c", "", "ababababc");

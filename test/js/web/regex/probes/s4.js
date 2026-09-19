@@ -1,0 +1,13 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const S = ".\n";
+const it = (label, src, fl) => { try { const re = new RegExp(src, fl); const r = []; let m, n = 0;
+  while ((m = re.exec(S)) !== null && n++ < 8) { r.push(m.index); if (m[0] === "") re.lastIndex++; } out(label.padEnd(50) + s(r)); } catch (e) { out(label.padEnd(50) + "ERR"); } };
+it("1 (?<!\\p{ASCII_Hex_Digit}*(?=\\b)x)", "(?<!\\p{ASCII_Hex_Digit}*(?=\\b)x)", "gv");
+it("2 (?<!\\p{ASCII_Hex_Digit}*x)", "(?<!\\p{ASCII_Hex_Digit}*x)", "gv");
+it("3 (?<!(?=\\b)x)", "(?<!(?=\\b)x)", "gv");
+it("4 (?<!a*(?=\\b)x)", "(?<!a*(?=\\b)x)", "gv");
+it("5 (?<!a*(?=\\b))\\s{0,2}", "(?<!a*(?=\\b))\\s{0,2}", "gv");
+it("6 (?<!(?=\\b))\\s{0,2}", "(?<!(?=\\b))\\s{0,2}", "gv");
+it("7 (?<!a*\\b)\\s{0,2}", "(?<!a*\\b)\\s{0,2}", "gv");
+it("8 (?<!a+(?=\\b))\\s{0,2}", "(?<!a+(?=\\b))\\s{0,2}", "gv");
+it("9 (?<!a{0,1}(?=\\b))\\s{0,2}", "(?<!a{0,1}(?=\\b))\\s{0,2}", "gv");

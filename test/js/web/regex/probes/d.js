@@ -1,0 +1,11 @@
+const out = typeof print === "function" ? print : console.log;
+const s = v => JSON.stringify(v);
+const G = "\u{1F600}";
+const t = (label, re, str) => { const m = re.exec(str); out(label.padEnd(34) + s(m && [m.index, m[0]])); };
+t("u  xy|-?a on -xy (BMP min2)", new RegExp("xy|-?a", "u"), "-xy");
+t("no-u xy|-?a on -xy", new RegExp("xy|-?a"), "-xy");
+t("u  😀|-?a on -😀", new RegExp(G + "|-?a", "u"), "-" + G);
+t("no-u 😀|-?a on -😀 (16bit)", new RegExp(G + "|-?a"), "-" + G);
+t("u  qq|-?a on -qq", new RegExp("qq|-?a", "u"), "-qq");
+t("u  q|-?a on -q (min1 vs min1)", new RegExp("q|-?a", "u"), "-q");
+t("u  😀q|-?a on -😀q", new RegExp(G + "q|-?a", "u"), "-" + G + "q");

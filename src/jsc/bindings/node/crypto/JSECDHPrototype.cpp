@@ -252,7 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPublicKey, (JSC::JSGlobalObject * glo
     };
 
     if (!pubPoint.setFromBuffer(buffer, ecdh->m_group)) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to set EC_POINT from buffer"_s);
+        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to convert Buffer to EC_POINT"_s);
         return {};
     }
 
@@ -304,7 +304,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncSetPrivateKey, (JSC::JSGlobalObject * gl
 
     // Validate the key is valid for the curve
     if (!isKeyValidForCurve(ecdh->m_group, privateKey)) {
-        return Bun::ERR::CRYPTO_INVALID_KEYTYPE(scope, globalObject, "Private key is not valid for specified curve"_s);
+        return Bun::ERR::CRYPTO_INVALID_KEYTYPE(scope, globalObject, "Private key is not valid for specified curve."_s);
     }
 
     // Clone the existing key

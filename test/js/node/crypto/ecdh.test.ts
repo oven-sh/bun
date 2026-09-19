@@ -268,6 +268,68 @@ test("ECDH - computeSecret throws when only a public key is set (no private key)
   expect(carolSecret.toString("hex")).toBe(aliceSecret.toString("hex"));
 });
 
+// Node's text: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_ec.cc#L322-L325
+test.each([
+  ["bytes that are not a point", (ecdh: ECDH) => ecdh.setPublicKey(Buffer.from("abcd"))],
+  ["a hex string that is not a point", (ecdh: ECDH) => ecdh.setPublicKey("abcd", "hex")],
+  ["an empty buffer", (ecdh: ECDH) => ecdh.setPublicKey(Buffer.alloc(0))],
+  ["a truncated point", (ecdh: ECDH) => ecdh.setPublicKey(createECDH("prime256v1").generateKeys().subarray(0, 10))],
+  ["a point of another curve", (ecdh: ECDH) => ecdh.setPublicKey(createECDH("secp384r1").generateKeys())],
+  [
+    "coordinates that are not on the curve",
+    (ecdh: ECDH) => ecdh.setPublicKey(Buffer.concat([Buffer.from([4]), Buffer.alloc(64)])),
+  ],
+])("ECDH - setPublicKey rejects %s with Node's error", (_name, setPublicKey) => {
+  const ecdh = createECDH("prime256v1");
+  const publicKey = ecdh.generateKeys();
+
+  expect(() => setPublicKey(ecdh)).toThrow(
+    expect.objectContaining({
+      name: "Error",
+      code: "ERR_CRYPTO_OPERATION_FAILED",
+      message: "Failed to convert Buffer to EC_POINT",
+    }),
+  );
+  // The rejected key does not replace the current one.
+  expect(ecdh.getPublicKey()).toEqual(publicKey);
+});
+
+// A private key is valid in the range [1, order - 1].
+const prime256v1Order = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
+const prime256v1OrderMinusOne = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550";
+
+// Node's text ends with a period: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_ec.cc#L272-L275
+test.each([
+  ["an empty buffer", (ecdh: ECDH) => ecdh.setPrivateKey(Buffer.alloc(0))],
+  ["zero", (ecdh: ECDH) => ecdh.setPrivateKey(Buffer.alloc(32))],
+  ["the curve order", (ecdh: ECDH) => ecdh.setPrivateKey(Buffer.from(prime256v1Order, "hex"))],
+  ["the curve order as a hex string", (ecdh: ECDH) => ecdh.setPrivateKey(prime256v1Order, "hex")],
+  ["a value above the curve order", (ecdh: ECDH) => ecdh.setPrivateKey(Buffer.alloc(32, 0xff))],
+  ["a value longer than the curve order", (ecdh: ECDH) => ecdh.setPrivateKey(Buffer.alloc(40, 0xff))],
+])("ECDH - setPrivateKey rejects %s with Node's error", (_name, setPrivateKey) => {
+  const ecdh = createECDH("prime256v1");
+  ecdh.generateKeys();
+  const privateKey = ecdh.getPrivateKey();
+  const publicKey = ecdh.getPublicKey();
+
+  expect(() => setPrivateKey(ecdh)).toThrow(
+    expect.objectContaining({
+      name: "RangeError",
+      code: "ERR_CRYPTO_INVALID_KEYTYPE",
+      message: "Private key is not valid for specified curve.",
+    }),
+  );
+  // The rejected key does not replace the current key pair.
+  expect(ecdh.getPrivateKey()).toEqual(privateKey);
+  expect(ecdh.getPublicKey()).toEqual(publicKey);
+});
+
+test("ECDH - setPrivateKey accepts the curve order minus one, the largest valid key", () => {
+  const ecdh = createECDH("prime256v1");
+  ecdh.setPrivateKey(prime256v1OrderMinusOne, "hex");
+  expect(ecdh.getPrivateKey("hex")).toBe(prime256v1OrderMinusOne);
+});
+
 test.each([
   [
     "the main realm",

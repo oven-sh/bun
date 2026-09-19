@@ -246,6 +246,8 @@ const WRITE_FLUSHED_WITHOUT_CALLBACK: u32 = 0x10;
 // RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
 // for the HPACK dynamic table entry structure
 const HPACK_ENTRY_OVERHEAD: usize = 32;
+// nghttp2's default `max_send_header_block_length`
+const NGHTTP2_MAX_HEADERSLEN: usize = 65536;
 // Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
 const MAX_CUSTOM_SETTINGS: usize = 10;
 
@@ -2502,6 +2504,20 @@ impl H2FrameParser {
         // event loop, so that call still returns with its stream usable for the rest of the tick.
         self.pending_header_compression_error.set(true);
         self.register_auto_flush();
+    }
+
+    /// nghttp2 refuses a block over `maxSendHeaderBlockLength` (65536 when unset) before it
+    /// deflates it, so a response only reaches the deflater failure when the user raised the limit.
+    fn fail_unencodable_header_field(&self, stream: &mut Stream, name: &[u8], value: &[u8]) {
+        let limit = match self.max_send_header_block_length.get() {
+            0 => NGHTTP2_MAX_HEADERSLEN,
+            limit => limit as usize,
+        };
+        if self.is_server.get() && name.len() + value.len() > limit {
+            self.reject_oversized_header_block(stream);
+        } else {
+            self.schedule_header_compression_session_error();
+        }
     }
 
     fn set_corked(parser: Option<RefPtr<H2FrameParser>>) -> Option<RefPtr<H2FrameParser>> {
@@ -6622,14 +6638,13 @@ impl H2FrameParser {
                         let Some(stream) = this.handle_received_stream_id(stream_id) else {
                             return Ok(JSValue::js_number(-1.0));
                         };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
+                        let mut stream = this.enter_stream_dispatch(stream);
                         if !stream_ctx_arg.is_empty_or_undefined_or_null()
                             && stream_ctx_arg.is_object()
                         {
                             stream.set_context(stream_ctx_arg, global_object);
                         }
-                        this.schedule_header_compression_session_error();
+                        this.fail_unencodable_header_field(&mut stream, validated_name, value);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
                 }
@@ -6792,14 +6807,13 @@ impl H2FrameParser {
                             let Some(stream) = this.handle_received_stream_id(stream_id) else {
                                 return Ok(JSValue::js_number(-1.0));
                             };
-                            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                            let stream = unsafe { &mut *stream };
+                            let mut stream = this.enter_stream_dispatch(stream);
                             if !stream_ctx_arg.is_empty_or_undefined_or_null()
                                 && stream_ctx_arg.is_object()
                             {
                                 stream.set_context(stream_ctx_arg, global_object);
                             }
-                            this.schedule_header_compression_session_error();
+                            this.fail_unencodable_header_field(&mut stream, validated_name, value);
                             return Ok(JSValue::UNDEFINED);
                         }
                     }
@@ -6862,14 +6876,13 @@ impl H2FrameParser {
                         let Some(stream) = this.handle_received_stream_id(stream_id) else {
                             return Ok(JSValue::js_number(-1.0));
                         };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
+                        let mut stream = this.enter_stream_dispatch(stream);
                         if !stream_ctx_arg.is_empty_or_undefined_or_null()
                             && stream_ctx_arg.is_object()
                         {
                             stream.set_context(stream_ctx_arg, global_object);
                         }
-                        this.schedule_header_compression_session_error();
+                        this.fail_unencodable_header_field(&mut stream, validated_name, value);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
                 }

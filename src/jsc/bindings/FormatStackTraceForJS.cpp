@@ -662,7 +662,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     JSC::SuspendExceptionScope suspendExceptionScope(vm);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // The frames only: JavaScriptCore heads them with the error's name and message when the stack is read.
+    // The frames only: JavaScriptCore prepends the error's name and message when the stack is read.
     WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
     if (scope.exception()) {
         // The onComputeErrorInfo hook cannot propagate a throw.

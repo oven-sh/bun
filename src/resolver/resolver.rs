@@ -2442,18 +2442,27 @@ impl<'a> Resolver<'a> {
             return a || b;
         }
 
-        if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
-            return false;
-        }
         if !bun_paths::is_absolute(import_source_file) {
             return false;
         }
+        let source_dir = bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO);
 
-        let joined = bun_paths::join_abs(
-            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
-            bun_paths::Platform::AUTO,
-            specifier,
-        );
+        if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
+            // A tsconfig `paths` alias or a `baseUrl` lookup lands in the
+            // directories the tsconfig maps it to, not next to the importer.
+            let mut busted = false;
+            self.for_each_tsconfig_target(source_dir, specifier, &mut |this, abs| {
+                // `import "@/dir/"` maps to a path that ends in a separator,
+                // which is not a valid cache key.
+                let abs = strings::without_trailing_slash_windows_path(abs);
+                let dir = bun_paths::dirname_platform(abs, bun_paths::Platform::AUTO);
+                busted |= this.bust_dir_cache(dir);
+                busted |= this.bust_dir_cache(abs);
+            });
+            return busted;
+        }
+
+        let joined = bun_paths::join_abs(source_dir, bun_paths::Platform::AUTO, specifier);
         let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
 
         let a = self.bust_dir_cache(dir);

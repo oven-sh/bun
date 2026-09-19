@@ -9795,13 +9795,8 @@ declare module "bun" {
     /**
      * Fired when a navigation completes successfully. The callback runs
      * before the corresponding `navigate()` promise resolves.
-     *
-     * **Chrome backend**: the callback fires when the navigation commits,
-     * before `title` and `status` are known, so both are `undefined`.
-     * Read {@link WebView.title} and {@link WebView.status} after
-     * `navigate()` resolves.
      */
-    onNavigated: ((url: string, title: string | undefined, status: number | null | undefined) => void) | null;
+    onNavigated: ((url: string, title: string) => void) | null;
     /**
      * Fired when a navigation fails. The callback runs before the
      * corresponding `navigate()` promise rejects.

@@ -97,8 +97,6 @@ extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,
     EncodedJSValue thisVal, EncodedJSValue arg0, EncodedJSValue arg1);
-extern "C" void Bun__EventLoop__runCallback3(JSGlobalObject*, EncodedJSValue cb,
-    EncodedJSValue thisVal, EncodedJSValue arg0, EncodedJSValue arg1, EncodedJSValue arg2);
 
 // --- JSON field scanner -----------------------------------------------------
 
@@ -1170,10 +1168,9 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         view->m_status = 0;
         // m_loading stays true — loadEventFired flips it.
 
-        // title and status are undefined at commit.
         if (JSObject* cb = view->m_onNavigated.get()) {
-            Bun__EventLoop__runCallback3(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-                JSValue::encode(jsString(vm, urlStr)), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()));
+            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+                JSValue::encode(jsString(vm, urlStr)), JSValue::encode(jsUndefined()));
         }
         return;
     }

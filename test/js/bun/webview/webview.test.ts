@@ -338,26 +338,25 @@ it("status reports the main frame's HTTP status, null for non-HTTP pages", async
   await using view = new Bun.WebView({ width: 200, height: 200 });
   expect(view.status).toBe(null);
 
-  const seen: Array<[string, string, number | null]> = [];
-  view.onNavigated = (url, title, status) => seen.push([url, title, status]);
+  // status is updated before onNavigated runs.
+  const seen: Array<[string, number | null]> = [];
+  view.onNavigated = url => seen.push([url, view.status]);
 
   await view.navigate(`${base}/ok`);
   expect(view.status).toBe(200);
   await view.navigate(`${base}/missing`);
   expect(view.status).toBe(404);
-  // The title can still be empty at didFinishNavigation (see the url/title
-  // getters test); the status is what this test is about.
   expect(seen).toEqual([
-    [`${base}/ok`, expect.any(String), 200],
-    [`${base}/missing`, expect.any(String), 404],
+    [`${base}/ok`, 200],
+    [`${base}/missing`, 404],
   ]);
 
   // reload() resolves on the host's Ack, before the page finishes loading;
   // the status still comes from the same delegate callback.
   const reloaded = Promise.withResolvers<number | null>();
-  view.onNavigated = (url, title, status) => {
-    seen.push([url, title, status]);
-    reloaded.resolve(status);
+  view.onNavigated = url => {
+    seen.push([url, view.status]);
+    reloaded.resolve(view.status);
   };
   await view.reload();
   expect(await reloaded.promise).toBe(404);
@@ -367,7 +366,7 @@ it("status reports the main frame's HTTP status, null for non-HTTP pages", async
   // not leak into it.
   await view.navigate(html("<title>data</title>"));
   expect(view.status).toBe(null);
-  expect(seen[seen.length - 1][2]).toBe(null);
+  expect(seen[seen.length - 1][1]).toBe(null);
 });
 
 it("userAgent option sets the User-Agent header and navigator.userAgent", async () => {

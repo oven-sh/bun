@@ -45,6 +45,7 @@ SEL NSData::s_length;
 
 Class NSNumber::cls;
 SEL NSNumber::s_numberWithDouble;
+SEL NSNumber::s_doubleValue;
 
 Class NSArray::cls;
 SEL NSArray::s_count;
@@ -198,6 +199,7 @@ Class NavigationDelegate::cls;
 void (*NavigationDelegate::s_setAssoc)(id, const void*, id, uintptr_t);
 id (*NavigationDelegate::s_getAssoc)(id, const void*);
 char NavigationDelegate::s_hostKey = 0;
+char WKBackForwardListItem::s_statusKey = 0;
 
 } // namespace objc
 
@@ -242,6 +244,15 @@ static void delegateDidFinishNavigation(id self, SEL, id /*webView*/, id /*navig
 {
     ObjCRuntime::ARPool pool;
     if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationFinished();
+}
+
+// _webView:navigation:didSameDocumentNavigation: (WKNavigationDelegatePrivate).
+// pushState and fragment navigations add a history item for the same
+// document; it needs the document's status for a later cache restore.
+static void delegateDidSameDocumentNavigation(id self, SEL, id /*webView*/, id /*navigation*/, long /*type*/)
+{
+    ObjCRuntime::ARPool pool;
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onSameDocumentNavigation();
 }
 
 static void delegateDidFailNavigation(id self, SEL, id /*webView*/, id /*navigation*/, id error)
@@ -439,6 +450,7 @@ bool ObjCRuntime::load()
 
     CLS(NSNumber::cls, "NSNumber");
     NSNumber::s_numberWithDouble = sel("numberWithDouble:");
+    NSNumber::s_doubleValue = sel("doubleValue");
 
     CLS(NSArray::cls, "NSArray");
     NSArray::s_count = sel("count");
@@ -581,6 +593,8 @@ bool ObjCRuntime::load()
         reinterpret_cast<IMP>(delegateDecidePolicyForNavigationResponse), "v@:@@@?");
     addMethod(NavigationDelegate::cls, sel("webView:didFinishNavigation:"),
         reinterpret_cast<IMP>(delegateDidFinishNavigation), "v@:@@");
+    addMethod(NavigationDelegate::cls, sel("_webView:navigation:didSameDocumentNavigation:"),
+        reinterpret_cast<IMP>(delegateDidSameDocumentNavigation), "v@:@@q");
     addMethod(NavigationDelegate::cls, sel("webView:didFailNavigation:withError:"),
         reinterpret_cast<IMP>(delegateDidFailNavigation), "v@:@@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFailProvisionalNavigation:withError:"),

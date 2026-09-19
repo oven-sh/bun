@@ -153,7 +153,9 @@ struct NSNumber : Ref {
     using Ref::Ref;
     static Class cls;
     static SEL s_numberWithDouble;
+    static SEL s_doubleValue;
     static NSNumber withDouble(double d) { return msgCls<id>(cls, s_numberWithDouble, d); }
+    double doubleValue() const { return m_id ? msg<double>(s_doubleValue) : 0; }
 };
 
 struct NSArray : Ref {
@@ -628,14 +630,13 @@ struct WKWebView : Ref {
     static SEL s_setCustomUserAgent;
     void setCustomUserAgent(NSString ua) { msg<void>(s_setCustomUserAgent, ua.m_id); }
 
-    // The WKBackForwardListItem of the current page, as an opaque key.
-    // Stable for the item's lifetime; 0 when there is no current item.
+    // backForwardList.currentItem, or nil before the first navigation.
     static SEL s_backForwardList;
     static SEL s_currentItem;
-    uintptr_t currentBackForwardItem() const
+    id currentBackForwardItem() const
     {
         Ref list(msg<id>(s_backForwardList));
-        return list ? reinterpret_cast<uintptr_t>(list.msg<id>(s_currentItem)) : 0;
+        return list ? list.msg<id>(s_currentItem) : nullptr;
     }
 
     // callAsyncJavaScript:arguments:inFrame:inContentWorld:completionHandler:
@@ -750,6 +751,18 @@ struct WKWebView : Ref {
     }
 };
 
+// WKBackForwardListItem. The main-frame HTTP status of the document loaded
+// into the item lives on the item as an associated NSNumber, so it is
+// released with the item and a back-forward cache restore (which delivers
+// no response) can read it back.
+struct WKBackForwardListItem : Ref {
+    using Ref::Ref;
+    static char s_statusKey;
+
+    uint16_t status() const;
+    void setStatus(uint16_t status) const;
+};
+
 // Runtime-registered NSObject<WKNavigationDelegate> subclass. The associated
 // object is the WebViewHost*.
 struct NavigationDelegate : Ref {
@@ -770,6 +783,19 @@ struct NavigationDelegate : Ref {
     void clearHost() { s_setAssoc(m_id, &s_hostKey, nullptr, 0); }
     WebViewHost *host() const { return reinterpret_cast<WebViewHost *>(s_getAssoc(m_id, &s_hostKey)); }
 };
+
+inline uint16_t WKBackForwardListItem::status() const
+{
+    if (!m_id) return 0;
+    return static_cast<uint16_t>(NSNumber(NavigationDelegate::s_getAssoc(m_id, &s_statusKey)).doubleValue());
+}
+
+inline void WKBackForwardListItem::setStatus(uint16_t status) const
+{
+    if (!m_id) return;
+    NavigationDelegate::s_setAssoc(m_id, &s_statusKey, NSNumber::withDouble(status).m_id,
+        1 /* OBJC_ASSOCIATION_RETAIN_NONATOMIC */);
+}
 
 } // namespace objc
 

@@ -209,7 +209,7 @@ public:
         // Non-ASCII path: transcode. The CString has its own NUL terminator
         // at data()[length()], so length()+1 covers the frame delimiter.
         auto utf8 = m_sb.toString().utf8();
-        sink(utf8.data(), utf8.length() + 1);
+        sink(utf8.legacyCStringPointer(), utf8.length() + 1);
     }
 
 private:

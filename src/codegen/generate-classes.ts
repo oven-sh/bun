@@ -969,7 +969,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
      * from a debugger */
     SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
     auto fileNameUTF8 = sourceOrigin.string().utf8();
-    const char* fileName = fileNameUTF8.data();
+    const char* fileName = fileNameUTF8.legacyCStringPointer();
     static const char* lastFileName = nullptr;
     if (lastFileName != fileName) {
       lastFileName = fileName;

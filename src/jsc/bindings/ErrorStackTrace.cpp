@@ -153,7 +153,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 
     JSC::JSObject* callerObject = caller.getObject();
     auto* globalObject = callerObject->globalObject();
-    WTF::String callerName = Zig::functionName(vm, globalObject, callerObject);
+    WTF::String callerName = Zig::functionName(vm, globalObject, callerObject, FinalizerSafety::NotInFinalizer);
     RETURN_IF_EXCEPTION(scope, );
 
     // Match V8: remove all frames up to and including the caller. If the caller
@@ -321,7 +321,7 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
     if (m_callee) {
         auto* calleeObject = m_callee->getObject();
         if (calleeObject) {
-            return Zig::functionName(m_vm, calleeObject->globalObject(), calleeObject);
+            return Zig::functionName(m_vm, calleeObject->globalObject(), calleeObject, FinalizerSafety::NotInFinalizer);
         }
     }
 
@@ -462,7 +462,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     return String();
 }
 
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* object)
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* object, FinalizerSafety finalizerSafety)
 {
     WTF::String functionName;
     auto jstype = object->type();
@@ -471,7 +471,19 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     // First try the "name" property. This names a frame for error output, so a
     // custom getter that throws, or a rope that fails to resolve, is not an
     // error to report here: clear it and fall through to the next strategy.
-    {
+    if (finalizerSafety == FinalizerSafety::MustNotTriggerGC) {
+        // Nothing may be allocated in the heap and no script may run. Everything after this block is safe there too.
+        unsigned attributes;
+        PropertyOffset offset = object->structure()->getConcurrently(vm.propertyNames->name.impl(), attributes);
+        if (offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+            JSValue functionNameValue = object->getDirect(offset);
+            if (functionNameValue && functionNameValue.isString()) {
+                auto name = asString(functionNameValue)->tryGetValueWithoutGC();
+                if (!name->isEmpty())
+                    return name;
+            }
+        }
+    } else {
         auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
         if (object->getOwnNonIndexPropertySlot(vm, object->structure(), vm.propertyNames->name, slot) && !slot.isAccessor()) {
@@ -514,34 +526,6 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     return functionName;
 }
 
-// functionName(vm, lexicalGlobalObject, object) for the end of a collection, where nothing may be
-// allocated in the heap and no script may run: data properties and what the function itself knows.
-static String functionNameWithoutGC(JSC::VM& vm, JSC::JSObject* object)
-{
-    for (const JSC::Identifier* propertyName : { &vm.propertyNames->name, &vm.propertyNames->displayName }) {
-        unsigned attributes;
-        PropertyOffset offset = object->structure()->getConcurrently(propertyName->impl(), attributes);
-        if (offset == invalidOffset || (attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)))
-            continue;
-        JSValue name = object->getDirect(offset);
-        if (name && name.isString()) {
-            auto str = asString(name)->tryGetValueWithoutGC();
-            if (!str->isEmpty())
-                return str;
-        }
-    }
-
-    if (auto* function = dynamicDowncast<JSC::JSFunction>(object)) {
-        auto str = function->nameWithoutGC(vm);
-        if (str.isEmpty() && !function->isHostFunction())
-            return function->jsExecutable()->ecmaNameWithoutGC();
-        return str;
-    }
-    if (auto* function = dynamicDowncast<JSC::InternalFunction>(object))
-        return function->name();
-    return emptyString();
-}
-
 // A stack is materialized on access or at the end of a collection (FinalizerSafety), and must read
 // the same either way: only how the callee's name is looked up differs between the two.
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety finalizerSafety, unsigned int* flags)
@@ -549,11 +533,6 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
     bool isConstructor = false;
     WTF::String functionName;
     JSC::JSObject* callee = frame.callee() ? frame.callee()->getObject() : nullptr;
-    const auto calleeName = [&]() -> String {
-        if (finalizerSafety == FinalizerSafety::MustNotTriggerGC)
-            return functionNameWithoutGC(vm, callee);
-        return Zig::functionName(vm, lexicalGlobalObject, callee);
-    };
 
     if (frame.hasLineAndColumnInfo()) {
         auto* codeblock = frame.codeBlock();
@@ -568,19 +547,15 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
             if (flags) {
                 if (codeType == JSC::CodeType::EvalCode) {
                     *flags |= static_cast<unsigned int>(FunctionNameFlags::Eval);
-                } else if (codeType == JSC::CodeType::FunctionCode) {
+                } else {
                     *flags |= static_cast<unsigned int>(FunctionNameFlags::Function);
                 }
             }
             if (callee) {
-                functionName = calleeName();
+                functionName = Zig::functionName(vm, lexicalGlobalObject, callee, finalizerSafety);
 
-                if (flags) {
-                    if (auto* unlinkedCodeBlock = codeblock->unlinkedCodeBlock()) {
-                        if (unlinkedCodeBlock->isBuiltinFunction()) {
-                            *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
-                        }
-                    }
+                if (flags && codeblock->unlinkedCodeBlock()->isBuiltinFunction()) {
+                    *flags |= static_cast<unsigned int>(FunctionNameFlags::Builtin);
                 }
             }
             break;
@@ -594,7 +569,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
             functionName = Zig::functionName(vm, codeblock);
         }
     } else if (callee) {
-        functionName = calleeName();
+        functionName = Zig::functionName(vm, lexicalGlobalObject, callee, finalizerSafety);
     }
 
     if ((flags && (*flags & static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword))) && isConstructor && !functionName.isEmpty()) {

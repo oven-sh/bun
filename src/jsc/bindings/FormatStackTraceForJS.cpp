@@ -485,21 +485,11 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     WTF::String name = "Error"_s;
     WTF::String message;
 
-    if (errorInstance) {
-        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
-        if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
-            if (!lexicalGlobalObject) {
-                lexicalGlobalObject = errorInstance->globalObject();
-            }
-            name = instance->sanitizedNameString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            message = instance->sanitizedMessageString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-
-    if (!globalObject) [[unlikely]] {
-        globalObject = defaultGlobalObject();
+    if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
+        name = instance->sanitizedNameString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        message = instance->sanitizedMessageString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance));
@@ -593,15 +583,6 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
 }
 
-// The frames only. This also runs at the end of a collection, where the error's name and message
-// cannot be read the way a read of the stack reads them, so JavaScriptCore heads the string with them
-// when the stack is read (ErrorInstance::materializeErrorInfoIfNeeded).
-static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RELEASE_AND_RETURN(scope, Bun::formatStackTrace(vm, defaultGlobalObject(), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr));
-}
-
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);
@@ -681,7 +662,8 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     JSC::SuspendExceptionScope suspendExceptionScope(vm);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    WTF::String result = computeErrorInfoToString(vm, stackTrace, line, column, sourceURL);
+    // The frames only: JavaScriptCore heads them with the error's name and message when the stack is read.
+    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
     if (scope.exception()) {
         // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();

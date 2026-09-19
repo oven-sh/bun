@@ -942,8 +942,8 @@ describe("ModuleGraph matrix: many concurrent instances", () => {
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 // 7. error.stack × where the error is read × when it is first read × what became of the graph it
-//    came from. A stack is materialized on first access, or by JSC at the end of a collection once
-//    a few have passed over an unread one; its text must be the same either way, from any reader,
+//    came from. A stack is materialized on first access, or by JSC at the end of a collection that
+//    finds a frame of an unread trace dead; its text must be the same either way, from any reader,
 //    whether the graph whose modules are in the trace is alive, disposed or collected.
 // ───────────────────────────────────────────────────────────────────────────────────────────────
 describe("ModuleGraph matrix: error.stack reader × first read × origin graph", () => {
@@ -986,14 +986,16 @@ import { join } from "node:path";
 const dir = import.meta.dir;
 const trace = process.argv[2];
 const tick = () => new Promise(resolve => setImmediate(resolve));
-// One collection leaves an unread stack alone; after a few, JSC makes it a string
-// (ErrorInstance::reconcileWeakReferencesAtGCEnd).
+// A collection that finds a frame of an unread trace dead makes the stack a string
+// (ErrorInstance::reconcileWeakReferencesAtGCEnd); underDeadFrame() gives every trace such a frame.
+// Back to the event loop first, so nothing on the stack refers to what the cells dropped.
 async function collect() {
-  for (let i = 0; i < 6; i++) {
-    Bun.gc(true);
-    await tick();
-  }
+  await tick();
+  Bun.gc(true);
 }
+// graph.run(...args) under a function that is garbage once it returns. Its frame is not one of the
+// graphs' modules, so graphFrames() leaves it out.
+const underDeadFrame = (graph, args) => new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}')(graph, args);
 
 // Whether a root reaches the graph that globalThis.__matrixProbe.weak points at. A WeakRef that still
 // derefs only says the cell was marked, and a stale word on the native stack marks a cell too; the
@@ -1042,7 +1044,7 @@ async function originIn(gc, cells) {
   const origin = new Bun.ModuleGraph();
   const originModule = await origin.import(join(dir, "origin.mjs"));
   const pairs = [];
-  for (let i = 0; i < cells; i++) pairs.push(trace === "origin+other" ? other.run(otherModule.call, originModule.pair, "boom") : origin.run(originModule.pair, "boom"));
+  for (let i = 0; i < cells; i++) pairs.push(trace === "origin+other" ? underDeadFrame(other, [otherModule.call, originModule.pair, "boom"]) : underDeadFrame(origin, [originModule.pair, "boom"]));
   const keep = gc === "none" || gc === "alive" ? { origin, originModule } : gc === "disposed, module held" ? { originModule } : {};
   if (gc === "disposed, module held" || gc === "collected") origin.dispose();
   return { pairs, keep, weak: new WeakRef(origin) };

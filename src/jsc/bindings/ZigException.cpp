@@ -118,7 +118,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
         // Use the richer callee-based path
         if (auto calleeCell = stackFrame.callee()) {
             if (auto* callee = calleeCell->getObject())
-                functionName = Zig::functionName(vm, globalObject, callee);
+                functionName = Zig::functionName(vm, globalObject, callee, finalizerSafety);
         }
     }
     if (!functionName.isEmpty())

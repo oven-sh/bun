@@ -212,7 +212,7 @@ public:
 };
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee);
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee, FinalizerSafety);
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety, unsigned int* flags);
 
 }

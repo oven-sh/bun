@@ -2642,7 +2642,6 @@ unsafe extern "C" {
         calloc_func: uv_calloc_func,
         free_func: uv_free_func,
     ) -> c_int;
-    pub fn uv_default_loop() -> *mut Loop;
     pub fn uv_loop_init(loop_: *mut Loop) -> ReturnCode;
     pub fn uv_loop_close(loop_: *mut Loop) -> ReturnCode;
     pub fn uv_loop_alive(loop_: *const Loop) -> c_int;
@@ -2652,10 +2651,8 @@ unsafe extern "C" {
     pub fn uv_unref(handle: *mut uv_handle_t);
     pub fn uv_has_ref(handle: *const uv_handle_t) -> c_int;
     pub fn uv_update_time(loop_: *mut Loop);
-    pub fn uv_now(loop_: *const Loop) -> u64;
 
     // handle/req
-    pub fn uv_handle_size(type_: uv_handle_type) -> usize;
     pub fn uv_handle_get_type(handle: *const uv_handle_t) -> uv_handle_type;
     pub fn uv_handle_type_name(type_: uv_handle_type) -> *const c_char;
     pub fn uv_handle_get_data(handle: *const uv_handle_t) -> *mut c_void;
@@ -2665,7 +2662,6 @@ unsafe extern "C" {
     pub fn uv_walk(loop_: *mut Loop, walk_cb: uv_walk_cb, arg: *mut c_void);
     pub fn uv_close(handle: *mut uv_handle_t, close_cb: uv_close_cb);
     pub fn uv_fileno(handle: *const uv_handle_t, fd: *mut uv_os_fd_t) -> c_int;
-    pub fn uv_buf_init(base: *mut c_char, len: c_uint) -> uv_buf_t;
     pub fn uv_pipe(fds: *mut [uv_file; 2], read_flags: c_int, write_flags: c_int) -> ReturnCode;
     pub fn uv_is_closing(handle: *const uv_handle_t) -> c_int;
     pub fn uv_cancel(req: *mut uv_req_t) -> c_int;
@@ -2775,10 +2771,8 @@ unsafe extern "C" {
 
     // misc
     pub fn uv_uptime(uptime: *mut f64) -> c_int;
-    pub fn uv_getrusage(rusage: *mut uv_rusage_t) -> c_int;
     pub fn uv_os_homedir(buffer: *mut u8, size: *mut usize) -> ReturnCode;
     pub fn uv_os_getppid() -> uv_pid_t;
-    pub fn uv_os_getpriority(pid: uv_pid_t, priority: *mut c_int) -> c_int;
     pub fn uv_translate_sys_error(sys_errno: c_int) -> c_int;
     pub fn uv_cpu_info(cpu_infos: *mut *mut uv_cpu_info_t, count: *mut c_int) -> c_int;
     pub fn uv_free_cpu_info(cpu_infos: *mut uv_cpu_info_t, count: c_int);
@@ -2788,9 +2782,7 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn uv_free_interface_addresses(addresses: *mut uv_interface_address_t, count: c_int);
     pub fn uv_os_uname(buffer: *mut uv_utsname_t) -> c_int;
-    pub fn uv_cwd(buffer: *mut c_char, size: *mut usize) -> c_int;
     pub fn uv_get_total_memory() -> u64;
-    pub fn uv_disable_stdio_inheritance();
 
     // fs
     pub fn uv_fs_req_cleanup(req: *mut fs_t);

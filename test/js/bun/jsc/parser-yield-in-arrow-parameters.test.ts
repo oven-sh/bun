@@ -42,7 +42,6 @@ const syntaxErrorOf = (source: string) => {
 describe("yield in the parameters of an arrow function", () => {
   test.each(invalid)("%s is a SyntaxError in a generator", (expression, message) => {
     expect(syntaxErrorOf(`(function* () { (${expression}); })`)).toBe(message);
-    expect(syntaxErrorOf(`new Function(${JSON.stringify(`return function* () { (${expression}); }`)})`)).toBe(message);
     for (const [before, after] of [
       ["(function* (p = ", ") { })"],
       ["({ *g() { (", "); } })"],

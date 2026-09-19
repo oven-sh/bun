@@ -2951,22 +2951,36 @@ function tryClose(fd) {
   } catch {}
 }
 
+// node's respondWithFD() sends headers before it reads the fd and fails on the read; replay that.
+function failFdResponseAsStreamError(this: Http2Stream, headers, options) {
+  if (this.destroyed || this.closed) return;
+  if (!this.headersSent) {
+    try {
+      this.respond(headers, options);
+    } catch (err) {
+      this.destroy(err);
+      return;
+    }
+  }
+  this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
+}
+
 // Shared by respondWithFile (the stream owns the descriptor it opened: every terminal path closes
 // it exactly once) and respondWithFD (the caller owns the descriptor: nothing here may close it,
 // matching node's doSendFD).
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   const ownsFd = this[kOwnsFd] === true;
+  // node's doSendFileFD and doSendFD: a stat failure destroys the stream before any headers.
+  const statsBeforeHeaders = ownsFd || options.statCheck !== undefined;
   if (err) {
     if (ownsFd && err.code !== "EBADF") {
       tryClose(fd);
     }
 
     if (onError) onError(err);
-    else {
-      this.respond(headers, options);
-      this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
-    }
+    else if (statsBeforeHeaders) this.destroy(err);
+    else failFdResponseAsStreamError.$call(this, headers, options);
     return;
   }
 
@@ -2982,10 +2996,8 @@ function doSendFileFD(options, fd, headers, err, stat) {
       const err = isDirectory ? $ERR_HTTP2_SEND_FILE() : $ERR_HTTP2_SEND_FILE_NOSEEK();
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
-      else {
-        this.respond(headers, options);
-        this.destroy(err);
-      }
+      else if (ownsFd) this.destroy(err);
+      else failFdResponseAsStreamError.$call(this, headers, options);
       return;
     }
 
@@ -2995,7 +3007,8 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
   if (this.destroyed || this.closed) {
     if (ownsFd) tryClose(fd);
-    this.destroy($ERR_HTTP2_INVALID_STREAM());
+    // node sent the no-statCheck headers already, so a close() after them is not an error.
+    if (statsBeforeHeaders) this.destroy($ERR_HTTP2_INVALID_STREAM());
     return;
   }
 

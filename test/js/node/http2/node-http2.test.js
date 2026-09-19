@@ -2681,6 +2681,67 @@ it("http2 client reports ECONNREFUSED for a refused connect, like Node.js", asyn
   }
 });
 
+// A failed fstat in respondWithFD({statCheck})/respondWithFile() destroys the stream with the
+// stat error and sends no headers (node's doSendFD/doSendFileFD). Only respondWithFD() without
+// statCheck sends the headers first and then fails with ERR_HTTP2_STREAM_ERROR. A stream that is
+// already destroyed when fstat completes gets nothing: respond() must not throw from the callback.
+// Node sends the headers at once on the no-statCheck path, so only that event differs between the
+// two runtimes for the last case.
+it("http2 respondWithFD/respondWithFile stat failure destroys the stream without headers, like Node.js", async () => {
+  const fixture = path.join(import.meta.dir, "node-http2-respond-file-stat-error.fixture.mjs");
+  // The server 'error' event and the client 'response' event are not ordered with each other,
+  // so the events of each case are compared as a sorted set.
+  function parse(stdout) {
+    const cases = {};
+    let current;
+    for (const line of stdout.split("\n")) {
+      if (line === "") continue;
+      if (line.startsWith("  ")) cases[current].push(line.trim());
+      else cases[(current = line)] = [];
+    }
+    for (const events of Object.values(cases)) events.sort();
+    return cases;
+  }
+  async function run(exe) {
+    await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const expected = {
+    "respondWithFD(closed fd), statCheck": [
+      "client error: Stream closed with error code NGHTTP2_INTERNAL_ERROR",
+      "server stream error: EBADF",
+    ],
+    "respondWithFD(closed fd), no statCheck": [
+      "client 'response': 200",
+      "client error: Stream closed with error code NGHTTP2_INTERNAL_ERROR",
+      "server stream error: ERR_HTTP2_STREAM_ERROR",
+    ],
+    "respondWithFile(directory)": [
+      "client error: Stream closed with error code NGHTTP2_INTERNAL_ERROR",
+      "server stream error: ERR_HTTP2_SEND_FILE",
+    ],
+    "respondWithFD(closed fd), statCheck, then destroy()": [],
+    "respondWithFD(closed fd), no statCheck, then destroy()": [],
+  };
+
+  const bunRun = await run(bunExe());
+  expect(bunRun.stderr).toBe("");
+  expect(parse(bunRun.stdout)).toEqual(expected);
+  expect(bunRun.exitCode).toBe(0);
+
+  const node = nodeExe();
+  if (node) {
+    const nodeRun = await run(node);
+    expect(parse(nodeRun.stdout)).toEqual({
+      ...expected,
+      // node sends the headers synchronously in this path, before the stream is destroyed.
+      "respondWithFD(closed fd), no statCheck, then destroy()": ["client 'response': 200"],
+    });
+    expect(nodeRun.exitCode).toBe(0);
+  }
+});
+
 it("http2 request.close() validates input and manages stream state", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer();

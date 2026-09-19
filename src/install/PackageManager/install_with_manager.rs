@@ -605,10 +605,7 @@ pub fn install_with_manager(
 
     let named_update = manager.to_update && !manager.update_requests.is_empty();
     let mut named = NamedUpdates::default();
-    let mut unsatisfied: Vec<UnsatisfiedRow> = Vec::new();
     if !needs_new_lockfile {
-        // Found while every row is bound. They resolve last, once it is known which rows and packages are left.
-        unsatisfied = unsatisfied_rows(&manager.lockfile);
         if named_update {
             named = enqueue_named_updates(
                 manager,
@@ -648,11 +645,12 @@ pub fn install_with_manager(
         manager.drain_dependency_list();
     }
 
-    if manager.pending_task_count() > 0
+    let resolving = manager.pending_task_count() > 0
         || manager.peer_dependencies.readable_length() > 0
-        || !named.latest_rows.is_empty()
-        || !unsatisfied.is_empty()
-    {
+        || !named.latest_rows.is_empty();
+    let mut unsatisfied: Vec<UnsatisfiedRow> = Vec::new();
+    // With nothing left to resolve every row is final, and the scan decides here. If not, it runs after those rows.
+    if resolving || !unsatisfied_rows(&manager.lockfile, &[]).0.is_empty() {
         resolve_pending_tasks(manager, &root, log_level, &mut named, &mut unsatisfied)?;
     }
 
@@ -1571,110 +1569,169 @@ struct UnsatisfiedRow {
     owner: PackageID,
 }
 
-fn unsatisfied_rows(lockfile: &Lockfile) -> Vec<UnsatisfiedRow> {
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let dependencies = lockfile.buffers.dependencies.as_slice();
-    let resolutions = lockfile.buffers.resolutions.as_slice();
-    let dep_slices = lockfile.packages.items_dependencies();
-    let pkg_names = lockfile.packages.items_name();
-    let pkg_name_hashes = lockfile.packages.items_name_hash();
-    let pkg_resolutions = lockfile.packages.items_resolution();
-    let has_overrides = !lockfile.overrides.is_empty();
-    let mut aliases: Option<Vec<(PackageNameHash, &DependencyVersion)>> = None;
-    let mut rows = Vec::new();
-    // Walked by owner: the rows the differ replaced still sit in the buffers, owned by nothing.
-    for (owner, slice) in dep_slices.iter().enumerate() {
-        for dep_id in slice.begin()..slice.end() {
-            let target = resolutions[dep_id as usize] as usize;
-            let Some(resolution) = pkg_resolutions.get(target) else {
-                continue;
-            };
-            if resolution.tag != ResolutionTag::Npm {
-                continue;
-            }
-            let dep = &dependencies[dep_id as usize];
-            // A peer binds to the highest version present when none fits. A bundled copy ships in its parent's tarball.
-            if dep.behavior.is_peer() || dep.behavior.is_bundled() {
-                continue;
-            }
-            // bun.lock does not record that an optional row found no version: loading binds it to a hoisted copy.
-            if dep.behavior.is_optional() {
-                continue;
-            }
+/// The columns that the scan for unsatisfied rows reads for every row.
+struct RowScan<'a> {
+    lockfile: &'a Lockfile,
+    buf: &'a [u8],
+    dependencies: &'a [Dependency],
+    resolutions: &'a [PackageID],
+    pkg_names: &'a [SemverString],
+    pkg_name_hashes: &'a [PackageNameHash],
+    pkg_resolutions: &'a [Resolution],
+    has_overrides: bool,
+}
 
-            // What the resolver asks the registry for: an override or a catalog entry stands in for the declared range.
-            let replaced;
-            let (requested, asks_for_own_name) = if dep.version.tag == DependencyVersionTag::Catalog
-                || (has_overrides && lockfile.overrides.has_rule_for_name(dep.name_hash))
-            {
-                let Some(version) = crate::dedupe::effective_npm_range(lockfile, dep_id, dep)
-                else {
-                    continue;
-                };
-                replaced = version;
-                (replaced.npm(), false)
-            } else if dep.version.tag == DependencyVersionTag::Npm {
-                let requested = dep.version.npm();
-                (requested, !requested.is_alias)
-            } else {
-                continue;
-            };
-            // The common row compares two hashes and never reads the string buffer.
-            let same_package = if asks_for_own_name {
-                dep.name_hash == pkg_name_hashes[target]
-            } else {
-                requested.name.slice(buf) == pkg_names[target].slice(buf)
-            };
-            let locked = resolution.npm().version;
-            if same_package && requested.version.satisfies(locked, buf, buf) {
-                continue;
-            }
-
-            // Two rows of one owner with one name share a folder, and the hoister gives it to the row it sorts first.
-            let shares_a_folder = (slice.begin()..slice.end()).any(|sibling_id| {
-                let sibling = &dependencies[sibling_id as usize];
-                sibling.name_hash == dep.name_hash
-                    && (resolutions[sibling_id as usize] as usize) < pkg_resolutions.len()
-                    && sibling.behavior.cmp(dep.behavior) == core::cmp::Ordering::Less
-            });
-            if shares_a_folder {
-                continue;
-            }
-
-            let aliases = aliases.get_or_insert_with(|| {
-                npm_aliases(
-                    lockfile,
-                    &reachable::packages(lockfile, resolutions, reachable::Options::all(0)),
-                )
-            });
-            if follows_an_alias(lockfile, aliases, dep, target as PackageID) {
-                continue;
-            }
-
-            rows.push(UnsatisfiedRow {
-                dep_id,
-                target: target as PackageID,
-                owner: owner as PackageID,
-            });
+impl<'a> RowScan<'a> {
+    fn new(lockfile: &'a Lockfile) -> Self {
+        Self {
+            lockfile,
+            buf: lockfile.buffers.string_bytes.as_slice(),
+            dependencies: lockfile.buffers.dependencies.as_slice(),
+            resolutions: lockfile.buffers.resolutions.as_slice(),
+            pkg_names: lockfile.packages.items_name(),
+            pkg_name_hashes: lockfile.packages.items_name_hash(),
+            pkg_resolutions: lockfile.packages.items_resolution(),
+            has_overrides: !lockfile.overrides.is_empty(),
         }
     }
-    rows
+
+    /// Whether the npm package `target` is what the row asks for, by name and version. `None`: it asks for none.
+    #[inline]
+    fn accepts(&self, dep_id: DependencyID, target: usize) -> Option<bool> {
+        let dep = &self.dependencies[dep_id as usize];
+        // What the resolver asks the registry for: an override or a catalog entry stands in for the declared range.
+        let replaced;
+        let (requested, asks_for_own_name) = if dep.version.tag == DependencyVersionTag::Catalog
+            || (self.has_overrides && self.lockfile.overrides.has_rule_for_name(dep.name_hash))
+        {
+            replaced = crate::dedupe::effective_npm_range(self.lockfile, dep_id, dep)?;
+            (replaced.npm(), false)
+        } else if dep.version.tag == DependencyVersionTag::Npm {
+            let requested = dep.version.npm();
+            (requested, !requested.is_alias)
+        } else {
+            return None;
+        };
+        // The common row compares two hashes and never reads the string buffer.
+        let same_package = if asks_for_own_name {
+            dep.name_hash == self.pkg_name_hashes[target]
+        } else {
+            requested.name.slice(self.buf) == self.pkg_names[target].slice(self.buf)
+        };
+        let locked = self.pkg_resolutions[target].npm().version;
+        Some(same_package && requested.version.satisfies(locked, self.buf, self.buf))
+    }
+
+    /// The rows of loaded packages that no rule of the row itself or of a row next to it explains.
+    fn rows(&self) -> Vec<UnsatisfiedRow> {
+        let dep_slices = self.lockfile.packages.items_dependencies();
+        let loaded = self.lockfile.loaded_package_count as usize;
+        let mut rows = Vec::new();
+        // Walked by owner: the rows the differ replaced still sit in the buffers, owned by nothing.
+        for (owner, slice) in dep_slices.iter().enumerate().take(loaded) {
+            for dep_id in slice.begin()..slice.end() {
+                let target = self.resolutions[dep_id as usize] as usize;
+                let Some(resolution) = self.pkg_resolutions.get(target) else {
+                    continue;
+                };
+                if resolution.tag != ResolutionTag::Npm {
+                    continue;
+                }
+                let dep = &self.dependencies[dep_id as usize];
+                // A peer binds to the highest version present when none fits. A bundled copy ships with its parent.
+                if dep.behavior.is_peer() || dep.behavior.is_bundled() {
+                    continue;
+                }
+                // bun.lock does not record that an optional row found no version: loading binds it to a hoisted copy.
+                if dep.behavior.is_optional() {
+                    continue;
+                }
+                if self.accepts(dep_id, target) != Some(false) {
+                    continue;
+                }
+                // bun.lock has one folder per owner and name: loading binds every row of that name to one row's choice.
+                let shares_a_folder = (slice.begin()..slice.end()).any(|sibling_id| {
+                    sibling_id != dep_id
+                        && self.dependencies[sibling_id as usize].name_hash == dep.name_hash
+                        && self.resolutions[sibling_id as usize] as usize == target
+                        && self.accepts(sibling_id, target) == Some(true)
+                });
+                if shares_a_folder {
+                    continue;
+                }
+                rows.push(UnsatisfiedRow {
+                    dep_id,
+                    target: target as PackageID,
+                    owner: owner as PackageID,
+                });
+            }
+        }
+        rows
+    }
+}
+
+type NpmAliases<'a> = Vec<(PackageNameHash, &'a DependencyVersion)>;
+
+/// The rows to resolve again, `resolved` left out, with the `npm:` aliases that their resolution can follow.
+fn unsatisfied_rows<'a>(
+    lockfile: &'a Lockfile,
+    resolved: &[UnsatisfiedRow],
+) -> (Vec<UnsatisfiedRow>, NpmAliases<'a>) {
+    let mut rows = RowScan::new(lockfile).rows();
+    rows.retain(|row| !resolved.iter().any(|done| done.dep_id == row.dep_id));
+    if rows.is_empty() {
+        return (rows, Vec::new());
+    }
+    reached_and_unexplained(lockfile, rows)
+}
+
+/// Drops the rows that follow an `npm:` alias of their name, then the rows of packages that nothing reaches.
+#[cold]
+#[inline(never)]
+fn reached_and_unexplained<'a>(
+    lockfile: &'a Lockfile,
+    mut rows: Vec<UnsatisfiedRow>,
+) -> (Vec<UnsatisfiedRow>, NpmAliases<'a>) {
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    // A row in question reaches nothing until an alias explains it: what only that row reaches can not vouch for it.
+    let mut bound = lockfile.buffers.resolutions.as_slice().to_vec();
+    for row in &rows {
+        bound[row.dep_id as usize] = invalid_package_id;
+    }
+    loop {
+        let reached = reachable::packages(lockfile, &bound, reachable::Options::all(0));
+        let aliases = npm_aliases(lockfile, &reached);
+        let in_question = rows.len();
+        rows.retain(|row| {
+            let dep = &dependencies[row.dep_id as usize];
+            let explained = follows_an_alias(lockfile, &aliases, dep, row.target);
+            if explained {
+                bound[row.dep_id as usize] = row.target;
+            }
+            !explained
+        });
+        if rows.len() == in_question {
+            // `clean` drops what nothing reaches, a package that package.json stopped listing included.
+            rows.retain(|row| reached.is_set(row.owner as usize));
+            return (rows, aliases);
+        }
+        if rows.is_empty() {
+            return (rows, aliases);
+        }
+    }
 }
 
 /// Every `npm:` alias the resolver can know: held by a reached package, a catalog or a flat override, sorted by name.
 #[cold]
 #[inline(never)]
-fn npm_aliases<'a>(
-    lockfile: &'a Lockfile,
-    reachable_packages: &DynamicBitSet,
-) -> Vec<(PackageNameHash, &'a DependencyVersion)> {
+fn npm_aliases<'a>(lockfile: &'a Lockfile, reached: &DynamicBitSet) -> NpmAliases<'a> {
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let rows = lockfile
         .packages
         .items_dependencies()
         .iter()
         .enumerate()
-        .filter(|&(owner, _)| reachable_packages.is_set(owner))
+        .filter(|&(owner, _)| reached.is_set(owner))
         .flat_map(|(_, slice)| slice.get(dependencies));
     let catalogs = &lockfile.catalogs;
     let catalog_entries = catalogs.default.values().iter().chain(
@@ -1684,7 +1741,7 @@ fn npm_aliases<'a>(
             .iter()
             .flat_map(|group| group.values()),
     );
-    let mut aliases: Vec<(PackageNameHash, &DependencyVersion)> = rows
+    let mut aliases: NpmAliases<'a> = rows
         .chain(catalog_entries)
         .chain(lockfile.overrides.map.values())
         .filter(|dep| dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
@@ -1723,46 +1780,30 @@ fn follows_an_alias(
         })
 }
 
-/// Resolves again the rows that are still bound as scanned, now that it is known which packages are reached.
-#[cold]
-#[inline(never)]
-fn enqueue_unsatisfied_rows(manager: &mut PackageManager, rows: &mut Vec<UnsatisfiedRow>) {
-    let _ = manager.get_cache_directory();
-    let _ = manager.get_temporary_directory();
-    let aliases: Vec<(PackageNameHash, DependencyVersion)> = {
-        let lockfile = &*manager.lockfile;
-        let dependencies = lockfile.buffers.dependencies.as_slice();
-        let resolutions = lockfile.buffers.resolutions.as_slice();
-        let dep_slices = lockfile.packages.items_dependencies();
-        // `clean` drops what nothing reaches, a package that package.json stopped listing included.
-        let reachable_packages =
-            reachable::packages(lockfile, resolutions, reachable::Options::all(0));
-        let aliases = npm_aliases(lockfile, &reachable_packages);
-        rows.retain(|row| {
-            resolutions[row.dep_id as usize] == row.target
-                && dep_slices[row.owner as usize].contains(row.dep_id)
-                && reachable_packages.is_set(row.owner as usize)
-                && !follows_an_alias(
-                    lockfile,
-                    &aliases,
-                    &dependencies[row.dep_id as usize],
-                    row.target,
-                )
-        });
-        aliases
+/// Enqueues the unsatisfied rows and moves them to `resolved`. False when there is none.
+fn enqueue_unsatisfied_rows(
+    manager: &mut PackageManager,
+    resolved: &mut Vec<UnsatisfiedRow>,
+) -> bool {
+    let (rows, aliases) = {
+        let (rows, aliases) = unsatisfied_rows(&manager.lockfile, resolved);
+        let aliases: Vec<(PackageNameHash, DependencyVersion)> = aliases
             .into_iter()
             .map(|(name_hash, aliased)| (name_hash, aliased.clone()))
-            .collect()
+            .collect();
+        (rows, aliases)
     };
     if rows.is_empty() {
-        return;
+        return false;
     }
+    let _ = manager.get_cache_directory();
+    let _ = manager.get_temporary_directory();
     // The map still holds aliases that package.json dropped, and versions parsed into another lockfile's strings.
     manager.known_npm_aliases.clear();
     for (name_hash, aliased) in aliases {
         manager.known_npm_aliases.insert(name_hash, aliased);
     }
-    for row in rows.iter() {
+    for row in &rows {
         let dependency = manager.lockfile.buffers.dependencies[row.dep_id as usize].clone();
         manager.lockfile.buffers.resolutions[row.dep_id as usize] = invalid_package_id;
         if let Err(err) = enqueue_dependency_with_main(
@@ -1775,6 +1816,8 @@ fn enqueue_unsatisfied_rows(manager: &mut PackageManager, rows: &mut Vec<Unsatis
             add_dependency_error(manager, &dependency, err);
         }
     }
+    resolved.extend(rows);
+    true
 }
 
 #[derive(Default)]
@@ -2224,8 +2267,8 @@ fn resolve_pending_tasks(
         wait_for_resolution(manager)?;
     }
 
-    if !unsatisfied.is_empty() {
-        enqueue_unsatisfied_rows(manager, unsatisfied);
+    // Each wave can reach a loaded package that nothing reached before, with rows of its own to resolve again.
+    while enqueue_unsatisfied_rows(manager, unsatisfied) {
         manager.drain_dependency_list();
         wait_for_resolution(manager)?;
     }

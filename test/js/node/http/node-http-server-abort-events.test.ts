@@ -299,3 +299,74 @@ describe("res.destroy() defers 'close'", () => {
     expect(events).toEqual(["destroy()", "destroy() returned (closed: false)", "res.close (closed: true)"]);
   });
 });
+
+// Like Node.js, whose parser runs to the end of the read before the destroyed
+// handle closes: the body bytes that arrived in the same read as the head still
+// reach the request after the 'request' listener destroyed the socket.
+describe.concurrent("req.socket.destroy() inside the 'request' listener", () => {
+  // Serves one POST whose head and body arrive in one write, destroys the
+  // socket from the 'request' listener (or from the first 'data' event), and
+  // returns the request events once the request and the connection have closed.
+  async function destroyAndRecord(body: string, destroyFrom: "request" | "data", { respondOnEnd = false } = {}) {
+    const events: string[] = [];
+    const reqClosed = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.on("data", chunk => {
+        events.push("req.data:" + chunk.length);
+        if (destroyFrom === "data" && !req.socket.destroyed) req.socket.destroy();
+      });
+      req.on("aborted", () => events.push("req.aborted"));
+      req.on("error", e => events.push("req.error:" + (e as NodeJS.ErrnoException).code));
+      req.on("end", () => {
+        events.push("req.end");
+        if (respondOnEnd) res.end("x");
+      });
+      req.on("close", () => {
+        events.push(`req.close (complete: ${req.complete})`);
+        reqClosed.resolve();
+      });
+      res.on("finish", () => events.push("res.finish"));
+      if (destroyFrom === "request") req.socket.destroy();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const client = connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      client.on("data", chunk => events.push("client.data:" + chunk.length));
+      await once(client, "connect");
+      client.write(body);
+      await Promise.all([reqClosed.promise, once(client, "close")]);
+      return events;
+    } finally {
+      server.close();
+    }
+  }
+
+  const head = "POST / HTTP/1.1\r\nHost: x\r\n";
+
+  test("the body that arrived with the head still reaches the request", async () => {
+    const events = await destroyAndRecord(head + "Content-Length: 10\r\n\r\naaaaaaaaaa", "request");
+    expect(events).toEqual(["req.data:10", "req.end", "req.close (complete: true)"]);
+  });
+
+  test("a partial body is delivered before the request is aborted", async () => {
+    const events = await destroyAndRecord(head + "Content-Length: 10\r\n\r\naaa", "request");
+    expect(events).toEqual(["req.data:3", "req.aborted", "req.error:ECONNRESET", "req.close (complete: false)"]);
+  });
+
+  test("destroyed from 'data': the chunks that follow in the same read still complete the request", async () => {
+    const events = await destroyAndRecord(
+      head + "Transfer-Encoding: chunked\r\n\r\n5\r\naaaaa\r\n5\r\nbbbbb\r\n0\r\n\r\n",
+      "data",
+    );
+    expect(events).toEqual(["req.data:5", "req.data:5", "req.end", "req.close (complete: true)"]);
+  });
+
+  test("a response written after destroy() does not reach the client and does not finish", async () => {
+    const events = await destroyAndRecord(head + "Content-Length: 2\r\n\r\nab", "request", { respondOnEnd: true });
+    expect(events).toEqual(["req.data:2", "req.end", "req.close (complete: true)"]);
+  });
+});

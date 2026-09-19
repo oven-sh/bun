@@ -138,6 +138,23 @@ public:
         return false;
     }
 
+    /* node:http socket.destroy() while onData is parsing this socket: mark it
+     * HTTP_NODE_CLOSE_AFTER_MESSAGE and let onData close it once the current
+     * message's body from this read is delivered. Returns false when onData is
+     * not parsing this socket (or it is a tunnel): the caller closes it now. */
+    bool closeAfterMessageIfParsing() {
+        HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
+        if (httpContext->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
+            return false;
+        }
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (httpResponseData->isConnectRequest) {
+            return false;
+        }
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE;
+        return true;
+    }
+
     /* Marks the response in flight as one that user JavaScript produces. See
      * HTTP_SEND_WHEN_COMPLETE. */
     void sendWhenComplete() {

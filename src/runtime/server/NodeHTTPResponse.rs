@@ -768,8 +768,27 @@ impl NodeHTTPResponse {
         JSValue::from(self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED))
     }
 
+    /// socket.destroy() from JS while uws was parsing this socket: uws closes
+    /// it once the current read's body is delivered. Until then writes are
+    /// dropped as after the close (Node's _writeRaw checks socket.destroyed).
+    /// SOCKET_CLOSED itself stays unset, so body delivery still finds its
+    /// wrapper and the pending-request ref is released by the close.
+    fn is_close_after_message_pending(&self) -> bool {
+        let flags = self.flags.get();
+        !flags.contains(Flags::SOCKET_CLOSED)
+            && !flags.contains(Flags::UPGRADED)
+            && self
+                .raw_response
+                .get()
+                .is_some_and(|raw| raw.state().is_node_close_after_message())
+    }
+
     pub(crate) fn get_flags(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number_from_int32(self.flags.get().bits() as i32)
+        let mut flags = self.flags.get();
+        if self.is_close_after_message_pending() {
+            flags.insert(Flags::SOCKET_CLOSED);
+        }
+        JSValue::js_number_from_int32(flags.bits() as i32)
     }
 
     pub(crate) fn get_aborted(&self, _global: &JSGlobalObject) -> JSValue {
@@ -894,7 +913,10 @@ impl NodeHTTPResponse {
             // We haven't emitted the "close" event yet.
             return Ok(JSValue::UNDEFINED);
         };
-        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
+        if flags.contains(Flags::SOCKET_CLOSED)
+            || flags.contains(Flags::UPGRADED)
+            || self.is_close_after_message_pending()
+        {
             // We haven't emitted the "close" event yet.
             return Ok(JSValue::UNDEFINED);
         }
@@ -1857,7 +1879,10 @@ impl NodeHTTPResponse {
         //          // then we haven't gotten the 'close' event yet.
         //          return false;
         //        }
-        if self.flags.get().contains(Flags::SOCKET_CLOSED) || self.raw_response.get().is_none() {
+        if self.flags.get().contains(Flags::SOCKET_CLOSED)
+            || self.raw_response.get().is_none()
+            || self.is_close_after_message_pending()
+        {
             return Ok(if IS_END {
                 JSValue::UNDEFINED
             } else {

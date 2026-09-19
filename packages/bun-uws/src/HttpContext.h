@@ -657,6 +657,17 @@ private:
                     httpResponseData->inStream = nullptr;
                 }
             }
+
+            /* node:http compat: JavaScript destroyed this socket earlier in this
+             * read. The body of the message it was destroyed under is delivered,
+             * so close now, before another request is parsed out of the read. */
+            if constexpr (IsNodeHttp) {
+                if (fin && !us_socket_is_closed((us_socket_t *) user)
+                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE)) {
+                    us_socket_close((us_socket_t *) user, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+                    return nullptr;
+                }
+            }
             return user;
         });
 
@@ -679,6 +690,13 @@ private:
                     /* Balance the parsing ref taken at the top of onData (the
                      * success path does this through returnedData). */
                     us_socket_unref(s);
+                    /* JavaScript destroyed the socket earlier in this read: the
+                     * deferred close runs now, the JS layer cannot reach the
+                     * handle any more. */
+                    if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE) {
+                        us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+                        return s;
+                    }
                 }
                 /* Flush anything the 'clientError' handler wrote (uncorking a
                  * closed socket is a no-op). */
@@ -697,6 +715,19 @@ private:
             us_socket_shutdown(s);
             /* Close any socket on HTTP errors */
             us_socket_close(s, 0, nullptr);
+        }
+
+        /* node:http compat: JavaScript destroyed the socket during this read and
+         * the message it was destroyed under did not complete in it (a partial
+         * body, or parsing stopped at a shutdown). Close now: Node delivers only
+         * what its parser already has. The ext is still an HttpResponseData
+         * unless the read upgraded the socket to a WebSocket. */
+        if constexpr (IsNodeHttp) {
+            if (!httpContextData->upgradedWebSocket && !us_socket_is_closed(s)
+                && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE)) {
+                us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+                return s;
+            }
         }
 
         auto returnedData = result.returnedData;

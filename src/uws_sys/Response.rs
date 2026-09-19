@@ -1109,6 +1109,7 @@ bitflags::bitflags! {
         const HTTP_CONNECTION_CLOSE            = 16;
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
         const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
+        const HTTP_NODE_CLOSE_AFTER_MESSAGE    = 1 << 19;
     }
 }
 
@@ -1146,6 +1147,13 @@ impl State {
     #[inline]
     pub fn is_node_received_fin(self) -> bool {
         self.bits() & State::HTTP_NODE_RECEIVED_FIN.bits() != 0
+    }
+
+    /// node:http destroyed the socket from JavaScript while uws was parsing a
+    /// read on it. uws closes it once the current message's body is delivered.
+    #[inline]
+    pub fn is_node_close_after_message(self) -> bool {
+        self.bits() & State::HTTP_NODE_CLOSE_AFTER_MESSAGE.bits() != 0
     }
 }
 

@@ -29,6 +29,7 @@
 
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
+#include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -642,6 +643,50 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
+extern "C" bool Bun__isESModuleByPathOrPackage(void* bunVM, const BunString* specifier);
+
+// What Node runs as an ES module: a .mjs/.mts file, a .js/.ts file under a
+// package.json with "type": "module", or a file with import, export, top-level
+// await or import.meta.
+static bool isESModule(void* bunVM, const WTF::String& specifier, JSC::AbstractModuleRecord* record)
+{
+    auto* module = dynamicDowncast<JSC::JSModuleRecord>(record);
+    if (!module)
+        return false;
+    BunString specifierString = Bun::toString(specifier);
+    if (Bun__isESModuleByPathOrPackage(bunVM, &specifierString))
+        return true;
+    return !module->requestedModules().isEmpty() || !module->exportEntries().isEmpty() || module->hasTLA() || (module->features() & JSC::ImportMetaFeature);
+}
+
+// The module threw while it was evaluated, and Node runs it as CommonJS (not an
+// ES module, or no JSModuleRecord at all). Node re-runs such a module on the
+// next require(). An ES module keeps its error.
+static bool threwAsCommonJS(void* bunVM, const WTF::String& specifier, JSC::ModuleRegistryEntry* entry)
+{
+    auto* record = entry->record();
+    bool threw = entry->status() == JSC::ModuleRegistryEntry::Status::EvaluationFailed;
+    // A dependency that threw inside another module's graph keeps Status::Fetched.
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
+        threw = threw || cyclic->evaluationError();
+    return threw && !isESModule(bunVM, specifier, record);
+}
+
+// A failed require() drops its module from the require map, but the registry
+// entry keeps the error and JSModuleLoader::loadModule replays it on every later
+// load. Only a failed entry is removed: a pending or loaded one may belong to an
+// in-flight import(). The retry reads the file again, as `delete require.cache[key]`
+// does, so the --isolate source cache is dropped with the entry.
+static void evictFailedModuleRegistryEntry(JSC::VM& vm, void* bunVM, JSC::JSModuleLoader* loader, const WTF::String& specifier)
+{
+    auto key = JSC::Identifier::fromString(vm, specifier);
+    auto* entry = loader->registryEntry(key);
+    if (!entry || !threwAsCommonJS(bunVM, specifier, entry))
+        return;
+    loader->removeEntry(key);
+    Bun::IsolatedModuleCache::evict(vm, specifier);
+}
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
@@ -660,6 +705,8 @@ JSValue fetchCommonJSModule(
     RETURN_IF_EXCEPTION(scope, {});
 
     BunString specifier = Bun::toString(specifierWtfString);
+
+    evictFailedModuleRegistryEntry(vm, bunVM, loader, specifierWtfString);
 
     bool wasModuleMock = false;
 
@@ -829,6 +876,9 @@ JSValue fetchCommonJSModuleNonBuiltin(
 {
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
+    // A direct Module._extensions[ext]() call skips fetchCommonJSModule.
+    if constexpr (isExtension)
+        evictFailedModuleRegistryEntry(vm, bunVM, loader, specifierWtfString);
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {

@@ -360,8 +360,7 @@ function setupWorkerStdio(stdio) {
 // on receive, markers are swapped back for reconstructed instances.
 // A plain string key on purpose: Symbols don't survive structured clone, and
 // Bun has no native HostObject hook, so the marker must ride along inside the
-// cloned graph (including Map/Set entries). A user object with the same key
-// stays plain data, as in node: it cannot hold a live claim id.
+// cloned graph (including Map/Set entries).
 const kJSTransferableMarker = "__bunNodeWorkerJSTransferable";
 
 function isJSTransferableMarker(value: object): boolean {

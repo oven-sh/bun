@@ -13,7 +13,7 @@ import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
-import { checkPreprocessedSource } from "./builtin-output-check";
+import { checkPreprocessedSource } from "./builtin-output-check.ts";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";

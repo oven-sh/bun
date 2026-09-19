@@ -21,9 +21,9 @@ export function checkPreprocessedSource(fileName: string, text: string, firstLin
   const visit = (node: ts.Node) => {
     let problem: string | undefined;
     if (literal_kinds.has(node.kind) && node.getText(sourceFile).includes("__intrinsic__")) {
-      problem = "the preprocessor read this literal as code and rewrote a `$name` in it";
+      problem = "the preprocessor rewrote a `$name` inside this literal";
     } else if (ts.isIdentifier(node) && /^\$\w/.test(node.text) && !kept_names.has(node.text)) {
-      problem = "the preprocessor read this code as a literal and did not rewrite `" + node.text + "`";
+      problem = "the preprocessor did not rewrite this `$name`";
     }
     if (problem) {
       const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
@@ -35,7 +35,8 @@ export function checkPreprocessedSource(fileName: string, text: string, firstLin
   if (problems.length) {
     throw new Error(
       problems.join("\n") +
-        "\nbuiltin-parser.ts is not a parser. Move the literal to where it reads right, for example `const re = /.../;`.",
+        "\nbuiltin-parser.ts is not a parser. It misread a `/` at or before each place: src/js/README.md lists what it misreads." +
+        "\nMove a regex literal to its own statement, `const re = /.../;`. Put the left side of a division in parentheses.",
     );
   }
 }

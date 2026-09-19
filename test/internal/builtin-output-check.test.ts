@@ -26,13 +26,13 @@ test("accepts what the preprocessor reads right", () => {
 
 test("reports a regex literal that the preprocessor read as code", () => {
   expect(check("$b();\nif (x) /[$a]/.test(y);", 10)).toThrow(
-    "src/js/example.ts:11:8: the preprocessor read this literal as code and rewrote a `$name` in it: /[__intrinsic__a]/",
+    "src/js/example.ts:11:8: the preprocessor rewrote a `$name` inside this literal: /[__intrinsic__a]/",
   );
 });
 
 test("reports code that the preprocessor read as a comment", () => {
   // After `)` the regex literal is read as code, so the `//` in it opens a line comment.
   expect(check("if (x) /a\\/\\//.test(y) && $b();")).toThrow(
-    "src/js/example.ts:1:27: the preprocessor read this code as a literal and did not rewrite `$b`: $b",
+    "src/js/example.ts:1:27: the preprocessor did not rewrite this `$name`: $b",
   );
 });

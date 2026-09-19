@@ -54,7 +54,6 @@ const {
   setServerAppFlags,
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
-  noBodySymbol,
   kOutHeaders,
   onDataIncomingMessage,
   validateMsecs,
@@ -221,9 +220,8 @@ function releaseServerParserShim(socket, req?) {
 function onNodeHTTPServerSocketTimeout() {
   const req = this[kRequest];
   // Like Node.js's socketOnTimeout: the request only sees 'timeout' while its
-  // message is still being received. A body-less request was fully received
-  // when it was dispatched, even if its (empty) stream was never consumed.
-  const reqTimeout = req && !req.complete && !req[noBodySymbol] && req.emit("timeout", this);
+  // message is still being received.
+  const reqTimeout = req && !req.complete && req.emit("timeout", this);
   const res = this._httpMessage;
   const resTimeout = res && res.emit("timeout", this);
   const serverTimeout = this.server.emit("timeout", this);
@@ -1028,6 +1026,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             server.emit("request", http_req, http_res);
           }
         }
+
+        // Like Node.js's parserOnMessageComplete: llhttp completes a message
+        // without a body as soon as the listener returns, read or not. EOF
+        // itself stays lazy (IncomingMessage.prototype._read).
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L143-L163
+        if (!hasBody) http_req.complete = true;
 
         socket.cork();
 

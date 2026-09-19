@@ -367,19 +367,30 @@ devTest("tsconfig paths alias to a directory that ends in a slash (#43391)", {
       import { abc } from "@/second/";
       console.log("value: " + abc);
     `,
-    "src/keep.ts": `
+    "src/second/keep.ts": `
       export const keep = 1;
     `,
   },
   async test(dev) {
-    await using c = await dev.client("/", {
-      errors: [`index.ts:1:21: error: Could not resolve: "@/second/". Maybe you need to "bun install"?`],
-    });
+    const errors = [`index.ts:1:21: error: Could not resolve: "@/second/". Maybe you need to "bun install"?`];
+    await using c = await dev.client("/", { errors });
 
-    await c.expectReload(async () => {
-      await dev.write("index.ts", `console.log("value: " + 789);`);
+    // No watch covers `src/second`, so this write alone rebuilds nothing.
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("src/second/index.ts", `export const abc = 789;`, { errors });
     });
-    await c.expectMessage("value: 789");
+    // The next build of the importer finds the stale listing of `src/second`,
+    // evicts it, and resolves the alias on the retry.
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+          import { abc } from "@/second/";
+          console.log("value: " + abc + "!");
+        `,
+      );
+    });
+    await c.expectMessage("value: 789!");
   },
 });
 devTest("deleting imported file shows error then recovers", {

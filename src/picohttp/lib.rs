@@ -426,6 +426,8 @@ impl fmt::Display for StatusCodeFormatter {
 pub enum ParseResponseError {
     #[strum(serialize = "Malformed_HTTP_Response")]
     MalformedHttpResponse,
+    /// Every slot of `src` is in use and the header section has not ended.
+    TooManyHeaders,
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseResponseError);
@@ -498,6 +500,8 @@ impl<'a> Response<'a> {
         };
 
         match rc {
+            // A malformed field returns -1 with `num_headers` below `src.len()`.
+            -1 if num_headers == src.len() => Err(ParseResponseError::TooManyHeaders),
             -1 => {
                 bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
                 Err(ParseResponseError::MalformedHttpResponse)

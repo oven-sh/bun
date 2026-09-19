@@ -13,23 +13,41 @@ const literal_kinds = new Set([
 // The `$debug` and `$assert` macros expand to calls of these.
 const kept_names = new Set(["$debug_log", "$assert"]);
 
-/** Throws if the preprocessor rewrote a `$name` inside a literal of `text`, or left a `$name` or a `require()` in its code. */
+const isNew = (node: ts.Node, name: string) =>
+  ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name;
+const isDefault = (modifier: ts.Modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword;
+
+/** What the preprocessor did wrong at `node`: a rewrite inside a literal, or code it left as written. */
+function problemAt(node: ts.Node, sourceFile: ts.SourceFile): string | undefined {
+  if (literal_kinds.has(node.kind)) {
+    return node.getText(sourceFile).includes("__intrinsic__") ? "rewrote a `$name` inside this literal" : undefined;
+  }
+  if (ts.isIdentifier(node)) {
+    return /^\$\w/.test(node.text) && !kept_names.has(node.text) ? "did not rewrite this `$name`" : undefined;
+  }
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require") {
+    return "did not replace this require()";
+  }
+  if (ts.isExportAssignment(node) || (ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(isDefault))) {
+    return "did not rewrite this `export default`";
+  }
+  if (isNew(node, "TypeError")) return "did not rewrite this `new TypeError`";
+  if (ts.isThrowStatement(node) && isNew(node.expression, "RangeError")) {
+    return "did not rewrite this `throw new RangeError`";
+  }
+}
+
+/** Throws if the preprocessor rewrote a `$name` inside a literal of `text`, or left code that it rewrites as written. */
 export function checkPreprocessedSource(fileName: string, text: string, firstLine = 1) {
   const kind = fileName.endsWith(".js") ? ts.ScriptKind.JS : ts.ScriptKind.TS;
   const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, false, kind);
   const problems: string[] = [];
   const visit = (node: ts.Node) => {
-    let problem: string | undefined;
-    if (literal_kinds.has(node.kind) && node.getText(sourceFile).includes("__intrinsic__")) {
-      problem = "the preprocessor rewrote a `$name` inside this literal";
-    } else if (ts.isIdentifier(node) && /^\$\w/.test(node.text) && !kept_names.has(node.text)) {
-      problem = "the preprocessor did not rewrite this `$name`";
-    } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require") {
-      problem = "the preprocessor did not replace this require()";
-    }
+    const problem = problemAt(node, sourceFile);
     if (problem) {
       const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-      problems.push(`${fileName}:${line + firstLine}:${character + 1}: ${problem}: ${node.getText(sourceFile)}`);
+      const [shown] = node.getText(sourceFile).split("\n", 1);
+      problems.push(`${fileName}:${line + firstLine}:${character + 1}: the preprocessor ${problem}: ${shown}`);
     }
     ts.forEachChild(node, visit);
   };

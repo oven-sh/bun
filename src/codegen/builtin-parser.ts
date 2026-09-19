@@ -118,7 +118,7 @@ export function sliceSourceCode(
       i = 1;
     } else if (contents.startsWith("require(")) {
       if (replaceRequire) {
-        const staticSpecifier = contents.match(/\brequire\(["']([^"']+)["']\)/);
+        const staticSpecifier = contents.match(/^require\(["']([^"']+)["']\)/);
         if (staticSpecifier) {
           const specifier = staticSpecifier[1];
           result += replaceRequire(specifier);

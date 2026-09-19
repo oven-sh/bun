@@ -81,6 +81,13 @@ describe("builtin preprocessor", () => {
     expect(preprocess(body)).toEqual(expected(body));
   });
 
+  test("a dynamic require() is an error, also when a static one follows", () => {
+    const load = (specifier: string) => `load(${JSON.stringify(specifier)})`;
+    expect(() => sliceSourceCode(`{ x = require(y); z = require("z"); }`, true, load)).toThrow(
+      "Require with dynamic specifier not supported here.",
+    );
+  });
+
   test("divides after a macro call and after require()", () => {
     const load = (specifier: string) => `load(${JSON.stringify(specifier)})`;
     const macro = sliceSourceCode("{$isPromisePending(x)}", true).result.slice(1, -1);

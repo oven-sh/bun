@@ -2,43 +2,49 @@
 // `$name` to `__intrinsic__name` in code and copies literals. It cannot tell a
 // regex literal from a division after `)` or `}`. bundle-modules.ts and
 // bundle-functions.ts pass its output to checkPreprocessedSource, which fails the
-// build when the TypeScript parser finds a rewrite inside a literal or a `$name`
-// left in code. (typescript comes from the root install, like at build time.)
+// build when the TypeScript parser finds a rewrite inside a literal, or code that
+// the preprocessor left as written. (typescript comes from the root install, like
+// at build time.)
 import { expect, test } from "bun:test";
 import { checkPreprocessedSource } from "../../src/codegen/builtin-output-check.ts";
-import { sliceSourceCode } from "../../src/codegen/builtin-parser.ts";
 
-function check(source: string, firstLine?: number) {
-  const { result, rest } = sliceSourceCode(`{${source}}`, true, specifier => `load(${JSON.stringify(specifier)})`);
-  expect(rest).toBe("");
-  return () => checkPreprocessedSource("src/js/example.ts", result.slice(1, -1), firstLine);
-}
+const check = (text: string, firstLine?: number) => () => checkPreprocessedSource("src/js/example.ts", text, firstLine);
 
-test("accepts what the preprocessor reads right", () => {
-  const source = [
-    "const re = x ? /[$a]/ : !/[$a]/.test(`${$b} \\`$a\\``);",
-    "$debug('$a', $b);",
-    "$assert($b, '$a');",
-    "export default { re, half: $b / 2 / $c, fs: require('node:fs') };",
+// What the preprocessor makes of: a regex and a template literal with `$a` in them, `$debug(..)`,
+// `$assert(..)`, `throw new TypeError(..)`, `throw new RangeError(..)`, `export default` and `require(..)`.
+test("accepts preprocessed code", () => {
+  const text = [
+    "const re = x ? /[$a]/ : !/[$a]/.test(`${__intrinsic__b} \\`$a\\``);",
+    "(IS_BUN_DEVELOPMENT?$debug_log('$a', __intrinsic__b):void 0);",
+    `!(IS_BUN_DEVELOPMENT?$assert(__intrinsic__b,"$b", '$a'):void 0);`,
+    "if (!re) __intrinsic__throwTypeError('$a');",
+    "if (!re) __intrinsic__throwRangeError('$a');",
+    `__intrinsic__exports = { re, half: __intrinsic__b / 2 / __intrinsic__c, fs: load("node:fs") };`,
   ].join("\n");
-  expect(check(source)).not.toThrow();
+  expect(check(text)).not.toThrow();
 });
 
-test("reports a regex literal that the preprocessor read as code", () => {
-  expect(check("$b();\nif (x) /[$a]/.test(y);", 10)).toThrow(
-    "src/js/example.ts:11:8: the preprocessor rewrote a `$name` inside this literal: /[__intrinsic__a]/",
+test.each([
+  ["a regex literal", "if (x) /[__intrinsic__a]/.test(y);", "1:8", "/[__intrinsic__a]/"],
+  ["a string", "x = '__intrinsic__a';", "1:5", "'__intrinsic__a'"],
+  ["template text", "x = `${y} __intrinsic__a`;", "1:9", "} __intrinsic__a`"],
+])("reports a rewrite inside %s", (_, text, position, shown) => {
+  expect(check(text)).toThrow(
+    `src/js/example.ts:${position}: the preprocessor rewrote a \`$name\` inside this literal: ${shown}`,
   );
 });
 
-// After `)` the regex literal is read as code, so the `//` in it opens a line comment.
-test("reports a `$name` in code that the preprocessor read as a comment", () => {
-  expect(check("if (x) /a\\/\\//.test(y) && $b();")).toThrow(
-    "src/js/example.ts:1:27: the preprocessor did not rewrite this `$name`: $b",
-  );
+test.each([
+  ["$b();", "did not rewrite this `$name`: $b"],
+  [`require("node:fs");`, `did not replace this require(): require("node:fs")`],
+  ["export default y;", "did not rewrite this `export default`: export default y;"],
+  ["export default function z() {}", "did not rewrite this `export default`: export default function z() {}"],
+  ["new TypeError(y);", "did not rewrite this `new TypeError`: new TypeError(y)"],
+  ["throw new RangeError(y);", "did not rewrite this `throw new RangeError`: throw new RangeError(y);"],
+])("reports code left as written: %s", (text, problem) => {
+  expect(check(text)).toThrow(`src/js/example.ts:1:1: the preprocessor ${problem}`);
 });
 
-test("reports a require() in code that the preprocessor read as a comment", () => {
-  expect(check('if (x) /a\\/\\//.test(y) && require("node:fs");')).toThrow(
-    'src/js/example.ts:1:27: the preprocessor did not replace this require(): require("node:fs")',
-  );
+test("reports the line in the source file", () => {
+  expect(check("__intrinsic__b();\n$b();", 10)).toThrow("src/js/example.ts:11:1: the preprocessor did not");
 });

@@ -452,8 +452,7 @@ void JSReadableStream::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     // Bun snapshots the ambient AsyncContext at construction; source callbacks restore it.
-    if (auto* asyncContextData = globalObject()->m_asyncContextData.get())
-        m_asyncContext.set(vm, this, asyncContextData->getInternalField(0));
+    m_asyncContext.set(vm, this, AsyncContextSwapScope::current(vm, globalObject()));
 }
 
 JSReadableStream* JSReadableStream::create(VM& vm, Structure* structure)

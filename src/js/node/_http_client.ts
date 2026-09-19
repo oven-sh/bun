@@ -92,12 +92,30 @@ class HTTPClientAsyncResource {
 // Node's parser AsyncWrap + _http_agent asyncResetHandle() make every socket
 // callback re-enter the current request's async scope; Bun bridges this in
 // JS by snapshotting the frame at tickOnSocket and running each socket
-// listener (data/end/error/close/drain/timeout) inside it.
+// listener (data/end/error/close/drain/timeout) inside it, and inside the
+// Bun.ModuleGraph context that was current next to it.
 const kClientAsyncContext = Symbol("kClientAsyncContext");
-const runInFrame = require("internal/async_context_frame").run;
+const kClientGraph = Symbol("kClientGraph");
+const runInContext = require("internal/async_context_frame").runInContext;
+
+function captureClientContext(req) {
+  req[kClientAsyncContext] = $getInternalField($asyncContext, 0);
+  req[kClientGraph] = $getInternalField($asyncContext, 1);
+}
+
+function clearClientContext(req) {
+  if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
+  if (req[kClientGraph] !== undefined) req[kClientGraph] = undefined;
+}
+
+/** Calls `listener` on `socket` in the context of the request the socket is serving (none: the host's). */
+function runInClientContext(socket, listener, arg?) {
+  const req = socket._httpMessage;
+  return runInContext(req?.[kClientAsyncContext], req?.[kClientGraph], listener, socket, arg);
+}
 
 function closeRequest(req) {
-  if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
+  clearClientContext(req);
   req._closed = true;
   req.emit("close");
 }
@@ -545,7 +563,7 @@ function emitAbortNT(req) {
 }
 
 function ondrain() {
-  return runInFrame(this._httpMessage?.[kClientAsyncContext], ondrainInner, this);
+  return runInClientContext(this, ondrainInner);
 }
 
 function ondrainInner() {
@@ -557,7 +575,7 @@ function ondrainInner() {
 }
 
 function socketCloseListener() {
-  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketCloseListenerInner, this);
+  return runInClientContext(this, socketCloseListenerInner);
 }
 
 function socketCloseListenerInner() {
@@ -607,7 +625,7 @@ function socketCloseListenerInner() {
 }
 
 function socketErrorListener(err) {
-  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketErrorListenerInner, this, err);
+  return runInClientContext(this, socketErrorListenerInner, err);
 }
 
 function socketErrorListenerInner(err) {
@@ -635,7 +653,7 @@ function socketErrorListenerInner(err) {
 }
 
 function socketOnEnd() {
-  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketOnEndInner, this);
+  return runInClientContext(this, socketOnEndInner);
 }
 
 function socketOnEndInner() {
@@ -657,7 +675,7 @@ function socketOnEndInner() {
 }
 
 function socketOnData(d) {
-  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketOnDataInner, this, d);
+  return runInClientContext(this, socketOnDataInner, d);
 }
 
 function socketOnDataInner(d) {
@@ -739,7 +757,7 @@ function processClientData(socket, d, parser) {
 
         // Clear before the emit: a throwing upgrade/connect handler would skip
         // closeRequest() and leave the retained request pinning the store.
-        req[kClientAsyncContext] = undefined;
+        clearClientContext(req);
         req.emit(eventName, res, socket, bodyHead);
         req.destroyed = true;
         closeRequest(req);
@@ -951,7 +969,7 @@ function responseOnEnd() {
 }
 
 function responseOnTimeout() {
-  return runInFrame(this._httpMessage?.[kClientAsyncContext], responseOnTimeoutInner, this);
+  return runInClientContext(this, responseOnTimeoutInner);
 }
 
 function responseOnTimeoutInner() {
@@ -985,7 +1003,7 @@ function emitFreeNT(req) {
 function tickOnSocket(req, socket) {
   const parser = parsers.alloc();
   req.socket = socket;
-  req[kClientAsyncContext] = $getInternalField($asyncContext, 0);
+  captureClientContext(req);
   const lenientFlags = calculateLenientFlags(req.httpValidation, req.insecureHTTPParser);
   parser.initialize(
     HTTPParser.RESPONSE,
@@ -1021,7 +1039,7 @@ function tickOnSocket(req, socket) {
 }
 
 function emitRequestTimeout() {
-  return runInFrame(this._httpMessage?.[kClientAsyncContext], emitRequestTimeoutInner, this);
+  return runInClientContext(this, emitRequestTimeoutInner);
 }
 
 function emitRequestTimeoutInner() {
@@ -1061,7 +1079,7 @@ ClientRequest.prototype.onSocket = function onSocket(socket, err) {
     // Capture the frame here, not just in tickOnSocket: onSocket runs in the
     // request's context, and an error in the window before onSocketNT would
     // otherwise run socketErrorListener with no frame and clear the context.
-    this[kClientAsyncContext] = $getInternalField($asyncContext, 0);
+    captureClientContext(this);
     socket.on("error", socketErrorListener);
   }
   process.nextTick(onSocketNT, this, socket, err);

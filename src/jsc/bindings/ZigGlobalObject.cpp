@@ -1377,14 +1377,10 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     RETURN_IF_EXCEPTION(scope, {});
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    JSC::JSValue asyncContext = JSC::AsyncContextSwapScope::current(vm, globalObject);
 #if ASSERT_ENABLED
     ASSERT_WITH_MESSAGE(!callback.isEmpty(), "Invalid microtask callback");
 #endif
-
-    if (asyncContext.isEmpty()) {
-        asyncContext = JSC::jsUndefined();
-    }
 
     // BunPerformMicrotaskJob: callback, asyncContext
     JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, callback, asyncContext };
@@ -2716,10 +2712,6 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSWeakMap>& init) {
             init.set(JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
         });
-    m_moduleGraphFrameStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(Bun::createModuleGraphFrameStructure(init.vm, init.owner));
-        });
 
     this->initGeneratedLazyClasses();
 
@@ -3118,7 +3110,7 @@ uint8_t GlobalObject::drainMicrotasks()
     // AsyncLocalStorage frame it installed with enterWith() must not leak into
     // the next one (everything queued runs under the frame it captured).
     if (!vm.entryScope)
-        m_asyncContextData.get()->putInternalField(vm, 0, m_moduleGraphs ? Bun::moduleGraphAsyncContextAtEventLoop(this) : jsUndefined());
+        m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
 
     if (auto nextTickQueue = this->m_nextTickQueue.get()) {
         nextTickQueue->drain(vm, this);

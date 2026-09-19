@@ -102,9 +102,7 @@ static JSReadableStreamReaderBase* teeReader(JSStreamTeeState* teeState)
 // carrying the current async context, without allocating a promise.
 static void queueReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
 {
-    JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    if (asyncContext.isEmpty())
-        asyncContext = jsUndefined();
+    JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
     QueuedTask task { nullptr, InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, handler, asyncContext, value, context };
     vm.queueMicrotask(WTF::move(task));
 }

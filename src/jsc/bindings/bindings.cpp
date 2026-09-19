@@ -177,7 +177,7 @@
 
 #include "AsyncContextFrame.h"
 #include "ModuleGraph.h"
-#include "JavaScriptCore/InternalFieldTuple.h"
+#include "JavaScriptCore/AsyncContextSwapScope.h"
 #include "JavaScriptCore/JSAsyncFunctionGenerator.h"
 #include "JavaScriptCore/JSGenerator.h"
 #include "JavaScriptCore/JSPromiseReaction.h"
@@ -3278,15 +3278,12 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
 
     JSC::JSValue jsThisObject = JSValue::decode(thisObject);
 
-    JSValue restoreAsyncContext;
-    InternalFieldTuple* asyncContextData = nullptr;
+    std::optional<AsyncContextSwapScope> asyncContextScope;
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(jsObject)) {
-        if (Bun::shouldDropCallbackOfStoppedModuleGraph(defaultGlobalObject(globalObject), wrapper->context.get())) [[unlikely]]
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(wrapper->context.get())) [[unlikely]]
             return JSValue::encode(jsUndefined());
         jsObject = wrapper->callback.get();
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, wrapper->context.get());
+        asyncContextScope.emplace(vm, globalObject, wrapper->context.get());
     }
 
     if (!jsThisObject)
@@ -3313,17 +3310,12 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     auto callData = getCallData(jsObject);
 
     if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
-        if (asyncContextData)
-            asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
+        asyncContextScope.reset();
         throwException(globalObject, scope, createNotAFunctionError(globalObject, jsObject));
         return {};
     }
 
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
-
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-    }
 
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(result);
@@ -3970,23 +3962,19 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(promise->globalObject());
         auto rejectPromiseFunction = globalObject->rejectPromiseFunction();
 
-        auto asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+        JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject);
 
 #if ASSERT_ENABLED
         ASSERT_WITH_MESSAGE(rejectPromiseFunction, "Invalid microtask callback");
         ASSERT_WITH_MESSAGE(!value.isEmpty(), "Invalid microtask value");
 #endif
 
-        if (asyncContext.isEmpty()) {
-            asyncContext = jsUndefined();
-        }
-
         if (value.isEmpty()) {
             value = jsUndefined();
         }
 
         // BunPerformMicrotaskJob: rejectPromiseFunction, asyncContext, promise, value
-        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, rejectPromiseFunction, globalObject->m_asyncContextData.get()->getInternalField(0), promise, value };
+        JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, rejectPromiseFunction, asyncContext, promise, value };
         globalObject->vm().queueMicrotask(WTF::move(task));
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -5790,7 +5778,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
     JSValue microtaskArgs[] = {
         JSValue::decode(JSValue1),
-        globalObject->m_asyncContextData.get()->getInternalField(0),
+        AsyncContextSwapScope::current(globalObject->vm(), globalObject),
         JSValue::decode(JSValue3),
         JSValue::decode(JSValue4)
     };
@@ -5799,14 +5787,10 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
     // a Bun.ModuleGraph that was disposed is not called, as on the other two routes a stored
     // callback is called through (Bun__JSValue__call, AsyncContextFrame::call).
     if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(microtaskArgs[0])) {
-        if (Bun::shouldDropCallbackOfStoppedModuleGraph(globalObject, wrapper->context.get())) [[unlikely]]
+        if (Bun::shouldDropCallbackOfStoppedModuleGraph(wrapper->context.get())) [[unlikely]]
             return;
         microtaskArgs[1] = wrapper->context.get();
         microtaskArgs[0] = wrapper->callback.get();
-    }
-
-    if (microtaskArgs[1].isEmpty()) {
-        microtaskArgs[1] = jsUndefined();
     }
 
     if (microtaskArgs[2].isEmpty()) {

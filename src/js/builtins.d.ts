@@ -202,7 +202,7 @@ declare const $processBindingConstants: {
   crypto: typeof import("crypto").constants;
   zlib: typeof import("zlib").constants;
 };
-declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined]>;
+declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined, Bun.ModuleGraph | undefined]>;
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
 

@@ -22,6 +22,7 @@
 // These three are used by name below (`JSC::JSUint8Array*` is a typedef and cannot be
 // forward-declared; `const JSC::Identifier&`; `WTF::String`) — do not rely on transitive
 // includes from root.h for them. MarkedVector.h supplies JSC::MarkedArgumentBuffer.
+#include <JavaScriptCore/AsyncContextSwapScope.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSTypedArrays.h>
@@ -375,12 +376,9 @@ class StreamAsyncContextScope {
 
 public:
     StreamAsyncContextScope(JSC::JSGlobalObject*, JSReadableStream*);
-    ~StreamAsyncContextScope();
 
 private:
-    JSC::VM& m_vm;
-    JSC::InternalFieldTuple* m_asyncContextData { nullptr };
-    JSC::JSValue m_previous;
+    std::optional<JSC::AsyncContextSwapScope> m_scope;
 };
 
 enum class ConsumerFillStep : uint8_t { Done,

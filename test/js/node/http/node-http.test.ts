@@ -3660,6 +3660,124 @@ it("req.upgrade is true inside the 'connect' listener", async () => {
   }
 });
 
+it("req.complete is true inside the 'connect' and 'upgrade' listeners like Node.js", async () => {
+  // Node.js emits 'connect' and 'upgrade' after llhttp completed the message:
+  // parserOnMessageComplete has set req.complete and pushed EOF. A CONNECT
+  // message ends with its header block, also when it declares a body. So does
+  // an Upgrade message without a body. A 'request' listener runs before the
+  // message completes, and so does an 'upgrade' listener whose request body
+  // has not arrived yet.
+  const messageState = (req: IncomingMessage) => ({
+    complete: req.complete,
+    ended: (req as any)._readableState.ended as boolean,
+  });
+  const seen: Record<string, ReturnType<typeof messageState>> = {};
+  const { promise: sawUpgradeWithBody, resolve: onUpgradeWithBody } = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    seen.request = messageState(req);
+    res.end();
+  });
+  server.on("connect", (req, socket) => {
+    seen[req.url === "with-length:443" ? "connectWithContentLength" : "connect"] = messageState(req);
+    socket.end("HTTP/1.1 200 Connection Established\r\n\r\n");
+  });
+  server.on("upgrade", (req, socket) => {
+    if (req.url !== "/body") {
+      seen.upgrade = messageState(req);
+      socket.end("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+      return;
+    }
+    seen.upgradeBeforeBody = messageState(req);
+    req.on("end", () => {
+      seen.upgradeAfterBody = messageState(req);
+      socket.end("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+    });
+    req.resume();
+    onUpgradeWithBody();
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    // Writes `head`, then `body` once `sendBodyAfter` resolves, and waits for
+    // the server to close the connection.
+    async function roundTrip(head: string, sendBodyAfter?: Promise<void>, body?: string) {
+      const socket = connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.resume();
+      const closed = once(socket, "close");
+      socket.write(head);
+      if (sendBodyAfter) {
+        await sendBodyAfter;
+        socket.write(body!);
+      }
+      await closed;
+    }
+
+    await Promise.all([
+      roundTrip("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"),
+      roundTrip("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"),
+      roundTrip("CONNECT with-length:443 HTTP/1.1\r\nHost: with-length:443\r\nContent-Length: 5\r\n\r\nhello"),
+      roundTrip("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: foo\r\n\r\n"),
+      roundTrip(
+        "POST /body HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: foo\r\nContent-Length: 5\r\n\r\n",
+        sawUpgradeWithBody,
+        "hello",
+      ),
+    ]);
+
+    expect(seen).toEqual({
+      request: { complete: false, ended: false },
+      connect: { complete: true, ended: true },
+      connectWithContentLength: { complete: true, ended: true },
+      upgrade: { complete: true, ended: true },
+      upgradeBeforeBody: { complete: false, ended: false },
+      upgradeAfterBody: { complete: true, ended: true },
+    });
+  } finally {
+    server.close();
+  }
+});
+
+it("a CONNECT request that declares a body ends when it is read and takes no tunnel bytes, like Node.js", async () => {
+  // llhttp ignores the body framing of a CONNECT request. The declared body
+  // is the start of the tunnel (head), req has no data, and the bytes that
+  // follow reach only the socket.
+  const seen = { head: "", reqData: "", reqEnded: false, socketData: "" };
+  const server = createServer();
+  server.on("connect", (req, socket, head) => {
+    seen.head = head.toString();
+    req.on("data", chunk => (seen.reqData += chunk));
+    req.on("end", () => (seen.reqEnded = true));
+    socket.on("data", chunk => {
+      seen.socketData += chunk;
+      if (seen.socketData === "tunnel") socket.end();
+    });
+    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const client = connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    const closed = once(client, "close");
+    let received = "";
+    client.on("data", chunk => {
+      received += chunk;
+      if (received.endsWith("\r\n\r\n")) client.write("tunnel");
+    });
+    client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nContent-Length: 5\r\n\r\nhello");
+    await closed;
+
+    expect(seen).toEqual({ head: "hello", reqData: "", reqEnded: true, socketData: "tunnel" });
+  } finally {
+    server.close();
+  }
+});
+
 it("plain HEAD with flushHeaders carries no auto-chunked framing", async () => {
   // No explicit framing headers: the native flushHeaders must not enter
   // chunked mode for a HEAD response, and end() must not write a terminator.

@@ -57,6 +57,7 @@ const {
   noBodySymbol,
   kOutHeaders,
   onDataIncomingMessage,
+  completeIncomingMessage,
   validateMsecs,
   http1ServerPipeline,
 } = require("internal/http");
@@ -757,6 +758,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.upgrade = true;
             // Node frees the parser before handing the raw socket to 'connect'.
             releaseServerParserShim(socket, http_req);
+            // Node.js emits 'connect' after llhttp's on_message_complete, which
+            // for CONNECT follows the header block even if a body is declared.
+            completeIncomingMessage(http_req);
             server.emit("connect", http_req, socket, head);
             // Attach the internal close listener after the user's "connect"
             // handler ran: Node.js hands the socket over with no listeners and
@@ -970,6 +974,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           if (hasBody) {
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
+          } else {
+            // Node.js emits 'upgrade' after llhttp's on_message_complete. With a
+            // body, the message completes when the body ends.
+            completeIncomingMessage(http_req);
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
           let upgradeHandled;

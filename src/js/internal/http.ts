@@ -118,7 +118,8 @@ function emitCloseNT(self) {
   }
 }
 
-function emitEOFIncomingMessageOuter(self) {
+// Like Node's parserOnMessageComplete: the message is complete, so push EOF.
+function completeIncomingMessage(self) {
   self.complete = true;
   // node:http server: trailer fields received after a chunked request body
   // populate req.trailers/rawTrailers before 'end' is emitted, like Node's
@@ -162,7 +163,7 @@ function clearServerParserIncoming(parser, req) {
 }
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
-  process.nextTick(emitEOFIncomingMessageOuter, self);
+  process.nextTick(completeIncomingMessage, self);
 }
 
 function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
@@ -507,6 +508,7 @@ export {
   abortedSymbol,
   callCloseCallback,
   checkShouldUseProxy,
+  completeIncomingMessage,
   drainMicrotasks,
   emitCloseNT,
   emitEOFIncomingMessage,

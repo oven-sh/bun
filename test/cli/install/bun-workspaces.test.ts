@@ -198,12 +198,14 @@ test("dependency on workspace without version in package.json", async () => {
 // pkg2 depends on a package that does not exist, so the install fails if the
 // negated entry does not exclude it. npm accepts each of these spellings.
 // examples/pkg2 has the same basename: a negated entry must never add it.
+// Like npm, a negated entry applies wherever it is in the array.
 test.concurrent.each([
   ["packages/*", "!packages/pkg2"],
   ["./packages/*", "!./packages/pkg2"],
   ["packages/*", "!./packages/pkg2"],
   ["packages/*", "!packages/pkg2/"],
   ["packages/*", "!././packages/pkg2//"],
+  ["!packages/pkg2", "packages/*"],
   ...(isWindows ? [["packages/*", "!.\\packages\\pkg2\\"]] : []),
 ])("allowing negative workspace patterns: %s, %s", async (...workspaces) => {
   using ctx = await setupTest();

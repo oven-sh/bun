@@ -438,7 +438,7 @@ impl WorkspaceMap {
 
         if workspace_globs.len() > 0 {
             let mut arena = Arena::new();
-            for (i, workspace_glob) in workspace_globs.iter().enumerate() {
+            for workspace_glob in &workspace_globs {
                 let WorkspaceGlob::Include(user_pattern) = workspace_glob else {
                     continue;
                 };
@@ -535,9 +535,9 @@ impl WorkspaceMap {
                             strings::without_suffix_comptime(matched_path, b"package.json"),
                         );
 
-                        // check if it's negated by any remaining patterns
-                        for next_glob in &workspace_globs[i + 1..] {
-                            let WorkspaceGlob::Exclude(negated_glob) = next_glob else {
+                        // Like npm, an `Exclude` applies wherever it is in the array.
+                        for exclude in &workspace_globs {
+                            let WorkspaceGlob::Exclude(negated_glob) = exclude else {
                                 continue;
                             };
                             if glob::r#match(negated_glob, matched_path_without_package_json)

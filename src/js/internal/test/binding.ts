@@ -86,6 +86,10 @@ function internalBinding(name: string) {
       const { kMaxLength, kStringMaxLength } = require("node:buffer");
       return { kMaxLength, kStringMaxLength };
     }
+    // Bun keeps node's provider enum only in its public form; node derives
+    // async_hooks.asyncWrapProviders from this binding's table, not the reverse.
+    case "async_wrap":
+      return { Providers: require("node:async_hooks").asyncWrapProviders };
     case "udp_wrap":
       return { UDP: require("internal/dgram").UDP };
     case "tcp_wrap":

@@ -2264,9 +2264,9 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
   // listener would otherwise turn session.destroy(code) into an uncaught
   // exception (e.g. grpc-js forceShutdown destroying sessions with
   // NGHTTP2_CANCEL while unread UNIMPLEMENTED streams are still around).
-  const observed = error !== undefined && stream.listenerCount("error") > 0;
+  const observed = error != null && stream.listenerCount("error") > 0;
   // A stream that does not get the error must not read as cleanly closed. CANCEL raises no error in _destroy.
-  if (error !== undefined && !observed && !stream.closed && !stream.rstCode) stream.rstCode = NGHTTP2_CANCEL;
+  if (error != null && !observed && !stream.closed && !stream.rstCode) stream.rstCode = NGHTTP2_CANCEL;
   stream.destroy(observed ? error : undefined);
 }
 class Http2Stream extends Duplex {
@@ -4893,6 +4893,12 @@ function destroySelfOnEnd(this: Http2Stream) {
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
+// The engine ended the session on its own and reported no error. A request that this cuts is
+// cancelled: destroy()'s sweep alone would let it end as if its response were complete.
+function cancelStreamForEngineEnd(stream: Http2Stream) {
+  if (stream.destroyed || stream.closed) return;
+  process.nextTick(destroyStreamForSessionDestroy, createPendingStreamCancelError(), NGHTTP2_CANCEL, stream);
+}
 
 // After the socket is gone a graceful close can never complete — the parser
 // is detached, so the stream's writable side has nothing left to flush
@@ -5309,6 +5315,8 @@ class ClientHttp2Session extends Http2Session {
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
+      // An engine error destroys the session from the `error` handler first. This is the other case.
+      if (!self.#destroying) self.#parser?.forEachStream(cancelStreamForEngineEnd);
       self.destroy();
     },
     altsvc(self: ClientHttp2Session, origin: string, value: string, streamId: number) {

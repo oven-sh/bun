@@ -2429,6 +2429,7 @@ describe("http2 client session.destroy() closes an open request like node", () =
     NGHTTP2_INTERNAL_ERROR,
     NGHTTP2_STREAM_CLOSED,
     NGHTTP2_REFUSED_STREAM,
+    NGHTTP2_FRAME_SIZE_ERROR,
     NGHTTP2_CANCEL,
     NGHTTP2_ENHANCE_YOUR_CALM,
   } = http2.constants;
@@ -2582,6 +2583,27 @@ describe("http2 client session.destroy() closes an open request like node", () =
     });
   });
 
+  // node resets only that request and keeps the session. Bun ends the session with GOAWAY(NO_ERROR),
+  // because the HPACK state is lost. The other requests are cut: they must not end as if complete.
+  it("and cancels the other requests when the engine ends the session over trailers that HPACK cannot encode", async () => {
+    let offender;
+    const sibling = await closeOpenRequest(async client => {
+      const req = client.request({ ":path": "/silent-trailers", ":method": "POST" }, { waitForTrailers: true });
+      const ending = recordEnding(req);
+      const { promise: closed, resolve: onClose } = Promise.withResolvers();
+      req.on("close", onClose);
+      // One header of more than 64 KB is over the encoder's limit.
+      req.on("wantTrailers", () => req.sendTrailers({ "x-big": Buffer.alloc(70000, "a").toString() }));
+      req.end();
+      await closed;
+      offender = { ...ending, rstCode: req.rstCode };
+    });
+    expect({ offender, sibling }).toEqual({
+      offender: { error: "ERR_HTTP2_STREAM_ERROR", rstCode: NGHTTP2_FRAME_SIZE_ERROR, events: ["error", "close"] },
+      sibling: { error: "ERR_HTTP2_STREAM_CANCEL", rstCode: NGHTTP2_CANCEL, events: ["error", "close"] },
+    });
+  });
+
   it.each([
     ["destroy()", [], { error: undefined, rstCode: NGHTTP2_NO_ERROR, events: ["close"] }],
     [
@@ -2715,6 +2737,31 @@ describe.concurrent("http2 client session gives a transport error to its open re
     });
     expect(result).toEqual({ error: undefined, rstCode: NGHTTP2_CANCEL, events: ["end", "close"], sessionErrors: [] });
   });
+});
+
+// A session error that a stream with no 'error' listener does not get marks that stream cancelled.
+// A null error is no error: the stream reports the session's code, as in node.
+it("http2 server session.destroy(null, NO_ERROR) reports rstCode 0 on a stream without an 'error' listener", async () => {
+  const { promise: rstCode, resolve: onStreamClose } = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("session", session => session.on("error", () => {}));
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.on("close", () => onStreamClose(stream.rstCode));
+    stream.session.destroy(null, http2.constants.NGHTTP2_NO_ERROR);
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  client.on("error", () => {});
+  try {
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    expect(await rstCode).toBe(http2.constants.NGHTTP2_NO_ERROR);
+  } finally {
+    client.destroy();
+    server.close();
+  }
 });
 
 it(

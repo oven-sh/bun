@@ -1227,6 +1227,12 @@ impl Task {
                             Which::Final,
                         );
                         let _ = Fd::cwd().delete_tree(previous.slice());
+
+                        // The `bun patch` copy is gone, so the entry can return to the global store.
+                        if !installer.is_new_bun_modules {
+                            let _ = local.append(super::PATCH_COPY_MARKER);
+                            let _ = sys::unlink(local.slice_z());
+                        }
                     }
 
                     if uses_global_store {
@@ -2591,8 +2597,7 @@ impl<'a> Installer<'a> {
                     // Existing entry from a previous install. If it's a
                     // symlink, replace it (stale link from a different
                     // hash). If it's a real directory, that's the
-                    // pre-global-store layout (`bun patch` detaches
-                    // `node_modules/<pkg>`, not this path).
+                    // pre-global-store layout: a `bun patch` copy is marked, so it is not eligible.
                     let is_symlink: bool = {
                         #[cfg(windows)]
                         {

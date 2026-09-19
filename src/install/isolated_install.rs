@@ -1131,6 +1131,39 @@ pub(crate) fn build_store(
     })
 }
 
+/// The global virtual store is `<cache>/links`.
+pub(crate) const GLOBAL_STORE_DIR: &[u8] = b"links";
+
+/// `bun patch` writes this file into the `node_modules/.bun/<entry>` that holds the copy of the package.
+pub(crate) const PATCH_COPY_MARKER: &[u8] = b".bun-patch";
+
+/// Whether a store entry of the project holds a `bun patch` copy. A link into the global store is never one.
+fn has_patch_copy() -> sys::Result<bool> {
+    let store_dir = match sys::open_dir_for_iteration(Fd::cwd(), b"node_modules/.bun") {
+        Ok(store_dir) => store_dir,
+        Err(err) if err.get_errno() == sys::Errno::ENOENT => return Ok(false),
+        Err(err) => return Err(err),
+    };
+    let store_dir = scopeguard::guard(store_dir, |fd| {
+        use bun_sys::FdExt as _;
+        fd.close();
+    });
+    let mut marker = AutoRelPath::init();
+    let mut entries = sys::iterate_dir(*store_dir);
+    while let Some(entry) = entries.next()? {
+        if entry.kind == sys::EntryKind::SymLink {
+            continue;
+        }
+        marker.set_length(0);
+        marker.append(entry.name.slice_u8()).assume_ok();
+        marker.append(PATCH_COPY_MARKER).assume_ok();
+        if sys::exists_at(*store_dir, marker.slice_z()) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
@@ -1191,6 +1224,20 @@ pub(crate) fn install_isolated_packages(
             let trusted_from_update = manager.find_trusted_dependencies_from_update_requests();
 
             let mut states = vec![State::Unvisited; store.entries.len()].into_boxed_slice();
+
+            // A missed mark lets this install delete the copy, so the error ends it.
+            let has_patch_copy = match has_patch_copy() {
+                Ok(has_patch_copy) => has_patch_copy,
+                Err(err) => {
+                    Output::err(
+                        err,
+                        "failed to read './node_modules/.bun'",
+                        format_args!(""),
+                    );
+                    Global::exit(1);
+                }
+            };
+            let mut marker_path: Vec<u8> = Vec::new();
 
             // Iterative DFS so dependency cycles (which the isolated graph permits)
             // can't overflow the stack and are handled deterministically: a back-edge
@@ -1289,6 +1336,21 @@ pub(crate) fn install_isolated_packages(
                                 ) || trusted_from_update.contains(&pkg_id)
                                 {
                                     break 'eligible false;
+                                }
+                                // A package that `bun patch` prepared stays in the project, like a patched one.
+                                if has_patch_copy {
+                                    marker_path.clear();
+                                    write!(
+                                        marker_path,
+                                        "node_modules/.bun/{}/",
+                                        store::entry::fmt_store_path(id, &store, lockfile)
+                                    )
+                                    .expect("formatting into a Vec is infallible");
+                                    marker_path.extend_from_slice(PATCH_COPY_MARKER);
+                                    // The volume compares the name: `bun patch <path>` makes the entry with the case that the user typed.
+                                    if sys::exists(&marker_path) {
+                                        break 'eligible false;
+                                    }
                                 }
                                 break 'eligible true;
                             }
@@ -1660,7 +1722,7 @@ pub(crate) fn install_isolated_packages(
             // a `&ZStr` for `Installer.global_store_path` below.
             let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(
                 cache_dir_path,
-                &[b"links"],
+                &[GLOBAL_STORE_DIR],
             );
             let mut owned = joined.to_vec();
             owned.push(0);

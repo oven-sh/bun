@@ -13,7 +13,9 @@ use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
-use crate::isolated_install::{FileCopier, Timings, build_store};
+use crate::isolated_install::{
+    FileCopier, GLOBAL_STORE_DIR, PATCH_COPY_MARKER, Timings, build_store,
+};
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::tree;
 use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
@@ -279,6 +281,14 @@ pub fn do_patch_commit(
         }
     };
     let changes_dir = resolve_symlinked_folder(changes_dir);
+
+    // The diff moves `node_modules` and the patch tag out of the folder. A folder that `bun patch` prepared is in the project.
+    refuse_global_store_folder(
+        manager.get_cache_directory(),
+        &changes_dir,
+        &changes_dir,
+        "run 'bun patch <name>@<version>' first, it makes a copy of the package in this project",
+    );
 
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
@@ -986,7 +996,21 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // edits into the shared cache. Detach first: walk up `module_folder` to
     // find the first symlink ancestor, replace it with a real directory, and
     // recreate the path below it so the copy lands in a project-local tree.
-    detach_module_folder_from_shared_store(module_folder);
+    let install_cache_dir = manager.get_cache_directory();
+    let replaced_store_link =
+        detach_module_folder_from_shared_store(install_cache_dir, module_folder);
+
+    // Detach stops at a folder that does not exist, and a path with no link can name the store itself.
+    refuse_global_store_folder(
+        install_cache_dir,
+        module_folder,
+        module_folder,
+        if folder_kind(module_folder) == FolderKind::Missing {
+            "run 'bun install' first, it links the package into this project"
+        } else {
+            USE_THE_FOLDER_OF_THE_PACKAGE
+        },
+    );
 
     if let Err(e) =
         overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
@@ -994,6 +1018,15 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         bun_core::pretty_error!(
             "<r><red>error<r>: error overwriting folder in node_modules: {}\n<r>",
             e.name(),
+        );
+        Global::crash();
+    }
+
+    if let Err(e) = mark_store_entry(module_folder) {
+        Output::err(
+            e,
+            "failed to mark the store entry of {f}",
+            (bun_fmt::quote(module_folder),),
         );
         Global::crash();
     }
@@ -1030,6 +1063,14 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         bun_core::pretty!(
             "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
             bstr::BStr::new(module_folder)
+        );
+    }
+
+    // The dependents are entries of the global store until an install: they link to the shared package.
+    if replaced_store_link {
+        bun_core::pretty!(
+            "\nTo load your changes in the packages that depend on <b>{}<r> before that, run:\n\n  <cyan>bun install<r>\n",
+            bstr::BStr::new(pkg_name),
         );
     }
 
@@ -1135,6 +1176,9 @@ fn isolated_store_folders(
         .map(|node_id| node_pkg_ids[node_id.get() as usize])
         .collect();
 
+    // `bun patch` puts a directory in place of a link into the global store. `--commit` reads only that directory.
+    let replaces_store_link = matches!(manager.options.patch_features, PatchFeatures::Patch);
+
     let project_folder = |entry: usize| -> Option<Vec<u8>> {
         let mut folder = Vec::new();
         write!(
@@ -1143,9 +1187,10 @@ fn isolated_store_folders(
             store_entry::fmt_store_path(store_entry::Id::from(entry as u32), &store, lockfile),
         )
         .expect("formatting into a Vec is infallible");
-        // `link_project_to_global_store` puts a global store link back over a detached copy.
-        if folder_kind(&folder) != FolderKind::RealDir {
-            return None;
+        match folder_kind(&folder) {
+            FolderKind::RealDir => {}
+            FolderKind::Symlink if replaces_store_link => {}
+            _ => return None,
         }
         write!(folder, "/node_modules/{}", bstr::BStr::new(name))
             .expect("formatting into a Vec is infallible");
@@ -1210,7 +1255,8 @@ fn resolve_symlinked_folder(folder: Vec<u8>) -> Vec<u8> {
     resolved.unwrap_or(folder)
 }
 
-fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
+/// Returns whether it replaced a link into the global store above `module_folder`: a store entry.
+fn detach_module_folder_from_shared_store(install_cache_dir: Fd, module_folder: &[u8]) -> bool {
     // `module_folder` reaches here normalised to forward slashes on every
     // platform (see `pathToPosixBuf` in `preparePatch`). Re-normalise to the
     // platform separator so `undo()`/`basename()` walk the path correctly on
@@ -1241,7 +1287,7 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             {
                 match sys::get_file_attributes(p.slice_z()) {
                     Some(attrs) => attrs.is_reparse_point,
-                    None => return,
+                    None => return false,
                 }
             }
             #[cfg(not(windows))]
@@ -1250,11 +1296,22 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
                     // `mode_t` is `u16` on darwin/freebsd, `u32` on linux.
                     sys::posix::s_islnk(st.st_mode as u32)
                 } else {
-                    return;
+                    return false;
                 }
             }
         };
         if is_symlink {
+            // The link from a shared entry to one of its dependencies is inside the global store.
+            let link_parent = resolve_path::dirname::<platform::Auto>(p.slice());
+            refuse_global_store_folder(
+                install_cache_dir,
+                link_parent,
+                module_folder,
+                USE_THE_FOLDER_OF_THE_PACKAGE,
+            );
+            let replaces_store_link = depth > 0
+                && resolves_into_global_store(install_cache_dir, p.slice(), module_folder);
+
             // Windows directory symlinks/junctions are removed with rmdir,
             // file symlinks with unlink; on POSIX unlink covers both. If
             // removal fails the symlink is still live, and the caller's
@@ -1302,11 +1359,108 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             if !parent.is_empty() {
                 let _ = Fd::cwd().make_path(parent);
             }
-            return;
+            return replaces_store_link;
         }
         p.undo(1);
         depth += 1;
     }
+    false
+}
+
+/// Whether `folder`, or its nearest ancestor that exists, is in `<cache>/links` after all links are followed.
+fn is_inside_global_store(install_cache_dir: Fd, folder: &[u8]) -> sys::Result<bool> {
+    let store = match Dir::borrow(&install_cache_dir)
+        .open_dir(GLOBAL_STORE_DIR, sys::OpenDirOptions::default())
+    {
+        Ok(store) => store,
+        Err(e) if e.get_errno() == sys::E::ENOENT => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    let mut existing = folder;
+    let nearest = loop {
+        match Dir::cwd().open_dir(existing, sys::OpenDirOptions::default()) {
+            Ok(dir) => break dir,
+            Err(e) if matches!(e.get_errno(), sys::E::ENOENT | sys::E::ENOTDIR) => {}
+            Err(e) => return Err(e),
+        }
+        existing = resolve_path::dirname::<platform::Loose>(existing);
+        if existing.is_empty() {
+            return Ok(false);
+        }
+    };
+    let mut store_buf = bun_paths::path_buffer_pool::get();
+    let mut nearest_buf = bun_paths::path_buffer_pool::get();
+    let store_path = sys::get_fd_path(store.fd, &mut store_buf)?;
+    let nearest_path = sys::get_fd_path(nearest.fd, &mut nearest_buf)?;
+    Ok(nearest_path
+        .strip_prefix(&*store_path)
+        .is_some_and(|rest| rest.first().is_none_or(|&c| c == SEP)))
+}
+
+/// An error ends the command, so a check that fails never lets a write through.
+fn resolves_into_global_store(install_cache_dir: Fd, folder: &[u8], module_folder: &[u8]) -> bool {
+    match is_inside_global_store(install_cache_dir, folder) {
+        Ok(inside) => inside,
+        Err(e) => {
+            Output::err(e, "failed to resolve {f}", (bun_fmt::quote(module_folder),));
+            Global::crash();
+        }
+    }
+}
+
+const USE_THE_FOLDER_OF_THE_PACKAGE: &str = "use 'bun patch <name>@<version>', or the folder node_modules/.bun/<name>@<version>/node_modules/<name>";
+
+/// All projects share `<cache>/links`, so `bun patch` changes nothing inside it.
+fn refuse_global_store_folder(
+    install_cache_dir: Fd,
+    folder: &[u8],
+    module_folder: &[u8],
+    remedy: &str,
+) {
+    if !resolves_into_global_store(install_cache_dir, folder, module_folder) {
+        return;
+    }
+    Output::err_generic(
+        "{} is inside the global store, which all projects share",
+        (bun_fmt::quote(module_folder),),
+    );
+    bun_core::note!("{}", remedy);
+    Global::crash();
+}
+
+/// Marks `node_modules/.bun/<entry>` when it holds `module_folder`. An install keeps a marked entry: `has_patch_copy`.
+fn mark_store_entry(module_folder: &[u8]) -> sys::Result<()> {
+    let store = match Dir::cwd().open_dir(b"node_modules/.bun", sys::OpenDirOptions::default()) {
+        Ok(store) => store,
+        Err(e) if e.get_errno() == sys::E::ENOENT => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let folder = Dir::cwd().open_dir(module_folder, sys::OpenDirOptions::default())?;
+    let mut store_buf = bun_paths::path_buffer_pool::get();
+    let mut folder_buf = bun_paths::path_buffer_pool::get();
+    let store_path = sys::get_fd_path(store.fd, &mut store_buf)?;
+    let folder_path = sys::get_fd_path(folder.fd, &mut folder_buf)?;
+
+    // `<entry>/node_modules/<name>`, from the real paths: the argument can be any spelling of the folder.
+    let Some(in_store) = folder_path
+        .strip_prefix(&*store_path)
+        .and_then(|rest| rest.strip_prefix(&[SEP]))
+    else {
+        return Ok(());
+    };
+    let Some(entry_len) = strings::index_of_char_usize(in_store, SEP) else {
+        return Ok(());
+    };
+    let is_package_folder = in_store[entry_len + 1..]
+        .strip_prefix(b"node_modules")
+        .is_some_and(|name| name.first() == Some(&SEP));
+    if !is_package_folder {
+        return Ok(());
+    }
+
+    let marker =
+        resolve_path::join_z::<platform::Auto>(&[&in_store[..entry_len], PATCH_COPY_MARKER]);
+    sys::File::write_file(store.fd, marker, b"")
 }
 
 fn overwrite_package_in_node_modules_folder(

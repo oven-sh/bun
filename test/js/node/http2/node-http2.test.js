@@ -2683,9 +2683,10 @@ it("http2 client reports ECONNREFUSED for a refused connect, like Node.js", asyn
 });
 
 // node reads options.settings in setupHandle, which runs when the socket connects. It ignores a
-// value that is not an object. A value that validation rejects destroys the session with that
-// error. connect() throws in two cases only: the socket is already connected, so setupHandle
-// runs inline, or the URL is https, where the options for tls.connect() are checked first.
+// value whose typeof is not "object". null, an array, or a value that validation rejects
+// destroys the session with that error. connect() throws in two cases only. The socket is
+// already connected, so setupHandle runs inline. Or the URL is https and there is no
+// createConnection: node then checks options.settings before it makes the socket.
 describe("http2.connect reports a rejected options.settings where Node.js does", () => {
   const sessionError = (code, message) => ({
     events: [`error ${code}: ${message}`, "close"],
@@ -2704,7 +2705,9 @@ describe("http2.connect reports a rejected options.settings where Node.js does",
     "http null": notAnObject("null"),
     "http array": notAnObject("an instance of Array"),
     "http invalid": sessionError(...invalidValue),
-    "http invalid, closed early": sessionError(...invalidValue),
+    "http invalid, closed with a request pending": sessionError(...invalidValue),
+    "http invalid, closed with nothing pending": { errors: [] },
+    "http invalid, closed after its request was destroyed": { errors: [] },
     "http number": ignored,
     "http string": ignored,
     "http boolean": ignored,
@@ -2713,6 +2716,7 @@ describe("http2.connect reports a rejected options.settings where Node.js does",
     "https array": notAnObjectProperty("an instance of Array"),
     "https number": notAnObjectProperty("type number (1)"),
     "https invalid": sessionError(...invalidValue),
+    "https null with createConnection": notAnObject("null"),
   };
 
   it("Bun", async () => {
@@ -2731,6 +2735,37 @@ describe("http2.connect reports a rejected options.settings where Node.js does",
     expect(JSON.parse(stdout)).toEqual(expected);
     expect(exitCode).toBe(0);
   });
+
+  // The session is destroyed one tick after the socket's connect callback. A throw from inside
+  // that callback is reported on the socket, so the error would never reach the process.
+  const noErrorListener = `
+    const http2 = require("node:http2");
+    const server = http2.createServer();
+    server.listen(0, "127.0.0.1", () => {
+      process.on("uncaughtException", e => {
+        console.log("uncaughtException " + e.code);
+        process.exit(0);
+      });
+      http2.connect("http://127.0.0.1:" + server.address().port, { settings: { initialWindowSize: -1 } });
+      console.log("connect() returned");
+    });
+  `;
+  for (const [runtime, exe] of [
+    ["Bun", bunExe()],
+    ["Node.js", nodeExe()],
+  ]) {
+    it.skipIf(!exe)(`with no 'error' listener the error is an uncaught exception (${runtime})`, async () => {
+      await using proc = Bun.spawn({
+        cmd: [exe, "-e", noErrorListener],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("connect() returned\nuncaughtException ERR_HTTP2_INVALID_SETTING_VALUE\n");
+      expect(exitCode).toBe(0);
+    });
+  }
 });
 
 it("http2 request.close() validates input and manages stream state", async done => {

@@ -4918,6 +4918,15 @@ function streamRejectedByGoawaySession(stream: Http2Stream) {
     stream.destroy(err);
   }
 }
+// A request that was destroyed while it waited for the connect stays in the queue until the flush.
+function hasLivePendingRequest(pendingRequests: Array<{ req: ClientHttp2Stream }> | null) {
+  if (pendingRequests !== null) {
+    for (let i = 0; i < pendingRequests.length; i++) {
+      if (!pendingRequests[i].req.destroyed) return true;
+    }
+  }
+  return false;
+}
 class ClientHttp2Session extends Http2Session {
   /// close indicates that the session is shutting down (close() or destroy() was called)
   #closed: boolean = false;
@@ -5651,12 +5660,14 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
         return;
       }
-      // node validates at this point unless the session is destroyed by then, and its close()
-      // destroys a session that has no request pending.
-      const sessionIsGone = this.destroyed || (this.#closed && !this.#pendingRequests?.length);
-      if (settingsRejected && !sessionIsGone) {
-        // Not from inside the socket's connect callback: the socket layer reports a throw from
-        // there on the socket, so an 'error' with no listener would never reach the process.
+      // node validates at this point unless the session is destroyed by then. Its close() destroys
+      // a session with no live request at once. close() here only schedules that destroy.
+      const destroyedInNode = this.destroyed || (this.#closed && !hasLivePendingRequest(this.#pendingRequests));
+      if (settingsRejected && !destroyedInNode) {
+        // node destroys the socket with the error. Here #onError drops a socket error once close()
+        // was called, so destroy the session. One tick later, because a throw from inside the
+        // socket's connect callback is reported on the socket: an 'error' with no listener would
+        // never reach the process.
         process.nextTick(destroyIfNotDestroyedNT, this, settingsError);
         return;
       }
@@ -5711,9 +5722,9 @@ class ClientHttp2Session extends Http2Session {
     this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
 
     // node reads options.settings in setupHandle, which runs once the socket is connected. It
-    // ignores a value that is not an object. A throw from validation there destroys the session
-    // with that error, so the caller sees 'error' and then 'close'. For a socket that is already
-    // connected, setupHandle runs inline and connect() throws.
+    // ignores a value that is not an object. A throw from validation there destroys the socket
+    // with that error, so the session emits 'error' and then 'close'. For a socket that is
+    // already connected, setupHandle runs inline and connect() throws.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1147
     let settings = typeof options.settings === "object" ? options.settings : undefined;
     if (settings !== undefined) {
@@ -5726,6 +5737,8 @@ class ClientHttp2Session extends Http2Session {
         settings = undefined;
       }
     }
+    // The parser validates again and its throw leaves connect(), so it gets `settings` and never
+    // the raw options.settings.
     const nativeSettings = { ...options, ...settings };
     this.#localSettings = initialLocalSettings(nativeSettings);
     // #onConnect attaches the native socket; frames written before that (the preface) queue.

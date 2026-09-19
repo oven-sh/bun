@@ -800,8 +800,9 @@ impl Builtin {
     /// Sets the owning Cmd's state to
     /// `WaitingWriteErr` and writes to the *Cmd's* `io.stderr` (not the
     /// builtin's, which may already have been redirected). Hoisted here
-    /// because `init_redirections` and `Cmd::transition_to_exec` (the
-    /// "command not found" / spawn-error paths) are the only callers.
+    /// because `init_redirections` and `Cmd` (the expansion-error,
+    /// "command not found", spawn-error and wait-error paths) are the only
+    /// callers.
     pub(crate) fn cmd_write_failing_error(
         interp: &Interpreter,
         cmd: NodeId,

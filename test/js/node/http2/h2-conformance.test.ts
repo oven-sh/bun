@@ -798,6 +798,87 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       raw.close();
     }
   });
+
+  // The server's side of a pushed stream is reserved (local), then half-closed (remote) once the
+  // pushed response HEADERS leave. The client may not send DATA on it in either state. The server
+  // answers like it does for DATA after END_STREAM on a request stream: a stream error, §5.1.
+  // (nghttp2 ends the session instead: GOAWAY(STREAM_CLOSED), "DATA: stream in half-closed(remote)".)
+  describe.each([
+    ["half-closed (remote)", true],
+    ["reserved (local)", false],
+  ])("DATA from the client on a pushed stream that is %s for the server", (_, respond) => {
+    test.each([
+      ["in one read", false],
+      ["split across two reads", true],
+    ])("%s is refused, not delivered", async (_, split) => {
+      const pushedStream = Promise.withResolvers<any>();
+      const pushedData: Buffer[] = [];
+      let pushedError: string | undefined;
+      const pushServer = http2.createServer();
+      pushServer.on("stream", (stream: any) => {
+        stream.on("error", () => {});
+        stream.pushStream({ ":path": "/pushed" }, (err: Error | null, pushed: any) => {
+          if (err) return pushedStream.reject(err);
+          pushed.on("data", (d: Buffer) => pushedData.push(d));
+          pushed.on("error", (e: NodeJS.ErrnoException) => (pushedError = e.code));
+          if (respond) {
+            pushed.respond({ ":status": 200 });
+            pushed.write("p");
+          }
+          pushedStream.resolve(pushed);
+        });
+        stream.respond({ ":status": 200 });
+        stream.end("main");
+      });
+      pushServer.listen(0);
+      await once(pushServer, "listening");
+      const c = await RawH2.connect((pushServer.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+        const [pushed] = await Promise.all([
+          pushedStream.promise,
+          c.waitFor(f =>
+            respond
+              ? f.type === FrameType.HEADERS && f.streamId === 2
+              : f.type === FrameType.PUSH_PROMISE && f.streamId === 1,
+          ),
+        ]);
+        const ping = (n: number) => encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8, n));
+        const pingAck = (n: number) => (f: Frame) =>
+          f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload[0] === n;
+        const data = encodeFrame(FrameType.DATA, 0, 2, Buffer.from("client-data-on-pushed-stream"));
+        // A split frame reaches the server as its 9-byte header and 10 payload bytes first. PING 1
+        // travels in the same read, so its ACK tells the client that the server handled that read.
+        const firstRead = split ? 19 : data.length;
+        c.send(Buffer.concat([ping(1), data.subarray(0, firstRead)]));
+        await c.waitFor(pingAck(1));
+        c.send(Buffer.concat([data.subarray(firstRead), ping(2)]));
+        await c.waitFor(pingAck(2));
+        expect({
+          refusals: c.frames
+            .filter(f => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY)
+            .map(f => ({
+              type: f.type,
+              streamId: f.streamId,
+              code: f.type === FrameType.GOAWAY ? goawayErrorCode(f) : f.payload.readUInt32BE(0),
+            })),
+          error: pushedError,
+          rstCode: pushed.rstCode,
+          delivered: Buffer.concat(pushedData).toString(),
+        }).toEqual({
+          refusals: [{ type: FrameType.RST_STREAM, streamId: 2, code: ErrorCode.STREAM_CLOSED }],
+          error: "ERR_HTTP2_STREAM_ERROR",
+          rstCode: ErrorCode.STREAM_CLOSED,
+          delivered: "",
+        });
+      } finally {
+        c.destroy();
+        pushServer.close();
+      }
+    });
+  });
 });
 
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {

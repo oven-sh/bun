@@ -191,6 +191,31 @@ describe("InternalSourceMap", () => {
     expect(exited).toBe(0);
   });
 
+  // The generated lines counted while building the map have to agree with what
+  // JSC reports: a lone "\r" is a line terminator and "\r\n" is a single one. A
+  // legal comment is printed verbatim apart from its "\r\n"s becoming "\n", so
+  // it is how either reaches the transpiled code ("\r\r\n" comes out as "\r\n").
+  describe("line terminators inside a legal comment", () => {
+    async function remappedLines(index: string) {
+      const { stdout, stderr, exited } = await run({ "index.ts": index });
+      expect(stderr).toBe("");
+      expect(exited).toBe(0);
+      return [...stdout.matchAll(/index\.ts:(\d+):\d+/g)].map(m => Number(m[1]));
+    }
+
+    test("a lone CR starts a new line", async () => {
+      // Lines: 1 "/*! a", 2 "b", 3 "c */", 4 the Error, 5 console.log.
+      const index = '/*! a\rb\nc */\nconst err = new Error("x");\nconsole.log(err.stack);\n';
+      expect(await remappedLines(index)).toEqual([4]);
+    });
+
+    test("a CRLF is a single line break", async () => {
+      // Lines: 1 "/*! a", 2 "", 3 "b */", 4 console.log("before"), 5 the Error, 6 console.log.
+      const index = '/*! a\r\r\nb */\nconsole.log("before");\nconst err = new Error("x");\nconsole.log(err.stack);\n';
+      expect(await remappedLines(index)).toEqual([5]);
+    });
+  });
+
   test("FindCache eviction (>16 distinct windows in one stack)", async () => {
     // 20 functions spread ~125 lines apart in a single file. With ~6 mappings
     // per padding line that's ~750 mappings between calls -> each frame lands

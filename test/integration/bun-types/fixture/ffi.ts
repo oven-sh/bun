@@ -1,4 +1,15 @@
-import { dlopen, FFIType, JSCallback, read, suffix, type CString, type Pointer } from "bun:ffi";
+import {
+  cc,
+  dlopen,
+  FFIType,
+  JSCallback,
+  linkSymbols,
+  read,
+  suffix,
+  viewSource,
+  type CString,
+  type Pointer,
+} from "bun:ffi";
 import * as tsd from "./utilities";
 
 // `suffix` is either "dylib", "so", or "dll" depending on the platform
@@ -181,3 +192,81 @@ tsd.expectType<number>(read.f32(ptr, 0));
 tsd.expectType<number>(read.f64(ptr, 0));
 tsd.expectType<number>(read.ptr(ptr, 0));
 tsd.expectType<number>(read.intptr(ptr, 0));
+
+// Every name the runtime accepts in `args`/`returns` is declared: the keys of the FFIType
+// object in src/js/bun/ffi.ts as enum members, and the table in src/runtime/ffi/abi_type.rs
+// as strings.
+declare const callback: JSCallback;
+declare const view: Uint8Array;
+
+const aliases = dlopen(path, {
+  c_ints: { args: [FFIType.c_int, FFIType.c_uint, "c_int", "c_uint"], returns: "c_int" },
+  returns_c_uint: { args: [], returns: FFIType.c_uint },
+  sizes: { args: [FFIType.isize, FFIType.usize, "isize", "usize", "size_t"], returns: "isize" },
+  returns_usize: { args: [], returns: FFIType.usize },
+  returns_size_t: { args: [], returns: "size_t" },
+  fast: { args: ["i64_fast", "u64_fast"], returns: "i64_fast" },
+  returns_u64_fast: { args: [], returns: "u64_fast" },
+  c_pointers: { args: ["char*", "void*"], returns: "char*" },
+  returns_void_pointer: { args: [], returns: "void*" },
+  function_members: { args: [FFIType.callback, FFIType.fn], returns: FFIType.fn },
+  function_names: { args: ["function", "callback", "fn"], returns: "fn" },
+  buffers: { args: [FFIType.buffer, FFIType.buffer_bytelength, "buffer", "buffer_bytelength"] },
+} as const);
+
+type AliasParams<K extends keyof (typeof aliases)["symbols"]> = Parameters<(typeof aliases)["symbols"][K]>;
+type Int64Arg = number | bigint;
+type PointerArg = NodeJS.TypedArray | Pointer | bigint | null;
+type PointerReturn = Pointer | bigint | null;
+type BufferArg = NodeJS.TypedArray | DataView;
+
+tsd.expectType<AliasParams<"c_ints">>().is<[number, number, number, number]>();
+tsd.expectType(aliases.symbols.c_ints(1, 2, 3, 4)).is<number>();
+tsd.expectType(aliases.symbols.returns_c_uint()).is<number>();
+
+tsd.expectType<AliasParams<"sizes">>().is<[Int64Arg, Int64Arg, Int64Arg, Int64Arg, Int64Arg]>();
+tsd.expectType(aliases.symbols.sizes(-1, 1n, -1n, 1, 1)).is<bigint>();
+tsd.expectType(aliases.symbols.returns_usize()).is<bigint>();
+tsd.expectType(aliases.symbols.returns_size_t()).is<bigint>();
+
+tsd.expectType<AliasParams<"fast">>().is<[Int64Arg, Int64Arg]>();
+tsd.expectType(aliases.symbols.fast(1, 1n)).is<Int64Arg>();
+tsd.expectType(aliases.symbols.returns_u64_fast()).is<Int64Arg>();
+
+tsd.expectType<AliasParams<"c_pointers">>().is<[PointerArg, PointerArg]>();
+tsd.expectType(aliases.symbols.c_pointers(view, null)).is<PointerReturn>();
+tsd.expectType(aliases.symbols.returns_void_pointer()).is<PointerReturn>();
+
+tsd.expectType<AliasParams<"function_members">>().is<[Pointer | JSCallback, Pointer | JSCallback]>();
+tsd.expectType(aliases.symbols.function_members(callback, ptr)).is<PointerReturn>();
+// The string spellings resolve like "function" and "callback" always have (to the pointer
+// argument type), so `fn(callback.ptr)` keeps compiling.
+tsd.expectType<AliasParams<"function_names">>().is<[PointerArg, PointerArg, PointerArg]>();
+tsd.expectType(aliases.symbols.function_names(callback.ptr, ptr, 1n)).is<PointerReturn>();
+
+tsd.expectType<AliasParams<"buffers">>().is<[BufferArg, BufferArg, BufferArg, BufferArg]>();
+tsd.expectType(aliases.symbols.buffers(view, view, view, view)).is<undefined>();
+
+// Names the runtime does not accept stay undeclared.
+// @ts-expect-error the runtime FFIType object has no `size_t` key (only the string is accepted)
+FFIType.size_t;
+// @ts-expect-error "jsvalue" is not accepted by bun:ffi
+viewSource({ f: { args: ["jsvalue"] } });
+
+// The same FFIFunction declaration type is shared by every entry point.
+const linked = linkSymbols({
+  strlen: { args: ["char*"], returns: "size_t", ptr },
+  labs: { args: ["isize"], returns: FFIType.isize, ptr },
+} as const);
+tsd.expectType(linked.symbols.strlen(view)).is<bigint>();
+tsd.expectType(linked.symbols.labs(-1n)).is<bigint>();
+
+const compiled = cc({
+  source: "add.c",
+  symbols: { add: { args: ["c_int", FFIType.c_uint], returns: "u64_fast" } } as const,
+});
+tsd.expectType(compiled.symbols.add(1, 2)).is<number | bigint>();
+
+new JSCallback(() => 0n, { args: ["void*", "size_t", FFIType.usize], returns: "isize" });
+viewSource({ f: { args: ["i64_fast", "fn", FFIType.buffer_bytelength], returns: "c_uint" } });
+viewSource({ args: [FFIType.callback], returns: FFIType.c_int }, true);

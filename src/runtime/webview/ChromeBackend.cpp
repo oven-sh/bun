@@ -796,13 +796,11 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     auto& vm = g->vm();
     JSWebView* view = viewFor(entry.viewId);
     if (!view) {
-        // The view closed while this was in flight (Ops::close keeps the entry): nothing else will dispose the context.
-        if (entry.method == Method::TargetCreateBrowserContext) {
-            if (error.empty())
-                disposeBrowserContext(*this, WTF::String::fromUTF8(jsonString(jsonField(result, { "browserContextId", 16 }))));
-            updateKeepAlive();
-        }
-        return; // user dropped both view and the awaited promise
+        // The view is closed or collected. A context it asked for has no other owner.
+        if (entry.method == Method::TargetCreateBrowserContext && error.empty())
+            disposeBrowserContext(*this, WTF::String::fromUTF8(jsonString(jsonField(result, { "browserContextId", 16 }))));
+        updateKeepAlive(); // that entry may have been the last thing holding the loop
+        return;
     }
 
     if (!error.empty()) {

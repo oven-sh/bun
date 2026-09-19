@@ -242,9 +242,12 @@ void MessagePort::close()
         updateListenerEventLoopRef();
     }
 
-    // Defer 'close' to a task (node fires it at uv close-callback timing, i.e.
-    // after sync code and microtasks), so a listener added after close() still
-    // observes it and close(cb) interleaves with other listeners.
+    queueCloseEvent();
+}
+
+void MessagePort::queueCloseEvent()
+{
+    // A task rather than synchronous: node fires it from the uv close callback, so a listener added right after close() or the transfer still sees it.
     if (isContextStopped()) {
         removeAllEventListeners();
         return;
@@ -296,17 +299,10 @@ TransferredMessagePort MessagePort::disentangle()
 {
     ASSERT(isEntangled());
 
-    // Drop any message listeners (and the event-loop ref they carry) while
-    // this port is still attached to its context; after observeContext(null)
-    // there would be nothing to unref.
-    removeAllEventListeners();
+    // The listeners themselves are dropped by the close task queued below.
     m_hasMessageEventListener = false;
 
-    // Release the self-reference taken by jsRef() on the sending side. After
-    // transfer this object is inert (the receiving side gets a fresh
-    // MessagePort for the same pipe endpoint) and is no longer a destruction
-    // observer, so nothing else will ever release a ref taken here.
-    // The caller (disentanglePorts) holds a RefPtr, so deref() is safe.
+    // Release jsRef()'s self-reference here, since close() no-ops on a detached port; the caller's RefPtr keeps us alive across deref().
     if (m_hasRef) {
         m_hasRef = false;
         if (auto* context = scriptExecutionContext())
@@ -330,12 +326,8 @@ TransferredMessagePort MessagePort::disentangle()
     m_isDetached = true;
     m_started = false;
 
-    // We can't receive any messages or generate any events after this, so remove ourselves from the list of active ports.
-    if (auto* context = scriptExecutionContext()) {
-        context->willDestroyActiveDOMObject(*this);
-        context->willDestroyDestructionObserver(*this);
-    }
-    observeContext(nullptr);
+    // Stays attached to the context like a close()d port: the task dispatches through it, and only pins the wrapper while we have one.
+    queueCloseEvent();
 
     return TransferredMessagePort { m_pipe.copyRef(), m_side };
 }
@@ -383,6 +375,7 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& hadMessage)
 {
     hadMessage = false;
+    // Also what stops a transferred-away object, which keeps its context, from taking from the pipe side its receiver now owns.
     if (!isEntangled())
         return jsUndefined();
 

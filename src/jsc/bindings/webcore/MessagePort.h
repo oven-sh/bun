@@ -84,7 +84,7 @@ public:
     void peerClosed();
     void dispatchCloseEvent();
 
-    // Transfer machinery.
+    // Transfer machinery. disentangle() also queues 'close' on the transferred-away object, like node's TransferForMessaging(): https://github.com/nodejs/node/blob/v26.3.0/src/node_messaging.cc#L921-L924
     static ExceptionOr<Vector<TransferredMessagePort>> disentanglePorts(Vector<RefPtr<MessagePort>>&&);
     static Vector<RefPtr<MessagePort>> entanglePorts(ScriptExecutionContext&, Vector<TransferredMessagePort>&&);
     static Ref<MessagePort> entangle(ScriptExecutionContext&, TransferredMessagePort&&);
@@ -131,6 +131,8 @@ private:
 
     // Deliver messages already queued when close() is called, before teardown.
     void flushQueuedMessagesBeforeClose();
+    // Shared tail of close() and disentangle(): fires 'close' from a task, then drops the listeners.
+    void queueCloseEvent();
 
     bool isEntangled() const { return !m_isDetached; }
 

@@ -507,7 +507,7 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::{Dir, E, File, O, S, Tag};
 
-        // The copy belongs to the mover until `copy_owner_and_mode` runs.
+        // The copy belongs to the mover until `copy_metadata` runs.
         const OWNER_ONLY: bun_core::Mode = 0o700;
 
         let st = bun_sys::lstatat(src_dir, src)?;
@@ -530,6 +530,19 @@ impl ShellMvBatchedTask {
             buf[n] = 0;
             let _ = bun_sys::unlinkat(dst_dir, dst);
             bun_sys::symlinkat(ZStr::from_buf(&buf[..], n), dst_dir, dst)?;
+            #[cfg(unix)]
+            {
+                // Same order as `copy_metadata`: times, then owner.
+                let (atime, mtime) = Self::source_times(&st);
+                let _ = bun_sys::utimensat(dst_dir, dst, atime, mtime, libc::AT_SYMLINK_NOFOLLOW);
+                let _ = bun_sys::fchownat(
+                    dst_dir,
+                    dst,
+                    st.st_uid as _,
+                    st.st_gid as _,
+                    libc::AT_SYMLINK_NOFOLLOW,
+                );
+            }
             return bun_sys::unlinkat(src_dir, src);
         }
 
@@ -575,8 +588,9 @@ impl ShellMvBatchedTask {
                 let name_z = ZStr::from_buf(&nbuf[..], name.len());
                 Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z)?;
             }
+            // After the children: each child copy bumps the mtime of the new directory.
             #[cfg(unix)]
-            Self::copy_owner_and_mode(dd.fd(), &st);
+            Self::copy_metadata(dd.fd(), &st);
             #[cfg(windows)]
             let _ = bun_sys::fchmod(dd.fd(), st.st_mode as bun_core::Mode & 0o7777);
             drop((sd, dd));
@@ -615,20 +629,37 @@ impl ShellMvBatchedTask {
             return Err(e);
         }
         #[cfg(unix)]
-        Self::copy_owner_and_mode(out.fd(), &st);
+        Self::copy_metadata(out.fd(), &st);
         drop((in_, out));
         bun_sys::unlinkat(src_dir, src)
     }
 
+    /// Gives the copy the times, owner and mode of the source, best effort.
     /// POSIX `mv`: the copy gets set-uid and set-gid only if it also gets the owner.
     #[cfg(unix)]
-    fn copy_owner_and_mode(fd: bun_sys::Fd, st: &bun_sys::Stat) {
+    fn copy_metadata(fd: bun_sys::Fd, st: &bun_sys::Stat) {
+        // Times before owner: once the copy belongs to another user, the mover may not set them.
+        let (atime, mtime) = Self::source_times(st);
+        let _ = bun_sys::futimens(fd, atime, mtime);
         let mut mode = st.st_mode as bun_core::Mode & 0o7777;
         // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
         if bun_sys::fchown(fd, st.st_uid as _, st.st_gid as _).is_err() {
             mode &= !(bun_sys::S::ISUID | bun_sys::S::ISGID);
         }
         let _ = bun_sys::fchmod(fd, mode);
+    }
+
+    /// `(atime, mtime)` of the source, for the copy made by [`Self::move_across_devices`].
+    #[cfg(unix)]
+    fn source_times(st: &bun_sys::Stat) -> (bun_sys::TimeLike, bun_sys::TimeLike) {
+        let to_time_like = |t: bun_core::Timespec| bun_sys::TimeLike {
+            sec: t.sec,
+            nsec: t.nsec,
+        };
+        (
+            to_time_like(bun_sys::stat_atime(st)),
+            to_time_like(bun_sys::stat_mtime(st)),
+        )
     }
 
     /// `renameat(cwd, src, target_fd, basename(src))`. A free fn over the

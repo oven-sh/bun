@@ -2838,6 +2838,18 @@ mod posix_impl {
         );
         Ok(())
     }
+    /// `flags` is `0` or `AT_SYMLINK_NOFOLLOW`.
+    pub fn fchownat(dir: impl AsFd, path: &ZStr, uid: u32, gid: u32, flags: i32) -> Maybe<()> {
+        let dir = dir.as_fd();
+        check_p!(
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `ZStr::as_ptr()` is a
+            // valid NUL-terminated C string.
+            unsafe { libc::fchownat(dir.native(), path.as_ptr(), uid, gid, flags) },
+            Tag::fchownat,
+            path
+        );
+        Ok(())
+    }
     pub fn fstatat(fd: impl AsFd, path: &ZStr) -> Maybe<Stat> {
         let fd = fd.as_fd();
         let dirfd = if fd.is_valid() {
@@ -2899,18 +2911,23 @@ mod posix_impl {
         Ok(())
     }
     pub fn lutimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
+        utimensat(Fd::cwd(), path, atime, mtime, libc::AT_SYMLINK_NOFOLLOW)
+    }
+    /// `flags` is `0` or `AT_SYMLINK_NOFOLLOW`.
+    pub fn utimensat(
+        dir: impl AsFd,
+        path: &ZStr,
+        atime: TimeLike,
+        mtime: TimeLike,
+        flags: i32,
+    ) -> Maybe<()> {
+        let dir = dir.as_fd();
         let ts = [atime.to_timespec(), mtime.to_timespec()];
         check_p!(
-            // SAFETY: `path` is NUL-terminated (`ZStr`); `ts` is a 2-element
-            // stack array and `utimensat` reads exactly two `timespec`s.
-            unsafe {
-                libc::utimensat(
-                    libc::AT_FDCWD,
-                    path.as_ptr(),
-                    ts.as_ptr(),
-                    libc::AT_SYMLINK_NOFOLLOW,
-                )
-            },
+            // SAFETY: `dir` is a live fd (or AT_FDCWD); `path` is NUL-terminated
+            // (`ZStr`); `ts` is a 2-element stack array and `utimensat` reads
+            // exactly two `timespec`s.
+            unsafe { libc::utimensat(dir.native(), path.as_ptr(), ts.as_ptr(), flags) },
             Tag::utimensat,
             path
         );

@@ -6,7 +6,9 @@ import {
   chmodSync,
   constants,
   existsSync,
+  lchownSync,
   lstatSync,
+  lutimesSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -14,6 +16,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
   type Stats,
 } from "node:fs";
@@ -217,6 +220,61 @@ describe("mv", async () => {
         }
       },
     );
+
+    test.skipIf(skip)("keeps atime and mtime across devices", async () => {
+      const [src, dst] = crossDevicePair("times");
+      try {
+        const atime = new Date("2001-02-03T04:05:06Z");
+        const mtime = new Date("2002-03-04T05:06:07Z");
+        const srcFile = join(src, "f.txt");
+        const srcDir = join(src, "d");
+        const srcLink = join(src, "link");
+        writeFileSync(srcFile, "payload\n");
+        mkdirSync(srcDir);
+        writeFileSync(join(srcDir, "child.txt"), "child\n");
+        symlinkSync("does-not-exist", srcLink);
+        utimesSync(srcFile, atime, mtime);
+        utimesSync(join(srcDir, "child.txt"), atime, mtime);
+        utimesSync(srcDir, atime, mtime);
+        lutimesSync(srcLink, atime, mtime);
+
+        const r = await $`mv ${srcFile} ${srcDir} ${srcLink} ${dst}`.quiet();
+        expect(r.stderr.toString()).toBe("");
+        expect(r.exitCode).toBe(0);
+        const times = (p: string) => {
+          const st = lstatSync(p);
+          return { atime: st.atime.toISOString(), mtime: st.mtime.toISOString() };
+        };
+        const expected = { atime: atime.toISOString(), mtime: mtime.toISOString() };
+        expect({
+          file: times(join(dst, "f.txt")),
+          dir: times(join(dst, "d")),
+          child: times(join(dst, "d", "child.txt")),
+          link: times(join(dst, "link")),
+        }).toEqual({ file: expected, dir: expected, child: expected, link: expected });
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
+    test.skipIf(skip || !isRoot)("keeps the owner of a symlink across devices", async () => {
+      const [src, dst] = crossDevicePair("link-owner");
+      try {
+        const srcLink = join(src, "link");
+        symlinkSync("does-not-exist", srcLink);
+        lchownSync(srcLink, 65534, 65534);
+
+        const r = await $`mv ${srcLink} ${dst}`.quiet();
+        expect(r.stderr.toString()).toBe("");
+        expect(r.exitCode).toBe(0);
+        const st = lstatSync(join(dst, "link"));
+        expect({ uid: st.uid, gid: st.gid }).toEqual({ uid: 65534, gid: 65534 });
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
 
     test.skipIf(skip)("FIFO across devices fails fast", async () => {
       const [src, dst] = crossDevicePair("fifo");

@@ -512,6 +512,76 @@ test("Bun.build() passes define and loader to the macro VM", async () => {
   expect(exitCode).toBe(0);
 });
 
+// The GC at the end of a `Bun.build()` on each worker thread schedules the cleanup of a
+// FinalizationRegistry that a macro left dead registrations in, and keeps the worker's loop alive
+// until that cleanup runs. Nothing else ticks the loop of a worker's macro VM outside a macro, so
+// the worker has to run that work itself, or its loop stays active for the rest of the process.
+// Each entry module waits in its macro until the other one has arrived, so every build runs a
+// macro on both of the pool's two threads, and a probe build reads the loop of both.
+test("a FinalizationRegistry cleanup scheduled by the GC after a Bun.build() runs and releases the worker's loop", async () => {
+  const entry = (round: number, macros: string) =>
+    [
+      `import { arrive, polls, makeGarbage } from "./m.ts" with { type: "macro" };`,
+      `export const arrived = arrive(${round});`,
+      `export const count = polls();`,
+      macros,
+      ``,
+    ].join("\n");
+  using dir = tempDir("macro-build-finalization-registry", {
+    "m.ts": [
+      `import { getEventLoopStats } from "bun:internal-for-testing";`,
+      `import { readdirSync, writeFileSync } from "node:fs";`,
+      `const registry = new FinalizationRegistry(() => {});`,
+      `export function arrive(round) {`,
+      `  const prefix = "arrived-" + round + "-";`,
+      `  writeFileSync(import.meta.dir + "/" + prefix + crypto.randomUUID(), "");`,
+      `  const deadline = Date.now() + 20_000;`,
+      `  while (readdirSync(import.meta.dir).filter(name => name.startsWith(prefix)).length < 2) {`,
+      `    if (Date.now() > deadline) throw new Error("the other worker thread never arrived");`,
+      `    Bun.sleepSync(1);`,
+      `  }`,
+      `  return 0;`,
+      `}`,
+      `export function polls() {`,
+      `  return getEventLoopStats().numPolls;`,
+      `}`,
+      `export function makeGarbage() {`,
+      `  for (let i = 0; i < 2000; i++) registry.register({ i }, i);`,
+      `  return 0;`,
+      `}`,
+      ``,
+    ].join("\n"),
+    "a1.ts": entry(1, `export const garbage = makeGarbage();`),
+    "b1.ts": entry(1, `export const garbage = makeGarbage();`),
+    "a2.ts": entry(2, ``),
+    "b2.ts": entry(2, ``),
+    "build.ts": [
+      `async function counts(entrypoints) {`,
+      `  const result = await Bun.build({ entrypoints, target: "bun" });`,
+      `  const texts = await Promise.all(result.outputs.map(output => output.text()));`,
+      `  return texts.map(text => Number(text.match(/count = (\\d+)/)[1])).sort();`,
+      `}`,
+      `const baseline = await counts(["./a1.ts", "./b1.ts"]);`,
+      `const probe = await counts(["./a2.ts", "./b2.ts"]);`,
+      `console.log(JSON.stringify({ baseline, probe }));`,
+      ``,
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "build.ts"],
+    // Two pool threads, so the probe build lands on the threads of the first build. bunEnv turns the
+    // timed GC off, so the only collection is the one at the end of each build.
+    env: { ...bunEnv, GOMAXPROCS: "2" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { baseline, probe } = JSON.parse(stdout.trim().split("\n").pop()!);
+  expect({ probe, stderr }).toEqual({ probe: baseline, stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

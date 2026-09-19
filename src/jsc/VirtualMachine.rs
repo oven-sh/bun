@@ -1901,10 +1901,7 @@ impl VirtualMachine {
         // frees the printer while this VM survives with the flag still set —
         // the next macro on the same pool thread would otherwise skip re-init
         // and panic at `SOURCE_CODE_PRINTER.get().expect(...)`.
-        if SOURCE_CODE_PRINTER.get().is_none() {
-            SOURCE_CODE_PRINTER_FROM_MACRO.set(true);
-        }
-        ensure_source_code_printer();
+        claim_source_code_printer_for_macro();
         self.transpiler.options.target = bun_ast::Target::BunMacro;
         self.transpiler
             .resolver
@@ -3945,6 +3942,17 @@ fn ensure_source_code_printer() {
     }
 }
 
+/// [`ensure_source_code_printer`] for script that runs on behalf of a macro.
+/// A printer allocated here is the macro's to free
+/// ([`drop_source_code_printer_if_macro_owned`]); one a runtime VM already
+/// owns stays its own.
+fn claim_source_code_printer_for_macro() {
+    if SOURCE_CODE_PRINTER.get().is_none() {
+        SOURCE_CODE_PRINTER_FROM_MACRO.set(true);
+    }
+    ensure_source_code_printer();
+}
+
 /// Free this thread's [`SOURCE_CODE_PRINTER`] Box (if any).
 fn drop_source_code_printer() {
     if let Some(printer) = SOURCE_CODE_PRINTER.take() {
@@ -3995,7 +4003,9 @@ pub fn drop_source_code_printer_if_macro_owned() {
 /// unimplemented), so JS-wrapper-owned native boxes — e.g. a
 /// `new Bun.Transpiler()` constructed inside a macro body — would otherwise
 /// outlive the worker thread's TLS root and be reported by LSan once the
-/// `leak:bun_js_parser_jsc::Macro` suppression is gone.
+/// `leak:bun_js_parser_jsc::Macro` suppression is gone. Then tick the regular
+/// loop once, so the deferred work the sweep scheduled runs now rather than
+/// never.
 ///
 /// Only invoked from `bun_bundler::ThreadPool::Worker::deinit` (the call site
 /// is the discriminant — JS `Worker` threads never reach it), after both
@@ -4014,6 +4024,17 @@ pub fn collect_macro_vm_garbage() {
     debug_assert!(!vm_ref.is_main_thread);
     debug_assert_eq!(vm_ref.macro_guard_depth, 0);
     vm_ref.jsc_vm().run_gc(true);
+
+    // The collection registers deferred work (a `FinalizationRegistry`'s
+    // cleanup job) on the regular loop and takes a keep-alive on it until the
+    // job runs. Nothing else ticks this thread's regular loop: a macro VM only
+    // ticks its macro loop, and only while a macro waits on a promise. Run the
+    // job here, which also folds the release of its keep-alive and adopts what
+    // a macro started and did not await. The job runs script, so it needs the
+    // printer that `__bun_macro_context_deinit` has just freed.
+    claim_source_code_printer_for_macro();
+    vm_ref.run_with_api_lock(|| vm_ref.event_loop_mut().tick());
+    drop_source_code_printer_if_macro_owned();
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {

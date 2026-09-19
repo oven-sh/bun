@@ -438,6 +438,8 @@ static void replayNodeHttpPausedSpill(us_socket_t* socket)
         size_t spillLength = spill.size();
         spill.grow(spillLength + LIBUS_RECV_BUFFER_PADDING);
         us_socket_t* returned = uWS::HttpContext<SSL>::feedNodeHttpData(socket, spill.mutableSpan().data(), (int)spillLength);
+        /* nullptr: `ws` accepted an Upgrade from the spill inside 'upgrade'. The socket is a
+         * WebSocket now and upgrade() resumed its reads; nothing of HTTP is left to resume. */
         if (!returned || us_socket_is_closed(returned)) {
             return;
         }
@@ -502,7 +504,7 @@ static void onNodeHttpReadsResumable(us_socket_t* socket)
     scriptExecutionContext->postTask([protectedSocket = std::move(protectedSocket)](WebCore::ScriptExecutionContext&) {
         auto* self = protectedSocket.get();
         us_socket_t* sock = self->socket;
-        if (!sock || us_socket_is_closed(sock)) {
+        if (!sock || self->upgraded || us_socket_is_closed(sock)) {
             return;
         }
         if (self->is_ssl) {

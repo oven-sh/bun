@@ -119,9 +119,12 @@ private:
 public:
     /* node:http flood prevention: re-feed parked request bytes through the same
      * parse path fresh socket data takes. The caller guarantees the buffer has
-     * LIBUS_RECV_BUFFER_PADDING of writable slack past `length`. */
+     * LIBUS_RECV_BUFFER_PADDING of writable slack past `length`.
+     * Returns nullptr when a request in these bytes upgraded the socket: upgrade()
+     * adopted it into the WebSocket context, and its ext is WebSocketData now. */
     static us_socket_t *feedNodeHttpData(us_socket_t *s, char *data, int length) {
-        return onData<true>(s, data, length);
+        us_socket_t *returned = onData<true>(s, data, length);
+        return us_socket_kind(returned) == socketKind() ? returned : nullptr;
     }
 
     us_socket_group_t *getSocketGroup() {

@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tls as options } from "harness";
 import http from "http";
 import https from "https";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
+import { connect, type AddressInfo } from "node:net";
 import tls from "tls";
 import { WebSocketServer, type WebSocket as WsWebSocket } from "ws";
 
@@ -162,3 +162,80 @@ describe.concurrent("request handlers run to completion before the callbacks the
     expect(order).toEqual(["rest of handler", "nextTick", "microtask"]);
   });
 });
+
+// node:http stops reading a connection while response bytes are unsent, and parks the requests it
+// already received until they drain (flood prevention). A WebSocket upgrade takes the socket out
+// of HTTP with that pause still on. Only HTTP lifted it, so the WebSocket never read a frame.
+describe.concurrent.each(["http", "https"])(
+  "a WebSocket upgrade on an %s connection with unsent response bytes",
+  scheme => {
+    const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+    const upgradeRequest =
+      "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+      "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+    // A frame masked with a zero key. 0x81 is a whole text message, 0x01 and 0x80 are the first
+    // and the last fragment of one.
+    const frame = (first: number, payload: string) =>
+      Buffer.concat([Buffer.from([first, 0x80 | payload.length, 0, 0, 0, 0]), Buffer.from(payload)]);
+
+    // Sends `pipelined` in one write and `afterSwitch` once the 101 is in. Resolves with the message
+    // that the WebSocket server received.
+    async function messageAfterUpgrade(pipelined: (string | Buffer)[], afterSwitch: Buffer) {
+      // Larger than the loopback socket buffers: most of it is still unsent when the handler returns.
+      const big = Buffer.alloc(16 * 1024 * 1024, "a");
+      const message = Promise.withResolvers<string>();
+      const switched = Promise.withResolvers<void>();
+      // A test that fails before it awaits these must not add an unhandled rejection.
+      message.promise.catch(() => {});
+      switched.promise.catch(() => {});
+      const onRequest: http.RequestListener = (req, res) => void res.end(req.url === "/big" ? big : "small");
+      await using server = scheme === "https" ? https.createServer(options, onRequest) : http.createServer(onRequest);
+      const wss = new WebSocketServer({ server });
+      wss.on("connection", ws => {
+        ws.on("message", data => message.resolve(String(data)));
+        ws.on("close", code => message.reject(new Error(`the WebSocket closed with ${code}`)));
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const { port } = server.address() as AddressInfo;
+      const client =
+        scheme === "https" ? tls.connect({ port, host: "127.0.0.1", ca: options.cert }) : connect(port, "127.0.0.1");
+      try {
+        client.on("error", switched.reject);
+        client.on("close", () => switched.reject(new Error("the connection closed before the 101")));
+        // The 101 is the last thing the server sends, so it is at the end of what the client has.
+        let tail = Buffer.alloc(0);
+        client.on("data", chunk => {
+          tail = Buffer.concat([tail, chunk]).subarray(-512);
+          const status = tail.indexOf("HTTP/1.1 101 ");
+          if (status !== -1 && tail.includes("\r\n\r\n", status)) switched.resolve();
+        });
+        await once(client, scheme === "https" ? "secureConnect" : "connect");
+        client.write(Buffer.concat(pipelined.map(part => Buffer.from(part))));
+        await switched.promise;
+        client.write(afterSwitch);
+        return await message.promise;
+      } finally {
+        client.destroy();
+        for (const ws of wss.clients) ws.terminate();
+        wss.close();
+      }
+    }
+
+    test("the Upgrade request is dispatched right behind the response", async () => {
+      expect(await messageAfterUpgrade([get("/big"), upgradeRequest], frame(0x81, "later"))).toBe("later");
+    });
+
+    test("the Upgrade request is parked, and replayed once the response has drained", async () => {
+      const pipelined = [get("/big"), get("/small"), upgradeRequest];
+      expect(await messageAfterUpgrade(pipelined, frame(0x81, "later"))).toBe("later");
+    });
+
+    // The replay went on after the upgrade and read the WebSocket's state as the HTTP state it
+    // replaced. A buffered fragment read as "requests were parked again", and reads stayed paused.
+    test("the parked Upgrade request is followed by the first fragment of a message", async () => {
+      const pipelined = [get("/big"), get("/small"), upgradeRequest, frame(0x01, "ear")];
+      expect(await messageAfterUpgrade(pipelined, frame(0x80, "ly"))).toBe("early");
+    });
+  },
+);

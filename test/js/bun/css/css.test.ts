@@ -8286,8 +8286,8 @@ console.log(line.length - line.trimStart().length);`,
     });
 
     test("bun build --target=browser", async () => {
-      // The default browser targets need `:-webkit-full-screen` and
-      // `:-webkit-any()`, and nesting is compiled away.
+      // The default browser targets need `:-webkit-full-screen`, `:-webkit-any()`
+      // and `:-moz-any()`, and nesting is compiled away.
       using dir = tempDir("css-nested-prefix-order", {
         "app.css": ".p:fullscreen { & .k:is(.a, .b) { color: red } & .k.c { color: blue } }",
       });
@@ -8303,9 +8303,15 @@ console.log(line.length - line.trimStart().length);`,
       expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
 
       const output = await Bun.file(join(String(dir), "out", "app.css")).text();
-      // The default targets still need both prefixes.
-      expect(output).toContain(".p:-webkit-full-screen .k:-webkit-any(.a,.b)");
-      expect(printedOrder(output, "color")).toEqual(["red", "#00f"]);
+      expect(output.trim()).toBe(
+        [
+          ".p:-webkit-full-screen .k:-webkit-any(.a,.b){color:red}",
+          ".p:fullscreen .k:-moz-any(.a,.b){color:red}",
+          ".p:fullscreen .k:is(.a,.b){color:red}",
+          ".p:-webkit-full-screen .k.c{color:#00f}",
+          ".p:fullscreen .k.c{color:#00f}",
+        ].join(""),
+      );
     });
   });
 });

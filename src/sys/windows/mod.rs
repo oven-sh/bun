@@ -505,7 +505,24 @@ pub fn CreateHardLinkW(
     rc
 }
 
-pub use bun_windows_sys::externs::CopyFileW;
+/// `CopyFileW`, passing an empty destination as the tail of a NUL pair:
+/// kernel32 reads the unit before an empty destination name.
+///
+/// # Safety
+/// `source` and `dest` must point at NUL-terminated wide strings that stay
+/// valid for the duration of the call.
+pub unsafe fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL {
+    static EMPTY_DEST: [u16; 2] = [0, 0];
+    // SAFETY: caller contract — `dest` is NUL-terminated, so its first unit
+    // is readable.
+    let dest = if unsafe { *dest } == 0 {
+        EMPTY_DEST[1..].as_ptr()
+    } else {
+        dest
+    };
+    // SAFETY: caller contract; the substitute is NUL-terminated too.
+    unsafe { externs::CopyFileW(source, dest, bFailIfExists) }
+}
 
 /// `bun.windows.Error` — alias for `Win32Error`.
 pub type Error = Win32Error;

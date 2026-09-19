@@ -798,6 +798,46 @@ describe("Bun.ModuleGraph — shared CodeBlocks under JIT tier-up", () => {
     expect([cx.m(), cy.m(), x.C.s(), y.C.s(), cx.p, cy.p]).toEqual(["x", "y", "x", "y", "x", "y"]);
     rmSync(dir, { recursive: true, force: true });
   });
+
+  test("namespace reads (import * as ns) in shared code: one inline cache entry serves every instance, and each instance reads its own bindings", async () => {
+    const dir = fixture({
+      "k.mjs": `export let v = process.env.T + ":0"; export const K = "K:" + process.env.T;
+        export function bump() { v = process.env.T + ":" + (Number(v.split(":")[1]) + 1) }`,
+      "barrel.mjs": `export * from "./k.mjs"; export { K as renamed } from "./k.mjs";`,
+      "c.cjs": `exports.who = "cjs:" + process.env.T;`,
+      "hot.mjs": `import * as ns from "./k.mjs"; import * as barrel from "./barrel.mjs"; import * as cjs from "./c.cjs";
+        export function read(n) { let r; for (let i = 0; i < n; i++) r = ns.v + "|" + ns.K + "|" + barrel.v + "|" + barrel.renamed + "|" + cjs.who; return r }
+        export function bump() { ns.bump() }`,
+    });
+    const tags = ["a", "b", "c", "d"];
+    const graphs = tags.map(T => ModuleGraph({ env: { T } }));
+    const mods: any[] = [];
+    for (const graph of graphs) mods.push(await graph.import(join(dir, "hot.mjs")));
+    const expected = (T: string, n: number) => `${T}:${n}|K:${T}|${T}:${n}|K:${T}|cjs:${T}`;
+    // Every instance in turn, often enough for each tier: the inline caches of the shared code see the
+    // namespace objects of all four instances.
+    const wrong: string[] = [];
+    for (let round = 0; round < 100; round++) {
+      for (let i = 0; i < mods.length; i++) {
+        const got = mods[i].read(100);
+        if (got !== expected(tags[i], 0)) wrong.push(`${tags[i]} round ${round}: ${got}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+    mods[1].bump();
+    expect(mods.map(m => m.read(100))).toEqual([
+      expected("a", 0),
+      expected("b", 1),
+      expected("c", 0),
+      expected("d", 0),
+    ]);
+    // An inline cache entry for one namespace object serves one instance, and every other instance takes
+    // the slow path on each read. From the second namespace object an inline cache sees, JavaScriptCore
+    // caches by export layout instead: a cell that namespace objects with the same exported names share.
+    expect(heapStats().objectTypeCounts.ModuleNamespaceExportLayout ?? 0).toBeGreaterThanOrEqual(1);
+    graphs.forEach(graph => graph.dispose());
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe("Bun.ModuleGraph — API validation and error attribution edges", () => {

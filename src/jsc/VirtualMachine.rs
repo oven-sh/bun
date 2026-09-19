@@ -3996,8 +3996,7 @@ pub fn drop_source_code_printer_if_macro_owned() {
 /// `new Bun.Transpiler()` constructed inside a macro body — would otherwise
 /// outlive the worker thread's TLS root and be reported by LSan once the
 /// `leak:bun_js_parser_jsc::Macro` suppression is gone. Then tick the regular
-/// loop once, so the deferred work the sweep scheduled runs now rather than
-/// never.
+/// loop once for the deferred work the sweep scheduled.
 ///
 /// Only invoked from `bun_bundler::ThreadPool::Worker::deinit` (the call site
 /// is the discriminant — JS `Worker` threads never reach it), after both
@@ -4007,10 +4006,9 @@ pub fn drop_source_code_printer_if_macro_owned() {
 /// where re-entering `run_gc` would be a recursion hazard.
 pub fn collect_macro_vm_garbage() {
     let Some(vm) = VM.get() else { return };
-    // SAFETY: `VM` is this thread's per-JS-thread VM singleton. The shared
-    // borrow is held across a tick that runs script and mutates the VM
-    // through `event_loop_mut()`, under the same single-JS-thread contract
-    // that accessor documents; no `&mut VirtualMachine` is formed here.
+    // SAFETY: `VM` is this thread's per-JS-thread VM singleton. The borrow is
+    // held across a tick that runs script; it mutates the VM only through
+    // `event_loop_mut()`, and no `&mut VirtualMachine` is formed here.
     let vm_ref = unsafe { &*vm };
     if !vm_ref.has_enabled_macro_mode {
         return;
@@ -4019,19 +4017,10 @@ pub fn collect_macro_vm_garbage() {
     debug_assert_eq!(vm_ref.macro_guard_depth, 0);
     vm_ref.jsc_vm().run_gc(true);
 
-    // The collection registers deferred work (a `FinalizationRegistry`'s
-    // cleanup job) on the regular loop and takes a keep-alive on it until the
-    // job runs. Nothing else ticks this thread's regular loop: a macro VM only
-    // ticks its macro loop, and only while a macro waits on a promise. Run the
-    // job here, which also folds the release of its keep-alive and adopts what
-    // a macro started and did not await.
-    //
-    // The job runs script, so it needs the printer that
-    // `__bun_macro_context_deinit` has just freed. It is allocated here as
-    // this function's own, not as macro-owned: a `Bun.Transpiler` call inside
-    // the job deinits a nested `MacroContext` at guard depth 0, and
-    // `drop_source_code_printer_if_macro_owned` would free a macro-owned
-    // printer in the middle of the tick.
+    // The sweep schedules a `FinalizationRegistry`'s cleanup on the regular
+    // loop and keeps the loop alive until it runs. Only a macro wait ticks this
+    // VM, so run it now. The cleanup is script: lend it a printer that is not
+    // macro-owned, so a `MacroContext` deinit inside it cannot free it mid-tick.
     let printer_allocated_here = SOURCE_CODE_PRINTER.get().is_none();
     ensure_source_code_printer();
     vm_ref.run_with_api_lock(|| vm_ref.event_loop_mut().tick());

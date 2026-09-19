@@ -1167,8 +1167,7 @@ pub use crate::Location;
 pub struct StyleContext<'a> {
     pub(crate) selectors: &'a crate::selectors::SelectorList,
     pub(crate) parent: Option<&'a StyleContext<'a>>,
-    /// The vendor prefix passes `selectors` print in. A nested style rule
-    /// without passes of its own prints once per pass in this set.
+    /// The vendor prefix passes `selectors` print in; a nested rule without passes of its own prints in them too.
     pub(crate) prefix_passes: crate::VendorPrefix,
 }
 

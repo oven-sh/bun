@@ -30,9 +30,7 @@ impl<R> ScopeRule<R> {
         // compiling nesting, like style rule preludes do (see
         // `serialize::serialize_nesting`).
         dest.nesting_expansions = 0;
-        // With nesting compiled away, `&` prints the parent selectors, which
-        // differ per vendor prefix pass. This rule prints once, so it takes the
-        // last pass: the unprefixed one if there is one (`FIELDS` ends with `NONE`).
+        // With nesting compiled away, `&` prints the parent selectors in their last pass, the unprefixed one if there is one.
         let saved_prefix = dest.vendor_prefix;
         if let Some(ctx) = dest.ctx
             && let Some(&last_pass) = VendorPrefix::FIELDS

@@ -793,9 +793,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     m_pending.remove(it);
 
     if (entry.method == Method::TargetCreateBrowserContextOrphaned) {
-        // The view is gone; an error reply made no context. Fire-and-forget
-        // like Ops::close. This entry may have been the last thing holding
-        // the keep-alive ref, so re-evaluate now it's gone.
+        // The view is gone: dispose the context this reply names, if any.
         auto cid = jsonString(jsonField(result, { "browserContextId", 16 }));
         if (!cid.empty()) disposeBrowserContext(*this, WTF::String::fromUTF8(cid));
         updateKeepAlive();
@@ -902,9 +900,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Untracked fire-and-forget — close() sends TargetCloseTarget
         // without adding to m_pending (the view is going away). Chrome's
         // reply finds no entry, handleResponse's find()==end() drops it.
-        // TargetCreateBrowserContextOrphaned is handled before the view
-        // lookup above. These arms are unreachable; present for switch
-        // completeness.
+        // This case arm is unreachable; present for switch completeness.
         return;
 
     case Method::PageNavigate: {
@@ -1837,12 +1833,7 @@ void close(JSWebView* view)
     // PageEnable sends Page.navigate, the tab navigates after dispose.
     // removeIf breaks the chain at the next reply — handleResponse's
     // find(id)==end() early-return drops it.
-    //
-    // Exception: a Target.createBrowserContext Chrome has already received.
-    // Its reply is the only place the new context's id appears, so retag
-    // it and let handleResponse dispose the context. One still parked
-    // behind the WebSocket handshake is dropped like the rest: the drain
-    // skips it and no context is made.
+    // A sent Target.createBrowserContext is retagged: its reply names the context to dispose.
     t.m_pending.removeIf([&t, vid = view->m_viewId](auto& pair) {
         if (pair.value.viewId != vid) return false;
         if (pair.value.method == Method::TargetCreateBrowserContext && !t.isQueuedUnsent(pair.key)) {

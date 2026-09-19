@@ -418,8 +418,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
-        // Ephemeral (the default) is per view: a browser context of its own.
-        // { directory } shares the one Chrome's default context.
+        // Ephemeral is per view; { directory } shares the one Chrome's default context.
         view->m_ownBrowserContext = !persistDirGiven;
         view->m_proxyServer = WTF::move(proxyServer);
         view->m_proxyBypass = proxyBypass.toString();

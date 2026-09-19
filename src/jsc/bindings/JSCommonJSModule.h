@@ -60,12 +60,10 @@ public:
     // `m_childrenValue` can be set to any value via the user-exposed setter,
     // but Bun does not test that behavior besides ensuring it does not crash.
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
-    // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule.
+    // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule
     // Only addChild and clearChildren change it.
     WTF::Vector<WriteBarrier<Unknown>> m_children;
-    // Set once m_children is long (see addChild). It holds the same cells as
-    // m_children, which keeps them alive. visitChildren does not read it, so
-    // the JS thread changes it without cellLock().
+    // Hash index of m_children once it is long (see addChild). m_children keeps the cells alive, and visitChildren does not read it, so it needs no cellLock().
     std::unique_ptr<WTF::HashSet<JSC::JSCell*>> m_childrenIndex;
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule

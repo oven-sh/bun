@@ -313,9 +313,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     return true;
 }
 
-// addChild finds a repeat with a scan of m_children while a parent has at most
-// this many children. The next child builds m_childrenIndex, so that neither a
-// cached require() nor the first load of another child scans a long vector.
+// A parent with more children than this keeps m_childrenIndex, so that addChild never scans a long vector.
 static constexpr size_t childrenIndexThreshold = 64;
 
 void JSCommonJSModule::addChild(JSC::VM& vm, JSC::JSCell* child)

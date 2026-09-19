@@ -149,6 +149,11 @@ export const install_test_helpers = $rust("install_binding.rs", "bun_install_js_
    */
   workspaceMembers: (packageJsonPath: string, packageJson: string) => { path: string; name: string }[];
   /**
+   * Returns the name of the member of the same kind of package.json whose directory is `dir` (an absolute
+   * path), or null. `bun install` uses this lookup to find the workspace root from a member directory.
+   */
+  workspaceMemberIn: (packageJsonPath: string, packageJson: string, dir: string) => string | null;
+  /**
    * Returns the spec that `$name` in the "overrides" of the same kind of package.json takes from the
    * "dependencies" of a workspace member, or null when no member (or more than one spec) declares `name`.
    */

@@ -229,6 +229,17 @@ describe.each([
     ]);
   });
 
+  // How `bun install` in a member directory finds the workspace root above it.
+  test("the directory of a member names that member", () => {
+    using dir = tempDir("workspace-root-directory", MEMBERS);
+    const root = rootOf(String(dir));
+    const packageJson = rootPackageJson([`${pkgsFrom(root, String(dir))}/*`]);
+    const memberIn = (...path: string[]) =>
+      install_test_helpers.workspaceMemberIn(join(root, "package.json"), packageJson, join(String(dir), ...path));
+
+    expect([memberIn("pkgs", "a"), memberIn("pkgs", "b"), memberIn("pkgs")]).toEqual(["a", "b", null]);
+  });
+
   test("$name in overrides takes the spec that a member declares", () => {
     using dir = tempDir("workspace-root-directory", MEMBERS);
     const root = rootOf(String(dir));

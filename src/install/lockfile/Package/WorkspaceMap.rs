@@ -82,6 +82,34 @@ impl WorkspaceMap {
         self.map.get(key)
     }
 
+    /// The member whose directory is `dir`, an absolute path. `source` is the root package.json.
+    pub(crate) fn member_in(&self, source: &bun_ast::Source, dir: &[u8]) -> Option<&Entry> {
+        let root_dir = package_json_dir(source);
+        #[cfg(windows)]
+        let mut posix_buf = path::path_buffer_pool::get();
+        for (member_path, entry) in self.keys().iter().zip(self.values()) {
+            let member_dir: &[u8] = if path::is_absolute(member_path) {
+                dir
+            } else {
+                resolve_path::relative_normalized::<path::platform::Auto, true>(root_dir, dir)
+            };
+            // The keys use `/` on every platform.
+            #[cfg(windows)]
+            let member_dir: &[u8] = {
+                let len = member_dir.len();
+                posix_buf.0[..len].copy_from_slice(member_dir);
+                resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                    &mut posix_buf.0[..len],
+                );
+                &posix_buf.0[..len]
+            };
+            if member_dir == &member_path[..] {
+                return Some(entry);
+            }
+        }
+        None
+    }
+
     fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
         // No `bun.sys.exists(key)` debug check here: `key` is
         // relative to the workspace root while `exists` resolves against process
@@ -649,6 +677,18 @@ pub(crate) fn parse_for_testing(
         }
     }
     Ok(members)
+}
+
+/// The name of the member that [`parse_for_testing`] finds in the directory `dir`.
+pub fn member_in_for_testing(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    dir: &[u8],
+) -> crate::Result<Option<Box<[u8]>>> {
+    let members = parse_for_testing(source, log, &mut WorkspacePackageJSONCache::default())?;
+    Ok(members
+        .member_in(source, dir)
+        .map(|entry| entry.name.clone()))
 }
 
 /// The `(path, name)` of each member that [`parse_for_testing`] finds.

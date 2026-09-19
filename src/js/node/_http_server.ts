@@ -879,6 +879,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           (dispatchBits & DISPATCH_HAS_UPGRADE) !== 0 &&
           (dispatchBits & DISPATCH_CONN_UPGRADE) !== 0
         ) {
+          // Like Node.js, shouldUpgradeCallback sees req.upgrade === true.
+          http_req.upgrade = true;
           is_upgrade = !!server.shouldUpgradeCallback(http_req);
         }
         // Like Node.js's parserOnIncoming: req.upgrade is true inside the

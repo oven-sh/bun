@@ -1,6 +1,6 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, substDrive, tempDir } from "harness";
 import { chmodSync, statSync } from "node:fs";
 import path from "path";
 
@@ -686,6 +686,18 @@ describe.concurrent("Bun REPL", () => {
         // Regression: was producing `/cwd[repl]` instead of `/cwd/[repl]`.
         expect.stringMatching(/^".+[\/\\]\[repl\]"$/),
       ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("module.filename and module.path at a filesystem root", async () => {
+      // A root (`/`, `C:\`) ends in a separator and keeps it: `C:` is the
+      // current directory of drive C, not its root.
+      using dir = isWindows ? tempDir("repl-fs-root", {}) : null;
+      using drive = dir ? substDrive(String(dir)) : null;
+      const root = drive?.root ?? "/";
+      const { outputs, stderr, exitCode } = await runRepl(["module.filename", "module.path", ".exit"], { cwd: root });
+      expect(outputs).toEqual([JSON.stringify(root + "[repl]"), JSON.stringify(root)]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

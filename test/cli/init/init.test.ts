@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, substDrive, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
@@ -310,6 +310,37 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       private: true,
     });
   }, 30_000);
+
+  // A filesystem root has no name. `C:` is not one: it is the current directory of drive C.
+  test.skipIf(!isWindows)('bun init in the root of a drive names the package "project"', async () => {
+    // This package.json lists everything `bun init` adds, so no `bun install` runs.
+    using dir = tempDir("bun-init-drive-root", {
+      "package.json": JSON.stringify({
+        devDependencies: { "@types/bun": "latest" },
+        peerDependencies: { typescript: "^7" },
+      }),
+    });
+    using drive = substDrive(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: drive.root,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(await Bun.file(path.join(dir, "package.json")).json()).toEqual({
+      name: "project",
+      devDependencies: { "@types/bun": "latest" },
+      peerDependencies: { typescript: "^7" },
+      module: "index.ts",
+      type: "module",
+      private: true,
+    });
+    expect(await Bun.file(path.join(dir, "README.md")).text()).toStartWith("# project\n");
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  });
 
   test("bun init --react works", async () => {
     await using temp = tempDir("bun-init--react-works", {});

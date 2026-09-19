@@ -393,8 +393,8 @@ impl InitCommand {
         }
 
         let _ = Fs::FileSystem::init(None)?;
-        let pathname =
-            Fs::PathName::init(Fs::FileSystem::get().top_level_dir_without_trailing_slash());
+        // Empty for a filesystem root (`/`, `C:\`), which has no name.
+        let cwd_name = bun_paths::basename(Fs::FileSystem::get().top_level_dir());
         let destination_dir = Fd::cwd();
 
         let mut fields = PackageJSONFields::default();
@@ -453,11 +453,7 @@ impl InitCommand {
         }
 
         fields.name = 'brk: {
-            if let Ok(name) = Self::normalize_package_name(if !pathname.filename.is_empty() {
-                pathname.filename
-            } else {
-                b""
-            }) {
+            if let Ok(name) = Self::normalize_package_name(cwd_name) {
                 if !name.is_empty() {
                     break 'brk name;
                 }

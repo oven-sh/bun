@@ -121,7 +121,8 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto cwdStr = WTF::String::fromUTF8(std::span { cwdPtr, cwdLen });
-    auto* filename = jsString(vm, makeString(cwdStr, PLATFORM_SEP_s, "[repl]"_s));
+    // A filesystem root (`/`, `C:\`) already ends in a separator.
+    auto* filename = jsString(vm, makeString(cwdStr, cwdStr.endsWith(PLATFORM_SEP) ? ""_s : PLATFORM_SEP_s, "[repl]"_s));
     auto* dirname = jsString(vm, WTF::String(cwdStr));
 
     auto* moduleObject = Bun::JSCommonJSModule::create(vm,

@@ -968,25 +968,22 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
 
     if not_in_workspace_root {
         let mut bufn = bun_paths::path_buffer_pool::get();
+        // Not `top_level_dir_without_trailing_slash`: it keeps the `\` of a drive root, and the
+        // Posix join would print `C:\/node_modules/..`.
+        let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
         bun_core::pretty!(
             "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
             bstr::BStr::new(pkg_name),
             bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
                 &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
-                ]
+                &[top_level, module_folder]
             )),
         );
         bun_core::pretty!(
             "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
             bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
                 &mut bufn[..],
-                &[
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
-                ]
+                &[top_level, module_folder]
             )),
         );
     } else {

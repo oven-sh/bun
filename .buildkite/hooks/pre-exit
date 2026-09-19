@@ -59,7 +59,7 @@ for log in "/tmp/bk-${BUILDKITE_JOB_ID}.log" "/tmp/sc-${BUILDKITE_JOB_ID}.log"; 
 done
 [ -n "$detail" ] || detail="see the job log for output"
 
-# Match escapeCodeBlock() in scripts/runner.node.ts: the body renders inside a
+# Match escapeCodeBlock() in scripts/buildkite.ts: the body renders inside a
 # ```terminal fence, so only backticks need escaping.
 preview=$(printf '%s' "$detail" | sed 's/`/\\`/g')
 

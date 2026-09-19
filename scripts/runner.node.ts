@@ -36,6 +36,8 @@ import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
+  escapeCodeBlock,
+  escapeHtml,
   getBranch,
   getBuildLabel,
   getBuildMetadata,
@@ -48,7 +50,8 @@ import {
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
-  stripAnsi as stripAnsiEscapes,
+  stripAnsi,
+  unescapeGitHubAction,
   uploadArtifact,
   type JunitFileSuite,
 } from "./buildkite.ts";
@@ -63,8 +66,7 @@ import {
   isLinux,
   isMacOS,
   isWindows,
-  spawnSafe as spawnCommandSafe,
-  spawnSync as spawnCommandSync,
+  spawnSafe,
   tmpdir,
   which,
 } from "./process.ts";
@@ -79,9 +81,9 @@ async function unzip(filename: string, output?: string): Promise<string> {
   const destination = output || mkdtempSync(join(tmpdir(), "unzip-"));
   if (isWindows) {
     const command = `Expand-Archive -Force -LiteralPath "${escapePowershell(filename)}" -DestinationPath "${escapePowershell(destination)}"`;
-    await spawnCommandSafe(["powershell", "-Command", command]);
+    await spawnSafe(["powershell", "-Command", command]);
   } else {
-    await spawnCommandSafe(["unzip", "-o", filename, "-d", destination]);
+    await spawnSafe(["unzip", "-o", filename, "-d", destination]);
   }
   return destination;
 }
@@ -142,7 +144,7 @@ function createLiveOutputFilter({
 
   /** `line` is an incomplete line. */
   const holdBack = (line: string) => {
-    const visible = stripAnsiEscapes(line);
+    const visible = stripAnsi(line);
     return (
       visible.startsWith("::") || markers.some(marker => marker.length > visible.length && marker.startsWith(visible))
     );
@@ -195,19 +197,22 @@ function getLoggedInUserCountOrDetails(): number | string | undefined {
   if (isWindows) {
     const pwsh = which(["pwsh", "powershell"]);
     if (pwsh) {
-      const { error, stdout } = spawnCommandSync([
+      const { status, stdout } = spawnSync(
         pwsh,
-        "-Command",
-        `Get-CimInstance -ClassName Win32_Process -Filter "Name = 'sshd.exe'" | Get-CimAssociatedInstance -Association Win32_SessionProcess | Get-CimAssociatedInstance -Association Win32_LoggedOnUser | Where-Object {$_.Name -ne 'SYSTEM'} | Measure-Object | Select-Object -ExpandProperty Count`,
-      ]);
-      if (!error) {
+        [
+          "-Command",
+          `Get-CimInstance -ClassName Win32_Process -Filter "Name = 'sshd.exe'" | Get-CimAssociatedInstance -Association Win32_SessionProcess | Get-CimAssociatedInstance -Association Win32_LoggedOnUser | Where-Object {$_.Name -ne 'SYSTEM'} | Measure-Object | Select-Object -ExpandProperty Count`,
+        ],
+        { encoding: "utf8" },
+      );
+      if (status === 0) {
         return parseInt(stdout) || undefined;
       }
     }
   }
 
-  const { error, stdout } = spawnCommandSync(["who"]);
-  if (!error) {
+  const { status, stdout } = spawnSync("who", { encoding: "utf8" });
+  if (status === 0) {
     const users = stdout
       .split("\n")
       .filter(line => /tty|pts/i.test(line))
@@ -447,7 +452,7 @@ let coresDir: string | undefined;
 
 if (options["coredump-upload"]) {
   // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
-  const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
+  const sysctl = await spawnWithTimeout({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
   coresDir = sysctl.stdout;
   if (sysctl.ok) {
     if (coresDir.startsWith("|")) {
@@ -1542,7 +1547,7 @@ async function runTests(): Promise<TestResult[]> {
         // bun-cores-XYZ containing core files, instead of a bunch of core files strewn in your
         // current directory
         const before = Date.now();
-        const zipAndEncrypt = await spawnSafe({
+        const zipAndEncrypt = await spawnWithTimeout({
           command: "bash",
           args: [
             "-c",
@@ -1655,7 +1660,7 @@ type SpawnResult = {
  */
 type SpawnedProcess = ChildProcessByStdio<null, Socket, Socket>;
 
-async function spawnSafe(options: SpawnOptions): Promise<SpawnResult> {
+async function spawnWithTimeout(options: SpawnOptions): Promise<SpawnResult> {
   const {
     command,
     args,
@@ -1797,7 +1802,7 @@ async function spawnSafe(options: SpawnOptions): Promise<SpawnResult> {
     const { code } = spawnError;
     if (code === "EBUSY" || code === "UNKNOWN") {
       await new Promise(resolve => setTimeout(resolve, 1000 * (retries + 1)));
-      return spawnSafe({
+      return spawnWithTimeout({
         ...options,
         retries: retries + 1,
       });
@@ -2035,7 +2040,7 @@ async function spawnBun(
   }
   try {
     const existingCores = options["coredump-upload"] ? readdirSync(coresDir!) : [];
-    const result: SpawnBunResult = await spawnSafe({
+    const result: SpawnBunResult = await spawnWithTimeout({
       command: execPath,
       args,
       cwd,
@@ -2062,7 +2067,7 @@ async function spawnBun(
       for (const coreName of newCores) {
         const corePath = join(coresDir!, coreName);
         let out = "";
-        const gdb = await spawnSafe({
+        const gdb = await spawnWithTimeout({
           command: "gdb",
           args: ["-batch", `--eval-command=bt`, "--core", corePath, execPath],
           timeout: 240_000,
@@ -2589,7 +2594,7 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
         const vendorPath = join(cwd, "vendor", name);
 
         if (!existsSync(vendorPath)) {
-          const { ok, error } = await spawnSafe({
+          const { ok, error } = await spawnWithTimeout({
             command: "git",
             args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
             timeout: testTimeout,
@@ -2598,7 +2603,7 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
           if (!ok) throw new Error(`failed to git clone vendor '${name}': ${error}`);
         }
 
-        let { ok, error } = await spawnSafe({
+        let { ok, error } = await spawnWithTimeout({
           command: "git",
           args: ["fetch", "--depth", "1", "origin", "tag", tag],
           timeout: testTimeout,
@@ -2606,7 +2611,7 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
         });
         if (!ok) throw new Error(`failed to fetch tag ${tag} for vendor '${name}': ${error}`);
 
-        ({ ok, error } = await spawnSafe({
+        ({ ok, error } = await spawnWithTimeout({
           command: "git",
           args: ["checkout", tag],
           timeout: testTimeout,
@@ -2909,7 +2914,7 @@ async function getExecPathFromBuildKite(target: string, buildId?: string): Promi
       args.push("--build", buildId);
     }
 
-    const { error } = await spawnSafe({
+    const { error } = await spawnWithTimeout({
       command: "buildkite-agent",
       args,
       timeout: 120000,
@@ -3099,28 +3104,6 @@ function getAnsi(color: string): string {
     default:
       return "";
   }
-}
-
-function stripAnsi(string: string): string {
-  return string.replace(/\u001b\[\d+m/g, "");
-}
-
-function unescapeGitHubAction(string: string): string {
-  return string.replace(/%25/g, "%").replace(/%0D/g, "\r").replace(/%0A/g, "\n");
-}
-
-function escapeHtml(string: string): string {
-  return string
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;")
-    .replace(/`/g, "&#96;");
-}
-
-function escapeCodeBlock(string: string): string {
-  return string.replace(/`/g, "\\`");
 }
 
 function parseDuration(duration: string | number | undefined): number | undefined {
@@ -3524,7 +3507,7 @@ async function disableSmartAppControl(): Promise<void> {
     "if (Get-Command CiTool -ErrorAction SilentlyContinue) { CiTool --refresh -json | Out-Null }",
     'Write-Output "Smart App Control: state $state -> 0"',
   ].join("; ");
-  const { ok, error } = await spawnSafe({
+  const { ok, error } = await spawnWithTimeout({
     command: "pwsh",
     args: ["-NoProfile", "-Command", script],
     timeout: 60_000,

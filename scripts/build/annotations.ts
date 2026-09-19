@@ -1,25 +1,15 @@
 // Compiler output captured from a build step, turned into Buildkite annotations.
 
-import { getBuildLabel, getBuildUrl, getFileUrl, stripAnsi } from "../buildkite.ts";
+import {
+  escapeCodeBlock,
+  escapeHtml,
+  getBuildLabel,
+  getBuildUrl,
+  getFileUrl,
+  stripAnsi,
+  unescapeGitHubAction,
+} from "../buildkite.ts";
 import { isBuildkite } from "../process.ts";
-
-export function unescapeGitHubAction(string: string): string {
-  return string.replace(/%25/g, "%").replace(/%0D/g, "\r").replace(/%0A/g, "\n");
-}
-
-export function escapeHtml(string: string): string {
-  return string
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;")
-    .replace(/`/g, "&#96;");
-}
-
-export function escapeCodeBlock(string: string): string {
-  return string.replace(/`/g, "\\`");
-}
 
 function parseLevel(level?: string): "notice" | "warning" | "error" {
   if (/error|fatal|fail/i.test(level ?? "")) {

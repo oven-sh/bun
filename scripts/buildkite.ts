@@ -559,6 +559,24 @@ export async function uploadArtifact(filename: string): Promise<void> {
   }
 }
 
+export function unescapeGitHubAction(string: string): string {
+  return string.replace(/%25/g, "%").replace(/%0D/g, "\r").replace(/%0A/g, "\n");
+}
+
+export function escapeHtml(string: string): string {
+  return string
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;")
+    .replace(/`/g, "&#96;");
+}
+
+export function escapeCodeBlock(string: string): string {
+  return string.replace(/`/g, "\\`");
+}
+
 export function stripAnsi(string: string): string {
   return string.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
 }

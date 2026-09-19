@@ -219,6 +219,33 @@ describe("require(specifier)", () => {
       expect(result).toEqual({ attempts: ["fail 1", "ok"], evaluations: 2 });
     });
 
+    // A Bun.ModuleGraph has its own module registry, which keeps the failed entry.
+    it("require() inside a Bun.ModuleGraph evaluates it again", async () => {
+      const result = await runEntry({
+        "flaky.js": `attempts.n++; if (attempts.n < 3) throw new Error("attempt " + attempts.n);`,
+        "user.cjs": /* js */ `
+          exports.tryOnce = () => {
+            try {
+              require("./flaky.js");
+              return "ok";
+            } catch (e) {
+              return e.message;
+            }
+          };
+        `,
+        "entry.js": /* js */ `
+          (async () => {
+            const attempts = { n: 0 };
+            const graph = new Bun.ModuleGraph({ globals: { attempts } });
+            const user = await graph.import(require.resolve("./user.cjs"));
+            const outcomes = [user.tryOnce(), user.tryOnce(), user.tryOnce(), user.tryOnce()];
+            console.log(JSON.stringify({ outcomes, evaluations: attempts.n }));
+          })();
+        `,
+      });
+      expect(result).toEqual({ outcomes: ["attempt 1", "attempt 2", "ok", "ok"], evaluations: 3 });
+    });
+
     // Only require() retries, and only what Node runs as CommonJS. A file with
     // ES module syntax that threw is not evaluated again: as in Node, every
     // later require() and import() of it gets the error it threw.

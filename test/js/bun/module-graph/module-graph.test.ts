@@ -1876,23 +1876,6 @@ describe("Bun.ModuleGraph — CommonJS surface per graph", () => {
     expect(Object.keys(require.cache).filter(k => k.endsWith("flaky.cjs"))).toEqual([]);
     rmSync(d, { recursive: true, force: true });
   });
-  test("a file with no module syntax that throws inside a graph is evaluated again by the graph's next require()", async () => {
-    // Such a file loads through the graph's own module registry, which kept the failed entry.
-    const d = fixture({
-      "flaky.js": `attempts.n++; if (attempts.n < 3) throw new Error("attempt " + attempts.n);`,
-      "user.cjs": `exports.tryOnce = () => { try { require("./flaky.js"); return "ok" } catch (e) { return e.message } }`,
-    });
-    const attempts = { n: 0 };
-    const u = await ModuleGraph({ globals: { attempts } }).import(join(d, "user.cjs"));
-    expect([u.tryOnce(), u.tryOnce(), u.tryOnce(), u.tryOnce(), attempts.n]).toEqual([
-      "attempt 1",
-      "attempt 2",
-      "ok",
-      "ok",
-      3,
-    ]);
-    rmSync(d, { recursive: true, force: true });
-  });
   test("CommonJS code in graphs with different globals name sets resolves each graph's own names (one wrapper executable per name set)", async () => {
     const d = fixture({
       "w.cjs": `module.exports = { a: typeof alpha === "undefined" ? "-" : alpha, b: typeof beta === "undefined" ? "-" : beta, p: typeof process.pid }`,

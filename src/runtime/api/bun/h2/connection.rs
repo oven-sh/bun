@@ -973,10 +973,13 @@ impl Connection {
                     // of type STREAM_CLOSED — node surfaces it as NghttpError "Stream was already
                     // closed or invalid" and tears the session down. A stream that closed for any
                     // other reason (e.g. we reset it and the peer's trailers were already in
-                    // flight) keeps the conservative stream-level handling: the block is still
-                    // decoded for HPACK sync (§4.3), then refused with RST_STREAM(STREAM_CLOSED)
-                    // by finish_header_block.
-                    if cur_state == State::HalfClosedRemote {
+                    // flight, or our own half ended too and the stream is fully closed) keeps the
+                    // conservative stream-level handling: the block is still decoded for HPACK
+                    // sync (§4.3), then refused with RST_STREAM(STREAM_CLOSED) by
+                    // finish_header_block.
+                    if cur_state == State::HalfClosedRemote
+                        && !sink.is_local_half_closed(hdr.stream_id)
+                    {
                         self.local_connection_error(
                             sink,
                             ErrorCode::StreamClosed,
@@ -1608,42 +1611,43 @@ impl Connection {
         true
     }
 
+    /// §5.1: whether `stream_id` is idle, that is, never started by either side. A stream the
+    /// engine tracks in any other state has started. So has one the embedder opened locally
+    /// (legacy outbound, this engine never saw its HEADERS go out), and anything at or below
+    /// the highest stream id either layer has started: a stream evicted after full close is
+    /// closed, not idle (nghttp2's session_detect_idle_stream uses the same high-water marks).
+    fn is_idle_stream(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        !(self
+            .streams
+            .get(&stream_id)
+            .is_some_and(|s| s.state != State::Idle)
+            || sink.is_local_stream(stream_id)
+            || stream_id <= self.last_stream_id
+            || stream_id <= sink.highest_started_stream_id())
+    }
+
     /// RFC 9113 §6.4 RST_STREAM.
     fn handle_rst_stream(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let code_raw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
         // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
-        let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
-            Some(s) if s.state != State::Idle => {
-                s.state = State::Closed;
-                false
-            }
-            _ => true,
-        };
-        // Transition shim: a stream the embedder opened locally (legacy outbound) is not idle even
-        // though this engine never saw its HEADERS go out.
-        if on_idle && sink.is_local_stream(hdr.stream_id) {
-            let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
-            let s = self
-                .streams
-                .entry(hdr.stream_id)
-                .or_insert_with(|| Stream::new(send_init, recv_init));
-            s.state = State::Closed;
-            on_idle = false;
-        }
-        // §5.1: a stream evicted after full close (per-request memory release) is
-        // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
-        // below the highest stream id either layer has started has existed; the embedder's
-        // mark covers locally-initiated streams this engine never saw HEADERS for.
-        if on_idle
-            && (hdr.stream_id <= self.last_stream_id
-                || hdr.stream_id <= sink.highest_started_stream_id())
-        {
-            return false;
-        }
-        if on_idle {
+        if self.is_idle_stream(sink, hdr.stream_id) {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
             return true;
+        }
+        match self.streams.get_mut(&hdr.stream_id) {
+            Some(s) if s.state != State::Idle => s.state = State::Closed,
+            // Transition shim: materialize the entry for a stream the embedder opened locally.
+            _ if sink.is_local_stream(hdr.stream_id) => {
+                let send_init = self.remote_settings.initial_window_size;
+                let recv_init = self.local_settings.initial_window_size;
+                let s = self
+                    .streams
+                    .entry(hdr.stream_id)
+                    .or_insert_with(|| Stream::new(send_init, recv_init));
+                s.state = State::Closed;
+            }
+            // A late RST_STREAM on a stream evicted after full close MUST be tolerated.
+            _ => return false,
         }
         sink.on_stream_reset(hdr.stream_id, code_raw);
         false
@@ -1733,12 +1737,7 @@ impl Connection {
         // PROTOCOL_ERROR and a parent whose remote half already ended with a connection error
         // of type STREAM_CLOSED. A parent that is closed or closing on this side is left to the
         // embedder, which refuses the promised stream with RST_STREAM(CANCEL) like nghttp2.
-        let parent_state = self.streams.get(&hdr.stream_id).map(|s| s.state);
-        let parent_started = matches!(parent_state, Some(s) if s != State::Idle)
-            || sink.is_local_stream(hdr.stream_id)
-            || hdr.stream_id <= self.last_stream_id
-            || hdr.stream_id <= sink.highest_started_stream_id();
-        if !parent_started {
+        if self.is_idle_stream(sink, hdr.stream_id) {
             self.send_go_away(
                 sink,
                 ErrorCode::ProtocolError,
@@ -1746,6 +1745,7 @@ impl Connection {
             );
             return true;
         }
+        let parent_state = self.streams.get(&hdr.stream_id).map(|s| s.state);
         if parent_state == Some(State::HalfClosedRemote)
             && !sink.is_local_half_closed(hdr.stream_id)
         {

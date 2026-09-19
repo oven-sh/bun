@@ -853,6 +853,69 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   );
 });
 
+describe("HEADERS after the response ended (RFC 9113 §5.1)", () => {
+  // nghttp2 escalates HEADERS on a half-closed (remote) stream to a connection error of type
+  // STREAM_CLOSED (nghttp2_session_on_headers_received). A client does not retain a stream
+  // that ended in both directions, so the same frame on a completed request is a stream-level
+  // matter and the session survives.
+  async function headersAfterResponseEnd(method: "GET" | "POST") {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const sessionErrors: string[] = [];
+    const firstSessionError = Promise.withResolvers<void>();
+    client.on("error", e => {
+      sessionErrors.push((e as any).code + " " + e.message);
+      firstSessionError.resolve();
+    });
+    try {
+      const req = client.request({ ":path": "/", ":method": method });
+      req.on("error", () => {});
+      req.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.socket!.write(
+        Buffer.concat([
+          encodeFrame(FrameType.SETTINGS, 0, 0),
+          encodeFrame(FrameType.SETTINGS, 0x1 /* ACK */, 0),
+          // Response HEADERS on stream 1: [:status 200], END_STREAM, then one more HEADERS.
+          encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x88])),
+          encodeFrame(FrameType.HEADERS, 0x4, 1, Buffer.from([0x88])),
+          encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+        ]),
+      );
+      const answer = await raw.waitFor(
+        f => f.type === FrameType.GOAWAY || (f.type === FrameType.PING && (f.flags & 0x1) !== 0),
+      );
+      if (answer.type === FrameType.GOAWAY) {
+        await firstSessionError.promise;
+        return { goaway: goawayErrorCode(answer), sessionErrors };
+      }
+      return {
+        resetsOnStream1: raw.frames
+          .filter(f => f.type === FrameType.RST_STREAM && f.streamId === 1)
+          .map(f => f.payload.readUInt32BE(0)),
+        sessionErrors,
+      };
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }
+
+  test("on a half-closed (remote) request it is a connection error", async () => {
+    expect(await headersAfterResponseEnd("POST")).toEqual({
+      goaway: ErrorCode.STREAM_CLOSED,
+      sessionErrors: ["ERR_HTTP2_ERROR Stream was already closed or invalid"],
+    });
+  });
+
+  test("on a completed request it is refused with RST_STREAM and the session survives", async () => {
+    expect(await headersAfterResponseEnd("GET")).toEqual({
+      resetsOnStream1: [ErrorCode.STREAM_CLOSED],
+      sessionErrors: [],
+    });
+  });
+});
+
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
   // Regression coverage for the test-http2-pipe failure mode: the server responds and ends its
   // side before the request body arrives, the request body is piped into a backpressured

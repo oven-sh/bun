@@ -28,6 +28,7 @@ import { basename, join } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
+import { formatElapsed } from "./tty.ts";
 
 /**
  * Absolute path to this file. Ninja rules use this in their command strings.
@@ -244,6 +245,7 @@ async function fetchDep(
   }
 
   console.log(`fetching ${repo}@${commit.slice(0, 8)}`);
+  const started = performance.now();
 
   // ─── Download (with cache) ───
   const url = `https://github.com/${repo}/archive/${commit}.tar.gz`;
@@ -282,7 +284,7 @@ async function fetchDep(
   // ─── Write stamp ───
   // Written LAST — if anything above failed, no stamp means next build retries.
   await writeFile(refPath, identity + "\n");
-  console.log(`done → ${dest}`);
+  console.log(`done → ${dest} (${formatElapsed(performance.now() - started)})`);
 }
 
 /**

@@ -686,10 +686,10 @@ async function waitForStepOutcome(stepKey: string): Promise<void> {
 // inherit, PRs do neither; one that inherits nothing generates, seeding the chain.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Cap on builds we ask for an order file before giving up and generating one. */
+/** Cap on probed builds we ask for an order file. The newest passed build is asked on top of these. */
 const PREVIOUS_BUILDS_TO_TRY = 50;
 
-/** Bound on the number-probe fallback: a branch is sparse among build numbers. */
+/** Bound on the number probe: a branch is sparse among build numbers. */
 const NUMBER_PROBE_BUDGET = 200;
 
 /** Per-attempt cap, so a hung agent cannot blow the step's budget. */
@@ -802,11 +802,38 @@ export function mustGenerateOrderFile(cfg: Config, ctx: OrderFileContext, inheri
 }
 
 /**
- * Builds on this branch that might have published an order file, newest first.
- * Lazy: the first candidate is nearly always the answer and the caller stops
- * there, so the happy path is one lookup.
+ * The unauthenticated Buildkite lookups candidateBuilds() makes. Passed in, like
+ * OrderFileContext, so the walk runs offline in a test.
  */
-async function* candidateBuilds(ctx: OrderFileContext): AsyncGenerator<{ id: string; number?: number }> {
+export interface BuildLookups {
+  /** A build's public JSON (`<pipeline>/builds/<n>.json`), or undefined when it cannot be read. */
+  build(url: string): Promise<{ id?: string; number?: number; branch_name?: string } | undefined>;
+  /** Where `url` redirects to, without following it. */
+  redirect(url: string): Promise<string | null>;
+}
+
+const buildkiteLookups: BuildLookups = {
+  async build(url) {
+    const response: { error?: unknown; body?: any } = await utils.curl(url, { json: true, cache: true });
+    return response.error ? undefined : response.body;
+  },
+  async redirect(url) {
+    try {
+      return (await fetch(url, { redirect: "manual" })).headers.get("location");
+    } catch {
+      return null;
+    }
+  },
+};
+
+/**
+ * Builds on this branch that might have published an order file, nearest first.
+ * Lazy: the first candidate is nearly always the answer and the caller stops there.
+ */
+export async function* candidateBuilds(
+  ctx: OrderFileContext,
+  lookups: BuildLookups = buildkiteLookups,
+): AsyncGenerator<{ id: string; number: number | undefined }> {
   const { branch, buildUrl } = ctx;
   if (!branch || !buildUrl) return;
 
@@ -814,43 +841,35 @@ async function* candidateBuilds(ctx: OrderFileContext): AsyncGenerator<{ id: str
   const url = new URL(buildUrl);
   const pipeline = new URL(url.pathname.replace(/\/builds\/.*$/, ""), url.origin).toString();
 
-  const fetchBuild = async (target: string): Promise<any | undefined> => {
-    const response: { error?: unknown; body?: any } = await utils.curl(target, { json: true, cache: true });
-    return response.error ? undefined : response.body;
-  };
-
   const seen = new Set<string>();
 
-  // Buildkite dropped `prev_branch_build` from the public build JSON, so
-  // `utils.getLastSuccessfulBuild()` always returns undefined. This redirect is
-  // what works unauthenticated; it drops the `.json`, so read it rather than follow it.
-  const newest = await (async () => {
-    try {
-      const latest = `${pipeline}/builds/latest?branch=${encodeURIComponent(branch)}&state=passed`;
-      const location = (await fetch(latest, { redirect: "manual" })).headers.get("location");
-      return location ? await fetchBuild(`${location}.json`) : undefined;
-    } catch {
-      return undefined;
-    }
-  })();
-  if (newest?.id) {
-    seen.add(newest.id);
-    yield { id: newest.id, number: newest.number };
-  }
-
-  // Probe downwards from this build, not from the newest passed one: a build can
-  // fail its tests and still have linked and published.
+  // Probe downwards from this build: the nearest file matches this link best.
+  // Rust symbol names embed a per-crate hash that changes with the crate's
+  // dependencies or the toolchain, so an older file can lose half its names to
+  // one commit. A build can fail its tests, or be cancelled, and still have
+  // linked and published.
   let number = ctx.buildNumber;
-  if (number === undefined) return;
-
-  for (let probes = 0; probes < NUMBER_PROBE_BUDGET; probes++) {
+  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET; probes++) {
+    if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
     number -= 1;
-    if (number < 1) return;
-    const body = await fetchBuild(`${pipeline}/builds/${number}.json`);
-    if (!body?.id || body.branch_name !== branch || seen.has(body.id)) continue;
+    const body = await lookups.build(`${pipeline}/builds/${number}.json`);
+    if (!body?.id || body.branch_name !== branch) continue;
     seen.add(body.id);
     yield { id: body.id, number: body.number };
   }
+
+  // The branch was quiet for longer than the probe reaches: fall back to its
+  // newest passed build. Buildkite dropped `prev_branch_build` from the public
+  // build JSON, so `utils.getLastSuccessfulBuild()` always returns undefined.
+  // This redirect is what works unauthenticated. Its Location repeats the query
+  // (`<pipeline>/builds/116199?branch=main&state=passed`), so `.json` goes on
+  // the path: after the query, Buildkite answers with the HTML page.
+  const latest = `${pipeline}/builds/latest?branch=${encodeURIComponent(branch)}&state=passed`;
+  const location = await lookups.redirect(latest);
+  if (!location) return;
+  const target = new URL(location, latest);
+  const newest = await lookups.build(`${target.origin}${target.pathname}.json`);
+  if (newest?.id && !seen.has(newest.id)) yield { id: newest.id, number: newest.number };
 }
 
 /**
@@ -868,7 +887,7 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
   let tried = 0;
 
   for await (const build of candidateBuilds(ctx)) {
-    if (++tried > PREVIOUS_BUILDS_TO_TRY) break;
+    tried++;
     // No --step: exactly one step per build publishes the target-unique name —
     // packageAndUpload() for a lane that traced its own binary, the sibling
     // trace-order step (.buildkite/ci.mjs) for a cross-compiled one.

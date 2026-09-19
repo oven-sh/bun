@@ -106,6 +106,13 @@ bitflags::bitflags! {
         /// chunk's namespace is `{ default: module.exports }`, so the call
         /// reads `.default` to return `module.exports`.
         const CROSS_CHUNK_REQUIRE_DEFAULT = 1 << 18;
+
+        /// Barrel optimization deferred this record: it set `IS_UNUSED` so the
+        /// target does not load until an importer requests one of its exports.
+        /// Only a record with this flag can be un-deferred. The parser sets
+        /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
+        /// import), and those records must never be resolved.
+        const IS_BARREL_DEFERRED = 1 << 19;
     }
 }
 

@@ -1153,7 +1153,10 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         }
 
         static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-        static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
+        // constexpr: the extern "C" <Type>__ptrOffset constants initialized from
+        // this are then constant-initialized in every build mode (no static
+        // initializer at -O0; the link-time initializer audit relies on it).
+        static constexpr ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(${name}, m_ctx); }
 
         /**
          * Estimated size of the object from Zig including the JS wrapper.

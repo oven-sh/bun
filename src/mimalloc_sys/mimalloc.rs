@@ -28,6 +28,18 @@ unsafe extern "C" {
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
     pub safe fn mi_on_thread_idle();
+    /// Call right before this thread blocks: mimalloc's scavenger thread does the work of
+    /// `mi_on_thread_idle` while it sleeps, and comes back for what one sweep leaves (the free
+    /// blocks of large pages that were just allocated from). Returns false when nothing was
+    /// handed off (no scavenger, or a thread that never allocated); `mi_on_thread_idle_end` is
+    /// not needed then, and the caller decides whether to sweep inline instead.
+    ///
+    /// # Safety
+    /// After a `true`, this thread must not allocate or free until `mi_on_thread_idle_end`.
+    pub fn mi_on_thread_idle_start() -> bool;
+    /// Awake again: take the heaps back from the scavenger, waiting for a sweep in progress to
+    /// stop at its next page. A no-op on a thread that is not parked. No preconditions.
+    pub safe fn mi_on_thread_idle_end();
     pub fn mi_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
     pub fn mi_process_info(
         elapsed_msecs: *mut usize,

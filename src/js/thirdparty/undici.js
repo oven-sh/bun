@@ -63,7 +63,7 @@ class BodyReadable extends ReadableFromWeb {
   constructor(response, options = {}) {
     // A response with no body (204, HEAD) still gets a body, as in undici:
     // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L118-L126
-    super(options, response.body ?? new ReadableStream({ start: closeEmptyBody }));
+    super({ ...options, responseBody: true }, response.body ?? new ReadableStream({ start: closeEmptyBody }));
 
     this.#response = response;
     this.#bodyUsed = response.bodyUsed;

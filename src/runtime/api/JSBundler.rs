@@ -146,6 +146,8 @@ pub mod js_bundler {
         pub(crate) css_chunking: bool,
         /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
         pub(crate) min_chunk_size: Option<u64>,
+        /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
+        pub(crate) fold_chunks: bool,
         pub(crate) module_preload: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
@@ -212,6 +214,7 @@ pub mod js_bundler {
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
                 min_chunk_size: None,
+                fold_chunks: true,
                 module_preload: true,
                 drop: StringSet::default(),
                 features: StringSet::default(),
@@ -849,6 +852,12 @@ pub mod js_bundler {
             if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
                 this.module_preload = module_preload;
             }
+            if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
+                && let Some(fold_chunks) =
+                    config.get_boolean_loose(global_this, "foldChunksForTesting")?
+            {
+                this.fold_chunks = fold_chunks;
+            }
 
             if let Some(min_chunk_size) =
                 config.get_optional_int::<u64>(global_this, "minChunkSize")?
@@ -1398,7 +1407,11 @@ pub mod js_bundler {
         pub(crate) keep_names: bool,
     }
 
-    fn build(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
+    fn build(
+        global_this: &JSGlobalObject,
+        context: jsc::ContextId,
+        arguments: &[JSValue],
+    ) -> JsResult<JSValue> {
         if arguments.is_empty() || !arguments[0].is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected a config object to be passed to Bun.build"
@@ -1432,6 +1445,7 @@ pub mod js_bundler {
             config,
             plugins.and_then(core::ptr::NonNull::new),
             global_this,
+            context,
         );
         completion.promise = jsc::JSPromiseStrong::init(global_this);
         let promise = completion.promise.value();
@@ -1445,7 +1459,11 @@ pub mod js_bundler {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        build(global_this, callframe.arguments())
+        build(
+            global_this,
+            global_this.bun_vm().context_of_caller(callframe).id(),
+            callframe.arguments(),
+        )
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
@@ -1936,6 +1954,19 @@ pub mod js_bundler {
 }
 
 pub use js_bundler as JSBundler;
+
+/// `bun:internal-for-testing`: bundler `Worker`s (one per pool thread a build ran on) not yet torn down.
+#[bun_jsc::host_fn]
+pub(crate) fn js_worker_live_count(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use core::sync::atomic::Ordering;
+    Ok(JSValue::js_number(
+        bun_bundler::thread_pool::WORKER_LIVE_COUNT.load(Ordering::SeqCst) as f64,
+    ))
+}
+
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;

@@ -593,6 +593,66 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
   },
 );
 
+// An empty destination has to fail the way node's walker fails it: mkdir("")
+// -> ENOENT, with nothing created. (node's cpSync alone reports whatever
+// std::filesystem::create_directories("") says in its C++ copy, EINVAL on Linux
+// and ESRCH on Windows; given a filter it walks in JS and reports ENOENT/mkdir
+// like its async forms do everywhere.)
+// On macOS a directory source takes the native recursive copy, which rebuilds
+// its destination from a stack buffer; an empty operand used to be returned
+// without ever being copied into that buffer, so the tree was copied to
+// whatever bytes the buffer happened to hold. The copies run in a child so ""
+// resolves against a throwaway cwd, and the listing afterwards proves the cwd
+// is untouched.
+test("empty destination is rejected with ENOENT and creates nothing", async () => {
+  using dir = tempDir("cp-empty-dest", {
+    "d/f": "f",
+    "d/sub/g": "g",
+    "file": "file",
+  });
+  const script = `
+    const fs = require("fs");
+    const shape = e => ({ code: e.code, syscall: e.syscall });
+    const forms = {
+      cpSync: (src, opts) => { try { fs.cpSync(src, "", opts); } catch (e) { return shape(e); } },
+      "promises.cp": (src, opts) => fs.promises.cp(src, "", opts).then(() => undefined, shape),
+      cp: (src, opts) => new Promise(resolve => fs.cp(src, "", opts, e => resolve(e ? shape(e) : undefined))),
+    };
+    (async () => {
+      const results = {};
+      for (const src of ["d", "file"]) {
+        for (const name in forms) {
+          results[name + "(" + src + ")"] = (await forms[name](src, { recursive: true })) ?? "resolved";
+        }
+      }
+      console.log(JSON.stringify({ results, cwd: fs.readdirSync(".", { recursive: true }) }));
+    })();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { results, cwd } = JSON.parse(stdout);
+  // Single-file copies report whichever syscall hit "" on that platform (mkdir
+  // of its parent on Linux, copyfile on Windows), so only the code is pinned
+  // for them.
+  expect({ ...results, cwd: cwd.map((entry: string) => entry.replaceAll("\\", "/")).sort() }).toEqual({
+    "cpSync(d)": { code: "ENOENT", syscall: "mkdir" },
+    "promises.cp(d)": { code: "ENOENT", syscall: "mkdir" },
+    "cp(d)": { code: "ENOENT", syscall: "mkdir" },
+    "cpSync(file)": { code: "ENOENT", syscall: expect.any(String) },
+    "promises.cp(file)": { code: "ENOENT", syscall: expect.any(String) },
+    "cp(file)": { code: "ENOENT", syscall: expect.any(String) },
+    cwd: ["d", "d/f", "d/sub", "d/sub/g", "file"],
+  });
+  expect(exitCode).toBe(0);
+});
+
 // fs.promises.cp recursive: when one SingleTask copy fails while siblings are
 // still in flight on the thread pool, the parent AsyncCpTask must not be
 // destroyed until every subtask has dropped its reference. Before the fix,

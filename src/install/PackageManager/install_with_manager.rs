@@ -1579,6 +1579,7 @@ struct RowScan<'a> {
     pkg_name_hashes: &'a [PackageNameHash],
     pkg_resolutions: &'a [Resolution],
     has_overrides: bool,
+    reached: core::cell::OnceCell<DynamicBitSet>,
 }
 
 impl<'a> RowScan<'a> {
@@ -1592,6 +1593,7 @@ impl<'a> RowScan<'a> {
             pkg_name_hashes: lockfile.packages.items_name_hash(),
             pkg_resolutions: lockfile.packages.items_resolution(),
             has_overrides: !lockfile.overrides.is_empty(),
+            reached: core::cell::OnceCell::new(),
         }
     }
 
@@ -1622,12 +1624,17 @@ impl<'a> RowScan<'a> {
         Some(same_package && requested.version.satisfies(locked, self.buf, self.buf))
     }
 
-    /// Whether bun.lock lists an npm package that the row accepts and the peer next to it rejects.
+    /// Whether a loaded npm package that something reaches is what the row accepts and the peer next to it rejects.
     #[cold]
     #[inline(never)]
     fn found_a_copy_its_peer_rejects(&self, dep_id: DependencyID, peer_id: DependencyID) -> bool {
+        // `clean` drops a copy that nothing reaches, and the binding would then have no reason left.
+        let reached = self.reached.get_or_init(|| {
+            reachable::packages(self.lockfile, self.resolutions, reachable::Options::all(0))
+        });
         (0..self.lockfile.loaded_package_count as usize).any(|id| {
-            self.pkg_resolutions[id].tag == ResolutionTag::Npm
+            reached.is_set(id)
+                && self.pkg_resolutions[id].tag == ResolutionTag::Npm
                 && self.accepts(dep_id, id) == Some(true)
                 && self.accepts(peer_id, id) == Some(false)
         })

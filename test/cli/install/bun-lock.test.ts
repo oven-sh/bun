@@ -2415,6 +2415,31 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
     expect(await file(lockfilePath).text()).toBe(lockfile);
   });
 
+  // lib's dependencies row is bound to the folder of the peer next to it, and found its own copy, the one app hoists.
+  // When app lets go of that copy nothing explains the binding, and this run has to say so, not the next one.
+  it("a dependency bound to the folder of a peer resolves again in the run where its own copy leaves", async () => {
+    const { earlier, packageJsons } = accepted["a dependency next to a peer of the same name that has its own folder"];
+    using registry = await serveRegistry(manifests);
+    using dir = createProject(registry.url, "hoisted", earlier!);
+    const cwd = String(dir);
+    const lockfilePath = join(cwd, "bun.lock");
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    for (const [path, json] of Object.entries(packageJsons)) await write(join(cwd, path), JSON.stringify(json));
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    expect(await file(lockfilePath).text()).toContain(`"lib/shared": ["shared@1.5.0"`);
+
+    await write(join(cwd, "packages", "app", "package.json"), JSON.stringify({ name: "app", version: "1.0.0" }));
+    await dropNodeModules(cwd);
+    expect(await install(cwd)).toMatchObject({ err: expect.stringContaining("Saved lockfile"), exitCode: 0 });
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile).toContain("shared@2.0.0");
+
+    await dropNodeModules(cwd);
+    expect(await install(cwd, "--frozen-lockfile")).toMatchObject({ exitCode: 0 });
+    expect(await file(lockfilePath).text()).toBe(lockfile);
+    expect(await seenFrom(join(cwd, "packages", "lib"), "shared")).toBe("shared@2.0.0");
+  });
+
   // The package leaves with its rows. Resolving them first could fail an install whose only job is to drop them.
   it("a package that package.json stops listing is dropped without resolving its dependency again", async () => {
     using registry = await serveRegistry(manifests);

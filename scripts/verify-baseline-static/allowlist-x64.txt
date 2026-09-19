@@ -984,10 +984,13 @@ crc32_fold_vpclmulqdq_reset  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, 
 
 # ----------------------------------------------------------------------------
 # Rust compiler-builtins libm FMA. ifunc-style dispatch.
-# (2 symbols)
+# The f32 pair is reached from naga's constant evaluator (WebGPU, src/webgpu).
+# (4 symbols)
 # ----------------------------------------------------------------------------
-_RNvNtNtNtNtNt<rust-hash>17compiler_builtins4math9libm_math4arch3x863fma12fma_with_fma   [FMA]
-_RNvNtNtNtNtNt<rust-hash>17compiler_builtins4math9libm_math4arch3x863fma13fma_with_fma4  [FMA4]
+_RNvNtNtNtNtNt<rust-hash>17compiler_builtins4math9libm_math4arch3x863fma12fma_with_fma    [FMA]
+_RNvNtNtNtNtNt<rust-hash>17compiler_builtins4math9libm_math4arch3x863fma13fma_with_fma4   [FMA4]
+_RNvNtNtNtNtNt<rust-hash>17compiler_builtins4math9libm_math4arch3x863fma13fmaf_with_fma   [FMA]
+_RNvNtNtNtNtNt<rust-hash>17compiler_builtins4math9libm_math4arch3x863fma14fmaf_with_fma4  [FMA4]
 
 
 # ----------------------------------------------------------------------------

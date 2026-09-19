@@ -1,0 +1,182 @@
+---
+title: WebGPU
+description: Run compute shaders and render to textures on the GPU with the standard navigator.gpu API
+---
+
+Bun implements [WebGPU](https://www.w3.org/TR/webgpu/), the Web-standard API for GPU compute and rendering. `navigator.gpu` and the `GPU*` classes are globals, the same as in a browser. There is nothing to import and nothing to install.
+
+<Warning>This API is experimental and may change in future releases.</Warning>
+
+```ts title="double.ts"
+const adapter = await navigator.gpu.requestAdapter();
+if (!adapter) throw new Error("No GPU adapter on this machine");
+const device = await adapter.requestDevice();
+
+const module = device.createShaderModule({
+  code: `
+    @group(0) @binding(0) var<storage, read_write> data: array<f32>;
+
+    @compute @workgroup_size(64)
+    fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+      if (id.x < arrayLength(&data)) {
+        data[id.x] = data[id.x] * 2.0;
+      }
+    }
+  `,
+});
+const pipeline = device.createComputePipeline({ layout: "auto", compute: { module } });
+
+const input = new Float32Array([1, 2, 3, 4]);
+const storage = device.createBuffer({
+  size: input.byteLength,
+  usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+});
+device.queue.writeBuffer(storage, 0, input);
+
+const readback = device.createBuffer({
+  size: input.byteLength,
+  usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+});
+
+const encoder = device.createCommandEncoder();
+const pass = encoder.beginComputePass();
+pass.setPipeline(pipeline);
+pass.setBindGroup(
+  0,
+  device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: storage } }],
+  }),
+);
+pass.dispatchWorkgroups(Math.ceil(input.length / 64));
+pass.end();
+encoder.copyBufferToBuffer(storage, 0, readback, 0, input.byteLength);
+device.queue.submit([encoder.finish()]);
+
+await readback.mapAsync(GPUMapMode.READ);
+console.log(new Float32Array(readback.getMappedRange())); // Float32Array(4) [ 2, 4, 6, 8 ]
+readback.unmap();
+```
+
+```sh
+bun run double.ts
+```
+
+The classes, methods, and descriptors are the ones the WebGPU specification defines, so the [MDN reference](https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API) applies to Bun. The parts that need a canvas are [not available](#limitations).
+
+---
+
+## Backends
+
+Bun uses [wgpu](https://wgpu.rs), the WebGPU implementation behind Firefox and Deno. wgpu validates every call as the specification requires and translates WGSL shaders for the platform's GPU API.
+
+| Platform | GPU API     |
+| -------- | ----------- |
+| macOS    | Metal       |
+| Windows  | Direct3D 12 |
+| Linux    | Vulkan      |
+
+Bun loads the platform's GPU libraries the first time you call `navigator.gpu.requestAdapter()`. A program that does not use WebGPU does not load them.
+
+`requestAdapter()` resolves to `null` when the machine has no usable GPU API. On Linux that means there is no Vulkan driver installed. A software rasterizer counts as an adapter: Mesa's `lavapipe` on Linux and WARP on Windows both work, which is enough to run GPU code in CI. `adapter.info.isFallbackAdapter` is `true` for a software adapter.
+
+```ts
+const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
+console.log(adapter?.info.description); // the name the driver reports for the GPU
+console.log([...(adapter?.features ?? [])]); // the optional features you can request
+```
+
+Code that installs another implementation only when `navigator.gpu` is missing (for example the [`webgpu`](https://www.npmjs.com/package/webgpu) package) now uses Bun's. `navigator.gpu` is a configurable getter and the `GPU*` globals are writable, so `Object.defineProperty(navigator, "gpu", { value: otherGpu })` still replaces Bun's implementation.
+
+---
+
+## Rendering without a canvas
+
+There is no window to present to, so Bun has no `GPUCanvasContext`. Render into a texture you create and copy the result into a buffer to read it.
+
+```ts
+const adapter = await navigator.gpu.requestAdapter();
+const device = await adapter!.requestDevice();
+
+const size = 256;
+const target = device.createTexture({
+  size: [size, size],
+  format: "rgba8unorm",
+  usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+});
+const pixels = device.createBuffer({
+  size: size * size * 4,
+  usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+});
+
+const encoder = device.createCommandEncoder();
+const pass = encoder.beginRenderPass({
+  colorAttachments: [{ view: target.createView(), loadOp: "clear", storeOp: "store", clearValue: [1, 0.5, 0, 1] }],
+});
+// pass.setPipeline(...), pass.draw(...)
+pass.end();
+// bytesPerRow has to be a multiple of 256.
+encoder.copyTextureToBuffer({ texture: target }, { buffer: pixels, bytesPerRow: size * 4 }, [size, size]);
+device.queue.submit([encoder.finish()]);
+
+await pixels.mapAsync(GPUMapMode.READ);
+const rgba = new Uint8Array(pixels.getMappedRange()).slice();
+pixels.unmap();
+console.log(rgba.subarray(0, 4)); // Uint8Array(4) [ 255, 128, 0, 255 ]
+```
+
+`navigator.gpu.getPreferredCanvasFormat()` returns `"bgra8unorm"` so that code which asks for it keeps working.
+
+---
+
+## Errors
+
+WebGPU reports most mistakes asynchronously. A call with invalid arguments still returns an object. The error goes to the innermost [error scope](https://developer.mozilla.org/en-US/docs/Web/API/GPUDevice/pushErrorScope) that is open on the device.
+
+```ts
+device.pushErrorScope("validation");
+device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.STORAGE });
+const error = await device.popErrorScope();
+if (error) console.error(error.message);
+```
+
+With no error scope open, the device fires an `uncapturederror` event. If no listener calls `event.preventDefault()`, Bun prints the error to stderr.
+
+```ts
+device.addEventListener("uncapturederror", event => {
+  event.preventDefault();
+  console.error("WebGPU error:", event.error.message);
+});
+```
+
+`shaderModule.getCompilationInfo()` resolves to the WGSL compiler's messages, with line and column numbers.
+
+The process stays alive while a `buffer.mapAsync()` or `queue.onSubmittedWorkDone()` promise is pending, the same as for a pending timer or socket.
+
+---
+
+## TypeScript
+
+`bun-types` does not declare the WebGPU globals yet. TypeScript's `DOM` lib includes them. If your `tsconfig.json` does not use the `DOM` lib, install [`@webgpu/types`](https://www.npmjs.com/package/@webgpu/types):
+
+```sh
+bun add -d @webgpu/types
+```
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "types": ["bun", "@webgpu/types"]
+  }
+}
+```
+
+---
+
+## Limitations
+
+- No `GPUCanvasContext`, `GPUExternalTexture`, or `queue.copyExternalImageToTexture()`. They need a canvas, a video element, or an image element.
+- `navigator.gpu.wgslLanguageFeatures` has no `unrestricted_pointer_parameters`. The list is what naga, the WGSL compiler in wgpu, implements, and that extension [is not done yet](https://github.com/gfx-rs/wgpu/issues/5158).
+- `createComputePipelineAsync()` and `createRenderPipelineAsync()` compile the pipeline before they return their promise.
+- `adapter.requestDevice()` rejects with an `OperationError` if the driver fails to create the device. Browsers resolve with a lost device instead.
+- An explicit `size` of `0` in `setVertexBuffer()` and `setIndexBuffer()` binds the rest of the buffer, the same as no `size`.

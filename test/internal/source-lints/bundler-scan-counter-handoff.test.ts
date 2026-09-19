@@ -10,9 +10,10 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // after the count. `wait_for_parse()` ticks the event loop until the count is
 // zero, and the dev server finishes its bundle at zero.
 //
-// So nothing may leave between the count and the hand-off. A `?` (or a `return`,
-// `break` or `continue`) there leaves a unit that no task pays back: the count
-// never reaches zero again, and a driver that waits on its error exit
+// So nothing may leave between the count and the hand-off, and no path may skip
+// the hand-off. A `?` (or a `return`, `break` or `continue`) there, or a
+// hand-off in a branch, leaves a unit that no task pays back: the count never
+// reaches zero again, and a driver that waits on its error exit
 // (`scan_module_graph_from_cli` for `bun test --changed`) never returns. The
 // only errors that reach such a `?` are allocation failures, so no test can
 // produce one on demand. This lint holds the order instead:
@@ -78,6 +79,24 @@ function restOfBlock(text: string): string {
   return text;
 }
 
+// The position of the first match at or after `from`, or -1.
+function firstIndex(re: RegExp, text: string, from = 0): number {
+  const i = text.slice(from).search(re);
+  return i === -1 ? -1 : from + i;
+}
+
+// How many blocks that open after the count hold `index`. A path that skips
+// such a block skips a hand-off inside it. An `unsafe` block always runs, so it
+// does not count.
+function blocksOpenAt(block: string, index: number): number {
+  const open: boolean[] = [];
+  for (let i = 0; i < index; i++) {
+    if (block[i] === "{") open.push(!/(?:^|\W)unsafe\s*$/.test(block.slice(Math.max(0, i - 16), i)));
+    else if (block[i] === "}") open.pop();
+  }
+  return open.filter(Boolean).length;
+}
+
 function check(source: string, raw: string): { callSites: number; offenders: string[] } {
   const content = blank(raw);
   const lineOf = (index: number) => content.slice(0, index).split("\n").length;
@@ -90,22 +109,35 @@ function check(source: string, raw: string): { callSites: number; offenders: str
     const after = m.index + m[0].length;
     const block = restOfBlock(content.slice(after));
 
-    let handOff = HAND_OFF.exec(block);
-    const onLoadCheck = ON_LOAD_CHECK.exec(block);
-    if (onLoadCheck !== null && (handOff === null || onLoadCheck.index < handOff.index)) {
-      const from = onLoadCheck.index + onLoadCheck[0].length;
-      const schedule = HAND_OFF.exec(block.slice(from));
-      handOff = schedule === null ? null : Object.assign(schedule, { index: from + schedule.index });
+    const why = "a count that no task pays back never lets wait_for_parse() return.";
+    let handOff = firstIndex(HAND_OFF, block);
+    const onLoadCheck = firstIndex(ON_LOAD_CHECK, block);
+    const viaOnLoadCheck = onLoadCheck !== -1 && (handOff === -1 || onLoadCheck < handOff);
+    if (viaOnLoadCheck) handOff = firstIndex(HAND_OFF, block, onLoadCheck);
+
+    // The hand-off has to run on every path. The one block it may sit in is the
+    // `if !…enqueue_on_load_plugin_if_needed(…) {` of an onLoad check: on the other
+    // path the plugin has the task.
+    if (handOff !== -1) {
+      const skippable = viaOnLoadCheck
+        ? blocksOpenAt(block, onLoadCheck) > 0 || blocksOpenAt(block, handOff) > 1
+        : blocksOpenAt(block, handOff) > 0;
+      if (skippable) {
+        offenders.push(
+          `${at}: the hand-off at line ${lineOf(after + handOff)} is inside a block that opens after increment_scan_counter(), so a path can skip it. Hand off on every path, at the level of the count: ${why}`,
+        );
+        continue;
+      }
     }
+
     // A count with no hand-off in its block moves a unit that is already owed
     // (a deferred load that was answered). Nothing may leave that block either.
-    const exit = EXIT.exec(block.slice(0, handOff?.index ?? block.length));
+    const exit = block.slice(0, handOff === -1 ? block.length : handOff).match(EXIT);
     if (exit === null) continue;
-    const leaves = `${at}: \`${exit[0]}\` at line ${lineOf(after + exit.index)} can leave after increment_scan_counter()`;
-    const why = "a count that no task pays back never lets wait_for_parse() return.";
+    const leaves = `${at}: \`${exit[0]}\` at line ${lineOf(after + exit.index!)} can leave after increment_scan_counter()`;
     offenders.push(
-      handOff !== null
-        ? `${leaves} and before the hand-off at line ${lineOf(after + handOff.index)}. Move the count below it: ${why}`
+      handOff !== -1
+        ? `${leaves} and before the hand-off at line ${lineOf(after + handOff)}. Move the count below it: ${why}`
         : `${leaves}, and this lint finds no hand-off (\`.schedule*(\`, \`.dispatch*(\`) before it. If a call in between pays the unit back, add it to HAND_OFF in ${path.basename(import.meta.path)}. If not, move the count below the exit: ${why}`,
     );
   }
@@ -129,7 +161,7 @@ test("finds the increment_scan_counter() call sites", () => {
   expect(callSites).toBeGreaterThan(0);
 });
 
-test("no early exit between increment_scan_counter() and the hand-off", () => {
+test("every path from increment_scan_counter() reaches the hand-off", () => {
   expect(offenders).toEqual([]);
 });
 
@@ -148,6 +180,8 @@ test("the scan recognizes the shapes it claims to", () => {
       `self.increment_scan_counter();\nif !self.enqueue_on_load_plugin_if_needed(task) {\n    self.graph.pool().schedule(task);\n}\nOk(())`,
     ),
   ).toEqual([]);
+  // An `unsafe` block always runs, so a hand-off in it is on every path.
+  expect(fixture(`self.increment_scan_counter();\nunsafe { (*pool).schedule(task) };\nOk(())`)).toEqual([]);
   // A unit that is already owed moves back into the count: no hand-off, no exit.
   expect(
     fixture(`if load.deferred {\n    self.graph.deferred_pending -= 1;\n    self.increment_scan_counter();\n}\nOk(())`),
@@ -169,6 +203,22 @@ test("the scan recognizes the shapes it claims to", () => {
       `self.increment_scan_counter();\nif !self.enqueue_on_load_plugin_if_needed(task) {\n    files.try_reserve(1)?;\n    self.graph.pool().schedule(task);\n}`,
     ),
   ).toEqual([expect.stringContaining("fixture.rs:2: `?` at line 4 can leave")]);
+
+  // A hand-off that a path can skip: in a branch, in a match arm, or behind an
+  // onLoad check that is itself in a branch.
+  expect(
+    fixture(`self.increment_scan_counter();\nif ready {\n    self.graph.pool().schedule(task);\n}\nOk(())`),
+  ).toEqual([expect.stringContaining("fixture.rs:2: the hand-off at line 4 is inside a block")]);
+  expect(
+    fixture(
+      `self.increment_scan_counter();\nmatch kind {\n    Kind::File => self.graph.pool().schedule(task),\n    _ => {}\n}`,
+    ),
+  ).toEqual([expect.stringContaining("fixture.rs:2: the hand-off at line 4 is inside a block")]);
+  expect(
+    fixture(
+      `self.increment_scan_counter();\nif ready {\n    if !self.enqueue_on_load_plugin_if_needed(task) {\n        self.graph.pool().schedule(task);\n    }\n}`,
+    ),
+  ).toEqual([expect.stringContaining("fixture.rs:2: the hand-off at line 5 is inside a block")]);
 
   // An exit after a call this lint does not know as a hand-off.
   expect(fixture(`self.increment_scan_counter();\nself.post(task);\nreturn true;`)).toEqual([

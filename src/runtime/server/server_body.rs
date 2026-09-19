@@ -516,6 +516,7 @@ pub(crate) mod BunInfo {
         match arch {
             Architecture::X64 => b"x64",
             Architecture::Arm64 => b"arm",
+            Architecture::Riscv64 => b"riscv64",
             Architecture::Wasm => b"wasm",
         }
     }

@@ -42,6 +42,7 @@ const IS_FREEBSD: bool = cfg!(target_os = "freebsd");
 /// kqueue-based event loop (macOS + FreeBSD share most of this path).
 pub const IS_KQUEUE: bool = IS_MAC || IS_FREEBSD;
 const IS_AARCH64: bool = cfg!(target_arch = "aarch64");
+const IS_RISCV64: bool = cfg!(target_arch = "riscv64");
 const IS_X64: bool = cfg!(target_arch = "x86_64");
 pub const IS_MUSL: bool = cfg!(target_env = "musl");
 pub const IS_ANDROID: bool = cfg!(target_os = "android");
@@ -175,6 +176,7 @@ pub const OS_NAME_NPM: &str = OS.npm_name();
 pub enum Architecture {
     X64,
     Arm64,
+    Riscv64,
     Wasm,
 }
 
@@ -184,6 +186,7 @@ impl Architecture {
         match self {
             Self::X64 => "x64",
             Self::Arm64 => "aarch64",
+            Self::Riscv64 => "riscv64",
             Self::Wasm => "wasm",
         }
     }
@@ -196,6 +199,7 @@ crate::comptime_string_map! {
         b"amd64" => Architecture::X64,
         b"aarch64" => Architecture::Arm64,
         b"arm64" => Architecture::Arm64,
+        b"riscv64" => Architecture::Riscv64,
         b"wasm" => Architecture::Wasm,
     };
 }
@@ -206,6 +210,8 @@ pub const ARCH: Architecture = if IS_WASM {
     Architecture::X64
 } else if IS_AARCH64 {
     Architecture::Arm64
+} else if IS_RISCV64 {
+    Architecture::Riscv64
 } else {
     panic!("Please add your architecture to the Architecture enum")
 };

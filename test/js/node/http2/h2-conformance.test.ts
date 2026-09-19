@@ -800,6 +800,125 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   });
 });
 
+describe("promised streams the client resets (RFC 9113 §5.1, §8.4)", () => {
+  /** PUSH_PROMISE on stream 1 reserving `promisedId`: [:method GET, :scheme http, :path /] from the
+   *  static table plus a literal :authority, so the dynamic table stays empty. */
+  function pushPromise(promisedId: number): Buffer {
+    const promised = Buffer.alloc(4);
+    promised.writeUInt32BE(promisedId, 0);
+    return Buffer.concat([promised, Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+  }
+  /** A connected client with one request on stream 1 and the SETTINGS exchange done. */
+  async function connectWithRequest(options?: http2.ClientSessionOptions) {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, options);
+    const errors: Error[] = [];
+    client.on("error", err => errors.push(err));
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+    raw.sendFrame(FrameType.SETTINGS, 0, 0);
+    raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+    return { raw, client, req, errors };
+  }
+
+  test("a pushed stream destroyed by user code releases its slot in the session", async () => {
+    const { raw, client, req, errors } = await connectWithRequest();
+    const events: string[] = [];
+    try {
+      const delivered = once(client, "stream");
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, pushPromise(2));
+      const [pushed] = (await delivered) as [http2.ClientHttp2Stream];
+      pushed.on("error", err => events.push(`error ${err.message}`));
+      pushed.on("close", () => events.push(`close ${pushed.rstCode}`));
+      pushed.destroy(new Error("boom"));
+      req.destroy();
+      const rst = await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.INTERNAL_ERROR);
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      // The server honors the reset and sends nothing more on stream 2. The session has no open
+      // stream left, so close() completes.
+      const closed = once(client, "close");
+      client.close();
+      await closed;
+      expect(events).toEqual(["error boom", "close 2"]);
+      expect(errors).toEqual([]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a response already in flight when the client refused the push is ignored", async () => {
+    // maxReservedRemoteStreams: 0 makes the client answer every PUSH_PROMISE with RST_STREAM(CANCEL)
+    // without surfacing the stream.
+    const { raw, client, req, errors } = await connectWithRequest({ maxReservedRemoteStreams: 0 });
+    const pushed: number[] = [];
+    client.on("stream", stream => pushed.push(stream.id!));
+    try {
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, pushPromise(2));
+      const rst = await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.CANCEL);
+      // The pushed response crossed the RST_STREAM on the wire: HEADERS (:status 200) and DATA on
+      // the stream the client already reset. Neither may open a stream on the client.
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 2, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.DATA, 0x1 /* END_STREAM */, 2, Buffer.from("late"));
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(raw.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      req.destroy();
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      const closed = once(client, "close");
+      client.close();
+      await closed;
+      expect(pushed).toEqual([]);
+      expect(errors).toEqual([]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a PUSH_PROMISE that reuses the id of a refused push fails the session", async () => {
+    const { raw, client, errors } = await connectWithRequest({ maxReservedRemoteStreams: 0 });
+    try {
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, pushPromise(2));
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+      // Not events.once: the session emits 'error' before 'close'.
+      const sessionClosed = new Promise<void>(resolve => client.once("close", resolve));
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, pushPromise(2));
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      expect(goaway.payload.readUInt32BE(4)).toBe(ErrorCode.PROTOCOL_ERROR);
+      await sessionClosed;
+      expect(errors.map(err => (err as NodeJS.ErrnoException).code)).toEqual(["ERR_HTTP2_ERROR"]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a PUSH_PROMISE whose id descends below an earlier refused push fails the session", async () => {
+    // The client refused the push on stream 4, so its engine entry is gone. A later PUSH_PROMISE on
+    // the lower even id 2 must still fail the session (RFC 9113 §5.1.1: promised ids only increase),
+    // which requires the engine to remember the highest promised id after it drops the entry.
+    const { raw, client, errors } = await connectWithRequest({ maxReservedRemoteStreams: 0 });
+    try {
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, pushPromise(4));
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 4);
+      // Not events.once: the session emits 'error' before 'close'.
+      const sessionClosed = new Promise<void>(resolve => client.once("close", resolve));
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, pushPromise(2));
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      expect(goaway.payload.readUInt32BE(4)).toBe(ErrorCode.PROTOCOL_ERROR);
+      await sessionClosed;
+      expect(errors.map(err => (err as NodeJS.ErrnoException).code)).toEqual(["ERR_HTTP2_ERROR"]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
   // Regression coverage for the test-http2-pipe failure mode: the server responds and ends its
   // side before the request body arrives, the request body is piped into a backpressured

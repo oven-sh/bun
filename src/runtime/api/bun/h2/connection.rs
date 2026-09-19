@@ -124,6 +124,9 @@ enum BlockDisposition {
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
+    /// HEADERS on a promised stream this client already reset (or that closed and was evicted):
+    /// §5.1 requires frames after a sent RST_STREAM to be ignored, so nothing is answered.
+    Ignored,
 }
 
 pub struct Feed {
@@ -296,6 +299,8 @@ pub struct Connection {
 
     preface_received: usize,
     pub last_stream_id: u32,
+    /// Highest peer-initiated stream id (§5.1.1); never raised by local streams.
+    pub last_peer_stream_id: u32,
     pub going_away: bool,
 }
 
@@ -329,6 +334,7 @@ impl Connection {
             evict_buf: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
+            last_peer_stream_id: 0,
             going_away: false,
         }
     }
@@ -931,12 +937,23 @@ impl Connection {
             return true;
         }
         let refused = is_new && self.is_server && !sink.can_open_stream();
+        // A client has no entry for an even id at or below its highest promised id once it reset
+        // the promised stream (or the stream closed and was evicted). The server's response may
+        // already have been in flight when the RST_STREAM left: decode the block for HPACK sync
+        // and drop it, as nghttp2 does (NGHTTP2_ERR_IGN_HEADER_BLOCK). Re-opening the stream here
+        // would hand the embedder a stream nobody asked for.
+        let ignored = is_new
+            && !self.is_server
+            && hdr.stream_id.is_multiple_of(2)
+            && hdr.stream_id <= self.last_peer_stream_id;
         let mut disposition = if refused {
             BlockDisposition::Refused
+        } else if ignored {
+            BlockDisposition::Ignored
         } else {
             BlockDisposition::Deliver
         };
-        if !refused {
+        if !refused && !ignored {
             let cur_state = self
                 .streams
                 .entry(hdr.stream_id)
@@ -983,7 +1000,7 @@ impl Connection {
                 }
             }
         }
-        if is_new {
+        if is_new && !ignored {
             // Must advance even for refused streams: §5.1 treats anything at or below the
             // high-water mark as having existed, so frames a client pipelined behind the
             // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
@@ -1244,6 +1261,7 @@ impl Connection {
                 sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
                 return false;
             }
+            BlockDisposition::Ignored => return false,
             BlockDisposition::Deliver => {}
         }
         // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
@@ -1703,9 +1721,14 @@ impl Connection {
             payload[off + 3],
         ]) & 0x7fff_ffff;
         off += 4;
-        // §5.1.1 / §8.4: server-initiated streams use even ids, never 0, and
-        // cannot be reused.
-        if promised == 0 || promised & 1 == 1 || self.streams.contains_key(&promised) {
+        // §5.1.1 / §8.4: server-initiated streams use even ids, never 0, and each new one is
+        // numbered above every earlier promise, including promises whose entries are gone (reset
+        // by this client, or closed and evicted). nghttp2 fails the session for these too.
+        if promised == 0
+            || promised & 1 == 1
+            || promised <= self.last_peer_stream_id
+            || self.streams.contains_key(&promised)
+        {
             self.send_go_away(
                 sink,
                 ErrorCode::ProtocolError,
@@ -1725,6 +1748,7 @@ impl Connection {
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
         }
+        self.last_peer_stream_id = promised;
 
         self.header_block.clear();
         self.header_block.extend_from_slice(&payload[off..end]);

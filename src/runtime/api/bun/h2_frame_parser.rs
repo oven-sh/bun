@@ -3609,8 +3609,9 @@ impl H2FrameParser {
                 }
             });
             // Streams whose legacy lifecycle finished since the last batch: evict the engine
-            // entry and free the legacy slot. free_resources already ran for these (it is the
-            // only producer of this queue); duplicate ids are fine — remove() yields None.
+            // entry and free the legacy slot. free_resources already ran for the ids it queued;
+            // rst_stream queues ids with no legacy slot at all (a pushed stream the client
+            // reset). Duplicate or unknown ids are fine — remove() yields None.
             if self.dispatch_depth.get() == 0 {
                 self.pending_engine_stream_closes.with_mut(|v| {
                     for id in v.drain(..) {
@@ -5071,6 +5072,26 @@ impl H2FrameParser {
                     .set(this.frames_sent_legacy.get() + 1);
                 this.write(&frame);
                 let _ = this.flush();
+                // The reset closes the stream on this side. A peer that honors it sends nothing
+                // more on the id, so the engine's entry (ReservedRemote for a promised stream)
+                // would otherwise stay until the session ends. Evict it on the next batch and
+                // finish the JS stream the way end_stream does for a stream in the legacy table:
+                // release its context root and report the reset so the session's open-stream
+                // count returns.
+                this.pending_engine_stream_closes
+                    .with_mut(|v| v.push(stream_id));
+                let context = this
+                    .sctx
+                    .with_mut(|m| m.remove(&stream_id))
+                    .and_then(|ctx| ctx.get());
+                if let Some(context) = context {
+                    context.ensure_still_alive();
+                    this.dispatch_with_extra(
+                        JSH2FrameParser::Gc::onStreamError,
+                        context,
+                        JSValue::js_number(error_code as f64),
+                    );
+                }
             }
             return Ok(JSValue::TRUE);
         };

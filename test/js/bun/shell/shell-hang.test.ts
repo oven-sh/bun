@@ -1,5 +1,6 @@
+import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows, libcPathForDlopen } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isWindows, libcPathForDlopen } from "harness";
 import path from "path";
 
 // Pass by not hanging
@@ -31,32 +32,33 @@ describe("pass", () => {
   });
 });
 
+// Without pidfd_open (a seccomp profile can block it) bun on Linux waits for
+// children on a second thread. That thread reaps the command before the test's
+// waitpid() can, so the wait cannot be made to fail there.
+function hasPidfdOpen() {
+  const libc = dlopen(libcPathForDlopen(), {
+    syscall: { args: ["i64", "i32", "u32"], returns: "i64" },
+    close: { args: ["i32"], returns: "i32" },
+  });
+  const SYS_pidfd_open = 434;
+  const pidfd = Number(libc.symbols.syscall(SYS_pidfd_open, process.pid, 0));
+  if (pidfd >= 0) libc.symbols.close(pidfd);
+  libc.close();
+  return pidfd >= 0;
+}
+const canForceFailedWait = !isWindows && (!isLinux || hasPidfdOpen());
+
 // Other code in the process (here a blocking waitpid(-1) through bun:ffi) reaps
 // the command first. bun's own wait then fails with ECHILD, and the exit status
 // is gone.
-test.skipIf(isWindows)("a command whose wait fails still completes", async () => {
+test.skipIf(!canForceFailedWait)("a command whose wait fails still completes", async () => {
   const script = /* js */ `
     import { $ } from "bun";
     import { dlopen, ptr } from "bun:ffi";
 
-    const { waitpid, syscall, getpid, close } = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+    const { waitpid } = dlopen(${JSON.stringify(libcPathForDlopen())}, {
       waitpid: { args: ["i32", "ptr", "i32"], returns: "i32" },
-      syscall: { args: ["i64", "i32", "u32"], returns: "i64" },
-      getpid: { args: [], returns: "i32" },
-      close: { args: ["i32"], returns: "i32" },
     }).symbols;
-
-    // Without pidfd_open (a seccomp profile can block it) bun on Linux waits on
-    // a second thread, and that thread reaps the command before waitpid() here.
-    if (process.platform === "linux") {
-      const SYS_pidfd_open = 434;
-      const pidfd = Number(syscall(SYS_pidfd_open, getpid(), 0));
-      if (pidfd < 0) {
-        console.log(JSON.stringify({ skipped: "pidfd_open is not available" }));
-        process.exit(0);
-      }
-      close(pidfd);
-    }
 
     const results = {};
     for (const quiet of [true, false]) {
@@ -85,13 +87,6 @@ test.skipIf(isWindows)("a command whose wait fails still completes", async () =>
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  if (stdout === JSON.stringify({ skipped: "pidfd_open is not available" }) + "\n") {
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    console.warn("pidfd_open is not available here, so the failed wait was not exercised");
-    return;
-  }
 
   const waitFailed = {
     reaped: true,

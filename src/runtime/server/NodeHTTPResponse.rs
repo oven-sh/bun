@@ -589,12 +589,10 @@ impl NodeHTTPResponse {
 
         if let Some(raw_response) = self.raw_response.take() {
             self.update_flags(|f| f.insert(Flags::UPGRADED));
-            // Unref the poll_ref since the socket is now upgraded to WebSocket
-            // and will have its own lifecycle management
+            // Unref poll_ref and body_read_ref since the socket is now upgraded to
+            // WebSocket and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();
             self.poll_ref.with_mut(|r| r.unref(vm));
-            // uWS stops parsing HTTP on the adopted socket, so the request
-            // body's last chunk never arrives to release this.
             self.body_read_ref.with_mut(|r| r.unref(vm));
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
@@ -726,10 +724,7 @@ impl NodeHTTPResponse {
         }
         let mut server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
-        // Still held when no last chunk, abort callback or
-        // `maybe_stop_reading_body()` came first: a pipelined response
-        // destroyed mid-body, or a socket close after the handler's promise
-        // settled without `res.end()`.
+        // A pipelined response destroyed mid-body gets here with this still held.
         self.body_read_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
 

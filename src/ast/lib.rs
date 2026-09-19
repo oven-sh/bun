@@ -646,14 +646,14 @@ pub struct Location {
     pub namespace: Cow<'static, [u8]>,
     /// Text on the line, avoiding the need to refetch the source code
     pub line_text: Option<Cow<'static, [u8]>>,
-    // TODO: document or remove
-    pub offset: usize,
-
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
     pub length: u32,
+    // TODO: document or remove
+    pub offset: usize,
     /// 0-based column (UTF-16 units) at which a windowed `line_text` starts.
     pub line_text_start_column: u32,
+
     /// 1-based line number.
     /// Line <= 0 means there is no line and column information.
     // TODO: move to `bun.Ordinal`

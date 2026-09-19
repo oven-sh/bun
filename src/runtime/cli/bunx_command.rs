@@ -12,7 +12,6 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand as Run};
 use bun_alloc::AllocError;
 use bun_ast::ExprData;
 use bun_bundler::Transpiler;
-use bun_collections::BoundedArray;
 use bun_core::{self, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
@@ -46,8 +45,10 @@ pub struct Options {
     pub(crate) package_name: &'static [u8],
     /// The binary name to run (when using --package)
     pub(crate) binary_name: Option<&'static [u8]>,
-    /// The package to install (when using --package)
-    pub(crate) specified_package: Option<&'static [u8]>,
+    /// The packages to install (when using --package). `--package`/`-p` may
+    /// be repeated to install several packages into the same temporary
+    /// execution environment; empty when `--package` was not passed.
+    pub(crate) specified_packages: Vec<&'static [u8]>,
     // `--silent` and `--verbose` are not mutually exclusive. Both the
     // global CLI parser and `bun add` parser use them for different
     // purposes.
@@ -64,7 +65,7 @@ impl Default for Options {
             passthrough_list: Vec::new(),
             package_name: b"",
             binary_name: None,
-            specified_package: None,
+            specified_packages: Vec::new(),
             verbose_install: false,
             silent_install: false,
             no_install: false,
@@ -129,7 +130,7 @@ impl Options {
                         );
                         Global::exit(1);
                     }
-                    opts.specified_package = Some(argv[i].as_bytes());
+                    opts.specified_packages.push(argv[i].as_bytes());
                 } else if positional.starts_with(b"--package=") {
                     let package_value = &positional[b"--package=".len()..];
                     if package_value.is_empty() {
@@ -139,7 +140,7 @@ impl Options {
                         );
                         Global::exit(1);
                     }
-                    opts.specified_package = Some(package_value);
+                    opts.specified_packages.push(package_value);
                 } else if positional.starts_with(b"-p=") {
                     let package_value = &positional[b"-p=".len()..];
                     if package_value.is_empty() {
@@ -149,7 +150,7 @@ impl Options {
                         );
                         Global::exit(1);
                     }
-                    opts.specified_package = Some(package_value);
+                    opts.specified_packages.push(package_value);
                 }
             } else {
                 if !found_subcommand_name {
@@ -163,7 +164,7 @@ impl Options {
         }
 
         // Handle --package flag case differently
-        if let Some(specified_package) = opts.specified_package {
+        if !opts.specified_packages.is_empty() {
             if let Some(package_name) = maybe_package_name {
                 if package_name.is_empty() {
                     Output::err_generic(
@@ -186,7 +187,12 @@ impl Options {
                 Global::exit(1);
             }
             opts.binary_name = maybe_package_name;
-            opts.package_name = specified_package;
+            // `package_name` keeps its historical meaning of "the first
+            // requested package" — used by single-package-oriented code
+            // below when exactly one `--package` was given.
+            // `specified_packages` is the source of truth for the install
+            // and cache-key logic in every case.
+            opts.package_name = opts.specified_packages[0];
         } else {
             // Normal case: package_name is the first non-flag argument
             if maybe_package_name.is_none() || maybe_package_name.unwrap().is_empty() {
@@ -679,26 +685,65 @@ impl BunxCommand {
         // `UpdateRequest::parse` immediately below; it is not held across any
         // call that may itself reborrow the same `Log`.
         let ctx_log = unsafe { ctx.log_mut() };
-        let update_requests = UpdateRequest::parse(
-            None,
-            ctx_log,
-            &[opts.package_name],
-            &mut requests_buf,
-            bun_install::Subcommand::Add,
-        );
+        // With one or more `--package` values, every one of them needs its
+        // own install request; otherwise `package_name` (the bare positional)
+        // is the sole request, exactly as before.
+        let update_requests = if opts.specified_packages.is_empty() {
+            UpdateRequest::parse(
+                None,
+                ctx_log,
+                &[opts.package_name],
+                &mut requests_buf,
+                bun_install::Subcommand::Add,
+            )
+        } else {
+            UpdateRequest::parse(
+                None,
+                ctx_log,
+                &opts.specified_packages,
+                &mut requests_buf,
+                bun_install::Subcommand::Add,
+            )
+        };
 
         if update_requests.is_empty() {
             Self::exit_with_usage();
         }
 
-        debug_assert!(update_requests.len() == 1); // One positional cannot parse to multiple requests
+        debug_assert!(
+            // One positional cannot parse to multiple requests; N `--package`
+            // values parse to N requests.
+            update_requests.len()
+                == core::cmp::max(1, opts.specified_packages.len())
+        );
+        // The rest of this function is written against a single "primary"
+        // request — the historical, single-package behavior, still exactly
+        // correct when zero or one `--package` was given. The values that
+        // must reflect *every* requested package when more than one
+        // `--package` was given — the cache key and the install argv — are
+        // computed separately, below, from `update_requests` as a whole.
+        //
+        // Cache freshness also has to look at every request: if any
+        // requested package floats on a dist-tag (e.g. `@latest`), a
+        // previously-cached multi-package install can't be trusted blindly,
+        // so bust the cache and skip straight to a fresh install. Computed
+        // here, before `update_requests[0]` is borrowed mutably below, since
+        // that borrow stays live for the rest of the function. For N <= 1
+        // this reduces to exactly the single-package check it replaces.
+        let mut do_cache_bust = update_requests
+            .iter()
+            .any(|r| r.version.tag == VersionTag::DistTag);
+        let look_for_existing_bin = update_requests
+            .iter()
+            .all(|r| r.version.literal.is_empty() || r.version.tag != VersionTag::DistTag);
+
         let update_request = &mut update_requests[0];
 
         // if you type "tsc" and TypeScript is not installed:
         // 1. Install TypeScript
         // 2. Run tsc
         // BUT: Skip this transformation if --package was explicitly specified
-        if opts.specified_package.is_none() {
+        if opts.specified_packages.is_empty() {
             if update_request.name == b"tsc" {
                 update_request.name = b"typescript".as_slice();
             } else if update_request.name == b"claude" {
@@ -896,6 +941,56 @@ impl BunxCommand {
             BStr::new(result_package_name)
         );
 
+        // With more than one `--package`, every raw specifier becomes its own
+        // `bun add` target — no name@version reconstruction needed, since
+        // `bun add` already parses raw specifiers itself, including
+        // github:/URL forms that don't reduce to a clean name. The cache key
+        // is derived from the same raw specifiers, sorted, so `--package a
+        // --package b` and `--package b --package a` share one cache
+        // directory, then hashed so the key stays short and filesystem-safe
+        // regardless of package name length, scoped-package slashes, or how
+        // many packages were requested. For 0 or 1 `--package` this is
+        // unreachable — the single-package `package_fmt`/`install_param`
+        // computed above are used unchanged.
+        let (package_fmt, install_params): (Vec<u8>, Vec<Vec<u8>>) =
+            if opts.specified_packages.len() <= 1 {
+                (package_fmt, vec![install_param])
+            } else {
+                let params: Vec<Vec<u8>> = opts
+                    .specified_packages
+                    .iter()
+                    .copied()
+                    .map(|p| p.to_vec())
+                    .collect();
+
+                let mut sorted: Vec<&[u8]> = opts.specified_packages.clone();
+                sorted.sort();
+                let mut combined_hash: u64 = 0;
+                for p in sorted.iter().copied() {
+                    combined_hash = combined_hash.wrapping_add(hash(p));
+                }
+                let mut key = Vec::new();
+                write!(&mut key, "multi-{}-{:x}", sorted.len(), combined_hash)
+                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+
+                (key, params)
+            };
+        bun_output::scoped_log!(bunx, "package_fmt (final): {}", BStr::new(&package_fmt));
+
+        // `install_param` was moved into `install_params` above; log/error
+        // messages further down need a single displayable string covering
+        // every requested package, not just the first.
+        let install_param_display: Vec<u8> = {
+            let mut v = Vec::new();
+            for (i, p) in install_params.iter().enumerate() {
+                if i > 0 {
+                    v.extend_from_slice(b", ");
+                }
+                v.extend_from_slice(p);
+            }
+            v
+        };
+
         let temp_dir = RealFS::platform_temp_dir();
 
         let path_for_bin_dirs: Vec<u8> = 'brk: {
@@ -1011,10 +1106,6 @@ impl BunxCommand {
         }
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
-
-        let mut do_cache_bust = update_request.version.tag == VersionTag::DistTag;
-        let look_for_existing_bin = update_request.version.literal.is_empty()
-            || update_request.version.tag != VersionTag::DistTag;
 
         bun_output::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
         if look_for_existing_bin {
@@ -1323,33 +1414,35 @@ impl BunxCommand {
             let _ = package_json.write_all(b"{}\n");
         }
 
-        let install_args: [&[u8]; 4] = [
-            bun_core::self_exe_path()?.as_bytes(),
-            b"add",
-            install_param.as_slice(),
-            b"--no-summary",
-        ];
-        let mut args: BoundedArray<&[u8], 8> =
-            BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
+        // `install_params` holds 1..=N targets (N > 1 only when multiple
+        // `--package` values were given), so the argv can't be a fixed-size
+        // array the way a single-package install could be.
+        let mut args: Vec<&[u8]> = Vec::with_capacity(install_params.len() + 6);
+        args.push(bun_core::self_exe_path()?.as_bytes());
+        args.push(b"add");
+        for p in &install_params {
+            args.push(p.as_slice());
+        }
+        args.push(b"--no-summary");
 
         if do_cache_bust {
             // disable the manifest cache when a tag is specified
             // so that @latest is fetched from the registry
-            args.append(b"--no-cache").expect("unreachable"); // upper bound is known
+            args.push(b"--no-cache");
 
             // forcefully re-install packages in this mode too
-            args.append(b"--force").expect("unreachable"); // upper bound is known
+            args.push(b"--force");
         }
 
         if opts.verbose_install {
-            args.append(b"--verbose").expect("unreachable"); // upper bound is known
+            args.push(b"--verbose");
         }
 
         if opts.silent_install {
-            args.append(b"--silent").expect("unreachable"); // upper bound is known
+            args.push(b"--silent");
         }
 
-        let argv_to_use = args.slice();
+        let argv_to_use = args.as_slice();
 
         bun_output::scoped_log!(
             bunx,
@@ -1401,7 +1494,7 @@ impl BunxCommand {
             Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error <b>{}<r>",
-                    BStr::new(&install_param),
+                    BStr::new(&install_param_display),
                     err.name(),
                 );
                 Global::exit(1);
@@ -1449,7 +1542,7 @@ impl BunxCommand {
             SpawnStatus::Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error:\n{}",
-                    BStr::new(&install_param),
+                    BStr::new(&install_param_display),
                     err,
                 );
                 Global::exit(1);
@@ -1576,10 +1669,10 @@ impl BunxCommand {
             }
         }
 
-        if let (Some(_), Some(binary_name)) = (opts.specified_package, opts.binary_name) {
+        if let (false, Some(binary_name)) = (opts.specified_packages.is_empty(), opts.binary_name) {
             Output::err_generic(
                 "Package <b>{}<r> does not provide a binary named <b>{}<r>",
-                (BStr::new(&update_request.name), BStr::new(binary_name)),
+                (BStr::new(&install_param_display), BStr::new(binary_name)),
             );
             bun_core::prettyln!(
                 "  <d>hint: try running without --package to install and run {} directly<r>",

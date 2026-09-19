@@ -994,8 +994,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
-                            // Not for peers: an unmet peer only warns, and
-                            // bun-lock.test.ts pins that it makes no request.
+                            // Not for peers: an unmet peer only warns, and bun-lock.test.ts pins zero requests for it.
                             if matches!(
                                 err,
                                 crate::Error::DistTagNotFound | crate::Error::NoMatchingVersion

@@ -11,8 +11,7 @@
 
 import { readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
-import { markBuildkiteStepReported } from "./utils.mjs";
+import { markBuildkiteStepReported } from "./utils.ts";
 
 const { parseArgs } = require("node:util");
 

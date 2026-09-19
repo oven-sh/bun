@@ -29,7 +29,7 @@ import {
   toYaml,
   uploadArtifact,
   writeFile,
-} from "../scripts/utils.mjs";
+} from "../scripts/utils.ts";
 
 /**
  * @typedef {"linux" | "darwin" | "windows" | "freebsd"} Os

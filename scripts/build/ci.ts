@@ -22,8 +22,7 @@ import {
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
-// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
-import * as utils from "../utils.mjs";
+import * as utils from "../utils.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
 import { webkitTestFFIPath } from "./deps/webkit.ts";
@@ -172,7 +171,7 @@ export async function spawnWithAnnotations(
       for (const ann of annotations) {
         utils.reportAnnotationToBuildKite({
           priority: 10,
-          label: ann.title || ann.filename,
+          label: ann.title,
           content: utils.formatAnnotationToHtml(ann),
         });
         annotated = true;

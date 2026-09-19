@@ -28,7 +28,7 @@ import {
   spawnSafe,
   which,
   writeFile,
-} from "./utils.mjs";
+} from "./utils.ts";
 
 // The buildkite-agent registration token, per cloud. AWS builders read
 // Secrets Manager with their instance role; Azure builders read Key Vault

@@ -22,8 +22,7 @@
 
 import { mkdirSync, rmSync } from "node:fs";
 import { parseArgs } from "node:util";
-// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
-import { markBuildkiteStepReported } from "./utils.mjs";
+import { markBuildkiteStepReported } from "./utils.ts";
 
 type Target = { triplet: string };
 type Sizes = Record<string, number>;

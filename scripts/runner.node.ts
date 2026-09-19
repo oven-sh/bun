@@ -71,7 +71,7 @@ import {
   tmpdir,
   unzip,
   uploadArtifact,
-} from "./utils.mjs";
+} from "./utils.ts";
 
 let isQuiet = false;
 const cwd = import.meta.dirname ? dirname(import.meta.dirname) : process.cwd();

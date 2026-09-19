@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { parseAnnotation, parseAnnotations, type Annotation } from "../../../scripts/utils.mjs";
+import { parseAnnotation, parseAnnotations, type Annotation } from "../../../scripts/utils.ts";
 
 // rustc's human-readable format (`cargo build` output): a header line, the
 // `-->` location, the rendered span with `|` gutters, optional `=` notes, and

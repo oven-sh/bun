@@ -62,9 +62,13 @@ variable "bootstrap_script" {
 }
 
 variable "agent_script" {
-  type    = string
-  default = ""
-  description = "Path to bundled agent.mjs. If empty, agent install is skipped."
+  type        = string
+  description = "Path to scripts/agent.ts."
+}
+
+variable "utils_script" {
+  type        = string
+  description = "Path to scripts/utils.ts, which agent.ts imports."
 }
 
 variable "repo_ref" {

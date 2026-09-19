@@ -1,0 +1,25 @@
+{
+  // The CI scripts: pipeline generation, the agent service, the test runner
+  // and their shared helpers. Same strictness as scripts/build/tsconfig.json.
+  // They run under plain `node` (type stripping), so only erasable syntax.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true,
+    "types": ["../packages/bun-types"],
+    "verbatimModuleSyntax": true
+  },
+  "include": ["utils.ts", "agent.ts", "runner.node.ts", "machine.ts", "../.buildkite/ci.ts"],
+  "exclude": ["node_modules"]
+}

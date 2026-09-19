@@ -1656,8 +1656,7 @@ install_linux_musl_sysroot() {
 }
 
 xwin_version() {
-	# Keep in sync with XWIN_VERSION in scripts/build/winsysroot.ts and
-	# .buildkite/Dockerfile.
+	# Keep in sync with XWIN_VERSION in scripts/build/winsysroot.ts.
 	print "0.9.0"
 }
 

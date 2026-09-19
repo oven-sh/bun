@@ -2001,7 +2001,7 @@ impl HeaderList {
     }
 
     /// Same formula as nghttp2_hd_deflate_bound:
-    /// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_hd.c
+    /// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_hd.c#L1578-L1603
     fn deflate_bound(&self) -> usize {
         12 + self.fields.len() * 12 + self.bytes.len()
     }
@@ -7167,51 +7167,52 @@ impl H2FrameParser {
             flags |= HeadersFrameFlags::PRIORITY as u8;
         }
 
-        if let Some(staged) = &staged {
-            // nghttp2 refuses the block on its pre-compression bound (it always counts the
-            // priority fields) before it deflates it, so the peer's HPACK table stays in step:
-            // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
-            if staged.deflate_bound() + StreamPriority::BYTE_SIZE
+        // nghttp2 refuses the block on its pre-compression bound (it always counts the priority
+        // fields) before it deflates it, so the peer's HPACK table stays in step:
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
+        if let Some(staged) = &staged
+            && staged.deflate_bound() + StreamPriority::BYTE_SIZE
                 > this.max_send_header_block_length.get() as usize
-            {
-                if this.is_server.get() {
-                    let identifier = stream.get_identifier();
-                    identifier.ensure_still_alive();
-                    // The JS handler closes the session gracefully, like node's onFrameError.
-                    this.dispatch_with_2_extra(
-                        JSH2FrameParser::Gc::onFrameError,
-                        identifier,
-                        JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-                        JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-                    );
-                    // Nothing can follow a refused final response: DATA without HEADERS is a
-                    // connection error for the peer. A refused 1xx block leaves the stream open
-                    // for the final response.
-                    if !staged.is_informational() {
-                        this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
-                    }
-                    return Ok(JSValue::js_number(stream_id as f64));
-                }
-
-                // Client: the request never reached the wire, nghttp2 refuses it locally.
-                stream.state = StreamState::CLOSED;
-                stream.rst_code = ErrorCode::REFUSED_STREAM.0;
-
+        {
+            if this.is_server.get() {
+                let identifier = stream.get_identifier();
+                identifier.ensure_still_alive();
+                // The JS handler closes the session gracefully, like node's onFrameError.
                 this.dispatch_with_2_extra(
                     JSH2FrameParser::Gc::onFrameError,
-                    stream.get_identifier(),
+                    identifier,
                     JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                     JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
                 );
-
-                this.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamError,
-                    stream.get_identifier(),
-                    JSValue::js_number(stream.rst_code as f64),
-                );
+                // Nothing can follow a refused final response: DATA without HEADERS is a
+                // connection error for the peer. A refused 1xx block leaves the stream open for
+                // the final response.
+                if !staged.is_informational() {
+                    this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
+                }
                 return Ok(JSValue::js_number(stream_id as f64));
             }
 
+            // Client: the request never reached the wire, nghttp2 refuses it locally.
+            stream.state = StreamState::CLOSED;
+            stream.rst_code = ErrorCode::REFUSED_STREAM.0;
+
+            this.dispatch_with_2_extra(
+                JSH2FrameParser::Gc::onFrameError,
+                stream.get_identifier(),
+                JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+            );
+
+            this.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                stream.get_identifier(),
+                JSValue::js_number(stream.rst_code as f64),
+            );
+            return Ok(JSValue::js_number(stream_id as f64));
+        }
+
+        if let Some(staged) = &staged {
             for (name, value, never_index) in staged.iter() {
                 if let Err(err) =
                     this.encode_header_into_list(&mut encoded_headers, name, value, never_index)

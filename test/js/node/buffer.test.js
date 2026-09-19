@@ -4290,6 +4290,175 @@ describe("*Write methods with NaN/invalid offset and length", () => {
   }
 });
 
+// Node's write() checks offset and length, then resolves the encoding (getEncodingOps). Only its
+// native writer rejects a non-string value, so an unknown encoding wins over a non-string value.
+// A result is the error code (or the return value) and the bytes of a 4-byte buffer that held 0xaa.
+// The expected values are the output of Node v26.3.0.
+describe("buf.write resolves the encoding before it checks the value", () => {
+  const write = (...args) => {
+    const buf = Buffer.alloc(4, 0xaa);
+    let result;
+    try {
+      result = buf.write(...args);
+    } catch (e) {
+      result = e.code ?? e.name;
+    }
+    return `${result} ${buf.toString("hex")}`;
+  };
+  // `label` names the value in a failure. String(value) would call the toString() that must not run.
+  const everyForm = (label, value, encoding, expected) => {
+    expect({
+      value: label,
+      encoding,
+      "write(value, encoding)": write(value, encoding),
+      "write(value, offset, encoding)": write(value, 0, encoding),
+      "write(value, offset, length, encoding)": write(value, 0, 1, encoding),
+    }).toEqual({
+      value: label,
+      encoding,
+      "write(value, encoding)": expected,
+      "write(value, offset, encoding)": expected,
+      "write(value, offset, length, encoding)": expected,
+    });
+  };
+
+  it("an unknown encoding wins, a known encoding rejects the value, and neither coerces it", () => {
+    let toStringCalls = 0;
+    const object = {
+      toString() {
+        toStringCalls++;
+        return "ab";
+      },
+    };
+    for (const [label, value] of [
+      ["123", 123],
+      ["null", null],
+      ["undefined", undefined],
+      ["true", true],
+      ["object with toString", object],
+      ["new String('ab')", new String("ab")],
+      ["['ab']", ["ab"]],
+    ]) {
+      everyForm(label, value, "bogus", "ERR_UNKNOWN_ENCODING aaaaaaaa");
+      for (const encoding of ["utf8", "latin1", "ascii", "ucs2", "utf16le", "hex", "base64", "base64url", "HEX"]) {
+        everyForm(label, value, encoding, "ERR_INVALID_ARG_TYPE aaaaaaaa");
+      }
+    }
+    expect(toStringCalls).toBe(0);
+  });
+
+  it("reads a falsy encoding as utf8 and coerces a truthy one of any type", () => {
+    const results = {};
+    for (const [label, encoding] of [
+      ["''", ""],
+      ["null", null],
+      ["undefined", undefined],
+      ["0", 0],
+      ["false", false],
+      ["5", 5],
+      ["true", true],
+      ["{}", {}],
+      ["[]", []],
+      ["['hex']", ["hex"]],
+      ["new String('hex')", new String("hex")],
+      ["new String('bogus')", new String("bogus")],
+      ["Symbol('hex')", Symbol("hex")],
+    ]) {
+      results[label] = [write(123, 0, 2, encoding), write("6162", 0, 2, encoding)];
+    }
+    const utf8 = ["ERR_INVALID_ARG_TYPE aaaaaaaa", "2 3631aaaa"];
+    const hex = ["ERR_INVALID_ARG_TYPE aaaaaaaa", "2 6162aaaa"];
+    const unknown = ["ERR_UNKNOWN_ENCODING aaaaaaaa", "ERR_UNKNOWN_ENCODING aaaaaaaa"];
+    expect(results).toEqual({
+      "''": utf8,
+      "null": utf8,
+      "undefined": utf8,
+      "0": utf8,
+      "false": utf8,
+      "5": unknown,
+      "true": unknown,
+      "{}": unknown,
+      "[]": unknown,
+      "['hex']": hex,
+      "new String('hex')": hex,
+      "new String('bogus')": unknown,
+      "Symbol('hex')": ["TypeError aaaaaaaa", "TypeError aaaaaaaa"],
+    });
+  });
+
+  it("reads an empty string encoding as utf8 in the forms where the encoding replaces offset or length", () => {
+    expect({
+      "write(string, '')": write("6162", ""),
+      "write(string, offset, '')": write("6162", 0, ""),
+      "write(123, '')": write(123, ""),
+      "write(123, offset, '')": write(123, 0, ""),
+    }).toEqual({
+      "write(string, '')": "4 36313632",
+      "write(string, offset, '')": "4 36313632",
+      "write(123, '')": "ERR_INVALID_ARG_TYPE aaaaaaaa",
+      "write(123, offset, '')": "ERR_INVALID_ARG_TYPE aaaaaaaa",
+    });
+  });
+
+  it("calls an object encoding's toString() before it rejects the value", () => {
+    const calls = [];
+    const encoding = name => ({
+      toString() {
+        calls.push(`encoding ${name}`);
+        return name;
+      },
+    });
+    const value = {
+      toString() {
+        calls.push("value");
+        return "61";
+      },
+    };
+    expect([write(value, 0, 1, encoding("hex")), write(value, 0, 1, encoding("utf8"))]).toEqual([
+      "ERR_INVALID_ARG_TYPE aaaaaaaa",
+      "ERR_INVALID_ARG_TYPE aaaaaaaa",
+    ]);
+    expect(calls).toEqual(["encoding hex", "encoding utf8"]);
+
+    const throws = {
+      toString() {
+        throw new RangeError("from the encoding");
+      },
+    };
+    expect(() => Buffer.alloc(4).write(123, 0, 1, throws)).toThrow(
+      expect.objectContaining({ name: "RangeError", message: "from the encoding" }),
+    );
+  });
+
+  it("validates offset and length before the encoding", () => {
+    expect({
+      negativeOffset: write(123, -1, "bogus"),
+      offsetPastEnd: write(123, 5, "bogus"),
+      fractionalOffset: write(123, 1.5, "bogus"),
+      negativeLength: write(123, 0, -1, "bogus"),
+      lengthPastEnd: write(123, 0, 5, "bogus"),
+    }).toEqual({
+      negativeOffset: "ERR_OUT_OF_RANGE aaaaaaaa",
+      offsetPastEnd: "ERR_OUT_OF_RANGE aaaaaaaa",
+      fractionalOffset: "ERR_OUT_OF_RANGE aaaaaaaa",
+      negativeLength: "ERR_OUT_OF_RANGE aaaaaaaa",
+      lengthPastEnd: "ERR_OUT_OF_RANGE aaaaaaaa",
+    });
+    expect(() => Buffer.alloc(4).write(123, "0", 1, "bogus")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "offset" argument must be of type number. Received type string ('0')`,
+      }),
+    );
+    expect(() => Buffer.alloc(4).write(123, 0, null, "bogus")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "length" argument must be of type number. Received null`,
+      }),
+    );
+  });
+});
+
 describe("utf8 write of a string ending in a lone high surrogate", () => {
   function hasAVX2() {
     if (process.arch !== "x64" || process.platform !== "linux") return false;

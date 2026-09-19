@@ -4654,30 +4654,29 @@ describe.concurrent("bundler", () => {
   //   },
   // });
   itBundled("default/KeepNamesTreeShaking", {
-    todo: true, // TODO: Full keepNames implementation with Object.defineProperty
     files: {
       "/entry.js": /* js */ `
-        (function() {
-          function fnStmtRemove() {}
-          function fnStmtKeep() {}
-          x = fnStmtKeep
-    
-          let fnExprRemove = function remove() {}
-          let fnExprKeep = function keepFn() {}
-          x = fnExprKeep
-    
-          class clsStmtRemove {}
-          class clsStmtKeep {}
-          new clsStmtKeep()
-    
-          let clsExprRemove = class remove {}
-          let clsExprKeep = class keepClass {}
-          new clsExprKeep()
-        })();
+        function fnStmtRemove() {}
+        function fnStmtKeep() {}
+        x = fnStmtKeep
+
+        let fnExprRemove = function remove() {}
+        let fnExprKeep = function keepFn() {}
+        x = fnExprKeep
+
+        class clsStmtRemove {}
+        class clsStmtKeep {}
+        new clsStmtKeep()
+
+        let clsExprRemove = class remove {}
+        let clsExprKeep = class keepClass {}
+        new clsExprKeep()
       `,
     },
     keepNames: true,
+    minifySyntax: true,
     dce: true,
+    dceKeepMarkerCount: false,
     onAfterBundle(api) {
       // to properly check that keep names actually worked, we need to minify the
       // file and THEN check for the names. we do this separatly just so that we know that
@@ -4691,7 +4690,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/KeepNamesClassStaticName", {
-    todo: true, // TODO: Full keepNames implementation with Object.defineProperty
     files: {
       "/entry.js": /* js */ `
         class ClassName1A { static foo = 1 }

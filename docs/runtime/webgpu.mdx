@@ -176,7 +176,7 @@ bun add -d @webgpu/types
 ## Limitations
 
 - No `GPUCanvasContext`, `GPUExternalTexture`, or `queue.copyExternalImageToTexture()`. They need a canvas, a video element, or an image element.
-- `navigator.gpu.wgslLanguageFeatures` is empty.
+- `navigator.gpu.wgslLanguageFeatures` has no `unrestricted_pointer_parameters`. The list is what naga, the WGSL compiler in wgpu, implements, and that extension [is not done yet](https://github.com/gfx-rs/wgpu/issues/5158).
 - `createComputePipelineAsync()` and `createRenderPipelineAsync()` compile the pipeline before they return their promise.
-- If the driver cannot create a device, `adapter.requestDevice()` rejects with an `OperationError`. The specification resolves to a device that is already lost.
+- `adapter.requestDevice()` rejects with an `OperationError` if the driver fails to create the device. Browsers resolve with a lost device instead.
 - An explicit `size` of `0` in `setVertexBuffer()` and `setIndexBuffer()` binds the rest of the buffer, the same as no `size`.

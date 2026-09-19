@@ -59,8 +59,16 @@ impl GPU {
         bun_core::String::static_("bgra8unorm").to_js(global)
     }
 
+    /// The WGSL language extensions that naga implements: what a `requires` directive can name.
     pub(crate) fn get_wgsl_language_features(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let names = JSValue::create_empty_array(global, 0)?;
+        use bun_jsc::StringJsc as _;
+        use bun_webgpu::wgc::naga::front::wgsl::ImplementedLanguageExtension;
+        let extensions = ImplementedLanguageExtension::all();
+        let names = JSValue::create_empty_array(global, extensions.len())?;
+        for (index, extension) in extensions.iter().enumerate() {
+            let name = bun_core::String::static_(extension.to_ident()).to_js(global)?;
+            names.put_index(global, index as u32, name)?;
+        }
         js_module(global, "createWGSLLanguageFeatures", &[names])
     }
 }

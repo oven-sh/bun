@@ -725,7 +725,7 @@ pub fn exit(code: u32) -> ! {
 
     #[cfg(target_os = "macos")]
     {
-        // Before libc, which runs the exit handlers of every loaded library: a callback here may need one (the GPU driver's threads have to stop before its library unloads).
+        // `exit()` runs exit handlers newest first, and `Bun__onExit` is registered at startup. A library loaded later (a GPU driver) would tear down before the callbacks that still use it, so they run here first, as in the Windows branch.
         Bun__onExit();
         libc_exit(code as i32)
     }

@@ -79,7 +79,12 @@ describe("surface", () => {
     expect(gpu).toBeInstanceOf(GPU);
     expect((navigator as any).gpu).toBe(gpu);
     expect(gpu.getPreferredCanvasFormat()).toBe("bgra8unorm");
-    expect([...gpu.wgslLanguageFeatures]).toEqual([]);
+    // What naga implements of https://www.w3.org/TR/WGSL/#language-extensions-sec.
+    expect([...gpu.wgslLanguageFeatures].sort()).toEqual([
+      "packed_4x8_integer_dot_product",
+      "pointer_composite_access",
+      "readonly_and_readwrite_storage_textures",
+    ]);
   });
 
   test("the first read of navigator.gpu runs no script", async () => {
@@ -553,6 +558,14 @@ describe.skipIf(!hasAdapter)("with a device", () => {
     await rejected.catch(() => {});
     // The async form reports through the promise only.
     expect(await device.popErrorScope()).toBeNull();
+
+    // A `requires` directive takes what wgslLanguageFeatures lists, and nothing else.
+    for (const feature of [...gpu.wgslLanguageFeatures, "unrestricted_pointer_parameters"]) {
+      const error = await validationError(device, () => {
+        device.createShaderModule({ code: `requires ${feature};\n@compute @workgroup_size(1) fn main() {}` });
+      });
+      expect([feature, error === null]).toEqual([feature, gpu.wgslLanguageFeatures.has(feature)]);
+    }
 
     device.destroy();
   });

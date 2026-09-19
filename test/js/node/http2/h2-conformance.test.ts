@@ -929,6 +929,294 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
   });
 });
 
+// A PADDED frame's payload is the Pad Length octet, the content, then Pad Length zero bytes. node
+// sizes it through nghttp2's select_padding callback, whose answer is the padded PAYLOAD length:
+// the Pad Length octet counts toward it. The DATA tables below are what node v26.3.0 puts on the
+// wire for the same exchange. node v26 no longer sends priority fields, so RFC 9113 §6.2 is the
+// reference for the HEADERS frame that carries them.
+describe("outbound padding (RFC 9113 §6.1/§6.2, paddingStrategy)", () => {
+  const { PADDING_STRATEGY_NONE, PADDING_STRATEGY_ALIGNED, PADDING_STRATEGY_MAX } = http2.constants;
+  const END_STREAM = 0x1;
+  const END_HEADERS = 0x4;
+  const PADDED = 0x8;
+  const PRIORITY = 0x20;
+
+  type DataShape = { flags: number; length: number; padLength: number | null; content: string };
+
+  /** PADDING_STRATEGY_ALIGNED for an unpadded payload of `n` bytes: 9 + length is a multiple of 8. */
+  function aligned(n: number) {
+    const length = n + ((8 - ((n + 9) % 8)) % 8);
+    // One missing byte is a PADDED frame with Pad Length 0; none is a frame without the flag.
+    return { length, padLength: length === n ? null : length - n - 1 };
+  }
+
+  /** Splits a DATA payload into Pad Length and content. The padding has to be zeros. */
+  function unpad(f: Frame): DataShape {
+    const padLength = f.flags & PADDED ? f.payload[0] : null;
+    const end = f.length - (padLength ?? 0);
+    expect(f.payload.subarray(end).toString("hex")).toBe(Buffer.alloc(padLength ?? 0).toString("hex"));
+    const content = f.payload.subarray(padLength === null ? 0 : 1, end).toString();
+    return { flags: f.flags, length: f.length, padLength, content };
+  }
+
+  /** `plain`, a frame captured without padding, as it has to look with Pad Length `padLength`. */
+  function withPadding(plain: Frame, padLength: number | null) {
+    if (padLength === null) return { flags: plain.flags, payload: plain.payload.toString("hex") };
+    const payload = Buffer.concat([Buffer.from([padLength]), plain.payload, Buffer.alloc(padLength)]);
+    return { flags: plain.flags | PADDED, payload: payload.toString("hex") };
+  }
+
+  /** GET / whose literal (never indexed) x-* fields tell the server of `withPaddedServer` what to answer. */
+  function request(fields: Record<string, number>): Buffer {
+    const literals = Object.entries(fields).flatMap(([name, value]) => [
+      Buffer.from([0x00]),
+      hpackLiteral(name),
+      hpackLiteral(String(value)),
+    ]);
+    return requestHeaderBlock("GET", Buffer.concat(literals));
+  }
+
+  /** The next `count` DATA frames of stream `id`, in order. */
+  async function dataFrames(c: RawH2, id: number, count: number): Promise<Frame[]> {
+    const frames: Frame[] = [];
+    while (frames.length < count) {
+      frames.push(await c.waitFor(f => f.type === FrameType.DATA && f.streamId === id && !frames.includes(f)));
+    }
+    return frames;
+  }
+
+  /**
+   * Runs `fn` with a raw client of a server that pads with `paddingStrategy`. The client announces
+   * `initialWindow` as SETTINGS_INITIAL_WINDOW_SIZE when it is given. The server answers a request
+   * with x-writes (default 1) body writes of x-size bytes each, one after the other, and with an
+   * x-fill response header of x-fill bytes when that is not 0.
+   */
+  async function withPaddedServer<T>(
+    paddingStrategy: number,
+    initialWindow: number | undefined,
+    fn: (c: RawH2) => Promise<T>,
+  ): Promise<T> {
+    const server = http2.createServer({ paddingStrategy });
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      // "!" has a 10-bit Huffman code, so HPACK sends it raw: one more byte of block per byte of fill.
+      const fill = Number(headers["x-fill"] ?? 0);
+      const fillHeader = fill ? { "x-fill": Buffer.alloc(fill, "!").toString() } : {};
+      stream.respond({ ":status": 200, ...fillHeader }, { sendDate: false });
+      const chunk = Buffer.alloc(Number(headers["x-size"]), "b");
+      let writes = Number(headers["x-writes"] ?? 1);
+      const next = () => (--writes > 0 ? stream.write(chunk, next) : stream.end(chunk));
+      next();
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        const settings = Buffer.alloc(initialWindow === undefined ? 0 : 6);
+        if (initialWindow !== undefined) {
+          settings.writeUInt16BE(0x4, 0); // SETTINGS_INITIAL_WINDOW_SIZE
+          settings.writeUInt32BE(initialWindow, 2);
+        }
+        c.sendFrame(FrameType.SETTINGS, 0, 0, settings);
+        return await fn(c);
+      } finally {
+        c.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  }
+
+  test("PADDING_STRATEGY_ALIGNED makes a DATA frame a multiple of 8 bytes, frame header included", async () => {
+    const seen = await withPaddedServer(PADDING_STRATEGY_ALIGNED, undefined, async c => {
+      const seen: DataShape[] = [];
+      for (const [i, size] of [1, 5, 6, 7, 8].entries()) {
+        const id = 2 * i + 1;
+        c.sendFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, id, request({ "x-size": size }));
+        seen.push(unpad(await c.waitFor(f => f.type === FrameType.DATA && f.streamId === id)));
+      }
+      return seen;
+    });
+    expect(seen).toEqual([
+      { flags: END_STREAM | PADDED, length: 7, padLength: 5, content: "b" },
+      { flags: END_STREAM | PADDED, length: 7, padLength: 1, content: "bbbbb" },
+      { flags: END_STREAM | PADDED, length: 7, padLength: 0, content: "bbbbbb" },
+      { flags: END_STREAM, length: 7, padLength: null, content: "bbbbbbb" },
+      { flags: END_STREAM | PADDED, length: 15, padLength: 6, content: "bbbbbbbb" },
+    ]);
+  });
+
+  test("PADDING_STRATEGY_ALIGNED pads the last DATA frame of a body that spans frames", async () => {
+    const [first, last] = await withPaddedServer(PADDING_STRATEGY_ALIGNED, undefined, async c => {
+      c.sendFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, 1, request({ "x-size": 20000 }));
+      return (await dataFrames(c, 1, 2)).map(unpad);
+    });
+    expect(first.content + last.content).toBe(Buffer.alloc(20000, "b").toString());
+    expect({
+      first: { flags: first.flags, padLength: first.padLength },
+      last: { flags: last.flags, length: last.length, padLength: last.padLength },
+    }).toEqual({
+      // The first frame is as large as a DATA frame gets, which leaves no room to pad it.
+      first: { flags: 0, padLength: null },
+      last: { flags: END_STREAM | PADDED, ...aligned(last.content.length) },
+    });
+  });
+
+  // Each write goes out as its own frame while the stream window has room. Padding counts against
+  // the window (RFC 9113 §6.9.1), so what is left of the window caps the padding of the last frame.
+  test.each<[string, number, number, DataShape[]]>([
+    [
+      "PADDING_STRATEGY_ALIGNED",
+      PADDING_STRATEGY_ALIGNED,
+      20,
+      [
+        { flags: PADDED, length: 7, padLength: 1, content: "bbbbb" },
+        { flags: PADDED, length: 7, padLength: 1, content: "bbbbb" },
+        { flags: END_STREAM | PADDED, length: 6, padLength: 0, content: "bbbbb" },
+      ],
+    ],
+    [
+      "PADDING_STRATEGY_MAX",
+      PADDING_STRATEGY_MAX,
+      600,
+      [
+        { flags: PADDED, length: 261, padLength: 255, content: "bbbbb" },
+        { flags: PADDED, length: 261, padLength: 255, content: "bbbbb" },
+        { flags: END_STREAM | PADDED, length: 78, padLength: 72, content: "bbbbb" },
+      ],
+    ],
+  ])("%s keeps padded DATA frames inside the flow-control window", async (_, paddingStrategy, window, expected) => {
+    const seen = await withPaddedServer(paddingStrategy, window, async c => {
+      c.sendFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, 1, request({ "x-size": 5, "x-writes": 3 }));
+      return (await dataFrames(c, 1, 3)).map(unpad);
+    });
+    expect(seen).toEqual(expected);
+  });
+
+  type QueuedCase = { window: number; frames: DataShape[] };
+
+  // The peer opens with a zero stream window, so the response body waits in the stream's queue
+  // until a WINDOW_UPDATE arrives. The window then caps the padded payload.
+  test.each<[string, number, QueuedCase[]]>([
+    [
+      "PADDING_STRATEGY_ALIGNED",
+      PADDING_STRATEGY_ALIGNED,
+      [
+        { window: 1000, frames: [{ flags: END_STREAM | PADDED, length: 7, padLength: 1, content: "bbbbb" }] },
+        { window: 6, frames: [{ flags: END_STREAM | PADDED, length: 6, padLength: 0, content: "bbbbb" }] },
+        { window: 5, frames: [{ flags: END_STREAM, length: 5, padLength: null, content: "bbbbb" }] },
+        {
+          window: 3,
+          frames: [
+            { flags: 0, length: 3, padLength: null, content: "bbb" },
+            { flags: END_STREAM | PADDED, length: 7, padLength: 4, content: "bb" },
+          ],
+        },
+      ],
+    ],
+    [
+      "PADDING_STRATEGY_MAX",
+      PADDING_STRATEGY_MAX,
+      [
+        { window: 1000, frames: [{ flags: END_STREAM | PADDED, length: 261, padLength: 255, content: "bbbbb" }] },
+        { window: 100, frames: [{ flags: END_STREAM | PADDED, length: 100, padLength: 94, content: "bbbbb" }] },
+        { window: 6, frames: [{ flags: END_STREAM | PADDED, length: 6, padLength: 0, content: "bbbbb" }] },
+        { window: 5, frames: [{ flags: END_STREAM, length: 5, padLength: null, content: "bbbbb" }] },
+      ],
+    ],
+  ])("%s pads a queued DATA frame within the flow-control window", async (_, paddingStrategy, cases) => {
+    const seen = await withPaddedServer(paddingStrategy, 0, async c => {
+      const windowUpdate = (id: number, increment: number) => {
+        const payload = Buffer.alloc(4);
+        payload.writeUInt32BE(increment);
+        c.sendFrame(FrameType.WINDOW_UPDATE, 0, id, payload);
+      };
+      const seen: QueuedCase[] = [];
+      for (const [i, { window }] of cases.entries()) {
+        const id = 2 * i + 1;
+        c.sendFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, id, request({ "x-size": 5 }));
+        await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === id);
+        // The premise: the body is in the queue. A PING round trip after the response HEADERS
+        // shows that no DATA went out with them.
+        const opaque = Buffer.alloc(8, id);
+        c.sendFrame(FrameType.PING, 0, 0, opaque);
+        await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(opaque));
+        expect(c.frames.filter(f => f.type === FrameType.DATA && f.streamId === id)).toEqual([]);
+        windowUpdate(id, window);
+        const frames = await dataFrames(c, id, 1);
+        if (!(frames[0].flags & END_STREAM)) {
+          // The first window was smaller than the body: open it wide for the rest.
+          windowUpdate(id, 1000);
+          frames.push(await c.waitFor(f => f.type === FrameType.DATA && f.streamId === id && f !== frames[0]));
+        }
+        seen.push({ window, frames: frames.map(unpad) });
+      }
+      return seen;
+    });
+    expect(seen).toEqual(cases);
+  });
+
+  test("PADDING_STRATEGY_ALIGNED makes a HEADERS frame a multiple of 8 bytes, frame header included", async () => {
+    // Response header blocks that grow by a byte each, so every remainder of (9 + length) % 8 occurs.
+    const fills = Array.from({ length: 16 }, (_, fill) => fill);
+    const responseHeaders = (paddingStrategy: number) =>
+      withPaddedServer(paddingStrategy, undefined, async c => {
+        const frames: Frame[] = [];
+        for (const fill of fills) {
+          const id = 2 * fill + 1;
+          c.sendFrame(FrameType.HEADERS, END_HEADERS | END_STREAM, id, request({ "x-size": 1, "x-fill": fill }));
+          frames.push(await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === id));
+        }
+        return frames;
+      });
+    // The same responses without padding. Each session has its own HPACK encoder, so the blocks match.
+    const plain = await responseHeaders(PADDING_STRATEGY_NONE);
+    const padded = await responseHeaders(PADDING_STRATEGY_ALIGNED);
+    expect([...new Set(plain.map(f => (9 + f.length) % 8))].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(padded.map(f => ({ flags: f.flags, payload: f.payload.toString("hex") }))).toEqual(
+      plain.map(f => withPadding(f, aligned(f.length).padLength)),
+    );
+  });
+
+  // RFC 9113 §6.2 puts Pad Length first and the priority fields second. The priority fields are
+  // part of the payload that PADDING_STRATEGY_ALIGNED aligns.
+  test.each<[string, number, (n: number) => number | null]>([
+    ["PADDING_STRATEGY_ALIGNED", PADDING_STRATEGY_ALIGNED, n => aligned(n).padLength],
+    ["PADDING_STRATEGY_MAX", PADDING_STRATEGY_MAX, () => 255],
+  ])("%s pads a HEADERS frame that carries priority fields", async (_, paddingStrategy, padLength) => {
+    async function requestHeaders(strategy: number): Promise<Frame> {
+      const raw = await RawH2Server.listen();
+      try {
+        const client = http2.connect(`http://127.0.0.1:${raw.port}`, { paddingStrategy: strategy });
+        client.on("error", () => {});
+        try {
+          const req = client.request({ ":path": "/", ":authority": "localhost" }, { exclusive: true });
+          req.on("error", () => {});
+          return await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+        } finally {
+          client.destroy();
+        }
+      } finally {
+        raw.close();
+      }
+    }
+    const plain = await requestHeaders(PADDING_STRATEGY_NONE);
+    const padded = await requestHeaders(paddingStrategy);
+    // The premise: priority fields that start with the exclusive bit, and a length that
+    // PADDING_STRATEGY_ALIGNED has to pad.
+    expect({
+      flags: plain.flags & (PADDED | PRIORITY),
+      exclusive: plain.payload[0],
+      aligned: (9 + plain.length) % 8 === 0,
+    }).toEqual({ flags: PRIORITY, exclusive: 0x80, aligned: false });
+    expect({ flags: padded.flags, payload: padded.payload.toString("hex") }).toEqual(
+      withPadding(plain, padLength(plain.length)),
+    );
+  });
+});
+
 function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc(0)): Buffer {
   return Buffer.concat([
     Buffer.from([method === "POST" ? 0x83 : 0x82, 0x86, 0x84, 0x01]),

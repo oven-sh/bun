@@ -323,7 +323,7 @@ describe("Bun.Transpiler replMode", () => {
       },
     );
 
-    test.each(["bun", "browser"] as const)(
+    test.each(["bun", "node", "browser"] as const)(
       "`require.main === module` is not folded to `import.meta.main` with target %s",
       async target => {
         const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true, target });

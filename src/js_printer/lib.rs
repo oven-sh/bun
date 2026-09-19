@@ -1348,8 +1348,7 @@ pub struct Options<'a> {
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub target: bun_ast::Target,
-    /// The output is a script for `vm.runInContext`, so `import.meta` is not
-    /// available and `require` comes from the context.
+    /// The output is a script, so it must not use `import.meta`.
     pub repl_mode: bool,
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
@@ -3350,6 +3349,10 @@ pub(crate) mod __gated_printer {
                             self.options.module_type != bundle_opts::Format::InternalBakeDev
                         );
 
+                        let wrap = level.gte(Level::Equals);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
 
@@ -3365,7 +3368,7 @@ pub(crate) mod __gated_printer {
                             self.print_whitespacer(ws!(b".main == "));
                         }
 
-                        if self.options.target == bun_ast::Target::Node {
+                        if self.options.target == bun_ast::Target::Node && !self.options.repl_mode {
                             // "__require.module"
                             if let Some(require) = self.options.require_ref {
                                 self.print_symbol(require);
@@ -3377,6 +3380,9 @@ pub(crate) mod __gated_printer {
                             self.print_symbol(self.options.commonjs_module_ref);
                         } else {
                             self.print(b"module");
+                        }
+                        if wrap {
+                            self.print(b")");
                         }
                     }
                 }

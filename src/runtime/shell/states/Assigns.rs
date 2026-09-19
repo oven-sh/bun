@@ -21,6 +21,10 @@ pub struct Assigns {
     pub node: bun_ptr::RawSlice<ast::Assign>,
     pub(crate) state: AssignsState,
     pub ctx: AssignCtx,
+    /// Status of the last `$(...)` performed while expanding the values, 0 if
+    /// none. An assignment list with no command name completes with it
+    /// (POSIX 2.9.1), so `FOO=$(false)` fails the way `false` does.
+    cmd_subst_exit_code: ExitCode,
 }
 
 #[derive(Default)]
@@ -47,6 +51,7 @@ impl Assigns {
             node: bun_ptr::RawSlice::new(node),
             state: AssignsState::Idle,
             ctx,
+            cmd_subst_exit_code: 0,
         }))
     }
 
@@ -76,8 +81,18 @@ impl Assigns {
                     return Expansion::start(interp, child);
                 }
                 AssignsState::Done => {
-                    let parent = interp.as_assigns(this).base.parent;
-                    return interp.child_done(parent, this, 0);
+                    let (parent, exit_code) = {
+                        let me = interp.as_assigns(this);
+                        let exit_code = match me.ctx {
+                            AssignCtx::Shell => me.cmd_subst_exit_code,
+                            // `Cmd` treats a nonzero status from this node as
+                            // an expansion failure; the command being prefixed
+                            // supplies the status (`FOO=$(false) echo hi` is 0).
+                            AssignCtx::Cmd => 0,
+                        };
+                        (me.base.parent, exit_code)
+                    };
+                    return interp.child_done(parent, this, exit_code);
                 }
             }
         }
@@ -108,8 +123,19 @@ impl Assigns {
             unreachable!("Assigns child_done outside Expanding")
         };
         // `idx` was bounds-checked in `next` before spawning the child.
-        let label = node.slice()[*idx as usize].label;
+        let assign = &node.slice()[*idx as usize];
         *idx += 1;
+
+        // Expansion reports `out_exit_code` only for a value that is a bare
+        // `$(...)` (0 when it succeeded). A value without a substitution leaves
+        // the status of an earlier one alone: `FOO=$(exit 3) BAR=x` is 3, while
+        // `FOO=$(exit 3) BAR=$(true)` is 0.
+        if matches!(
+            assign.value,
+            ast::Atom::Simple(ast::SimpleAtom::CmdSubst(_))
+        ) {
+            interp.as_assigns_mut(this).cmd_subst_exit_code = out.out_exit_code;
+        }
 
         // Join multi-word expansions with a single space. `ExpansionOut` stores all words contiguously in `buf`
         // with `bounds` marking inter-word offsets, so the merged value is
@@ -130,7 +156,7 @@ impl Assigns {
 
         let value_ref = EnvStr::init_ref_counted(value.into_boxed_slice());
         interp.as_assigns_mut(this).base.shell_mut().assign_var(
-            EnvStr::init_slice(label),
+            EnvStr::init_slice(assign.label),
             value_ref,
             ctx,
         );

@@ -1212,6 +1212,32 @@ describe.concurrent("bun patch and the symlinks above the package folder", () =>
     expect(readdirSync(join(packageDir, "real-node-modules", "no-deps")).sort()).toEqual(["index.js", "package.json"]);
   });
 
+  test("keeps a symlink above the project when the argument is an absolute path", async () => {
+    // The absolute path names the project through `link`, so `link` is a component of the path.
+    using dir = tempDir("bun-patch-symlinked-parent", {
+      real: { project: { "package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0" } }) } },
+    });
+    symlinkSync(join(String(dir), "real"), join(String(dir), "link"), "junction");
+    const packageDir = join(String(dir), "link", "project");
+    await registry.writeBunfig(packageDir, { linker: "hoisted" });
+
+    await install(packageDir);
+
+    // On Windows only a forward slash after `node_modules` makes the argument a path.
+    const { stderr, exitCode } = await runBun(packageDir, "patch", `${packageDir}/node_modules/no-deps`);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(isLink(String(dir), "link")).toBe(true);
+    expect(await Bun.file(join(packageDir, "package.json")).json()).toEqual({
+      name: "root",
+      dependencies: { "no-deps": "1.0.0" },
+    });
+    expect(
+      await Bun.file(join(String(dir), "real", "project", "node_modules", "no-deps", "package.json")).json(),
+    ).toEqual({ name: "no-deps", version: "1.0.0" });
+  });
+
   // A path through node_modules/.bun/<storepath> reaches into the shared entry. In the entry of
   // no-deps the package folder is a real directory. In the entry of two-range-deps it is a link
   // to the entry of no-deps, and that link is inside the shared entry too.

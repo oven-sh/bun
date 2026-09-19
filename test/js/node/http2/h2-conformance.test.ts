@@ -1929,11 +1929,23 @@ describe("stream release after a queued END_STREAM", () => {
   });
 });
 
+const RESPONSE_200 = Buffer.from([0x88]); // ":status: 200", static table
+const END_STREAM = 0x1;
+const END_HEADERS = 0x4;
+
+/** Two PING round trips: what the client wrote before it read the first PING has arrived. */
+let pings = 0;
+async function twoRoundTrips(raw: RawH2Server) {
+  for (let i = 0; i < 2; i++) {
+    const payload = Buffer.alloc(8);
+    payload.writeUInt32BE(++pings, 4);
+    raw.sendFrame(FrameType.PING, 0, 0, payload);
+    await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(payload));
+  }
+}
+
 describe.concurrent("a client closes a pushed stream (RFC 9113 §8.4.2)", () => {
   // Expected values are what node v26.3.0 reports against the same raw server.
-  const RESPONSE_200 = Buffer.from([0x88]); // ":status: 200", static table
-  const END_STREAM = 0x1;
-  const END_HEADERS = 0x4;
 
   /** Connect, run `act` on the pushed stream inside 'stream', and record what the stream reports. */
   function connectAndRecordPush(raw: RawH2Server, act: (pushed: http2.ClientHttp2Stream) => void) {
@@ -1984,17 +1996,6 @@ describe.concurrent("a client closes a pushed stream (RFC 9113 §8.4.2)", () => 
         ...more,
       ]),
     );
-  }
-
-  /** Two PING round trips: what the client wrote before it read the first PING has arrived. */
-  let pings = 0;
-  async function twoRoundTrips(raw: RawH2Server) {
-    for (let i = 0; i < 2; i++) {
-      const payload = Buffer.alloc(8);
-      payload.writeUInt32BE(++pings, 4);
-      raw.sendFrame(FrameType.PING, 0, 0, payload);
-      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(payload));
-    }
   }
 
   /** What the client sent on the pushed stream, a late frame included. */
@@ -2214,4 +2215,35 @@ describe.concurrent("a client closes a pushed stream (RFC 9113 §8.4.2)", () => 
       raw.close();
     }
   });
+});
+
+// The same race on a request stream. node v26.3.0 closes the session here too.
+test("a response that was in flight when the client cancelled the request opens no stream", async () => {
+  const raw = await RawH2Server.listen();
+  const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+  client.on("error", () => {});
+  try {
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+    raw.sendFrame(FrameType.SETTINGS, 0, 0);
+    raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+    const reqClosed = once(req, "close");
+    req.close(http2.constants.NGHTTP2_CANCEL);
+    await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+    // The response that the server sent before the reset reached it.
+    raw.sendFrame(FrameType.HEADERS, END_HEADERS, 1, RESPONSE_200);
+    raw.sendFrame(FrameType.DATA, END_STREAM, 1, Buffer.from("late"));
+    await twoRoundTrips(raw);
+    await reqClosed;
+    // The late frames must not count as an open stream, or close() waits forever.
+    const sessionClosed = once(client, "close");
+    client.close();
+    await sessionClosed;
+    expect(client.destroyed).toBe(true);
+  } finally {
+    client.destroy();
+    raw.close();
+  }
 });

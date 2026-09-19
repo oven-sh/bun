@@ -578,9 +578,10 @@ impl Connection {
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
         // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
-        // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
-        // evicted id re-opens a fresh entry (the parity checks in handle_headers still apply); that
+        // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. On a server a late
+        // HEADERS for an evicted id re-opens a fresh entry (the parity check still applies); that
         // matches how trailers-after-close are treated as a new block by the legacy parser as well.
+        // On a client it takes the closed-stream path (handle_headers).
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
         for (id, s) in self.streams.iter() {
@@ -932,20 +933,20 @@ impl Connection {
             return true;
         }
         let refused = is_new && self.is_server && !sink.can_open_stream();
-        // §8.4: a server opens a stream only with PUSH_PROMISE, which creates the entry for the
-        // promised id. HEADERS for an even id with no entry are for a promised stream that is
-        // already closed here (the client reset it and the response was in flight), or for an
-        // id that no PUSH_PROMISE reserved. Neither opens a stream: both take the closed-stream
-        // path.
-        let closed_push = is_new && !self.is_server && hdr.stream_id.is_multiple_of(2);
+        // On a client a stream exists because the embedder opened it (a request) or because
+        // PUSH_PROMISE reserved it here (§8.4: a server opens a stream in no other way). HEADERS
+        // for any other id are for a stream that is already closed (the client reset it and the
+        // response was in flight) or that never existed. Neither opens a stream: both take the
+        // closed-stream path.
+        let unknown_on_client = is_new && !self.is_server && !sink.is_local_stream(hdr.stream_id);
         let mut disposition = if refused {
             BlockDisposition::Refused
-        } else if closed_push {
+        } else if unknown_on_client {
             BlockDisposition::StreamClosed
         } else {
             BlockDisposition::Deliver
         };
-        if !refused && !closed_push {
+        if !refused && !unknown_on_client {
             let cur_state = self
                 .streams
                 .entry(hdr.stream_id)
@@ -999,7 +1000,7 @@ impl Connection {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-            if !refused && !closed_push {
+            if !refused && !unknown_on_client {
                 sink.on_stream_open(hdr.stream_id);
             }
         }
@@ -1924,7 +1925,8 @@ impl Connection {
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
     /// has the same observable behavior as scan-eviction of a Closed stream: late frames
     /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
-    /// answer) and a late HEADERS re-opens a fresh entry (never for an even id on a client).
+    /// answer) and a late HEADERS re-opens a fresh entry on a server. On a client it takes the
+    /// closed-stream path too.
     pub fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }

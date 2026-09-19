@@ -4960,8 +4960,8 @@ class ClientHttp2Session extends Http2Session {
 
   static #Handlers = {
     binaryType: "buffer",
-    // Never for an even id: the parser reports a pushed stream through streamPush, and HEADERS on
-    // an even id with no open push never open a stream.
+    // Only for request(): HEADERS from the server never open a stream on a client, and the parser
+    // reports a pushed stream through streamPush.
     streamStart(self: ClientHttp2Session) {
       if (!self) return;
       self.#connections++;

@@ -1,27 +1,14 @@
 {
   // The CI scripts: pipeline generation, the agent service, the test runner
-  // and their shared helpers. Same strictness as scripts/build/tsconfig.json.
-  // They run under plain `node` (type stripping), so only erasable syntax.
+  // and what they share. They run under plain `node` (type stripping), so only
+  // erasable syntax.
+  "extends": "./build/tsconfig.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
     // runner.node.ts imports test/docker/prestart-map.mjs.
     "allowJs": true,
-    "noEmit": true,
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "noImplicitOverride": true,
-    "exactOptionalPropertyTypes": true,
-    "erasableSyntaxOnly": true,
-    "skipLibCheck": true,
-    "types": ["../packages/bun-types"],
-    "verbatimModuleSyntax": true
+    // `extends` does not rebase this path.
+    "types": ["../packages/bun-types"]
   },
-  "include": ["process.ts", "buildkite.ts", "agent.ts", "runner.node.ts", "machine.ts", "../.buildkite/ci.ts"],
-  "exclude": ["node_modules"]
+  "include": ["agent.ts", "buildkite.ts", "runner.node.ts", "machine.ts", "../.buildkite/ci.ts"]
 }

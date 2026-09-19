@@ -8,15 +8,19 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
+import { isWindows, output, run } from "../scripts/agent.ts";
 import {
   curl,
   getBuildMetadata,
   getCommit,
   getCommitMessage,
+  getEnv,
   getLastSuccessfulBuild,
   getRepositoryUrl,
   getSecret,
+  isBuildkite,
   isFork,
+  isGithubAction,
   isMainBranch,
   isMergeQueue,
   isPullRequest,
@@ -24,7 +28,6 @@ import {
   startGroup,
   uploadArtifact,
 } from "../scripts/buildkite.ts";
-import { getEnv, isBuildkite, isGithubAction, isWindows, spawn, spawnSafe } from "../scripts/process.ts";
 
 function parseGitRepository(url: string | URL): string | undefined {
   const parsed = parseGitUrl(url);
@@ -41,7 +44,7 @@ function parseGitRepository(url: string | URL): string | undefined {
 function getRepository(cwd?: string): string | undefined {
   if (!cwd) {
     if (isGithubAction) {
-      const repository = getEnv("GITHUB_REPOSITORY", false);
+      const repository = process.env.GITHUB_REPOSITORY;
       if (repository) {
         return repository;
       }
@@ -70,9 +73,9 @@ function getBuildNumber(): number | undefined {
 
 function isBuildManual(): boolean | undefined {
   if (isBuildkite) {
-    const buildSource = getEnv("BUILDKITE_SOURCE", false);
+    const buildSource = process.env.BUILDKITE_SOURCE;
     if (buildSource) {
-      const buildId = getEnv("BUILDKITE_REBUILT_FROM_BUILD_ID", false);
+      const buildId = process.env.BUILDKITE_REBUILT_FROM_BUILD_ID;
       return buildSource === "ui" && !buildId;
     }
   }
@@ -107,12 +110,9 @@ function parseBoolean(value: string): boolean | undefined {
   return undefined;
 }
 
-async function setBuildMetadata(name: string, value: string): Promise<void> {
-  if (isBuildkite) {
-    const { error } = await spawn(["buildkite-agent", "meta-data", "set", name, value]);
-    if (error) {
-      console.error(`Failed to set build meta-data '${name}':`, error);
-    }
+function setBuildMetadata(name: string, value: string): void {
+  if (isBuildkite && output(["buildkite-agent", "meta-data", "set", name, value]) === undefined) {
+    console.error(`Failed to set build meta-data '${name}'`);
   }
 }
 
@@ -155,7 +155,7 @@ async function getCanaryRevision(): Promise<number> {
 }
 
 function getGithubApiUrl(): URL {
-  return new URL(getEnv("GITHUB_API_URL", false) || "https://api.github.com");
+  return new URL(process.env.GITHUB_API_URL || "https://api.github.com");
 }
 
 function toYaml(obj: object, indent = 0): string {
@@ -1054,7 +1054,6 @@ function getWindowsBuildImageStep(platform: Platform, options: PipelineOptions):
       queue: "build-image",
     },
     env: {
-      DEBUG: "1",
       // Packer needs several minutes to delete its temp Azure resources after a cancel;
       // the agent's default 10s grace SIGKILLs it mid-cleanup and leaks a full
       // VM/NIC/IP stack per retry. The agent reads this from job env — there's no
@@ -1085,7 +1084,7 @@ function getLinuxBuildImageSteps(platform: Platform, options: PipelineOptions): 
   const bootstrapArgs = ["--ci", ...(features || []).map(feature => `--${feature}`)];
   // prefetch_build_deps shallow-clones the repo at this ref for the dep pins
   // in scripts/build/deps/; bake from the branch that changed them.
-  const branch = getEnv("BUILDKITE_BRANCH", false);
+  const branch = process.env.BUILDKITE_BRANCH;
   const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
 
   const bakeStep: CommandStep = {
@@ -1539,7 +1538,7 @@ function getOptionsApplyStep(): CommandStep {
     command: `${command} --apply`,
     depends_on: ["options"],
     agents: {
-      queue: getEnv("BUILDKITE_AGENT_META_DATA_QUEUE", false),
+      queue: process.env.BUILDKITE_AGENT_META_DATA_QUEUE,
     },
   };
 }
@@ -1577,7 +1576,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
   if (isManual) {
     const { fields } = getOptionsStep();
     const keys = fields?.map(({ key }) => key) ?? [];
-    const values = await Promise.all(keys.map(getBuildMetadata));
+    const values = keys.map(getBuildMetadata);
     const options = Object.fromEntries(keys.map((key, index) => [key, values[index]]));
 
     const parseArray = (value: string | undefined): string[] | undefined =>
@@ -1633,8 +1632,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
   };
 
   const isCanary =
-    !parseBoolean(getEnv("RELEASE", false) || "false") &&
-    !/\[(release|build release|release build)\]/i.test(commitMessage);
+    !parseBoolean(process.env.RELEASE || "false") && !/\[(release|build release|release build)\]/i.test(commitMessage);
 
   let buildImages = parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i);
   let publishImages = parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i);
@@ -2076,8 +2074,8 @@ async function main() {
     // is the difference between 1 API call and 150, and the per-shard calls
     // were exhausting the token's hourly rate limit under load.
     if (allFiles.length > 0) {
-      await setBuildMetadata("pr-all-files", JSON.stringify(allFiles));
-      await setBuildMetadata("pr-new-files", JSON.stringify(newFiles));
+      setBuildMetadata("pr-all-files", JSON.stringify(allFiles));
+      setBuildMetadata("pr-new-files", JSON.stringify(newFiles));
     }
   }
 
@@ -2099,7 +2097,7 @@ async function main() {
   if (isBuildkite) {
     startGroup("Uploading pipeline...");
     try {
-      await spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath], { stdio: "inherit" });
+      await run(["buildkite-agent", "pipeline", "upload", contentPath]);
     } finally {
       await uploadArtifact(contentPath);
     }

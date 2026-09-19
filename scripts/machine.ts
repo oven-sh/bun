@@ -10,15 +10,15 @@
 //   wait-image --name=<ami name> --build=<build number> [--timeout-minutes=N]
 //     Block until the Linux AMI a `…-bake-image` step produced is available.
 
-import { spawn as nodeSpawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import type { Arch } from "./agent.ts";
+import { requireCommand, run, which } from "./agent.ts";
 import { getBranch, getSecret } from "./buildkite.ts";
-import { spawnSafe, which } from "./process.ts";
 
 const PACKER_VERSION = "1.15.0";
 
@@ -109,7 +109,7 @@ async function buildWindowsImage(arch: Arch, imageDefName: string): Promise<void
   const packerBin = await ensurePacker();
 
   console.log("[packer] Initializing plugins...");
-  await spawnSafe([packerBin, "init", templateDir], { stdio: "inherit" });
+  await run([packerBin, "init", templateDir]);
 
   const branch = getBranch() ?? "";
   console.log(`[packer] Building ${templateName} image: ${imageDefName}`);
@@ -151,7 +151,7 @@ async function buildWindowsImage(arch: Arch, imageDefName: string): Promise<void
   // if the signal actually reaches the packer process and it is given time to finish the Azure
   // deletes. spawnSafe() does not forward signals, so a Buildkite cancel would orphan the whole
   // VM/NIC/IP/disk/vnet/NSG/keyvault stack in the build RG. Spawn directly and forward.
-  const child = nodeSpawn(packerBin, packerArgs, {
+  const child = spawn(packerBin, packerArgs, {
     stdio: "inherit",
     env: {
       ...process.env,
@@ -187,7 +187,7 @@ async function buildWindowsImage(arch: Arch, imageDefName: string): Promise<void
 
 /** Packer from PATH, else downloaded into the temp dir. */
 async function ensurePacker(): Promise<string> {
-  const packerPath = which("packer");
+  const packerPath = which(["packer"]);
   if (packerPath) {
     console.log("[packer] Found:", packerPath);
     return packerPath;
@@ -208,7 +208,7 @@ async function ensurePacker(): Promise<string> {
   if (!response.ok) throw new Error(`Failed to download Packer: ${response.status}`);
   writeFileSync(zipPath, Buffer.from(await response.arrayBuffer()));
 
-  await spawnSafe(["unzip", "-o", zipPath, "-d", tmpdir()], { stdio: "inherit" });
+  await run(["unzip", "-o", zipPath, "-d", tmpdir()]);
   chmodSync(localPacker, 0o755);
 
   console.log(`[packer] Installed Packer ${PACKER_VERSION}`);
@@ -222,11 +222,13 @@ type AwsImage = {
   StateReason?: { Message?: string };
 };
 
-async function describeImages(filters: string[]): Promise<AwsImage[]> {
-  const aws = which("aws", { required: true });
-  const { stdout } = await spawnSafe(
-    [aws, "ec2", "describe-images", "--owners", "self", "--filters", ...filters, "--output", "json"],
+function describeImages(filters: string[]): AwsImage[] {
+  const { error, status, stdout, stderr } = spawnSync(
+    requireCommand("aws"),
+    ["ec2", "describe-images", "--owners", "self", "--filters", ...filters, "--output", "json"],
     {
+      encoding: "utf8",
+      // The aws CLI gets these and nothing else of this job's environment.
       env: {
         AWS_ACCESS_KEY_ID: getSecret("EC2_ACCESS_KEY_ID"),
         AWS_SECRET_ACCESS_KEY: getSecret("EC2_SECRET_ACCESS_KEY"),
@@ -234,6 +236,9 @@ async function describeImages(filters: string[]): Promise<AwsImage[]> {
       },
     },
   );
+  if (error || status !== 0) {
+    throw new Error(`aws ec2 describe-images failed: ${stderr.trim()}`, { cause: error });
+  }
   const { Images } = JSON.parse(stdout) as { Images: AwsImage[] };
   return Images;
 }
@@ -253,7 +258,7 @@ async function waitImage(name: string, build: string, timeoutMinutes: number): P
   let seen: string | undefined;
   console.log(`Waiting for image ${name} (build ${build})...`);
   while (Date.now() < deadline) {
-    const images = await describeImages(filters);
+    const images = describeImages(filters);
     const [image] = images.sort((a, b) => (a.CreationDate < b.CreationDate ? 1 : -1));
     const state = image?.State ?? (seen ? "gone" : "not created yet");
     if (state !== lastState) {

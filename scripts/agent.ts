@@ -5,8 +5,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir, hostname, release } from "node:os";
+import { homedir, hostname, tmpdir as osTmpdir, release } from "node:os";
 import { dirname, join } from "node:path";
+import { normalize as normalizeWindows } from "node:path/win32";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
 
@@ -15,17 +16,15 @@ import { inspect, parseArgs } from "node:util";
 // copy. So it imports nothing but Node. The rest of the CI scripts import what
 // it knows about the machine (os, arch, abi, distro, ...) from here.
 
-const isWindows = process.platform === "win32";
-const isMacOS = process.platform === "darwin";
+export const isWindows = process.platform === "win32";
+export const isMacOS = process.platform === "darwin";
 // Node built for Termux/bionic reports "android"; CI models that as linux + abi=android.
-const isAndroid = process.platform === "android";
-const isLinux = process.platform === "linux" || isAndroid;
-const isPosix = isMacOS || isLinux || process.platform === "freebsd";
-const isBuildkite = process.env["BUILDKITE"] === "true";
-const isGithubAction = process.env["GITHUB_ACTIONS"] === "true";
+export const isAndroid = process.platform === "android";
+export const isLinux = process.platform === "linux" || isAndroid;
+export const isPosix = isMacOS || isLinux || process.platform === "freebsd";
 
 /** The path of the first of `names` found on PATH. */
-function which(names: string[]): string | undefined {
+export function which(names: string[]): string | undefined {
   const executables = isWindows ? names.flatMap(name => [name, `${name}.exe`, `${name}.cmd`]) : names;
   for (const directory of (process.env["PATH"] || "").split(isWindows ? ";" : ":")) {
     for (const executable of executables) {
@@ -39,7 +38,7 @@ function which(names: string[]): string | undefined {
 }
 
 /** The path of `name` on PATH; it has to be there. */
-function requireCommand(name: string): string {
+export function requireCommand(name: string): string {
   const path = which([name]);
   if (path === undefined) {
     throw new Error(`Command not found: ${name}`);
@@ -47,27 +46,28 @@ function requireCommand(name: string): string {
   return path;
 }
 
-function describeCommand(command: string[]): string {
+function describeCommand(command: Command): string {
   return command.map(arg => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg)).join(" ");
 }
 
+/** A program and its arguments. */
+export type Command = [string, ...string[]];
+
 /** What `command` prints, or undefined if it cannot be run or fails. */
-function output(command: string[]): string | undefined {
+export function output(command: Command, options: { cwd?: string | undefined } = {}): string | undefined {
   const [file, ...args] = command;
-  if (file === undefined) {
-    return undefined;
-  }
-  const { error, status, stdout } = spawnSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const { error, status, stdout } = spawnSync(file, args, {
+    ...options,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   return error || status !== 0 ? undefined : stdout;
 }
 
 /** Runs `command` on this process's stdio, and throws unless it exits with 0. */
-async function run(command: string[]): Promise<void> {
+export async function run(command: Command, options: { cwd?: string } = {}): Promise<void> {
   const [file, ...args] = command;
-  if (file === undefined) {
-    throw new TypeError("The command is empty");
-  }
-  const child = spawn(file, args, { stdio: "inherit" });
+  const child = spawn(file, args, { ...options, stdio: "inherit" });
   const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve, reject) => {
     child.on("error", cause => reject(new Error(`Command failed to start: ${describeCommand(command)}`, { cause })));
     child.on("close", (code, signal) => resolve([code, signal]));
@@ -95,7 +95,10 @@ type RequestOptions = {
  * yet when the agent starts at boot, so a failed attempt is repeated, a little
  * later each time. A 400, 404 or 422 is an answer, not a failure to repeat.
  */
-async function request(url: string, options: RequestOptions): Promise<{ error: Error | undefined; body: unknown }> {
+export async function request(
+  url: string,
+  options: RequestOptions,
+): Promise<{ error: Error | undefined; body: unknown }> {
   const { method = "GET", headers = {}, body: input, json, attempts } = options;
   let error: Error | undefined;
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -120,6 +123,35 @@ async function request(url: string, options: RequestOptions): Promise<{ error: E
     }
   }
   return { error, body: undefined };
+}
+
+/** The temp directory to use on this machine. */
+export function tmpdir(): string {
+  if (isWindows) {
+    for (const key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP", "RUNNER_TEMP"]) {
+      const tmpdir = process.env[key];
+      if (!tmpdir || /cygwin|cygdrive/i.test(tmpdir) || !/^[a-z]/i.test(tmpdir)) {
+        continue;
+      }
+      return normalizeWindows(tmpdir);
+    }
+
+    const appData = process.env["LOCALAPPDATA"];
+    if (appData) {
+      const appDataTemp = join(appData, "Temp");
+      if (existsSync(appDataTemp)) {
+        return appDataTemp;
+      }
+    }
+  }
+
+  if (isMacOS || isLinux) {
+    if (existsSync("/tmp")) {
+      return "/tmp";
+    }
+  }
+
+  return osTmpdir();
 }
 
 export type Os = "darwin" | "linux" | "windows" | "freebsd";
@@ -239,15 +271,15 @@ export function getAbiVersion(): string | undefined {
 }
 
 export function getHostname(): string {
-  if (isBuildkite) {
-    const agent = process.env["BUILDKITE_AGENT_NAME"];
+  if (process.env.BUILDKITE === "true") {
+    const agent = process.env.BUILDKITE_AGENT_NAME;
     if (agent) {
       return agent;
     }
   }
 
-  if (isGithubAction) {
-    const runner = process.env["RUNNER_NAME"];
+  if (process.env.GITHUB_ACTIONS === "true") {
+    const runner = process.env.RUNNER_NAME;
     if (runner) {
       return runner;
     }
@@ -859,7 +891,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
       mkdirSync(logsPath, { recursive: true });
 
       const nssm = requireCommand("nssm");
-      const nssmCommands = [
+      const nssmCommands: Command[] = [
         [nssm, "install", "buildkite-agent", command, ...args],
         [nssm, "set", "buildkite-agent", "Start", "SERVICE_AUTO_START"],
         [nssm, "set", "buildkite-agent", "AppDirectory", homePath],

@@ -6,10 +6,10 @@ import {
   getBuildLabel,
   getBuildUrl,
   getFileUrl,
+  isBuildkite,
   stripAnsi,
   unescapeGitHubAction,
 } from "../buildkite.ts";
-import { isBuildkite } from "../process.ts";
 
 function parseLevel(level?: string): "notice" | "warning" | "error" {
   if (/error|fatal|fail/i.test(level ?? "")) {

@@ -35,7 +35,22 @@ import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
-import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getOs } from "./agent.ts";
+import {
+  getAbi,
+  getAbiVersion,
+  getArch,
+  getDistro,
+  getDistroVersion,
+  getHostname,
+  getOs,
+  isAndroid,
+  isLinux,
+  isMacOS,
+  isWindows,
+  run,
+  tmpdir,
+  which,
+} from "./agent.ts";
 import {
   escapeCodeBlock,
   escapeHtml,
@@ -46,6 +61,9 @@ import {
   getCommit,
   getFileUrl,
   getSecret,
+  isBuildkite,
+  isCI,
+  isGithubAction,
   markBuildkiteStepReported,
   parseJunitFileSuites,
   printEnvironment,
@@ -56,19 +74,6 @@ import {
   uploadArtifact,
   type JunitFileSuite,
 } from "./buildkite.ts";
-import {
-  getEnv,
-  isAndroid,
-  isBuildkite,
-  isCI,
-  isGithubAction,
-  isLinux,
-  isMacOS,
-  isWindows,
-  spawnSafe,
-  tmpdir,
-  which,
-} from "./process.ts";
 
 const isX64 = process.arch === "x64";
 
@@ -80,9 +85,9 @@ async function unzip(filename: string, output?: string): Promise<string> {
   const destination = output || mkdtempSync(join(tmpdir(), "unzip-"));
   if (isWindows) {
     const command = `Expand-Archive -Force -LiteralPath "${escapePowershell(filename)}" -DestinationPath "${escapePowershell(destination)}"`;
-    await spawnSafe(["powershell", "-Command", command]);
+    await run(["powershell", "-Command", command]);
   } else {
-    await spawnSafe(["unzip", "-o", filename, "-d", destination]);
+    await run(["unzip", "-o", "-q", filename, "-d", destination]);
   }
   return destination;
 }
@@ -100,7 +105,7 @@ function getShell(): string | undefined {
     return sh;
   }
 
-  return getEnv("SHELL", false);
+  return process.env.SHELL;
 }
 
 type LiveOutputFilterOptions = {
@@ -314,11 +319,11 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["shard"]: {
       type: "string",
-      default: getEnv("BUILDKITE_PARALLEL_JOB", false) || "0",
+      default: process.env.BUILDKITE_PARALLEL_JOB || "0",
     },
     ["max-shards"]: {
       type: "string",
-      default: getEnv("BUILDKITE_PARALLEL_JOB_COUNT", false) || "1",
+      default: process.env.BUILDKITE_PARALLEL_JOB_COUNT || "1",
     },
     ["include"]: {
       type: "string",
@@ -400,8 +405,8 @@ if (isBuildkite) {
   // list once and stored it as build meta-data. Read it from there so each of
   // the ~150 test shards doesn't repeat the GitHub API call and burn through
   // the token's hourly rate limit.
-  const cachedAll = await getBuildMetadata("pr-all-files");
-  const cachedNew = await getBuildMetadata("pr-new-files");
+  const cachedAll = getBuildMetadata("pr-all-files");
+  const cachedNew = getBuildMetadata("pr-new-files");
   if (cachedAll) {
     try {
       allFiles = JSON.parse(cachedAll) as string[];
@@ -3394,13 +3399,13 @@ async function uploadJUnitToBuildKite(junitFile: string): Promise<boolean> {
   !isQuiet && console.log(`Uploading JUnit file "${fileName}" to BuildKite Test Analytics...`);
 
   // Get BuildKite environment variables for run_env fields
-  const buildId = getEnv("BUILDKITE_BUILD_ID", false);
-  const buildUrl = getEnv("BUILDKITE_BUILD_URL", false);
+  const buildId = process.env.BUILDKITE_BUILD_ID;
+  const buildUrl = process.env.BUILDKITE_BUILD_URL;
   const branch = getBranch();
   const commit = getCommit();
-  const buildNumber = getEnv("BUILDKITE_BUILD_NUMBER", false);
-  const jobId = getEnv("BUILDKITE_JOB_ID", false);
-  const message = getEnv("BUILDKITE_MESSAGE", false);
+  const buildNumber = process.env.BUILDKITE_BUILD_NUMBER;
+  const jobId = process.env.BUILDKITE_JOB_ID;
+  const message = process.env.BUILDKITE_MESSAGE;
 
   try {
     // Add a unique test suite identifier to help with correlation in BuildKite

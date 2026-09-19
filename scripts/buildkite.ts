@@ -2,27 +2,41 @@
 // the build (branch, commit, pull request, fork), cluster secrets, build
 // meta-data, artifacts, annotations and log groups.
 
-import { spawnSync as nodeSpawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
-import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getKernel, getOs } from "./agent.ts";
 import {
-  debugLog,
-  getEnv,
-  isBuildkite,
-  isCI,
-  isGithubAction,
+  getAbi,
+  getAbiVersion,
+  getArch,
+  getDistro,
+  getDistroVersion,
+  getHostname,
+  getKernel,
+  getOs,
   isLinux,
   isMacOS,
   isPosix,
   isWindows,
-  spawn,
-  spawnSafe,
-  spawnSync,
+  output,
+  run,
   tmpdir,
   which,
-} from "./process.ts";
+} from "./agent.ts";
+
+export const isBuildkite = process.env.BUILDKITE === "true";
+export const isGithubAction = process.env.GITHUB_ACTIONS === "true";
+export const isCI = process.env.CI === "true" || isBuildkite || isGithubAction;
+
+/** An environment variable that has to be set. */
+export function getEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Environment variable is missing: ${name}`);
+  }
+  return value;
+}
 
 type SecretOptions = {
   required?: boolean;
@@ -33,19 +47,16 @@ export function getSecret(name: string, options?: SecretOptions & { required?: t
 export function getSecret(name: string, options: SecretOptions): string | undefined;
 
 export function getSecret(name: string, options: SecretOptions = { required: true }): string | undefined {
-  const value = getEnv(name, false);
+  const value = process.env[name];
   if (value) {
     return value;
   }
 
   if (isBuildkite) {
-    const command = ["buildkite-agent", "secret", "get", name];
-
-    const { error, stdout } = spawnSync(command);
-    const secret = stdout.trim();
-    if (error || !secret) {
-      const orgId = getEnv("BUILDKITE_ORGANIZATION_SLUG", false);
-      const clusterId = getEnv("BUILDKITE_CLUSTER_ID", false);
+    const secret = output(["buildkite-agent", "secret", "get", name])?.trim();
+    if (!secret) {
+      const orgId = process.env.BUILDKITE_ORGANIZATION_SLUG;
+      const clusterId = process.env.BUILDKITE_CLUSTER_ID;
 
       let hint;
       if (orgId && clusterId) {
@@ -54,14 +65,14 @@ export function getSecret(name: string, options: SecretOptions = { required: tru
         hint = "https://buildkite.com/docs/pipelines/buildkite-secrets";
       }
 
-      throw new Error(`Secret not found: ${name} (hint: go to ${hint} and create a secret)`, { cause: error });
+      throw new Error(`Secret not found: ${name} (hint: go to ${hint} and create a secret)`);
     }
 
     setEnv(name, secret);
     return secret;
   }
 
-  return getEnv(name, options["required"]);
+  return options.required ? getEnv(name) : undefined;
 }
 
 function setEnv(name: string, value: string | undefined): void {
@@ -80,7 +91,7 @@ function setEnv(name: string, value: string | undefined): void {
 export function parseGitUrl(url: string | URL): URL | undefined {
   const string = typeof url === "string" ? url : url.toString();
 
-  const githubUrl = getEnv("GITHUB_SERVER_URL", false) || "https://github.com";
+  const githubUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
   if (/^git@github\.com:/.test(string)) {
     return new URL(string.slice(15).replace(/\.git$/, ""), githubUrl);
   }
@@ -94,23 +105,23 @@ export function parseGitUrl(url: string | URL): URL | undefined {
 export function getRepositoryUrl(cwd?: string): URL | undefined {
   if (!cwd) {
     if (isBuildkite) {
-      const repository = getEnv("BUILDKITE_REPO", false);
+      const repository = process.env.BUILDKITE_REPO;
       if (repository) {
         return parseGitUrl(repository);
       }
     }
 
     if (isGithubAction) {
-      const serverUrl = getEnv("GITHUB_SERVER_URL", false) || "https://github.com";
-      const repository = getEnv("GITHUB_REPOSITORY", false);
+      const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
+      const repository = process.env.GITHUB_REPOSITORY;
       if (serverUrl && repository) {
         return parseGitUrl(new URL(repository, serverUrl));
       }
     }
   }
 
-  const { error, stdout } = spawnSync(["git", "remote", "get-url", "origin"], { cwd });
-  if (!error) {
+  const stdout = output(["git", "remote", "get-url", "origin"], { cwd });
+  if (stdout !== undefined) {
     return parseGitUrl(stdout.trim());
   }
 
@@ -120,22 +131,22 @@ export function getRepositoryUrl(cwd?: string): URL | undefined {
 export function getCommit(cwd?: string): string | undefined {
   if (!cwd) {
     if (isBuildkite) {
-      const commit = getEnv("BUILDKITE_COMMIT", false);
+      const commit = process.env.BUILDKITE_COMMIT;
       if (commit) {
         return commit;
       }
     }
 
     if (isGithubAction) {
-      const commit = getEnv("GITHUB_SHA", false);
+      const commit = process.env.GITHUB_SHA;
       if (commit) {
         return commit;
       }
     }
   }
 
-  const { error, stdout } = spawnSync(["git", "rev-parse", "HEAD"], { cwd });
-  if (!error) {
+  const stdout = output(["git", "rev-parse", "HEAD"], { cwd });
+  if (stdout !== undefined) {
     return stdout.trim();
   }
 
@@ -145,15 +156,15 @@ export function getCommit(cwd?: string): string | undefined {
 export function getCommitMessage(cwd?: string): string | undefined {
   if (!cwd) {
     if (isBuildkite) {
-      const message = getEnv("BUILDKITE_MESSAGE", false);
+      const message = process.env.BUILDKITE_MESSAGE;
       if (message) {
         return message;
       }
     }
   }
 
-  const { error, stdout } = spawnSync(["git", "log", "-1", "--pretty=%B"], { cwd });
-  if (!error) {
+  const stdout = output(["git", "log", "-1", "--pretty=%B"], { cwd });
+  if (stdout !== undefined) {
     return stdout.trim();
   }
 
@@ -163,22 +174,22 @@ export function getCommitMessage(cwd?: string): string | undefined {
 export function getBranch(cwd?: string): string | undefined {
   if (!cwd) {
     if (isBuildkite) {
-      const branch = getEnv("BUILDKITE_BRANCH", false);
+      const branch = process.env.BUILDKITE_BRANCH;
       if (branch) {
         return branch;
       }
     }
 
     if (isGithubAction) {
-      const ref = getEnv("GITHUB_REF_NAME", false);
+      const ref = process.env.GITHUB_REF_NAME;
       if (ref) {
         return ref;
       }
     }
   }
 
-  const { error, stdout } = spawnSync(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd });
-  if (!error) {
+  const stdout = output(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd });
+  if (stdout !== undefined) {
     return stdout.trim();
   }
 
@@ -188,22 +199,22 @@ export function getBranch(cwd?: string): string | undefined {
 function getMainBranch(cwd?: string): string | undefined {
   if (!cwd) {
     if (isBuildkite) {
-      const branch = getEnv("BUILDKITE_PIPELINE_DEFAULT_BRANCH", false);
+      const branch = process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH;
       if (branch) {
         return branch;
       }
     }
 
     if (isGithubAction) {
-      const headRef = getEnv("GITHUB_HEAD_REF", false);
+      const headRef = process.env.GITHUB_HEAD_REF;
       if (headRef) {
         return headRef;
       }
     }
   }
 
-  const { error, stdout } = spawnSync(["git", "symbolic-ref", "refs/remotes/origin/HEAD"], { cwd });
-  if (!error) {
+  const stdout = output(["git", "symbolic-ref", "refs/remotes/origin/HEAD"], { cwd });
+  if (stdout !== undefined) {
     return stdout.trim().replace("refs/remotes/origin/", "");
   }
 
@@ -224,11 +235,11 @@ type GithubEvent = {
 
 export function isPullRequest(): boolean {
   if (isBuildkite) {
-    return !isNaN(parseInt(getEnv("BUILDKITE_PULL_REQUEST", false) ?? ""));
+    return !isNaN(parseInt(process.env.BUILDKITE_PULL_REQUEST ?? ""));
   }
 
   if (isGithubAction) {
-    return /pull_request|merge_group/.test(getEnv("GITHUB_EVENT_NAME", false) ?? "");
+    return /pull_request|merge_group/.test(process.env.GITHUB_EVENT_NAME ?? "");
   }
 
   return false;
@@ -236,14 +247,14 @@ export function isPullRequest(): boolean {
 
 function getPullRequest(): number | undefined {
   if (isBuildkite) {
-    const pullRequest = getEnv("BUILDKITE_PULL_REQUEST", false);
+    const pullRequest = process.env.BUILDKITE_PULL_REQUEST;
     if (pullRequest) {
       return parseInt(pullRequest);
     }
   }
 
   if (isGithubAction) {
-    const eventPath = getEnv("GITHUB_EVENT_PATH", false);
+    const eventPath = process.env.GITHUB_EVENT_PATH;
     if (eventPath && existsSync(eventPath)) {
       const event = JSON.parse(readFileSync(eventPath, "utf8")) as GithubEvent;
       const pullRequest = event["pull_request"];
@@ -259,11 +270,11 @@ function getPullRequest(): number | undefined {
 function getTargetBranch(): string | undefined {
   if (isPullRequest()) {
     if (isBuildkite) {
-      return getEnv("BUILDKITE_PULL_REQUEST_BASE_BRANCH", false);
+      return process.env.BUILDKITE_PULL_REQUEST_BASE_BRANCH;
     }
 
     if (isGithubAction) {
-      return getEnv("GITHUB_BASE_REF", false);
+      return process.env.GITHUB_BASE_REF;
     }
   }
 
@@ -272,12 +283,12 @@ function getTargetBranch(): string | undefined {
 
 export function isFork(): boolean {
   if (isBuildkite) {
-    const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false);
-    return !!repository && repository !== getEnv("BUILDKITE_REPO", false);
+    const repository = process.env.BUILDKITE_PULL_REQUEST_REPO;
+    return !!repository && repository !== process.env.BUILDKITE_REPO;
   }
 
   if (isGithubAction) {
-    const eventPath = getEnv("GITHUB_EVENT_PATH", false);
+    const eventPath = process.env.GITHUB_EVENT_PATH;
     if (eventPath && existsSync(eventPath)) {
       const event = JSON.parse(readFileSync(eventPath, "utf8")) as GithubEvent;
       const pullRequest = event["pull_request"];
@@ -297,12 +308,11 @@ export function isMergeQueue(cwd?: string): boolean {
 function getGithubToken(): string | undefined {
   const cachedToken = getSecret("GITHUB_TOKEN", { required: false });
 
-  if (typeof cachedToken === "string" || !which("gh")) {
+  if (typeof cachedToken === "string" || !which(["gh"])) {
     return cachedToken || undefined;
   }
 
-  const { error, stdout } = spawnSync(["gh", "auth", "token"]);
-  const token = error ? "" : stdout.trim();
+  const token = output(["gh", "auth", "token"])?.trim() ?? "";
 
   setEnv("GITHUB_TOKEN", token);
   return token || undefined;
@@ -352,11 +362,9 @@ export async function curl(url: string | URL, options: CurlOptions = {}): Promis
       response = await fetch(href, { headers });
       body = json && response.ok ? await response.json() : await response.text();
     } catch (cause) {
-      debugLog("$", "curl", href, "-> error");
       error = new Error(`Fetch failed: GET ${url}`, { cause });
       continue;
     }
-    debugLog("$", "curl", href, "->", response.status, response.statusText);
 
     if (response.ok) {
       // An earlier attempt's failure is not this request's.
@@ -398,7 +406,7 @@ export function getBuildUrl(): URL | undefined {
   }
 
   if (isGithubAction) {
-    const baseUrl = getEnv("GITHUB_SERVER_URL", false) || "https://github.com";
+    const baseUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
     const repository = getEnv("GITHUB_REPOSITORY");
     const runId = getEnv("GITHUB_RUN_ID");
     return new URL(`${repository}/actions/runs/${runId}`, baseUrl);
@@ -409,14 +417,14 @@ export function getBuildUrl(): URL | undefined {
 
 export function getBuildLabel(): string | undefined {
   if (isBuildkite) {
-    const label = getEnv("BUILDKITE_LABEL", false) || getEnv("BUILDKITE_GROUP_LABEL", false);
+    const label = process.env.BUILDKITE_LABEL || process.env.BUILDKITE_GROUP_LABEL;
     if (label) {
       return label;
     }
   }
 
   if (isGithubAction) {
-    const label = getEnv("GITHUB_WORKFLOW", false);
+    const label = process.env.GITHUB_WORKFLOW;
     if (label) {
       return label;
     }
@@ -429,11 +437,10 @@ export function getFileUrl(filename?: string, line?: number | string): URL | str
   let cwd: string | undefined;
   if (filename?.startsWith("vendor")) {
     const parentPath = resolve(dirname(filename));
-    const { error, stdout } = spawnSync(["git", "rev-parse", "--show-toplevel"], { cwd: parentPath });
-    if (error) {
+    cwd = output(["git", "rev-parse", "--show-toplevel"], { cwd: parentPath })?.trim();
+    if (cwd === undefined) {
       return;
     }
-    cwd = stdout.trim();
   }
 
   const baseUrl = getRepositoryUrl(cwd);
@@ -502,10 +509,7 @@ export async function getLastSuccessfulBuild(): Promise<BuildkiteBuild | undefin
  */
 export async function uploadArtifact(filename: string): Promise<void> {
   if (isBuildkite) {
-    await spawnSafe(["buildkite-agent", "artifact", "upload", basename(filename)], {
-      cwd: dirname(filename),
-      stdio: "inherit",
-    });
+    await run(["buildkite-agent", "artifact", "upload", basename(filename)], { cwd: dirname(filename) });
   } else {
     console.warn(`not in buildkite. artifact ${filename} not uploaded.`);
   }
@@ -614,8 +618,8 @@ function getTailscale(): string {
 
 function getTailscaleIp(): string | undefined {
   const tailscale = getTailscale();
-  const { error, stdout } = spawnSync([tailscale, "ip", "--1"]);
-  if (!error) {
+  const stdout = output([tailscale, "ip", "--1"]);
+  if (stdout !== undefined) {
     return stdout.trim();
   }
 
@@ -624,8 +628,8 @@ function getTailscaleIp(): string | undefined {
 
 function getPublicIp(): string | undefined {
   for (const url of ["https://checkip.amazonaws.com", "https://ipinfo.io/ip"]) {
-    const { error, stdout } = spawnSync(["curl", url]);
-    if (!error) {
+    const stdout = output(["curl", url]);
+    if (stdout !== undefined) {
       return stdout.trim();
     }
   }
@@ -638,15 +642,9 @@ function getUsername(): string {
   return username;
 }
 
-export async function getBuildMetadata(name: string): Promise<string | undefined> {
+export function getBuildMetadata(name: string): string | undefined {
   if (isBuildkite) {
-    const { error, stdout } = await spawn(["buildkite-agent", "meta-data", "get", name]);
-    if (!error) {
-      const value = stdout.trim();
-      if (value) {
-        return value;
-      }
-    }
+    return output(["buildkite-agent", "meta-data", "get", name])?.trim() || undefined;
   }
 
   return undefined;
@@ -676,7 +674,7 @@ export function reportAnnotationToBuildKite({
   // context is too long`). rustc diagnostic titles routinely exceed that and
   // were silently dropped, leaving only short warnings visible in the UI.
   const ctx = `${context || label}`.slice(0, 100);
-  const { error, status, signal, stderr } = nodeSpawnSync(
+  const { error, status, signal, stderr } = spawnSync(
     "buildkite-agent",
     ["annotate", "--append", "--style", `${style}`, "--context", ctx, "--priority", `${priority}`],
     {
@@ -714,9 +712,9 @@ export function reportAnnotationToBuildKite({
  */
 export function markBuildkiteStepReported(): void {
   if (!isBuildkite) return;
-  const jobId = getEnv("BUILDKITE_JOB_ID", false);
+  const jobId = process.env.BUILDKITE_JOB_ID;
   if (!jobId) return;
-  const { status } = nodeSpawnSync("buildkite-agent", ["meta-data", "set", `reported-${jobId}`, "1"], {
+  const { status } = spawnSync("buildkite-agent", ["meta-data", "set", `reported-${jobId}`, "1"], {
     stdio: "ignore",
     timeout: 30_000,
   });
@@ -795,49 +793,24 @@ export function printEnvironment(): void {
       }
     });
 
+    const show = (title: string, shells: string[], ...scripts: string[]) =>
+      startGroup(title, () => {
+        const shell = which(shells);
+        for (const script of shell ? scripts : []) {
+          spawnSync(shell!, ["-c", script], { stdio: "inherit" });
+        }
+      });
     if (isPosix) {
-      startGroup("Limits", () => {
-        const shell = which(["sh", "bash"]);
-        if (shell) {
-          spawnSync([shell, "-c", "ulimit -a"], { stdio: "inherit" });
-        }
-      });
-      startGroup("Disk (df)", () => {
-        const shell = which(["sh", "bash"]);
-        if (shell) {
-          spawnSync([shell, "-c", "df"], { stdio: "inherit" });
-        }
-      });
+      show("Limits", ["sh", "bash"], "ulimit -a");
+      show("Disk (df)", ["sh", "bash"], "df");
     }
     if (isLinux) {
-      startGroup("Memory", () => {
-        const shell = which(["sh", "bash"]);
-        if (shell) {
-          spawnSync([shell, "-c", "free -m -w"], { stdio: "inherit" });
-        }
-      });
-      startGroup("Docker", () => {
-        const shell = which(["sh", "bash"]);
-        if (shell) {
-          spawnSync([shell, "-c", "docker ps"], { stdio: "inherit" });
-        }
-      });
+      show("Memory", ["sh", "bash"], "free -m -w");
+      show("Docker", ["sh", "bash"], "docker ps");
     }
     if (isWindows) {
-      startGroup("Disk (win)", () => {
-        const shell = which(["pwsh"]);
-        if (shell) {
-          spawnSync([shell, "-c", "get-psdrive"], { stdio: "inherit" });
-        }
-      });
-      startGroup("Memory", () => {
-        const shell = which(["pwsh"]);
-        if (shell) {
-          spawnSync([shell, "-c", "Get-Counter '\\Memory\\Available MBytes'"], { stdio: "inherit" });
-          console.log();
-          spawnSync([shell, "-c", "Get-CimInstance Win32_PhysicalMemory"], { stdio: "inherit" });
-        }
-      });
+      show("Disk (win)", ["pwsh"], "get-psdrive");
+      show("Memory", ["pwsh"], "Get-Counter '\\Memory\\Available MBytes'", "Get-CimInstance Win32_PhysicalMemory");
     }
   }
 

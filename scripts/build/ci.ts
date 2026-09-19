@@ -24,13 +24,15 @@ import { fileURLToPath } from "node:url";
 import {
   curl,
   endGroup,
+  isBuildkite,
+  isCI,
+  isGithubAction,
   markBuildkiteStepReported,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
 } from "../buildkite.ts";
 import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
-import { isBuildkite, isCI, isGithubAction } from "../process.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";

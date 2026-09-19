@@ -707,12 +707,6 @@ function darwinReleaseTier(distroVersion: string | undefined): DarwinReleaseTier
   return "oldest";
 }
 
-type AgentAction = "install" | "start";
-
-interface AgentCliOptions {
-  queue?: string;
-}
-
 interface AgentPaths {
   homePath: string;
   cachePath: string;
@@ -767,55 +761,54 @@ function writeFile(filename: string, content: string, mode?: number): void {
   }
 }
 
-async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions = {}): Promise<void> {
-  const username = "buildkite-agent";
-  const command = requireCommand("buildkite-agent");
-
+/** Registers the agent as a service of this machine. `--queue` is for macOS, where the queue is part of the agent's configuration file. */
+async function install(queueOption: string | undefined): Promise<void> {
+  // The service is of no use without it.
+  requireCommand("buildkite-agent");
   const { homePath, cachePath, logsPath, agentLogPath, pidPath, cfgPath } = getAgentPaths();
+  const username = "buildkite-agent";
+  const command = process.execPath;
 
-  async function install(): Promise<void> {
-    const command = process.execPath;
+  // Checked before anything is written, so a Mac that cannot be given a
+  // token is left as it was.
+  const token = process.env.BUILDKITE_AGENT_TOKEN;
+  if (cfgPath !== undefined && !token && !existsSync(cfgPath)) {
+    throw new Error("BUILDKITE_AGENT_TOKEN not set and no existing buildkite-agent.cfg to reuse");
+  }
 
-    // Checked before anything is written, so a Mac that cannot be given a
-    // token is left as it was.
-    const token = process.env.BUILDKITE_AGENT_TOKEN;
-    if (cfgPath !== undefined && !token && !existsSync(cfgPath)) {
-      throw new Error("BUILDKITE_AGENT_TOKEN not set and no existing buildkite-agent.cfg to reuse");
+  // The service runs a copy of this script from the agent's home, so it does
+  // not depend on the checkout that ran `install` sticking around. The copy
+  // is an .mts: outside the repo no package.json says it is an ES module, and
+  // one above the home (on macOS, the user's home directory) could say it is
+  // not. When `install` is run on the copy itself (the Windows image bake
+  // uploads it there first), it is already in place.
+  mkdirSync(homePath, { recursive: true });
+  const installedScript = join(homePath, "agent.mts");
+  const thisScript = fileURLToPath(import.meta.url);
+  if (!existsSync(installedScript) || realpathSync(thisScript) !== realpathSync(installedScript)) {
+    copyFileSync(thisScript, installedScript);
+  }
+  const args = [installedScript, "start"];
+
+  if (isWindows) {
+    mkdirSync(logsPath, { recursive: true });
+
+    const nssm = requireCommand("nssm");
+    const nssmCommands: Command[] = [
+      [nssm, "install", "buildkite-agent", command, ...args],
+      [nssm, "set", "buildkite-agent", "Start", "SERVICE_AUTO_START"],
+      [nssm, "set", "buildkite-agent", "AppDirectory", homePath],
+      [nssm, "set", "buildkite-agent", "AppStdout", agentLogPath],
+      [nssm, "set", "buildkite-agent", "AppStderr", agentLogPath],
+    ];
+    for (const command of nssmCommands) {
+      await run(command);
     }
+  }
 
-    // The service runs a copy of this script from the agent's home, so it does
-    // not depend on the checkout that ran `install` sticking around. The copy
-    // is an .mts: outside the repo no package.json says it is an ES module, and
-    // one above the home (on macOS, the user's home directory) could say it is
-    // not. When `install` is run on the copy itself (the Windows image bake
-    // uploads it there first), it is already in place.
-    mkdirSync(homePath, { recursive: true });
-    const installedScript = join(homePath, "agent.mts");
-    const thisScript = fileURLToPath(import.meta.url);
-    if (!existsSync(installedScript) || realpathSync(thisScript) !== realpathSync(installedScript)) {
-      copyFileSync(thisScript, installedScript);
-    }
-    const args = [installedScript, "start"];
-
-    if (isWindows) {
-      mkdirSync(logsPath, { recursive: true });
-
-      const nssm = requireCommand("nssm");
-      const nssmCommands: Command[] = [
-        [nssm, "install", "buildkite-agent", command, ...args],
-        [nssm, "set", "buildkite-agent", "Start", "SERVICE_AUTO_START"],
-        [nssm, "set", "buildkite-agent", "AppDirectory", homePath],
-        [nssm, "set", "buildkite-agent", "AppStdout", agentLogPath],
-        [nssm, "set", "buildkite-agent", "AppStderr", agentLogPath],
-      ];
-      for (const command of nssmCommands) {
-        await run(command);
-      }
-    }
-
-    if (isOpenRc()) {
-      const servicePath = "/etc/init.d/buildkite-agent";
-      const service = `#!/sbin/openrc-run
+  if (isOpenRc()) {
+    const servicePath = "/etc/init.d/buildkite-agent";
+    const service = `#!/sbin/openrc-run
         name="buildkite-agent"
         description="Buildkite Agent"
         command=${escape(command)}
@@ -834,50 +827,50 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
           use dns logger
         }
       `;
-      writeFile(servicePath, service, 0o755);
-      await run(["rc-update", "add", "buildkite-agent", "default"]);
+    writeFile(servicePath, service, 0o755);
+    await run(["rc-update", "add", "buildkite-agent", "default"]);
+  }
+
+  if (cfgPath !== undefined) {
+    const queue = queueOption || process.env.BUILDKITE_AGENT_QUEUE || "test-darwin";
+    // `install` runs via sudo, so process.env.USER is "root". The launchd
+    // service must run as the real login user (whose ~/Library the cfg and
+    // build dirs live under), and the files we write here must be owned by
+    // them so the service can read them.
+    const runAsUser = process.env.SUDO_USER || process.env.USER || "administrator";
+
+    for (const dir of [homePath, cachePath, logsPath]) {
+      mkdirSync(dir, { recursive: true });
     }
 
-    if (cfgPath !== undefined) {
-      const queue = cliOptions.queue || process.env.BUILDKITE_AGENT_QUEUE || "test-darwin";
-      // `install` runs via sudo, so process.env.USER is "root". The launchd
-      // service must run as the real login user (whose ~/Library the cfg and
-      // build dirs live under), and the files we write here must be owned by
-      // them so the service can read them.
-      const runAsUser = process.env.SUDO_USER || process.env.USER || "administrator";
+    // Stable node path (the Homebrew/usr-local symlink, not a Cellar version
+    // path that breaks on `brew upgrade node`).
+    const nodePath = which(["node"]) || process.execPath;
 
-      for (const dir of [homePath, cachePath, logsPath]) {
-        mkdirSync(dir, { recursive: true });
-      }
+    // Preserve an existing token line if we're re-installing on a box that
+    // already has one and BUILDKITE_AGENT_TOKEN wasn't supplied this time.
+    let tokenLine: string | undefined = token ? `token=${escape(token)}` : undefined;
+    if (!tokenLine) {
+      const existing = readFileSync(cfgPath, "utf8");
+      tokenLine = existing.split("\n").find(l => l.startsWith("token="));
+    }
 
-      // Stable node path (the Homebrew/usr-local symlink, not a Cellar version
-      // path that breaks on `brew upgrade node`).
-      const nodePath = which(["node"]) || process.execPath;
+    // Intentionally no `spawn=` line: macOS test runners run one job at a
+    // time. The test suite assumes it owns the machine (shared /private/tmp
+    // shims, ncpu-sized install thread pools, etc.), so multi-worker
+    // configurations time out — scale with more boxes, not more workers.
+    const cfg = [
+      "# Generated by scripts/agent.ts",
+      "# https://buildkite.com/docs/agent/v3/configuration",
+      "",
+      tokenLine,
+      `queue=${escape(queue)}`,
+      "",
+    ].join("\n");
+    writeFile(cfgPath, cfg, 0o600);
 
-      // Preserve an existing token line if we're re-installing on a box that
-      // already has one and BUILDKITE_AGENT_TOKEN wasn't supplied this time.
-      let tokenLine: string | undefined = token ? `token=${escape(token)}` : undefined;
-      if (!tokenLine) {
-        const existing = readFileSync(cfgPath, "utf8");
-        tokenLine = existing.split("\n").find(l => l.startsWith("token="));
-      }
-
-      // Intentionally no `spawn=` line: macOS test runners run one job at a
-      // time. The test suite assumes it owns the machine (shared /private/tmp
-      // shims, ncpu-sized install thread pools, etc.), so multi-worker
-      // configurations time out — scale with more boxes, not more workers.
-      const cfg = [
-        "# Generated by scripts/agent.ts",
-        "# https://buildkite.com/docs/agent/v3/configuration",
-        "",
-        tokenLine,
-        `queue=${escape(queue)}`,
-        "",
-      ].join("\n");
-      writeFile(cfgPath, cfg, 0o600);
-
-      const plistPath = "/Library/LaunchDaemons/buildkite-agent.plist";
-      const plist = `<?xml version="1.0" encoding="UTF-8"?>
+    const plistPath = "/Library/LaunchDaemons/buildkite-agent.plist";
+    const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -904,20 +897,20 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
 </dict>
 </plist>
 `;
-      writeFile(plistPath, plist, 0o644);
+    writeFile(plistPath, plist, 0o644);
 
-      // Matches the script already deployed on the fleet: covers both the
-      // Homebrew-agent layout (older x64 boxes) and the Library layout (this
-      // installer), fixes ownership, then reboots.
-      const cleanupPlistPath = "/Library/LaunchDaemons/com.buildkite.cleanup.plist";
-      const cleanupScript =
-        `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin; ` +
-        `BASE_PREFIX=$([ "$(uname -m)" = "arm64" ] && echo "/opt/homebrew" || echo "/usr/local"); ` +
-        `{ rm -rf $BASE_PREFIX/{var,etc}/buildkite-agent/{builds,cache}/* ${homePath}/{builds,cache}/* /tmp/* /var/tmp/* || true; } && ` +
-        `{ chown -R ${runAsUser}:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
-        `{ chmod -R 755 $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
-        `{ shutdown -r now || reboot; }`;
-      const cleanupPlist = `<?xml version="1.0" encoding="UTF-8"?>
+    // Matches the script already deployed on the fleet: covers both the
+    // Homebrew-agent layout (older x64 boxes) and the Library layout (this
+    // installer), fixes ownership, then reboots.
+    const cleanupPlistPath = "/Library/LaunchDaemons/com.buildkite.cleanup.plist";
+    const cleanupScript =
+      `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin; ` +
+      `BASE_PREFIX=$([ "$(uname -m)" = "arm64" ] && echo "/opt/homebrew" || echo "/usr/local"); ` +
+      `{ rm -rf $BASE_PREFIX/{var,etc}/buildkite-agent/{builds,cache}/* ${homePath}/{builds,cache}/* /tmp/* /var/tmp/* || true; } && ` +
+      `{ chown -R ${runAsUser}:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
+      `{ chmod -R 755 $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
+      `{ shutdown -r now || reboot; }`;
+    const cleanupPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -932,25 +925,25 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
 </dict>
 </plist>
 `;
-      writeFile(cleanupPlistPath, cleanupPlist, 0o644);
+    writeFile(cleanupPlistPath, cleanupPlist, 0o644);
 
-      // install runs as root, so everything above is root-owned. The service
-      // runs as runAsUser and needs to read the cfg (mode 0600) and write to
-      // the build/log/cache dirs.
-      await run(["chown", "-R", `${runAsUser}:staff`, cfgPath, homePath, cachePath, logsPath]);
+    // install runs as root, so everything above is root-owned. The service
+    // runs as runAsUser and needs to read the cfg (mode 0600) and write to
+    // the build/log/cache dirs.
+    await run(["chown", "-R", `${runAsUser}:staff`, cfgPath, homePath, cachePath, logsPath]);
 
-      // Best-effort: replace any previously-loaded service. bootout fails if
-      // not loaded, which is fine.
-      for (const p of [plistPath, cleanupPlistPath]) {
-        await run(["launchctl", "bootout", "system", p]).catch(() => {});
-        await run(["launchctl", "bootstrap", "system", p]);
-      }
-      return;
+    // Best-effort: replace any previously-loaded service. bootout fails if
+    // not loaded, which is fine.
+    for (const p of [plistPath, cleanupPlistPath]) {
+      await run(["launchctl", "bootout", "system", p]).catch(() => {});
+      await run(["launchctl", "bootstrap", "system", p]);
     }
+    return;
+  }
 
-    if (isSystemd()) {
-      const servicePath = "/etc/systemd/system/buildkite-agent.service";
-      const service = `
+  if (isSystemd()) {
+    const servicePath = "/etc/systemd/system/buildkite-agent.service";
+    const service = `
         [Unit]
         Description=Buildkite Agent
         After=syslog.target
@@ -971,133 +964,129 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
         [Install]
         WantedBy=multi-user.target
       `;
-      writeFile(servicePath, service);
-      await run(["systemctl", "daemon-reload"]);
-      await run(["systemctl", "enable", "buildkite-agent"]);
+    writeFile(servicePath, service);
+    await run(["systemctl", "daemon-reload"]);
+    await run(["systemctl", "enable", "buildkite-agent"]);
+  }
+}
+
+/** Runs the agent, as the service `install` registered does. */
+async function start(): Promise<void> {
+  const command = requireCommand("buildkite-agent");
+  const { homePath, cachePath, logsPath, cfgPath } = getAgentPaths();
+  const cloud = await getCloud();
+
+  let token = process.env.BUILDKITE_AGENT_TOKEN;
+  if (!token && cloud === "aws") {
+    token = await getAwsSecret(BUILDKITE_TOKEN_SECRET);
+  }
+  if (!token && cloud === "azure") {
+    token = await getAzureSecret(AZURE_KEYVAULT, AZURE_TOKEN_SECRET);
+  }
+  // Images baked before the secret stores existed only had the tag.
+  if (!token && cloud) {
+    token = await getCloudMetadataTag("buildkite:token", cloud);
+  }
+
+  const hasCfg = cfgPath !== undefined && existsSync(cfgPath);
+  if (!token && !hasCfg) {
+    throw new Error(
+      "Buildkite token not found: set BUILDKITE_AGENT_TOKEN or grant this machine access to the buildkite agent-token secret",
+    );
+  }
+
+  let shell: string;
+  if (isWindows) {
+    // Command Prompt has a faster startup time than PowerShell.
+    // Also, it propogates the exit code of the command, which PowerShell does not.
+    const cmd = requireCommand("cmd");
+    shell = `"${cmd}" /S /C`;
+  } else {
+    const sh = requireCommand("sh");
+    shell = `${sh} -elc`;
+  }
+
+  const distroVersion = getDistroVersion();
+  const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];
+  const options: Record<string, string> = {
+    // On macOS the hostname is often a meaningless asset ID (e.g. 66783.local),
+    // so name the agent by what it actually is. %spawn yields the existing
+    // fleet's "-1" suffix at spawn=1.
+    "name": isMacOS ? `${getOs()}-${getArch()}-${distroVersion}-%spawn` : `${getHostname()}-%spawn`,
+    "shell": shell,
+    "job-log-path": logsPath,
+    "build-path": join(homePath, "builds"),
+    "hooks-path": join(homePath, "hooks"),
+    "plugins-path": join(homePath, "plugins"),
+    "experiment": "normalised-upload-paths,resolve-commit-after-checkout,agent-api",
+  };
+
+  // On macOS, token/queue/spawn live in the cfg file written by `install`;
+  // pass it via --config so re-running `install` is the single edit point.
+  // On other platforms the token is passed directly.
+  if (hasCfg) {
+    options.config = cfgPath;
+  } else if (token) {
+    options.token = token;
+  }
+
+  let ephemeral = false;
+  if (cloud) {
+    const jobId = await getCloudMetadataTag("buildkite:job-uuid", cloud);
+    if (jobId) {
+      options["acquire-job"] = jobId;
+      flags.push("disconnect-after-job");
+      ephemeral = true;
     }
   }
 
-  async function start(): Promise<void> {
-    const cloud = await getCloud();
+  if (ephemeral) {
+    options["git-clone-flags"] = "-v --depth=1";
+    options["git-fetch-flags"] = "-v --prune --depth=1";
+  } else {
+    options["git-mirrors-path"] = join(cachePath, "git");
+  }
 
-    let token = process.env.BUILDKITE_AGENT_TOKEN;
-    if (!token && cloud === "aws") {
-      token = await getAwsSecret(BUILDKITE_TOKEN_SECRET);
-    }
-    if (!token && cloud === "azure") {
-      token = await getAzureSecret(AZURE_KEYVAULT, AZURE_TOKEN_SECRET);
-    }
-    // Images baked before the secret stores existed only had the tag.
-    if (!token && cloud) {
-      token = await getCloudMetadataTag("buildkite:token", cloud);
-    }
+  const tags: Record<string, string | boolean | undefined> = {
+    "os": getOs(),
+    "arch": getArch(),
+    "posix": isPosix,
+    "windows": isWindows,
+    "kernel": getKernel(),
+    "abi": getAbi(),
+    "abi-version": getAbiVersion(),
+    "distro": getDistro(),
+    "distro-version": distroVersion,
+    "release": isMacOS ? distroVersion?.split(".")[0] : undefined,
+    // ci.ts targets darwin test jobs by `release-tier` so each PR runs on
+    // distinct OS-age pools without needing per-box config. arm64 uses
+    // latest+previous; x64 uses previous+oldest (Intel can't run latest).
+    "release-tier": isMacOS ? darwinReleaseTier(distroVersion) : undefined,
+    "ephemeral": ephemeral,
+    "cloud": cloud,
+  };
 
-    const hasCfg = cfgPath !== undefined && existsSync(cfgPath);
-    if (!token && !hasCfg) {
-      throw new Error(
-        "Buildkite token not found: set BUILDKITE_AGENT_TOKEN or grant this machine access to the buildkite agent-token secret",
-      );
-    }
-
-    let shell: string;
-    if (isWindows) {
-      // Command Prompt has a faster startup time than PowerShell.
-      // Also, it propogates the exit code of the command, which PowerShell does not.
-      const cmd = requireCommand("cmd");
-      shell = `"${cmd}" /S /C`;
-    } else {
-      const sh = requireCommand("sh");
-      shell = `${sh} -elc`;
-    }
-
-    const distroVersion = getDistroVersion();
-    const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];
-    const options: Record<string, string> = {
-      // On macOS the hostname is often a meaningless asset ID (e.g. 66783.local),
-      // so name the agent by what it actually is. %spawn yields the existing
-      // fleet's "-1" suffix at spawn=1.
-      "name": isMacOS ? `${getOs()}-${getArch()}-${distroVersion}-%spawn` : `${getHostname()}-%spawn`,
-      "shell": shell,
-      "job-log-path": logsPath,
-      "build-path": join(homePath, "builds"),
-      "hooks-path": join(homePath, "hooks"),
-      "plugins-path": join(homePath, "plugins"),
-      "experiment": "normalised-upload-paths,resolve-commit-after-checkout,agent-api",
-    };
-
-    // On macOS, token/queue/spawn live in the cfg file written by `install`;
-    // pass it via --config so re-running `install` is the single edit point.
-    // On other platforms the token is passed directly.
-    if (hasCfg) {
-      options.config = cfgPath;
-    } else if (token) {
-      options.token = token;
-    }
-
-    let ephemeral = false;
-    if (cloud) {
-      const jobId = await getCloudMetadataTag("buildkite:job-uuid", cloud);
-      if (jobId) {
-        options["acquire-job"] = jobId;
-        flags.push("disconnect-after-job");
-        ephemeral = true;
+  if (cloud) {
+    const requiredTags = ["robobun", "robobun2"];
+    for (const tag of requiredTags) {
+      const value = await getCloudMetadataTag(tag, cloud);
+      if (typeof value === "string") {
+        tags[tag] = value;
       }
     }
-
-    if (ephemeral) {
-      options["git-clone-flags"] = "-v --depth=1";
-      options["git-fetch-flags"] = "-v --prune --depth=1";
-    } else {
-      options["git-mirrors-path"] = join(cachePath, "git");
-    }
-
-    const tags: Record<string, string | boolean | undefined> = {
-      "os": getOs(),
-      "arch": getArch(),
-      "posix": isPosix,
-      "windows": isWindows,
-      "kernel": getKernel(),
-      "abi": getAbi(),
-      "abi-version": getAbiVersion(),
-      "distro": getDistro(),
-      "distro-version": distroVersion,
-      "release": isMacOS ? distroVersion?.split(".")[0] : undefined,
-      // ci.ts targets darwin test jobs by `release-tier` so each PR runs on
-      // distinct OS-age pools without needing per-box config. arm64 uses
-      // latest+previous; x64 uses previous+oldest (Intel can't run latest).
-      "release-tier": isMacOS ? darwinReleaseTier(distroVersion) : undefined,
-      "ephemeral": ephemeral,
-      "cloud": cloud,
-    };
-
-    if (cloud) {
-      const requiredTags = ["robobun", "robobun2"];
-      for (const tag of requiredTags) {
-        const value = await getCloudMetadataTag(tag, cloud);
-        if (typeof value === "string") {
-          tags[tag] = value;
-        }
-      }
-    }
-
-    options.tags = Object.entries(tags)
-      .filter(([, value]) => value !== undefined && value !== "")
-      .map(([key, value]) => `${key}=${value}`)
-      .join(",");
-
-    await run([
-      command,
-      "start",
-      ...flags.map(flag => `--${flag}`),
-      ...Object.entries(options).map(([key, value]) => `--${key}=${value}`),
-    ]);
   }
 
-  if (action === "install") {
-    await install();
-  } else if (action === "start") {
-    await start();
-  }
+  options.tags = Object.entries(tags)
+    .filter(([, value]) => value !== undefined && value !== "")
+    .map(([key, value]) => `${key}=${value}`)
+    .join(",");
+
+  await run([
+    command,
+    "start",
+    ...flags.map(flag => `--${flag}`),
+    ...Object.entries(options).map(([key, value]) => `--${key}=${value}`),
+  ]);
 }
 
 function isSystemd(): boolean {
@@ -1122,14 +1111,14 @@ async function main(): Promise<void> {
 
   if (!args.length || args.includes("install")) {
     console.log("Installing agent...");
-    await doBuildkiteAgent("install", values);
+    await install(values.queue);
     console.log("Agent installed.");
   }
 
   // `exec` is what the macOS launchd plist invokes; treat it as `start`.
   if (args.includes("start") || args.includes("exec")) {
     console.log("Starting agent...");
-    await doBuildkiteAgent("start", values);
+    await start();
     console.log("Agent started.");
   }
 }

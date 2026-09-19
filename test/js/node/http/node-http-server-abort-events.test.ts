@@ -56,8 +56,10 @@ describe("a late end() or write() answers its callback like Node.js", () => {
 
   const lateCalls = {
     "end(cb)": (res: ServerResponse, cb: Callback) => res.end(cb),
+    'end("", cb)': (res: ServerResponse, cb: Callback) => res.end("", cb),
     "end(chunk, cb)": (res: ServerResponse, cb: Callback) => res.end("late", cb),
     "write(chunk, cb)": (res: ServerResponse, cb: Callback) => res.write("late", cb),
+    'write("", cb)': (res: ServerResponse, cb: Callback) => res.write("", cb),
   };
   type LateCall = keyof typeof lateCalls;
 
@@ -119,14 +121,26 @@ describe("a late end() or write() answers its callback like Node.js", () => {
         whenConnectionClosed(req, res, run);
         res.end("ok");
       }),
-      expected: { "end(cb)": alreadyFinished, "end(chunk, cb)": dropped, "write(chunk, cb)": writeAfterEnd },
+      expected: {
+        "end(cb)": alreadyFinished,
+        'end("", cb)': alreadyFinished,
+        "end(chunk, cb)": dropped,
+        "write(chunk, cb)": writeAfterEnd,
+        'write("", cb)': writeAfterEnd,
+      },
     },
     "finished, the connection is still open": {
       reach: overConnection(false, (req, res, run) => {
         res.once("close", run);
         res.end("ok");
       }),
-      expected: { "end(cb)": alreadyFinished, "end(chunk, cb)": dropped, "write(chunk, cb)": writeAfterEnd },
+      expected: {
+        "end(cb)": alreadyFinished,
+        'end("", cb)': alreadyFinished,
+        "end(chunk, cb)": dropped,
+        "write(chunk, cb)": writeAfterEnd,
+        'write("", cb)': writeAfterEnd,
+      },
     },
     // Not destroyed yet (no 'close'), so a write after end also reaches 'error'.
     "finished, the handler destroyed the socket in the same tick": {
@@ -137,8 +151,10 @@ describe("a late end() or write() answers its callback like Node.js", () => {
       }),
       expected: {
         "end(cb)": alreadyFinished,
+        'end("", cb)': alreadyFinished,
         "end(chunk, cb)": { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"], returned: "res" },
         "write(chunk, cb)": { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"] },
+        'write("", cb)': { ...writeAfterEnd, errorEvents: ["ERR_STREAM_WRITE_AFTER_END"] },
       },
     },
     "unfinished, the client closed the connection": {
@@ -146,7 +162,13 @@ describe("a late end() or write() answers its callback like Node.js", () => {
         whenConnectionClosed(req, res, run);
         res.write("ok");
       }),
-      expected: { "end(cb)": dropped, "end(chunk, cb)": dropped, "write(chunk, cb)": destroyed },
+      expected: {
+        "end(cb)": dropped,
+        'end("", cb)': dropped,
+        "end(chunk, cb)": dropped,
+        "write(chunk, cb)": destroyed,
+        'write("", cb)': destroyed,
+      },
     },
     "unfinished, destroyed before it got a socket": {
       async reach(call) {
@@ -156,7 +178,13 @@ describe("a late end() or write() answers its callback like Node.js", () => {
         await closed;
         return observe(res, call);
       },
-      expected: { "end(cb)": dropped, "end(chunk, cb)": dropped, "write(chunk, cb)": destroyed },
+      expected: {
+        "end(cb)": dropped,
+        'end("", cb)': dropped,
+        "end(chunk, cb)": dropped,
+        "write(chunk, cb)": destroyed,
+        'write("", cb)': destroyed,
+      },
     },
   };
 
@@ -166,6 +194,18 @@ describe("a late end() or write() answers its callback like Node.js", () => {
 
   test.concurrent.each(rows)("%s: %s", async (_name, call, state) => {
     expect(await state.reach(call)).toEqual(state.expected[call]);
+  });
+
+  test("the error of a write() to a destroyed response names write()", async () => {
+    const res = new ServerResponse(new IncomingMessage(null as any));
+    res.destroy();
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
+    res.write("late", resolve);
+    const err = await promise;
+    expect({ code: err?.code, message: err?.message }).toEqual({
+      code: "ERR_STREAM_DESTROYED",
+      message: "Cannot call write after a stream was destroyed",
+    });
   });
 });
 

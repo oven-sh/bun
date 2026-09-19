@@ -391,7 +391,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, MessageBuilder& buil
     case JSC::JSType::InternalFunctionType:
     case JSC::JSType::JSFunctionType: {
         auto& vm = JSC::getVM(globalObject);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+        auto name = Zig::functionName(vm, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append("[Function: "_s);
@@ -469,7 +469,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
     }
     if (cell->isCallable()) {
         builder.append("function "_s);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+        auto name = Zig::functionName(vm, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append(name);
@@ -1290,7 +1290,7 @@ JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObje
 
 JSC::EncodedJSValue STRING_TOO_LONG(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
 {
-    auto message = makeString("Cannot create a string longer than "_s, WTF::String ::MaxLength, " characters"_s);
+    auto message = makeString("Cannot create a string longer than "_s, WTF::String::MaxLength, " characters"_s);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_STRING_TOO_LONG, message));
     throwScope.release();
     return {};

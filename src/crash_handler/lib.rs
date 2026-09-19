@@ -3105,10 +3105,10 @@ mod draft {
             let programs: &[&bun_core::ZStr] = if cfg!(windows) {
                 &[bun_core::zstr!("pdb-addr2line")]
             } else {
-                // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-21`
+                // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-23`
                 &[
                     bun_core::zstr!("llvm-symbolizer"),
-                    bun_core::zstr!("llvm-symbolizer-21"),
+                    bun_core::zstr!("llvm-symbolizer-23"),
                 ]
             };
             for &program in programs {

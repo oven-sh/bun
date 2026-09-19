@@ -6,7 +6,12 @@ const { isIP } = require("internal/net/isIP");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
-const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const {
+  kProxyConfig,
+  checkShouldUseProxy,
+  kWaitForProxyTunnel,
+  kPerRequestCheckServerIdentity,
+} = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
 const ArrayPrototypeShift = Array.prototype.shift;
@@ -188,7 +193,7 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
       tunneledSocket.on("free", onTunneledSocketFree);
       tunneledSocket.on("error", onTLSHandshakeError);
       const agentKey = requestOptions._agentKey;
-      if (agentKey) {
+      if (agentKey && !requestOptions[kPerRequestCheckServerIdentity]) {
         // The tunneled socket carries the TLS session with the target; cache
         // it (and evict on close) under the target's agent key.
         tunneledSocket.on("session", onSocketSession.bind(agent, agentKey));
@@ -257,7 +262,8 @@ function createConnection(...args) {
   $debug("https createConnection", options);
 
   const agentKey = options._agentKey;
-  if (agentKey) {
+  const reuseSession = agentKey && !options[kPerRequestCheckServerIdentity];
+  if (reuseSession) {
     const session = this._getSession(agentKey);
     if (session) {
       $debug("reuse session for %j", agentKey);
@@ -324,7 +330,7 @@ function createConnection(...args) {
     socket[kWaitForProxyTunnel] = true;
   }
 
-  if (agentKey && tunnelConfig === null) {
+  if (reuseSession && tunnelConfig === null) {
     // Cache new session for reuse. On the proxy-tunnel path `socket` is the
     // connection to the proxy, not the target - establishTunnel attaches
     // these listeners to the tunneled target socket instead, so the proxy's
@@ -454,6 +460,9 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
 
   name += ":";
   if (privateKeyEngine) name += privateKeyEngine;
+
+  const perRequestCheckServerIdentity = options[kPerRequestCheckServerIdentity];
+  if (perRequestCheckServerIdentity) name += `:${perRequestCheckServerIdentity}`;
 
   return name;
 };

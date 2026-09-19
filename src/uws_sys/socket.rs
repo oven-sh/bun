@@ -469,17 +469,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── timeouts ────────────────────────────────────────────────────────────
 
-    /// Direct seconds timeout (no long-timeout split).
-    pub fn timeout(&self, seconds: c_uint) {
-        on_socket!(self.socket;
-            connected s => s.set_timeout(seconds),
-            connecting c => c.timeout(seconds),
-            detached => {},
-            duplex d => d.set_timeout(seconds),
-            pipe p => p.set_timeout(seconds),
-        )
-    }
-
     /// Splits >240s onto the minute-granularity long-timeout wheel.
     pub fn set_timeout(&self, seconds: c_uint) {
         on_socket!(self.socket;
@@ -500,16 +489,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             detached => {},
             duplex d => d.set_timeout(seconds),
             pipe p => p.set_timeout(seconds),
-        )
-    }
-
-    pub fn set_timeout_minutes(&self, minutes: c_uint) {
-        on_socket!(self.socket;
-            connected s => { s.set_timeout(0); s.set_long_timeout(minutes); },
-            connecting c => { c.timeout(0); c.long_timeout(minutes); },
-            detached => {},
-            duplex d => d.set_timeout(minutes * 60),
-            pipe p => p.set_timeout(minutes * 60),
         )
     }
 
@@ -786,13 +765,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             0
         };
         // getaddrinfo doesn't understand bracketed IPv6 literals; URL parsing
-        // leaves them in (`[::1]`), so strip here like the old connectAnon did.
-        let host =
-            if raw_host.len() > 1 && raw_host[0] == b'[' && raw_host[raw_host.len() - 1] == b']' {
-                &raw_host[1..raw_host.len() - 1]
-            } else {
-                raw_host
-            };
+        // leaves them in (`[::1]`).
+        let host = bun_core::ip_address::strip_ipv6_brackets(raw_host);
         // SocketGroup.connect needs a NUL-terminated host.
         let mut stack = [0u8; 256];
         let heap: Vec<u8>;

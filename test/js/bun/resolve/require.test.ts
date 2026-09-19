@@ -265,6 +265,11 @@ describe("require(specifier)", () => {
         "./bad.js",
         { "package.json": `{ "type": "module" }`, "bad.js": flakyModule(1) },
       ],
+      [
+        '"type": "module" in a nameless package.json, file in a subdirectory',
+        "./src/bad.js",
+        { "package.json": `{ "type": "module" }`, "src/bad.js": flakyModule(1) },
+      ],
     ])("an ES module is not evaluated again: %s", async (_, specifier, files) => {
       const result = await runEntry({
         ...files,

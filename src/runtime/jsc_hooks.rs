@@ -4067,8 +4067,7 @@ pub unsafe extern "C" fn Bun__isESModuleByPathOrPackage(
     // and returns a stable cache slot.
     match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
         Ok(Some(dir_info)) => dir_info
-            .package_json()
-            .or(dir_info.enclosing_package_json)
+            .package_json_for_module_type
             .is_some_and(|pkg| pkg.module_type == ModuleType::Esm),
         _ => false,
     }

@@ -639,9 +639,7 @@ function unrefAfterDrain(self, handle) {
 }
 
 function finishSocketEnd(self) {
-  // destroy() closes the handle before _destroy returns, and the native close
-  // handler lands here. Node never pushes EOF into a destroyed stream: a
-  // destroyed socket emits 'close' only, never 'end'.
+  // A destroyed stream gets no EOF: destroy() emits 'close' only, never 'end'.
   if (self[kended] || self.destroyed) return;
   self[kended] = true;
   if (!self.allowHalfOpen) self.write = writeAfterFIN;
@@ -660,15 +658,11 @@ function finishSocketEnd(self) {
   }
 }
 
-// A write that was waiting on the native drain can never complete once the
-// handle is gone - fail it so 'finish'/destroy are not stuck behind it. On the
-// next tick, not now: the EOF the close pushed has to reach the stream first,
-// so 'end' (and the destroy a TLS handshake hangs on it, onConnectEnd) come
-// before the write failure, as in Node, where the write completes only after
-// the read side reported EOF. The write stays parked until then, so a destroy
-// that runs in between can settle it first. A write that still holds its chunk
-// in _pendingData never reached the handle: the 'close' listener _write added
-// for it reports it.
+// A native close strands the write that waits on the drain. Fail it on the next
+// tick, after the EOF reached the stream, so 'end' (and the destroy that a TLS
+// handshake hangs on it) come first, and a destroy in between can settle it. A
+// chunk still in _pendingData never reached the handle: _write's 'close'
+// listener reports it.
 function failPendingWriteAfterClose(self, err) {
   const pendingWrite = self[kwriteCallback];
   if (pendingWrite && self._pendingData == null) process.nextTick(failPendingWriteNT, self, pendingWrite, err);
@@ -678,9 +672,8 @@ function failPendingWriteNT(self, callback, err) {
   self[kwriteCallback] = null;
   callback(err ?? $ERR_SOCKET_CLOSED());
 }
-// A close that destroys the socket with the read error cancels the write in
-// flight, like uv_close() does for node: its callback gets ECANCELED, after
-// 'error'. https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L464
+// The write in flight gets ECANCELED after 'error', as uv_close gives it in node:
+// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L464
 function cancelPendingWriteAfterClose(self) {
   if (self[kwriteCallback] && self._pendingData == null) {
     failPendingWriteAfterClose(self, new ErrnoException(uv().UV_ECANCELED, "write"));
@@ -719,9 +712,8 @@ function SocketEmitEndNT(self, _err?) {
   // _hadError: the failure already reached JS through the error dispatch
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
-  // A write in flight cannot end silently: its failure destroys the socket
-  // with an error either way, so the error is the real read error (Node
-  // throws an uncaught "read ECONNRESET" here), not ERR_SOCKET_CLOSED.
+  // A write in flight errors the socket either way: report the read error
+  // (uncaught, as in node), not ERR_SOCKET_CLOSED.
   const hasErrorListener = self.listenerCount("error") > 0;
   if (_err && !self.destroyed && !self._hadError && !teardownNoise && (hasErrorListener || self[kwriteCallback])) {
     // The consumer can detach its 'error' listener between this close
@@ -1410,9 +1402,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
-    // A write in flight cannot end silently: its failure destroys the socket
-    // with an error either way, so surface the real read error (Node throws
-    // an uncaught "read ECONNRESET" here) instead of ERR_SOCKET_CLOSED.
+    // A write in flight errors the socket either way: report the read error
+    // (uncaught, as in node), not ERR_SOCKET_CLOSED.
     const hasErrorListener = self.listenerCount("error") > 0;
     if (err && !self.destroyed && socket === self._handle && (hasErrorListener || self[kwriteCallback])) {
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
@@ -2229,9 +2220,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   if (upgraded && !(upgraded instanceof Socket) && !upgraded.destroyed) {
     upgraded.destroy?.();
   } else if (upgraded && upgraded._handle?.[kAdoptedTLSRaw] && !upgraded.destroyed) {
-    // The net.Socket whose fd this TLS socket adopted goes down with it, as
-    // node's TLSWrap closes its parent. Done here, not from 'end': a destroyed
-    // socket emits no 'end'.
+    // Close the adopted net.Socket here, as node's TLSWrap does: a destroyed
+    // socket emits no 'end' to do it from.
     this[kCloseRawConnection]();
   }
 

@@ -99,8 +99,7 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
 
     auto buffer = keyView->span();
 
-    // Node returns an empty string for an empty key, before it looks up the curve
-    // (ECDH::ConvertKey in src/crypto/crypto_ec.cc).
+    // Node returns "" for an empty key before the curve lookup (ECDH::ConvertKey in src/crypto/crypto_ec.cc).
     if (buffer.empty())
         return JSValue::encode(jsEmptyString(vm));
 

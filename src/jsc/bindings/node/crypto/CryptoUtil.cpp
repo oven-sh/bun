@@ -555,9 +555,7 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     return true;
 }
 
-// Node's getArrayBufferOrView(buffer, name, encoding) and toBuf(val, encoding) map 'buffer' to
-// utf8 and then call Buffer.from(string, encoding). Buffer.from uses utf8 unless `encoding` is a
-// non-empty string. nullopt means a string that names no encoding.
+// Node's getArrayBufferOrView() rules: 'buffer' or anything but a non-empty string is utf8. nullopt is an unknown name.
 static std::optional<BufferEncodingType> parseStringInputEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
 {
     if (!encodingValue.isString()) {
@@ -656,7 +654,7 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
     return Return(nullptr, {});
 }
 
-JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding)
+JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool unknownEncodingIsUtf8)
 {
     if (value.isString()) {
         JSString* dataString = value.toString(globalObject);
@@ -665,9 +663,8 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         auto maybeEncoding = parseStringInputEncoding(globalObject, scope, encodingValue);
         RETURN_IF_EXCEPTION(scope, {});
 
-        // `defaultBufferEncoding` is for cipher.update(). Node decodes its input natively with
-        // ParseEncoding(encoding, UTF8) (Decode() in src/crypto/crypto_util.h): an unknown name is utf8.
-        if (!maybeEncoding && !defaultBufferEncoding) {
+        // For cipher.update(): Node's native Decode() (src/crypto/crypto_util.h) reads an unknown name as utf8.
+        if (!maybeEncoding && !unknownEncodingIsUtf8) {
             ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
             return {};
         }

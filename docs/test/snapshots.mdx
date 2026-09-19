@@ -270,23 +270,20 @@ test("format test", () => {
 
 ### Group Related Snapshots
 
-```ts title="test.ts" icon="/icons/typescript.svg"
+```tsx title="test.ts" icon="/icons/typescript.svg"
 import { describe, test, expect } from "bun:test";
 
 describe("Button component", () => {
   test("primary variant", () => {
-    expect(render(<Button variant="primary">Click</Button>))
-      .toMatchSnapshot();
+    expect(render(<Button variant="primary">Click</Button>)).toMatchSnapshot();
   });
 
   test("secondary variant", () => {
-    expect(render(<Button variant="secondary">Cancel</Button>))
-      .toMatchSnapshot();
+    expect(render(<Button variant="secondary">Cancel</Button>)).toMatchSnapshot();
   });
 
   test("disabled state", () => {
-    expect(render(<Button disabled>Disabled</Button>))
-      .toMatchSnapshot();
+    expect(render(<Button disabled>Disabled</Button>)).toMatchSnapshot();
   });
 });
 ```

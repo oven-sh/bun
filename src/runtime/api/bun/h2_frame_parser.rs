@@ -2186,6 +2186,29 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
+    /// An outbound header block on an open stream is over `maxSendHeaderBlockLength`.
+    /// Node's `onFrameError` (lib/internal/http2/core.js) emits `frameError`, resets the
+    /// stream with FRAME_SIZE_ERROR and then closes the session.
+    fn reject_oversized_header_block(&self, stream: &mut Stream) {
+        let identifier = stream.get_identifier();
+        identifier.ensure_still_alive();
+        self.dispatch_with_2_extra(
+            JSH2FrameParser::Gc::onFrameError,
+            identifier,
+            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+        );
+        let triggering_id = stream.id;
+        self.end_stream(stream, ErrorCode::FRAME_SIZE_ERROR);
+        self.send_go_away(
+            triggering_id,
+            ErrorCode::NO_ERROR,
+            b"",
+            self.last_stream_id.get(),
+            true,
+        );
+    }
+
     pub(crate) fn send_go_away(
         &self,
         triggering_stream_id: u32,
@@ -5657,23 +5680,7 @@ impl H2FrameParser {
                         // nghttp2 checks maxSendHeaderBlockLength pre-deflation and fires
                         // on_frame_not_send_callback(NGHTTP2_ERR_FRAME_SIZE_ERROR); Node surfaces
                         // 'frameError' + ERR_HTTP2_STREAM_ERROR (test-http2-exceeds-server-trailer-size.js).
-                        let identifier = stream.get_identifier();
-                        identifier.ensure_still_alive();
-                        this.dispatch_with_2_extra(
-                            JSH2FrameParser::Gc::onFrameError,
-                            identifier,
-                            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-                            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-                        );
-                        let triggering_id = stream.id;
-                        this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
-                        this.send_go_away(
-                            triggering_id,
-                            ErrorCode::NO_ERROR,
-                            b"",
-                            this.last_stream_id.get(),
-                            true,
-                        );
+                        this.reject_oversized_header_block(&mut stream);
                         Ok(Some(JSValue::UNDEFINED))
                     }
                 }
@@ -7083,6 +7090,16 @@ impl H2FrameParser {
         if this.max_send_header_block_length.get() != 0
             && encoded_size > this.max_send_header_block_length.get() as usize
         {
+            if this.is_server.get() {
+                // The peer opened this stream and waits for the response.
+                this.reject_oversized_header_block(&mut stream);
+                return Ok(JSValue::js_number(stream_id as f64));
+            }
+
+            // A client request never reached the wire. nghttp2 closes such a stream
+            // locally with REFUSED_STREAM and sends nothing.
+            stream.state = StreamState::CLOSED;
+            stream.rst_code = ErrorCode::REFUSED_STREAM.0;
             let identifier = stream.get_identifier();
             identifier.ensure_still_alive();
             this.dispatch_with_2_extra(
@@ -7091,31 +7108,11 @@ impl H2FrameParser {
                 JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                 JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
             );
-
-            if this.is_server.get() {
-                // The peer opened this stream, so it must hear that the response
-                // failed. Node resets it with FRAME_SIZE_ERROR and then closes the
-                // session (onFrameError in lib/internal/http2/core.js).
-                let triggering_id = stream.id;
-                this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
-                this.send_go_away(
-                    triggering_id,
-                    ErrorCode::NO_ERROR,
-                    b"",
-                    this.last_stream_id.get(),
-                    true,
-                );
-            } else {
-                // A client stream that never reached the wire is closed locally,
-                // the way nghttp2 refuses an unsent request.
-                stream.state = StreamState::CLOSED;
-                stream.rst_code = ErrorCode::REFUSED_STREAM.0;
-                this.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamError,
-                    identifier,
-                    JSValue::js_number(stream.rst_code as f64),
-                );
-            }
+            this.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                identifier,
+                JSValue::js_number(stream.rst_code as f64),
+            );
             return Ok(JSValue::js_number(stream_id as f64));
         }
 

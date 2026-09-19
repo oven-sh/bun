@@ -1004,14 +1004,39 @@ fn get_maybe_non_null_in_instruction(
 /// The `temporaries` map is shared across recursive calls (matching TS behavior where
 /// the same Map is passed to recursive invocations for inner functions).
 fn get_assumed_invoked_functions(func: &HirFunction, env: &Environment) -> HashSet<FunctionId> {
-    let mut temporaries: IdMap<IdentifierId, (FunctionId, HashSet<FunctionId>)> = IdMap::new();
+    let mut temporaries = FunctionTemporaries::default();
     get_assumed_invoked_functions_impl(func, env, &mut temporaries)
+}
+
+/// TS: the `temporaries` map of `getAssumedInvokedFunctions`.
+#[derive(Default)]
+struct FunctionTemporaries {
+    entries: IdMap<IdentifierId, (FunctionId, HashSet<FunctionId>)>,
+    /// Not in upstream: the keys of `entries` by function. The last step of
+    /// each recursive call reads the entries of the functions it found, not
+    /// every entry of the component.
+    by_function: HashMap<FunctionId, Vec<IdentifierId>>,
+}
+
+impl FunctionTemporaries {
+    fn get(&self, id: IdentifierId) -> Option<&(FunctionId, HashSet<FunctionId>)> {
+        self.entries.get(id)
+    }
+
+    fn get_mut(&mut self, id: IdentifierId) -> Option<&mut (FunctionId, HashSet<FunctionId>)> {
+        self.entries.get_mut(id)
+    }
+
+    fn insert(&mut self, id: IdentifierId, entry: (FunctionId, HashSet<FunctionId>)) {
+        self.by_function.entry(entry.0).or_default().push(id);
+        self.entries.insert(id, entry);
+    }
 }
 
 fn get_assumed_invoked_functions_impl(
     func: &HirFunction,
     env: &Environment,
-    temporaries: &mut IdMap<IdentifierId, (FunctionId, HashSet<FunctionId>)>,
+    temporaries: &mut FunctionTemporaries,
 ) -> HashSet<FunctionId> {
     let mut hoistable: HashSet<FunctionId> = HashSet::default();
 
@@ -1117,26 +1142,23 @@ fn get_assumed_invoked_functions_impl(
     }
 
     // Step 3: Propagate assumed-invoked status through mayInvoke chains
-    let mut changed = true;
-    while changed {
-        changed = false;
-        // Two-phase: collect then insert
-        let mut to_add = Vec::new();
-        for (_, (func_id, may_invoke)) in temporaries.iter() {
-            if hoistable.contains(func_id) {
-                for &called in may_invoke {
-                    if !hoistable.contains(&called) {
-                        to_add.push(called);
-                    }
+    let mut pending: Vec<FunctionId> = hoistable.iter().copied().collect();
+    while let Some(func_id) = pending.pop() {
+        let Some(ids) = temporaries.by_function.get(&func_id) else {
+            continue;
+        };
+        for &id in ids {
+            let Some((entry_func_id, may_invoke)) = temporaries.entries.get(id) else {
+                continue;
+            };
+            if *entry_func_id != func_id {
+                continue;
+            }
+            for &called in may_invoke {
+                if hoistable.insert(called) {
+                    pending.push(called);
                 }
             }
-        }
-        for id in to_add {
-            changed = true;
-            hoistable.insert(id);
-        }
-        if !changed {
-            break;
         }
     }
 
@@ -1277,12 +1299,21 @@ fn propagate_non_null(
     registry: &mut PropertyPathRegistry,
 ) -> IdMap<BlockId, BTreeSet<usize>> {
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
-    // BlockIds are environment-wide; size dense vectors to this function's max id.
-    let vec_len = block_ids
-        .iter()
-        .map(|b| b.0 as usize)
+    // BlockIds are environment-wide. The dense vectors span the ids of this
+    // function only, so that a nested function does not pay for every block
+    // that was created before it.
+    let ids = || {
+        func.body
+            .blocks
+            .iter()
+            .flat_map(|(id, block)| std::iter::once(id.0).chain(block.preds.iter().map(|p| p.0)))
+    };
+    let index = BlockIndex {
+        first: ids().min().unwrap_or(0),
+    };
+    let vec_len = ids()
         .max()
-        .map(|m| m + 1)
+        .map(|last| index.of(BlockId(last)) + 1)
         .unwrap_or(0);
 
     // Build successor map. Use BTreeSet to iterate successors in sorted BlockId
@@ -1291,14 +1322,14 @@ fn propagate_non_null(
     let mut block_successors: Vec<BTreeSet<BlockId>> = vec![BTreeSet::new(); vec_len];
     for (block_id, block) in &func.body.blocks {
         for pred in &block.preds {
-            block_successors[pred.0 as usize].insert(*block_id);
+            block_successors[index.of(*pred)].insert(*block_id);
         }
     }
 
     // Clone nodes into mutable working set, indexed by BlockId.
     let mut working: Vec<Option<BTreeSet<usize>>> = vec![None; vec_len];
     for (k, v) in nodes.iter() {
-        working[k.0 as usize] = Some(v.assumed_non_null_objects.clone());
+        working[index.of(k)] = Some(v.assumed_non_null_objects.clone());
     }
 
     let mut reversed_block_ids = block_ids.clone();
@@ -1316,6 +1347,7 @@ fn propagate_non_null(
         for &block_id in &block_ids {
             let block_changed = recursively_propagate_non_null(
                 block_id,
+                index,
                 PropagationDirection::Forward,
                 &mut traversal_state,
                 &mut working,
@@ -1333,6 +1365,7 @@ fn propagate_non_null(
         for &block_id in &reversed_block_ids {
             let block_changed = recursively_propagate_non_null(
                 block_id,
+                index,
                 PropagationDirection::Backward,
                 &mut traversal_state,
                 &mut working,
@@ -1350,11 +1383,24 @@ fn propagate_non_null(
 
     let mut result = IdMap::new();
     for id in block_ids {
-        if let Some(set) = working[id.0 as usize].take() {
+        if let Some(set) = working[index.of(id)].take() {
             result.insert(id, set);
         }
     }
     result
+}
+
+/// Where a block of one function is in the dense vectors of `propagate_non_null`.
+#[derive(Clone, Copy)]
+struct BlockIndex {
+    /// The smallest id among the blocks of the function and their predecessors.
+    first: u32,
+}
+
+impl BlockIndex {
+    fn of(self, id: BlockId) -> usize {
+        (id.0 - self.first) as usize
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1371,6 +1417,7 @@ enum PropagationDirection {
 
 fn recursively_propagate_non_null(
     node_id: BlockId,
+    index: BlockIndex,
     direction: PropagationDirection,
     traversal_state: &mut [Option<TraversalState>],
     working: &mut [Option<BTreeSet<usize>>],
@@ -1379,13 +1426,13 @@ fn recursively_propagate_non_null(
     registry: &mut PropertyPathRegistry,
 ) -> bool {
     // Avoid re-visiting computed or currently active nodes
-    if traversal_state[node_id.0 as usize].is_some() {
+    if traversal_state[index.of(node_id)].is_some() {
         return false;
     }
-    traversal_state[node_id.0 as usize] = Some(TraversalState::Active);
+    traversal_state[index.of(node_id)] = Some(TraversalState::Active);
 
     let neighbors: Vec<BlockId> = match direction {
-        PropagationDirection::Backward => block_successors[node_id.0 as usize]
+        PropagationDirection::Backward => block_successors[index.of(node_id)]
             .iter()
             .copied()
             .collect(),
@@ -1399,9 +1446,10 @@ fn recursively_propagate_non_null(
 
     let mut changed = false;
     for &neighbor in &neighbors {
-        if traversal_state[neighbor.0 as usize].is_none() {
+        if traversal_state[index.of(neighbor)].is_none() {
             let neighbor_changed = recursively_propagate_non_null(
                 neighbor,
+                index,
                 direction,
                 traversal_state,
                 working,
@@ -1416,8 +1464,8 @@ fn recursively_propagate_non_null(
     // Compute intersection of 'done' neighbors only (filter out 'active' = cycle nodes)
     let done_neighbor_sets: Vec<BTreeSet<usize>> = neighbors
         .iter()
-        .filter(|n| traversal_state[n.0 as usize] == Some(TraversalState::Done))
-        .filter_map(|n| working[n.0 as usize].clone())
+        .filter(|n| traversal_state[index.of(**n)] == Some(TraversalState::Done))
+        .filter_map(|n| working[index.of(*n)].clone())
         .collect();
 
     let neighbor_intersection = if done_neighbor_sets.is_empty() {
@@ -1428,7 +1476,7 @@ fn recursively_propagate_non_null(
         iter.fold(first, |acc, s| acc.intersection(&s).copied().collect())
     };
 
-    let prev_objects = working[node_id.0 as usize].clone().unwrap_or_default();
+    let prev_objects = working[index.of(node_id)].clone().unwrap_or_default();
     let mut merged: BTreeSet<usize> = prev_objects
         .union(&neighbor_intersection)
         .copied()
@@ -1437,8 +1485,8 @@ fn recursively_propagate_non_null(
 
     // Compare with previous value — can't just check size due to reduce_maybe_optional_chains
     changed |= prev_objects != merged;
-    working[node_id.0 as usize] = Some(merged);
-    traversal_state[node_id.0 as usize] = Some(TraversalState::Done);
+    working[index.of(node_id)] = Some(merged);
+    traversal_state[index.of(node_id)] = Some(TraversalState::Done);
 
     changed
 }

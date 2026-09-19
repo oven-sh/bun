@@ -11,6 +11,10 @@ use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data;
 use bun_ast::{self as ast, Binding, Expr, G, Ref, Stmt, b, s};
 use smallvec::SmallVec;
+use std::cmp::Ordering;
+use std::collections::BTreeSet;
+
+use crate::collections::FxHashMap;
 
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
@@ -103,49 +107,75 @@ fn lower_block_statement_inner(
     }
 
     // Phase 2: for each statement preceding (or equal to) a decl's index,
-    // scan its subtree for a reference to that decl. Upstream only hoists a
+    // look in its subtree for a reference to that decl. Upstream only hoists a
     // reference when it sits inside a nested function (`fnDepth > 0`) or the
     // target is a function declaration (`binding.kind === 'hoisted'`), so a
     // plain forward reference to a let/const is left for EnterSSA to reject.
-    // The `ref_in_nested_fn_*` walkers match at `depth > 0` and increment on
-    // function entry, so the nested-function filter is a start depth of 0;
-    // HoistedFunction targets start at 1 to match at any nesting level.
     // Record the statement index of the first reference so DeclareContext is
     // emitted immediately before that statement (matching upstream); emitting
     // it any earlier would extend the variable's mutable range across
     // unrelated instructions (e.g. a preceding hook call), which causes the
     // resulting scope to be flattened.
+    //
+    // One walk per statement collects its references to the decls, and `slots`
+    // finds the entries of `decls` for a `Ref`. A walk of each statement once
+    // per decl is n^2 walks for a block of n declarations.
+    let mut slots: FxHashMap<Ref, SmallVec<[usize; 1]>> = FxHashMap::default();
+    for (k, (_, target, _, _)) in decls.iter().enumerate() {
+        slots.entry(*target).or_default().push(k);
+    }
     let mut hoist: SmallVec<[(usize, Ref, ast::Loc, InstructionKind); 4]> = SmallVec::new();
-    'outer: for (i, stmt) in body.iter().enumerate() {
-        let mut k = 0;
-        while k < decls.len() {
-            let (decl_i, target, loc, kind) = decls[k];
-            let depth = u32::from(kind == InstructionKind::HoistedFunction);
-            let found = if decl_i > i {
-                ref_in_nested_fn_stmt(builder, target, stmt, depth)
-            } else if decl_i == i {
+    let mut references: FxHashMap<Ref, u8> = FxHashMap::default();
+    for (i, stmt) in body.iter().enumerate() {
+        if decls.is_empty() {
+            break;
+        }
+        references.clear();
+        collect_decl_references(builder, stmt, &slots, &mut references);
+
+        let mut found: BTreeSet<usize> = BTreeSet::new();
+        for (ref_, &seen) in &references {
+            for &k in &slots[ref_] {
+                let (decl_i, _, _, kind) = decls[k];
                 // Self-reference: only the initializer expressions of this
                 // statement count (the binding pattern itself is the def).
-                match &stmt.data {
-                    Data::SLocal(local) => local.decls.iter().any(|d| {
-                        d.value
-                            .as_ref()
-                            .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
-                    }),
-                    Data::SFunction(f) => ref_in_nested_fn_func(builder, target, &f.func, depth),
-                    _ => false,
+                let part = match decl_i.cmp(&i) {
+                    Ordering::Greater => DeclReference::OWN | DeclReference::REST,
+                    Ordering::Equal => DeclReference::OWN,
+                    Ordering::Less => continue,
+                };
+                // A function declaration matches at any nesting level.
+                let depth = if kind == InstructionKind::HoistedFunction {
+                    DeclReference::ANY_DEPTH
+                } else {
+                    DeclReference::IN_NESTED_FN
+                };
+                if seen & part & depth != 0 {
+                    found.insert(k);
                 }
-            } else {
-                false
-            };
-            if found {
-                hoist.push((i, target, loc, kind));
-                decls.swap_remove(k);
-                if decls.is_empty() {
-                    break 'outer;
+            }
+        }
+
+        // The order of `hoist` is the order of a scan over `decls` that takes
+        // each found entry out with `swap_remove` and looks at the entry that
+        // moved into its place next.
+        while let Some(k) = found.pop_first() {
+            let (_, target, loc, kind) = decls[k];
+            hoist.push((i, target, loc, kind));
+            let last = decls.len() - 1;
+            decls.swap_remove(k);
+            if let Some(target_slots) = slots.get_mut(&target) {
+                target_slots.retain(|slot| *slot != k);
+            }
+            if k != last {
+                if let Some(moved_slots) = slots.get_mut(&decls[k].1) {
+                    for slot in moved_slots.iter_mut().filter(|slot| **slot == last) {
+                        *slot = k;
+                    }
                 }
-            } else {
-                k += 1;
+                if found.remove(&last) {
+                    found.insert(k);
+                }
             }
         }
     }
@@ -214,277 +244,359 @@ fn collect_binding_refs(binding: &Binding, f: &mut impl FnMut(Ref, ast::Loc)) {
 // emitted a `StoreLocal` for it. Replicate just enough of that scan here so
 // `validateContextVariableLValues` observes the same Local→Context conflict.
 fn catch_param_referenced_in_nested_fn(builder: &HirBuilder, target: Ref, body: &[Stmt]) -> bool {
+    let mut is_target_in_nested_fn = |ref_: Ref, depth: u32| depth > 0 && ref_ == target;
     body.iter()
-        .any(|s| ref_in_nested_fn_stmt(builder, target, s, 0))
+        .any(|s| any_ref_in_stmt(builder, &mut is_target_in_nested_fn, s, 0))
 }
 
-fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: u32) -> bool {
+/// Which part of a statement references a decl of its block, and how deep.
+struct DeclReference;
+
+impl DeclReference {
+    /// In the part that a decl of the statement itself can reference: the
+    /// initializers of a let/const, or the function of a function declaration.
+    const OWN: u8 = 0b0011;
+    /// In the rest of the statement.
+    const REST: u8 = 0b1100;
+    /// Inside a function nested in the statement.
+    const IN_NESTED_FN: u8 = 0b0101;
+    const ANY_DEPTH: u8 = 0b1010;
+}
+
+/// For each key of `slots` that `stmt` references, the `DeclReference` bits of
+/// the references.
+fn collect_decl_references(
+    builder: &HirBuilder,
+    stmt: &Stmt,
+    slots: &FxHashMap<Ref, SmallVec<[usize; 1]>>,
+    references: &mut FxHashMap<Ref, u8>,
+) {
+    let mut part = DeclReference::OWN;
+    let mut record = |ref_: Ref, depth: u32, part: u8| {
+        if slots.contains_key(&ref_) {
+            let depth = if depth > 0 {
+                DeclReference::IN_NESTED_FN | DeclReference::ANY_DEPTH
+            } else {
+                DeclReference::ANY_DEPTH
+            };
+            *references.entry(ref_).or_default() |= part & depth;
+        }
+        false
+    };
+    match &stmt.data {
+        Data::SLocal(local) => {
+            for d in local.decls.iter() {
+                if let Some(value) = &d.value {
+                    any_ref_in_expr(builder, &mut |r, depth| record(r, depth, part), value, 0);
+                }
+            }
+            part = DeclReference::REST;
+            for d in local.decls.iter() {
+                any_ref_in_binding(
+                    builder,
+                    &mut |r, depth| record(r, depth, part),
+                    &d.binding,
+                    0,
+                );
+            }
+        }
+        Data::SFunction(f) => {
+            any_ref_in_func(builder, &mut |r, depth| record(r, depth, part), &f.func, 0);
+        }
+        _ => {
+            part = DeclReference::REST;
+            any_ref_in_stmt(builder, &mut |r, depth| record(r, depth, part), stmt, 0);
+        }
+    }
+}
+
+fn any_ref_in_stmt(
+    builder: &HirBuilder,
+    visit: &mut impl FnMut(Ref, u32) -> bool,
+    stmt: &Stmt,
+    depth: u32,
+) -> bool {
     match &stmt.data {
         Data::SBlock(b) => b
             .stmts
             .slice()
             .iter()
-            .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth)),
-        Data::SExpr(e) => ref_in_nested_fn_expr(builder, target, &e.value, depth),
+            .any(|s| any_ref_in_stmt(builder, visit, s, depth)),
+        Data::SExpr(e) => any_ref_in_expr(builder, visit, &e.value, depth),
         Data::SLocal(l) => l.decls.iter().any(|d| {
             d.value
                 .as_ref()
-                .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
-                || ref_in_nested_fn_binding(builder, target, &d.binding, depth)
+                .is_some_and(|v| any_ref_in_expr(builder, visit, v, depth))
+                || any_ref_in_binding(builder, visit, &d.binding, depth)
         }),
         Data::SReturn(r) => r
             .value
             .as_ref()
-            .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth)),
-        Data::SThrow(t) => ref_in_nested_fn_expr(builder, target, &t.value, depth),
+            .is_some_and(|v| any_ref_in_expr(builder, visit, v, depth)),
+        Data::SThrow(t) => any_ref_in_expr(builder, visit, &t.value, depth),
         Data::SIf(i) => {
-            ref_in_nested_fn_expr(builder, target, &i.test, depth)
-                || ref_in_nested_fn_stmt(builder, target, &i.yes, depth)
+            any_ref_in_expr(builder, visit, &i.test, depth)
+                || any_ref_in_stmt(builder, visit, &i.yes, depth)
                 || i.no
                     .as_ref()
-                    .is_some_and(|n| ref_in_nested_fn_stmt(builder, target, n, depth))
+                    .is_some_and(|n| any_ref_in_stmt(builder, visit, n, depth))
         }
         Data::SFor(f) => {
             f.init
                 .as_ref()
-                .is_some_and(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
+                .is_some_and(|s| any_ref_in_stmt(builder, visit, s, depth))
                 || f.test
                     .as_ref()
-                    .is_some_and(|e| ref_in_nested_fn_expr(builder, target, e, depth))
+                    .is_some_and(|e| any_ref_in_expr(builder, visit, e, depth))
                 || f.update
                     .as_ref()
-                    .is_some_and(|e| ref_in_nested_fn_expr(builder, target, e, depth))
-                || ref_in_nested_fn_stmt(builder, target, &f.body, depth)
+                    .is_some_and(|e| any_ref_in_expr(builder, visit, e, depth))
+                || any_ref_in_stmt(builder, visit, &f.body, depth)
         }
         Data::SForIn(f) => {
-            ref_in_nested_fn_stmt(builder, target, &f.init, depth)
-                || ref_in_nested_fn_expr(builder, target, &f.value, depth)
-                || ref_in_nested_fn_stmt(builder, target, &f.body, depth)
+            any_ref_in_stmt(builder, visit, &f.init, depth)
+                || any_ref_in_expr(builder, visit, &f.value, depth)
+                || any_ref_in_stmt(builder, visit, &f.body, depth)
         }
         Data::SForOf(f) => {
-            ref_in_nested_fn_stmt(builder, target, &f.init, depth)
-                || ref_in_nested_fn_expr(builder, target, &f.value, depth)
-                || ref_in_nested_fn_stmt(builder, target, &f.body, depth)
+            any_ref_in_stmt(builder, visit, &f.init, depth)
+                || any_ref_in_expr(builder, visit, &f.value, depth)
+                || any_ref_in_stmt(builder, visit, &f.body, depth)
         }
         Data::SWhile(w) => {
-            ref_in_nested_fn_expr(builder, target, &w.test, depth)
-                || ref_in_nested_fn_stmt(builder, target, &w.body, depth)
+            any_ref_in_expr(builder, visit, &w.test, depth)
+                || any_ref_in_stmt(builder, visit, &w.body, depth)
         }
         Data::SDoWhile(d) => {
-            ref_in_nested_fn_stmt(builder, target, &d.body, depth)
-                || ref_in_nested_fn_expr(builder, target, &d.test, depth)
+            any_ref_in_stmt(builder, visit, &d.body, depth)
+                || any_ref_in_expr(builder, visit, &d.test, depth)
         }
         Data::SSwitch(sw) => {
-            ref_in_nested_fn_expr(builder, target, &sw.test, depth)
+            any_ref_in_expr(builder, visit, &sw.test, depth)
                 || sw.cases.slice().iter().any(|c| {
                     c.value
                         .as_ref()
-                        .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
+                        .is_some_and(|v| any_ref_in_expr(builder, visit, v, depth))
                         || c.body
                             .slice()
                             .iter()
-                            .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
+                            .any(|s| any_ref_in_stmt(builder, visit, s, depth))
                 })
         }
         Data::STry(t) => {
             t.body
                 .slice()
                 .iter()
-                .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
+                .any(|s| any_ref_in_stmt(builder, visit, s, depth))
                 || t.catch.as_ref().is_some_and(|c| {
                     c.body
                         .slice()
                         .iter()
-                        .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
+                        .any(|s| any_ref_in_stmt(builder, visit, s, depth))
                 })
                 || t.finally.as_ref().is_some_and(|f| {
                     f.stmts
                         .slice()
                         .iter()
-                        .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
+                        .any(|s| any_ref_in_stmt(builder, visit, s, depth))
                 })
         }
-        Data::SLabel(l) => ref_in_nested_fn_stmt(builder, target, &l.stmt, depth),
+        Data::SLabel(l) => any_ref_in_stmt(builder, visit, &l.stmt, depth),
         Data::SWith(w) => {
-            ref_in_nested_fn_expr(builder, target, &w.value, depth)
-                || ref_in_nested_fn_stmt(builder, target, &w.body, depth)
+            any_ref_in_expr(builder, visit, &w.value, depth)
+                || any_ref_in_stmt(builder, visit, &w.body, depth)
         }
-        Data::SFunction(f) => ref_in_nested_fn_func(builder, target, &f.func, depth),
-        Data::SClass(c) => ref_in_nested_fn_class(builder, target, &c.class, depth),
+        Data::SFunction(f) => any_ref_in_func(builder, visit, &f.func, depth),
+        Data::SClass(c) => any_ref_in_class(builder, visit, &c.class, depth),
         Data::SExportDefault(e) => match &e.value {
-            ast::StmtOrExpr::Stmt(s) => ref_in_nested_fn_stmt(builder, target, s, depth),
-            ast::StmtOrExpr::Expr(e) => ref_in_nested_fn_expr(builder, target, e, depth),
+            ast::StmtOrExpr::Stmt(s) => any_ref_in_stmt(builder, visit, s, depth),
+            ast::StmtOrExpr::Expr(e) => any_ref_in_expr(builder, visit, e, depth),
         },
-        Data::SExportEquals(e) => ref_in_nested_fn_expr(builder, target, &e.value, depth),
+        Data::SExportEquals(e) => any_ref_in_expr(builder, visit, &e.value, depth),
         _ => false,
     }
 }
 
-fn ref_in_nested_fn_binding(
+fn any_ref_in_binding(
     builder: &HirBuilder,
-    target: Ref,
+    visit: &mut impl FnMut(Ref, u32) -> bool,
     binding: &Binding,
     depth: u32,
 ) -> bool {
     match &binding.data {
         b::B::BArray(arr) => arr.items().iter().any(|item| {
-            ref_in_nested_fn_binding(builder, target, &item.binding, depth)
+            any_ref_in_binding(builder, visit, &item.binding, depth)
                 || item
                     .default_value
                     .as_ref()
-                    .is_some_and(|d| ref_in_nested_fn_expr(builder, target, d, depth))
+                    .is_some_and(|d| any_ref_in_expr(builder, visit, d, depth))
         }),
         b::B::BObject(obj) => obj.properties().iter().any(|p| {
             (p.flags.contains(ast::flags::Property::IsComputed)
-                && ref_in_nested_fn_expr(builder, target, &p.key, depth))
-                || ref_in_nested_fn_binding(builder, target, &p.value, depth)
+                && any_ref_in_expr(builder, visit, &p.key, depth))
+                || any_ref_in_binding(builder, visit, &p.value, depth)
                 || p.default_value
                     .as_ref()
-                    .is_some_and(|d| ref_in_nested_fn_expr(builder, target, d, depth))
+                    .is_some_and(|d| any_ref_in_expr(builder, visit, d, depth))
         }),
         b::B::BIdentifier(_) | b::B::BMissing(_) => false,
     }
 }
 
-fn ref_in_nested_fn_func(builder: &HirBuilder, target: Ref, func: &G::Fn, depth: u32) -> bool {
+fn any_ref_in_func(
+    builder: &HirBuilder,
+    visit: &mut impl FnMut(Ref, u32) -> bool,
+    func: &G::Fn,
+    depth: u32,
+) -> bool {
     let depth = depth + 1;
     func.args.slice().iter().any(|a| {
         a.default
             .as_ref()
-            .is_some_and(|d| ref_in_nested_fn_expr(builder, target, d, depth))
-            || ref_in_nested_fn_binding(builder, target, &a.binding, depth)
+            .is_some_and(|d| any_ref_in_expr(builder, visit, d, depth))
+            || any_ref_in_binding(builder, visit, &a.binding, depth)
     }) || func
         .body
         .stmts
         .slice()
         .iter()
-        .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
+        .any(|s| any_ref_in_stmt(builder, visit, s, depth))
 }
 
-fn ref_in_nested_fn_class(builder: &HirBuilder, target: Ref, class: &G::Class, depth: u32) -> bool {
+fn any_ref_in_class(
+    builder: &HirBuilder,
+    visit: &mut impl FnMut(Ref, u32) -> bool,
+    class: &G::Class,
+    depth: u32,
+) -> bool {
     class
         .extends
         .as_ref()
-        .is_some_and(|e| ref_in_nested_fn_expr(builder, target, e, depth))
+        .is_some_and(|e| any_ref_in_expr(builder, visit, e, depth))
         || class.properties.slice().iter().any(|p| {
             if let Some(block) = p.class_static_block_ref() {
                 return block
                     .stmts
                     .iter()
-                    .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth + 1));
+                    .any(|s| any_ref_in_stmt(builder, visit, s, depth + 1));
             }
             (p.flags.contains(ast::flags::Property::IsComputed)
                 && p.key
                     .as_ref()
-                    .is_some_and(|k| ref_in_nested_fn_expr(builder, target, k, depth)))
+                    .is_some_and(|k| any_ref_in_expr(builder, visit, k, depth)))
                 || p.value
                     .as_ref()
-                    .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
+                    .is_some_and(|v| any_ref_in_expr(builder, visit, v, depth))
                 || p.initializer
                     .as_ref()
-                    .is_some_and(|i| ref_in_nested_fn_expr(builder, target, i, depth))
+                    .is_some_and(|i| any_ref_in_expr(builder, visit, i, depth))
         })
 }
 
 #[allow(clippy::too_many_lines)]
-fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32) -> bool {
+fn any_ref_in_expr(
+    builder: &HirBuilder,
+    visit: &mut impl FnMut(Ref, u32) -> bool,
+    e: &Expr,
+    depth: u32,
+) -> bool {
     match &e.data {
-        ExprData::EIdentifier(id) => depth > 0 && builder.resolve_ref(id.ref_) == target,
-        ExprData::EImportIdentifier(id) => depth > 0 && builder.resolve_ref(id.ref_) == target,
+        ExprData::EIdentifier(id) => visit(builder.resolve_ref(id.ref_), depth),
+        ExprData::EImportIdentifier(id) => visit(builder.resolve_ref(id.ref_), depth),
         ExprData::EBinary(b) => {
-            ref_in_nested_fn_expr(builder, target, &b.left, depth)
-                || ref_in_nested_fn_expr(builder, target, &b.right, depth)
+            any_ref_in_expr(builder, visit, &b.left, depth)
+                || any_ref_in_expr(builder, visit, &b.right, depth)
         }
-        ExprData::EUnary(u) => ref_in_nested_fn_expr(builder, target, &u.value, depth),
+        ExprData::EUnary(u) => any_ref_in_expr(builder, visit, &u.value, depth),
         ExprData::EArrow(a) => {
             let depth = depth + 1;
             a.args.slice().iter().any(|arg| {
                 arg.default
                     .as_ref()
-                    .is_some_and(|d| ref_in_nested_fn_expr(builder, target, d, depth))
-                    || ref_in_nested_fn_binding(builder, target, &arg.binding, depth)
+                    .is_some_and(|d| any_ref_in_expr(builder, visit, d, depth))
+                    || any_ref_in_binding(builder, visit, &arg.binding, depth)
             }) || a
                 .body
                 .stmts
                 .slice()
                 .iter()
-                .any(|s| ref_in_nested_fn_stmt(builder, target, s, depth))
+                .any(|s| any_ref_in_stmt(builder, visit, s, depth))
         }
-        ExprData::EFunction(f) => ref_in_nested_fn_func(builder, target, &f.func, depth),
-        ExprData::EClass(c) => ref_in_nested_fn_class(builder, target, c, depth),
+        ExprData::EFunction(f) => any_ref_in_func(builder, visit, &f.func, depth),
+        ExprData::EClass(c) => any_ref_in_class(builder, visit, c, depth),
         ExprData::EArray(a) => a
             .items
             .iter()
-            .any(|i| ref_in_nested_fn_expr(builder, target, i, depth)),
+            .any(|i| any_ref_in_expr(builder, visit, i, depth)),
         ExprData::EObject(o) => o.properties.iter().any(|p| {
             (p.flags.contains(ast::flags::Property::IsComputed)
                 && p.key
                     .as_ref()
-                    .is_some_and(|k| ref_in_nested_fn_expr(builder, target, k, depth)))
+                    .is_some_and(|k| any_ref_in_expr(builder, visit, k, depth)))
                 || p.value
                     .as_ref()
-                    .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
+                    .is_some_and(|v| any_ref_in_expr(builder, visit, v, depth))
                 || p.initializer
                     .as_ref()
-                    .is_some_and(|i| ref_in_nested_fn_expr(builder, target, i, depth))
+                    .is_some_and(|i| any_ref_in_expr(builder, visit, i, depth))
         }),
-        ExprData::ESpread(s) => ref_in_nested_fn_expr(builder, target, &s.value, depth),
+        ExprData::ESpread(s) => any_ref_in_expr(builder, visit, &s.value, depth),
         ExprData::EIf(c) => {
-            ref_in_nested_fn_expr(builder, target, &c.test, depth)
-                || ref_in_nested_fn_expr(builder, target, &c.yes, depth)
-                || ref_in_nested_fn_expr(builder, target, &c.no, depth)
+            any_ref_in_expr(builder, visit, &c.test, depth)
+                || any_ref_in_expr(builder, visit, &c.yes, depth)
+                || any_ref_in_expr(builder, visit, &c.no, depth)
         }
-        ExprData::EDot(d) => ref_in_nested_fn_expr(builder, target, &d.target, depth),
+        ExprData::EDot(d) => any_ref_in_expr(builder, visit, &d.target, depth),
         ExprData::EIndex(i) => {
-            ref_in_nested_fn_expr(builder, target, &i.target, depth)
-                || ref_in_nested_fn_expr(builder, target, &i.index, depth)
+            any_ref_in_expr(builder, visit, &i.target, depth)
+                || any_ref_in_expr(builder, visit, &i.index, depth)
         }
         ExprData::ECall(c) => {
-            ref_in_nested_fn_expr(builder, target, &c.target, depth)
+            any_ref_in_expr(builder, visit, &c.target, depth)
                 || c.args
                     .iter()
-                    .any(|a| ref_in_nested_fn_expr(builder, target, a, depth))
+                    .any(|a| any_ref_in_expr(builder, visit, a, depth))
         }
         ExprData::ENew(n) => {
-            ref_in_nested_fn_expr(builder, target, &n.target, depth)
+            any_ref_in_expr(builder, visit, &n.target, depth)
                 || n.args
                     .iter()
-                    .any(|a| ref_in_nested_fn_expr(builder, target, a, depth))
+                    .any(|a| any_ref_in_expr(builder, visit, a, depth))
         }
         ExprData::EImport(i) => {
-            ref_in_nested_fn_expr(builder, target, &i.expr, depth)
-                || ref_in_nested_fn_expr(builder, target, &i.options, depth)
+            any_ref_in_expr(builder, visit, &i.expr, depth)
+                || any_ref_in_expr(builder, visit, &i.options, depth)
         }
-        ExprData::EAwait(a) => ref_in_nested_fn_expr(builder, target, &a.value, depth),
+        ExprData::EAwait(a) => any_ref_in_expr(builder, visit, &a.value, depth),
         ExprData::EYield(y) => y
             .value
             .as_ref()
-            .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth)),
+            .is_some_and(|v| any_ref_in_expr(builder, visit, v, depth)),
         ExprData::ETemplate(t) => {
             t.tag
                 .as_ref()
-                .is_some_and(|tag| ref_in_nested_fn_expr(builder, target, tag, depth))
+                .is_some_and(|tag| any_ref_in_expr(builder, visit, tag, depth))
                 || t.parts()
                     .iter()
-                    .any(|p| ref_in_nested_fn_expr(builder, target, &p.value, depth))
+                    .any(|p| any_ref_in_expr(builder, visit, &p.value, depth))
         }
         ExprData::EJsxElement(j) => {
             j.tag
                 .as_ref()
-                .is_some_and(|tag| ref_in_nested_fn_expr(builder, target, tag, depth))
+                .is_some_and(|tag| any_ref_in_expr(builder, visit, tag, depth))
                 || j.properties.iter().any(|p| {
                     p.value
                         .as_ref()
-                        .is_some_and(|v| ref_in_nested_fn_expr(builder, target, v, depth))
+                        .is_some_and(|v| any_ref_in_expr(builder, visit, v, depth))
                         || p.initializer
                             .as_ref()
-                            .is_some_and(|i| ref_in_nested_fn_expr(builder, target, i, depth))
+                            .is_some_and(|i| any_ref_in_expr(builder, visit, i, depth))
                 })
                 || j.children
                     .iter()
-                    .any(|c| ref_in_nested_fn_expr(builder, target, c, depth))
+                    .any(|c| any_ref_in_expr(builder, visit, c, depth))
         }
-        ExprData::EInlinedEnum(ie) => ref_in_nested_fn_expr(builder, target, &ie.value, depth),
+        ExprData::EInlinedEnum(ie) => any_ref_in_expr(builder, visit, &ie.value, depth),
         _ => false,
     }
 }

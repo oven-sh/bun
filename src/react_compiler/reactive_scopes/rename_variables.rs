@@ -15,6 +15,7 @@ use crate::collections::IdMap;
 use crate::hir::DeclarationId;
 use crate::hir::EvaluationOrder;
 use crate::hir::FunctionId;
+use crate::hir::IdentifierId;
 use crate::hir::IdentifierName;
 use crate::hir::InstructionValue;
 use crate::hir::Place;
@@ -33,11 +34,25 @@ use crate::reactive_scopes::visitors::{self};
 // Scopes
 // =============================================================================
 
+/// Not in upstream. The names that `visit_identifier` generates, in the order
+/// it tries them: `t0, t1, ..`, `T0, T1, ..`, or `x$0, x$1, ..` for a name `x`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Sequence {
+    Temporary,
+    JsxTemporary,
+    Named(StoreStr),
+}
+
 struct Scopes {
     seen: IdMap<DeclarationId, IdentifierName>,
     stack: Vec<HashMap<StoreStr, DeclarationId>>,
     globals: HashSet<StoreStr>,
     names: HashSet<StoreStr>,
+    /// Not in upstream, which tries each sequence from 0 for every identifier.
+    /// One map per entry of `stack`: an index of a sequence below which every
+    /// name is visible from that scope. A scope only gains names until it is
+    /// left, so the bound stays valid that long.
+    next_index: Vec<HashMap<Sequence, u32>>,
 }
 
 impl Scopes {
@@ -47,6 +62,7 @@ impl Scopes {
             stack: vec![HashMap::new()],
             globals,
             names: HashSet::new(),
+            next_index: vec![HashMap::new()],
         }
     }
 
@@ -67,9 +83,24 @@ impl Scopes {
         let is_promoted_temp = is_promoted && original_value.starts_with(b"#t");
         let is_promoted_jsx = is_promoted && original_value.starts_with(b"#T");
 
+        let sequence = if is_promoted_temp {
+            Sequence::Temporary
+        } else if is_promoted_jsx {
+            Sequence::JsxTemporary
+        } else {
+            Sequence::Named(StoreStr::new(original_value))
+        };
+        // The innermost scope that has a bound has the largest one.
+        let first_id: u32 = self
+            .next_index
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(&sequence).copied())
+            .unwrap_or(0);
+
         let mut name: Vec<u8> = Vec::with_capacity(original_value.len() + 4);
         let mut itoa = bun_core::fmt::ItoaBuf::new();
-        let mut id: u32 = 0;
+        let mut id: u32 = first_id;
         let mut regen = |buf: &mut Vec<u8>, n: u32| {
             buf.clear();
             if is_promoted_temp {
@@ -102,6 +133,9 @@ impl Scopes {
             .unwrap()
             .insert(stored, declaration_id);
         self.names.insert(stored);
+        if id != first_id {
+            self.next_index.last_mut().unwrap().insert(sequence, id);
+        }
     }
 
     fn lookup(&self, name: &[u8]) -> Option<DeclarationId> {
@@ -115,10 +149,12 @@ impl Scopes {
 
     fn enter(&mut self) {
         self.stack.push(HashMap::new());
+        self.next_index.push(HashMap::new());
     }
 
     fn leave(&mut self) {
         self.stack.pop();
+        self.next_index.pop();
     }
 }
 
@@ -206,13 +242,50 @@ pub(crate) fn rename_variables(
     func: &mut ReactiveFunction,
     env: &mut Environment,
 ) -> HashSet<String> {
-    rename_variables_with_parent(func, env, None)
+    rename_variables_with_parent(func, env, None, None)
+}
+
+/// Not in upstream. `rename_variables` for an outlined function, which has a
+/// few declarations of a large environment: `identifiers` finds the
+/// identifiers to rename without a walk over all of them.
+pub(crate) fn rename_variables_of_outlined(
+    func: &mut ReactiveFunction,
+    env: &mut Environment,
+    identifiers: &IdentifiersByDeclaration,
+) -> HashSet<String> {
+    rename_variables_with_parent(func, env, None, Some(identifiers))
+}
+
+/// Not in upstream. The identifiers of the environment, grouped by declaration.
+/// Valid until the environment gets a new identifier.
+pub(crate) struct IdentifiersByDeclaration(Vec<(DeclarationId, IdentifierId)>);
+
+impl IdentifiersByDeclaration {
+    pub(crate) fn new(env: &Environment) -> Self {
+        let mut pairs: Vec<(DeclarationId, IdentifierId)> = env
+            .identifiers
+            .iter()
+            .enumerate()
+            .map(|(index, identifier)| (identifier.declaration_id, IdentifierId(index as u32)))
+            .collect();
+        pairs.sort_unstable();
+        Self(pairs)
+    }
+
+    fn of(&self, declaration_id: DeclarationId) -> impl Iterator<Item = IdentifierId> + '_ {
+        let start = self.0.partition_point(|(id, _)| *id < declaration_id);
+        self.0[start..]
+            .iter()
+            .take_while(move |(id, _)| *id == declaration_id)
+            .map(|(_, identifier_id)| *identifier_id)
+    }
 }
 
 fn rename_variables_with_parent(
     func: &mut ReactiveFunction,
     env: &mut Environment,
     parent_names: Option<&HashSet<StoreStr>>,
+    identifiers: Option<&IdentifiersByDeclaration>,
 ) -> HashSet<String> {
     let globals = collect_referenced_globals(&func.body, env);
 
@@ -237,10 +310,25 @@ fn rename_variables_with_parent(
     rename_variables_impl(func, &Visitor { env }, &mut scopes);
 
     // Phase 2: Apply the computed renames to all identifiers in env.
-    for identifier in env.identifiers.iter_mut() {
-        if let Some(mapped_name) = scopes.seen.get(identifier.declaration_id) {
-            if identifier.name.is_some() {
-                identifier.name = Some(mapped_name.clone());
+    match identifiers {
+        None => {
+            for identifier in env.identifiers.iter_mut() {
+                if let Some(mapped_name) = scopes.seen.get(identifier.declaration_id) {
+                    if identifier.name.is_some() {
+                        identifier.name = Some(mapped_name.clone());
+                    }
+                }
+            }
+        }
+        Some(identifiers) => {
+            debug_assert_eq!(identifiers.0.len(), env.identifiers.len());
+            for (declaration_id, mapped_name) in scopes.seen.iter() {
+                for identifier_id in identifiers.of(declaration_id) {
+                    let identifier = &mut env.identifiers[identifier_id.0 as usize];
+                    if identifier.name.is_some() {
+                        identifier.name = Some(mapped_name.clone());
+                    }
+                }
             }
         }
     }

@@ -3059,6 +3059,98 @@ describe("bundler", () => {
   });
 });
 
+// A component with N arrow functions next to each other. Lowering gave each
+// nested function a copy of the bindings of the component, and looked for a
+// free name (`e`, `e_0`, `e_1`, ...) with a walk over every binding per
+// candidate: N^3 steps when the functions share a parameter name. It also
+// walked each statement of a block once per declaration below it.
+// RenameVariables tried `t0`, `t1`, ... from 0 for each temporary of a block,
+// and OutlineFunctions `_temp`, `_temp2`, ... for each outlined function.
+// InferReactiveScopeVariables, AlignMethodCallScopes, AlignObjectMethodScopes
+// and the rename of an outlined function walked every identifier of the
+// component once per scope or per nested function.
+// PropagateScopeDependenciesHIR sized three vectors per nested function by the
+// blocks of the component, and codegen copied the set of names per nested
+// function. On a release build, 2400 of the handlers below in one component
+// took 23 seconds and 4000 of the locals 5.6 seconds.
+describe.each([
+  [
+    "a local",
+    (name: string, n: number) =>
+      `export function ${name}(props) {\n` +
+      Array.from({ length: n }, (_, i) => `  const f${i} = () => props.x${i % 7};\n`).join("") +
+      `  return <div>${Array.from({ length: n }, (_, i) => `<b onClick={f${i}} />`).join("")}</div>;\n}\n`,
+  ],
+  [
+    "an attribute and names its parameter `e`",
+    (name: string, n: number) =>
+      `export function ${name}(props) {\n  return <div>${Array.from({ length: n }, (_, i) => `<b onClick={e => props.on${i % 7}(e, ${i})} />`).join("")}</div>;\n}\n`,
+  ],
+  [
+    "outlined",
+    (name: string, n: number) =>
+      `export function ${name}(props) {\n` +
+      Array.from({ length: n }, (_, i) => `  const v${i} = props.items.map(x${i} => x${i} + ${i});\n`).join("") +
+      `  return <div>${Array.from({ length: n }, (_, i) => `{v${i}}`).join("")}</div>;\n}\n`,
+  ],
+] as const)("react-compiler compile time per arrow function", (shape, component) => {
+  // A debug build spends 7 ms per arrow function in work that is linear. Only
+  // the cubic step stands out against that in the time of one test.
+  const name = `does not grow with the number of them when each is ${shape}`;
+  test.skipIf(isDebug && !shape.startsWith("an attribute"))(
+    name,
+    async () => {
+      // `large` arrow functions in one component, against `control` of them in
+      // components of `perComponent`. An ASAN build has the stack for fewer
+      // blocks than a release build.
+      const { large, control, perComponent, rounds } = isDebug
+        ? { large: 400, control: 200, perComponent: 10, rounds: 1 }
+        : isASAN
+          ? { large: 600, control: 600, perComponent: 10, rounds: 3 }
+          : { large: shape.startsWith("an attribute") ? 1200 : 2000, control: 1000, perComponent: 10, rounds: 3 };
+      using dir = tempDir("react-compiler-arrow-functions", {
+        "warmup.jsx": component("App", 1),
+        "control.jsx": Array.from({ length: control / perComponent }, (_, c) =>
+          component(`App${c}`, perComponent),
+        ).join(""),
+        "large.jsx": component("App", large),
+      });
+
+      // The bundler runs on threads of this process. `cpuUsage` counts them all.
+      const cpuPerFunction = async (entry: string, functions: number) => {
+        const before = process.cpuUsage();
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), entry)],
+          target: "browser",
+          external: ["*"],
+          reactCompiler: true,
+          throw: false,
+        });
+        const { user } = process.cpuUsage(before);
+        expect(result.success).toBe(true);
+        expect(await result.outputs[0].text()).toContain("react/compiler-runtime");
+        return user / functions;
+      };
+
+      // The time per arrow function must not depend on the size of the
+      // component. On a release build the ratio is 1.3 to 1.7 with the fixes,
+      // and 7, 26 and 5 without them. On a debug build it is 1 and 4. Other
+      // load on the machine adds to a CPU time, so an optimized build, which
+      // has the time, takes the best of up to three.
+      await cpuPerFunction("warmup.jsx", 1);
+      let controlCost = Infinity;
+      let largeCost = Infinity;
+      for (let round = 0; round < rounds; round++) {
+        controlCost = Math.min(controlCost, await cpuPerFunction("control.jsx", control));
+        largeCost = Math.min(largeCost, await cpuPerFunction("large.jsx", large));
+        if (largeCost / controlCost < 2.5) break;
+      }
+      expect(largeCost / controlCost).toBeLessThan(2.5);
+    },
+    60_000,
+  );
+});
+
 // Three passes kept one copy of their work per basic block or per nesting
 // level of a value, so memory grew with the square of the size of a component
 // that has no loop at all. The fixpoint in InferMutationAliasingEffects kept

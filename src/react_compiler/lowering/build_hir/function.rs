@@ -54,8 +54,6 @@ fn lower_function(
     let parent_function_scope = builder.function_scope();
     let component_scope = builder.component_scope();
 
-    let parent_bindings = builder.bindings().clone();
-    let parent_used_refs = builder.used_refs().clone();
     let context_ids = builder.context_identifiers().clone();
     let import_bindings = builder.import_bindings().clone();
 
@@ -74,16 +72,14 @@ fn lower_function(
         merged
     };
 
-    // Use host_and_env_mut to avoid conflicting borrows
-    let (host, env) = builder.host_and_env_mut();
-    let (hir_func, child_used_refs, child_bindings) = lower_inner(
+    let (host, env, bindings) = builder.host_env_and_bindings_mut();
+    let hir_func = lower_inner(
         &func,
         id,
         loc,
         host,
         env,
-        Some(parent_bindings),
-        Some(parent_used_refs),
+        bindings,
         &merged_context,
         parent_function_scope,
         component_scope,
@@ -91,9 +87,6 @@ fn lower_function(
         &import_bindings,
         false, // nested function
     )?;
-
-    builder.merge_used_refs(&child_used_refs);
-    builder.merge_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
     Ok(LoweredFunction { func: func_id })
@@ -114,8 +107,6 @@ pub(super) fn lower_function_declaration(
     let parent_function_scope = builder.function_scope();
     let component_scope = builder.component_scope();
 
-    let parent_bindings = builder.bindings().clone();
-    let parent_used_refs = builder.used_refs().clone();
     let context_ids = builder.context_identifiers().clone();
     let import_bindings = builder.import_bindings().clone();
 
@@ -134,15 +125,14 @@ pub(super) fn lower_function_declaration(
         merged
     };
 
-    let (host, env) = builder.host_and_env_mut();
-    let (hir_func, child_used_refs, child_bindings) = lower_inner(
+    let (host, env, bindings) = builder.host_env_and_bindings_mut();
+    let hir_func = lower_inner(
         &func,
         func_name,
         loc,
         host,
         env,
-        Some(parent_bindings),
-        Some(parent_used_refs),
+        bindings,
         &merged_context,
         parent_function_scope,
         component_scope,
@@ -150,9 +140,6 @@ pub(super) fn lower_function_declaration(
         &import_bindings,
         false, // nested function
     )?;
-
-    builder.merge_used_refs(&child_used_refs);
-    builder.merge_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
     let lowered_func = LoweredFunction { func: func_id };
@@ -242,8 +229,6 @@ fn lower_function_for_object_method(
     let parent_function_scope = builder.function_scope();
     let component_scope = builder.component_scope();
 
-    let parent_bindings = builder.bindings().clone();
-    let parent_used_refs = builder.used_refs().clone();
     let context_ids = builder.context_identifiers().clone();
     let import_bindings = builder.import_bindings().clone();
 
@@ -261,15 +246,14 @@ fn lower_function_for_object_method(
         merged
     };
 
-    let (host, env) = builder.host_and_env_mut();
-    let (hir_func, child_used_refs, child_bindings) = lower_inner(
+    let (host, env, bindings) = builder.host_env_and_bindings_mut();
+    let hir_func = lower_inner(
         &func,
         None,
         func_loc,
         host,
         env,
-        Some(parent_bindings),
-        Some(parent_used_refs),
+        bindings,
         &merged_context,
         parent_function_scope,
         component_scope,
@@ -277,9 +261,6 @@ fn lower_function_for_object_method(
         &import_bindings,
         false, // nested function
     )?;
-
-    builder.merge_used_refs(&child_used_refs);
-    builder.merge_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
     Ok(LoweredFunction { func: func_id })

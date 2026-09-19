@@ -76,5 +76,7 @@ pub(crate) use prune_non_reactive_dependencies::prune_non_reactive_dependencies;
 pub(crate) use prune_unused_labels::prune_unused_labels;
 pub(crate) use prune_unused_lvalues::prune_unused_lvalues;
 pub(crate) use prune_unused_scopes::prune_unused_scopes;
-pub(crate) use rename_variables::rename_variables;
+pub(crate) use rename_variables::{
+    IdentifiersByDeclaration, rename_variables, rename_variables_of_outlined,
+};
 pub(crate) use stabilize_block_ids::stabilize_block_ids;

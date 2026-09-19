@@ -89,17 +89,15 @@ pub(crate) fn infer_reactive_scope_variables(
         env.scopes[state.scope_id.0 as usize].loc = state.loc;
     }
 
-    // Update each identifier's mutable_range to match its scope's range
-    for state in scopes.values() {
-        let scope_range = env.scopes[state.scope_id.0 as usize].range.clone();
-        // Find all identifiers with this scope and update their mutable_range
-        // We iterate through all identifiers and check their scope
-        for ident in &mut env.identifiers {
-            if ident.scope == Some(state.scope_id) {
-                ident.mutable_range = scope_range.clone();
-            }
+    // Update each identifier's mutable_range to match its scope's range.
+    // Not in upstream, which walks every identifier of the environment once per
+    // scope. The scopes are new, so their identifiers are the members of the sets.
+    scope_identifiers.for_each(|identifier_id, _group_id| {
+        let identifier = &mut env.identifiers[identifier_id.0 as usize];
+        if let Some(scope_id) = identifier.scope {
+            identifier.mutable_range = env.scopes[scope_id.0 as usize].range.clone();
         }
-    }
+    });
 
     // Validate scope ranges
     let mut max_instruction = EvaluationOrder(0);

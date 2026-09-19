@@ -4,6 +4,8 @@
 //! `&dyn Host` (which exposes `symbols()/module_scope()/import_records()`)
 //! instead, since Bun's parser already resolved every reference to a `Ref`.
 
+use crate::collections::FxHashMap;
+use crate::collections::FxHashSet;
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
 use crate::diagnostics::CompilerDiagnostic;
@@ -271,6 +273,21 @@ fn new_block(id: BlockId, kind: BlockKind) -> WipBlock {
 )]
 type RefSet = std::collections::HashSet<Ref>;
 
+/// The bindings that a top-level function and the functions nested in it have
+/// resolved. Upstream gives a nested function a copy of the maps of its parent
+/// and merges the copy back, which only ever adds entries, so one instance
+/// shared by every builder holds the same entries in the same order.
+#[derive(Default)]
+pub(crate) struct Bindings {
+    /// Maps a `Ref` to the HIR IdentifierId created for it.
+    identifiers: IndexMap<Ref, IdentifierId>,
+    /// The name of each identifier in `identifiers`, for collision avoidance.
+    used_names: FxHashSet<StoreStr>,
+    /// For a name that had a collision, a suffix `N` below which every `name_N`
+    /// is in `used_names`. Names are never removed, so the bound stays valid.
+    next_suffix: FxHashMap<StoreStr, u32>,
+}
+
 pub(crate) struct HirBuilder<'h> {
     completed: IndexMap<BlockId, BasicBlock>,
     current: WipBlock,
@@ -279,10 +296,7 @@ pub(crate) struct HirBuilder<'h> {
     /// Context identifiers: variables captured from an outer scope.
     /// Maps the outer scope's binding `Ref` to the source location where it was referenced.
     context: IndexMap<Ref, Option<SourceLocation>>,
-    /// Resolved bindings: maps a `Ref` to the HIR IdentifierId created for it.
-    bindings: IndexMap<Ref, IdentifierId>,
-    /// Refs already resolved to bindings, for collision avoidance.
-    used_refs: IndexSet<Ref>,
+    bindings: &'h mut Bindings,
     env: &'h mut Environment,
     host: &'h dyn Host,
     exception_handler_stack: Vec<BlockId>,
@@ -321,10 +335,9 @@ impl<'h> HirBuilder<'h> {
         function_scope: &'h ast::Scope,
         component_scope: &'h ast::Scope,
         context_identifiers: RefSet,
-        bindings: Option<IndexMap<Ref, IdentifierId>>,
+        bindings: &'h mut Bindings,
         context: Option<IndexMap<Ref, Option<SourceLocation>>>,
         entry_block_kind: Option<BlockKind>,
-        used_refs: Option<IndexSet<Ref>>,
     ) -> Self {
         let entry = env.next_block_id();
         let kind = entry_block_kind.unwrap_or(BlockKind::Block);
@@ -334,8 +347,7 @@ impl<'h> HirBuilder<'h> {
             entry,
             scopes: Vec::new(),
             context: context.unwrap_or_default(),
-            bindings: bindings.unwrap_or_default(),
-            used_refs: used_refs.unwrap_or_default(),
+            bindings,
             env,
             host,
             exception_handler_stack: Vec::new(),
@@ -433,28 +445,11 @@ impl<'h> HirBuilder<'h> {
         self.context_identifiers.insert(self.resolve_ref(ref_));
     }
 
-    pub(crate) fn host_and_env_mut(&mut self) -> (&'h dyn Host, &mut Environment) {
-        (self.host, self.env)
-    }
-
-    pub(crate) fn bindings(&self) -> &IndexMap<Ref, IdentifierId> {
-        &self.bindings
-    }
-
-    pub(crate) fn used_refs(&self) -> &IndexSet<Ref> {
-        &self.used_refs
-    }
-
-    pub(crate) fn merge_used_refs(&mut self, child_used_refs: &IndexSet<Ref>) {
-        for &ref_ in child_used_refs.iter() {
-            self.used_refs.insert(ref_);
-        }
-    }
-
-    pub(crate) fn merge_bindings(&mut self, child_bindings: IndexMap<Ref, IdentifierId>) {
-        for (ref_, identifier_id) in child_bindings {
-            self.bindings.entry(ref_).or_insert(identifier_id);
-        }
+    /// What the builder of a nested function shares with this one.
+    pub(crate) fn host_env_and_bindings_mut(
+        &mut self,
+    ) -> (&'h dyn Host, &mut Environment, &mut Bindings) {
+        (self.host, self.env, self.bindings)
     }
 
     pub(crate) fn push(&mut self, instruction: Instruction) {
@@ -759,17 +754,7 @@ impl<'h> HirBuilder<'h> {
         self.current.kind
     }
 
-    pub(crate) fn build(
-        mut self,
-    ) -> Result<
-        (
-            HIR,
-            HirVec<Instruction>,
-            IndexSet<Ref>,
-            IndexMap<Ref, IdentifierId>,
-        ),
-        CompilerError,
-    > {
+    pub(crate) fn build(mut self) -> Result<(HIR, HirVec<Instruction>), CompilerError> {
         let mut hir = HIR {
             blocks: std::mem::take(&mut self.completed),
             entry: self.entry,
@@ -812,9 +797,7 @@ impl<'h> HirBuilder<'h> {
         mark_instruction_ids(&mut hir, &mut instructions);
         mark_predecessors(&mut hir);
 
-        let used_refs = self.used_refs;
-        let bindings = self.bindings;
-        Ok((hir, instructions, used_refs, bindings))
+        Ok((hir, instructions))
     }
 
     // -----------------------------------------------------------------------
@@ -852,14 +835,15 @@ impl<'h> HirBuilder<'h> {
         let name = self.ref_name(ref_)?;
 
         if name == "fbt" {
-            let should_record_fbt_error = if let Some(&identifier_id) = self.bindings.get(&ref_) {
-                match &self.env.identifiers[identifier_id.0 as usize].name {
-                    Some(IdentifierName::Named(resolved_name)) => resolved_name == b"fbt",
-                    _ => false,
-                }
-            } else {
-                true
-            };
+            let should_record_fbt_error =
+                if let Some(&identifier_id) = self.bindings.identifiers.get(&ref_) {
+                    match &self.env.identifiers[identifier_id.0 as usize].name {
+                        Some(IdentifierName::Named(resolved_name)) => resolved_name == b"fbt",
+                        _ => false,
+                    }
+                } else {
+                    true
+                };
             if should_record_fbt_error {
                 self.env.record_error(CompilerErrorDetail {
                     category: ErrorCategory::Todo,
@@ -873,7 +857,7 @@ impl<'h> HirBuilder<'h> {
             }
         }
 
-        if let Some(&identifier_id) = self.bindings.get(&ref_) {
+        if let Some(&identifier_id) = self.bindings.identifiers.get(&ref_) {
             return Ok(identifier_id);
         }
 
@@ -881,37 +865,32 @@ impl<'h> HirBuilder<'h> {
             return Err(CompilerError::from(reserved_identifier_diagnostic(&name)));
         }
 
-        let name_taken = |env: &Environment,
-                          used_refs: &IndexSet<Ref>,
-                          bindings: &IndexMap<Ref, IdentifierId>,
-                          candidate: &[u8],
-                          ref_: Ref|
-         -> bool {
-            used_refs.iter().any(|&r| {
-                r != ref_
-                    && bindings.get(&r).is_some_and(|&id| {
-                        matches!(
-                            &env.identifiers[id.0 as usize].name,
-                            Some(IdentifierName::Named(n)) if n.slice() == candidate
-                        )
-                    })
-            })
-        };
-
+        // Find a unique name: the original name, then `name_0`, `name_1`, ...
+        // Upstream counts from 0 for each binding.
+        let stored_name = StoreStr::new(self.host.ref_name(ref_));
         let mut candidate = name.clone();
-        let mut index = 0u32;
-        while name_taken(
-            self.env,
-            &self.used_refs,
-            &self.bindings,
-            candidate.as_bytes(),
-            ref_,
-        ) {
-            candidate = format!("{}_{}", name, index);
-            index += 1;
+        let mut next_suffix = None;
+        if self.bindings.used_names.contains(&stored_name) {
+            let mut index = self
+                .bindings
+                .next_suffix
+                .get(&stored_name)
+                .copied()
+                .unwrap_or(0);
+            loop {
+                candidate = format!("{}_{}", name, index);
+                index += 1;
+                if !self
+                    .bindings
+                    .used_names
+                    .contains(&StoreStr::new(candidate.as_bytes()))
+                {
+                    break;
+                }
+            }
+            next_suffix = Some(index);
         }
 
-        let stored_name = StoreStr::new(self.host.ref_name(ref_));
         let stored_candidate = if candidate == name {
             stored_name
         } else {
@@ -935,8 +914,11 @@ impl<'h> HirBuilder<'h> {
             self.env.identifiers[id.0 as usize].loc = Some(loc);
         }
 
-        self.used_refs.insert(ref_);
-        self.bindings.insert(ref_, id);
+        self.bindings.used_names.insert(stored_candidate);
+        if let Some(next_suffix) = next_suffix {
+            self.bindings.next_suffix.insert(stored_name, next_suffix);
+        }
+        self.bindings.identifiers.insert(ref_, id);
         Ok(id)
     }
 

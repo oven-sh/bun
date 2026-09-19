@@ -112,6 +112,10 @@ pub struct Environment {
     // identifiers on first use, then updated with each generated name.
     // Matches Babel's generateUid behavior of checking hasBinding/hasReference.
     uid_known_names: Option<HashSet<StoreStr>>,
+    // Not in upstream, which counts from 1 for each generated name. For a base
+    // name, a suffix below which every candidate is in `uid_known_names`. The
+    // set only grows until `take_uid_known_names`.
+    uid_next_suffix: HashMap<StoreStr, u32>,
 }
 
 /// An outlined function entry, stored on Environment during compilation.
@@ -205,6 +209,7 @@ impl Environment {
             default_mutating_hook: None,
             outlined_functions: AstAlloc::vec(),
             uid_known_names: None,
+            uid_next_suffix: HashMap::new(),
             config,
         }
     }
@@ -769,7 +774,7 @@ impl Environment {
         // Reuse a single buffer across iterations; HashSet::contains accepts &[u8].
         let known = self.uid_known_names.as_mut().unwrap();
         let mut uid: HirVec<u8> = AstAlloc::vec_with_capacity(uid_base.len() + 4);
-        let mut i = 1u32;
+        let mut i = self.uid_next_suffix.get(uid_base).copied().unwrap_or(1);
         loop {
             uid.clear();
             uid.push(b'_');
@@ -793,6 +798,9 @@ impl Environment {
 
         let result = StoreStr::new(uid.leak());
         known.insert(result);
+        // `result` is `_` + `uid_base` + digits, and it outlives `camel`.
+        let stored_base = StoreStr::new(&result.slice()[1..1 + uid_base.len()]);
+        self.uid_next_suffix.insert(stored_base, i);
         result
     }
 
@@ -808,6 +816,7 @@ impl Environment {
 
     /// Return the UID known names accumulated during this compilation.
     pub fn take_uid_known_names(&mut self) -> Option<HashSet<StoreStr>> {
+        self.uid_next_suffix.clear();
         self.uid_known_names.take()
     }
 

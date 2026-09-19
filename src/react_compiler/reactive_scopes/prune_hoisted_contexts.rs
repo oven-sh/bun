@@ -96,10 +96,12 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         self.traverse_scope(scope, state)?;
         state.active_scopes.pop();
 
-        // Clean up uninitialized after scope
+        // Clean up uninitialized after scope.
+        // Not in upstream, where this is a `HashMap`: nothing reads the order of
+        // `uninitialized`, and `remove` shifts every later entry of the map.
         let scope_data = &self.env.scopes[scope.scope.0 as usize];
         for (_, decl) in &scope_data.declarations {
-            state.uninitialized.remove(decl.identifier);
+            state.uninitialized.swap_remove(decl.identifier);
         }
         Ok(())
     }
@@ -167,7 +169,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                             }
                             // References to hoisted functions are now "safe" as
                             // variable assignments have finished.
-                            state.uninitialized.remove(lvalue_id);
+                            state.uninitialized.swap_remove(lvalue_id);
                         }
                     } else {
                         return Err(cold_todo(

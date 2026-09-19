@@ -14,15 +14,14 @@
 //! | 6242–6468 | `jsx` (`lower_jsx_*`) |
 //! | 4257–4361, 5985–6241 | this file: `lower()` entry + `lower_inner()` driver |
 
-use crate::collections::{IndexMap, IndexSet};
+use crate::collections::IndexMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
 use crate::hir::{
-    AstAlloc, BlockKind, Effect, EvaluationOrder, HirFunction, HirVec, IdentifierId,
-    InstructionKind, InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType,
-    ReturnVariant, SourceLocation, SpreadPattern, StoreStr, Terminal, VariableBinding,
-    environment::Environment,
+    AstAlloc, BlockKind, Effect, EvaluationOrder, HirFunction, HirVec, InstructionKind,
+    InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType, ReturnVariant,
+    SourceLocation, SpreadPattern, StoreStr, Terminal, VariableBinding, environment::Environment,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
@@ -30,7 +29,7 @@ use bun_ast::{self as ast, Expr, G, Loc, Ref, Stmt, StmtOrExpr, b};
 
 use super::find_context_identifiers::find_context_identifiers;
 use super::hir_builder::{
-    HirBuilder, convert_loc, create_temporary_place, is_always_reserved_word,
+    Bindings, HirBuilder, convert_loc, create_temporary_place, is_always_reserved_word,
     reserved_identifier_diagnostic,
 };
 use crate::program::Host;
@@ -89,14 +88,14 @@ pub(crate) fn lower(
     // For top-level functions, context is empty (no captured refs)
     let context_map: IndexMap<Ref, Option<SourceLocation>> = IndexMap::new();
 
-    let (hir_func, _used_refs, _child_bindings) = lower_inner(
+    let mut bindings = Bindings::default();
+    let hir_func = lower_inner(
         func,
         ast_id,
         loc,
         host,
         env,
-        None, // no pre-existing bindings for top-level
-        None, // no pre-existing used_refs for top-level
+        &mut bindings,
         &context_map,
         scope,
         scope, // component_scope = function_scope for top-level
@@ -116,15 +115,14 @@ pub(super) fn lower_inner<'h>(
     loc: Option<SourceLocation>,
     host: &'h dyn Host,
     env: &'h mut Environment,
-    parent_bindings: Option<IndexMap<Ref, IdentifierId>>,
-    parent_used_refs: Option<IndexSet<Ref>>,
+    bindings: &'h mut Bindings,
     context_map: &IndexMap<Ref, Option<SourceLocation>>,
     function_scope: &'h ast::Scope,
     component_scope: &'h ast::Scope,
     context_identifiers: &RefSet,
     import_bindings: &IndexMap<Ref, VariableBinding>,
     is_top_level: bool,
-) -> Result<(HirFunction, IndexSet<Ref>, IndexMap<Ref, IdentifierId>), CompilerError> {
+) -> Result<HirFunction, CompilerError> {
     // `validate_ts_this_parameter`: Bun's parser strips `this` parameters
     // before this pass runs, so the upstream check is a no-op here.
 
@@ -140,10 +138,9 @@ pub(super) fn lower_inner<'h>(
         function_scope,
         component_scope,
         context_identifiers.clone(),
-        parent_bindings,
+        bindings,
         Some(context_map.clone()),
         None,
-        parent_used_refs,
     );
     builder.set_import_bindings(import_bindings.clone());
 
@@ -306,35 +303,31 @@ pub(super) fn lower_inner<'h>(
     builder.pop_scope();
 
     // Build the HIR
-    let (hir_body, instructions, used_refs, child_bindings) = builder.build()?;
+    let (hir_body, instructions) = builder.build()?;
 
     // Create the returns place
     let returns = create_temporary_place(env, loc);
 
-    Ok((
-        HirFunction {
-            loc,
-            id,
-            name_hint: None,
-            fn_type: if is_top_level {
-                env.fn_type
-            } else {
-                ReactFunctionType::Other
-            },
-            params: hir_params,
-            return_type_annotation: None,
-            returns,
-            context,
-            body: hir_body,
-            instructions,
-            generator,
-            is_async,
-            directives,
-            aliasing_effects: None,
+    Ok(HirFunction {
+        loc,
+        id,
+        name_hint: None,
+        fn_type: if is_top_level {
+            env.fn_type
+        } else {
+            ReactFunctionType::Other
         },
-        used_refs,
-        child_bindings,
-    ))
+        params: hir_params,
+        return_type_annotation: None,
+        returns,
+        context,
+        body: hir_body,
+        instructions,
+        generator,
+        is_async,
+        directives,
+        aliasing_effects: None,
+    })
 }
 
 /// Bun's `E::Arrow` always carries a `G::FnBody`; an expression body is encoded

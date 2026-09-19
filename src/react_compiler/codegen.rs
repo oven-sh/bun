@@ -14,8 +14,10 @@
     reason = "interops with vendored react_compiler_hir which uses std::collections"
 )]
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::rc::Rc;
 
 use crate::collections::IdMap;
 use bun_alloc::{Arena, ArenaVec, AstAlloc, AstVec};
@@ -44,8 +46,8 @@ use crate::hir::{
 };
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
-    build_reactive_function, prune_hoisted_contexts, prune_unused_labels, prune_unused_lvalues,
-    rename_variables,
+    IdentifiersByDeclaration, build_reactive_function, prune_hoisted_contexts, prune_unused_labels,
+    prune_unused_lvalues, rename_variables_of_outlined,
 };
 
 use crate::imports::ProgramContext;
@@ -227,7 +229,7 @@ pub(crate) fn codegen_function(
     context: &mut ProgramContext,
     unique_identifiers: HashSet<String>,
 ) -> Result<CodegenFunction, CompilerError> {
-    let mut cx = Context::new(env, cg, unique_identifiers);
+    let mut cx = Context::new(env, cg, Rc::new(RefCell::new(unique_identifiers)));
 
     // Fast Refresh: Bun handles HMR via its own React Refresh transform; the
     // upstream `enable_reset_cache_on_source_file_changes` path keys on
@@ -358,6 +360,8 @@ pub(crate) fn codegen_function(
     // Process outlined functions.
     let outlined_entries = cx.env.get_outlined_functions().to_vec();
     let mut outlined: Vec<OutlinedFunction> = Vec::new();
+    // Nothing in the loop adds an identifier to the environment.
+    let mut identifiers_by_declaration: Option<IdentifiersByDeclaration> = None;
     for entry in outlined_entries {
         let reactive_fn = build_reactive_function(&entry.func, cx.env)?;
         let mut reactive_fn_mut = reactive_fn;
@@ -365,8 +369,11 @@ pub(crate) fn codegen_function(
         prune_unused_lvalues(&mut reactive_fn_mut, cx.env);
         prune_hoisted_contexts(&mut reactive_fn_mut, cx.env)?;
 
-        let identifiers = rename_variables(&mut reactive_fn_mut, cx.env);
-        let mut outlined_cx = Context::new(cx.env, cx.cg, identifiers);
+        let by_declaration =
+            identifiers_by_declaration.get_or_insert_with(|| IdentifiersByDeclaration::new(cx.env));
+        let identifiers =
+            rename_variables_of_outlined(&mut reactive_fn_mut, cx.env, by_declaration);
+        let mut outlined_cx = Context::new(cx.env, cx.cg, Rc::new(RefCell::new(identifiers)));
         let mut codegen = codegen_reactive_function(&mut outlined_cx, &reactive_fn_mut)?;
         // Module level. `name_to_ref` gives the `Ref` the use site's `LoadGlobal` printed.
         codegen.id = reactive_fn_mut.id.as_ref().map(|name| LocRef {
@@ -397,7 +404,9 @@ struct Context<'a, 'h> {
     declarations: HashSet<DeclarationId>,
     temp: Temporaries,
     object_methods: IdMap<IdentifierId, (InstructionValue, Option<DiagSourceLocation>)>,
-    unique_identifiers: HashSet<String>,
+    /// One set for a function and the functions nested in it, as in upstream TS.
+    /// The upstream Rust port copies the set for each nested function.
+    unique_identifiers: Rc<RefCell<HashSet<String>>>,
     synthesized_names: HashMap<&'static str, String>,
 }
 
@@ -405,7 +414,7 @@ impl<'a, 'h> Context<'a, 'h> {
     fn new(
         env: &'a mut Environment,
         cg: &'a mut Codegen<'h>,
-        unique_identifiers: HashSet<String>,
+        unique_identifiers: Rc<RefCell<HashSet<String>>>,
     ) -> Self {
         Context {
             env,
@@ -441,13 +450,15 @@ impl<'a, 'h> Context<'a, 'h> {
         }
         let mut validated = String::from(name);
         let mut index = 0u32;
-        while self.unique_identifiers.contains(&validated) {
+        let mut unique_identifiers = self.unique_identifiers.borrow_mut();
+        while unique_identifiers.contains(&validated) {
             validated.clear();
             use std::fmt::Write;
             write!(validated, "{name}{index}").unwrap();
             index += 1;
         }
-        self.unique_identifiers.insert(validated.clone());
+        unique_identifiers.insert(validated.clone());
+        drop(unique_identifiers);
         self.synthesized_names.insert(name, validated.clone());
         validated
     }
@@ -2297,7 +2308,7 @@ fn codegen_function_expression(
     prune_unused_lvalues(&mut reactive_fn_mut, cx.env);
     prune_hoisted_contexts(&mut reactive_fn_mut, cx.env)?;
 
-    let mut inner_cx = Context::new(cx.env, cx.cg, cx.unique_identifiers.clone());
+    let mut inner_cx = Context::new(cx.env, cx.cg, Rc::clone(&cx.unique_identifiers));
     inner_cx.temp.clone_from(&cx.temp);
 
     let fn_result = codegen_reactive_function(&mut inner_cx, &reactive_fn_mut)?;
@@ -2444,7 +2455,7 @@ fn codegen_object_expression(
                         prune_unused_lvalues(&mut reactive_fn_mut, cx.env);
 
                         let mut inner_cx =
-                            Context::new(cx.env, cx.cg, cx.unique_identifiers.clone());
+                            Context::new(cx.env, cx.cg, Rc::clone(&cx.unique_identifiers));
                         inner_cx.temp.clone_from(&cx.temp);
 
                         let fn_result = codegen_reactive_function(&mut inner_cx, &reactive_fn_mut)?;

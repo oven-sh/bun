@@ -132,7 +132,6 @@ function throwSettingTypeError(name: string, value: any) {
 }
 
 function validateSettings(settings: any) {
-  // node's assertIsObject() and validateSettings() both accept undefined.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1010-L1011
   if (settings === undefined) return;
   if (typeof settings !== "object" || settings === null || $isArray(settings)) {

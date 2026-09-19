@@ -5346,9 +5346,12 @@ class ClientHttp2Session extends Http2Session {
   get alpnProtocol() {
     return this.#alpnProtocol;
   }
-  #onConnect() {
-    const socket = this[bunHTTP2Socket];
-    if (!socket) return;
+  #onConnect(socket) {
+    if (!this[bunHTTP2Socket]) {
+      // node's setupHandle: a session destroyed before its socket connected still emits 'connect'.
+      process.nextTick(emitConnectNT, this, socket);
+      return;
+    }
     this.#connected = true;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
@@ -5649,8 +5652,7 @@ class ClientHttp2Session extends Http2Session {
         return;
       }
       try {
-        this.#onConnect(arguments);
-        listener?.$call(this, this);
+        this.#onConnect(socket);
       } catch (e) {
         this.destroy(e);
       }
@@ -5718,6 +5720,9 @@ class ClientHttp2Session extends Http2Session {
       // would then run against a session whose #parser is not assigned yet.
       process.nextTick(onConnect.bind(this));
     }
+    // Like node's connect(): the listener is an ordinary 'connect' listener, so a throw
+    // from it is an uncaught exception and never reaches the session.
+    if (typeof listener === "function") this.once("connect", listener);
   }
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.

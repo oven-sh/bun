@@ -755,6 +755,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // Node.js's parserOnIncoming: req.upgrade is true for CONNECT
             // regardless of shouldUpgradeCallback.
             http_req.upgrade = true;
+            // llhttp completes a CONNECT request at the end of its headers, so
+            // Node's 'connect' listener already sees req.complete === true.
+            http_req.complete = true;
             // Node frees the parser before handing the raw socket to 'connect'.
             releaseServerParserShim(socket, http_req);
             server.emit("connect", http_req, socket, head);
@@ -970,6 +973,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           if (hasBody) {
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
+          } else {
+            // llhttp completes an Upgrade request without a body at the end
+            // of its headers, so Node's 'upgrade' listener already sees
+            // req.complete === true.
+            http_req.complete = true;
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
           let upgradeHandled;
@@ -2369,8 +2377,17 @@ function emitResponseFinish() {
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
-  const socket = this.req?.socket ?? this.socket;
+  const req = this.req;
+  const socket = req?.socket ?? this.socket;
   onResponseFinishHandleSocket(socket?.server, socket, this);
+  // Like Node's clearIncoming: a request that already ended (for example one
+  // that optimizeEmptyRequests pre-dumped, which never reaches
+  // emitEOFIncomingMessageOuter) must not stay reachable from socket.parser
+  // while the kept-alive connection idles.
+  if (req != null && req.readableEnded) {
+    const parser = socket?.parser;
+    if (parser != null && parser.incoming === req) parser.incoming = null;
+  }
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
   if (this[kDispatcherDetached]) return;

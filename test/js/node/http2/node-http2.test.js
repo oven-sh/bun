@@ -6125,6 +6125,81 @@ it("a client request over maxSendHeaderBlockLength leaves the session usable", a
   }
 });
 
+it("a refused client request is freed safely: close(), a body, destroy() and a late abort do not touch it", async () => {
+  // The native side frees the refused stream before it calls into JS, and the next inbound
+  // frames evict its entry. Nothing the caller does afterwards may reach the freed stream
+  // (ASan builds turn a stale access into a crash).
+  const server = http2.createServer();
+  try {
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`, { maxSendHeaderBlockLength: 300 });
+    const sessionErrors = [];
+    client.on("error", e => sessionErrors.push(e.message));
+    await new Promise(resolve => client.once("connect", resolve));
+    const big = Buffer.alloc(400, "b").toString();
+    const settle = req =>
+      new Promise(resolve => {
+        const result = { status: undefined, error: undefined };
+        req.on("response", headers => (result.status = headers[":status"]));
+        req.on("error", e => (result.error = e.message));
+        req.on("close", () => resolve({ ...result, rstCode: req.rstCode }));
+        req.resume();
+      });
+
+    const closed = client.request({ ":path": "/closed", "x-big": big });
+    const closedResult = settle(closed);
+    closed.close();
+    Bun.gc(true);
+    const controller = new AbortController();
+    const aborted = client.request({ ":path": "/aborted", "x-big": big }, { signal: controller.signal });
+    const abortedResult = settle(aborted);
+    const posted = client.request({ ":path": "/posted", ":method": "POST", "x-big": big });
+    const postedResult = settle(posted);
+    posted.write("body");
+    posted.end("more");
+    const destroyed = client.request({ ":path": "/destroyed", "x-big": big });
+    const destroyedResult = settle(destroyed);
+    destroyed.on("frameError", () => {
+      Bun.gc(true);
+      destroyed.destroy();
+    });
+    const refused = await Promise.all([closedResult, abortedResult, postedResult, destroyedResult]);
+
+    // A response is inbound traffic, which evicts the freed entries.
+    const first = client.request({ ":path": "/first" });
+    const firstResult = await settle(first);
+    controller.abort();
+    for (const req of [closed, aborted, posted, destroyed]) {
+      req.close();
+      req.destroy();
+    }
+    Bun.gc(true);
+    const second = client.request({ ":path": "/second" });
+    const secondResult = await settle(second);
+    client.destroy();
+
+    const refusedError = "Stream closed with error code NGHTTP2_REFUSED_STREAM";
+    const rstCode = http2.constants.NGHTTP2_REFUSED_STREAM;
+    expect({ refused, firstResult, secondResult, sessionErrors }).toEqual({
+      refused: [
+        { status: undefined, error: refusedError, rstCode },
+        { status: undefined, error: refusedError, rstCode },
+        { status: undefined, error: refusedError, rstCode },
+        { status: undefined, error: undefined, rstCode },
+      ],
+      firstResult: { status: 200, error: undefined, rstCode: 0 },
+      secondResult: { status: 200, error: undefined, rstCode: 0 },
+      sessionErrors: [],
+    });
+  } finally {
+    server.close();
+  }
+});
+
 it("an oversized respond() over a JS Duplex transport still puts RST_STREAM and GOAWAY on the wire", async () => {
   // A session on a user Duplex has no native socket: the RST_STREAM is corked by the native
   // side and must still reach the transport.

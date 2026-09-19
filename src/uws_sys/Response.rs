@@ -1211,7 +1211,10 @@ pub mod c {
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_corked(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_when_complete(ssl: i32, res: &mut uws_res);
-        pub(crate) safe fn uws_res_close_after_message_if_parsing(ssl: i32, res: &mut uws_res) -> bool;
+        pub(crate) safe fn uws_res_close_after_message_if_parsing(
+            ssl: i32,
+            res: &mut uws_res,
+        ) -> bool;
         pub(crate) fn uws_res_end(
             ssl: i32,
             res: *mut uws_res,

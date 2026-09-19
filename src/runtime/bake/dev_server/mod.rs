@@ -17,7 +17,7 @@ use bun_collections::{HashMap, StringArrayHashMap, bit_set::DynamicBitSet};
 use bun_sys::FdExt as _;
 
 use super::jsc;
-use super::{Graph, Side};
+use super::{Graph, HmrRuntime, Side, get_hmr_runtime};
 
 // ─── submodules ──────────────────────────────────────────────────────────────
 pub(crate) mod error_report_request;
@@ -60,6 +60,22 @@ pub enum FileKind {
 pub enum ChunkKind {
     InitialResponse = 0,
     HmrChunk = 1,
+}
+
+impl ChunkKind {
+    /// What `IncrementalGraph::take_js_bundle` emits ahead of the module code.
+    /// `source_map_store::Entry::join_vlq` offsets the chunk's mappings by its
+    /// `line_count`, so both sides of that agreement come from here.
+    pub(crate) fn prefix(self, side: Side) -> HmrRuntime {
+        const CLIENT_HMR_CHUNK: HmrRuntime =
+            HmrRuntime::from_static(b"self[Symbol.for(\"bun:hmr\")]({\n\0");
+        const SERVER_HMR_CHUNK: HmrRuntime = HmrRuntime::from_static(b"({\0");
+        match (self, side) {
+            (ChunkKind::InitialResponse, _) => get_hmr_runtime(side),
+            (ChunkKind::HmrChunk, Side::Client) => CLIENT_HMR_CHUNK,
+            (ChunkKind::HmrChunk, Side::Server) => SERVER_HMR_CHUNK,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]

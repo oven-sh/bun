@@ -165,8 +165,6 @@ pub(crate) fn drop_manual_memoization(
             let mut next_instructions: Option<HirVec<InstructionId>> = None;
             for i in 0..block.instructions.len() {
                 let instr_id = block.instructions[i];
-                // `remove` keeps the order of the other entries: it shifts them and
-                // rebuilds the map's index each time it removes one.
                 if let Some(insert_instr) = queued_inserts.swap_remove(instr_id) {
                     if next_instructions.is_none() {
                         next_instructions =

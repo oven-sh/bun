@@ -347,8 +347,7 @@ pub(crate) fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env:
     // When scope.range is updated, ALL identifiers referencing that range object
     // automatically see the new values. We use MutableRangeId to identify which
     // identifiers share the same logical range as a root scope.
-    // Not in upstream: keyed by the range id, so the sync below is one lookup
-    // per identifier. The first root with a given id wins.
+    // Not in upstream: keyed by range id for the lookup below. The first root with an id wins.
     let mut original_root_range_ids: FxHashMap<crate::hir::MutableRangeId, ScopeId> =
         FxHashMap::default();
     for (_, root_id) in &scope_groups {

@@ -40,9 +40,7 @@ fn validate_use_memo_impl(
     let mut use_memos: HashSet<IdentifierId> = HashSet::new();
     let mut react: HashSet<IdentifierId> = HashSet::new();
     let mut func_exprs: IdMap<IdentifierId, FuncExprInfo> = IdMap::new();
-    // Not in upstream: a used entry stays in the map as `None`, which keeps the
-    // order of the report below. `IdMap::remove` keeps it too, but it shifts the
-    // later entries and rebuilds the hash index each time it removes an entry.
+    // Not in upstream: a used entry becomes `None` in place, which keeps the order of the report.
     let mut unused_use_memos: IdMap<IdentifierId, Option<(SourceLocation, Option<String>)>> =
         IdMap::new();
 

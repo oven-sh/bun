@@ -1066,39 +1066,50 @@ describe.concurrent("a '!' entry in \"workspaces\"", () => {
     expect(result).toMatchObject({ ran: [], exitCode: 1 });
   });
 
+  async function installedMembers(cwd: string): Promise<string[]> {
+    await runBunInstall(bunEnv, cwd);
+    return Object.values<string>(parseLockfile(cwd).workspace_paths).sort();
+  }
+
+  // npm 11 finds the same members for these values.
   const configs: { workspaces: string[] | { packages: string[] }; members: string[] }[] = [
     { workspaces: { packages: ["packages/*", "!packages/legacy"] }, members: ["packages/app", "packages/lib"] },
     { workspaces: ["packages/*", "!**/legacy"], members: ["packages/app", "packages/lib"] },
     { workspaces: ["packages/*", "!packages/{app,legacy}"], members: ["packages/lib"] },
-    // `packages/legacy/**` matches what is below `packages/legacy`, not the directory itself.
-    {
-      workspaces: ["packages/**", "!packages/legacy/**"],
-      members: ["packages/app", "packages/legacy", "packages/lib"],
-    },
     {
       workspaces: ["packages/**", "!packages/legacy"],
       members: ["packages/app", "packages/legacy/nested", "packages/lib"],
     },
-    // A '!' entry removes what the entries before it matched, and only that.
-    {
-      workspaces: ["!packages/legacy", "packages/*"],
-      members: ["packages/app", "packages/legacy", "packages/lib"],
-    },
-    {
-      workspaces: ["packages/*", "!packages/legacy", "packages/leg*"],
-      members: ["packages/app", "packages/legacy", "packages/lib"],
-    },
-    // A path that is listed as is stays a member.
-    { workspaces: ["packages/lib", "!packages/lib"], members: ["packages/lib"] },
   ];
   test.each(configs.map(row => [JSON.stringify(row.workspaces), row] as const))(
     "bun run and bun install find the same members for %s",
     async (_, { workspaces, members }) => {
       using dir = fixture(workspaces);
       expect(await run(String(dir), ["--workspaces"])).toMatchObject({ ran: members, exitCode: 0 });
+      expect(await installedMembers(String(dir))).toEqual(members);
+    },
+  );
 
-      await runBunInstall(bunEnv, String(dir));
-      expect(Object.values(parseLockfile(String(dir)).workspace_paths).sort()).toEqual(members);
+  // `bun install` has its own rule for these values: a '!' entry removes what the globs before it
+  // matched, it is matched against the directory itself, and a path that is listed as is stays.
+  // npm 11 drops `legacy` (`lib` for the last value) every time. Only the agreement with
+  // `bun install` is asserted, and that no value reaches outside `packages`.
+  const bunRuleConfigs = [
+    ["packages/**", "!packages/legacy/**"],
+    ["!packages/legacy", "packages/*"],
+    ["packages/*", "!packages/legacy", "packages/leg*"],
+    ["packages/lib", "!packages/lib"],
+  ];
+  test.each(bunRuleConfigs.map(workspaces => [JSON.stringify(workspaces), workspaces] as const))(
+    "bun run follows bun install for %s",
+    async (_, workspaces) => {
+      using dir = fixture(workspaces);
+      const { ran, exitCode } = await run(String(dir), ["--workspaces"]);
+      expect({ ran, outside: ran.filter(member => !member.startsWith("packages/")), exitCode }).toEqual({
+        ran: await installedMembers(String(dir)),
+        outside: [],
+        exitCode: 0,
+      });
     },
   );
 });

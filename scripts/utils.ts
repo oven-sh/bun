@@ -131,26 +131,6 @@ export type SpawnResult = {
   error: Error | undefined;
 };
 
-export function $(strings: TemplateStringsArray, ...values: unknown[]): string[] {
-  const result: string[] = [];
-  for (let i = 0; i < strings.length; i++) {
-    result.push(...strings[i]!.trim().split(/\s+/).filter(Boolean));
-    if (i < values.length) {
-      const value = values[i];
-      if (Array.isArray(value)) {
-        result.push(...value);
-      } else if (typeof value === "string") {
-        if (result.at(-1)?.endsWith("=")) {
-          result[result.length - 1]! += value;
-        } else {
-          result.push(value);
-        }
-      }
-    }
-  }
-  return result;
-}
-
 function parseCommand(command: string[], options: SpawnOptions): string[] {
   if (options?.privileged) {
     return [...getPrivilegedCommand(), ...command];
@@ -994,11 +974,9 @@ export function getFileUrl(filename?: string, line?: number | string): URL | str
   return url;
 }
 
-/** The fields of Buildkite's build JSON (`<build url>.json`) that are read here. */
+/** The fields of Buildkite's build JSON (`<build url>.json`) that are read here and in .buildkite/ci.ts. */
 export type BuildkiteBuild = {
   id: string;
-  commit_id: string;
-  branch_name: string;
   state: string;
   prev_branch_build?: { url: string } | null;
   steps: { label: string; outcome: string }[];
@@ -1626,11 +1604,12 @@ export async function getCloud(): Promise<Cloud | undefined> {
 }
 
 /**
- * `name` is the path of the metadata entry, or one path per cloud. The azure
- * entry can be left out: that branch does not use it.
+ * `name` is the path of the metadata entry, or one path per cloud. There is
+ * no azure path: Azure serves one JSON document, and the caller picks fields
+ * out of it.
  */
 async function getCloudMetadata(
-  name: string | Partial<Record<Cloud, string>>,
+  name: string | { aws: string; google: string },
   cloud?: Cloud,
 ): Promise<string | undefined> {
   cloud ??= await getCloud();
@@ -1639,7 +1618,7 @@ async function getCloudMetadata(
   }
 
   if (typeof name === "object") {
-    name = name[cloud] ?? "";
+    name = cloud === "azure" ? "" : name[cloud];
   }
 
   let url;
@@ -1732,11 +1711,11 @@ export type AwsRequest = {
 };
 
 /**
- * Signs an AWS API request (SigV4). agent.ts ships to the AMI as a single
- * bundled file, so this avoids pulling in the SDK.
+ * Signs an AWS API request (SigV4). agent.ts and this file are all that is
+ * installed on a CI machine, so there is no SDK to call.
  * @returns headers, including Authorization
  */
-export function signAwsRequest({
+function signAwsRequest({
   method,
   host,
   path,
@@ -2150,7 +2129,8 @@ export function parseAnnotations(content: string): AnnotationResult {
         }) || [],
       );
       if (title === undefined) {
-        // Kept from the JavaScript, where unescapeGitHubAction(undefined) threw a TypeError.
+        // A workflow command without `title=` cannot be turned into an
+        // annotation. The caller reports the error and carries on.
         throw new TypeError("The workflow command has no title");
       }
 

@@ -1893,6 +1893,26 @@ describe("requests that cross the server's GOAWAY (RFC 9113 §6.8)", () => {
     }
   });
 
+  // §6.8: the last-stream-id of a later GOAWAY must not be higher, because the client can have
+  // sent request 3 again elsewhere. node v26.3.0 also names 1 in the second GOAWAY.
+  test("does not name an ignored request in the GOAWAY of a later connection error", async () => {
+    const { server, c, seen } = await shuttingDownSession(session => session.close());
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      expect(goawayFields(await c.waitForGoaway())).toEqual({ lastStreamId: 1, code: ErrorCode.NO_ERROR });
+      // 0x80 is indexed field 0: a decoding error in every HPACK state (RFC 7541 §6.1).
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.from([0x80]));
+      expect(goawayFields(await c.waitFor(isErrorGoaway))).toEqual({
+        lastStreamId: 1,
+        code: ErrorCode.COMPRESSION_ERROR,
+      });
+      expect(seen).toEqual([1]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
   // node's onSessionHeaders: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
   test("refuses a request whose header block completes after close()", async () => {
     // setImmediate: close() runs after the read that carries both HEADERS frames below.

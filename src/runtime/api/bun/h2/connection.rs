@@ -389,12 +389,16 @@ impl Connection {
     ) {
         self.going_away = true;
         self.terminated = true;
+        // RFC 9113 §6.8: a GOAWAY never names a higher last-stream-id than an earlier one. The
+        // high-water mark also covers the streams that were ignored after that earlier GOAWAY.
+        let last = sink
+            .sent_goaway_last_stream_id()
+            .map_or(self.last_stream_id, |sent| sent.min(self.last_stream_id));
         let mut payload = Vec::with_capacity(8 + debug.len());
-        payload.extend_from_slice(&self.last_stream_id.to_be_bytes());
+        payload.extend_from_slice(&last.to_be_bytes());
         payload.extend_from_slice(&code.as_u32().to_be_bytes());
         payload.extend_from_slice(debug);
         self.write_frame(sink, FrameType::GoAway, 0, 0, &payload);
-        let last = self.last_stream_id;
         sink.on_error(lib_code, last, debug);
     }
 

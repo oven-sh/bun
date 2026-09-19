@@ -4003,17 +4003,37 @@ pub fn drop_source_code_printer_if_macro_owned() {
 /// `__bun_macro_context_deinit`: that path is reached from
 /// `TranspilerStateGuard::drop` and `JSTranspiler::Drop` (during a sweep),
 /// where re-entering `run_gc` would be a recursion hazard.
+///
+/// The collection can schedule script: a `FinalizationRegistry` whose targets
+/// died registers its cleanup with JSC's `DeferredWorkTimer`, which takes a
+/// keep-alive and posts the job to the loop that is current. This VM ticks only
+/// its macro loop, and only while a macro waits on a promise. So the collection
+/// runs in macro mode, and the macro loop gets one turn if a task is queued
+/// afterwards: on the regular loop the job would never run, and its keep-alive
+/// would leave the thread's loop active for good.
 pub fn collect_macro_vm_garbage() {
     let Some(vm) = VM.get() else { return };
-    // SAFETY: `VM` is this thread's per-JS-thread VM singleton; we only read
-    // plain fields and call `jsc_vm()` (which the C++ side locks internally).
+    // SAFETY: `VM` is this thread's per-JS-thread VM singleton.
     let vm_ref = unsafe { &*vm };
     if !vm_ref.has_enabled_macro_mode {
         return;
     }
     debug_assert!(!vm_ref.is_main_thread);
     debug_assert_eq!(vm_ref.macro_guard_depth, 0);
-    vm_ref.jsc_vm().run_gc(true);
+    {
+        let _macro_mode = MacroModeGuard::new(vm);
+        let _flush = bun_core::Output::flush_guard();
+        vm_ref.run_with_api_lock(|| {
+            vm_ref.jsc_vm().run_gc(true);
+            let event_loop = vm_ref.event_loop_mut();
+            if event_loop.has_pending_tasks() {
+                event_loop.tick();
+            }
+        });
+    }
+    // `enable_macro_mode` allocated the printer again after
+    // `__bun_macro_context_deinit` freed it.
+    drop_source_code_printer_if_macro_owned();
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {

@@ -506,6 +506,72 @@ describe("event loop routing around macros", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // When a build ends, each bundler worker runs a full collection on the macro VM of its thread. A
+  // FinalizationRegistry whose targets died schedules its cleanup there, with a keep-alive, on the loop
+  // that is current. That VM ticks only its macro loop, and only while a macro waits, so the worker has
+  // to run the cleanup itself: left on the regular loop it never runs, and the thread's loop stays active.
+  test.concurrent(
+    "the collection at the end of a Bun.build() runs the FinalizationRegistry cleanup it schedules",
+    async () => {
+      const first = [
+        `import { observe, makeGarbage } from "./m.ts" with { type: "macro" };`,
+        `export const observed = observe();`,
+        `makeGarbage();`,
+      ].join("\n");
+      const later = `import { observe } from "./m.ts" with { type: "macro" };\nexport const observed = observe();\n`;
+      const { lines, stderr, exitCode } = await run(
+        {
+          "m.ts": [
+            `import { getEventLoopStats } from "bun:internal-for-testing";`,
+            `// Module state is per VM, and each bundler thread has its own macro VM.`,
+            `const vm = Math.random().toString(36).slice(2);`,
+            `let cleaned = 0;`,
+            `const registry = new FinalizationRegistry(() => void cleaned++);`,
+            `export function makeGarbage() {`,
+            `  for (let i = 0; i < 100; i++) registry.register({ i }, i);`,
+            `  return 0;`,
+            `}`,
+            `// Synchronous: nothing here ticks the macro loop.`,
+            `export function observe() {`,
+            `  return [vm, cleaned > 0 ? 1 : 0, getEventLoopStats().numPolls].join(" ");`,
+            `}`,
+          ].join("\n"),
+          ...Object.fromEntries([1, 2, 3, 4].map(i => [`first${i}.ts`, first])),
+          ...Object.fromEntries([1, 2, 3, 4].map(i => [`later${i}.ts`, later])),
+          "index.ts": [
+            `// Four entry points, so that both bundler threads get work.`,
+            `async function observe(name: string) {`,
+            `  const result = await Bun.build({ entrypoints: [1, 2, 3, 4].map(i => "./" + name + i + ".ts") });`,
+            `  const texts = await Promise.all(result.outputs.map(output => output.text()));`,
+            `  return texts.map(text => {`,
+            `    const [, vm, cleaned, polls] = text.match(/"(\\w+) (\\d) (\\d+)"/)!;`,
+            `    return { vm, cleaned: cleaned === "1", polls: Number(polls) };`,
+            `  });`,
+            `}`,
+            `// Each VM observes before it makes garbage, so its lowest count is the one of an idle loop.`,
+            `const idle = new Map<string, number>();`,
+            `for (const { vm, polls } of await observe("first")) idle.set(vm, Math.min(polls, idle.get(vm) ?? polls));`,
+            `// Build until one of these VMs reports after its worker's collection. A thread runs the collection`,
+            `// when it has no task left, so at most one later build gets there before it.`,
+            `let seen = { cleaned: false, leaked: NaN };`,
+            `for (let builds = 0, reports = 0; builds < 20 && reports < 3 && !seen.cleaned; builds++) {`,
+            `  const observed = (await observe("later")).filter(({ vm }) => idle.has(vm));`,
+            `  const report = observed.find(({ cleaned }) => cleaned) ?? observed[0];`,
+            `  if (!report) continue;`,
+            `  reports++;`,
+            `  seen = { cleaned: report.cleaned, leaked: report.polls - idle.get(report.vm)! };`,
+            `}`,
+            `console.log(JSON.stringify(seen));`,
+          ].join("\n"),
+        },
+        // Two bundler threads, the minimum, so that a later build soon reaches a thread of the first one.
+        { GOMAXPROCS: "2" },
+      );
+      expect({ lines, stderr }).toEqual({ lines: [`{"cleaned":true,"leaked":0}`], stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // A module that is not the entry point is transpiled on a worker thread, where no VM exists yet. The

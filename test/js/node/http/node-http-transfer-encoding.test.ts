@@ -1042,6 +1042,53 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
     expect(raw).toEndWith("\r\n\r\nok");
   });
 
+  // The message boundary: bytes after the head that spell a whole request are body, never a
+  // second request. Before the fix, "chunked, gzip" was framed as no body and these bytes were
+  // dispatched as GET /smuggled.
+  test.concurrent.each([
+    ["gzip", "Transfer-Encoding: gzip"],
+    ["chunked, gzip", "Transfer-Encoding: chunked, gzip"],
+  ])("a request line in the unframed body of %s is not dispatched as a second request", async (_name, teFields) => {
+    const smuggled = "GET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n";
+    const events: string[] = [];
+    await using server = createServer({ insecureHTTPParser: true }, (req, res) => {
+      if (req.url === "/barrier") {
+        res.end();
+        return;
+      }
+      let body = "";
+      req.on("data", d => (body += d));
+      req.on("end", () => {
+        events.push(`end body=${JSON.stringify(body)}`);
+        res.end("ok");
+      });
+      events.push(`request ${req.method} ${req.url}`);
+    });
+    server.httpAllowHalfOpen = true;
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    let raw = "";
+    socket.on("data", chunk => (raw += chunk.toString("latin1")));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    await once(socket, "connect");
+    socket.write(`POST /p HTTP/1.1\r\nHost: x\r\n${teFields}\r\n\r\n`);
+    // In its own read, so a parser that ends the first message at its head sees a clean request.
+    const barrier = connect(port, "127.0.0.1");
+    barrier.resume();
+    barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    await once(barrier, "close");
+    socket.end(smuggled);
+    await closed;
+    expect(events).toEqual(["request POST /p", `end body=${JSON.stringify(smuggled)}`]);
+    expect(raw.match(/HTTP\/1\.1 200/g)).toHaveLength(1);
+  });
+
   test.concurrent.each([
     ["gzip", "Transfer-Encoding: gzip", ["request POST /p", "clientError HPE_INVALID_TRANSFER_ENCODING"]],
     ["chunked, gzip", "Transfer-Encoding: chunked, gzip", ["clientError HPE_INVALID_TRANSFER_ENCODING"]],

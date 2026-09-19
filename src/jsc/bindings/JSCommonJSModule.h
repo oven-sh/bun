@@ -4,6 +4,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSString.h"
 #include "headers-handwritten.h"
+#include "wtf/HashSet.h"
 #include "wtf/NakedPtr.h"
 #include "BunClientData.h"
 
@@ -55,12 +56,17 @@ public:
     // children fields to exist, recursively. To avoid allocating a *JSArray for
     // each module, the children array is constructed internally as a
     // Vector of pointers, each child once (see addChild). If accessed, the
-    // array is moved into JavaScript. These two fields add 16 bytes to JSCommonJSModule.
+    // array is moved into JavaScript.
     // `m_childrenValue` can be set to any value via the user-exposed setter,
     // but Bun does not test that behavior besides ensuring it does not crash.
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
-    // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule
+    // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule.
+    // Only addChild and clearChildren change it.
     WTF::Vector<WriteBarrier<Unknown>> m_children;
+    // Set once m_children is long (see addChild). It holds the same cells as
+    // m_children, which keeps them alive. visitChildren does not read it, so
+    // the JS thread changes it without cellLock().
+    std::unique_ptr<WTF::HashSet<JSC::JSCell*>> m_childrenIndex;
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule
     // parent, it is assigned to this field.
@@ -81,6 +87,7 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    bool hasEvaluated = false;
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -135,6 +142,8 @@ public:
 
     // Appends `child` to m_children unless it is already there.
     void addChild(JSC::VM& vm, JSC::JSCell* child);
+    // Empties m_children and m_childrenIndex. `module.children` then lives in m_childrenValue.
+    void clearChildren();
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -148,8 +157,6 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSCommonJSModule, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSCommonJSModule, m_subspaceForJSCommonJSModule));
     }
-
-    bool hasEvaluated = false;
 
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)

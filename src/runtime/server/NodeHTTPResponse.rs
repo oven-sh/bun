@@ -593,8 +593,7 @@ impl NodeHTTPResponse {
             // and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();
             self.poll_ref.with_mut(|r| r.unref(vm));
-            // uWS drops the HTTP body callback when it adopts the socket, so a
-            // body that is still pending never arrives.
+            // Once uWS adopts the socket, a body that is still pending never arrives.
             if self.body_read_state.get() == BodyReadState::Pending {
                 self.body_read_ref.with_mut(|r| r.unref(vm));
                 self.body_read_state.set(BodyReadState::Done);

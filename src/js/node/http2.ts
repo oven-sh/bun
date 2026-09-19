@@ -3367,18 +3367,12 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
 
-    if (typeof fd !== "number") {
-      // node accepts a FileHandle too; unwrap its descriptor.
-      if (fd !== null && typeof fd === "object" && typeof fd.fd === "number") {
-        fd = fd.fd;
-      } else {
-        const err = new TypeError(
-          `The "fd" argument must be of type number or an instance of FileHandle.` +
-            ` Received ${receivedValueLabel(fd)}`,
-        );
-        err.code = "ERR_INVALID_ARG_TYPE";
-        throw err;
-      }
+    // Only a real FileHandle is unwrapped, so no user getter runs between the state checks above
+    // and the response below.
+    if (fd instanceof FileHandle) {
+      fd = fd.fd;
+    } else if (typeof fd !== "number") {
+      throw $ERR_INVALID_ARG_TYPE("fd", ["number", "FileHandle"], fd);
     }
 
     // node's message names Array, yet only respond() accepts the raw-array form.
@@ -3407,11 +3401,7 @@ class ServerHttp2Stream extends Http2Stream {
       // stream.end() right after it is a no-op instead of ending the stream before the file.
       closeWritableForFileResponse(this);
     }
-    if (fd instanceof FileHandle) {
-      fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
-    } else {
-      fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
-    }
+    fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
   }
   additionalHeaders(headers) {
     if (this.destroyed || this.closed || this.session === undefined) {

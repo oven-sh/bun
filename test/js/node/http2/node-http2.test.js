@@ -4995,6 +4995,18 @@ it("http2 stream.respondWithFD checks the stream state, the options, fd, then th
     results.optionsStatCheck = capture(() => stream.respondWithFD(badFd, {}, { statCheck: "x" }));
     results.headersNotAnObject = capture(() => stream.respondWithFD(badFd, "hdrs"));
     results.payloadForbidden = capture(() => stream.respondWithFD(badFd, { ":status": 204 }));
+    // node unwraps only a real FileHandle: a look-alike object is rejected and its `fd` is never read.
+    results.fdPlainObject = capture(() => stream.respondWithFD({ fd: 0 }, "hdrs"));
+    let fdGetterRan = false;
+    results.fdGetter = capture(() =>
+      stream.respondWithFD({
+        get fd() {
+          fdGetterRan = true;
+          return "x";
+        },
+      }),
+    );
+    results.fdGetterRan = fdGetterRan;
     // From here on every argument is bad, so only a state check that runs first gives these results.
     stream.respond();
     results.headersSent = capture(() => stream.respondWithFD(badFd, "hdrs", "opts"));
@@ -5025,6 +5037,9 @@ it("http2 stream.respondWithFD checks the stream state, the options, fd, then th
       optionsStatCheck: "ERR_INVALID_ARG_VALUE: The property 'options.statCheck' is invalid. Received 'x'",
       headersNotAnObject: fdError,
       payloadForbidden: fdError,
+      fdPlainObject: `ERR_INVALID_ARG_TYPE: The "fd" argument must be of type number or an instance of FileHandle. Received an instance of Object`,
+      fdGetter: `ERR_INVALID_ARG_TYPE: The "fd" argument must be of type number or an instance of FileHandle. Received an instance of Object`,
+      fdGetterRan: false,
       headersSent: "ERR_HTTP2_HEADERS_SENT: Response has already been initiated.",
       destroyedAfterClose: false,
       closed: "ERR_HTTP2_INVALID_STREAM: The stream has been destroyed",

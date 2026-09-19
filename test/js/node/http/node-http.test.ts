@@ -4979,6 +4979,50 @@ describe("Upgrade pipelined behind a pending response", () => {
     }
   });
 
+  test("should read the body of the Upgrade request while the response ahead has not drained", async () => {
+    // The response ahead fills the socket buffers, which pauses reads for queued responses.
+    // A queued hand-off must not hold them: the listener waits for the body before it ends
+    // the response ahead.
+    const total = 4 * 1024 * 1024;
+    const body = "0123456789";
+    let first: http.ServerResponse | undefined;
+    const { promise: gotBody, resolve: onBody, reject: onFailure } = Promise.withResolvers<string>();
+    await using server = http.createServer((req, res) => {
+      if (req.headers.upgrade !== undefined) return void onFailure(new Error("dispatched as a request"));
+      first = res;
+      res.writeHead(200, { "Content-Length": total });
+      res.write(Buffer.alloc(total, "a"));
+    });
+    server.on("clientError", onFailure);
+    server.on("upgrade", (req, socket) => {
+      let read = "";
+      req.on("data", chunk => (read += chunk));
+      req.on("end", () => {
+        onBody(read);
+        socket.end(SWITCHING);
+        first!.end();
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      const received: Buffer[] = [];
+      client.on("data", chunk => received.push(chunk));
+      client.on("error", onFailure);
+      client.pause();
+      client.write(get("/first") + upgradeRequest("/second", `Content-Length: ${body.length}\r\n`));
+      await once(server, "upgrade");
+      // The body comes in a packet of its own, while the client still does not read.
+      client.write(body);
+      expect(await gotBody).toBe(body);
+      client.resume();
+      await once(client, "end");
+      expect(Buffer.concat(received).toString("latin1").endsWith(SWITCHING)).toBe(true);
+    } finally {
+      client.destroy();
+    }
+  });
+
   test("should go to 'request' when shouldUpgradeCallback declines", async () => {
     const events: string[] = [];
     let first: http.ServerResponse | undefined;

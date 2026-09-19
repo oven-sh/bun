@@ -2459,8 +2459,12 @@ function emitResponseFinish() {
 // is eventually closed.
 function onResponseFinishHandleSocket(server, socket, res) {
   if (res[kMustCloseConnection]) {
-    // A hand-off waiting behind this response: its bytes go out before the FIN.
-    if (socket?.[kPendingHandoff] !== undefined) activatePipelinedHandoff(socket);
+    if (socket?.[kPendingHandoff] !== undefined) {
+      // A hand-off waiting behind this response: its bytes go out before the FIN, and the
+      // connection closes after it, like Node's destroySoon() (native leaves that to this end).
+      activatePipelinedHandoff(socket);
+      socket.once("finish", destroyHandoffSocketNT);
+    }
     socket?.end();
     return;
   }
@@ -2631,6 +2635,10 @@ function activatePipelinedHandoff(socket) {
 
 function runHandoffReady(ready) {
   for (let i = 0; i < ready.length; i++) ready[i]();
+}
+
+function destroyHandoffSocketNT(this: NodeHTTPServerSocket) {
+  this.destroy();
 }
 
 function failParkedHandoff(pending, waiting, reason) {

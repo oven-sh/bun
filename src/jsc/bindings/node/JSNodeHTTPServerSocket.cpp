@@ -462,11 +462,12 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
-/* A pipelined CONNECT stays queued so that the connection never counts as idle. No request follows it, so it holds no reads. */
+/* A pipelined CONNECT/Upgrade stays queued so that the connection never counts as idle. No request follows it, so it holds no reads. */
 template<bool SSL>
 static bool queuedResponsesHoldReads(uWS::NodeHttpResponseData<SSL>* httpResponseData)
 {
-    return httpResponseData->nodeHttpQueuedPipelinedCount > 0 && !httpResponseData->isConnectRequest;
+    bool tunnel = httpResponseData->isConnectRequest || (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY);
+    return httpResponseData->nodeHttpQueuedPipelinedCount > 0 && !tunnel;
 }
 
 /* node:http flood prevention, resume half. Parked pipelined requests (HttpParser::nodeHttpPausedSpill)

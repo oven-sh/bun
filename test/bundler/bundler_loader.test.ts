@@ -32,6 +32,22 @@ describe("bundler", async () => {
         },
         run: { stdout: "Hello, world!" },
       });
+      if (target === "bun") {
+        itBundled("bun/loader-file-path-from-other-cwd", {
+          target,
+          outfile: "",
+          outdir: "/out",
+          files: {
+            "/entry.ts": /* js */ `
+        import { readFile } from "node:fs/promises";
+        import asset from './asset.txt' with {type: "file"};
+        console.write(await readFile(asset, "utf8"));
+      `,
+            "/asset.txt": "Hello from an asset",
+          },
+          run: { stdout: "Hello from an asset" },
+        });
+      }
       itBundled("bun/loader-json-file", {
         target,
         files: {

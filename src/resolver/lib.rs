@@ -420,9 +420,7 @@ pub mod fs {
             bun_core::set_top_level_dir(dir);
         }
 
-        /// `top_level_dir` with any trailing separator stripped. A filesystem
-        /// root (`/`, `C:\`) is left intact: `C:` is the current directory of
-        /// drive C, not its root.
+        /// `top_level_dir` without a trailing separator. Roots (`/`, `C:\`) keep theirs.
         pub fn top_level_dir_without_trailing_slash(&self) -> &'static [u8] {
             let d = self.top_level_dir;
             let root_len = if cfg!(windows) {

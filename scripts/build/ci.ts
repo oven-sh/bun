@@ -2,7 +2,7 @@
  * CI integration: collapsible log groups, environment dump, Buildkite
  * annotations on build failure.
  *
- * Thin layer over `scripts/utils.mjs` — the same helpers the CMake build
+ * Thin layer over `scripts/utils.ts` — the same helpers the CMake build
  * uses. We import rather than reimplement so CI logs look identical and
  * annotation regex stays in one place.
  */
@@ -398,9 +398,9 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   const bunTriplet = computeBunTriplet(cfg);
 
   // ─── features.json ───
-  // Run the built bun with features.mjs to dump its feature flags.
+  // Run the built bun with features.ts to dump its feature flags.
   // Env vars match cmake's (BuildBun.cmake ~1462).
-  // No setarch wrapper — cmake doesn't use one for features.mjs either
+  // No setarch wrapper — cmake doesn't use one for features.ts either
   // (only for the --revision smoke test).
   // Binaries that can't run on this host: every field is a build-time
   // constant, so generate the same payload host-side instead (the feature
@@ -410,7 +410,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     writeFileSync(resolve(buildDir, "features.json"), crossFeaturesJson(cfg));
   } else {
     console.log("Generating features.json...");
-    run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {
+    run([exe, resolve(cfg.cwd, "scripts", "features.ts")], buildDir, {
       BUN_GARBAGE_COLLECTOR_LEVEL: "1",
       BUN_DEBUG_QUIET_LOGS: "1",
       BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",

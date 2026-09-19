@@ -343,7 +343,7 @@ function getTestAgent(platform: Platform, options: PipelineOptions): Agent {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
-    // `release-tier` is emitted by scripts/agent.mjs based on the box's macOS
+    // `release-tier` is emitted by scripts/agent.ts based on the box's macOS
     // major version. arm64 splits into `latest` (current macOS) + `previous`
     // (anything older). x64 is NOT tier-targeted — single entry, any Intel
     // box — because the tier split bottlenecked the smaller pool and Intel
@@ -754,7 +754,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
-      // Platform smoke check: runner.node.mjs asserts the agent matches what
+      // Platform smoke check: runner.node.ts asserts the agent matches what
       // this step targets before running any test (see assertExpectedPlatform).
       // `release` is only asserted where the lane pins an exact version:
       // darwin aarch64 "previous" and darwin x64 intentionally float across
@@ -771,8 +771,14 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     },
     command:
       os === "windows"
-        ? `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 node .\\scripts\\runner.node.mjs ${args.join(" ")}`
-        : `./scripts/runner.node.mjs ${args.join(" ")}`,
+        ? `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 node .\\scripts\\runner.node.ts ${args.join(" ")}`
+        : os === "darwin"
+          ? // The command hook installed on the tart hosts (scripts/darwin-ci/hooks/command.ts)
+            // recognises a test step by this file name. runner.node.mjs only
+            // imports runner.node.ts; call that directly once the hosts have a
+            // hook that knows the new name.
+            `./scripts/runner.node.mjs ${args.join(" ")}`
+          : `./scripts/runner.node.ts ${args.join(" ")}`,
   };
 }
 
@@ -815,7 +821,7 @@ function getBuildImageSteps(platform: Platform, options: PipelineOptions): Comma
  * Windows images bake on Azure through Packer (WinRM) from the hosted queue.
  */
 function getWindowsBuildImageStep(platform: Platform, options: PipelineOptions): CommandStep {
-  const { os, arch, release } = platform;
+  const { arch } = platform;
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
   return {
@@ -834,7 +840,7 @@ function getWindowsBuildImageStep(platform: Platform, options: PipelineOptions):
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: `node ./scripts/machine.mjs ${action} --os=${os} --arch=${arch} --release=${release} --cloud=azure --ci --authorized-org=oven-sh`,
+    command: `node ./scripts/machine.ts ${action} --arch=${arch}`,
     timeout_in_minutes: 3 * 60,
   };
 }
@@ -844,7 +850,7 @@ function getWindowsBuildImageStep(platform: Platform, options: PipelineOptions):
  *
  *  1. `…-bake-image` runs ON a fresh machine of the target distro (requested
  *     with the `bake` agent tag): bootstrap.sh provisions it — so this step's
- *     log is the bootstrap log — and agent.mjs installs the agent service.
+ *     log is the bootstrap log — and agent.ts installs the agent service.
  *     The machine is imaged as `image-name` once the step passes.
  *  2. `…-build-image` (labelled wait-for-image) waits for that image to be
  *     available. It keeps the key the rest of the pipeline depends on.
@@ -871,12 +877,12 @@ function getLinuxBuildImageSteps(platform: Platform, options: PipelineOptions): 
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    // Install the service from the machine's own copy of agent.mjs rather
-    // than this checkout's, so the unit outlives the build directory.
-    // ($$ is a literal $ after pipeline-upload interpolation.)
+    // `install` copies agent.ts and the utils.ts it imports out of this
+    // checkout into the agent's home, so the unit outlives the build directory.
+    // ($ is a literal $ after pipeline-upload interpolation.)
     command: [
       `sh ./scripts/bootstrap.sh ${bootstrapArgs.join(" ")}`,
-      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) node /var/lib/buildkite-agent/agent.mjs install`,
+      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) node ./scripts/agent.ts install`,
     ],
     timeout_in_minutes: 3 * 60,
   };
@@ -890,7 +896,7 @@ function getLinuxBuildImageSteps(platform: Platform, options: PipelineOptions): 
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: `node ./scripts/machine.mjs wait-image --name=${imageName} --build=${getBuildNumber()}`,
+    command: `node ./scripts/machine.ts wait-image --name=${imageName} --build=${getBuildNumber()}`,
     timeout_in_minutes: 120,
   };
 

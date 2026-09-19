@@ -443,13 +443,6 @@ pub fn buf_print_len(
 }
 
 // ── RAII Mutex ────────────────────────────────────────────────────────────
-// The BSS containers below need to hold the lock across `&mut self` method calls, so
-// the returned [`MutexGuard`] deliberately erases its borrow of `self` — it
-// stores the `std::sync::MutexGuard` lifetime-extended to `'static` (lifetimes
-// are erased at codegen, so this is a layout no-op). This is sound because
-// every `Mutex` here lives inside a `'static` BSS singleton (see `instance()`
-// below), so the pointee always outlives the guard.
-//
 // LAYERING: `bun_alloc` is below `bun_threading` in the crate graph, so the
 // futex-backed `bun_threading::Mutex` is unavailable here; `std::sync` (itself
 // futex-backed since Rust 1.62) is the dependency-free stand-in.
@@ -459,29 +452,20 @@ impl Mutex {
         Self(std::sync::Mutex::new(()))
     }
     #[inline]
-    pub(crate) fn lock(&self) -> MutexGuard {
-        let g = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // SAFETY: lifetime extension only — `std::sync::MutexGuard<'a, ()>` and
-        // `<'static, ()>` have identical layout. Every `bun_alloc::Mutex` lives
-        // in a `'static` BSS singleton, so the inner `&Mutex` the guard holds
-        // is in fact valid for `'static`.
-        let _guard = unsafe {
-            core::mem::transmute::<std::sync::MutexGuard<'_, ()>, std::sync::MutexGuard<'static, ()>>(
-                g,
-            )
-        };
-        MutexGuard { _guard }
+    pub(crate) fn lock(&self) -> MutexGuard<'_> {
+        MutexGuard {
+            _guard: self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        }
     }
 }
 
-/// Unlocks the paired [`Mutex`] on drop. See the type-level comment on
-/// [`Mutex`] for why this erases the guard lifetime rather than borrowing.
+/// Unlocks the borrowed [`Mutex`] on drop.
 #[must_use = "if unused the Mutex will immediately unlock"]
-pub(crate) struct MutexGuard {
-    _guard: std::sync::MutexGuard<'static, ()>,
+pub(crate) struct MutexGuard<'a> {
+    _guard: std::sync::MutexGuard<'a, ()>,
 }
 
 // Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_alloc::AllocError>`.
@@ -1752,8 +1736,8 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
         this: *mut Self,
     ) -> core::result::Result<*mut MaybeUninit<ValueType>, AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
-        // `&mut *this` formed below does not alias a live guard borrow.
+        // is sound. The guard borrows only `(*this).mutex`; the `&mut *this` formed
+        // below covers it, but `append_overflow_uninit` never accesses `self.mutex`.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: the inner mutex is held, so this call has exclusive access
         // to `*this` (the receiver is raw precisely so nothing exclusive is
@@ -1945,8 +1929,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: &A,
     ) -> core::result::Result<&'a mut [u8], AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
-        // `&mut *this` formed below does not alias a live guard borrow.
+        // is sound. The guard borrows only `(*this).mutex`; the `&mut *this` formed
+        // below covers it, but `do_append` never accesses `self.mutex`.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let (ptr, len) = unsafe { (*this).do_append(value)? };
@@ -2024,8 +2008,8 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         value: &A,
     ) -> core::result::Result<&'a [u8], AllocError> {
         // SAFETY: `this` is live; `Mutex: Sync` so concurrent `&Mutex` formation
-        // is sound. `MutexGuard` stores a raw pointer (see its doc), so the
-        // `&mut *this` formed below does not alias a live guard borrow.
+        // is sound. The guard borrows only `(*this).mutex`; the `&mut *this` formed
+        // below covers it, but `do_append` never accesses `self.mutex`.
         let _guard = unsafe { (*this).mutex.lock() };
         // SAFETY: inner mutex held ⇒ this thread has exclusive access.
         let (ptr, len) = unsafe { (*this).do_append(value)? };
@@ -2269,13 +2253,11 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
 
     pub fn get(&mut self, denormalized_key: &[u8]) -> Option<&mut ValueType> {
         let _key = Self::key_hash(denormalized_key);
-        // Hold the lock across `at_index` —
-        // a concurrent `put()` could otherwise mutate `overflow_list`/`backing_buf` while
-        // we dereference `index`. `MutexGuard` holds a raw pointer (see [`Mutex`] docs),
-        // so it does not conflict with the `&mut self` borrow in `at_index`.
+        // Hold the lock across the slot lookup: a concurrent `put()` could otherwise
+        // mutate `overflow_list`/`backing_buf` while we dereference `index`.
         let _guard = self.mutex.lock();
         let index = self.index.get(&_key).copied()?;
-        self.at_index(index)
+        Self::slot_mut(&mut self.overflow_list, &mut self.backing_buf, index)
     }
 
     pub fn mark_not_found(&mut self, result: Result) {
@@ -2284,16 +2266,26 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     }
 
     pub fn at_index(&mut self, index: IndexType) -> Option<&mut ValueType> {
+        Self::slot_mut(&mut self.overflow_list, &mut self.backing_buf, index)
+    }
+
+    /// Takes fields, not `&mut self`, so `get` can call it while its guard borrows `self.mutex`.
+    #[inline(always)]
+    fn slot_mut<'a>(
+        overflow_list: &'a mut OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
+        backing_buf: &'a mut [MaybeUninit<ValueType>; COUNT],
+        index: IndexType,
+    ) -> Option<&'a mut ValueType> {
         if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
             return None;
         }
 
         if index.is_overflow() {
-            Some(self.overflow_list.at_index_mut(index))
+            Some(overflow_list.at_index_mut(index))
         } else {
             // SAFETY: a non-sentinel, non-overflow index was assigned by `put`, which
             // initialized this slot via `.write()`.
-            Some(unsafe { self.backing_buf[index.index() as usize].assume_init_mut() })
+            Some(unsafe { backing_buf[index.index() as usize].assume_init_mut() })
         }
     }
 

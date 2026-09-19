@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
+import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -5747,6 +5748,168 @@ it("Http2Stream pull-mode read() after pause() replenishes the receive window", 
     client.close();
     server.close();
   }
+});
+
+// A paused stream has no reader. Once the stream is closed on the wire, only the session can end a
+// readable side that holds no data, like node's onStreamClose (read(0)). Without that the stream
+// never emits 'end' or 'close'.
+describe.concurrent("a paused server stream", () => {
+  function record(emitter, events, names, prefix = "") {
+    for (const name of names) emitter.on(name, () => events.push(prefix + name));
+  }
+
+  // Runs `body(client)` against `server`, then tears both down.
+  async function withClient(server, body) {
+    let client;
+    try {
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      return await body(client);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  }
+
+  // Resolves when the server has processed everything the client sent after the response ended:
+  // the client's PING is acknowledged behind it.
+  async function settled(client, req) {
+    req.resume();
+    await once(req, "close");
+    await new Promise((resolve, reject) => client.ping(err => (err ? reject(err) : resolve())));
+  }
+
+  function respond(stream) {
+    stream.respond({ ":status": 200 });
+    stream.end("hello");
+  }
+
+  it("emits 'end' and 'close' when the request has no body", async () => {
+    const events = [];
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.pause();
+      record(stream, events, ["end", "close"]);
+      respond(stream);
+    });
+    await withClient(server, async client => {
+      await settled(client, client.request({ ":path": "/" }));
+      expect(events).toEqual(["end", "close"]);
+    });
+  });
+
+  it("still emits 'finish' when it responds after the request ended", async () => {
+    // The response's END_STREAM closes the stream inside end(), while that write is in flight. An
+    // 'end' at that point destroys the stream before 'finish'. node emits 'end' first and Bun
+    // emits 'finish' first, so the order of those two is not asserted.
+    const events = [];
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.pause();
+      record(stream, events, ["end", "finish", "close"]);
+      setImmediate(() => {
+        stream.respond({ ":status": 200 });
+        stream.end("hello", err => events.push(err ? err.code : "end callback"));
+      });
+    });
+    await withClient(server, async client => {
+      await settled(client, client.request({ ":path": "/" }));
+      expect({ last: events.at(-1), all: events.toSorted() }).toEqual({
+        last: "close",
+        all: ["close", "end", "end callback", "finish"],
+      });
+    });
+  });
+
+  it("emits 'end' and 'close' when END_STREAM arrives on an empty DATA frame", async () => {
+    const events = [];
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.pause();
+      record(stream, events, ["end", "close"]);
+      respond(stream);
+    });
+    await withClient(server, async client => {
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      req.end();
+      await settled(client, req);
+      expect(events).toEqual(["end", "close"]);
+    });
+  });
+
+  it("emits 'end' and 'close' when it was paused after its last chunk", async () => {
+    const events = [];
+    let req;
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      record(stream, events, ["end", "close"]);
+      stream.on("data", () => {
+        stream.pause();
+        req.end();
+      });
+      respond(stream);
+    });
+    await withClient(server, async client => {
+      req = client.request({ ":path": "/", ":method": "POST" });
+      req.write("body");
+      await settled(client, req);
+      expect(events).toEqual(["end", "close"]);
+    });
+  });
+
+  it("emits 'end' before 'close' when close() ends it without a response", async () => {
+    const events = [];
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.pause();
+      record(stream, events, ["end", "close"]);
+      stream.close();
+    });
+    await withClient(server, async client => {
+      await settled(client, client.request({ ":path": "/" }));
+      expect(events).toEqual(["end", "close"]);
+    });
+  });
+
+  it("completes the compat request and response that wrap it", async () => {
+    const events = [];
+    const server = http2.createServer((req, res) => {
+      req.pause();
+      record(req, events, ["close"], "req ");
+      record(res, events, ["finish", "close"], "res ");
+      res.end("hello");
+    });
+    await withClient(server, async client => {
+      await settled(client, client.request({ ":path": "/" }));
+      expect(events).toEqual(["req close", "res finish", "res close"]);
+    });
+  });
+
+  it("keeps unread data until the user reads it", async () => {
+    const events = [];
+    let stream;
+    const server = http2.createServer();
+    server.on("stream", serverStream => {
+      stream = serverStream;
+      stream.pause();
+      record(stream, events, ["end", "close"]);
+      respond(stream);
+    });
+    await withClient(server, async client => {
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      req.end("body");
+      await settled(client, req);
+      expect({ events, destroyed: stream.destroyed, readableLength: stream.readableLength }).toEqual({
+        events: [],
+        destroyed: false,
+        readableLength: 4,
+      });
+      const closed = once(stream, "close");
+      expect(String(stream.read())).toBe("body");
+      await closed;
+      expect(events).toEqual(["end", "close"]);
+    });
+  });
 });
 
 // The outbound cork buffer is thread-local across every Http2Session. Interleaving

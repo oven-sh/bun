@@ -2060,8 +2060,7 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
-  // The native side dispatched streamError or aborted for the stream. It closed the stream
-  // first, and the RST_STREAM, when one was due, is already written.
+  // Native dispatched streamError or aborted: it closed the stream and wrote the RST_STREAM if one was due.
   NativeReset = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
@@ -2230,9 +2229,7 @@ function markStreamClosed(stream: Http2Stream) {
   }
 }
 function rstNextTick(this: Http2Stream, session: Http2Session, id: number, rstCode: number) {
-  // Native drops a reset for a stream it already closed only while the stream's table entry
-  // lives. Once the entry is evicted, and always for a client's pushed stream (never in the
-  // table), it writes the frame.
+  // Native drops this call only via the stream's table entry: evicted on the next read, absent for a pushed stream.
   if ((this[bunHTTP2StreamStatus] & (StreamState.NativeClosed | StreamState.NativeReset)) !== 0) return;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
@@ -2686,8 +2683,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       session &&
       typeof this.#id === "number" &&
       !this[kNeverAnnounced] &&
-      // A stream the native side already closed or reset has nothing to send, whatever the
-      // rstCode (node's `if (!this.closed)`): skip the host call rstNextTick would drop anyway.
+      // Native already closed or reset the stream: nothing is left to send, whatever the rstCode.
       (this[bunHTTP2StreamStatus] & (StreamState.NativeClosed | StreamState.NativeReset)) === 0
     ) {
       setImmediate(rstNextTick.bind(this, session, this.#id, rstCode));

@@ -7,7 +7,7 @@
 // Connection-level cases only here (no HPACK required): preface, SETTINGS handshake/ack, PING,
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
@@ -1939,17 +1939,14 @@ describe("RST_STREAM on a stream the native layer already closed", () => {
     try {
       // The request body stays open, so the peer's reset is an abort.
       const req = await openRequest(raw, client, { ":method": "POST", ":path": "/" });
-      let closedFromListener = false;
-      req.on("aborted", () => {
-        req.close(http2.constants.NGHTTP2_CANCEL);
-        closedFromListener = true;
-      });
+      const onAborted = jest.fn(() => req.close(http2.constants.NGHTTP2_CANCEL));
+      req.on("aborted", onAborted);
       const closed = closeOf(req);
       raw.sendFrame(FrameType.RST_STREAM, 0, 1, u32(ErrorCode.CANCEL));
       // A second read in the same turn: stream 1 loses its table entry before close()'s reset runs.
       raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 0, u32(1));
       await closed;
-      expect(closedFromListener).toBe(true);
+      expect(onAborted).toHaveBeenCalledTimes(1);
       expect(await resetsWritten(raw, 1)).toEqual([]);
     } finally {
       client.destroy();

@@ -3685,8 +3685,8 @@ function scheduleSettingsAckGraceNT(session) {
   timer.unref?.();
   session[kSettingsAckGraceTimer] = timer;
 }
-function destroyIfNotDestroyedNT(target) {
-  if (!target.destroyed) target.destroy();
+function destroyIfNotDestroyedNT(target, error?) {
+  if (!target.destroyed) target.destroy(error);
 }
 function scheduleDestroyIfNotDestroyed(target) {
   if (!target.destroyed) {
@@ -5651,8 +5651,13 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
         return;
       }
-      if (settingsRejected && !this.destroyed) {
-        this[bunHTTP2Socket].destroy(settingsError);
+      // node validates at this point unless the session is destroyed by then, and its close()
+      // destroys a session that has no request pending.
+      const sessionIsGone = this.destroyed || (this.#closed && !this.#pendingRequests?.length);
+      if (settingsRejected && !sessionIsGone) {
+        // Not from inside the socket's connect callback: the socket layer reports a throw from
+        // there on the socket, so an 'error' with no listener would never reach the process.
+        process.nextTick(destroyIfNotDestroyedNT, this, settingsError);
         return;
       }
       try {
@@ -5706,9 +5711,9 @@ class ClientHttp2Session extends Http2Session {
     this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
 
     // node reads options.settings in setupHandle, which runs once the socket is connected. It
-    // ignores a value that is not an object. A throw from validation is caught at the connect
-    // event and destroys the socket with that error, so the session reports it as 'error'.
-    // For a socket that is already connected, setupHandle runs inline and connect() throws.
+    // ignores a value that is not an object. A throw from validation there destroys the session
+    // with that error, so the caller sees 'error' and then 'close'. For a socket that is already
+    // connected, setupHandle runs inline and connect() throws.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1147
     let settings = typeof options.settings === "object" ? options.settings : undefined;
     if (settings !== undefined) {

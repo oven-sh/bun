@@ -17,8 +17,9 @@ function serve(server) {
 }
 
 // What one connect() call does: the error it throws, or the session's events in order and the
-// outcome of a request made while the socket was still connecting.
-function observe(url, options) {
+// outcome of a request made while the socket was still connecting. `closeEarly` also calls
+// close() before the socket connects.
+function observe(url, options, closeEarly = false) {
   const events = [];
   let client;
   try {
@@ -36,6 +37,7 @@ function observe(url, options) {
   req.on("close", () => client.close());
   req.resume();
   req.end();
+  if (closeEarly) client.close();
   client.on("close", () => {
     events.push("close");
     resolve({ events, request });
@@ -78,6 +80,7 @@ async function observeConnectSettings(tlsOptions) {
       "http null": observe(http, { settings: null }),
       "http array": observe(http, { settings: [] }),
       "http invalid": observe(http, { settings: invalid }),
+      "http invalid, closed early": observe(http, { settings: invalid }, true),
       "http number": observe(http, { settings: 1 }),
       "http string": observe(http, { settings: "x" }),
       "http boolean": observe(http, { settings: true }),

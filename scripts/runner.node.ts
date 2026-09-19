@@ -1213,7 +1213,7 @@ async function runTests(): Promise<TestResult[]> {
             .replaceAll("\\", "/"),
         );
 
-      const { ok, error, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
+      const { ok, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
         spawnBun(execPath, {
           args: [
             "test",
@@ -2158,7 +2158,7 @@ interface TestResult {
   tests: TestEntry[];
   stdout: string;
   stdoutPreview: string;
-  // Read for --results-json and the JUnit report; nothing sets them.
+  // For --results-json and the JUnit report.
   exitCode?: SpawnResult["exitCode"];
   signalCode?: SpawnResult["signalCode"];
   duration?: number;
@@ -2169,8 +2169,6 @@ interface TestEntry {
   file: string | undefined;
   test: string;
   status: string;
-  /** Read by formatTestToMarkdown; nothing sets it. */
-  error?: TestError;
   errors?: TestError[];
   duration?: number | undefined;
 }
@@ -2251,7 +2249,7 @@ async function spawnBunTest(
     env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
   }
 
-  const { ok, error, stdout, crashes } = await spawnBun(execPath, {
+  const { ok, error, stdout, crashes, exitCode, signalCode, duration } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
     cwd: opts.cwd,
     // release-asan with debug-assertions on runs every spawned subprocess
@@ -2284,6 +2282,9 @@ async function spawnBunTest(
     tests,
     stdout,
     stdoutPreview,
+    exitCode,
+    signalCode,
+    duration,
   };
 }
 
@@ -2468,11 +2469,12 @@ async function spawnBunInstall(
         file: testPath,
         test: "bun install",
         status,
-        duration: parseDuration(duration),
+        duration,
       },
     ],
     stdout,
     stdoutPreview: stdout,
+    duration,
   };
 }
 
@@ -2760,10 +2762,7 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
   }
 
   const skipExpectations = testExpectations
-    .filter(
-      ({ modifiers, expectations }) =>
-        !modifiers?.length || testModifiers.some(modifier => modifiers?.includes(modifier)),
-    )
+    .filter(({ modifiers }) => !modifiers?.length || testModifiers.some(modifier => modifiers?.includes(modifier)))
     .map(({ filename }) => filename.replace("test/", ""));
   if (skipExpectations.length) {
     const skippedTests = availableTests.filter(testPath => skipExpectations.some(filter => isMatch(testPath, filter)));
@@ -3017,17 +3016,7 @@ function formatTestToMarkdown(
       continue;
     }
 
-    let errorLine: TestError["line"];
-    for (const { error } of tests) {
-      if (!error) {
-        continue;
-      }
-      const { file, line } = error;
-      if (line) {
-        errorLine = line;
-        break;
-      }
-    }
+    const errorLine = tests.flatMap(({ errors }) => errors ?? []).find(({ line }) => line)?.line;
 
     const testTitle = testPath.replace(/\\/g, "/");
     const testUrl = getFileUrl(testPath, errorLine);
@@ -3238,7 +3227,7 @@ function generateJUnitReport(outfile: string, results: TestResult[]): void {
   const testSuites = new Map<string, JUnitTestSuite>();
 
   for (const result of results) {
-    const { testPath, ok, status, error, tests, stdoutPreview, stdout, duration = 0 } = result;
+    const { testPath, status, error, tests, stdoutPreview, stdout, duration = 0 } = result;
 
     if (!testSuites.has(testPath)) {
       testSuites.set(testPath, {

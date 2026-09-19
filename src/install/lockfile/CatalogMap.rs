@@ -10,7 +10,7 @@ use bun_install::dependency::{
     Version as DependencyVersion,
 };
 use bun_install::lockfile::{Buffers, StringBuilder};
-use bun_install::{Behavior, Dependency, Lockfile, PackageManager};
+use bun_install::{Behavior, Dependency, Lockfile, PackageManager, PackageNameHash};
 use bun_semver::SlicedString;
 use core::mem::ManuallyDrop;
 // Layering: every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML
@@ -206,14 +206,7 @@ impl CatalogMap {
         if catalog_name.is_empty() {
             return Ok(&mut self.default);
         }
-
-        let entry = self.groups.get_or_put_adapted(&catalog_name, &ctx(buf))?;
-        if !entry.found_existing {
-            *entry.key_ptr = catalog_name;
-            *entry.value_ptr = Map::default();
-        }
-
-        Ok(entry.value_ptr)
+        get_or_put_named_group(&mut self.groups, buf, catalog_name)
     }
 
     // Deliberately takes no `Lockfile` param so `lockfile.catalogs.parse_count`
@@ -395,6 +388,31 @@ impl CatalogMap {
         Ok(())
     }
 
+    /// `catalog_obj`/`catalogs_obj` are the pnpm-workspace.yaml objects the migration writes into package.json for `parse_append` to read back, so the map takes their shape: pnpm-lock.yaml's section has only the entries in use and spells every default catalog `default`, while entries it does record keep its specifier, which their resolutions were made with.
+    pub(crate) fn put_missing_from_pnpm_workspace(
+        catalogs: &mut CatalogMap,
+        catalog_obj: Option<Expr>,
+        catalogs_obj: Option<Expr>,
+        string_buf: &mut StringBuf,
+    ) -> Result<(), AllocError> {
+        if let Some(declared) = catalog_obj {
+            put_declared_entries(&mut catalogs.default, None, &declared, string_buf)?;
+        }
+        let Some(declared_groups) = catalogs_obj else {
+            return Ok(());
+        };
+        declared_groups.try_for_each_property(|group_name_str, _, declared| {
+            let group_name = string_buf.append(group_name_str)?;
+            if group_name_str != b"default" {
+                let group = catalogs.get_or_put_group(string_buf.bytes.as_slice(), group_name)?;
+                return put_declared_entries(group, None, &declared, string_buf);
+            }
+            let CatalogMap { default, groups } = &mut *catalogs;
+            let group = get_or_put_named_group(groups, string_buf.bytes.as_slice(), group_name)?;
+            put_declared_entries(group, Some(default), &declared, string_buf)
+        })
+    }
+
     // Takes `buffers: &Buffers` rather than the whole `Lockfile` so the call
     // site can hold `&mut lockfile.catalogs` while only borrowing
     // `lockfile.buffers` immutably (disjoint fields), instead of forcing a
@@ -541,26 +559,15 @@ fn put_entries_from_pnpm_lockfile(
         let Some(version_str) = specifier.as_utf8_string_literal() else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
         };
-        let version_hash = StringBuilderNs::string_hash(version_str);
-        let version = string_buf.append_with_hash(version_str, version_hash)?;
-        let version_sliced = version.sliced(string_buf.bytes.as_slice());
-
-        let Some(parsed_version) = Dependency::parse(
+        let Some(dep) = parse_entry(
             dep_name,
             dep_name_hash,
-            version_sliced.slice,
-            &version_sliced,
+            version_str,
             Some(&mut *log),
-            None,
-        ) else {
+            string_buf,
+        )?
+        else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
-        };
-
-        let dep = Dependency {
-            name: dep_name,
-            name_hash: dep_name_hash,
-            version: parsed_version,
-            ..Dependency::default()
         };
 
         let buf = string_buf.bytes.as_slice();
@@ -574,4 +581,87 @@ fn put_entries_from_pnpm_lockfile(
         *entry.value_ptr = dep;
     }
     Ok(())
+}
+
+/// Entries `group` records stay as recorded, ones `lockfile_default` recorded move into `group`, the rest are added; an entry that does not parse is left out silently because `parse_append_group` leaves it out and reports it when the next install reads package.json.
+fn put_declared_entries(
+    group: &mut Map,
+    mut lockfile_default: Option<&mut Map>,
+    declared: &Expr,
+    string_buf: &mut StringBuf,
+) -> Result<(), AllocError> {
+    declared.try_for_each_property(|dep_name_str, _, specifier| {
+        let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
+        let dep_name = string_buf.append_with_hash(dep_name_str, dep_name_hash)?;
+        let buf = string_buf.bytes.as_slice();
+        if group.contains_adapted(&dep_name, &ctx(buf)) {
+            return Ok(());
+        }
+        let recorded = lockfile_default
+            .as_deref_mut()
+            .and_then(|lockfile_default| {
+                let i = lockfile_default.get_index_adapted(&dep_name, &ctx(buf))?;
+                Some(lockfile_default.swap_remove_at(i).1)
+            });
+        let dep = match recorded {
+            Some(dep) => dep,
+            None => {
+                let Some(specifier_str) = specifier.as_utf8_string_literal() else {
+                    return Ok(());
+                };
+                let Some(dep) =
+                    parse_entry(dep_name, dep_name_hash, specifier_str, None, string_buf)?
+                else {
+                    return Ok(());
+                };
+                dep
+            }
+        };
+        let buf = string_buf.bytes.as_slice();
+        let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
+        *entry.key_ptr = dep_name;
+        *entry.value_ptr = dep;
+        Ok(())
+    })
+}
+
+/// `dep_name` is already in `string_buf`; `None` means `specifier` is not a dependency version.
+fn parse_entry(
+    dep_name: String,
+    dep_name_hash: PackageNameHash,
+    specifier: &[u8],
+    log: Option<&mut Log>,
+    string_buf: &mut StringBuf,
+) -> Result<Option<Dependency>, AllocError> {
+    let version = string_buf.append(specifier)?;
+    let version_sliced = version.sliced(string_buf.bytes.as_slice());
+    let Some(version) = Dependency::parse(
+        dep_name,
+        dep_name_hash,
+        version_sliced.slice,
+        &version_sliced,
+        log,
+        None,
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(Dependency {
+        name: dep_name,
+        name_hash: dep_name_hash,
+        version,
+        ..Dependency::default()
+    }))
+}
+
+fn get_or_put_named_group<'a>(
+    groups: &'a mut ArrayHashMap<String, Map>,
+    buf: &[u8],
+    catalog_name: String,
+) -> Result<&'a mut Map, AllocError> {
+    let entry = groups.get_or_put_adapted(&catalog_name, &ctx(buf))?;
+    if !entry.found_existing {
+        *entry.key_ptr = catalog_name;
+        *entry.value_ptr = Map::default();
+    }
+    Ok(entry.value_ptr)
 }

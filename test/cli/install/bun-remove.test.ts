@@ -473,8 +473,14 @@ for (const linker of ["hoisted", "isolated"] as const) {
       ...localBin("other-bin"),
       ...local("linked"),
     });
-    const globalEnv = { BUN_INSTALL: join(String(dir), "global") };
-    const globalDir = join(globalEnv.BUN_INSTALL, "install", "global");
+    const bunInstall = join(String(dir), "global");
+    const globalDir = join(bunInstall, "install", "global");
+    // Every global-dir variable is set so an inherited one can never point the test at the developer's real global folder.
+    const globalEnv = {
+      BUN_INSTALL: bunInstall,
+      BUN_INSTALL_GLOBAL_DIR: globalDir,
+      BUN_INSTALL_BIN: join(bunInstall, "bin"),
+    };
     const runGlobal = (...args: string[]) => runWithEnv(globalEnv, String(dir), ...args, "-g", "--linker", linker);
 
     // The second add does not name what-bin, so it links what-bin into the node_modules/.bin of the global dir.

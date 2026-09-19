@@ -148,6 +148,65 @@ describe.concurrent("bun update --interactive", () => {
     expect(exitCode).toBe(0);
   });
 
+  // With colors on, each version is printed as a diff against the current
+  // version. The latest build-metadata-1 is 1.1.0-rc.1+build.20240101, whose
+  // build tag is longer than the 8 bytes a semver string stores inline, so it
+  // has to be read from the latest version's own string, not the current one's.
+  // Needs a real terminal: colors, and a width at which a 25 character version
+  // is not truncated (truncated versions are printed without the diff). Skipped
+  // on Windows because ConPTY rewrites the escape sequences this asserts on.
+  it.skipIf(isWindows)("should keep the build tag of the latest version when rendering with colors", async () => {
+    await using dir = tempDir("update-interactive-build-tag", {
+      "bunfig.toml": bunfig(),
+      "package.json": JSON.stringify({
+        name: "test-project",
+        version: "1.0.0",
+        dependencies: { "build-metadata-1": "1.0.0" },
+      }),
+    });
+
+    await install(dir);
+
+    const decoder = new TextDecoder();
+    let output = "";
+    const tableRendered = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "update", "-i", "--latest", "--dry-run"],
+      cwd: String(dir),
+      env: { ...bunEnv, FORCE_COLOR: "1" },
+      terminal: {
+        cols: 200,
+        rows: 50,
+        data(_terminal, chunk) {
+          output += decoder.decode(chunk, { stream: true });
+          // Every frame ends with a clear-to-end-of-screen before the prompt
+          // blocks on input, so once that follows the row the row is complete.
+          const row = output.indexOf("build-metadata-1");
+          if (row !== -1 && output.includes("\x1b[0J", row)) tableRendered.resolve();
+        },
+        exit() {
+          tableRendered.reject(new Error(`exited before rendering the table:\n${output}`));
+        },
+      },
+    });
+
+    let exitCode: number;
+    try {
+      await tableRendered.promise;
+      proc.terminal!.write("\r");
+      exitCode = await proc.exited;
+    } finally {
+      proc.terminal!.close();
+    }
+
+    const row = output.split(/\r?\n/).find(line => line.includes("build-metadata-1"))!;
+    expect(Bun.stripANSI(row)).toMatch(/build-metadata-1 +1\.0\.0 +1\.0\.0 +1\.1\.0-rc\.1\+build\.20240101/);
+    // "1." dim, "1.0" yellow (minor bump), then the whole tag red because
+    // 1.0.0 has no prerelease.
+    expect(row).toContain("\x1b[2m1.\x1b[0m\x1b[1m\x1b[33m1.0\x1b[0m\x1b[1m\x1b[31m-rc.1+build.20240101\x1b[0m");
+    expect(exitCode).toBe(0);
+  });
+
   // The header's help-text budget is `terminal_width - 30`; on a tty narrower
   // than 30 columns that usize subtraction overflows (panics on overflow-checks
   // builds). Exercise the render path through a 20-column pty.

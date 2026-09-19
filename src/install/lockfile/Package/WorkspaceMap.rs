@@ -247,11 +247,8 @@ fn relative_workspace_path<'b>(
 }
 
 enum WorkspaceGlob {
-    /// The entry as written. It is walked to find members.
     Include(Box<[u8]>),
-    /// A `!` entry, in the shape of a matched path: posix separators, no `./`
-    /// prefix, no trailing slash. It only removes members that an earlier
-    /// `Include` found.
+    /// A `!` entry in the shape of a matched path: `/` separators, no `./`, no trailing slash.
     Exclude(Box<[u8]>),
 }
 

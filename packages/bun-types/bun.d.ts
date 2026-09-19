@@ -9718,7 +9718,10 @@ declare module "bun" {
        * applies to all views with a `directory` in the same Bun process,
        * and they all share that Chrome's default context. An ephemeral
        * view gets a browser context of its own (a CDP
-       * `Target.createBrowserContext`) inside that one Chrome.
+       * `Target.createBrowserContext`) inside that one Chrome. When Bun
+       * connects to a Chrome that is already running, an ephemeral view
+       * is an incognito window and `{ directory }` (value unused) selects
+       * that browser's own profile.
        */
       dataStore?: "ephemeral" | { directory: string };
       /**

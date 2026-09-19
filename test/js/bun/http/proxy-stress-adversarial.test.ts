@@ -8,14 +8,19 @@
  * Also covers the WebSocket proxy tunnel (`WebSocketProxyTunnel`), which is
  * a separate SSLWrapper consumer from the fetch `ProxyTunnel` and had zero
  * stress coverage for the wss-through-https-proxy (double-TLS) case.
+ *
+ * Concurrency note: the 151 tests share one {http, https} proxy pair from
+ * beforeAll to avoid ephemeral-port reuse under test.concurrent's rolling
+ * listen(0) churn. Tests that pass non-default proxy options or inspect
+ * proxy.connections create a dedicated proxy.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { isASAN } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
 import {
+  AdversarialProxy,
   cartesian,
   clearProxyEnv,
   createAdversarialOrigin,
@@ -28,10 +33,50 @@ import {
 } from "./proxy-stress-helpers";
 
 let savedEnv: Record<string, string | undefined>;
-beforeAll(() => {
+let sharedHttpProxy: AdversarialProxy;
+let sharedHttpsProxy: AdversarialProxy;
+const sharedProxy = (tls: boolean) => (tls ? sharedHttpsProxy : sharedHttpProxy);
+
+// Shared echo origins (one per scheme) for the stateless describes below:
+// they echo the request path+search as the body and take the status from an
+// X-Status request header, so a single server pair covers every status/path
+// case without per-test listen(0) churn. Tests that need to inspect
+// origin.requests or shape the response framing still create their own.
+interface SharedOrigin {
+  server: ReturnType<typeof Bun.serve>;
+  /** `server.url.origin` (no trailing slash, so `url + "/x"` is well-formed). */
+  url: string;
+  port: number;
+}
+let sharedHttpOrigin: SharedOrigin;
+let sharedHttpsOrigin: SharedOrigin;
+const sharedOrigin = (tls: boolean) => (tls ? sharedHttpsOrigin : sharedHttpOrigin);
+function echoHandler(req: Request) {
+  const url = new URL(req.url);
+  const status = Number(req.headers.get("x-status") ?? "200");
+  // 204/304 carry no body per RFC; everything else echoes path+search.
+  const hasBody = status !== 204 && status !== 304;
+  return new Response(hasBody ? url.pathname + url.search : null, { status });
+}
+function makeSharedOrigin(tls: boolean): SharedOrigin {
+  const server = Bun.serve({ port: 0, tls: tls ? tlsCert : undefined, fetch: echoHandler });
+  return { server, url: server.url.origin, port: server.port };
+}
+
+beforeAll(async () => {
   savedEnv = clearProxyEnv();
+  [sharedHttpProxy, sharedHttpsProxy] = await Promise.all([
+    createAdversarialProxy({ tls: false }),
+    createAdversarialProxy({ tls: true }),
+  ]);
+  sharedHttpOrigin = makeSharedOrigin(false);
+  sharedHttpsOrigin = makeSharedOrigin(true);
 });
-afterAll(() => {
+afterAll(async () => {
+  await sharedHttpProxy?.close();
+  await sharedHttpsProxy?.close();
+  sharedHttpOrigin?.server.stop(true);
+  sharedHttpsOrigin?.server.stop(true);
   restoreProxyEnv(savedEnv);
 });
 
@@ -42,27 +87,47 @@ afterAll(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("stacked adversarial", () => {
+  // 6 split-reply proxies (2 tls × 3 split values) and 3 chunked/encoded
+  // origins (one per encoding, all https) are shared across all 36 cases
+  // instead of 72 per-test listen(0) calls. Both are stateless per
+  // connection; each test uses a unique request path so it can find its own
+  // entry in the shared origin's append-only request log.
+  const splitProxies = new Map<string, AdversarialProxy>();
+  const splitProxy = (tls: boolean, split: number) => splitProxies.get(`${tls}-${split}`)!;
+  const encOrigins = new Map<string, Awaited<ReturnType<typeof createAdversarialOrigin>>>();
+  const payload = makeBody(8192, "A");
+  beforeAll(async () => {
+    await Promise.all([
+      ...cartesian({ tls: [false, true], split: [1, 3, 10] }).map(async ({ tls, split }) => {
+        splitProxies.set(`${tls}-${split}`, await createAdversarialProxy({ tls, splitConnectReply: split }));
+      }),
+      ...(["identity", "gzip", "br"] as const).map(async encoding => {
+        encOrigins.set(
+          encoding,
+          await createAdversarialOrigin({ tls: true, body: payload, framing: "chunked", encoding }),
+        );
+      }),
+    ]);
+  });
+  afterAll(async () => {
+    for (const p of splitProxies.values()) await p.close();
+    for (const o of encOrigins.values()) await o.close();
+  });
+
+  let uid = 0;
   for (const { proxyTls, splitConnect, encoding, keepalive } of cartesian({
     proxyTls: [false, true] as const,
     splitConnect: [1, 3, 10] as const,
     encoding: ["identity", "gzip", "br"] as const,
     keepalive: [false, true] as const,
   })) {
+    const path = `/t-${uid++}`;
     test.concurrent(
       `${proxyTls ? "https" : "http"}-proxy split=${splitConnect} chunked/${encoding} keepalive=${keepalive}`,
       async () => {
-        const payload = makeBody(8192, "A");
-        await using origin = await createAdversarialOrigin({
-          tls: true,
-          body: payload,
-          framing: "chunked",
-          encoding,
-        });
-        await using proxy = await createAdversarialProxy({
-          tls: proxyTls,
-          splitConnectReply: splitConnect,
-        });
-        const res = await fetch(origin.url, {
+        const origin = encOrigins.get(encoding)!;
+        const proxy = splitProxy(proxyTls, splitConnect);
+        const res = await fetch(origin.url + path, {
           method: "POST",
           body: Buffer.alloc(1024, "q"),
           proxy: proxy.url,
@@ -71,7 +136,8 @@ describe("stacked adversarial", () => {
         });
         expect(await res.text()).toBe(payload);
         expect(res.status).toBe(200);
-        expect(origin.requests[0].body.length).toBe(1024);
+        const mine = origin.requests.find(r => r.path === path);
+        expect(mine?.body.length).toBe(1024);
       },
     );
   }
@@ -95,21 +161,17 @@ describe("origin status through tunnel", () => {
       async () => {
         // 204/304 carry no body per RFC; everything else does.
         const hasBody = status !== 204 && status !== 304;
-        await using origin = await createAdversarialOrigin({
-          tls: originTls,
-          status,
-          body: hasBody ? `status-${status}` : "",
-          framing: "content-length",
-        });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
-        const res = await fetch(origin.url, {
+        const origin = sharedOrigin(originTls);
+        const proxy = sharedProxy(proxyTls);
+        const res = await fetch(`${origin.url}/status-${status}`, {
           proxy: proxy.url,
           keepalive: false,
           tls: laxTls,
           redirect: "manual", // surface 3xx as-is
+          headers: { "X-Status": String(status) },
         });
         expect(res.status).toBe(status);
-        expect(await res.text()).toBe(hasBody ? `status-${status}` : "");
+        expect(await res.text()).toBe(hasBody ? `/status-${status}` : "");
       },
     );
   }
@@ -130,7 +192,7 @@ describe("origin-facing headers", () => {
       `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin Host + user headers`,
       async () => {
         await using origin = await createAdversarialOrigin({ tls: originTls, body: "ok" });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(`${origin.url}/path?q=1`, {
           proxy: proxy.url,
           keepalive: false,
@@ -163,7 +225,7 @@ describe("checkServerIdentity through tunnel", () => {
   for (const proxyTls of [false, true] as const) {
     test.concurrent(`${proxyTls ? "https" : "http"}-proxy: callback approves → request completes`, async () => {
       await using origin = await createAdversarialOrigin({ tls: true, body: "approved" });
-      await using proxy = await createAdversarialProxy({ tls: proxyTls });
+      const proxy = sharedProxy(proxyTls);
       let called = 0;
       const res = await fetch(origin.url, {
         proxy: proxy.url,
@@ -189,7 +251,7 @@ describe("checkServerIdentity through tunnel", () => {
       `${proxyTls ? "https" : "http"}-proxy: callback rejects → fetch rejects, origin untouched`,
       async () => {
         await using origin = await createAdversarialOrigin({ tls: true, body: "never" });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const proxy = sharedProxy(proxyTls);
         let caught: any;
         try {
           await fetch(origin.url, {
@@ -211,26 +273,31 @@ describe("checkServerIdentity through tunnel", () => {
     );
 
     test.concurrent(
-      `${proxyTls ? "https" : "http"}-proxy: callback approves ${isASAN ? 50 : 20}× under GC pressure`,
+      `${proxyTls ? "https" : "http"}-proxy: callback approves 20× under GC pressure`,
       async () => {
         await using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("gc") });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
-        const N = isASAN ? 50 : 20;
-        for (let i = 0; i < N; i++) {
-          const res = await fetch(origin.url, {
-            proxy: proxy.url,
-            keepalive: true,
-            tls: {
-              ca: tlsCert.cert,
-              rejectUnauthorized: true,
-              checkServerIdentity: () => {
-                Bun.gc(false);
-                return undefined;
+        const proxy = sharedProxy(proxyTls);
+        const N = 20;
+        let called = 0;
+        const results = await Promise.all(
+          Array.from({ length: N }, () =>
+            fetch(origin.url, {
+              proxy: proxy.url,
+              keepalive: false,
+              tls: {
+                ca: tlsCert.cert,
+                rejectUnauthorized: true,
+                checkServerIdentity: () => {
+                  called++;
+                  Bun.gc(false);
+                  return undefined;
+                },
               },
-            },
-          });
-          expect(await res.text()).toBe("gc");
-        }
+            }).then(res => res.text()),
+          ),
+        );
+        expect(results).toEqual(Array.from({ length: N }, () => "gc"));
+        expect(called).toBe(N);
       },
       60_000,
     );
@@ -259,11 +326,13 @@ describe("path and query through proxy", () => {
     test.concurrent(
       `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin path="${short}"`,
       async () => {
-        await using origin = await createAdversarialOrigin({ tls: originTls, body: "ok" });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
+        const origin = sharedOrigin(originTls);
+        const proxy = sharedProxy(proxyTls);
         const res = await fetch(origin.url + path, { proxy: proxy.url, keepalive: false, tls: laxTls });
         expect(res.status).toBe(200);
-        expect(origin.requests[0].path).toBe(path);
+        // The echo origin returns exactly what it received as path+search;
+        // getting it back proves the path survived both proxy hops unmodified.
+        expect(await res.text()).toBe(path);
       },
     );
   }
@@ -283,15 +352,15 @@ describe("verbose through proxy", () => {
     test.concurrent(
       `${proxyTls ? "https" : "http"}-proxy → ${originTls ? "https" : "http"}-origin verbose:true`,
       async () => {
-        await using origin = await createAdversarialOrigin({ tls: originTls, body: "v" });
-        await using proxy = await createAdversarialProxy({ tls: proxyTls });
-        const res = await fetch(origin.url, {
+        const origin = sharedOrigin(originTls);
+        const proxy = sharedProxy(proxyTls);
+        const res = await fetch(`${origin.url}/v`, {
           proxy: proxy.url,
           keepalive: false,
           tls: laxTls,
           verbose: true,
         });
-        expect(await res.text()).toBe("v");
+        expect(await res.text()).toBe("/v");
         expect(res.status).toBe(200);
       },
     );
@@ -323,7 +392,7 @@ describe("AbortSignal.timeout through proxy", () => {
         await once(server, "listening");
         const originPort = (server.address() as net.AddressInfo).port;
         try {
-          await using proxy = await createAdversarialProxy({ tls: proxyTls });
+          const proxy = sharedProxy(proxyTls);
 
           let code: string;
           const t0 = Date.now();
@@ -382,6 +451,20 @@ describe("WebSocket through proxy", () => {
     });
   }
 
+  // Shared echo origins for the whole describe: the server is a stateless echo
+  // and Bun.serve handles concurrent upgrades, so one pair serves every test.
+  let wsOrigin: ReturnType<typeof makeEchoServer>;
+  let wssOrigin: ReturnType<typeof makeEchoServer>;
+  const echoOrigin = (tls: boolean) => (tls ? wssOrigin : wsOrigin);
+  beforeAll(() => {
+    wsOrigin = makeEchoServer(false);
+    wssOrigin = makeEchoServer(true);
+  });
+  afterAll(() => {
+    wsOrigin?.stop(true);
+    wssOrigin?.stop(true);
+  });
+
   for (const { proxyTls, originTls } of cartesian({
     proxyTls: [false, true] as const,
     originTls: [false, true] as const,
@@ -390,7 +473,8 @@ describe("WebSocket through proxy", () => {
     const route = `${proxyTls ? "https" : "http"}-proxy → ${scheme}-origin`;
 
     test.concurrent(`${route}: echo round-trip`, async () => {
-      await using origin = makeEchoServer(originTls);
+      const origin = echoOrigin(originTls);
+      // This test inspects proxy.connections, so it needs a dedicated proxy.
       await using proxy = await createAdversarialProxy({ tls: proxyTls });
 
       const received: string[] = [];
@@ -418,8 +502,8 @@ describe("WebSocket through proxy", () => {
     });
 
     test.concurrent(`${route}: large binary frame round-trip`, async () => {
-      await using origin = makeEchoServer(originTls);
-      await using proxy = await createAdversarialProxy({ tls: proxyTls });
+      const origin = echoOrigin(originTls);
+      const proxy = sharedProxy(proxyTls);
       const payload = new Uint8Array(256 * 1024).fill(0xab);
 
       const { promise: done, resolve, reject } = Promise.withResolvers<Uint8Array>();
@@ -451,7 +535,7 @@ describe("WebSocket through proxy", () => {
     });
 
     test.concurrent(`${route}: proxy RSTs at CONNECT → error event`, async () => {
-      await using origin = makeEchoServer(originTls);
+      const origin = echoOrigin(originTls);
       await using proxy = await createAdversarialProxy({
         tls: proxyTls,
         killClientAt: "request-received",
@@ -469,7 +553,7 @@ describe("WebSocket through proxy", () => {
     });
 
     test.concurrent(`${route}: CONNECT → 407 without auth → error/close event`, async () => {
-      await using origin = makeEchoServer(originTls);
+      const origin = echoOrigin(originTls);
       await using proxy = await createAdversarialProxy({
         tls: proxyTls,
         auth: { user: "u", pass: "p" },
@@ -487,8 +571,8 @@ describe("WebSocket through proxy", () => {
     });
 
     test.concurrent(`${route}: rapid close after open`, async () => {
-      await using origin = makeEchoServer(originTls);
-      await using proxy = await createAdversarialProxy({ tls: proxyTls });
+      const origin = echoOrigin(originTls);
+      const proxy = sharedProxy(proxyTls);
       const { promise, resolve, reject } = Promise.withResolvers<number>();
       const ws = new WebSocket(`${scheme}://localhost:${origin.port}/`, {
         proxy: proxy.url,
@@ -504,25 +588,44 @@ describe("WebSocket through proxy", () => {
 
   // wss through https proxy: the double-TLS case that had zero coverage.
   // Churn it under GC pressure to look for tunnel lifecycle issues.
-  test("wss via https-proxy: open/close churn under GC", async () => {
-    await using origin = makeEchoServer(true);
-    await using proxy = await createAdversarialProxy({ tls: true });
-    const N = isASAN ? 40 : 20;
-    for (let i = 0; i < N; i++) {
-      const { promise, resolve, reject } = Promise.withResolvers<void>();
-      const ws = new WebSocket(`wss://localhost:${origin.port}/`, {
-        proxy: proxy.url,
-        tls: laxTls,
-      } as any);
-      ws.onmessage = () => {
-        ws.close();
-      };
-      ws.onclose = () => resolve();
-      ws.onerror = ev => reject(new Error("ws error: " + (ev as any).message));
-      await promise;
-      if (i % 5 === 0) Bun.gc(true);
-    }
-  }, 60_000);
+  test.concurrent(
+    "wss via https-proxy: open/close churn under GC",
+    async () => {
+      const origin = echoOrigin(true);
+      const proxy = sharedProxy(true);
+      const N = 20;
+      // Batches of 8: each batch opens 8 tunnels concurrently, waits for every
+      // close, then forces a full GC before the next batch reopens. Same N
+      // open→close cycles as the previous sequential loop, with the GC sweep
+      // now landing between concurrent-tunnel generations.
+      const BATCH = 8;
+      let opened = 0;
+      for (let i = 0; i < N; i += BATCH) {
+        const n = Math.min(BATCH, N - i);
+        await Promise.all(
+          Array.from({ length: n }, () => {
+            const { promise, resolve, reject } = Promise.withResolvers<void>();
+            const ws = new WebSocket(`wss://localhost:${origin.port}/`, {
+              proxy: proxy.url,
+              tls: laxTls,
+            } as any);
+            ws.onopen = () => {
+              opened++;
+            };
+            ws.onmessage = () => {
+              ws.close();
+            };
+            ws.onclose = () => resolve();
+            ws.onerror = ev => reject(new Error("ws error: " + (ev as any).message));
+            return promise;
+          }),
+        );
+        Bun.gc(true);
+      }
+      expect(opened).toBe(N);
+    },
+    60_000,
+  );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -533,12 +636,13 @@ describe("WebSocket through proxy", () => {
 
 describe("interleaved proxy/direct", () => {
   for (const proxyTls of [false, true] as const) {
-    test(`${proxyTls ? "https" : "http"}-proxy + direct to same https origin, alternating`, async () => {
+    test.concurrent(`${proxyTls ? "https" : "http"}-proxy + direct to same https origin, alternating`, async () => {
       await using origin = Bun.serve({
         port: 0,
         tls: tlsCert,
         fetch: req => new Response(new URL(req.url).searchParams.get("via") ?? "?"),
       });
+      // This test inspects proxy.connections, so it needs a dedicated proxy.
       await using proxy = await createAdversarialProxy({ tls: proxyTls });
 
       const totalBytesUp = () => proxy.connections.reduce((s, c) => s + c.bytesUp, 0);
@@ -576,6 +680,7 @@ describe("CONNECT target format", () => {
   for (const proxyTls of [false, true] as const) {
     test.concurrent(`${proxyTls ? "https" : "http"}-proxy CONNECT target is host:port`, async () => {
       await using origin = await createAdversarialOrigin({ tls: true, body: "ok" });
+      // This test inspects proxy.connections, so it needs a dedicated proxy.
       await using proxy = await createAdversarialProxy({ tls: proxyTls });
       const res = await fetch(origin.url, { proxy: proxy.url, keepalive: false, tls: laxTls });
       expect(res.status).toBe(200);

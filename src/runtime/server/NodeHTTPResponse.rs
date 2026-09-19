@@ -593,10 +593,8 @@ impl NodeHTTPResponse {
             // and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();
             self.poll_ref.with_mut(|r| r.unref(vm));
-            // uWS frees the HTTP response data, and its body callback, when it
-            // adopts the socket: a pending body never arrives, so nothing later
-            // releases its ref. A ref that is held while the body is `Done` is
-            // inside the last `ondata` call, and `on_data_or_aborted` releases it.
+            // uWS drops the HTTP body callback when it adopts the socket, so a
+            // body that is still pending never arrives.
             if self.body_read_state.get() == BodyReadState::Pending {
                 self.body_read_ref.with_mut(|r| r.unref(vm));
                 self.body_read_state.set(BodyReadState::Done);

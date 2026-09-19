@@ -1039,6 +1039,14 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
 }
 
 #if !defined(_WIN32)
+int bsd_send_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
+    ssize_t rc;
+    do {
+        rc = send(fd, "", 0, MSG_NOSIGNAL | MSG_DONTWAIT);
+    } while (UNLIKELY(IS_EINTR(rc)));
+    return (int) rc;
+}
+
 ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags) {
     ssize_t injected = 0; int unused = 0;
     if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) return injected;

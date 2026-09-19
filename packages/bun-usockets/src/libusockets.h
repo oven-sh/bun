@@ -726,13 +726,13 @@ size_t us_bundled_root_certs_der(const uint8_t *const **out_certs, const size_t 
 unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(us_socket_r s);
-/* A writable event's write made zero progress: does that prove the peer is
- * gone? On epoll/kqueue a writable event implies real send-buffer space, so
- * no progress means the send itself failed (EPIPE/ECONNRESET folded to 0) and
- * the answer is always yes. The libuv backend's completion model can deliver
- * a writable completion for space the same loop iteration already refilled,
- * making a stall there routine backpressure, so it asks the kernel
- * (SO_ERROR, then a zero-byte send probe). */
+/* A writable event's write made zero progress: is the peer gone? The stall
+ * alone does not say. us_socket_write folds every send() error to 0, so it is
+ * EPIPE/ECONNRESET from a dead peer, or ENOBUFS/ENOMEM/EAGAIN on a healthy
+ * socket, or (libuv) a writable completion for space the same loop iteration
+ * already refilled. So this asks the kernel with a zero-byte send, which
+ * fails with EPIPE/ECONNRESET only when the write side is down. libuv reads
+ * SO_ERROR first. */
 int us_socket_stalled_write_means_peer_gone(us_socket_r s);
 
 void us_socket_ref(us_socket_r s);

@@ -295,6 +295,15 @@ declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,
   sourceModule: JSCommonJSModule,
 ): JSCommonJSModule[];
+/**
+ * The id that an earlier `require(request)` of `requirer` resolved to against `filename`, while
+ * that answer still holds. `undefined`: the resolver has to answer.
+ */
+declare function $cachedRequireResolution(
+  requirer: JSCommonJSModule,
+  filename: string,
+  request: string,
+): string | undefined;
 declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;

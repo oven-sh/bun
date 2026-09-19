@@ -378,6 +378,96 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     RELEASE_AND_RETURN(throwScope, JSValue::encode(returnValue));
 }
 
+bool JSCommonJSModule::canCacheResolutions(Zig::GlobalObject* globalObject)
+{
+    return !globalObject->hasOverriddenModuleResolveFilenameFunction
+        && !globalObject->onLoadPlugins.hasVirtualModules()
+        && globalObject->onResolvePlugins.isEmpty();
+}
+
+void JSCommonJSModule::didResolveRequire(Zig::GlobalObject* globalObject, JSString* request, JSString* resolved)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Any other filename resolves against the working directory, which can change.
+    auto* filename = dynamicDowncast<JSString>(m_filename.get());
+    if (!filename)
+        return;
+    auto filenameString = filename->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!isAbsolutePath(filenameString))
+        return;
+
+    // Most require() calls run once, while the program loads. The first time a request is
+    // resolved only its hash is kept; it gets an entry when it comes back.
+    auto requestString = request->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    auto& seen = globalObject->m_resolvedRequireHashes;
+    unsigned hash = WTF::pairIntHash(WTF::PtrHash<JSCommonJSModule*>::hash(this), requestString->hash());
+    if (std::exchange(seen[hash % seen.size()], hash) != hash)
+        return;
+
+    // A file or a builtin module. Not, for one, a blob: URL, which resolves until it is revoked.
+    auto resolvedString = resolved->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!isAbsolutePath(resolvedString)) {
+        auto utf8 = UTF8View::tryCreate(resolvedString);
+        if (!utf8 || !ModuleLoader__isBuiltin(utf8->span().data(), utf8->span().size()))
+            return;
+    }
+
+    JSMap* resolutions = m_resolutions.get();
+    if (!resolutions) {
+        resolutions = JSMap::create(vm, globalObject->mapStructure());
+        m_resolutions.set(vm, this, resolutions);
+    }
+    RELEASE_AND_RETURN(scope, resolutions->set(globalObject, request, resolved));
+}
+
+// $cachedRequireResolution(requirer, filename, request): see JSCommonJSModule::m_resolutions.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCachedRequireResolution, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
+{
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(callframe->argumentCount() == 3);
+    // `this` of a require() call can be anything: Module.prototype.require.call({ filename }, id)
+    auto* requirer = dynamicDowncast<JSCommonJSModule>(callframe->uncheckedArgument(0));
+    if (!requirer)
+        return JSValue::encode(jsUndefined());
+
+    // An own `filename` property can shadow the one the entries were resolved against.
+    JSMap* resolutions = requirer->m_resolutions.get();
+    if (!resolutions || callframe->uncheckedArgument(1) != requirer->filename() || !JSCommonJSModule::canCacheResolutions(globalObject))
+        return JSValue::encode(jsUndefined());
+
+    // require() from a disposed Bun.ModuleGraph's module throws; the resolver's entry point does that.
+    JSModuleGraph* graph = requirer->moduleGraph();
+    if (graph && graph->disposed()) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    JSValue request = callframe->uncheckedArgument(2);
+    JSValue resolved = resolutions->get(globalObject, request);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (resolved.isUndefined())
+        return JSValue::encode(jsUndefined());
+
+    // A builtin always resolves the same. A file has to be in the require cache still: like Node,
+    // drop the entry and resolve again once it is not.
+    auto resolvedString = asString(resolved)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isAbsolutePath(resolvedString)) {
+        bool isCached = requireMapOf(globalObject, graph)->has(globalObject, resolved);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isCached) {
+            resolutions->remove(globalObject, request);
+            RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+        }
+    }
+    return JSValue::encode(resolved);
+}
+
 JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -749,6 +839,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterFilename,
     JSString* string = JSValue::decode(value).toString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     thisObject->m_filename.set(globalObject->vm(), thisObject, string);
+    thisObject->m_resolutions.clear();
     return true;
 }
 
@@ -1313,6 +1404,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_overriddenCompile);
     visitor.appendHidden(thisObject->m_childrenValue);
     visitor.append(thisObject->m_moduleGraph);
+    visitor.append(thisObject->m_resolutions);
     {
         WTF::Locker locker { thisObject->cellLock() };
         visitor.appendValues(thisObject->m_children.begin(), thisObject->m_children.size());

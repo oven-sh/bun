@@ -56,6 +56,7 @@ using namespace JSC;
     macro(body) \
     macro(bunNativePtr) \
     macro(bytes) \
+    macro(cachedRequireResolution) \
     macro(cancel) \
     macro(checks) \
     macro(close) \

@@ -213,7 +213,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSValue resolveFilenameOptions = callFrame->argument(6);
 
     // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
-    if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
+    auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule);
+    if (requirer) {
         Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -328,12 +329,20 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         return {};
     }
 
+    // A module's require() that only the default resolver answers: see JSCommonJSModule::m_resolutions.
+    bool isCacheable = requirer && !isESM && !isRequireDotResolve && from == requirer->filename() && Bun::JSCommonJSModule::canCacheResolutions(globalObject);
+
     auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {
         JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
         return {};
+    }
+
+    if (isCacheable) {
+        requirer->didResolveRequire(globalObject, asString(moduleName), asString(JSC::JSValue::decode(result)));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     scope.release();

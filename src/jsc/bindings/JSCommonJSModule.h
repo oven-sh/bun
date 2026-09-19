@@ -28,6 +28,7 @@ static constexpr ASCIILiteral commonJSDefaultWrapperEnd = "})"_s;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCachedRequireResolution);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
 
 void populateESMExports(
@@ -79,6 +80,11 @@ public:
     // required it, did): its require cache, its loader for require(esm), and the scope its
     // wrapper closes over are the graph's. Null: the global object's.
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
+    // request -> resolved id, for each require(request) of this module that the default
+    // resolver answered more than once with a file or a builtin. A repeat skips the
+    // resolver while the file is in the require cache. Made on first use; dropped when
+    // `filename`, which requests resolve against, is assigned.
+    JSC::WriteBarrier<JSC::JSMap> m_resolutions;
 
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
@@ -118,6 +124,12 @@ public:
     static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString, JSModuleGraph* = nullptr);
     JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
     void setModuleGraph(JSC::VM&, JSModuleGraph*);
+
+    // See m_resolutions. False while anything but the default resolver can answer a require():
+    // an overridden Module._resolveFilename, an onResolve plugin, a virtual module.
+    static bool canCacheResolutions(Zig::GlobalObject*);
+    // The default resolver answered this module's require(request) with `resolved`.
+    void didResolveRequire(Zig::GlobalObject*, JSC::JSString* request, JSC::JSString* resolved);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
         const JSC::Identifier& moduleKey,

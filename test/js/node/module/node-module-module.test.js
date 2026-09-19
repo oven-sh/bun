@@ -1017,4 +1017,364 @@ console.log("survived", require("./late.js"));`,
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // require() answers a repeat of a request from the requiring module's own cache of resolutions
+  // while the target is in require.cache. Each fixture repeats the request first, so that cache is in use.
+  describe("a repeated require()", () => {
+    async function run(files, cmd = ["main.cjs"]) {
+      using dir = tempDir("repeated-require", files);
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    const modules = {
+      "a.cjs": `globalThis.aLoads = (globalThis.aLoads ?? 0) + 1; module.exports = { name: "a", loads: globalThis.aLoads };`,
+      "b.cjs": `module.exports = { name: "b" };`,
+      "sub/a.cjs": `module.exports = { name: "sub/a" };`,
+      "node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "node_modules/pkg/index.js": `module.exports = { name: "pkg" };`,
+      "other/node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "other/node_modules/pkg/index.js": `module.exports = { name: "other pkg" };`,
+    };
+
+    test("returns the module that is in require.cache when the request would now resolve to another file, like Node", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "foo/index.js": `module.exports = "foo/index.js";`,
+        "main.cjs": `
+          const fs = require("fs");
+          const path = require("path");
+          const out = [require("./foo"), require("./foo"), require("./foo")];
+          // ./foo.js now shadows ./foo/index.js. A failed lookup makes the resolver read the directory again.
+          fs.writeFileSync(path.join(__dirname, "foo.js"), 'module.exports = "foo.js";');
+          try { require("./missing"); } catch {}
+          out.push(require("./foo"));
+          console.log(JSON.stringify(out));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["foo/index.js", "foo/index.js", "foo/index.js", "foo/index.js"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("loads the file again after delete require.cache[id]", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        ...modules,
+        "main.cjs": `
+          const first = [require("./a.cjs"), require("./a.cjs"), require("./a.cjs")];
+          delete require.cache[require.resolve("./a.cjs")];
+          const second = [require("./a.cjs"), require("./a.cjs"), require("./a.cjs")];
+          console.log(JSON.stringify({
+            first: first.map(a => a.loads),
+            second: second.map(a => a.loads),
+            sameFirst: first.every(a => a === first[0]),
+            sameSecond: second.every(a => a === second[0]),
+          }));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ first: [1, 1, 1], second: [2, 2, 2], sameFirst: true, sameSecond: true });
+      expect(exitCode).toBe(0);
+    });
+
+    test("returns what require.cache[id] was replaced with", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        ...modules,
+        "main.cjs": `
+          const Module = require("module");
+          const out = [require("./a.cjs").name, require("./a.cjs").name, require("./a.cjs").name];
+          const id = require.resolve("./a.cjs");
+          const replacement = new Module(id);
+          replacement.exports = { name: "replacement" };
+          replacement.loaded = true;
+          require.cache[id] = replacement;
+          out.push(require("./a.cjs").name);
+          console.log(JSON.stringify(out));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["a", "a", "a", "replacement"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("calls a Module._resolveFilename that was overridden after the first calls", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        ...modules,
+        "main.cjs": `
+          const Module = require("module");
+          const out = [require("./a.cjs").name, require("./a.cjs").name, require("./a.cjs").name];
+          const original = Module._resolveFilename;
+          let calls = 0;
+          Module._resolveFilename = function (request, ...rest) {
+            calls++;
+            return original.call(this, request === "./a.cjs" ? "./b.cjs" : request, ...rest);
+          };
+          out.push(require("./a.cjs").name, require("./a.cjs").name, require("./a.cjs").name, calls);
+          Module._resolveFilename = original;
+          out.push(require("./a.cjs").name, require("./a.cjs").name, calls);
+          console.log(JSON.stringify(out));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["a", "a", "a", "b", "b", "b", 3, "a", "a", 3]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("calls a Module.prototype.require that was overridden after the first calls", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        ...modules,
+        "main.cjs": `
+          const Module = require("module");
+          const out = [require("./a.cjs").name, require("./a.cjs").name, require("./a.cjs").name];
+          const original = Module.prototype.require;
+          const seen = [];
+          Module.prototype.require = function (id) {
+            seen.push(id);
+            return id === "./a.cjs" ? original.call(this, "./b.cjs") : original.apply(this, arguments);
+          };
+          out.push(require("./a.cjs").name, require("./a.cjs").name);
+          Module.prototype.require = original;
+          out.push(require("./a.cjs").name);
+          console.log(JSON.stringify({ out, seen }));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ out: ["a", "a", "a", "b", "b", "a"], seen: ["./a.cjs", "./a.cjs"] });
+      expect(exitCode).toBe(0);
+    });
+
+    test("resolves against options.paths when they are given", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        ...modules,
+        "main.cjs": `
+          const path = require("path");
+          const out = [require("pkg").name, require("pkg").name, require("pkg").name];
+          const paths = [path.join(__dirname, "other")];
+          out.push(require("pkg", { paths }).name, require("pkg", { paths }).name, require("pkg").name);
+          console.log(JSON.stringify(out));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["pkg", "pkg", "pkg", "other pkg", "other pkg", "pkg"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("resolves against a module.filename that was assigned or redefined after the first calls", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        ...modules,
+        "main.cjs": `
+          const path = require("path");
+          const inSub = path.join(__dirname, "sub", "index.cjs");
+          const assigned = [require("./a.cjs").name, require("./a.cjs").name, require("./a.cjs").name];
+          module.filename = inSub;
+          assigned.push(require("./a.cjs").name, require("./a.cjs").name, require("./a.cjs").name);
+          module.filename = __filename;
+          assigned.push(require("./a.cjs").name);
+
+          const redefined = [require("./b.cjs").name, require("./b.cjs").name, require("./b.cjs").name];
+          Object.defineProperty(module, "filename", { value: inSub, configurable: true });
+          let error;
+          try { require("./b.cjs"); } catch (e) { error = e.code; }
+          delete module.filename;
+          redefined.push(error, require("./b.cjs").name);
+          console.log(JSON.stringify({ assigned, redefined }));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        assigned: ["a", "a", "a", "sub/a", "sub/a", "sub/a", "a"],
+        redefined: ["b", "b", "b", "MODULE_NOT_FOUND", "b"],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("calls an onResolve plugin and finds a virtual module that were registered after the first calls", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        ...modules,
+        "main.cjs": `
+          const path = require("path");
+          const out = [require("./a.cjs").name, require("./a.cjs").name, require("./a.cjs").name];
+          const pkg = [require("pkg").name, require("pkg").name, require("pkg").name];
+          let calls = 0;
+          Bun.plugin({
+            name: "a is b",
+            setup(build) {
+              build.onResolve({ filter: /a\\.cjs$/ }, () => (calls++, { path: path.join(__dirname, "b.cjs") }));
+            },
+          });
+          out.push(require("./a.cjs").name, require("./a.cjs").name, calls);
+          Bun.plugin.clearAll();
+          out.push(require("./a.cjs").name, require("./a.cjs").name, calls);
+
+          Bun.plugin({
+            name: "virtual pkg",
+            setup(build) {
+              build.module("pkg", () => ({ exports: { name: "virtual pkg" }, loader: "object" }));
+            },
+          });
+          pkg.push(require("pkg").name, require("pkg").name);
+          console.log(JSON.stringify({ out, pkg }));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        out: ["a", "a", "a", "b", "b", 2, "a", "a", 2],
+        pkg: ["pkg", "pkg", "pkg", "virtual pkg", "virtual pkg"],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("returns what mock.module() registered after the first calls", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          ...modules,
+          "mock.test.cjs": `
+            const { test, expect, mock } = require("bun:test");
+            test("mock.module", () => {
+              const out = [require("./a.cjs").name, require("./a.cjs").name, require("./a.cjs").name];
+              mock.module("./a.cjs", () => ({ name: "mock a" }));
+              out.push(require("./a.cjs").name, require("./a.cjs").name);
+              expect(out).toEqual(["a", "a", "a", "mock a", "mock a"]);
+            });
+          `,
+        },
+        ["test", "./mock.test.cjs"],
+      );
+      expect(stderr).toContain(" 1 pass");
+      expect(stderr).toContain(" 0 fail");
+      expect(exitCode).toBe(0);
+    });
+
+    test("of a builtin returns a require.cache entry made for its unprefixed name", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "main.cjs": `
+          const real = [require("fs"), require("fs"), require("fs"), require("node:fs"), require("node:fs"), require("node:fs")];
+          const fake = { name: "fake fs" };
+          require.cache["fs"] = { exports: fake };
+          const whileCached = [require("fs") === fake, require("fs") === fake, require("node:fs") === real[0]];
+          delete require.cache["fs"];
+          const afterDelete = [require("fs") === real[0], require("node:fs") === real[0]];
+
+          // A bun: builtin is in require.cache, and loads again when it is deleted from there.
+          const sqlite = [require("bun:sqlite"), require("bun:sqlite"), require("bun:sqlite")];
+          delete require.cache["bun:sqlite"];
+          sqlite.push(require("bun:sqlite"), require("bun:sqlite"));
+          console.log(JSON.stringify({
+            same: real.every(fs => fs === real[0]),
+            whileCached,
+            afterDelete,
+            sameSqlite: sqlite.every(m => m === sqlite[0] && typeof m.Database === "function"),
+          }));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        same: true,
+        whileCached: [true, true, true],
+        afterDelete: [true, true],
+        sameSqlite: true,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("does not need `this` to be a module", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        ...modules,
+        "main.cjs": `
+          const Module = require("module");
+          const path = require("path");
+          require("./a.cjs");
+          require("./sub/a.cjs");
+          const parent = { filename: __filename };
+          const require2 = id => Module.prototype.require.call(parent, id).name;
+          const out = [require2("./a.cjs"), require2("./a.cjs"), require2("./a.cjs")];
+          parent.filename = path.join(__dirname, "sub", "index.cjs");
+          out.push(require2("./a.cjs"), require2("./a.cjs"));
+          console.log(JSON.stringify(out));
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["a", "a", "a", "sub/a", "sub/a"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("in a Bun.ModuleGraph returns the graph's module, and throws once the graph is disposed", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        {
+          ...modules,
+          "in-graph.cjs": `module.exports = () => require("./a.cjs");`,
+          "main.mjs": `
+            import { createRequire } from "node:module";
+            import { join } from "node:path";
+            const require = createRequire(import.meta.url);
+            const host = [require("./a.cjs"), require("./a.cjs"), require("./a.cjs")];
+            const graph = new Bun.ModuleGraph();
+            const { default: load } = await graph.import(join(import.meta.dir, "in-graph.cjs"));
+            const inGraph = [load(), load(), load()];
+            graph.dispose();
+            let error;
+            try { load(); } catch (e) { error = e.message; }
+            console.log(JSON.stringify({
+              host: host.map(a => a.loads),
+              inGraph: inGraph.map(a => a.loads),
+              sameInGraph: inGraph.every(a => a === inGraph[0]),
+              afterHost: require("./a.cjs") === host[0],
+              error,
+            }));
+          `,
+        },
+        ["main.mjs"],
+      );
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        host: [1, 1, 1],
+        inGraph: [2, 2, 2],
+        sameInGraph: true,
+        afterHost: true,
+        error: "ModuleGraph has been disposed",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("loads the file again after a hot reload", async () => {
+      using dir = tempDir("repeated-require-hot", {
+        ...modules,
+        // The test rewrites this file to start a reload. A partial write of it is still a valid module.
+        "trigger.cjs": `module.exports = 0;`,
+        "main.cjs": `
+          require("./trigger.cjs");
+          globalThis.generation = (globalThis.generation ?? 0) + 1;
+          const load = () => require("./a.cjs").loads;
+          const out = { generation: globalThis.generation, loads: [load(), load(), load()] };
+          // A require() of the module object of the generation before, which outlived the reload.
+          if (globalThis.before) out.before = [globalThis.before(), globalThis.before()];
+          globalThis.before ??= load;
+          console.write(JSON.stringify(out) + "\\n");
+          setInterval(() => {}, 1 << 30);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--hot", "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const lines = [];
+      let buffered = "";
+      for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+        buffered += chunk;
+        let end;
+        while ((end = buffered.indexOf("\n")) !== -1) {
+          lines.push(JSON.parse(buffered.slice(0, end)));
+          buffered = buffered.slice(end + 1);
+          if (lines.length === 1) fs.writeFileSync(path.join(String(dir), "trigger.cjs"), "module.exports = 1;");
+        }
+        if (lines.length >= 2) break;
+      }
+      expect(lines.slice(0, 2)).toEqual([
+        { generation: 1, loads: [1, 1, 1] },
+        { generation: 2, loads: [2, 2, 2], before: [2, 2] },
+      ]);
+    }, 30_000);
+  });
 });

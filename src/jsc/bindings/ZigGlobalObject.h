@@ -801,6 +801,9 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+    // Hashes of the (module, request) pairs whose require() the resolver answered last:
+    // see JSCommonJSModule::didResolveRequire.
+    std::array<unsigned, 512> m_resolvedRequireHashes {};
 
     // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
     // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be

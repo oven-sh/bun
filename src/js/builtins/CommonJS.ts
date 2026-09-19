@@ -16,7 +16,12 @@ export function require(this: JSCommonJSModule, _: string) {
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string, options?: { paths?: string[] }) {
-  const id = $resolveSync(originalId, this.filename, false, false, options ? options.paths : undefined, this, options);
+  const filename = this.filename;
+  // A repeat of a require() of a builtin, or of a file that is still in the require cache, does not run the resolver.
+  let id = options === undefined ? $cachedRequireResolution(this, filename, originalId) : undefined;
+  if (id === undefined) {
+    id = $resolveSync(originalId, filename, false, false, options ? options.paths : undefined, this, options);
+  }
   // The global require cache, or the one of the Bun.ModuleGraph this module belongs to.
   // (`this` need not be a module: Module.prototype.require.call({ filename }, id).)
   const requireMap: RequireMap = this.$requireMap || $requireMap;

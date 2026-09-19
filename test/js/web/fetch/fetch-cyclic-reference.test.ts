@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
@@ -190,7 +190,7 @@ describe("an error that references the Response whose body it failed", () => {
     const readers: Record<string, (response: Response, dir: string) => unknown> = {
       "HTMLRewriter.transform()": response => new HTMLRewriter().transform(response),
       "WebAssembly.compileStreaming()": response => WebAssembly.compileStreaming(response),
-      "Bun.spawn() stdin": response => Bun.spawn({ cmd: [bunExe(), "--version"], stdin: response }),
+      "Bun.spawn() stdin": response => Bun.spawn({ cmd: [bunExe(), "--version"], env: bunEnv, stdin: response }),
       "Bun.write()": (response, dir) => Bun.write(join(dir, "out"), response),
     };
 

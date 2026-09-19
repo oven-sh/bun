@@ -1498,8 +1498,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let nhr_flags = nhr.flags.get();
             if !nhr_flags.contains(NhrFlags::UPGRADED) {
                 if let Some(raw) = nhr.raw_response.get() {
-                    if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
-                        && raw.state().is_response_pending()
+                    // A tunnel keeps its upgrade context: ws adopts it later.
+                    if nhr_flags.contains(NhrFlags::TUNNELED)
+                        || (!nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
+                            && raw.state().is_response_pending())
                     {
                         nhr.set_on_aborted_handler();
                     }

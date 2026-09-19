@@ -946,6 +946,47 @@ describe("CONNECT pipelined behind a pending response", () => {
     }
   });
 
+  test("should write what the 'connect' listener writes at once after the response ahead", async () => {
+    // The listener answers synchronously and keeps the tunnel open. Its bytes wait for the
+    // response ahead, which ends later, and are not cut into it.
+    let first: http.ServerResponse | undefined;
+    const { promise: handedOff, resolve: onHandoff, reject: onFailure } = Promise.withResolvers<void>();
+    await using server = http.createServer((req, res) => {
+      if (req.method === "CONNECT") return void onFailure(new Error("dispatched as a request"));
+      first = res;
+      res.write("first");
+    });
+    server.on("clientError", onFailure);
+    server.on("connect", (req, socket) => {
+      socket.write(ESTABLISHED);
+      socket.on("data", chunk => socket.write(`echo:${chunk}`));
+      onHandoff();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      let received = "";
+      const { promise: gotEstablished, resolve: onEstablished } = Promise.withResolvers<void>();
+      const { promise: gotEcho, resolve: onEcho } = Promise.withResolvers<void>();
+      client.setEncoding("latin1");
+      client.on("data", chunk => {
+        received += chunk;
+        if (received.endsWith(ESTABLISHED)) onEstablished();
+        if (received.endsWith("echo:ping")) onEcho();
+      });
+      client.on("error", onFailure);
+      client.write(get("/first") + CONNECT);
+      await handedOff;
+      first!.end("-done");
+      await gotEstablished;
+      expect(withoutResponseHeads(received)).toBe(`5\r\nfirst\r\n5\r\n-done\r\n0\r\n\r\n${ESTABLISHED}`);
+      client.write("ping");
+      await gotEcho;
+    } finally {
+      client.destroy();
+    }
+  });
+
   test("should close the connection when the server has no 'connect' listener", async () => {
     const events: string[] = [];
     let first: http.ServerResponse | undefined;

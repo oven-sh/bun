@@ -14,6 +14,19 @@ _file_arguments() {
     $reset
 }
 
+# The `compgen -X` exclusion pattern for the files bun can run, built from the
+# extensions bun itself reports (".ts" per line) with the leading dots stripped.
+# Empty when bun reports none, which excludes nothing.
+_bun_runnable_filter() {
+    local extensions
+    extensions="$(SHELL=bash bun getcompletes e)"
+    extensions="${extensions//./}"
+    extensions="${extensions//$'\n'/|}"
+    if [[ -n "${extensions}" ]]; then
+        echo "!(*.@(${extensions})?($|))"
+    fi
+}
+
 _long_short_completion() {
     local wordlist="${1}";
     local short_options="${2}"
@@ -201,7 +214,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
             return;;
         run)
-            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
+            _file_arguments "$(_bun_runnable_filter)";
             COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
             _read_scripts_in_package_json;
             return;;

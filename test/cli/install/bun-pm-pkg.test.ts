@@ -23,6 +23,7 @@ async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
 }
 
 const readPkg = (dir: string) => Bun.file(join(dir, "package.json")).json();
+const readRaw = (dir: string) => Bun.file(join(dir, "package.json")).text();
 
 function createTestPackageJson(overrides = {}) {
   return JSON.stringify(
@@ -344,9 +345,153 @@ describe.concurrent("bun pm pkg", () => {
       expect(await readPkg(dir)).toEqual({
         name: "x",
         version: "1.0.0",
-        contributors: { "0": "alice" },
-        nested: { deep: { "0": "value" } },
+        contributors: ["alice"],
+        nested: { deep: ["value"] },
         scripts: { lint: "eslint ." },
+      });
+    });
+
+    describe("arrays", () => {
+      it("should append, index, and create arrays", async () => {
+        using dir = makeTestDir();
+        const { error, code } = await runPmPkg(
+          [
+            "set",
+            // existing array: append, then replace by bracket and dot index, then add at index == length
+            "keywords[]=cli",
+            "keywords[0]=first",
+            "keywords.1=second",
+            "keywords[3]=fourth",
+            // missing properties: [] and a bracketed index create arrays, a dotted number creates an object
+            "files[]=dist",
+            "files[]=README.md",
+            "os[0]=linux",
+            "config.0=zero",
+            // existing object: either notation is a property name
+            "scripts[0]=bracket",
+            "scripts.1=dot",
+            // null is treated as missing
+            "testNull[0]=x",
+            "matrix[0][0]=a",
+            "matrix[0][]=b",
+            "matrix[][0]=c",
+          ],
+          dir,
+        );
+        expect(error).toBe("");
+        expect(code).toBe(0);
+        expect(await readPkg(dir)).toEqual({
+          ...JSON.parse(createTestPackageJson()),
+          keywords: ["first", "second", "cli", "fourth"],
+          files: ["dist", "README.md"],
+          os: ["linux"],
+          config: { "0": "zero" },
+          scripts: { test: "echo 'test'", build: "echo 'build'", "0": "bracket", "1": "dot" },
+          testNull: ["x"],
+          matrix: [["a", "b"], ["c"]],
+        });
+
+        const { output } = await runPmPkg(["get", "scripts[0]", "scripts.1", "keywords[3]"], dir);
+        expect(JSON.parse(output)).toEqual({ "scripts[0]": "bracket", "scripts.1": "dot", "keywords[3]": "fourth" });
+      });
+
+      it("should set properties of objects inside an array, creating elements as needed", async () => {
+        using dir = makeTestDir();
+        const { error, code } = await runPmPkg(
+          [
+            "set",
+            "contributors[0].email=john@new.example",
+            "contributors[1].email=jane@example.com",
+            "contributors[2].name=Third",
+            "contributors[].name=Fourth",
+            "testNull.key=x",
+          ],
+          dir,
+        );
+        expect(error).toBe("");
+        expect(code).toBe(0);
+        expect(await readPkg(dir)).toEqual({
+          ...JSON.parse(createTestPackageJson()),
+          contributors: [
+            { name: "John Doe", email: "john@new.example" },
+            { name: "Jane Smith", email: "jane@example.com" },
+            { name: "Third" },
+            { name: "Fourth" },
+          ],
+          testNull: { key: "x" },
+        });
+      });
+
+      it("should append --json values", async () => {
+        using dir = makeTestDir();
+        const { code } = await runPmPkg(["set", "keywords[]=42", 'contributors[]={"name":"Obj"}', "--json"], dir);
+        expect(code).toBe(0);
+        expect(await readPkg(dir)).toMatchObject({
+          keywords: ["test", "package", 42],
+          contributors: [{ name: "John Doe", email: "john@example.com" }, { name: "Jane Smith" }, { name: "Obj" }],
+        });
+      });
+
+      it("should still replace a whole array or element when it is the final segment", async () => {
+        using dir = makeTestDir();
+        const { code } = await runPmPkg(["set", "keywords=none", "contributors[0]=alice"], dir);
+        expect(code).toBe(0);
+        expect(await readPkg(dir)).toMatchObject({
+          keywords: "none",
+          contributors: ["alice", { name: "Jane Smith" }],
+        });
+      });
+
+      const rejected = [
+        [
+          "keywords[3]=x",
+          'error: "keywords[3]": index 3 is out of range for "keywords" (length 2)\n' +
+            "note: keywords[] appends to the end of the array\n",
+        ],
+        ["keywords.foo=x", 'error: "keywords.foo": "keywords" is an array, so "foo" must be an index or []\n'],
+        ["scripts[]=x", 'error: "scripts[]": cannot append to "scripts" because it is not an array\n'],
+        ["name[]=x", 'error: "name[]": "name" already exists and is not an object or array\n'],
+        ["name.first=x", 'error: "name.first": "name" already exists and is not an object or array\n'],
+        // nested values are named by the part of the key that leads to them
+        [
+          "matrix[0][9]=x",
+          'error: "matrix[0][9]": index 9 is out of range for "matrix[0]" (length 2)\n' +
+            "note: matrix[0][] appends to the end of the array\n",
+        ],
+        ["matrix[0].foo=x", 'error: "matrix[0].foo": "matrix[0]" is an array, so "foo" must be an index or []\n'],
+        [
+          "contributors[0].name.first=x",
+          'error: "contributors[0].name.first": "contributors[0].name" already exists and is not an object or array\n',
+        ],
+        [
+          "nested.matrix[0][9]=x",
+          'error: "nested.matrix[0][9]": index 9 is out of range for "nested.matrix[0]" (length 1)\n' +
+            "note: nested.matrix[0][] appends to the end of the array\n",
+        ],
+        // an empty part between dots is skipped but still counts towards the name
+        [
+          "nested..matrix[0].foo=x",
+          'error: "nested..matrix[0].foo": "nested..matrix[0]" is an array, so "foo" must be an index or []\n',
+        ],
+      ] as const;
+
+      it.each(rejected)("should reject %s without touching package.json", async (arg, expectedError) => {
+        using dir = tempDir("pm-pkg-reject", {
+          "package.json": createTestPackageJson({ matrix: [["a", "b"]], nested: { matrix: [["a"]] } }),
+        });
+        const before = await readRaw(dir);
+        const { output, error, code } = await runPmPkg(["set", arg], dir, false);
+        expect({ output, error, code }).toEqual({ output: "", error: expectedError, code: 1 });
+        expect(await readRaw(dir)).toBe(before);
+      });
+
+      it("should not write earlier arguments when a later one is rejected", async () => {
+        using dir = makeTestDir();
+        const before = await readRaw(dir);
+        const { error, code } = await runPmPkg(["set", "description=changed", "keywords[9]=x"], dir, false);
+        expect(error).toStartWith('error: "keywords[9]": index 9 is out of range');
+        expect(code).toBe(1);
+        expect(await readRaw(dir)).toBe(before);
       });
     });
 
@@ -410,6 +555,43 @@ describe.concurrent("bun pm pkg", () => {
       const { error, code } = await runPmPkg(["delete"], dir, false);
       expect(error).toContain("delete expects key args");
       expect(code).toBe(1);
+    });
+
+    it("should delete array elements and bracketed properties", async () => {
+      using dir = makeTestDir();
+      const { error, code } = await runPmPkg(
+        ["delete", "keywords[0]", "contributors.1", "contributors[0].email", "scripts[test]"],
+        dir,
+      );
+      expect(error).toBe("");
+      expect(code).toBe(0);
+      expect(await readPkg(dir)).toEqual({
+        ...JSON.parse(createTestPackageJson()),
+        keywords: ["package"],
+        contributors: [{ name: "John Doe" }],
+        scripts: { build: "echo 'build'" },
+      });
+    });
+
+    it("should leave package.json alone when the path does not lead anywhere", async () => {
+      using dir = makeTestDir();
+      const before = await readRaw(dir);
+      const { error, code } = await runPmPkg(
+        ["delete", "keywords[2]", "keywords.foo", "contributors[0].missing", "name[0]", "missing[0]"],
+        dir,
+      );
+      expect(error).toBe("");
+      expect(code).toBe(0);
+      expect(await readRaw(dir)).toBe(before);
+    });
+
+    it("should reject empty brackets", async () => {
+      using dir = makeTestDir();
+      const before = await readRaw(dir);
+      const { error, code } = await runPmPkg(["delete", "keywords[]"], dir, false);
+      expect(error).toBe("error: Empty brackets are not valid syntax for deleting values.\n");
+      expect(code).toBe(1);
+      expect(await readRaw(dir)).toBe(before);
     });
   });
 
@@ -700,20 +882,22 @@ describe.concurrent("bun pm pkg", () => {
     it("should handle numeric indices with different data types", async () => {
       using dir = makeTestDir();
 
-      const [arr0, arr1] = await Promise.all([
-        runPmPkg(["get", "keywords.0"], dir, false),
-        runPmPkg(["get", "keywords.1"], dir, false),
+      const setThenGet = async () => {
+        const { code } = await runPmPkg(["set", "config.0=zero-value"], dir);
+        expect(code).toBe(0);
+        return runPmPkg(["get", "config.0"], dir);
+      };
+      // The read-only gets use the shared fixture so they can overlap with the set/get round trip.
+      const [arr0, arr1, config0] = await Promise.all([
+        runPmPkg(["get", "keywords.0"], readonlyDir, false),
+        runPmPkg(["get", "keywords.1"], readonlyDir, false),
+        setThenGet(),
       ]);
       expect(arr0.output.trim()).toBe('"test"');
       expect(arr0.code).toBe(0);
       expect(arr1.output.trim()).toBe('"package"');
       expect(arr1.code).toBe(0);
-
-      const { code: setCode } = await runPmPkg(["set", "config.0=zero-value"], dir);
-      expect(setCode).toBe(0);
-
-      const { output } = await runPmPkg(["get", "config.0"], dir);
-      expect(output.trim()).toBe('"zero-value"');
+      expect(config0.output.trim()).toBe('"zero-value"');
     });
 
     it("should gracefully handle invalid notation patterns", async () => {
@@ -737,15 +921,15 @@ describe.concurrent("bun pm pkg", () => {
     it("should maintain consistency between set and get operations", async () => {
       using dir = makeTestDir();
 
-      const { code: setCode1 } = await runPmPkg(["set", "test.array.0=first"], dir);
-      expect(setCode1).toBe(0);
-      const { output: getOutput1 } = await runPmPkg(["get", "test.array.0"], dir);
-      expect(getOutput1.trim()).toBe('"first"');
+      const { code: setCode } = await runPmPkg(["set", "test.array.0=first", "test.bracket.access=success"], dir);
+      expect(setCode).toBe(0);
 
-      const { code: setCode2 } = await runPmPkg(["set", "test.bracket.access=success"], dir);
-      expect(setCode2).toBe(0);
-      const { output: getOutput2 } = await runPmPkg(["get", "test.bracket.access"], dir);
-      expect(getOutput2.trim()).toBe('"success"');
+      const [getOutput1, getOutput2] = await Promise.all([
+        runPmPkg(["get", "test.array.0"], dir),
+        runPmPkg(["get", "test.bracket.access"], dir),
+      ]);
+      expect(getOutput1.output.trim()).toBe('"first"');
+      expect(getOutput2.output.trim()).toBe('"success"');
     });
 
     it("should handle edge cases with special characters", async () => {

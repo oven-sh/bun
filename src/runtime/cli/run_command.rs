@@ -99,7 +99,7 @@ pub(crate) struct ConfigureEnvOptions {
 pub(crate) enum EntryPath {
     /// The file to run.
     Resolved,
-    /// A path as `node` takes it. `Run::start` resolves it and it stays `process.argv[1]` (Node: `resolveMainPath`).
+    /// A path as `node` takes it. `Run::start` resolves it. It stays `process.argv[1]` (Node: `resolveMainPath`) unless the file that runs is HTML.
     Unresolved,
 }
 
@@ -1467,10 +1467,17 @@ impl Run<'_> {
         if entry_kind == EntryPath::Unresolved
             && vm.module_loader.eval_source.is_none()
             && let Some(resolved) = RunCommand::resolve_entry_path(vm, entry)
-            && resolved != entry
         {
-            vm.set_main_for_argv(entry);
-            entry = resolved;
+            // As for `bun <entry>`, the file that runs says whether this is an HTML entry point.
+            vm.main_is_html_entrypoint =
+                vm.transpiler.options.loader(paths::extension(resolved)) == Loader::Html;
+            if resolved != entry {
+                // `internal/html.ts` reads its entry from `process.argv`, so only a script keeps the given path there.
+                if !vm.main_is_html_entrypoint {
+                    vm.set_main_for_argv(entry);
+                }
+                entry = resolved;
+            }
         }
 
         match vm.load_entry_point(entry) {

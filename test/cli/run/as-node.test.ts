@@ -113,8 +113,8 @@ describe("fake node cli", () => {
     expect(result.success).toBe(false);
   });
 
-  // These tests are not concurrent. In a debug build each `bun --bun` deletes and makes again the
-  // directory of the `node` shim, so a concurrent one can fail with `Script not found "node"`.
+  // The tests that spawn `bun --bun` are not concurrent. In a debug build each `bun --bun` deletes and makes again
+  // the directory of the `node` shim, so a concurrent one can fail with `Script not found "node"`.
 
   // `node ./pkg`, `node .`, `node ./entry` and `node ./bin/link` do not name the file that runs.
   describe("an entry point that does not name the file that runs", () => {
@@ -242,6 +242,36 @@ describe("fake node cli", () => {
         exitCode: 0,
       });
     });
+
+    // The file that runs says whether the entry point is an HTML file, as for `bun <entry>`.
+    test.concurrent.each([
+      { name: "a directory with a package.json main", arg: "./site" },
+      { name: "a symlink", arg: "./bin/link" },
+    ])("an HTML file behind $name starts the HTML server", async ({ arg }) => {
+      using temp = tempDir("fake-node-html", {
+        "site/package.json": JSON.stringify({ main: "index.html" }),
+        "site/index.html": "<!doctype html><html><head><title>node shim</title></head><body></body></html>",
+      });
+      mkdirSync(join(temp, "bin"));
+      symlinkSync(join("..", "site", "index.html"), join(temp, "bin", "link"));
+      await using proc = spawnShim(String(temp), arg);
+      const url = await htmlServerUrl(proc.stdout);
+      expect(url).toStartWith("http://");
+      const response = await fetch(url);
+      expect({ status: response.status, body: await response.text() }).toEqual({
+        status: 200,
+        body: expect.stringContaining("<title>node shim</title>"),
+      });
+    });
+
+    test.concurrent("a script behind a symlink named `.html` runs as a script", async () => {
+      using temp = tempDir("fake-node-html", { "script.js": "console.log(process.argv[1]);" });
+      symlinkSync("script.js", join(temp, "page.html"));
+      await using proc = spawnShim(String(temp), "./page.html");
+      // A child that starts the HTML server after the script does not exit. Then this is the URL.
+      expect(await htmlServerUrl(proc.stdout)).toBe(join(temp, "page.html") + "\n");
+      expect(await proc.exited).toBe(0);
+    });
   });
 
   // Until the main module loads, Bun parses an import with an unknown extension as code.
@@ -293,6 +323,30 @@ async function runAsNode(cwd: string, args: string[], env?: Record<string, strin
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+// `argv0` makes bun the `node` shim with no `bun --bun` parent, so the end of the test stops the HTML server itself.
+function spawnShim(cwd: string, entry: string) {
+  return Bun.spawn({
+    cmd: [bunExe(), entry, "--port=0"],
+    argv0: "node",
+    cwd,
+    env: { ...bunEnv, NODE_ENV: "production" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+}
+
+// The HTML server prints `url: ` and its URL once it listens. A child that exits first gives back what it printed.
+async function htmlServerUrl(stdout: ReadableStream<Uint8Array>) {
+  const decoder = new TextDecoder();
+  let text = "";
+  for await (const chunk of stdout) {
+    text += decoder.decode(chunk, { stream: true });
+    const url = text.match(/^url: (\S+)\r?\n/m)?.[1];
+    if (url) return url;
+  }
+  return text;
 }
 
 // A child that fails prints no JSON. Keep what it printed for the failure message.

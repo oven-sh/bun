@@ -31,6 +31,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { removeAbandonedScratch, scratchSuffix } from "./download.ts";
 import { BuildError } from "./error.ts";
 
 /**
@@ -148,12 +149,14 @@ export async function ensureMacosSdk(cfg: {
 
   // Extract into a staging dir, then rename the .sdk into place — same
   // discipline as fetchPrebuilt() so an interrupted configure never leaves a
-  // half-extracted tree claiming to be an SDK. The downloaded .pkg itself is
-  // cached separately under <cacheDir>/xmac so a failed/interrupted
-  // extraction doesn't re-download ~60 MB.
-  const suffix = `.${process.pid}.${Date.now().toString(36)}`;
-  const staging = `${expected}${suffix}.staging`;
+  // half-extracted tree claiming to be an SDK, and the same scratch naming so
+  // that what an interrupted configure does leave behind is collected by the
+  // next fetch into this cacheDir. The downloaded .pkg itself is cached
+  // separately under <cacheDir>/xmac so a failed/interrupted extraction
+  // doesn't re-download ~60 MB.
+  const staging = `${expected}${scratchSuffix()}.staging`;
   await mkdir(cfg.cacheDir, { recursive: true });
+  await removeAbandonedScratch(cfg.cacheDir);
 
   try {
     const result = spawnSync(

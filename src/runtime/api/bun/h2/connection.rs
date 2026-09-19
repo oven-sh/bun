@@ -942,8 +942,7 @@ impl Connection {
                 .entry(hdr.stream_id)
                 .or_insert_with(|| Stream::new(send_init, recv_init))
                 .state;
-            // RecvEndStream is applied in finish_header_block once the block is complete (as
-            // finish_streamed_data does for DATA), so a mid-block eviction never sees Closed.
+            // END_STREAM is applied in finish_header_block, once the block is complete.
             match stream::transition(cur_state, stream::Event::RecvHeaders) {
                 Ok(next) => {
                     if let Some(s) = self.streams.get_mut(&hdr.stream_id) {

@@ -37,9 +37,7 @@ fn is_pruned_workspace(manager: &PackageManager, lockfile: &Lockfile, pkg_id: Pa
         && pruned.contains(&pkgs.items_name_hash()[pkg_id as usize])
 }
 
-/// bun.lock may leave a peer or an optional dependency unresolved, and this edge is treated the same way.
-/// A required dependency, and every edge of a package whose package.json is on disk, keeps the workspace
-/// in the plan, and `exit_if_install_links_missing` reports it.
+// Every other edge keeps the workspace in the plan, and `exit_if_install_links_missing` reports it.
 pub(crate) fn skips_link_to_pruned_workspace(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -144,8 +142,7 @@ fn note_pruned_checkout_rule() {
     );
 }
 
-/// `planned` is every package the linker's plan places. The plan already reflects `--omit`, `--filter` and
-/// the package each peer resolves to, so a pruned workspace is in it only when this install would link it.
+// `planned` is every package the linker's plan places, so `--omit`, `--filter` and peer resolution already apply.
 pub(crate) fn exit_if_install_links_missing(
     manager: &PackageManager,
     lockfile: &Lockfile,

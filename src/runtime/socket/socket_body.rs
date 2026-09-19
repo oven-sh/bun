@@ -1663,6 +1663,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         value
     }
 
+    /// `get_this_value`, pinned: a Weak `node:net` handle GC'd mid-connect never fires `on_open`.
+    pub(crate) fn this_value_for_connect(&self, global: &JSGlobalObject) -> JSValue {
+        let value = self.get_this_value(global);
+        if self.this_value.get().is_not_empty() {
+            self.this_value.with_mut(|r| r.upgrade(global));
+        }
+        value
+    }
+
     /// Points this socket at `handlers` and, when its JS wrapper already
     /// exists (the `node:net` prev-socket reuse paths), stores the new cell in
     /// the wrapper's visited slot. Fresh wrappers get it in

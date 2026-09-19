@@ -1823,6 +1823,9 @@ describe("version published after the manifest was cached", () => {
 
   const optionalOn = (version: string) =>
     JSON.stringify({ name: "root", optionalDependencies: { "fresh-pkg": version } });
+  const lockedPackages = async (dir: string) =>
+    (Bun.JSONC.parse(await file(join(dir, "bun.lock")).text()) as { packages: Record<string, [string, ...unknown[]]> })
+      .packages;
 
   test.concurrent("an optional dependency bump to the new version installs it", async () => {
     const versions = ["1.0.0"];
@@ -1844,7 +1847,7 @@ describe("version published after the manifest was cached", () => {
     expect(second.err).not.toContain("error:");
     expect(second.exitCode).toBe(0);
     expect((await file(join(String(dir), "node_modules", "fresh-pkg", "package.json")).json()).version).toBe("1.0.1");
-    expect(await file(join(String(dir), "bun.lock")).text()).toContain('"fresh-pkg@1.0.1"');
+    expect((await lockedPackages(String(dir)))["fresh-pkg"]?.[0]).toBe("fresh-pkg@1.0.1");
     expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
   });
 
@@ -1864,7 +1867,7 @@ describe("version published after the manifest was cached", () => {
     const second = await install(String(dir));
     expect(second.err).not.toContain("error:");
     expect(second.exitCode).toBe(0);
-    expect(await file(join(String(dir), "bun.lock")).text()).not.toContain('"fresh-pkg@');
+    expect(await lockedPackages(String(dir))).toEqual({});
     expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
 
     // The lockfile records the skip, so an unchanged project makes no request.
@@ -1893,11 +1896,12 @@ describe("version published after the manifest was cached", () => {
       JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.1" } }),
     );
 
+    // A guard, not a repro: bun without the refetch passes this too.
     const requestsBefore = manifestRequests.length;
     const second = await install(String(dir), "--offline");
     expect(second.err).toContain('No version matching "1.0.1" found for specifier "fresh-pkg"');
-    expect(second.exitCode).not.toBe(0);
     expect(manifestRequests.slice(requestsBefore)).toEqual([]);
+    expect(second.exitCode).toBe(1);
   });
 
   test.concurrent("--prefer-offline fetches the manifest again for a version the cache lacks", async () => {
@@ -2053,8 +2057,37 @@ describe("version published after the manifest was cached", () => {
     const requestsBefore = manifestRequests.length;
     const second = await install(String(dir));
     expect(second.err).toContain('No version matching "9.9.9" found for specifier "fresh-pkg"');
+    expect(second.err).toContain("fresh-pkg@9.9.9 failed to resolve");
+    expect(second.err).not.toContain('No version matching "1.0.1"');
+    expect(second.err).not.toContain("fresh-pkg@1.0.1 failed to resolve");
     expect(second.exitCode).not.toBe(0);
     // The missing version is authoritative after the one shared refetch.
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+  });
+
+  test.concurrent("runtime auto-install fetches the manifest again for the new version", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    using dir = writeRegistryProject({}, server.url.href);
+
+    const requireVersion = async (version: string) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "--install=force", "-e", `console.log(require("fresh-pkg@${version}/package.json").version)`],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: out.trim(), err, exitCode };
+    };
+
+    expect(await requireVersion("1.0.0")).toEqual({ out: "1.0.0", err: "", exitCode: 0 });
+
+    versions.push("1.0.1");
+    const requestsBefore = manifestRequests.length;
+    expect(await requireVersion("1.0.1")).toEqual({ out: "1.0.1", err: "", exitCode: 0 });
     expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
   });
 

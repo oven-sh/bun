@@ -3,6 +3,7 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import vm from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -377,6 +378,60 @@ test("Error.captureStackTrace: the first line of a target's stack is its name an
   const assigned = captured({ name: "Unread" });
   assigned.stack = "replaced";
   expect(assigned.stack).toBe("replaced");
+});
+
+test("Error.captureStackTrace on a target that is not an Error: capturing again, an existing stack, delete, own keys", () => {
+  const firstLine = target => target.stack.split("\n")[0];
+
+  // A target from another realm.
+  const fromVm = vm.runInNewContext("({ name: 'FromVm', message: 'm' })");
+  Error.captureStackTrace(fromVm);
+  expect(firstLine(fromVm)).toBe("FromVm: m");
+
+  // Capturing again replaces the frames, read or unread.
+  function outer() {
+    const twice = { name: "Twice" };
+    Error.captureStackTrace(twice);
+    const unread = { name: "Unread" };
+    Error.captureStackTrace(unread);
+    const before = twice.stack;
+    Error.captureStackTrace(twice, outer);
+    Error.captureStackTrace(unread, outer);
+    return { before, after: twice.stack, unread: unread.stack };
+  }
+  const { before, after, unread } = outer();
+  expect({ before: /at outer/.test(before), after: /at outer/.test(after), unread: /at outer/.test(unread) }).toEqual({
+    before: true,
+    after: false,
+    unread: false,
+  });
+  expect([after.split("\n")[0], unread.split("\n")[0]]).toEqual(["Twice", "Unread"]);
+
+  // A stack the target already had is replaced.
+  const had = { name: "Had", stack: "old" };
+  Error.captureStackTrace(had);
+  expect(firstLine(had)).toBe("Had");
+
+  // Deleted before it is read, it is gone.
+  const deleted = { name: "Deleted" };
+  Error.captureStackTrace(deleted);
+  expect(delete deleted.stack).toBe(true);
+  expect(deleted.stack).toBeUndefined();
+
+  // What is kept for the first read is not a property anyone can see, before or after it.
+  const target = { name: "Target" };
+  Error.captureStackTrace(target);
+  const visible = () => ({
+    keys: Object.keys(target),
+    symbols: Object.getOwnPropertySymbols(target),
+    names: Object.getOwnPropertyNames(target).filter(name => !name.startsWith("original")),
+    json: JSON.stringify(target),
+  });
+  const unreadKeys = visible();
+  expect(firstLine(target)).toBe("Target");
+  expect([unreadKeys, visible()]).toEqual(
+    Array(2).fill({ keys: ["name"], symbols: [], names: ["name", "stack"], json: '{"name":"Target"}' }),
+  );
 });
 
 test("Error.captureStackTrace: a target's stack is found through an object that inherits from it", () => {

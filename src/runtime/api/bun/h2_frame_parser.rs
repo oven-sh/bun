@@ -1177,6 +1177,8 @@ pub struct H2FrameParser {
     /// Promised stream id whose PUSH_PROMISE header block is being delivered by the engine (its
     /// on_headers_complete dispatches onStreamPush instead of onStreamHeaders).
     rewrite_pending_push: Cell<u32>,
+    /// The stream that PUSH_PROMISE arrived on. Read only while `rewrite_pending_push` is set.
+    rewrite_pending_push_parent: Cell<u32>,
     /// stream id -> JS stream context object, for the rewrite engine's Sink callbacks.
     sctx: JsCell<BunHashMap<u32, StrongOptional>>,
     /// In-progress decoded header array + sensitive-name array, accumulated across on_header.
@@ -2467,6 +2469,33 @@ impl H2FrameParser {
             this_value,
             ctx_value,
             &[ctx_value, value, extra, extra2],
+        );
+    }
+
+    pub(crate) fn dispatch_with_3_extra(
+        &self,
+        event: JSH2FrameParser::Gc,
+        value: JSValue,
+        extra: JSValue,
+        extra2: JSValue,
+        extra3: JSValue,
+    ) {
+        let Some(this_value) = self.strong_this.get().try_get() else {
+            return;
+        };
+        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
+            return;
+        };
+        value.ensure_still_alive();
+        extra.ensure_still_alive();
+        extra2.ensure_still_alive();
+        extra3.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
+        let _ = self.handlers.get().call_event_handler(
+            event,
+            this_value,
+            ctx_value,
+            &[ctx_value, value, extra, extra2, extra3],
         );
     }
 
@@ -3962,10 +3991,11 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
     }
 
-    fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
+    fn on_push_promise(&self, parent_id: u32, promised_id: u32) {
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.
         self.rewrite_pending_push.set(promised_id);
+        self.rewrite_pending_push_parent.set(parent_id);
     }
 
     fn on_origin(&self, payload: &[u8]) {
@@ -4073,12 +4103,16 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         };
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
             // A PUSH_PROMISE header block: surface the promised request to JS as a pushed stream.
+            // The JS handler refuses it when the parent's JS stream is already closed: close() and
+            // destroy() reach this parser later, from setImmediate.
             self.rewrite_pending_push.set(0);
-            self.dispatch_with_2_extra(
+            let parent_ctx = self.rewrite_stream_ctx(self.rewrite_pending_push_parent.get());
+            self.dispatch_with_3_extra(
                 JSH2FrameParser::Gc::onStreamPush,
                 JSValue::js_number(stream_id as f64),
                 tuple,
                 JSValue::js_number(flags as f64),
+                parent_ctx,
             );
         } else {
             let stream_ctx = self.rewrite_stream_ctx(stream_id);
@@ -7485,6 +7519,7 @@ impl H2FrameParser {
             engine: core::cell::RefCell::new(None),
             rewrite_tail: JsCell::new(Vec::new()),
             rewrite_pending_push: Cell::new(0),
+            rewrite_pending_push_parent: Cell::new(0),
             sctx: JsCell::new(BunHashMap::default()),
             hdr_block: JsCell::new(Vec::new()),
             hdr_meta: JsCell::new(Vec::new()),

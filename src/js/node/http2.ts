@@ -4975,11 +4975,20 @@ class ClientHttp2Session extends Http2Session {
       pushId: number,
       headersTuple: [string[], Record<string, any>, string[] | undefined],
       flags: number,
+      parent: ClientHttp2Stream | number | undefined,
     ) {
       if (!self) return;
-      if (self.#reservedStreamsCount >= self.#maxReservedRemoteStreams) {
-        // Too many reserved (pushed) streams: refuse this one (node cancels it instead of
-        // surfacing it).
+      if (
+        (typeof parent === "object" && (parent[bunHTTP2StreamStatus] & StreamState.Closed) !== 0) ||
+        self.#reservedStreamsCount >= self.#maxReservedRemoteStreams
+      ) {
+        // nghttp2 cancels a promise instead of surfacing it when the stream it arrived on is
+        // closing, or when too many pushed streams are reserved. close() and destroy() set Closed
+        // at once and send their RST_STREAM later: that window is nghttp2's CLOSING state.
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4613-L4627
+        // A parent the parser already released (`parent` is not an object, nghttp2's `!stream`)
+        // is still accepted: our server writes PUSH_PROMISE after the parent's END_STREAM when
+        // end() runs before pushStream().
         self.#parser?.rstStream(pushId, constants.NGHTTP2_CANCEL);
         return;
       }

@@ -590,43 +590,50 @@ describe("backpressure", () => {
     // the failed write is the only sign of the client's death. The response
     // still completes, and its request, which is still open, is not aborted:
     // it left the connection's queue of requests when the response finished.
-    it("a client that goes away with a request queued behind the unfinished response still completes it", async () => {
-      const events: string[] = [];
-      let backlog = false;
-      const handled = { first: Promise.withResolvers<void>(), second: Promise.withResolvers<void>() };
-      const closed = Promise.withResolvers<void>();
-      await using server = createServer(false, (req, res) => {
-        const name = req.url!.slice(1) as "first" | "second";
-        if (name === "second") {
-          res.end("second");
-          handled.second.resolve();
-          return;
-        }
-        req.on("data", () => {});
-        req.pause();
-        req.on("aborted", () => events.push("request aborted"));
-        res.on("finish", () => events.push(`finish, request destroyed: ${req.destroyed}`));
-        res.on("close", () => {
-          events.push("close");
-          closed.resolve();
+    it.each([
+      ["http", false],
+      ["https", true],
+    ] as const)(
+      "a client that goes away with a request queued behind the unfinished response still completes it: %s",
+      async (_name, tls) => {
+        const events: string[] = [];
+        let backlog = false;
+        const handled = { first: Promise.withResolvers<void>(), second: Promise.withResolvers<void>() };
+        const closed = Promise.withResolvers<void>();
+        await using server = createServer(tls, (req, res) => {
+          const name = req.url!.slice(1) as "first" | "second";
+          if (name === "second") {
+            res.end("second");
+            handled.second.resolve();
+            return;
+          }
+          req.on("data", () => {});
+          req.pause();
+          req.on("aborted", () => events.push("request aborted"));
+          res.on("finish", () => events.push(`finish, request destroyed: ${req.destroyed}`));
+          res.on("close", () => {
+            events.push("close");
+            closed.resolve();
+          });
+          backlog = writeBody(res);
+          handled.first.resolve();
         });
-        backlog = writeBody(res);
-        handled.first.resolve();
-      });
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      using client = pausedClient(
-        (server.address() as AddressInfo).port,
-        "POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello",
-      );
-      await Promise.race([handled.first.promise, client.done]);
-      client.send("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
-      await Promise.race([handled.second.promise, client.done]);
-      // The client has not read anything yet.
-      if (backlog) expect(events).toEqual([]);
-      client.destroy();
-      await closed.promise;
-      expect(events).toEqual(["finish, request destroyed: false", "close"]);
-    });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        using client = pausedClient(
+          (server.address() as AddressInfo).port,
+          "POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello",
+          { tls },
+        );
+        await Promise.race([handled.first.promise, client.done]);
+        client.send("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await Promise.race([handled.second.promise, client.done]);
+        // The client has not read anything yet.
+        if (backlog) expect(events).toEqual([]);
+        client.destroy();
+        await closed.promise;
+        expect(events).toEqual(["finish, request destroyed: false", "close"]);
+      },
+    );
 
     it("a request pipelined behind the unfinished response is answered after it, intact", async () => {
       const events: string[] = [];

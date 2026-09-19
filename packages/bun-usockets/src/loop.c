@@ -521,6 +521,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
+                        s->hangup_closes_unsent = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -845,9 +846,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * left behind it. This includes sockets we already shut down (a client
              * that end()ed before reading the reply), the case that truncated; once
              * read_eof is set there is nothing left to drain and deferring would only
-             * lose the close. Error-flagged events keep the error path. */
+             * lose the close. Error-flagged events keep the error path. A hangup
+             * takes the write side down too, so a hangup_closes_unsent socket does
+             * not wait when the write this event retried failed again. */
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
-            if (eof_deferrable && s->flags.is_paused) {
+            const int unsent_is_lost = hangup && s && s->hangup_closes_unsent && s->flags.last_write_failed;
+            if (eof_deferrable && s->flags.is_paused && !unsent_is_lost) {
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in
                  * the kernel until resume() re-adds the fd via us_poll_change (end() while paused keeps it parked). */

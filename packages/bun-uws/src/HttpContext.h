@@ -208,6 +208,10 @@ private:
          * so a client that connects and never sends anything still expires. */
         if constexpr (IsNodeHttp) {
             ((HttpResponseData<SSL, true> *) us_socket_ext(s))->lastMessageStartMs = nodeCompatMonotonicMs();
+
+            /* The pause for backed-up pipelined responses lifts when their bytes drain, and after
+             * a hangup they never do. Node.js destroys the socket on the failed write. */
+            s->hangup_closes_unsent = 1;
         }
 
         /* A peer FIN must not tear the connection down at the loop level:
@@ -805,20 +809,11 @@ private:
                  * moves nothing (EPIPE) means the peer is gone and this would
                  * otherwise spin the writable dispatch until idle timeout.
                  * Except on libuv, where a stale SEND completion can move
-                 * nothing on a healthy socket; there the kernel is asked.
-                 * While node:http paused reads behind these bytes no FIN can
-                 * show up, and the loop parks a paused socket on the peer's
-                 * hangup until it resumes, which needs them to drain. A write
-                 * can also stall on a healthy socket there (ENOBUFS), so the
-                 * kernel is asked on every backend. */
-                if (flushed == 0) {
-                    const bool peerGone = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
-                        ? us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)
-                        : (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED)
-                            && us_socket_peer_is_gone((us_socket_t *) asyncSocket);
-                    if (peerGone) {
-                        return asyncSocket->close();
-                    }
+                 * nothing on a healthy socket; there the kernel is asked. */
+                if (flushed == 0
+                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
+                    && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
+                    return asyncSocket->close();
                 }
                 /* Socket buffer is not completely empty yet
                 * - Reset the timeout to prevent premature connection closure

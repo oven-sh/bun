@@ -1555,8 +1555,7 @@ class WebSocketServer extends EventEmitter {
 
     if (this._state > RUNNING) return abortHandshake(socket, 503);
 
-    // server.upgrade() adopts the connection. Behind a pipelined Upgrade the responses ahead still
-    // write through it, so the upgrade waits for them. Its 101 then follows them, in request order.
+    // server.upgrade() adopts the connection, so behind a pipelined Upgrade it waits for the responses ahead, which still write through it.
     const retry = () => {
       socket[kUpgradeDeferred] = false;
       this.completeUpgrade(extensions, key, protocols, request, socket, head, cb);

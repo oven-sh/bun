@@ -426,8 +426,7 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
-/* A pipelined CONNECT or Upgrade stays queued so that the connection never counts as idle. No request follows it
- * (at most the body of the Upgrade, HTTP_NODE_TUNNEL_AFTER_BODY), so it holds no reads. */
+/* A pipelined CONNECT or Upgrade stays queued so that the connection never counts as idle. No request follows it (at most the Upgrade's body, HTTP_NODE_TUNNEL_AFTER_BODY), so it holds no reads. */
 template<bool SSL>
 static bool queuedResponsesHoldReads(uWS::NodeHttpResponseData<SSL>* httpResponseData)
 {

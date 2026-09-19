@@ -1977,8 +1977,7 @@ function getNodeHTTPServerSocket() {
       return super.resume();
     }
 
-    // For the builtin ws. After an 'upgrade' handoff it is the response of that request: behind a
-    // pipelined Upgrade, handle.response is the response in flight.
+    // For the builtin ws. After a handoff, the response of that request: behind a pipelined one, handle.response is the response in flight.
     get [kInternalSocketData]() {
       return this[kHandoffResponse] ?? this[kHandle]?.response;
     }
@@ -2581,9 +2580,7 @@ function advanceResponsePipeline(server, socket) {
     const waiter = socket[kHandoffWaiter];
     if (waiter !== undefined) {
       socket[kHandoffWaiter] = undefined;
-      // A task of its own. This can be a tick inside the dispatch of another connection, and uWS
-      // takes an upgrade made while it parses for the upgrade of the connection it parses. Also,
-      // a throw from the waiter must not cut the 'finish' of the response that just completed.
+      // A task, not a tick: a tick can run inside the dispatch of another connection, where uWS takes the upgrade for that connection's, and a throw would cut this 'finish'.
       setImmediate(waiter);
     }
     return;
@@ -2684,8 +2681,7 @@ function advanceResponsePipeline(server, socket) {
   }
 }
 
-// For the builtin ws. Its native upgrade adopts the connection, and behind a pipelined Upgrade the
-// responses ahead still write through it. Returns true when it keeps `callback` until they are complete.
+// For the builtin ws, whose native upgrade adopts the connection. True when `callback` has to wait: the responses ahead of a pipelined Upgrade still write through it.
 function deferUntilHandoffOwnsConnection(socket, callback) {
   const handle = socket[kHandle];
   const response = socket[kHandoffResponse];

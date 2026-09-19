@@ -1684,8 +1684,7 @@ where
             {
                 return Ok(JSValue::FALSE);
             }
-            // A response that is queued behind another one does not own the connection yet. The
-            // upgrade adopts the socket, and the response in flight still writes through it.
+            // Queued behind another response, it does not own the connection yet: the upgrade adopts the socket, and the response in flight still writes through it.
             if node_http_response.get_this_value() != object {
                 return Ok(JSValue::FALSE);
             }

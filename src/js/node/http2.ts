@@ -2200,10 +2200,6 @@ function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
-function scheduleRstStream(stream: Http2Stream, session: Http2Session, id: number, rstCode: number) {
-  stream[bunHTTP2StreamStatus] |= StreamState.Closing;
-  setImmediate(rstNextTick.bind(session, id, rstCode));
-}
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
 // drives the native receive window. While paused, the stream's window is not replenished; on
 // resume the deferred WINDOW_UPDATE is sent. A pending stream (no id yet) has nothing on the
@@ -2221,7 +2217,8 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
-  scheduleRstStream(this, session, this.id, code);
+  this[bunHTTP2StreamStatus] |= StreamState.Closing;
+  setImmediate(rstNextTick.bind(session, this.id, code));
 }
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
@@ -2549,7 +2546,8 @@ class Http2Stream extends Duplex {
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
       } else if (this.writableFinished || code) {
-        scheduleRstStream(this, session, this.#id, code);
+        this[bunHTTP2StreamStatus] |= StreamState.Closing;
+        setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
         // node's closeStream submits at once when user code had not ended the writable.
         if (!ending) this[bunHTTP2StreamStatus] |= StreamState.Closing;
@@ -2644,7 +2642,8 @@ class Http2Stream extends Duplex {
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
-      scheduleRstStream(this, session, this.#id, rstCode);
+      this[bunHTTP2StreamStatus] |= StreamState.Closing;
+      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error

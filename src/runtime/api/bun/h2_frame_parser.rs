@@ -1128,7 +1128,7 @@ pub struct H2FrameParser {
     /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
     /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
     last_peer_stream_id: Cell<u32>,
-    /// Highest LOCALLY-initiated stream id registered (odd ids for a client, even for a
+    /// Highest registered stream id of the LOCAL parity (odd ids for a client, even for a
     /// server). A local-parity id above it is idle (`Sink::highest_local_stream_id`).
     last_local_stream_id: Cell<u32>,
     is_server: Cell<bool>,

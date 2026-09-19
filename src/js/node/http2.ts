@@ -3329,6 +3329,17 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
+    options = { ...options };
+    if (options.offset !== undefined && typeof options.offset !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
+    }
+    if (options.length !== undefined && typeof options.length !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
+    }
+    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
+      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
+    }
+
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
@@ -3336,7 +3347,6 @@ class ServerHttp2Stream extends Http2Stream {
     if (statusCode < 200 || statusCode > 599) {
       throw $ERR_HTTP2_STATUS_INVALID(statusCode);
     }
-    options = { ...options };
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -3346,16 +3356,6 @@ class ServerHttp2Stream extends Http2Stream {
       this.headRequest
     ) {
       throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
-    }
-
-    if (options.offset !== undefined && typeof options.offset !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
-    }
-    if (options.length !== undefined && typeof options.length !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
-    }
-    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
-      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
     this[kOwnsFd] = true;
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
@@ -3392,6 +3392,17 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
+    options = { ...options };
+    if (options.offset !== undefined && typeof options.offset !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
+    }
+    if (options.length !== undefined && typeof options.length !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
+    }
+    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
+      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
+    }
+
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
@@ -3408,16 +3419,6 @@ class ServerHttp2Stream extends Http2Stream {
       this.headRequest
     ) {
       throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
-    }
-    options = { ...options };
-    if (options.offset !== undefined && typeof options.offset !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
-    }
-    if (options.length !== undefined && typeof options.length !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
-    }
-    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
-      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
     // The caller owns this fd; clear any stale flag left by a prior respondWithFile()
     // on the same stream so doSendFileFD will not close it (node semantics).

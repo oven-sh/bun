@@ -3,9 +3,9 @@
 // An agent that starts buildkite-agent and runs others services.
 
 import { createHash, createHmac } from "node:crypto";
-import { copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
-import { homedir as nodeHomedir, release } from "node:os";
-import { join } from "node:path";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { homedir, release } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
 import {
@@ -23,16 +23,10 @@ import {
   isMacOS,
   isPosix,
   isWindows,
-  mkdir,
   spawn,
   spawnSafe,
   which,
-  writeFile,
 } from "./utils.ts";
-
-function homedir(): string {
-  return nodeHomedir();
-}
 
 type Cloud = "aws" | "google" | "azure";
 
@@ -516,6 +510,15 @@ function getAgentPaths(): AgentPaths {
   }
 }
 
+/** Writes a service or configuration file, creating its directory; `mode` is set even when the file already exists. */
+function writeFile(filename: string, content: string, mode?: number): void {
+  mkdirSync(dirname(filename), { recursive: true });
+  writeFileSync(filename, content);
+  if (mode !== undefined) {
+    chmodSync(filename, mode);
+  }
+}
+
 async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions = {}): Promise<void> {
   const username = "buildkite-agent";
   const command = which("buildkite-agent", { required: true });
@@ -537,7 +540,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
     // `install` sticking around. When `install` is run from the home itself
     // (the Windows image bake uploads both files there first), they are
     // already in place.
-    mkdir(homePath);
+    mkdirSync(homePath, { recursive: true });
     const srcDir = fileURLToPath(new URL(".", import.meta.url));
     if (realpathSync(srcDir) !== realpathSync(homePath)) {
       for (const f of ["agent.ts", "utils.ts"]) {
@@ -552,7 +555,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
     const args = [installedScript, "start"];
 
     if (isWindows) {
-      mkdir(logsPath);
+      mkdirSync(logsPath, { recursive: true });
 
       const nssm = which("nssm", { required: true });
       const nssmCommands = [
@@ -588,7 +591,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
           use dns logger
         }
       `;
-      writeFile(servicePath, service, { mode: 0o755 });
+      writeFile(servicePath, service, 0o755);
       await spawnSafe(["rc-update", "add", "buildkite-agent", "default"], { stdio: "inherit" });
     }
 
@@ -602,7 +605,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
       const runAsUser = process.env.SUDO_USER || process.env.USER || "administrator";
 
       for (const dir of [homePath, cachePath, logsPath]) {
-        mkdir(dir);
+        mkdirSync(dir, { recursive: true });
       }
 
       // Stable node path (the Homebrew/usr-local symlink, not a Cellar version
@@ -629,7 +632,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
         `queue=${escape(queue)}`,
         "",
       ].join("\n");
-      writeFile(cfgPath, cfg, { mode: 0o600 });
+      writeFile(cfgPath, cfg, 0o600);
 
       const plistPath = "/Library/LaunchDaemons/buildkite-agent.plist";
       const plist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -659,7 +662,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
 </dict>
 </plist>
 `;
-      writeFile(plistPath, plist, { mode: 0o644 });
+      writeFile(plistPath, plist, 0o644);
 
       // Matches the script already deployed on the fleet: covers both the
       // Homebrew-agent layout (older x64 boxes) and the Library layout (this
@@ -687,7 +690,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
 </dict>
 </plist>
 `;
-      writeFile(cleanupPlistPath, cleanupPlist, { mode: 0o644 });
+      writeFile(cleanupPlistPath, cleanupPlist, 0o644);
 
       // install runs as root, so everything above is root-owned. The service
       // runs as runAsUser and needs to read the cfg (mode 0600) and write to

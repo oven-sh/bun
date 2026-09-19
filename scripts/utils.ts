@@ -8,7 +8,7 @@ import {
   type SpawnSyncOptions as NodeSpawnSyncOptions,
   type StdioOptions,
 } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
@@ -346,7 +346,7 @@ export function getWindowsExitReason(exitCode: number | null): string | undefine
     return;
   }
 
-  const nthStatus = readFile(ntStatusPath, { cache: true });
+  const nthStatus = readFileSync(ntStatusPath, "utf8");
   const match = nthStatus.match(new RegExp(`(STATUS_\\w+).*0x${exitCode?.toString(16)}`, "i"));
   if (match) {
     const [, exitReason] = match;
@@ -524,7 +524,7 @@ function getPullRequest(): number | undefined {
   if (isGithubAction) {
     const eventPath = getEnv("GITHUB_EVENT_PATH", false);
     if (eventPath && existsSync(eventPath)) {
-      const event = JSON.parse(readFile(eventPath, { cache: true })) as GithubEvent;
+      const event = JSON.parse(readFileSync(eventPath, "utf8")) as GithubEvent;
       const pullRequest = event["pull_request"];
       if (pullRequest) {
         return parseInt(`${pullRequest["number"]}`);
@@ -558,7 +558,7 @@ export function isFork(): boolean {
   if (isGithubAction) {
     const eventPath = getEnv("GITHUB_EVENT_PATH", false);
     if (eventPath && existsSync(eventPath)) {
-      const event = JSON.parse(readFile(eventPath, { cache: true })) as GithubEvent;
+      const event = JSON.parse(readFileSync(eventPath, "utf8")) as GithubEvent;
       const pullRequest = event["pull_request"];
       if (pullRequest) {
         return !!pullRequest["head"]["repo"]["fork"];
@@ -663,7 +663,8 @@ export async function curl(url: string | URL, options: CurlOptions = {}): Promis
     try {
       if (filename && ok) {
         const buffer = await response.arrayBuffer();
-        writeFile(filename, new Uint8Array(buffer));
+        mkdirSync(dirname(filename), { recursive: true });
+        writeFileSync(filename, new Uint8Array(buffer));
       } else if (arrayBuffer && ok) {
         body = await response.arrayBuffer();
       } else if (json && ok) {
@@ -698,58 +699,6 @@ export async function curl(url: string | URL, options: CurlOptions = {}): Promis
     error,
     body,
   };
-}
-
-let cachedFiles: Record<string, string> | undefined;
-
-export function readFile(filename: string, options: { cache?: boolean } = {}): string {
-  const absolutePath = resolve(filename);
-  if (options["cache"]) {
-    if (cachedFiles?.[absolutePath]) {
-      return cachedFiles[absolutePath];
-    }
-  }
-
-  debugLog("$", "cat", absolutePath);
-
-  let content;
-  try {
-    content = readFileSync(absolutePath, "utf-8");
-  } catch (cause) {
-    throw new Error(`Read failed: ${absolutePath}`, { cause });
-  }
-
-  if (options["cache"]) {
-    cachedFiles ||= {};
-    cachedFiles[absolutePath] = content;
-  }
-
-  return content;
-}
-
-export function chmod(path: string, mode: number): void {
-  debugLog("$", "chmod", path, mode);
-  chmodSync(path, mode);
-}
-
-export function writeFile(filename: string, content: string | Uint8Array, options?: { mode?: number }): void {
-  mkdir(dirname(filename));
-
-  debugLog("$", "touch", filename);
-  writeFileSync(filename, content);
-
-  if (options?.mode) {
-    chmod(filename, options.mode);
-  }
-}
-
-export function mkdir(path: string, options: { mode?: number } = {}): void {
-  if (existsSync(path)) {
-    return;
-  }
-
-  debugLog("$", "mkdir", path);
-  mkdirSync(path, { ...options, recursive: true });
 }
 
 export type WhichOptions = {
@@ -1197,7 +1146,7 @@ export function getDistro(): string | undefined {
 
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
-      const releaseFile = readFile(releasePath, { cache: true });
+      const releaseFile = readFileSync(releasePath, "utf8");
       const match = releaseFile.match(/^ID=(.*)/m);
       if (match) {
         const id = match[1]!;
@@ -1232,7 +1181,7 @@ export function getDistroVersion(): string | undefined {
   if (isLinux) {
     const alpinePath = "/etc/alpine-release";
     if (existsSync(alpinePath)) {
-      const release = readFile(alpinePath, { cache: true }).trim();
+      const release = readFileSync(alpinePath, "utf8").trim();
       if (release.includes("_")) {
         const [version] = release.split("_");
         return `${version}-edge`;
@@ -1242,7 +1191,7 @@ export function getDistroVersion(): string | undefined {
 
     const releasePath = "/etc/os-release";
     if (existsSync(releasePath)) {
-      const releaseFile = readFile(releasePath, { cache: true });
+      const releaseFile = readFileSync(releasePath, "utf8");
       const match = releaseFile.match(/^VERSION_ID=(.*)/m);
       if (match) {
         const release = match[1]!;

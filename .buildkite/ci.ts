@@ -5,6 +5,7 @@
  * @link https://buildkite.com/docs/pipelines/defining-steps
  */
 
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/utils.ts";
 import {
@@ -24,12 +25,10 @@ import {
   isPullRequest,
   isWindows,
   parseGitUrl,
-  readFile,
   spawn,
   spawnSafe,
   startGroup,
   uploadArtifact,
-  writeFile,
 } from "../scripts/utils.ts";
 
 function parseGitRepository(url: string | URL): string | undefined {
@@ -93,7 +92,7 @@ function getBootstrapVersion(os?: string): number {
     "scripts",
     os === "windows" || (!os && isWindows) ? "bootstrap.ps1" : "bootstrap.sh",
   );
-  const scriptContent = readFile(scriptPath, { cache: true });
+  const scriptContent = readFileSync(scriptPath, "utf8");
   const match = /# Version: (\d+)/.exec(scriptContent);
   if (match) {
     const version = match[1]!;
@@ -2093,7 +2092,7 @@ async function main() {
 
   const content = toYaml(pipeline);
   const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
-  writeFile(contentPath, content);
+  writeFileSync(contentPath, content);
 
   console.log("Generated pipeline:");
   console.log(" - Path:", contentPath);

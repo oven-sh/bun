@@ -53,6 +53,34 @@ describe.concurrent("bunshell rm", () => {
     }
   });
 
+  // POSIX rm: -f shall "not write diagnostic messages or modify the exit
+  // status in the case of no file operands". GNU and BSD rm exit 0 silently,
+  // which is what `rm -f ${files}` with an empty list relies on. Without -f,
+  // no operands is still a usage error.
+  describe("no operands", () => {
+    const none: string[] = [];
+    const usage = "usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n";
+
+    TestBuilder.command`rm -f`.stdout("").stderr("").exitCode(0).runAsTest("rm -f");
+    TestBuilder.command`rm -f`.quiet().stdout("").stderr("").exitCode(0).runAsTest("rm -f (quiet)");
+    TestBuilder.command`rm -f ${none}`.stdout("").stderr("").exitCode(0).runAsTest("rm -f with an empty list");
+    TestBuilder.command`rm -rf`.stdout("").stderr("").exitCode(0).runAsTest("rm -rf");
+    TestBuilder.command`rm -fv`.stdout("").stderr("").exitCode(0).runAsTest("rm -fv");
+    TestBuilder.command`rm -f ${none} && echo cleaned`
+      .stdout("cleaned\n")
+      .stderr("")
+      .exitCode(0)
+      .runAsTest("rm -f succeeds in a && chain");
+
+    TestBuilder.command`rm`.stdout("").stderr(usage).exitCode(1).runAsTest("rm");
+    TestBuilder.command`rm -r`.stdout("").stderr(usage).exitCode(1).runAsTest("rm -r");
+    TestBuilder.command`rm -rv`.quiet().stdout("").stderr(usage).exitCode(1).runAsTest("rm -rv (quiet)");
+    // Missing operands are reported before the unsupported prompting mode is.
+    TestBuilder.command`rm -i`.stdout("").stderr(usage).exitCode(1).runAsTest("rm -i");
+    // -f only covers the missing operands, not a bad flag.
+    TestBuilder.command`rm -f -x`.stdout("").stderr("rm: illegal option -- x\n").exitCode(1).runAsTest("rm -f -x");
+  });
+
   test("recursive", async () => {
     const files = {
       "existent.txt": "",

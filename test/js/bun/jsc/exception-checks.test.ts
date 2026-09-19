@@ -27,6 +27,21 @@ const snippets: Record<string, { code: string; stdout: string }> = {
     code: `const a = "SIG"; const b = "BOGUS"; try { process.kill(process.pid, a + b); } catch (e) { console.log(e.code); }`,
     stdout: "ERR_UNKNOWN_SIGNAL",
   },
+  // The parser's SyntaxError gets its stack formatted before the Function
+  // constructor throws it. The formatter can run Error.prepareStackTrace, so
+  // the validator sees a scope that can throw right before the throw.
+  "new Function with a syntax error": {
+    code: `try { new Function("return ("); } catch (e) { console.log(e.name); }`,
+    stdout: "SyntaxError",
+  },
+  "GeneratorFunction constructor with a syntax error": {
+    code: `try { new (function* () {}).constructor("return ("); } catch (e) { console.log(e.name); }`,
+    stdout: "SyntaxError",
+  },
+  "new Function with a syntax error while Error.prepareStackTrace throws": {
+    code: `Error.prepareStackTrace = () => { throw new Error("from prepareStackTrace"); }; try { new Function("return ("); } catch (e) { console.log(e.name + ": " + e.message); }`,
+    stdout: "SyntaxError: Unexpected token '}'",
+  },
 };
 
 for (const [name, { code, stdout: expected }] of Object.entries(snippets)) {

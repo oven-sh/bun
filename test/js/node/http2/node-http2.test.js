@@ -14,6 +14,7 @@ import tls from "node:tls";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
+import { runRespondFileErrorScenarios } from "./http2-respond-file-errors.fixture";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx, mock } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
 // there; the 10k-request maxSessionMemory stress test takes ~105s under
@@ -5024,6 +5025,62 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
     server.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/43448
+// The fstat callback of respondWithFD()/respondWithFile() called respond() before it destroyed
+// the stream: the peer got a 200 that node never sends, and respond() threw inside the fs callback
+// when the stream was already destroyed or the headers were invalid.
+it("http2 respondWithFD/respondWithFile fail like node when the descriptor cannot be sent", async () => {
+  const reset = { error: "Stream closed with error code NGHTTP2_INTERNAL_ERROR", rstCode: 2 };
+  const expected = {
+    // The stream is gone when fstat returns: nothing happens.
+    gone: {
+      "respondWithFD(bad fd, statCheck), destroy()": { server: [] },
+      "respondWithFD(bad fd), destroy()": { server: [] },
+      "respondWithFD(directory fd), destroy()": { server: [] },
+      "respondWithFD(bad fd), close(NGHTTP2_CANCEL)": { server: [] },
+    },
+    failed: {
+      // node's doSendFD: the fstat error destroys the stream, nothing is sent.
+      "respondWithFD(bad fd, statCheck)": { server: ["EBADF"], client: { response: null, ...reset } },
+      // Without a statCheck node sends the headers at call time and fails on the read.
+      "respondWithFD(bad fd)": { server: ["ERR_HTTP2_STREAM_ERROR"], client: { response: 200, ...reset } },
+      // node's doSendFileFD: the error destroys the stream, nothing is sent.
+      "respondWithFile(directory)": { server: ["ERR_HTTP2_SEND_FILE"], client: { response: null, ...reset } },
+      "respondWithFile(directory, statCheck)": {
+        server: ["ERR_HTTP2_SEND_FILE"],
+        client: { response: null, ...reset },
+      },
+      // Headers that respond() rejects reach the stream 'error' only where node has sent them.
+      "respondWithFD(bad fd, statCheck), invalid headers": { server: ["EBADF"], client: { response: null, ...reset } },
+      "respondWithFD(bad fd), invalid headers": {
+        server: ["ERR_HTTP2_INVALID_PSEUDOHEADER"],
+        client: { response: null, ...reset },
+      },
+      "respondWithFile(directory), invalid headers": {
+        server: ["ERR_HTTP2_SEND_FILE"],
+        client: { response: null, ...reset },
+      },
+    },
+    statCheckCalls: 0,
+  };
+
+  // Runs in this process: a throw inside the fs callback is an uncaught exception and fails the test.
+  expect(await runRespondFileErrorScenarios()).toEqual(expected);
+
+  const node = nodeExe();
+  if (node) {
+    const fixture = path.join(import.meta.dir, "http2-respond-file-errors.fixture.js");
+    await using proc = Bun.spawn({ cmd: [node, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, result: JSON.parse(stdout || "null"), exitCode }).toEqual({
+      stderr: "",
+      result: expected,
+      exitCode: 0,
+    });
+  }
+});
+
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

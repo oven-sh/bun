@@ -2951,6 +2951,20 @@ function tryClose(fd) {
   } catch {}
 }
 
+// node's respondWithFD sends the response headers before it reads the descriptor, so the peer gets
+// them and then the reset. A header block that cannot be sent destroys the stream instead:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2702-L2738
+// The caller is an fs callback, where a throw from respond() is an uncaught exception.
+function respondThenDestroy(stream: ServerHttp2Stream, headers, options, err) {
+  if (stream.destroyed || stream.closed) return;
+  try {
+    stream.respond(headers, options);
+  } catch (respondError) {
+    err = respondError;
+  }
+  stream.destroy(err);
+}
+
 // Shared by respondWithFile (the stream owns the descriptor it opened: every terminal path closes
 // it exactly once) and respondWithFD (the caller owns the descriptor: nothing here may close it,
 // matching node's doSendFD).
@@ -2963,10 +2977,10 @@ function doSendFileFD(options, fd, headers, err, stat) {
     }
 
     if (onError) onError(err);
-    else {
-      this.respond(headers, options);
-      this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
-    }
+    else if (ownsFd || options.statCheck !== undefined) this.destroy(err);
+    // node's respondWithFD stats only for a statCheck. Without one the read fails, and its
+    // onPipedFileHandleRead closes the stream with NGHTTP2_INTERNAL_ERROR.
+    else respondThenDestroy(this, headers, options, streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     return;
   }
 
@@ -2982,10 +2996,8 @@ function doSendFileFD(options, fd, headers, err, stat) {
       const err = isDirectory ? $ERR_HTTP2_SEND_FILE() : $ERR_HTTP2_SEND_FILE_NOSEEK();
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
-      else {
-        this.respond(headers, options);
-        this.destroy(err);
-      }
+      else if (ownsFd) this.destroy(err);
+      else respondThenDestroy(this, headers, options, err);
       return;
     }
 

@@ -1402,17 +1402,15 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
     join_abs_string_buf::<P>(cwd, &mut spill[..], parts)
 }
 
-/// Node's `path.resolve(cwd, path)`: [`join_abs_string_spill`] without the
-/// trailing separator that the join keeps. A filesystem root keeps its
-/// separator.
+/// Node's `path.resolve(cwd, path)`. Unlike [`join_abs_string_spill`] it drops
+/// a trailing separator, except on a filesystem root.
 pub fn resolve_spill<'a, P: PlatformT>(
     cwd: &'a [u8],
     spill: &'a mut Vec<u8>,
     path: &[u8],
 ) -> &'a [u8] {
     let is_windows = P::P == Platform::Windows || (cfg!(windows) && P::P == Platform::Loose);
-    // The Windows join finds no volume in a `\\.\` device path and would put
-    // the path under the drive of `cwd`.
+    // The Windows join finds no volume in `\\.\C:\x` and answers `C:\C:\x`.
     if is_windows
         && path.len() >= 4
         && is_sep_any(path[0])

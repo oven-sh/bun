@@ -2968,25 +2968,7 @@ impl RunCommand {
             Self::exec_as_if_node_missing_script();
         }
 
-        // Node reports `path.resolve(script)` as `process.argv[1]`. This path is
-        // also what the module loader resolves the entry from, and there a
-        // trailing separator selects the directory. So it stays: without it
-        // `node ./pkg/` runs a sibling `pkg.ts`, where Node runs `pkg/index.js`.
-        let normalized: Box<[u8]> = {
-            let script = &ctx.positionals[0];
-            let mut cwd_buf = bun_paths::path_buffer_pool::get();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf).as_bytes();
-            let mut spill = Vec::new();
-            let mut entry = paths::resolve_path::resolve_spill::<paths::platform::Loose>(
-                cwd, &mut spill, script,
-            )
-            .to_vec();
-            let names_directory = |path: &[u8]| path.last().is_some_and(|&c| paths::is_sep_any(c));
-            if names_directory(script) && !names_directory(&entry) {
-                entry.push(SEP);
-            }
-            entry.into_boxed_slice()
-        };
+        let normalized = Self::node_script_entry_path(&ctx.positionals[0]);
 
         // This arm calls `Run::boot`
         // directly — NOT `boot_and_handle_error` — so it (a) does not call
@@ -2997,6 +2979,22 @@ impl RunCommand {
             Self::exec_as_if_node_boot_failed(ctx, &basename, err);
         }
         Ok(())
+    }
+
+    /// `path.resolve(script)` for `process.argv[1]`. The module loader resolves
+    /// the entry from the same path, so a trailing separator stays.
+    fn node_script_entry_path(script: &[u8]) -> Box<[u8]> {
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf).as_bytes();
+        let mut spill = Vec::new();
+        let mut entry =
+            paths::resolve_path::resolve_spill::<paths::platform::Loose>(cwd, &mut spill, script)
+                .to_vec();
+        let names_directory = |path: &[u8]| path.last().is_some_and(|&c| paths::is_sep_any(c));
+        if names_directory(script) && !names_directory(&entry) {
+            entry.push(SEP);
+        }
+        entry.into_boxed_slice()
     }
 
     #[cold]

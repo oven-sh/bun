@@ -1774,7 +1774,7 @@ impl PostgresSQLConnection {
         Ok(postgres_error_to_js_with_hint(
             self.global(),
             Some(b"Failed to read data"),
-            Some(b"The query may have run on the server. The client could not decode a value in its result."),
+            Some(b"The query may have run on the server. The client could not decode a value in its result. Cast that column to text, or use .raw()."),
             err,
         ))
     }
@@ -2397,23 +2397,15 @@ impl PostgresSQLConnection {
                 // `DataRow::decode`'s callback is `FnMut`, so capture `&mut putter`
                 // directly instead of laundering it through a raw `*mut` context —
                 // the by-value `C: Copy` slot is unused (`()`).
-                let raw = request_flags.result_mode == SQLQueryResultMode::Raw;
-                // Kept aside: `decode` still reads the whole frame and fails on framing only.
-                let mut undecodable: Option<AnyPostgresError> = None;
-                let decode_result = protocol::DataRow::decode((), &mut reader, |(), i, b| {
-                    if undecodable.is_some() {
-                        return Ok(true);
-                    }
-                    let put = if raw {
-                        putter.put_raw(i, b)
-                    } else {
-                        putter.put(i, b)
-                    };
-                    put.or_else(|err| {
-                        undecodable = Some(err);
-                        Ok(true)
+                // Tells a cell the client cannot decode from a framing error of `decode` itself.
+                let mut cell_failed = false;
+                let decode_result = if request_flags.result_mode == SQLQueryResultMode::Raw {
+                    protocol::DataRow::decode((), &mut reader, |(), i, b| putter.put_raw(i, b))
+                } else {
+                    protocol::DataRow::decode((), &mut reader, |(), i, b| {
+                        putter.put(i, b).inspect_err(|_| cell_failed = true)
                     })
-                });
+                };
                 // Cell cleanup (deinit each cell, then free the buffer)
                 // runs on ALL exits (decode error, to_js error, success). `putter.count` is final
                 // after `decode` (the only writer is `Putter::put_impl`, and `to_js` does not
@@ -2433,12 +2425,11 @@ impl PostgresSQLConnection {
                     }
                     // `if free_cells free(cells)`: heap_cells Vec drops at scope end.
                 };
-                // Takes a `JSError` cell's pending exception before a framing error can return.
-                let undecodable = undecodable
-                    .map(|err| self.undecodable_row_error(err))
-                    .transpose()?;
-                decode_result?;
-                if let Some(js_err) = undecodable {
+                if let Err(err) = decode_result {
+                    if !cell_failed {
+                        return Err(err);
+                    }
+                    let js_err = self.undecodable_row_error(err)?;
                     request.on_undecodable_row(js_err, self.global());
                     return Ok(());
                 }

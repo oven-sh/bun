@@ -304,6 +304,42 @@ describe("echo | bun run -", () => {
   group(run);
 });
 
+// `-` is the stdin entry point, not a flag: whatever follows it belongs to the
+// script (`node - help` runs stdin with argv ["-", "help"]). The subcommand
+// lookup used to skip the `-` and dispatch on the next argument instead, so
+// `bun - help` printed bun's help and `bun - add x` ran `bun add x`.
+describe("bun - <args> runs stdin even when an arg is a subcommand name", () => {
+  const cases: { flags: string[]; args: string[] }[] = [
+    { flags: [], args: ["help"] },
+    { flags: [], args: ["add", "--help"] },
+    { flags: [], args: ["test"] },
+    // Landed on `bun run`, which happened to read stdin but dropped "run" from argv.
+    { flags: [], args: ["run", "x"] },
+    // The `-` is reached after stepping over a real flag.
+    { flags: ["--silent"], args: ["upgrade", "--help"] },
+  ];
+
+  for (const { flags, args } of cases) {
+    test.concurrent(["bun", ...flags, "-", ...args].join(" "), async () => {
+      // An empty cwd: if the args are dispatched as a subcommand instead, it
+      // must not find a project (or test files) to act on.
+      using dir = tempDir("bun-dash-stdin", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...flags, "-", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: Buffer.from("console.log(JSON.stringify(process.argv.slice(1)))"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(JSON.stringify(["-", ...args]) + "\n");
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 test("process._eval (undefined for normal run)", async () => {
   const cwd = tmpdirSync();
   const file = join(cwd, "test.js");

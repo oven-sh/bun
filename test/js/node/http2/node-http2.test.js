@@ -5230,8 +5230,9 @@ describe.concurrent("http2 client.request() options.parent", () => {
     return server;
   }
 
-  it("accepts 0, the connection root, like node", async () => {
-    // node v26.3.0 validates `parent` with a minimum of 0 and fills in 0 when it is unset.
+  it("accepts 0 and every other non-negative number, like node", async () => {
+    // node v26.3.0 validates `parent` with a minimum of 0 and nothing else. 0 is the connection
+    // root, and the value node fills in when `parent` is unset.
     const server = await echoPathServer();
     const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
     try {
@@ -5242,6 +5243,9 @@ describe.concurrent("http2 client.request() options.parent", () => {
         ["/zero", { parent: 0 }],
         ["/negative-zero", { parent: -0 }],
         ["/zero-exclusive", { parent: 0, exclusive: true }],
+        ["/fraction", { parent: 1.5 }],
+        ["/above-stream-ids", { parent: 2 ** 31 }],
+        ["/infinity", { parent: Infinity }],
         // The session's HPACK state must still match the server's after the requests above.
         ["/plain", undefined],
       ]) {
@@ -5251,6 +5255,9 @@ describe.concurrent("http2 client.request() options.parent", () => {
         { status: 200, body: "/zero" },
         { status: 200, body: "/negative-zero" },
         { status: 200, body: "/zero-exclusive" },
+        { status: 200, body: "/fraction" },
+        { status: 200, body: "/above-stream-ids" },
+        { status: 200, body: "/infinity" },
         { status: 200, body: "/plain" },
       ]);
       expect(sessionErrors).toEqual([]);

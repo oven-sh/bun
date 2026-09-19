@@ -589,8 +589,8 @@ impl NodeHTTPResponse {
 
         if let Some(raw_response) = self.raw_response.take() {
             self.update_flags(|f| f.insert(Flags::UPGRADED));
-            // Unref poll_ref and body_read_ref since the socket is now upgraded to
-            // WebSocket and will have its own lifecycle management
+            // Unref the poll_ref since the socket is now upgraded to WebSocket
+            // and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();
             self.poll_ref.with_mut(|r| r.unref(vm));
             self.body_read_ref.with_mut(|r| r.unref(vm));

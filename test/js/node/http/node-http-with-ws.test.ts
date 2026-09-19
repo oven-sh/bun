@@ -170,7 +170,7 @@ test.concurrent(
       signalCode: null,
     });
   },
-  // A debug build needs more than 4 s of the default 5 s to load node:http and ws on a busy machine.
+  // A debug build on a busy machine needs 3 s to load node:http and ws. This test hit the default 5 s there.
   30_000,
 );
 

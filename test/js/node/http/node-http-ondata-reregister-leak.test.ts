@@ -119,5 +119,6 @@ test.concurrent(
       signalCode: null,
     });
   },
+  // A debug build on a busy machine takes 4.5 s here, and 8.7 s with LeakSanitizer on.
   30_000,
 );

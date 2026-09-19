@@ -3012,7 +3012,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
   if (this.destroyed || this.closed) {
     if (ownsFd) tryClose(fd);
-    this.destroy($ERR_HTTP2_INVALID_STREAM());
+    // A respondWithFD() without statCheck that is closed before fstat completes stays silent:
+    // node already sent its headers and a close() after that is not an error.
+    if (statsBeforeHeaders) this.destroy($ERR_HTTP2_INVALID_STREAM());
     return;
   }
 

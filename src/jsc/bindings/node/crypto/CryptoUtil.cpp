@@ -555,6 +555,38 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     return true;
 }
 
+// Node's getArrayBufferOrView(buffer, name, encoding) and toBuf(val, encoding) map 'buffer' to
+// utf8 and then call Buffer.from(string, encoding). Buffer.from uses utf8 unless `encoding` is a
+// non-empty string. nullopt means a string that names no encoding.
+static std::optional<BufferEncodingType> parseStringInputEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
+{
+    if (!encodingValue.isString()) {
+        return BufferEncodingType::utf8;
+    }
+
+    auto encodingView = asString(encodingValue)->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    if (encodingView->isEmpty() || encodingView == "buffer"_s) {
+        return BufferEncodingType::utf8;
+    }
+
+    return parseEnumerationFromView<BufferEncodingType>(encodingView);
+}
+
+std::optional<BufferEncodingType> getStringInputEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
+{
+    auto encoding = parseStringInputEncoding(globalObject, scope, encodingValue);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    if (!encoding) {
+        ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
+        return std::nullopt;
+    }
+
+    return encoding;
+}
+
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding)
 {
     if (value.isString()) {
@@ -609,19 +641,10 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
         auto strView = str->view(globalObject);
         RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
-        BufferEncodingType encoding = BufferEncodingType::utf8;
-        if (encodingValue.isString()) {
-            auto* encodingString = encodingValue.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
-            auto encodingView = encodingString->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
+        auto encoding = getStringInputEncoding(globalObject, scope, encodingValue);
+        RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
-            if (encodingView != "buffer"_s) {
-                encoding = parseEnumerationFromView<BufferEncodingType>(encodingView).value_or(BufferEncodingType::utf8);
-            }
-        }
-
-        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, strView, encoding));
+        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, strView, *encoding));
         RETURN_IF_EXCEPTION(scope, Return(nullptr, {}));
 
         if (auto* view = dynamicDowncast<JSArrayBufferView>(buffer)) {
@@ -639,25 +662,21 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         JSString* dataString = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto maybeEncoding = encodingValue.pureToBoolean() == TriState::True ? WebCore::parseEnumerationAllowBuffer(*globalObject, encodingValue) : std::optional<BufferEncodingType> { BufferEncodingType::utf8 };
+        auto maybeEncoding = parseStringInputEncoding(globalObject, scope, encodingValue);
         RETURN_IF_EXCEPTION(scope, {});
 
+        // `defaultBufferEncoding` is for cipher.update(). Node decodes its input natively with
+        // ParseEncoding(encoding, UTF8) (Decode() in src/crypto/crypto_util.h): an unknown name is utf8.
         if (!maybeEncoding && !defaultBufferEncoding) {
             ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
             return {};
         }
 
-        auto encoding = maybeEncoding.has_value() ? maybeEncoding.value() : BufferEncodingType::buffer;
-
-        if (encoding == BufferEncodingType::hex && dataString->length() % 2 != 0) {
-            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
-            return {};
-        }
+        auto encoding = maybeEncoding.value_or(BufferEncodingType::utf8);
 
         auto dataView = dataString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        encoding = encoding == BufferEncodingType::buffer ? BufferEncodingType::utf8 : encoding;
         JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 

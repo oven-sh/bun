@@ -63,6 +63,9 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding);
 bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey);
 std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer);
+// The encoding that Node's getArrayBufferOrView(buffer, name, encoding) decodes a string with.
+// nullopt means an exception is pending: ERR_UNKNOWN_ENCODING for a name that is not an encoding.
+std::optional<WebCore::BufferEncodingType> getStringInputEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue);
 
 // For output encoding
 void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);

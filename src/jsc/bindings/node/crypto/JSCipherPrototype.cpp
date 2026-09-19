@@ -53,10 +53,21 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherUpdate, (JSC::JSGlobalObject * lexicalGlobalObj
     JSValue dataValue = callFrame->argument(0);
     JSValue encodingValue = callFrame->argument(1);
 
+    // validateEncoding()
+    if (dataValue.isString()) {
+        auto encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        unsigned dataLength = asString(dataValue)->length();
+        if (encoding == BufferEncodingType::hex && dataLength % 2 != 0) {
+            return ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataLength));
+        }
+    }
+
     WTF::String dataString = WTF::nullString();
     WTF::String encodingString = WTF::nullString();
 
-    JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue);
+    JSArrayBufferView* dataView = getArrayBufferOrView(lexicalGlobalObject, scope, dataValue, "data"_s, encodingValue, true);
     RETURN_IF_EXCEPTION(scope, {});
 
     MarkPopErrorOnReturn popError;

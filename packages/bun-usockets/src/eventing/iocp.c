@@ -36,6 +36,9 @@
  * libuv's uv_poll_t. */
 
 extern void Bun__JSC_onBeforeWait(void *_Nonnull jsc_vm);
+/* Closes what Bun still has open on `loop`: pipes, consoles, files, pipe
+ * connects and process exit waits. Each cancels its operations. */
+extern void Bun__closeAllForLoop(struct us_loop_t *_Nonnull loop);
 
 #ifndef STATUS_SUCCESS
 #define STATUS_SUCCESS ((NTSTATUS) 0x00000000L)
@@ -146,6 +149,16 @@ struct us_internal_afd_poll {
     unsigned char slow;
     unsigned char slow_requests;
     int slow_submitted_interest;
+    /* The `slow_requests` that are out. */
+    struct us_internal_slow_poll_req *slow_reqs[2];
+};
+
+/* Who finishes a slow request. Its thread posts it, unless the loop stopped
+ * counting it first: then the thread frees it and posts nothing. */
+enum {
+    SLOW_REQ_PENDING = 0,
+    SLOW_REQ_POSTED = 1,
+    SLOW_REQ_ORPHANED = 2,
 };
 
 struct us_internal_slow_poll_req {
@@ -157,6 +170,9 @@ struct us_internal_slow_poll_req {
     int interest;
     int result_events;
     int result_error;
+    volatile LONG state;
+    /* loop->slow_reqs. The loop thread's. */
+    struct us_internal_slow_poll_req *prev, *next;
 };
 
 typedef NTSTATUS(NTAPI *nt_create_file_fn)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, PLARGE_INTEGER, ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
@@ -374,6 +390,7 @@ static ULONG afd_poll_wanted_events(struct us_internal_afd_poll *poll) {
 
 static void afd_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry);
 static int slow_poll_submit(struct us_internal_afd_poll *poll);
+static void slow_req_orphan(struct us_loop_t *loop, struct us_internal_slow_poll_req *req);
 static void us_internal_resume_list_add(struct us_loop_t *loop);
 static void us_internal_resume_list_remove(struct us_loop_t *loop);
 static void acceptors_cancel(struct us_loop_t *loop);
@@ -513,6 +530,11 @@ static struct us_internal_afd_poll *afd_poll_create(struct us_loop_t *loop, void
 
 static void afd_poll_stop(struct us_internal_afd_poll *poll) {
     poll->owner = NULL;
+    for (int i = 0; i < 2; i++) {
+        if (poll->slow_reqs[i]) {
+            slow_req_orphan(poll->loop, poll->slow_reqs[i]);
+        }
+    }
     if (poll->state != AFD_POLL_STATE_IDLE || poll->slow_requests) {
         afd_poll_cancel(poll);
         return;
@@ -673,6 +695,40 @@ static void afd_flush_updates(struct us_loop_t *loop) {
 
 /* select() fallback for sockets whose provider chain does not end at AFD. */
 
+/* Takes `req` off the loop's list and its poll's. Only pointers are compared
+ * with `req`: it may be the thread's already. */
+static void slow_req_unlink(struct us_loop_t *loop, struct us_internal_afd_poll *poll, struct us_internal_slow_poll_req *req, struct us_internal_slow_poll_req *prev, struct us_internal_slow_poll_req *next) {
+    if (prev) {
+        prev->next = next;
+    } else {
+        loop->slow_reqs = next;
+    }
+    if (next) {
+        next->prev = prev;
+    }
+    if (poll->slow_reqs[0] == req) {
+        poll->slow_reqs[0] = NULL;
+    } else {
+        poll->slow_reqs[1] = NULL;
+    }
+    poll->slow_requests--;
+}
+
+/* The select() behind `req` cannot be interrupted. Unless its answer is
+ * already on its way to the port, the request becomes its thread's to free
+ * and the loop stops counting it. */
+static void slow_req_orphan(struct us_loop_t *loop, struct us_internal_slow_poll_req *req) {
+    struct us_internal_afd_poll *poll = req->poll;
+    struct us_internal_slow_poll_req *prev = req->prev;
+    struct us_internal_slow_poll_req *next = req->next;
+    if (InterlockedCompareExchange(&req->state, SLOW_REQ_ORPHANED, SLOW_REQ_PENDING) != SLOW_REQ_PENDING) {
+        return;
+    }
+    /* `req` is the thread's from here on. */
+    slow_req_unlink(loop, poll, req, prev, next);
+    InterlockedDecrement((volatile LONG *) &loop->pending_ops);
+}
+
 static void slow_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op, OVERLAPPED_ENTRY *entry) {
     (void) entry;
     struct us_internal_slow_poll_req *req = (struct us_internal_slow_poll_req *) op;
@@ -680,9 +736,9 @@ static void slow_poll_complete(struct us_loop_t *loop, struct us_iocp_op *op, OV
     int events = req->result_events;
     int error = req->result_error;
     int stale = req->interest != poll->interest;
+    slow_req_unlink(loop, poll, req, req->prev, req->next);
     us_free(req);
 
-    poll->slow_requests--;
     if (!poll->owner) {
         if (!poll->slow_requests && !poll->queued_for_update) {
             afd_poll_free(poll);
@@ -717,9 +773,13 @@ static DWORD WINAPI slow_poll_thread(LPVOID param) {
         if (FD_ISSET(req->socket, &rfds)) req->result_events |= LIBUS_SOCKET_READABLE;
         if (FD_ISSET(req->socket, &wfds) || FD_ISSET(req->socket, &efds)) req->result_events |= LIBUS_SOCKET_WRITABLE;
     }
-    /* The completion frees `req`. */
     HANDLE port = req->port;
-    PostQueuedCompletionStatus(port, 0, 0, &req->op.overlapped);
+    if (InterlockedCompareExchange(&req->state, SLOW_REQ_POSTED, SLOW_REQ_PENDING) == SLOW_REQ_PENDING) {
+        /* The completion frees `req`. */
+        PostQueuedCompletionStatus(port, 0, 0, &req->op.overlapped);
+    } else {
+        us_free(req);
+    }
     CloseHandle(port);
     return 0;
 }
@@ -750,6 +810,12 @@ static int slow_poll_submit(struct us_internal_afd_poll *poll) {
         WSASetLastError(WSAENOBUFS);
         return -1;
     }
+    req->next = poll->loop->slow_reqs;
+    if (req->next) {
+        req->next->prev = req;
+    }
+    poll->loop->slow_reqs = req;
+    poll->slow_reqs[poll->slow_reqs[0] ? 1 : 0] = req;
     poll->slow_requests++;
     poll->slow_submitted_interest = poll->interest;
     us_iocp_op_submitted(poll->loop);
@@ -778,6 +844,9 @@ struct us_iocp_wait {
     struct us_loop_t *loop;
     /* Wait completion packet, or NULL when the thread-pool fallback is used. */
     HANDLE packet;
+    /* The fallback's own handle to the port: its callback runs on a
+     * thread-pool thread, which the loop's teardown does not wait for. */
+    HANDLE port;
     HANDLE registered_wait;
     struct us_iocp_op *op;
     volatile LONG fired;
@@ -787,10 +856,20 @@ struct us_iocp_wait *us_iocp_wait_create(struct us_loop_t *loop) {
     nt_ensure();
     struct us_iocp_wait *wait = us_calloc(1, sizeof(struct us_iocp_wait));
     wait->loop = loop;
-    if (pNtCreateWaitCompletionPacket) {
+    int fallback = 0;
+#if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
+    ssize_t injected = 0;
+    int unused = 0;
+    fallback = US_FAULT_CHECK(US_FAULT_WAIT_FALLBACK, -1, injected, unused);
+#endif
+    if (pNtCreateWaitCompletionPacket && !fallback) {
         if (!NT_SUCCESS(pNtCreateWaitCompletionPacket(&wait->packet, GENERIC_ALL, NULL))) {
             wait->packet = NULL;
         }
+    }
+    if (!wait->packet && !DuplicateHandle(GetCurrentProcess(), loop->iocp, GetCurrentProcess(), &wait->port, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        us_free(wait);
+        return NULL;
     }
     return wait;
 }
@@ -799,7 +878,7 @@ static VOID CALLBACK iocp_wait_fired(PVOID context, BOOLEAN timed_out) {
     (void) timed_out;
     struct us_iocp_wait *wait = context;
     InterlockedExchange(&wait->fired, 1);
-    PostQueuedCompletionStatus(wait->loop->iocp, 0, 0, &wait->op->overlapped);
+    PostQueuedCompletionStatus(wait->port, 0, 0, &wait->op->overlapped);
 }
 
 int us_iocp_wait_start(struct us_iocp_wait *wait, HANDLE handle, struct us_iocp_op *op) {
@@ -860,6 +939,9 @@ void us_iocp_wait_free(struct us_iocp_wait *wait) {
     }
     if (wait->registered_wait) {
         UnregisterWaitEx(wait->registered_wait, INVALID_HANDLE_VALUE);
+    }
+    if (wait->port) {
+        CloseHandle(wait->port);
     }
     us_free(wait);
 }
@@ -1252,9 +1334,11 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout
 }
 
 void us_loop_free(struct us_loop_t *loop) {
+    Bun__closeAllForLoop(loop);
+
     /* A poll whose owner never stopped it must not run that owner from the
      * drain below, nor be re-armed by it. Cancelled here, its packet comes
-     * back at once instead of holding the drain for its full duration. */
+     * back at once. */
     loop->closing = 1;
     us_internal_resume_list_remove(loop);
     for (struct us_internal_afd_helper *helper = loop->afd_helpers; helper; helper = helper->next) {
@@ -1262,6 +1346,16 @@ void us_loop_free(struct us_loop_t *loop) {
         pNtCancelIoFileEx(helper->handle, NULL, &cancel_iosb);
     }
     acceptors_cancel(loop);
+    /* Nothing waits for a select(): a request whose answer is not already on
+     * its way to the port becomes its thread's. */
+    for (struct us_internal_slow_poll_req *req = loop->slow_reqs, *next; req; req = next) {
+        next = req->next;
+        struct us_internal_afd_poll *poll = req->poll;
+        slow_req_orphan(loop, req);
+        if (!poll->owner && !poll->slow_requests && poll->state == AFD_POLL_STATE_IDLE && !poll->queued_for_update) {
+            afd_poll_free(poll);
+        }
+    }
 
     us_internal_loop_data_free(loop);
 
@@ -1271,18 +1365,18 @@ void us_loop_free(struct us_loop_t *loop) {
         CloseHandle(loop->hrtimer);
     }
 
-    /* Every op still out there was cancelled by its owner, but its memory
-     * belongs to the kernel until its packet is dequeued. Bounded: whatever
-     * has not come back by then stays allocated rather than being freed under
-     * the kernel. */
-    for (int rounds = 0; rounds < 64; rounds++) {
+    /* The memory of an op belongs to the kernel until its packet is dequeued.
+     * Every op the loop counts was cancelled, by its owner or above, and the
+     * packet of a cancelled op comes. What a thread that cannot be stopped
+     * has is not counted: that thread frees it. */
+    for (;;) {
         afd_flush_updates(loop);
         us_internal_complete_ready_ops(loop);
         if (loop->pending_ops == 0) {
             break;
         }
         us_internal_begin_batch(loop);
-        us_internal_iocp_dequeue(loop, 16);
+        us_internal_iocp_dequeue(loop, INFINITE);
         us_internal_dispatch_ready_polls(loop);
     }
 

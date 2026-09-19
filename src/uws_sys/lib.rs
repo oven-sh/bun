@@ -449,6 +449,9 @@ pub mod fault_inject {
     /// Not a syscall: `afd_poll_create` (Windows) takes the `select()`
     /// fallback for the socket.
     pub const POLL_SLOW: c_int = 13;
+    /// Not a syscall: `us_iocp_wait_create` (Windows) waits with the
+    /// thread-pool fallback instead of a wait completion packet.
+    pub const WAIT_FALLBACK: c_int = 14;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;

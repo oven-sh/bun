@@ -62,6 +62,10 @@ enum us_fault_syscall {
      * (a non-IFS layered service provider). Only US_FAULT_ERRNO applies, and
      * the errno value is ignored. */
     US_FAULT_POLL_SLOW,
+    /* Not a syscall: makes us_iocp_wait_create (Windows) wait with the
+     * thread-pool fallback, as where ntdll has no wait completion packets.
+     * Only US_FAULT_ERRNO applies, and the errno value is ignored. */
+    US_FAULT_WAIT_FALLBACK,
     US_FAULT_COUNT
 };
 

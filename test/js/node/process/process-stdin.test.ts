@@ -540,6 +540,75 @@ describe("pause() with a read pending, then a child inherits stdin", () => {
   test.concurrent.skipIf(!isWindows)("stdin is an overlapped pipe", () => run("overlapped"));
 });
 
+// A synchronous pipe serves one call at a time, whichever process makes it. While the child's read
+// has the pipe, the parent's reader thread is queued behind it and cannot be taken out of that
+// queue; pausing stdin must not wait for it.
+test.skipIf(!isWindows)("pause() returns while a child is blocked reading the same synchronous stdin", async () => {
+  const child = `
+    process.stdout.write("CHILD-READING\\n");
+    const buffer = Buffer.alloc(16);
+    const n = require("fs").readSync(0, buffer);
+    process.stdout.write("CHILD-GOT:" + JSON.stringify(buffer.toString("utf8", 0, n)) + "\\n");`;
+  const parent = `
+    const turn = () => new Promise(resolve => setTimeout(resolve, 1));
+    process.stdin.once("data", async d => {
+      process.stdout.write("PARENT-GOT:" + JSON.stringify(d.toString()) + "\\n");
+      process.stdin.pause();
+      const child = Bun.spawn({
+        cmd: [process.execPath, "-e", ${JSON.stringify(child)}],
+        stdin: "inherit",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = child.stdout.getReader();
+      let seen = "";
+      while (!seen.includes("CHILD-READING\\n")) seen += new TextDecoder().decode((await reader.read()).value);
+      process.stdout.write("CHILD-READING\\n");
+      // The child enters its read some time after it said so: every turn from then on finds it there.
+      for (let i = 0; i < 100; i++) {
+        process.stdin.resume();
+        await turn();
+        process.stdin.pause();
+        await turn();
+      }
+      process.stdout.write("PARENT-ALIVE\\n");
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        seen += new TextDecoder().decode(value);
+      }
+      process.stdout.write(seen.slice(seen.indexOf("CHILD-GOT")));
+      process.exit(await child.exited);
+    });
+    process.stdout.write("PARENT-READY\\n");`;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", parent],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const { until, output } = readUntil(proc.stdout);
+  await until("PARENT-READY");
+  proc.stdin.write("first\n");
+  proc.stdin.flush();
+  // Nothing is written until the parent has shown that its loop still turns.
+  await until("PARENT-ALIVE");
+  proc.stdin.write("second\n");
+  proc.stdin.flush();
+  await until("CHILD-GOT");
+  await proc.stdin.end();
+  expect(output().trim().split("\n")).toEqual([
+    "PARENT-READY",
+    'PARENT-GOT:"first\\n"',
+    "CHILD-READING",
+    "PARENT-ALIVE",
+    'CHILD-GOT:"second\\n"',
+  ]);
+  expect(await proc.exited).toBe(0);
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the

@@ -1,6 +1,8 @@
+import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { connect, createServer, type Socket } from "net";
 import path from "path";
 import wt from "worker_threads";
 
@@ -813,5 +815,127 @@ describe("worker_threads", () => {
     });
     await p;
     expect(message).toEqual("hello");
+  });
+});
+
+// A worker's loop is freed when the worker goes, and first collects every operation it still has
+// with the kernel: each has to be one that can be taken back, or one the loop does not wait for.
+describe.skipIf(!isWindows)("terminate() with an operation out that the worker cannot finish", () => {
+  // select() on a helper thread, for a socket AFD cannot poll; it cannot be interrupted.
+  test.skipIf(!fault.available())("a socket polled with the select() fallback", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const net = require("node:net");
+        const server = net.createServer(() => {});
+        server.listen(0, "127.0.0.1", () => {
+          const src = \`
+            import { socketFaultInjection as fault } from "bun:internal-for-testing";
+            import net from "node:net";
+            fault.set({ syscall: "poll_slow", action: "errno", errno: "EINVAL", repeat: -1 });
+            const client = net.connect({ port: \${server.address().port}, host: "127.0.0.1" }, () => postMessage("connected"));
+            client.on("error", () => {});
+          \`;
+          const worker = new Worker(URL.createObjectURL(new Blob([src])));
+          worker.onmessage = () => worker.terminate();
+          worker.addEventListener("close", () => {
+            fault.clear();
+            console.log("closed");
+            process.exit(0);
+          });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({ stdout: "closed", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The pipe's one instance is taken, so the worker's connect waits for the server to offer another.
+  test.skipIf(!Bun.which("powershell.exe"))("a connect that waits for a busy named pipe", async () => {
+    const name = `bun-test-${crypto.randomUUID()}`;
+    const script = `
+      $ErrorActionPreference = 'Stop'
+      $server = New-Object System.IO.Pipes.NamedPipeServerStream('${name}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None)
+      [Console]::Out.WriteLine('LISTENING')
+      $server.WaitForConnection()
+      [void][Console]::In.ReadLine()
+      $server.Dispose()
+    `;
+    await using server = Bun.spawn({
+      cmd: ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = server.stdout.getReader();
+    let said = "";
+    while (!said.includes("LISTENING")) {
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error("the pipe server exited: " + said);
+      said += new TextDecoder().decode(chunk.value);
+    }
+    const pipe = `\\\\.\\pipe\\${name}`;
+    const holder = connect(pipe);
+    await once(holder, "connect");
+    try {
+      const src = `
+        import net from "node:net";
+        const client = net.connect(${JSON.stringify(pipe)});
+        client.on("error", () => {});
+        // It has found the pipe busy once its connect() has had a turn of the loop.
+        setImmediate(() => setImmediate(() => postMessage("waiting")));
+      `;
+      const worker = new Worker(URL.createObjectURL(new Blob([src])));
+      await once(worker, "message");
+      worker.terminate();
+      await once(worker, "close");
+    } finally {
+      holder.destroy();
+      server.stdin.write("done\n");
+      await server.stdin.end();
+    }
+    expect(await server.exited).toBe(0);
+  });
+
+  // fs.openSync gives a synchronous handle, which is written from a helper thread; the write is
+  // stuck in the kernel once the server has stopped reading and the pipe is full.
+  test("a write blocked on a synchronous pipe handle", async () => {
+    const pipe = `\\\\.\\pipe\\bun-test-${crypto.randomUUID()}`;
+    const connected = Promise.withResolvers<Socket>();
+    await using server = createServer(conn => {
+      conn.pause();
+      conn.on("error", () => {});
+      connected.resolve(conn);
+    });
+    await once(server.listen(pipe), "listening");
+    const src = `
+      import fs from "node:fs";
+      const fd = fs.openSync(${JSON.stringify(pipe)}, "w");
+      const writer = Bun.file(fd).writer();
+      const chunk = Buffer.alloc(64 * 1024, 120);
+      for (let i = 0; i < 64; i++) writer.write(chunk);
+      const flushed = writer.flush();
+      postMessage(flushed instanceof Promise ? "blocked" : "flushed " + flushed);
+    `;
+    const worker = new Worker(URL.createObjectURL(new Blob([src])));
+    const [message] = await once(worker, "message");
+    expect(message.data).toBe("blocked");
+    const conn = await connected.promise;
+    try {
+      worker.terminate();
+      await once(worker, "close");
+    } finally {
+      // Paused, it never reads the end of the stream, and the server waits for it to close.
+      conn.destroy();
+    }
   });
 });

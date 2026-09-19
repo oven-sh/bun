@@ -1658,6 +1658,9 @@ pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub outgoing: StreamBuffer,
     // the bytes of the write in flight must not move, so the buffers are swapped
     pub(crate) current_payload: StreamBuffer,
+    /// The bytes of `current_payload` while its `list` is with a write, which
+    /// gives it back; 0 otherwise.
+    lent_len: usize,
     // we preserve the last write result for simplicity
     pub(crate) last_write_result: WriteResult,
     // Set only by `close_without_reporting()` (i.e. `Drop`) to suppress
@@ -1675,6 +1678,7 @@ impl<Parent: WindowsStreamingWriterParent> Default for WindowsStreamingWriter<Pa
             force_sync: false,
             outgoing: StreamBuffer::default(),
             current_payload: StreamBuffer::default(),
+            lent_len: 0,
             last_write_result: WriteResult::Wrote(0),
             closed_without_reporting: false,
         }
@@ -1728,7 +1732,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     }
 
     pub fn memory_cost(&self) -> usize {
-        mem::size_of::<Self>() + self.current_payload.memory_cost() + self.outgoing.memory_cost()
+        mem::size_of::<Self>()
+            + self.current_payload.memory_cost()
+            + self.lent_len
+            + self.outgoing.memory_cost()
     }
 
     pub fn get_fd(&self) -> Fd {
@@ -1736,7 +1743,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     }
 
     pub fn has_pending_data(&self) -> bool {
-        self.outgoing.is_not_empty() || self.current_payload.is_not_empty()
+        self.outgoing.is_not_empty() || self.current_payload.is_not_empty() || self.lent_len > 0
     }
 
     /// process_send found a write already in flight (current_payload alone is not backpressure).
@@ -1747,7 +1754,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// Bytes accepted from callers that have not reached the fd yet: queued in
     /// `outgoing` or handed to the kernel in `current_payload`.
     pub fn buffered_len(&self) -> usize {
-        self.outgoing.size() + self.current_payload.size()
+        self.outgoing.size() + self.current_payload.size() + self.lent_len
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
@@ -1858,6 +1865,13 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // set_parent()s; read `.parent` at guard execution instead.
         let _g = scopeguard::guard(this, |s| Self::r_deref(s));
 
+        if mem::take(&mut Self::r(this).lent_len) > 0 {
+            let returned = match Self::r(this).source.as_mut() {
+                Some(Source::Pipe(pipe)) => pipe.take_lent_buffer(),
+                _ => None,
+            };
+            Self::r(this).current_payload.list = returned.unwrap_or_default();
+        }
         let submitted = Self::r(this).current_payload.size();
         let written = match result {
             // Closed with the write still out; `close()` told the parent already.
@@ -1950,18 +1964,38 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             Self::fail_send(this, sys::Error::from_code(sys::E::PIPE, sys::Tag::pipe));
             return;
         };
-        // SAFETY: `current_payload` is not touched until the write's result
-        // arrives, and the parent ref taken below keeps the writer (a field of
-        // the parent) alive until then. `(*this)` raw deref so the payload
-        // borrow does not overlap the `source` borrow.
-        let submitted = unsafe {
-            submit_write(
-                source,
-                (*this).current_payload.slice(),
-                Refusal::Returned,
-                this,
-                Self::on_write_result,
-            )
+        let submitted = match source {
+            // A write this pipe could not recall has to own its bytes: the
+            // payload is lent to it, and `on_write_result` takes it back.
+            Source::Pipe(pipe) if pipe.writes_outlive_cancel() => {
+                let payload = &mut Self::r(this).current_payload;
+                let lent_len = payload.size();
+                let (list, cursor) = (mem::take(&mut payload.list), payload.cursor);
+                match pipe.write_lent(list, cursor, Refusal::Returned, this, Self::on_write_result)
+                {
+                    Ok(()) => {
+                        Self::r(this).lent_len = lent_len;
+                        sys::Result::Ok(())
+                    }
+                    Err((err, list)) => {
+                        Self::r(this).current_payload.list = list;
+                        sys::Result::Err(err)
+                    }
+                }
+            }
+            // SAFETY: `current_payload` is not touched until the write's result
+            // arrives, and the parent ref taken below keeps the writer (a field
+            // of the parent) alive until then. `(*this)` raw deref so the
+            // payload borrow does not overlap the `source` borrow.
+            source => unsafe {
+                submit_write(
+                    source,
+                    (*this).current_payload.slice(),
+                    Refusal::Returned,
+                    this,
+                    Self::on_write_result,
+                )
+            },
         };
         if let sys::Result::Err(err) = submitted {
             Self::r(this).current_payload.reset();
@@ -1978,7 +2012,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// this tries to send more data returning if we are writable or not after this
     fn process_send(&mut self) {
         log!("processSend");
-        if self.current_payload.is_not_empty() {
+        if self.current_payload.is_not_empty() || self.lent_len > 0 {
             // we have some pending async request, the next outgoing data will be processed after this finish
             self.last_write_result = WriteResult::Pending(0);
             return;

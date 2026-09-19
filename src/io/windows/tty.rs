@@ -288,13 +288,38 @@ fn type_wake_key() {
         return;
     }
     let record = wake_record();
-    let mut written: u32 = 0;
+    let type_into = |console: HANDLE| {
+        let mut written: u32 = 0;
+        // SAFETY: `console` is an open console input handle; `written` is a live local.
+        let ok =
+            unsafe { win::WriteConsoleInputW(console, &raw const record, 1, &raw mut written) }
+                != 0;
+        ok && written == 1
+    };
     // SAFETY: `reader` stays allocated while it is `LINE_READER`, which only
-    // changes under the lock the caller holds; `written` is a live local.
-    let typed = unsafe {
-        win::WriteConsoleInputW((*reader).handle, &raw const record, 1, &raw mut written)
-    } != 0
-        && written == 1;
+    // changes under the lock the caller holds.
+    let mut typed = type_into(unsafe { (*reader).handle });
+    if !typed {
+        // The handle being read may have come without write access (stdin as
+        // a parent handed it over). The input buffer is the console's, not
+        // the handle's: by name it opens for writing.
+        // SAFETY: plain Win32 calls; the name is NUL-terminated.
+        unsafe {
+            let console = win::CreateFileW(
+                bun_core::w!("CONIN$\0").as_ptr(),
+                win::GENERIC_READ | win::GENERIC_WRITE,
+                bun_sys::windows::FILE_SHARE_READ | bun_sys::windows::FILE_SHARE_WRITE,
+                ptr::null_mut(),
+                win::OPEN_EXISTING,
+                0,
+                ptr::null_mut(),
+            );
+            if console != INVALID_HANDLE_VALUE {
+                typed = type_into(console);
+                win::CloseHandle(console);
+            }
+        }
+    }
     WAKE_TYPED.store(typed, Ordering::Release);
 }
 

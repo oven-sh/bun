@@ -483,6 +483,12 @@ impl Process {
             let loop_ = self.event_loop.loop_();
             // SAFETY: `loop_` is the live loop of this thread.
             let wait = unsafe { iocp::us_iocp_wait_create(loop_) };
+            if wait.is_null() {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENOMEM,
+                    bun_sys::Tag::waitpid,
+                ));
+            }
             let exit_wait = bun_core::heap::into_raw(Box::new(ExitWait {
                 op: iocp::Op::new(ExitWait::on_packet),
                 wait,
@@ -1010,12 +1016,22 @@ thread_local! {
         const { core::cell::Cell::new(core::ptr::null_mut()) };
 }
 
+/// `us_loop_free` starts with this: what is still open on `loop_` caches its
+/// pointer and completes through it, so each is closed, which cancels its
+/// operations, and the loop then collects those before it goes.
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__closeAllForLoop(loop_: *mut bun_uws_sys::Loop) {
+    bun_io::windows::close_all_for_loop(loop_);
+    close_all_for_loop(loop_);
+}
+
 /// Stop watching every process whose exit wait is on `loop_`, which this
 /// thread is about to free (a Worker's): [`Process::close`] for each. Their
 /// exit handlers never run and the children are left running, as when a POSIX
 /// loop goes away with process polls still registered.
 #[cfg(windows)]
-pub fn close_all_for_loop(loop_: *mut bun_uws_sys::Loop) {
+fn close_all_for_loop(loop_: *mut bun_uws_sys::Loop) {
     let mut cursor = EXIT_WAITS.get();
     while !cursor.is_null() {
         // SAFETY: listed waits are live and their `process` is set; `close`

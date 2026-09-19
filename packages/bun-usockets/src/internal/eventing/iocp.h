@@ -103,6 +103,8 @@ struct us_loop_t {
 
     /* Ops submitted and not yet dequeued. The port is closed only at zero. */
     unsigned int pending_ops;
+    /* select() requests that are out for sockets AFD cannot poll. */
+    struct us_internal_slow_poll_req *slow_reqs;
 
     /* Ops handed to us_iocp_op_ready and not completed yet, oldest first. */
     struct us_iocp_op *ready_ops_head;

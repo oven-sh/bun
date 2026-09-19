@@ -324,6 +324,54 @@ test.skipIf(!fault.available() || !isWindows)(
   },
 );
 
+// Where ntdll has no wait completion packets, a wait on a handle (a listener's accept event, a
+// child process) is a thread-pool wait whose callback posts to the loop's port.
+test.skipIf(!fault.available() || !isWindows)(
+  "a listener accepts and a child's exit is seen with the thread-pool fallback for waits",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const net = require("node:net");
+        fault.set({ syscall: "wait_fallback", action: "errno", errno: "EINVAL", repeat: -1 });
+        const server = net.createServer(conn => conn.end("accepted"));
+        server.listen(0, "127.0.0.1", async () => {
+          const replies = await Promise.all(
+            Array.from({ length: 3 }, () => {
+              const { promise, resolve, reject } = Promise.withResolvers();
+              let received = "";
+              const client = net.connect({ port: server.address().port, host: "127.0.0.1" });
+              client.setEncoding("utf8");
+              client.on("data", chunk => (received += chunk));
+              client.on("error", reject);
+              client.on("close", () => resolve(received));
+              return promise;
+            }),
+          );
+          const child = Bun.spawn({ cmd: [process.execPath, "-e", "process.exit(7)"], stdio: ["ignore", "ignore", "ignore"] });
+          const exitCode = await child.exited;
+          console.log(JSON.stringify({ replies, exitCode }));
+          fault.clear();
+          server.close();
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({ replies: ["accepted", "accepted", "accepted"], exitCode: 7 }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
 // A Windows listener takes connections with AcceptEx, into a socket it makes first. While that
 // socket cannot be made, connections wait in the backlog, and every tick tries again. 10055 is
 // WSAENOBUFS.

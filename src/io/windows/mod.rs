@@ -69,6 +69,35 @@ pub(crate) unsafe fn op_dequeued(loop_: *mut Loop) {
     unsafe { (*loop_).dec() };
 }
 
+/// The packet counted by [`op_submitted`] will not come: a helper thread that
+/// cannot be stopped was left to finish the operation by itself, and frees it.
+/// The count is taken off as the loop collects its packets, in their order.
+///
+/// # Safety
+/// `loop_` is the live loop of the calling thread, with one such packet owed.
+pub(crate) unsafe fn settle(loop_: *mut Loop) {
+    #[repr(C)]
+    struct Settle {
+        op: iocp::Op,
+    }
+    unsafe extern "C" fn complete(
+        loop_: *mut Loop,
+        op: *mut iocp::Op,
+        _entry: *mut iocp::OverlappedEntry,
+    ) {
+        // SAFETY: `op` is the first field of the `Settle` made below.
+        unsafe {
+            op_dequeued(loop_);
+            drop(bun_core::heap::take(op.cast::<Settle>()));
+        }
+    }
+    let settle = bun_core::heap::into_raw(Box::new(Settle {
+        op: iocp::Op::new(complete),
+    }));
+    // SAFETY: caller contract; `settle` is freed by its completion.
+    unsafe { iocp::us_iocp_op_ready(loop_, &raw mut (*settle).op) };
+}
+
 /// Have `op`'s `complete` run from the loop rather than re-entrantly: from
 /// its next tick, before that tick takes packets from the port, in the order of
 /// these calls. No kernel I/O stands behind it: `complete` learns how the
@@ -223,9 +252,9 @@ impl Link {
     }
 }
 
-/// Close every pipe, pipe server and console still open on `loop_`. Call on
-/// the loop's thread before freeing the loop; the cancelled operations are
-/// collected by the loop's own teardown drain.
+/// Close every pipe, pipe server, console, file and pipe connect still open
+/// on `loop_`, on the loop's thread. `us_loop_free` starts with this
+/// (`Bun__closeAllForLoop`) and then collects the cancelled operations.
 pub fn close_all_for_loop(loop_: *mut Loop) {
     let mut cursor = OPEN.get();
     while !cursor.is_null() {
@@ -239,7 +268,8 @@ pub fn close_all_for_loop(loop_: *mut Loop) {
             cursor = next;
         }
     }
-    PORTS.with_borrow_mut(|ports| ports.retain(|(l, _)| *l != loop_));
+    // A loop can be freed from its thread's exit, after this thread-local is gone.
+    let _ = PORTS.try_with(|ports| ports.borrow_mut().retain(|(l, _)| *l != loop_));
 }
 
 // ──────────────────────────────────────────────────────────────────────────

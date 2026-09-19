@@ -1332,6 +1332,92 @@ describe.concurrent.skipIf(!isWindows)("a named pipe server under a burst of con
   });
 });
 
+// A client holds the server's one instance, so the next clients find the pipe busy and wait for
+// an instance. One of them is destroyed while it waits, and with that it stops waiting: the
+// instance the server makes next is the other's, not one the destroyed client takes and drops.
+// The server makes it before it lets go of the first: a pipe whose last instance is closed is
+// gone, and whoever waits for it is told so.
+it.skipIf(!isWindows || !Bun.which("powershell.exe"))(
+  "a client waits for a busy named pipe, and a waiting client can be destroyed",
+  async () => {
+    const name = `bun-test-${randomUUID()}`;
+    const script = `
+      $ErrorActionPreference = 'Stop'
+      function Instance() {
+        New-Object System.IO.Pipes.NamedPipeServerStream('${name}', [System.IO.Pipes.PipeDirection]::InOut, 2, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None)
+      }
+      function Greet($server, [string]$greeting) {
+        $bytes = [System.Text.Encoding]::ASCII.GetBytes($greeting)
+        $server.Write($bytes, 0, $bytes.Length)
+        $server.WaitForPipeDrain()
+        $server.Dispose()
+      }
+      $first = Instance
+      [Console]::Out.WriteLine('LISTENING')
+      $first.WaitForConnection()
+      [Console]::Out.WriteLine('CONNECTED')
+      [void][Console]::In.ReadLine()
+      $second = Instance
+      Greet $first 'first'
+      $second.WaitForConnection()
+      [Console]::Out.WriteLine('CONNECTED')
+      [void][Console]::In.ReadLine()
+      Greet $second 'second'
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const decoder = new TextDecoder();
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    async function serverSaid(line: string, times: number) {
+      while (stdout.split(line).length - 1 < times) {
+        const chunk = await reader.read();
+        if (chunk.done) throw new Error(`the server exited: ${stdout}\n${await proc.stderr.text()}`);
+        stdout += decoder.decode(chunk.value, { stream: true });
+      }
+    }
+    function client() {
+      const socket = connect(`\\\\.\\pipe\\${name}`);
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      let received = "";
+      socket.setEncoding("utf8");
+      socket.on("data", chunk => (received += chunk));
+      socket.on("error", reject);
+      socket.on("close", () => resolve(received));
+      return { socket, closed: promise };
+    }
+
+    await serverSaid("LISTENING", 1);
+    const holder = client();
+    await serverSaid("CONNECTED", 1);
+
+    const waiter = client();
+    const abandoned = client();
+    let abandonedConnected = false;
+    abandoned.socket.on("connect", () => (abandonedConnected = true));
+    // Both have found the pipe busy once their connect() has had a turn of the loop.
+    await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+    abandoned.socket.destroy();
+
+    proc.stdin.write("go\n");
+    proc.stdin.flush();
+    expect(await holder.closed).toBe("first");
+    await serverSaid("CONNECTED", 2);
+    proc.stdin.write("go\n");
+    proc.stdin.flush();
+    expect(await waiter.closed).toBe("second");
+    expect(await abandoned.closed).toBe("");
+    expect(abandonedConnected).toBe(false);
+    await proc.stdin.end();
+    expect(await proc.exited).toBe(0);
+  },
+);
+
 // A server that identifies its client (an ssh agent, anything using RunAsClient) only
 // can if the client did not open the pipe with SECURITY_ANONYMOUS.
 it.skipIf(!isWindows || !Bun.which("powershell.exe"))(

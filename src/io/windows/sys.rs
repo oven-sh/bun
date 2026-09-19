@@ -5,6 +5,7 @@
 
 use core::ffi::c_void;
 
+pub(crate) use bun_windows_sys::GetCurrentThread;
 pub(crate) use bun_windows_sys::kernel32::{
     CreateNamedPipeW, DuplicateHandle, GetCurrentProcess, ReadFile, WriteFile,
 };
@@ -13,11 +14,11 @@ pub(crate) use bun_windows_sys::{
     BOOL, CancelIoEx, CloseHandle, ConnectNamedPipe, CreateEventW, CreateFileW,
     DUPLICATE_SAME_ACCESS, DWORD, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT,
     ENABLE_VIRTUAL_TERMINAL_INPUT, FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED,
-    FILE_INFORMATION_CLASS, FILE_READ_ATTRIBUTES, FILE_SYNCHRONOUS_IO_NONALERT,
-    FILE_WRITE_ATTRIBUTES, GENERIC_READ, GENERIC_WRITE, GetConsoleMode, HANDLE, INPUT_RECORD,
-    INVALID_HANDLE_VALUE, IO_STATUS_BLOCK, KEY_EVENT, LEFT_CTRL_PRESSED, NTSTATUS, OPEN_EXISTING,
-    OVERLAPPED, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT, SetConsoleMode, SetEvent, WRITE_DAC,
-    Win32Error,
+    FILE_INFORMATION_CLASS, FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    FILE_SYNCHRONOUS_IO_NONALERT, FILE_WRITE_ATTRIBUTES, GENERIC_READ, GENERIC_WRITE,
+    GetConsoleMode, HANDLE, INPUT_RECORD, INVALID_HANDLE_VALUE, IO_STATUS_BLOCK, KEY_EVENT,
+    LEFT_CTRL_PRESSED, NTSTATUS, OPEN_EXISTING, OVERLAPPED, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE,
+    PIPE_WAIT, SYNCHRONIZE, SetConsoleMode, SetEvent, WRITE_DAC, Win32Error,
 };
 
 pub(crate) const PIPE_ACCESS_DUPLEX: DWORD = 0x0000_0003;
@@ -49,7 +50,6 @@ unsafe extern "system" {
         dwCompletionKey: usize,
         lpOverlapped: *mut OVERLAPPED,
     ) -> BOOL;
-    pub(crate) fn WaitNamedPipeW(lpNamedPipeName: *const u16, nTimeOut: DWORD) -> BOOL;
     pub(crate) fn GetNamedPipeClientProcessId(Pipe: HANDLE, ClientProcessId: *mut u32) -> BOOL;
     pub(crate) fn GetNamedPipeServerProcessId(Pipe: HANDLE, ServerProcessId: *mut u32) -> BOOL;
     pub(crate) fn PeekNamedPipe(
@@ -80,7 +80,6 @@ unsafe extern "system" {
         Context: *mut c_void,
         Flags: u32,
     ) -> BOOL;
-    pub(crate) safe fn SwitchToThread() -> BOOL;
     pub(crate) fn ReadConsoleW(
         hConsoleInput: HANDLE,
         lpBuffer: *mut c_void,

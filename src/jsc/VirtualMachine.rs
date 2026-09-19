@@ -2499,14 +2499,6 @@ impl VirtualMachine {
             }
             // SAFETY: this thread's loop; nothing ticks it any more.
             unsafe { (*vm.uws_loop()).internal_loop_data.jsc_vm = core::ptr::null_mut() };
-            // What is still open on the loop caches its pointer and completes
-            // through it; each is cancelled and detached here, and freeing the
-            // loop collects the cancelled operations.
-            #[cfg(windows)]
-            {
-                bun_io::windows::close_all_for_loop(vm.uws_loop());
-                bun_spawn::process::close_all_for_loop(vm.uws_loop());
-            }
             bun_uws::free_thread_loop();
             teardown_log!("teardown: uSockets loop freed");
         }

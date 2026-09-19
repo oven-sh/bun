@@ -2378,6 +2378,17 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.h#L325-L330
+// Node's native writers reject a non-string value and never coerce it, so its
+// toString() does not run.
+static JSString* stringArgumentOrThrow(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    if (value.isString()) [[likely]]
+        return asString(value);
+    Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "argument must be a string"_s);
+    return nullptr;
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L962-L990
 // Only utf8Write/latin1Write/asciiWrite go through this strict JS wrapper in node;
 // the other encodings use jsBufferPrototypeFunction_StringWriteWithEncoding below.
@@ -2545,9 +2556,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     size_t length;
 
     if (offsetValue.isUndefined()) {
-        Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto* str = stringValue.toString(lexicalGlobalObject);
+        auto* str = stringArgumentOrThrow(scope, lexicalGlobalObject, stringValue);
         RETURN_IF_EXCEPTION(scope, {});
         offset = 0;
         length = castedThis->byteLength();
@@ -2556,9 +2565,10 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     if (lengthValue.isUndefined() && offsetValue.isString()) {
         encodingValue = offsetValue;
 
-        auto* str = stringValue.toString(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        // Node resolves the encoding first, so an unknown encoding wins over a non-string value.
         auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto* str = stringArgumentOrThrow(scope, lexicalGlobalObject, stringValue);
         RETURN_IF_EXCEPTION(scope, {});
         if (castedThis->isDetached()) [[unlikely]] {
             throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
@@ -2587,16 +2597,16 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         }
     }
 
-    Bun::V::validateString(scope, lexicalGlobalObject, stringValue, "string"_s);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* str = stringValue.toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
     if (!encodingValue.toBoolean(lexicalGlobalObject)) {
+        auto* str = stringArgumentOrThrow(scope, lexicalGlobalObject, stringValue);
+        RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, WebCore::BufferEncodingType::utf8));
     }
 
+    // Node resolves the encoding first, so an unknown encoding wins over a non-string value.
     auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* str = stringArgumentOrThrow(scope, lexicalGlobalObject, stringValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (castedThis->isDetached()) [[unlikely]] {

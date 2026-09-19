@@ -2566,6 +2566,7 @@ class Http2Stream extends Duplex {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
+    this[bunHTTP2Session]?.[kUnreadClosedStreams]?.delete(this);
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2589,7 +2590,9 @@ class Http2Stream extends Duplex {
 
     let rstCode = this.rstCode;
     if (!rstCode) {
-      if (err != null) {
+      // A stream that is already closed on the wire keeps its code, like node:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2455-L2469
+      if (err != null && (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0) {
         if (err.code === "ABORT_ERR") {
           // Enables using AbortController to cancel requests with RST code 8.
           rstCode = NGHTTP2_CANCEL;
@@ -2627,7 +2630,6 @@ class Http2Stream extends Duplex {
       err = null;
     }
 
-    session?.[kUnreadClosedStreams]?.delete(this);
     this[bunHTTP2Session] = null;
     // This notifies the session that this stream has been destroyed and
     // gives the session the opportunity to clean itself up. The session
@@ -4289,7 +4291,7 @@ class ServerHttp2Session extends Http2Session {
     this.#parser?.read(data);
   }
   #onClose() {
-    // Read first: the abort sweep and close() below leave every session closed and idle, which
+    // Read first: the abort sweep and close() below make the session closed and idle, which
     // destroy() takes for a graceful close (see settleUnreadClosedStreams).
     const closedAndIdle = this.#closed && this.#connections === 0;
     const parser = this.#parser;
@@ -4884,8 +4886,10 @@ function destroySelfOnEnd(this: Http2Stream) {
   this.destroy();
 }
 // streamEnd(7): the native side fully closed the stream and freed it.
-function destroyClosedStream(session: Http2Session, stream: Http2Stream) {
-  if (stream.readable && !stream.rstCode) {
+function destroyClosedStream(session: ClientHttp2Session | ServerHttp2Session, stream: Http2Stream) {
+  // The close can reach JS a tick late (see kSendingTrailers). A session destroyed in between has
+  // already swept its streams, so this one cannot be left to wait.
+  if (stream.readable && !stream.rstCode && !session.destroyed) {
     // Clean close while data is still buffered on the readable side (e.g. the response ended
     // before the request body was consumed): node defers the destroy until the consumer drains
     // it ('end'), so a late-attaching reader does not lose data.
@@ -4905,8 +4909,8 @@ function destroyClosedStream(session: Http2Session, stream: Http2Stream) {
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1234-L1239
 // `closedAndIdle`: the session closed gracefully and nothing was left on the wire. Bun completes
 // that session without waiting for unread streams; node keeps it open until they are read
-// (kMaybeDestroy, #L1662-L1676). Without an error those streams are let go instead: they stay
-// readable and destroy themselves on 'end'.
+// (kMaybeDestroy, #L1662-L1675). Without an error those streams are let go instead, also by an
+// explicit destroy(): they stay readable and destroy themselves on 'end'.
 function settleUnreadClosedStreams(session: Http2Session, error: Error | null | undefined, closedAndIdle: boolean) {
   const streams = session[kUnreadClosedStreams];
   if (streams === null) return;

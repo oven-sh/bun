@@ -931,11 +931,60 @@ describe("minimum-release-age", () => {
       const exitCode = await proc.exited;
       const stderr = await proc.stderr.text();
 
-      // Should fail because 3.0.0 is too recent
-      expect(exitCode).toBe(1);
-      expect(stderr.toLowerCase()).toMatch(
-        /blocked.*npm.*minimal.*age.*gate|blocked.*minimum.*release.*age|too.*recent/,
+      // Should fail because 3.0.0 is too recent; same argument order as the "(but package exists)" error.
+      expect(stderr).toContain(
+        `error: No version matching "3.0.0" found for specifier "regular-package" (blocked by minimum-release-age: ${5 * SECONDS_PER_DAY} seconds)`,
       );
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports the range and package name when every version in a range is too recent", async () => {
+      using dir = tempDir("range-all-too-recent", {
+        "package.json": JSON.stringify({
+          dependencies: { "regular-package": "^2.1.0" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      // 2.1.0 is 6 days old and 3.0.0 is 1 day old; ^2.1.0 excludes 1.0.0 and 2.0.0.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${10 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain(
+        `error: No version matching "^2.1.0" found for specifier "regular-package" (blocked by minimum-release-age: ${10 * SECONDS_PER_DAY} seconds)`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    test("reports the package name and tag when every version behind a dist-tag is too recent", async () => {
+      using dir = tempDir("dist-tag-all-too-recent", {
+        "package.json": JSON.stringify({
+          dependencies: { "all-future-package": "latest" },
+        }),
+        ".npmrc": `registry=${mockRegistryUrl}`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`, "--no-verify"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain(
+        `error: Package "all-future-package" with tag "latest" not found (all versions blocked by minimum-release-age: ${5 * SECONDS_PER_DAY} seconds)`,
+      );
+      expect(exitCode).toBe(1);
     });
   });
 
@@ -1547,9 +1596,10 @@ describe("minimum-release-age", () => {
       const stderr = await proc.stderr.text();
 
       // Should fail gracefully
+      expect(stderr).toContain(
+        'error: No version matching "99.0.0" found for specifier "regular-package" (but package exists)',
+      );
       expect(exitCode).toBe(1);
-      // Error message varies but should indicate version not found
-      expect(stderr.toLowerCase()).toMatch(/not found|no version matching|failed to resolve/);
     });
   });
 
@@ -2400,8 +2450,10 @@ describe("minimum-release-age", () => {
       const [exitCode, stderr] = await Promise.all([proc.exited, proc.stderr.text()]);
 
       // Should fail - no versions pass the age gate
+      expect(stderr).toContain(
+        `error: No version matching "*" found for specifier "all-future-package" (blocked by minimum-release-age: ${5 * SECONDS_PER_DAY} seconds)`,
+      );
       expect(exitCode).toBe(1);
-      expect(stderr.toLowerCase()).toMatch(/no version|blocked|failed to resolve/);
     });
   });
 

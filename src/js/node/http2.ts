@@ -3592,8 +3592,7 @@ class ServerHttp2Stream extends Http2Stream {
       }
       statusCode = headers[HTTP2_HEADER_STATUS] |= 0;
     }
-    // node's validatePreparedResponseHeaders: a final response is 2xx-5xx. A 1xx block is sent
-    // with additionalHeaders() instead.
+    // A final response is 2xx-5xx, as in node. A 1xx block goes through additionalHeaders().
     if (statusCode < 200 || statusCode > 599) {
       throw $ERR_HTTP2_STATUS_INVALID(statusCode);
     }

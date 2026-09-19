@@ -122,6 +122,274 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/19529
+  // `srcset` / `imagesrcset` hold a comma-separated list of image candidates
+  // ("<url> <descriptor>"), not one URL. Each candidate URL is resolved, hashed
+  // and emitted on its own, descriptors survive, and external candidates are
+  // left alone.
+  itBundled("html/srcset", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="preload" as="image" href="./fallback.png" imagesrcset="./small.png 1x, ./big.png 2x" imagesizes="100vw">
+    <link rel="preload" as="image" imagesrcset="./big.png 480w" imagesizes="(max-width: 600px) 480px, 800px">
+  </head>
+  <body>
+    <img srcset="./small.png 1x, ./big.png 2x">
+    <picture>
+      <source srcset="./small.png 480w, ./big.png 800w" media="(min-width: 800px)" type="image/png">
+      <img src="./small.png" alt="image">
+    </picture>
+    <img srcset="./small.png 2x">
+    <img srcset="
+      ./small.png 480w,
+      ./big.png   800w
+    " sizes="50vw">
+    <img srcset="./small.png, ./big.png">
+    <img srcset="https://example.com/ext.png 1x, ./big.png 2x">
+    <img srcset="./small.png">
+    <img srcset="https://example.com/a.png  1x ,  http://example.com/b.png 2x">
+    <img srcset="">
+    <img srcset=" , ">
+    <img srcset="data:image/gif;base64,R0lGODlhAQABAAAAACw= 1x, ./big.png 2x">
+    <img srcset="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
+    <img srcset="https://example.com/upload/c_scale,w_300/x.jpg 300w, ./big.png 800w">
+    <img srcset="./small.png foo(1x, 2), ./big.png 2x">
+    <img srcset="./small.png,, ./big.png">
+    <img srcset="./small.png\t1x,\t./big.png\t2x">
+  </body>
+</html>`,
+      "/fallback.png": "fallback",
+      "/small.png": "smallsmall",
+      "/big.png": "bigbigbigbig",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const small = String.raw`\./small-[a-z0-9]+\.png`;
+      const big = String.raw`\./big-[a-z0-9]+\.png`;
+
+      expect([...html.matchAll(/imagesrcset="([^"]*)"/g)].map(m => m[1])).toEqual([
+        expect.stringMatching(new RegExp(`^${small} 1x, ${big} 2x$`)),
+        expect.stringMatching(new RegExp(`^${big} 480w$`)),
+      ]);
+      // The legacy `href` fallback next to `imagesrcset` is still rewritten,
+      // and the non-URL attributes are untouched.
+      expect(html).toMatch(/href="\.\/fallback-[a-z0-9]+\.png" imagesrcset="[^"]+" imagesizes="100vw">/);
+      expect(html).toContain(`imagesizes="(max-width: 600px) 480px, 800px">`);
+
+      expect([...html.matchAll(/ srcset="([^"]*)"/g)].map(m => m[1])).toEqual([
+        // Density descriptors.
+        expect.stringMatching(new RegExp(`^${small} 1x, ${big} 2x$`)),
+        // <source> with width descriptors.
+        expect.stringMatching(new RegExp(`^${small} 480w, ${big} 800w$`)),
+        // Single candidate with a descriptor.
+        expect.stringMatching(new RegExp(`^${small} 2x$`)),
+        // Newlines and runs of whitespace between candidates are normalized.
+        expect.stringMatching(new RegExp(`^${small} 480w, ${big} 800w$`)),
+        // No descriptors: the comma directly follows each URL.
+        expect.stringMatching(new RegExp(`^${small}, ${big}$`)),
+        // External candidate is left alone, local one is hashed.
+        expect.stringMatching(new RegExp(`^https://example\\.com/ext\\.png 1x, ${big} 2x$`)),
+        // Bare single URL.
+        expect.stringMatching(new RegExp(`^${small}$`)),
+        // Nothing to rewrite: the attribute is left byte-for-byte as written.
+        "https://example.com/a.png  1x ,  http://example.com/b.png 2x",
+        "",
+        " , ",
+        // The rest tell the HTML srcset grammar apart from a plain comma split.
+        // A URL runs to the next whitespace, so a comma inside it (data: URI,
+        // CDN transform path) does not start a new candidate...
+        expect.stringMatching(new RegExp(`^data:image/gif;base64,R0lGODlhAQABAAAAACw= 1x, ${big} 2x$`)),
+        "data:image/gif;base64,R0lGODlhAQABAAAAACw=",
+        expect.stringMatching(new RegExp(`^https://example\\.com/upload/c_scale,w_300/x\\.jpg 300w, ${big} 800w$`)),
+        // ...nor does a comma inside a parenthesized descriptor.
+        expect.stringMatching(new RegExp(`^${small} foo\\(1x, 2\\), ${big} 2x$`)),
+        // A run of commas after a URL ends that candidate with no descriptor.
+        expect.stringMatching(new RegExp(`^${small}, ${big}$`)),
+        // Any ASCII whitespace separates a URL from its descriptor.
+        expect.stringMatching(new RegExp(`^${small} 1x, ${big} 2x$`)),
+      ]);
+      api.expectFile("out/index.html").toContain(`media="(min-width: 800px)" type="image/png">`);
+      api.expectFile("out/index.html").toContain(`" sizes="50vw">`);
+      api.expectFile("out/index.html").toMatch(new RegExp(`<img src="${small}" alt="image">`));
+
+      // Every candidate file was emitted exactly once, under the name the HTML references.
+      const [, smallFile, bigFile] = html.match(
+        new RegExp(`srcset="\\./(small-[a-z0-9]+\\.png) 1x, \\./(big-[a-z0-9]+\\.png) 2x"`),
+      )!;
+      expect(api.readFile(`out/${smallFile}`)).toBe("smallsmall");
+      expect(api.readFile(`out/${bigFile}`)).toBe("bigbigbigbig");
+      expect(new Set(html.match(/small-[a-z0-9]+\.png/g))).toEqual(new Set([smallFile]));
+      expect(new Set(html.match(/big-[a-z0-9]+\.png/g))).toEqual(new Set([bigFile]));
+    },
+  });
+
+  itBundled("html/srcset-public-path", {
+    outdir: "out/",
+    publicPath: "https://cdn.example.com/",
+    files: {
+      "/index.html": `<!DOCTYPE html><html><head><link rel="preload" as="image" imagesrcset="./a.png 1x,./b.png 2x"></head><body><img src="./a.png" srcset="./a.png 1x, ./b.png 2x"></body></html>`,
+      "/a.png": "aaaa",
+      "/b.png": "bbbbbbbb",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const list =
+        /^https:\/\/cdn\.example\.com\/a-[a-z0-9]+\.png 1x, https:\/\/cdn\.example\.com\/b-[a-z0-9]+\.png 2x$/;
+      expect(html.match(/imagesrcset="([^"]*)"/)![1]).toMatch(list);
+      expect(html.match(/ srcset="([^"]*)"/)![1]).toMatch(list);
+      expect(html).toMatch(/src="https:\/\/cdn\.example\.com\/a-[a-z0-9]+\.png"/);
+    },
+  });
+
+  // A candidate that does not exist is a resolve error naming that candidate,
+  // not the whole attribute value.
+  itBundled("html/srcset-unresolved-candidate", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html><html><body><img srcset="./here.png 1x, ./missing.png 2x"></body></html>`,
+      "/here.png": "here",
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/index.html": [`Could not resolve: "./missing.png"`],
+    },
+  });
+
+  // A ?query/#fragment is not part of the file name: resolve without it and
+  // put it back on the rewritten URL. Protocol-relative URLs are external.
+  itBundled("html/url-suffix", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <script src="./app.js?v=3"></script>
+    <link rel="stylesheet" href="./style.css?v=3">
+  </head>
+  <body>
+    <img src="./sprite.svg#icon">
+    <img src="./sprite.svg?v=2#icon">
+    <svg><use href="./sprite.svg#icon"></use></svg>
+    <video src="./clip.mp4#t=1,2"></video>
+    <img src="//cdn.example.com/x.png">
+    <script src="//cdn.example.com/lib.js"></script>
+    <img src="https://cdn.example.com/y.png?v=1#f">
+    <svg><symbol id="local"></symbol><use href="#local"></use><use xlink:href="#local"></use></svg>
+    <img src="#">
+  </body>
+</html>`,
+      "/app.js": "console.log('app')",
+      "/style.css": "body { color: red }",
+      "/sprite.svg": `<svg xmlns="http://www.w3.org/2000/svg"><symbol id="icon"/></svg>`,
+      "/clip.mp4": "not really a video",
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const sprite = html.match(/(sprite-[a-z0-9]+\.svg)/)![1];
+      const clip = html.match(/(clip-[a-z0-9]+\.mp4)/)![1];
+      api.assertFileExists(`out/${sprite}`);
+      api.assertFileExists(`out/${clip}`);
+      expect([...html.matchAll(/(?:src|href)="([^"]*)"/g)].map(m => m[1])).toEqual([
+        expect.stringMatching(/^\.\/index-[a-z0-9]+\.css$/),
+        expect.stringMatching(/^\.\/index-[a-z0-9]+\.js$/),
+        `./${sprite}#icon`,
+        `./${sprite}?v=2#icon`,
+        `./${sprite}#icon`,
+        `./${clip}#t=1,2`,
+        `//cdn.example.com/x.png`,
+        `//cdn.example.com/lib.js`,
+        `https://cdn.example.com/y.png?v=1#f`,
+        // Same-document references are not files.
+        `#local`,
+        `#local`,
+        `#`,
+      ]);
+      api.expectFile(`out/${html.match(/index-[a-z0-9]+\.js/)![0]}`).toContain("app");
+    },
+  });
+
+  // Every element/attribute pair the scanner treats as an asset URL emits a
+  // hashed copy; see TAG_HANDLERS in src/bundler/HTMLScanner.rs.
+  itBundled("html/asset-attributes", {
+    outdir: "out/",
+    files: {
+      "/index.html": `<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="shortcut icon" href="./a.png">
+    <link rel="apple-touch-icon-precomposed" href="./a.png">
+    <link rel="apple-touch-startup-image" href="./a.png">
+    <link rel="mask-icon" href="./a.svg">
+    <link rel="modulepreload" href="./keep-me.js">
+    <meta property="og:image" content="./a.png">
+    <meta property="og:image:alt" content="./not-a-file.png">
+    <meta name="twitter:image" content="./a.png">
+    <meta name="msapplication-TileImage" content="./a.png">
+    <meta name="description" content="./not-a-file.png">
+  </head>
+  <body>
+    <video><track src="./a.vtt"></video>
+    <object data="./a.pdf"><embed src="./a.pdf"></object>
+    <input type="image" src="./a.png">
+    <svg><image href="./a.png"/><image xlink:href="./a.png"/><use xlink:href="./a.svg#x"/></svg>
+    <iframe src="./page.html"></iframe>
+    <object data="./page.html"></object>
+    <a href="./a.pdf">download</a>
+  </body>
+</html>`,
+      "/a.png": "png",
+      "/a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+      "/a.vtt": "WEBVTT",
+      "/a.pdf": "%PDF-1.4",
+      // A page that another page points at is a link, not an asset: it is not
+      // parsed, so its script must not end up in index.html's bundle.
+      "/page.html": `<!DOCTYPE html><script src="./page.js"></script>`,
+      "/page.js": `console.log("only on page.html")`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const html = api.readFile("out/index.html");
+      const js = api.readFile(`out/${html.match(/index-\w+\.js/)![0]}`);
+      expect(js).not.toContain("only on page.html");
+      const hashed = (ext: string) => {
+        const name = html.match(new RegExp(`"\\./(a-[a-z0-9]+\\.${ext})[?#"]`))![1];
+        api.assertFileExists(`out/${name}`);
+        return `./${name}`;
+      };
+      const [png, svg, vtt, pdf] = ["png", "svg", "vtt", "pdf"].map(hashed);
+      const urls = [...html.matchAll(/(?:src|href|content|data)="([^"]*)"/g)].map(m => m[1]);
+      expect(urls.filter(url => !/^\.\/index-\w+\.js$/.test(url))).toEqual([
+        png, // shortcut icon
+        png, // apple-touch-icon-precomposed
+        png, // apple-touch-startup-image
+        svg, // mask-icon
+        "./keep-me.js", // modulepreload is only dropped in standalone mode
+        png, // og:image
+        "./not-a-file.png", // og:image:alt is text
+        png, // twitter:image
+        png, // msapplication-TileImage
+        "./not-a-file.png", // description is text
+        vtt,
+        pdf, // object
+        pdf, // embed
+        png, // input
+        png, // image href
+        png, // image xlink:href
+        `${svg}#x`, // use xlink:href
+        "./page.html", // iframes are left alone
+        "./page.html", // so are other pages
+        "./a.pdf", // and anchors
+      ]);
+    },
+  });
+
   // Test external assets preservation
   itBundled("html/external-assets", {
     outdir: "out/",

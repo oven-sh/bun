@@ -119,18 +119,15 @@ pub(crate) fn install_hoisted_packages(
         },
     );
 
-    if !this.summary.pruned_workspaces.is_empty() {
-        let lockfile = &*this.lockfile;
-        let mut planned = Bitset::init_empty(lockfile.packages.len())?;
-        for &dep_id in &lockfile.buffers.hoisted_dependencies {
-            planned.set(lockfile.buffers.resolutions[dep_id as usize] as usize);
-        }
+    {
+        let buffers = &this.lockfile.buffers;
         pruned_workspaces::exit_if_install_links_missing(
             this,
-            lockfile,
-            &planned,
-            workspace_filters,
-            install_root_dependencies,
+            &this.lockfile,
+            &mut buffers
+                .hoisted_dependencies
+                .iter()
+                .map(|&dep_id| (dep_id, buffers.resolutions[dep_id as usize])),
         );
     }
 

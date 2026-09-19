@@ -2826,7 +2826,13 @@ describe("bun update <name> semantics", () => {
         await using proc = spawn({
           cmd: [bunExe(), ...args, "-g", `--config=${join(dir, "bunfig.toml")}`],
           cwd: project,
-          env: { ...envFor(dir), BUN_INSTALL: join(dir, ".global") },
+          // Every global-dir variable is set so an inherited one can never point a test at the developer's real global folder.
+          env: {
+            ...envFor(dir),
+            BUN_INSTALL: join(dir, ".global"),
+            BUN_INSTALL_GLOBAL_DIR: globalDir,
+            BUN_INSTALL_BIN: globalBinDir,
+          },
           stdout: "pipe",
           stderr: "pipe",
           stdin: "ignore",

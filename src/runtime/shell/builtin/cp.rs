@@ -597,6 +597,12 @@ impl ShellCpTask {
         }
     }
 
+    /// Follows symlinks, as cp(1) does for its target: `cp file linkdir` copies into the directory.
+    fn target_is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
+        let st = bun_sys::stat(path)?;
+        Ok(bun_sys::S::ISDIR(st.st_mode as _))
+    }
+
     /// Resolves src/tgt to absolute paths, classifies them per the three
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
@@ -660,7 +666,7 @@ impl ShellCpTask {
             ));
         }
 
-        let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt) {
+        let (tgt_is_dir, tgt_exists) = match Self::target_is_dir(tgt) {
             Ok(is_dir) => (is_dir, true),
             Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                 // If it has a trailing directory separator, it's a directory.

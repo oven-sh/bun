@@ -1878,7 +1878,72 @@ async function getPipeline(options = {}) {
   return { priority, steps: mergedSteps };
 }
 
+/**
+ * TEST ONLY, not for merging: does a hosted queue whose base image is the
+ * stock Buildkite image plus Node.js 26 run what the pipeline step needs?
+ * Uploads two probe steps on the `build-image-test` queue and nothing else
+ * (no builds, no tests).
+ */
+async function probeHostedQueue() {
+  startGroup("Pipeline runner (this step, on build-image)");
+  console.log("node:", process.version);
+
+  const queue = "build-image-test";
+  const pipeline = {
+    steps: [
+      {
+        key: "probe-tools",
+        label: ":mag: probe tools",
+        agents: { queue },
+        checkout: { sparse: { paths: [".buildkite/"] } },
+        timeout_in_minutes: 10,
+        command: [
+          "head -2 /etc/os-release",
+          "command -v node",
+          "node --version",
+          'node -p "process.features.typescript"',
+          "echo 'const x = 1 as number; console.log(\"typescript ran\", x);' > /tmp/probe.ts",
+          'node /tmp/probe.ts || echo "typescript did not run"',
+          "npx --version",
+          "git --version",
+          "aws --version",
+          "docker --version",
+          "curl --version | head -1",
+        ],
+      },
+      {
+        // The real pipeline generation with the exact sparse paths the
+        // pipeline step uses today. PROBE_GENERATE_ONLY makes main() generate
+        // the full pipeline and stop short of uploading it.
+        key: "probe-generate-pipeline",
+        label: ":mag: probe generate pipeline",
+        agents: { queue },
+        checkout: {
+          sparse: { paths: [".buildkite/", "scripts/", "package.json", "bun.lock", "packages/", "LATEST"] },
+        },
+        env: { PROBE_GENERATE_ONLY: "1" },
+        timeout_in_minutes: 10,
+        command: ["node --version", "node .buildkite/ci.mjs"],
+      },
+    ],
+  };
+  const content = toYaml(pipeline);
+  const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
+  writeFile(contentPath, content);
+  console.log(content);
+  if (isBuildkite) {
+    startGroup("Uploading pipeline...");
+    await spawnSafe(["buildkite-agent", "pipeline", "upload", contentPath], { stdio: "inherit" });
+  }
+}
+
 async function main() {
+  const generateOnly = process.env.PROBE_GENERATE_ONLY === "1";
+  if (process.env.BUILDKITE_BRANCH === "claude/ci-hosted-queue-image-probe" && !generateOnly) {
+    await probeHostedQueue();
+    return;
+  }
+
   startGroup("Generating options...");
   const options = await getPipelineOptions();
   if (options) {
@@ -1949,6 +2014,12 @@ async function main() {
   console.log("Generated pipeline:");
   console.log(" - Path:", contentPath);
   console.log(" - Size:", (content.length / 1024).toFixed(), "KB");
+
+  if (isBuildkite && generateOnly) {
+    startGroup("Not uploading (PROBE_GENERATE_ONLY)");
+    await uploadArtifact(contentPath);
+    return;
+  }
 
   if (isBuildkite) {
     startGroup("Uploading pipeline...");

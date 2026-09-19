@@ -2396,6 +2396,327 @@ describe.concurrent("http2 session.destroy(error, code) sends the GOAWAY code no
   });
 });
 
+// Resolves with the arguments of `event`. Rejects if the emitter reports an error or closes first.
+// It removes its listeners again, so it does not count as an 'error' listener afterwards.
+function eventBeforeFailure(emitter, event) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const onEvent = (...args) => resolve(args);
+  const onClose = () => reject(new Error(`'close' before '${event}'`));
+  emitter.once(event, onEvent).once("error", reject).once("close", onClose);
+  return promise.finally(() => emitter.off(event, onEvent).off("error", reject).off("close", onClose));
+}
+
+// Records how a request ends: the order of its 'aborted', 'end', 'error' and 'close' events, and the
+// 'error' itself (code, or message for a plain Error). `events` is complete once "close" is in it.
+function recordEnding(req, { errorListener = true } = {}) {
+  const ending = { error: undefined, events: [] };
+  for (const name of ["aborted", "end", "close"]) req.on(name, () => ending.events.push(name));
+  if (errorListener) {
+    req.on("error", e => {
+      ending.error = e.code ?? e.message;
+      ending.events.push("error");
+    });
+  }
+  return ending;
+}
+
+// node's closeSession() gives ERR_HTTP2_STREAM_CANCEL to pending requests only. An open request gets
+// the session's error, if there is one, and the session's code. The expected values are what node
+// v26.3.0 reports for the same request.
+describe("http2 client session.destroy() closes an open request like node", () => {
+  const {
+    NGHTTP2_NO_ERROR,
+    NGHTTP2_INTERNAL_ERROR,
+    NGHTTP2_STREAM_CLOSED,
+    NGHTTP2_REFUSED_STREAM,
+    NGHTTP2_CANCEL,
+    NGHTTP2_ENHANCE_YOUR_CALM,
+  } = http2.constants;
+
+  // One server for every case. It hands each stream to the case that asked for that path. It answers
+  // with headers and a first DATA frame and leaves the response open. A "/silent" path gets no answer.
+  let server;
+  let paths = 0;
+  const serverStreams = new Map();
+  beforeAll(async () => {
+    server = http2.createServer();
+    server.on("session", session => session.on("error", () => {}));
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      const path = headers[":path"];
+      if (path.startsWith("/silent")) return serverStreams.get(path)?.(stream);
+      stream.respond({ ":status": 200 });
+      stream.write("partial", () => serverStreams.get(path)?.(stream));
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  });
+  afterAll(() => server.close());
+
+  // Opens a request, waits until its response is in progress (`respond: false`: until the server has
+  // the request), runs teardown(client, req, serverStream) and reports how the request ended. With
+  // `pause` the request is paused with unread data: `buffered` bytes before, `lateData` events after.
+  async function closeOpenRequest(
+    teardown,
+    { errorListener = true, pause = false, post = false, respond = true } = {},
+  ) {
+    const path = `${respond ? "/" : "/silent"}${paths++}`;
+    const { promise: serverStreamPromise, resolve: onServerStream } = Promise.withResolvers();
+    serverStreams.set(path, onServerStream);
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": path, ":method": post ? "POST" : "GET" });
+      const ending = recordEnding(req, { errorListener });
+      const { promise: closed, resolve: onClose } = Promise.withResolvers();
+      req.on("close", onClose);
+      if (respond) await eventBeforeFailure(req, "data");
+      const serverStream = await serverStreamPromise;
+      const paused = {};
+      if (pause) {
+        // A second DATA frame that stays buffered: a ping round trip proves that it arrived.
+        req.pause();
+        paused.lateData = 0;
+        req.on("data", () => paused.lateData++);
+        const { promise: arrived, resolve, reject } = Promise.withResolvers();
+        serverStream.write("unread", err => {
+          if (err) return reject(err);
+          try {
+            client.ping(err => (err ? reject(err) : resolve()));
+          } catch (e) {
+            reject(e);
+          }
+        });
+        await arrived;
+        paused.buffered = req.readableLength;
+      }
+      await teardown(client, req, serverStream);
+      await closed;
+      return { ...ending, rstCode: req.rstCode, ...paused };
+    } finally {
+      client.destroy();
+      serverStreams.delete(path);
+    }
+  }
+
+  it.each([
+    ["destroy()", [], { error: undefined, rstCode: NGHTTP2_NO_ERROR, events: ["end", "close"] }],
+    [
+      "destroy(NO_ERROR)",
+      [NGHTTP2_NO_ERROR],
+      { error: undefined, rstCode: NGHTTP2_NO_ERROR, events: ["end", "close"] },
+    ],
+    [
+      "destroy(undefined, CANCEL)",
+      [undefined, NGHTTP2_CANCEL],
+      { error: undefined, rstCode: NGHTTP2_NO_ERROR, events: ["end", "close"] },
+    ],
+    [
+      "destroy(null, CANCEL)",
+      [null, NGHTTP2_CANCEL],
+      { error: undefined, rstCode: NGHTTP2_CANCEL, events: ["end", "close"] },
+    ],
+    [
+      "destroy(null, REFUSED_STREAM)",
+      [null, NGHTTP2_REFUSED_STREAM],
+      { error: "ERR_HTTP2_STREAM_ERROR", rstCode: NGHTTP2_REFUSED_STREAM, events: ["error", "close"] },
+    ],
+    [
+      "destroy(CANCEL)",
+      [NGHTTP2_CANCEL],
+      { error: "ERR_HTTP2_SESSION_ERROR", rstCode: NGHTTP2_CANCEL, events: ["error", "close"] },
+    ],
+    [
+      "destroy(new Error('boom'))",
+      [new Error("boom")],
+      { error: "boom", rstCode: NGHTTP2_INTERNAL_ERROR, events: ["error", "close"] },
+    ],
+    [
+      "destroy(new Error('boom'), REFUSED_STREAM)",
+      [new Error("boom"), NGHTTP2_REFUSED_STREAM],
+      { error: "boom", rstCode: NGHTTP2_REFUSED_STREAM, events: ["error", "close"] },
+    ],
+  ])("with %s", async (name, args, expected) => {
+    expect(await closeOpenRequest(client => client.destroy(...args))).toEqual(expected);
+  });
+
+  it("without an 'error' listener on the request", async () => {
+    const result = await closeOpenRequest(client => client.destroy(), { errorListener: false });
+    expect(result).toEqual({ error: undefined, rstCode: NGHTTP2_NO_ERROR, events: ["end", "close"] });
+  });
+
+  it("with 'aborted' when the request body is still open", async () => {
+    const result = await closeOpenRequest(client => client.destroy(), { post: true });
+    expect(result).toEqual({ error: undefined, rstCode: NGHTTP2_NO_ERROR, events: ["aborted", "end", "close"] });
+  });
+
+  it("before the response begins", async () => {
+    const result = await closeOpenRequest(client => client.destroy(), { respond: false });
+    expect(result).toEqual({ error: undefined, rstCode: NGHTTP2_NO_ERROR, events: ["close"] });
+  });
+
+  it("with the code of a GOAWAY that the session received", async () => {
+    const result = await closeOpenRequest((client, req, serverStream) => {
+      // The listener runs before the session destroys itself with ERR_HTTP2_SESSION_ERROR.
+      const { promise: destroyed, resolve, reject } = Promise.withResolvers();
+      client.once("goaway", () => resolve(client.destroy()));
+      client.once("close", () => reject(new Error("'close' before 'goaway'")));
+      serverStream.session.goaway(NGHTTP2_ENHANCE_YOUR_CALM);
+      return destroyed;
+    });
+    expect(result).toEqual({
+      error: "ERR_HTTP2_STREAM_ERROR",
+      rstCode: NGHTTP2_ENHANCE_YOUR_CALM,
+      events: ["error", "close"],
+    });
+  });
+
+  it("with the request's own code when it closed before", async () => {
+    const result = await closeOpenRequest((client, req) => {
+      req.close(NGHTTP2_STREAM_CLOSED);
+      client.destroy();
+    });
+    expect(result).toEqual({
+      error: "ERR_HTTP2_STREAM_ERROR",
+      rstCode: NGHTTP2_STREAM_CLOSED,
+      events: ["error", "close"],
+    });
+  });
+
+  it.each([
+    ["destroy()", [], { error: undefined, rstCode: NGHTTP2_NO_ERROR, events: ["close"] }],
+    [
+      "destroy(new Error('boom'))",
+      [new Error("boom")],
+      { error: "boom", rstCode: NGHTTP2_INTERNAL_ERROR, events: ["error", "close"] },
+    ],
+  ])("%s does not push buffered data to a paused request", async (name, args, expected) => {
+    const result = await closeOpenRequest(client => client.destroy(...args), { pause: true });
+    expect(result).toEqual({ ...expected, buffered: "unread".length, lateData: 0 });
+  });
+});
+
+// A client session stays quiet about a transport error when it is already close()d, or when the error
+// is an ECONNRESET behind a GOAWAY or one that no 'error' listener observes. Its open requests still
+// get the error, as in node. (Behind a GOAWAY node gives them nothing: a cut response looks complete.)
+describe.concurrent("http2 client session gives a transport error to its open requests", () => {
+  const { NGHTTP2_NO_ERROR, NGHTTP2_INTERNAL_ERROR, NGHTTP2_CANCEL } = http2.constants;
+  const { SettingsFrame, HeadersFrame, DataFrame, GoAwayFrame, kClientMagic, kFakeResponseHeaders } = http2utils;
+  const econnreset = () => Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
+
+  // A JS transport whose peer answers the HEADERS of a request with response HEADERS and one DATA frame.
+  function respondingTransport() {
+    let pending = Buffer.alloc(0);
+    let prefaceSeen = false;
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        pending = Buffer.concat([pending, chunk]);
+        if (!prefaceSeen && pending.length >= kClientMagic.length) {
+          prefaceSeen = true;
+          pending = pending.subarray(kClientMagic.length);
+        }
+        while (prefaceSeen && pending.length >= 9) {
+          const length = pending.readUIntBE(0, 3);
+          if (pending.length < 9 + length) break;
+          const type = pending[3];
+          const streamId = pending.readUInt32BE(5);
+          pending = pending.subarray(9 + length);
+          if (type === 1) {
+            const response = [
+              new HeadersFrame(streamId, kFakeResponseHeaders, 0, true).data,
+              new DataFrame(streamId, Buffer.from("partial")).data,
+            ];
+            setImmediate(() => transport.push(Buffer.concat(response)));
+          }
+        }
+        callback();
+      },
+    });
+    // The peer's SETTINGS, and its ACK of the client's.
+    transport.push(Buffer.concat([new SettingsFrame().data, new SettingsFrame(true).data]));
+    return transport;
+  }
+
+  // Opens a request, waits until its response is in progress, runs fail(client, transport, req) and
+  // reports how the request ended and the 'error' events of the session, once both have closed.
+  async function failTransport(fail, { errorListener = true, observeSession = true } = {}) {
+    const transport = respondingTransport();
+    const client = http2.connect("http://localhost:1", { createConnection: () => transport });
+    try {
+      await eventBeforeFailure(client, "connect");
+      const sessionErrors = [];
+      if (observeSession) client.on("error", e => sessionErrors.push(e.code));
+      const { promise: sessionClosed, resolve: onSessionClose } = Promise.withResolvers();
+      client.on("close", onSessionClose);
+      const req = client.request({ ":path": "/" });
+      const ending = recordEnding(req, { errorListener });
+      const { promise: closed, resolve: onClose } = Promise.withResolvers();
+      req.on("close", onClose);
+      await eventBeforeFailure(req, "data");
+      await fail(client, transport, req);
+      await Promise.all([closed, sessionClosed]);
+      return { ...ending, rstCode: req.rstCode, sessionErrors };
+    } finally {
+      client.destroy();
+      transport.destroy();
+    }
+  }
+
+  const expected = {
+    error: "ECONNRESET",
+    rstCode: NGHTTP2_INTERNAL_ERROR,
+    events: ["error", "close"],
+    sessionErrors: [],
+  };
+
+  it("when no 'error' listener observes the session", async () => {
+    const result = await failTransport(
+      (client, transport) => {
+        expect(client.listenerCount("error")).toBe(0);
+        transport.destroy(econnreset());
+      },
+      { observeSession: false },
+    );
+    expect(result).toEqual(expected);
+  });
+
+  it("when the session is close()d", async () => {
+    const result = await failTransport((client, transport) => {
+      client.close();
+      transport.destroy(econnreset());
+    });
+    expect(result).toEqual(expected);
+  });
+
+  it("when a GOAWAY(NO_ERROR) closed the session", async () => {
+    const result = await failTransport(async (client, transport, req) => {
+      const goaway = eventBeforeFailure(client, "goaway");
+      transport.push(new GoAwayFrame(NGHTTP2_NO_ERROR, req.id).data);
+      await goaway;
+      transport.destroy(econnreset());
+    });
+    expect(result).toEqual(expected);
+  });
+
+  it("when the ECONNRESET comes while the 'goaway' event is emitted, before the session closes", async () => {
+    const result = await failTransport((client, transport, req) => {
+      client.once("goaway", () => transport.emit("error", econnreset()));
+      transport.push(new GoAwayFrame(NGHTTP2_NO_ERROR, req.id).data);
+    });
+    expect(result).toEqual(expected);
+  });
+
+  // node emits the error on such a request too and the process dies. Bun does not emit it. The
+  // request then reports NGHTTP2_CANCEL, so that the cut response does not read as complete.
+  it("and cancels a request that has no 'error' listener", async () => {
+    const result = await failTransport((client, transport) => transport.destroy(econnreset()), {
+      errorListener: false,
+      observeSession: false,
+    });
+    expect(result).toEqual({ error: undefined, rstCode: NGHTTP2_CANCEL, events: ["end", "close"], sessionErrors: [] });
+  });
+});
+
 it(
   "http2 server with minimal maxSessionMemory handles multiple requests",
   async () => {

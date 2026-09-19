@@ -2264,7 +2264,10 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
   // listener would otherwise turn session.destroy(code) into an uncaught
   // exception (e.g. grpc-js forceShutdown destroying sessions with
   // NGHTTP2_CANCEL while unread UNIMPLEMENTED streams are still around).
-  stream.destroy(error !== undefined && stream.listenerCount("error") > 0 ? error : undefined);
+  const observed = error !== undefined && stream.listenerCount("error") > 0;
+  // A stream that does not get the error must not read as cleanly closed. CANCEL raises no error in _destroy.
+  if (error !== undefined && !observed && !stream.closed && !stream.rstCode) stream.rstCode = NGHTTP2_CANCEL;
+  stream.destroy(observed ? error : undefined);
 }
 class Http2Stream extends Duplex {
   #id: number;
@@ -5034,6 +5037,13 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
 
       self.#connections--;
+      if (self.#destroying) {
+        // destroy()'s sweep: `error` is the session's code. Like node's closeSession(), an open stream
+        // gets the session's error, if there is one. ERR_HTTP2_STREAM_CANCEL is for pending requests.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1234-L1239
+        process.nextTick(destroyStreamForSessionDestroy, self[kSessionDestroyError], error, stream);
+        return;
+      }
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
@@ -5408,6 +5418,10 @@ class ClientHttp2Session extends Http2Session {
       return;
     }
     this[bunHTTP2Socket] = null;
+    // Open streams get the transport error like in node, also on the paths below where the session
+    // stays quiet. Behind a GOAWAY node gives them nothing, so a cut response looks complete there:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3253-L3263
+    this[kSessionDestroyError] = error;
     if (this.#closed) {
       this.destroy();
       return;
@@ -5846,17 +5860,11 @@ class ClientHttp2Session extends Http2Session {
       }
       const parser = this.#parser;
       if (parser) {
-        // node cancels streams still open when their session is destroyed: each gets
-        // ERR_HTTP2_STREAM_CANCEL (or the session error when one was provided), with the CANCEL
-        // rst code.
-        if (this[kSessionDestroyError] == null && error == null) {
-          this[kSessionDestroyError] = createPendingStreamCancelError();
-        }
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
         this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);
         try {
-          parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+          parser.emitErrorToAllStreams(this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR);
         } finally {
           this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
         }

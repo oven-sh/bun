@@ -1859,6 +1859,8 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
 
 it("process.execArgv", async () => {
   const script = join(__dirname, "print-process-execArgv.js");
+  const printExpr = "JSON.stringify({execArgv:process.execArgv,argv:process.argv.slice(2)})";
+  const printCode = `console.log(${printExpr})`;
   // Every command below also gets `script` on stdin, so a bare `-` in the script
   // position runs the same fixture from stdin. `argv` is process.argv.slice(2).
   const fixtures = [
@@ -1880,12 +1882,19 @@ it("process.execArgv", async () => {
     ["--conditions run index.ts", ["--conditions", "run"], []],
     // `-c`/`--config` only take a value as `--config=path`, so the next arg is the script.
     ["-c index.ts a", ["-c"], ["a"]],
+    // In a short chain the last short takes the next token (`-be code` is `-b -e code`).
+    [`-be '${printCode}' a`, ["-be", printCode], []],
+    // `-pe` is an alias of `-p` without `run`; `bun run -pe x` is `-p e` and `x` is the script.
+    [`-pe '${printExpr}' a`, ["-pe", printExpr], []],
+    ["run -pe index.ts a", ["-pe"], ["a"]],
   ];
 
   const results = await Promise.all(
     fixtures.map(async ([cmd]) => {
       const replacedCmd = cmd.replace("index.ts", Bun.$.escape(script));
-      return [cmd, await Bun.$`${bunExe()} ${{ raw: replacedCmd }} < ${script}`.json()];
+      const stdout = await Bun.$`${bunExe()} ${{ raw: replacedCmd }} < ${script}`.text();
+      // `run -pe index.ts` also prints the `-p` result, so pick the fixture's line.
+      return [cmd, JSON.parse(stdout.split("\n").find(line => line.startsWith('{"execArgv"')))];
     }),
   );
   expect(Object.fromEntries(results)).toEqual(

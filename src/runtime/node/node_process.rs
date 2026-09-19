@@ -289,14 +289,30 @@ mod _impl {
                         }
                     }
                 }
-                // Aliases are not params; one takes a value iff its target does.
-                for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
-                    if set.contains(to) {
-                        bun_core::handle_oom(set.insert(from));
-                    }
-                }
                 set
             });
+
+        // Mirrors `src/clap/streaming.rs`: in a short chain (`-be`) the first value-taking
+        // short takes the rest of the token, or the next token when it is the last byte.
+        fn consumes_next_arg(arg: &[u8], seen_run: bool) -> bool {
+            if arg.starts_with(b"--") {
+                return CONSUMES_NEXT_ARG.contains(arg);
+            }
+            // `bun run` parses without the node short aliases (`-pe` is `-p e` there).
+            if !seen_run {
+                for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
+                    if arg == *from {
+                        return CONSUMES_NEXT_ARG.contains(to);
+                    }
+                }
+            }
+            for (i, &short) in arg.iter().enumerate().skip(1) {
+                if CONSUMES_NEXT_ARG.contains(&[b'-', short]) {
+                    return i == arg.len() - 1;
+                }
+            }
+            false
+        }
 
         let mut seen_run = false;
         let mut awaiting_value = false;
@@ -322,7 +338,7 @@ mod _impl {
 
             if arg.len() >= 1 && arg[0] == b'-' {
                 args.push(BunString::clone_utf8(arg));
-                awaiting_value = CONSUMES_NEXT_ARG.contains(arg);
+                awaiting_value = consumes_next_arg(arg, seen_run);
                 continue;
             }
 

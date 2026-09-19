@@ -1604,6 +1604,7 @@ mod rule_parsers {
                         let mut selector_parser = selector_parser::SelectorParser {
                             is_nesting_allowed: true,
                             options: this.options,
+                            in_global_scope: false,
                         };
                         let scope_start = if input.try_parse(|p| p.expect_parenthesis_block()).is_ok() {
                             Some(input.parse_nested_block(|input2| {
@@ -1637,6 +1638,7 @@ mod rule_parsers {
                         let mut selector_parser = selector_parser::SelectorParser {
                             is_nesting_allowed: true,
                             options: this.options,
+                            in_global_scope: false,
                         };
                         let selectors = SelectorList::parse(
                             &mut selector_parser,
@@ -1950,6 +1952,7 @@ mod rule_parsers {
             let mut selector_parser = selector_parser::SelectorParser {
                 is_nesting_allowed: true,
                 options: this.options,
+                in_global_scope: false,
             };
             if this.is_in_style_rule {
                 SelectorList::parse_relative(

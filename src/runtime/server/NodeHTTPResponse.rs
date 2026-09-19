@@ -593,6 +593,9 @@ impl NodeHTTPResponse {
             // and will have its own lifecycle management
             let vm = self.server.global_this().bun_vm().as_mut();
             self.poll_ref.with_mut(|r| r.unref(vm));
+            // uWS stops parsing HTTP on the adopted socket, so the request
+            // body's last chunk never arrives to release this.
+            self.body_read_ref.with_mut(|r| r.unref(vm));
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
             let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);
@@ -2284,7 +2287,7 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
 
         // Every site that unrefs `body_read_ref` also transitions `body_read_state` out of `.pending`
-        // or sets `is_data_buffered_during_pause_last`, both of which are rejected by the guard above.
+        // or sets `is_data_buffered_during_pause_last` or `upgraded`, all of which are rejected by the guard above.
         // So reaching here, `body_read_ref` is still held from create(). Do not re-acquire it or
         // `this.ref()` — there would be no balancing release (PR #18564 removed the paired derefs).
         debug_assert!(self.body_read_ref.get().has);

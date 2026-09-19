@@ -3116,7 +3116,7 @@ function processRespondWithFD(
       // The read stream closes respondWithFile's fd. respondWithFD's stays the caller's (node).
       autoClose: ownsFd,
       start: offset < 0 ? undefined : offset,
-      end: length < 0 ? undefined : Math.max(offset, 0) + length - 1,
+      end: length < 0 ? undefined : Math.min(Math.max(offset, 0) + length - 1, Number.MAX_SAFE_INTEGER),
       emitClose: false,
     });
   } catch {

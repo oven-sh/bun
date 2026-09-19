@@ -5105,6 +5105,7 @@ it("http2 respondWithFD() reads offset and length like node, from one descriptor
     [{ offset: 3 }, "3456789"],
     [{ offset: 3, length: 4 }, "3456"],
     [{ offset: 3, length: 100 }, "3456789"],
+    [{ offset: 3, length: Number.MAX_SAFE_INTEGER }, "3456789"],
     [{ length: 0 }, ""],
     [{ length: -5 }, "0123456789"],
     [{ length: 2.5 }, "01"],

@@ -2050,8 +2050,8 @@ enum StreamState {
   Closed = 1 << 3, // 01000 = 8
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
-  // The native side closed and freed the stream (state 7 delivered, or a reset from either
-  // peer dispatched as streamError/aborted): there is nothing left to send on the wire for it.
+  // The native side fully closed and freed the stream (state 7 delivered): there is
+  // nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
   // END_STREAM already rode the final DATA frame from _write/_writev; _final must not
   // emit the empty END_STREAM frame on top of it.
@@ -2060,6 +2060,9 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // The native side dispatched streamError or aborted for the stream. It closed the stream
+  // first, and the RST_STREAM, when one was due, is already written.
+  NativeReset = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2230,7 +2233,7 @@ function rstNextTick(this: Http2Stream, session: Http2Session, id: number, rstCo
   // Native drops a reset for a stream it already closed only while the stream's table entry
   // lives. Once the entry is evicted, and always for a client's pushed stream (never in the
   // table), it writes the frame.
-  if ((this[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0) return;
+  if ((this[bunHTTP2StreamStatus] & (StreamState.NativeClosed | StreamState.NativeReset)) !== 0) return;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
@@ -2683,9 +2686,9 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       session &&
       typeof this.#id === "number" &&
       !this[kNeverAnnounced] &&
-      // A stream the native side already closed has nothing to send, whatever the rstCode
-      // (node's `if (!this.closed)`): skip the host call rstNextTick would drop anyway.
-      (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0
+      // A stream the native side already closed or reset has nothing to send, whatever the
+      // rstCode (node's `if (!this.closed)`): skip the host call rstNextTick would drop anyway.
+      (this[bunHTTP2StreamStatus] & (StreamState.NativeClosed | StreamState.NativeReset)) === 0
     ) {
       setImmediate(rstNextTick.bind(this, session, this.#id, rstCode));
     }
@@ -4074,20 +4077,20 @@ class ServerHttp2Session extends Http2Session {
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeReset;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
         stream[kAborted] = true;
         stream.emit("aborted");
       }
-      stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ServerHttp2Session, stream: ServerHttp2Stream, error: number) {
       if (!self || typeof stream !== "object") return;
-      stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeReset;
       self.#connections--;
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
@@ -5082,19 +5085,19 @@ class ClientHttp2Session extends Http2Session {
     ),
     aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
       if (!self || typeof stream !== "object") return;
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeReset;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
       if (old_state != 5 && old_state != 7) {
         stream[kAborted] = true;
         stream.emit("aborted");
       }
-      stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
     streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
-      stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+      stream[bunHTTP2StreamStatus] |= StreamState.NativeReset;
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),

@@ -924,6 +924,8 @@ describe.concurrent("bun run", () => {
       "style.css": "body { color: red }",
       "notes.txt": "hello",
       "config.toml": "a = 1",
+      "UPPER.CSS": "body { color: red }",
+      "data.sqlite": "",
       "sub": { "keep.txt": "" },
     });
 
@@ -945,13 +947,25 @@ describe.concurrent("bun run", () => {
     it.each([
       ["./notes.txt", "text"],
       ["./config.toml", "toml"],
+      // The VM also takes the loader from an extension in upper case, and from
+      // an extension that is a loader name.
+      ["./UPPER.CSS", "css"],
+      ["UPPER.CSS", "css"],
+      ["./data.sqlite", "sqlite"],
+      ["data.sqlite", "sqlite"],
     ])("bun %s names the %s loader", async (path, loader) => {
       expect(await run(dir, path)).toEqual(cannotRun(basename(path), loader));
     });
 
     it("--if-present exits 0 without an error", async () => {
-      expect(await run(dir, "--if-present", "./style.css")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-      expect(await run(dir, "run", "--if-present", "./style.css")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+      const silent = { stdout: "", stderr: "", exitCode: 0 };
+      expect(
+        await Promise.all([
+          run(dir, "--if-present", "./style.css"),
+          run(dir, "run", "--if-present", "./style.css"),
+          run(dir, "--if-present", "sub/keep.txt"),
+        ]),
+      ).toEqual([silent, silent, silent]);
     });
 
     it("follows a [loader] entry in bunfig.toml", async () => {
@@ -976,6 +990,43 @@ describe.concurrent("bun run", () => {
       expect(await run(String(cwd), "--loader", ".js:text", "./words.js")).toEqual(cannotRun("words.js", "text"));
     });
 
+    // The `sh` loader does not survive the trip through `--loader` and bunfig:
+    // it arrives as the `file` loader. A `.sh` entry point runs in the Bun shell
+    // whatever its loader is.
+    it("runs a .sh file whose extension is mapped to the sh loader", async () => {
+      using cwd = tempDir("bun-run-sh-loader", {
+        "bunfig.toml": `[loader]\n".sh" = "sh"\n`,
+        "script.sh": "echo ran script.sh",
+      });
+      const ran = { stdout: "ran script.sh\n", stderr: "", exitCode: 0 };
+      expect(
+        await Promise.all([
+          run(String(cwd), "./script.sh"),
+          run(String(cwd), "run", "script.sh"),
+          run(String(cwd), "--loader", ".sh:sh", "./script.sh"),
+        ]),
+      ).toEqual([ran, ran, ran]);
+    });
+
+    it("renders or runs a file by its configured loader, for every spelling", async () => {
+      using cwd = tempDir("bun-run-md-loader", {
+        "bunfig.toml": `[loader]\n".txt" = "md"\n".md" = "ts"\n`,
+        "notes.txt": "# Title\n",
+        "code.md": "console.log('ran code.md' as string);",
+      });
+      const rendered = { stdout: "Title\n=====\n", stderr: "", exitCode: 0 };
+      const ranCode = { stdout: "ran code.md\n", stderr: "", exitCode: 0 };
+      expect(
+        await Promise.all([
+          run(String(cwd), "./notes.txt"),
+          run(String(cwd), "notes.txt"),
+          run(String(cwd), "./code.md"),
+          run(String(cwd), "code.md"),
+          run(String(cwd), "run", "code.md"),
+        ]),
+      ).toEqual([rendered, rendered, ranCode, ranCode, ranCode]);
+    });
+
     // On Windows, a file symlink needs a privilege that the test user can lack.
     it.skipIf(isWindows)("uses the extension of the file that a symlink points to", async () => {
       using cwd = tempDir("bun-run-unrunnable-symlink", {
@@ -995,10 +1046,23 @@ describe.concurrent("bun run", () => {
     it("does not execute the file as a binary", async () => {
       using cwd = tempDir("bun-run-unrunnable-executable", {
         "tool.css": "#!/bin/sh\necho executed tool.css\n",
+        "sub": { "tool.css": "#!/bin/sh\necho executed sub/tool.css\n" },
       });
       chmodSync(join(String(cwd), "tool.css"), 0o755);
-      expect(await run(String(cwd), "./tool.css")).toEqual(cannotRun("tool.css", "css"));
-      expect(await run(String(cwd), "run", "./tool.css")).toEqual(cannotRun("tool.css", "css"));
+      chmodSync(join(String(cwd), "sub", "tool.css"), 0o755);
+      const targets = ["./tool.css", "sub/tool.css", ...(isWindows ? ["sub\\tool.css"] : [])];
+      expect(
+        await Promise.all(targets.flatMap(target => [run(String(cwd), target), run(String(cwd), "run", target)])),
+      ).toEqual(Array(targets.length * 2).fill(cannotRun("tool.css", "css")));
+    });
+
+    // Only Windows looks for `tool.cmd` when the target is `sub/tool`.
+    it.skipIf(!isWindows)("runs the .cmd file next to a data file of the same name", async () => {
+      using cwd = tempDir("bun-run-cmd-sibling", {
+        "sub": { "tool.json": "{}", "tool.cmd": "@echo ran tool.cmd" },
+      });
+      const { stdout, stderr, exitCode } = await run(String(cwd), "run", "sub/tool");
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ran tool.cmd", stderr: "", exitCode: 0 });
     });
   });
 

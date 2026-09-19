@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
+import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -6337,18 +6338,45 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
   // The same transport under a TLS socket. tls.connect({ socket: duplex }) is a native socket to
   // the session, but every write to it hands a TLS record to the Duplex, so it runs _write just
   // as synchronously. The frames are read from what a TLS server decrypts.
+  // outer "connect": the nested call fires while the session hands the transport the bytes that
+  // waited for the connect (the connection preface and SETTINGS). The session used to keep them
+  // pending until that write returned, so a frame or a flush issued from inside it sent them again.
+  function expectNestedAfterConnectFlush(bytes, parsed, kind) {
+    expect(bytes.indexOf(PREFACE)).toBe(0);
+    expect(bytes.indexOf(PREFACE, 1)).toBe(-1);
+    expect(parsed.complete).toBe(true);
+    expect(parsed.headerBlocksContiguous).toBe(true);
+    expect(parsed.frames[0].type).toBe(FRAME.SETTINGS);
+    expect(parsed.frames.filter(f => f.type === FRAME.SETTINGS).length).toBe(kind === "settings" ? 2 : 1);
+    // The nested request is the session's first stream here.
+    const after = parsed.frames.slice(1);
+    if (kind === "request" || kind === "data") {
+      expect(after.filter(f => f.type === FRAME.HEADERS && f.streamId === 1).length).toBe(1);
+    } else {
+      expect(after.filter(f => f.type === nested[kind].type).length).toBe(1);
+    }
+    if (kind === "data") {
+      const nestedData = Buffer.concat(
+        after.filter(f => f.type === FRAME.DATA && f.streamId === 1).map(f => f.payload),
+      );
+      expect(nestedData.equals(nestedBody)).toBe(true);
+    }
+  }
   const tlsCases = Object.keys(nested).flatMap(kind => [
     [kind, "data"],
     [kind, "continuation"],
+    [kind, "connect"],
   ]);
   it.each(tlsCases)(
     "nested %s() issued during the outer %s write (transport under a TLSSocket)",
     async (kind, outer) => {
       const received = [];
-      // Sent once the body and the nested frames are serialized, so it is the session's last
-      // frame: when the server has it, it has every frame.
+      // Sent once every other frame is serialized, so it is the session's last frame: when the
+      // server has it, it has them all. Nothing is held back, because this transport reports no
+      // backpressure and both bodies fit the default flow-control windows.
       const lastPing = Buffer.from("LASTPING");
       const receivedAll = Promise.withResolvers();
+      receivedAll.promise.catch(() => {});
       const server = tls.createServer({ ...TLS_CERT, ALPNProtocols: ["h2"] }, socket => {
         socket.on("error", () => {});
         socket.on("data", chunk => {
@@ -6362,6 +6390,7 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
       let armed = false;
       let issued = false;
       let sess;
+      let socket;
       const transport = new Duplex({
         read() {},
         write(chunk, enc, cb) {
@@ -6375,24 +6404,37 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
       transport.on("error", () => {});
       raw.on("data", chunk => transport.push(chunk));
       try {
-        await new Promise(resolve => raw.once("connect", resolve));
-        const socket = tls.connect({ socket: transport, ALPNProtocols: ["h2"], ...TLS_OPTIONS });
+        await once(raw, "connect");
+        socket = tls.connect({ socket: transport, ALPNProtocols: ["h2"], ...TLS_OPTIONS });
         socket.on("error", () => {});
+        if (outer === "connect") {
+          // Runs right before the session's own listener attaches the socket and flushes. Armed
+          // for that tick only: the nested call has to fire from inside that flush.
+          socket.once("secureConnect", () => {
+            armed = true;
+            process.nextTick(() => (armed = false));
+          });
+        }
         sess = http2.connect("https://localhost", { createConnection: () => socket });
         sess.on("error", () => {});
-        await new Promise(resolve => sess.once("connect", resolve));
+        sess.once("close", () => receivedAll.reject(new Error("the session closed before the server had every frame")));
+        await once(sess, "connect");
         expect(socket._handle).toBeTruthy();
 
-        await sendOuterRequest(sess, outer, () => (armed = true));
+        if (outer !== "connect") await sendOuterRequest(sess, outer, () => (armed = true));
         expect(issued).toBe(true);
         sess.ping(lastPing, () => {});
         await receivedAll.promise;
 
-        const parsed = parseFrames(Buffer.concat(received));
+        const bytes = Buffer.concat(received);
+        const parsed = parseFrames(bytes);
         parsed.frames = parsed.frames.filter(f => !(f.type === FRAME.PING && f.payload.equals(lastPing)));
-        expectNestedAfterOuterUnit(parsed, kind, outer);
+        if (outer === "connect") expectNestedAfterConnectFlush(bytes, parsed, kind);
+        else expectNestedAfterOuterUnit(parsed, kind, outer);
       } finally {
         sess?.destroy();
+        socket?.destroy();
+        transport.destroy();
         raw.destroy();
         server.close();
       }

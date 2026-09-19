@@ -255,6 +255,31 @@ describe("an invalid encoding is reported before an invalid path", () => {
     }
     expect(actual).toEqual(expected);
   });
+
+  // fs.watch validates more options than the other calls. Node v26.3.0 reports
+  // the encoding before each of them too, with a valid path or an invalid one.
+  it("watch, with a second invalid option", () => {
+    using dir = tempDir("fs-watch-encoding-first", {});
+    const otherOptions = { persistent: 1, recursive: 1, verbose: 1, signal: 1, ignore: 5 };
+    const actual: Record<string, unknown> = {};
+    const expected: Record<string, unknown> = {};
+    for (const [pathLabel, path] of [
+      ["valid path", String(dir)],
+      ["bigint", 123n],
+    ] as [string, any][]) {
+      for (const [name, value] of Object.entries(otherOptions)) {
+        const label = `${pathLabel}, { encoding: 'bogus', ${name}: ${value} }`;
+        expected[label] = encodingError;
+        try {
+          fs.watch(path, { encoding: "bogus", [name]: value } as any, noop).close();
+          actual[label] = "did not throw";
+        } catch (err) {
+          actual[label] = describeError(err);
+        }
+      }
+    }
+    expect(actual).toEqual(expected);
+  });
 });
 
 describe("test-fs-assert-encoding-error", () => {

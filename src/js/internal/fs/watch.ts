@@ -146,16 +146,14 @@ class FSWatcher extends EventEmitter {
     } else if (typeof options === "string") {
       options = { encoding: options };
     }
+    // node's getOptions() asserts the encoding before the path or any other
+    // option is validated, so an invalid encoding wins over each of them.
+    assertEncoding(options?.encoding);
 
-    if (path instanceof URL || (typeof path === "string" && path.startsWith("file:"))) {
-      try {
-        path = Bun.fileURLToPath(path);
-      } catch (err) {
-        // node's getOptions() asserts the encoding before the path is validated,
-        // so an invalid encoding wins over an invalid URL.
-        assertEncoding(options?.encoding);
-        throw err;
-      }
+    if (path instanceof URL) {
+      path = Bun.fileURLToPath(path);
+    } else if (typeof path === "string" && path.startsWith("file:")) {
+      path = Bun.fileURLToPath(path);
     }
 
     if (typeof listener !== "function") {

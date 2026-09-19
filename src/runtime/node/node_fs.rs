@@ -3212,7 +3212,7 @@ pub mod args {
     /// an invalid encoding wins over an invalid path. The path is still parsed first:
     /// that captures a resizable buffer before an `encoding` getter can shrink it.
     /// https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1761-L1764
-    pub(crate) fn or_encoding_error<T>(
+    fn or_encoding_error<T>(
         ctx: &JSGlobalObject,
         options: Option<JSValue>,
         path: JsResult<T>,

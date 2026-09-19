@@ -651,15 +651,11 @@ impl<'a> Arguments<'a> {
         cx: &bun_jsc::JsThread<'a>,
         arguments: &mut ArgumentsSlice,
     ) -> JsResult<Arguments<'a>> {
-        let options = arguments.peek_at(1);
-        let path = PathLike::from_js(cx.global(), arguments).and_then(|path| {
-            path.ok_or_else(|| {
-                cx.global().throw_invalid_arguments(format_args!(
-                    "filename must be a string or TypedArray"
-                ))
-            })
-        });
-        let path = crate::node::fs::args::or_encoding_error(cx.global(), options, path)?;
+        let Some(path) = PathLike::from_js(cx.global(), arguments)? else {
+            return Err(cx
+                .global()
+                .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
+        };
         // `PathLike: Drop` releases the path: `?` on the error paths below
         // drops `path` automatically.
 

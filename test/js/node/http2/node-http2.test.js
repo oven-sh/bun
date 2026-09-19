@@ -2101,7 +2101,7 @@ it("http2 padded DATA write survives a re-entrant stream write from a JS Duplex 
   expect(exitCode).toBe(0);
 });
 
-describe("http2 priority fields of a request HEADERS frame", () => {
+describe("http2 priority fields of a HEADERS frame", () => {
   const HEADERS = 0x1;
   const CONTINUATION = 0x9;
   const END_HEADERS = 0x4;
@@ -2140,9 +2140,11 @@ describe("http2 priority fields of a request HEADERS frame", () => {
       },
     });
     const session = http2.connect("http://localhost:1", { createConnection: () => transport });
-    session.on("error", () => {});
+    session.on("error", headerBlock.reject);
+    session.on("close", () => headerBlock.reject(new Error("the session closed before the header block was written")));
     try {
-      await new Promise(resolve => session.once("connect", resolve));
+      const connected = new Promise(resolve => session.once("connect", resolve));
+      await Promise.race([connected, headerBlock.promise]);
       const req = session.request(headers, options);
       req.on("error", headerBlock.reject);
       req.on("close", () => headerBlock.reject(new Error("the request closed before its header block was written")));
@@ -2179,6 +2181,33 @@ describe("http2 priority fields of a request HEADERS frame", () => {
       priority: { exclusive: true, parent: 3, weight: 16 },
       block: plain.block,
     });
+  });
+
+  // The client request() drops `weight` (DEP0194). The options of the server respond() reach the
+  // same native writer, and node ignores a weight there.
+  it("respond() accepts 256, the largest RFC 7540 weight", async () => {
+    const response = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("error", response.reject);
+    server.on("stream", stream => {
+      stream.on("error", response.reject);
+      stream.respond({ ":status": 200 }, { endStream: true, weight: 256 });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      client.on("error", response.reject);
+      const req = client.request({ ":path": "/" });
+      let status;
+      req.on("response", headers => (status = headers[":status"]));
+      req.on("error", response.reject);
+      req.on("close", () => response.resolve(status));
+      req.resume();
+      expect(await response.promise).toBe(200);
+    } finally {
+      client.destroy();
+      server.close();
+    }
   });
 });
 

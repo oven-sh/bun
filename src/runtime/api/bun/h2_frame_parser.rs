@@ -6991,7 +6991,7 @@ impl H2FrameParser {
                 if weight_js.is_number() || weight_js.is_int32() {
                     has_priority = true;
                     weight = weight_js.to_int32();
-                    if weight < 1 || weight > u8::MAX as i32 {
+                    if weight < 1 || weight > 256 {
                         stream.state = StreamState::CLOSED;
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                         this.dispatch_with_extra(
@@ -7010,7 +7010,7 @@ impl H2FrameParser {
                     ));
                 }
 
-                if weight < 1 || weight > u8::MAX as i32 {
+                if weight < 1 || weight > 256 {
                     stream.state = StreamState::CLOSED;
                     stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                     this.dispatch_with_extra(

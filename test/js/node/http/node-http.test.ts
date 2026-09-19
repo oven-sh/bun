@@ -4980,18 +4980,18 @@ describe("Upgrade pipelined behind a pending response", () => {
   });
 
   test("should read the body of the Upgrade request while the response ahead has not drained", async () => {
-    // The response ahead fills the socket buffers, which pauses reads for queued responses.
-    // A queued hand-off must not hold them: the listener waits for the body before it ends
-    // the response ahead.
-    const total = 4 * 1024 * 1024;
+    // Small writes past the kernel buffers fill the uWS send buffer, which pauses the reads of
+    // the connection when the Upgrade is parsed. Once the buffer drains, a queued hand-off must
+    // not keep them paused: the listener waits for the body before it ends the response ahead.
+    const chunk = Buffer.alloc(8 * 1024, "a");
+    const count = 1024;
     const body = "0123456789";
     let first: http.ServerResponse | undefined;
     const { promise: gotBody, resolve: onBody, reject: onFailure } = Promise.withResolvers<string>();
     await using server = http.createServer((req, res) => {
       if (req.headers.upgrade !== undefined) return void onFailure(new Error("dispatched as a request"));
       first = res;
-      res.writeHead(200, { "Content-Length": total });
-      res.write(Buffer.alloc(total, "a"));
+      for (let i = 0; i < count; i++) res.write(chunk);
     });
     server.on("clientError", onFailure);
     server.on("upgrade", (req, socket) => {
@@ -5012,12 +5012,16 @@ describe("Upgrade pipelined behind a pending response", () => {
       client.pause();
       client.write(get("/first") + upgradeRequest("/second", `Content-Length: ${body.length}\r\n`));
       await once(server, "upgrade");
-      // The body comes in a packet of its own, while the client still does not read.
+      // The body comes in a packet of its own. The server reads it once its buffer has drained.
       client.write(body);
-      expect(await gotBody).toBe(body);
       client.resume();
+      expect(await gotBody).toBe(body);
       await once(client, "end");
-      expect(Buffer.concat(received).toString("latin1").endsWith(SWITCHING)).toBe(true);
+      const text = withoutResponseHeads(Buffer.concat(received).toString("latin1"));
+      const bodyEnd = text.indexOf("0\r\n\r\n");
+      expect(text.slice(bodyEnd)).toBe(`0\r\n\r\n${SWITCHING}`);
+      expect(text.slice(0, bodyEnd).replace(/2000\r\na+\r\n/g, "")).toBe("");
+      expect(received.reduce((n, b) => n + b.length, 0)).toBeGreaterThan(chunk.length * count);
     } finally {
       client.destroy();
     }

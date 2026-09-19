@@ -4789,7 +4789,11 @@ impl VirtualMachine {
                         if bun_paths::is_absolute(path.slice()) {
                             let directory = bun_resolver::fs::PathName::init(path.slice())
                                 .dir_with_trailing_slash();
-                            jsc_vm.transpiler.resolver.bust_dir_cache(directory);
+                            jsc_vm.transpiler.resolver.bust_dir_cache(
+                                bun_paths::string_paths::without_trailing_slash_windows_path(
+                                    directory,
+                                ),
+                            );
                         }
                     }
                     return Ok(resolved_path);

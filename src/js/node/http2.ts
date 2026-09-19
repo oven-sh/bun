@@ -3332,7 +3332,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
+    const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
     options = { ...options };
 
     // Payload/DATA frames are not permitted in these cases
@@ -3392,7 +3392,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
+    const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -3470,7 +3470,7 @@ class ServerHttp2Stream extends Http2Stream {
       headers[HTTP2_HEADER_STATUS] = 200;
       hasStatus = false;
     }
-    const statusCode = headers[HTTP2_HEADER_STATUS];
+    const statusCode = (headers[HTTP2_HEADER_STATUS] |= 0);
     if (hasStatus) {
       if (statusCode === HTTP_STATUS_SWITCHING_PROTOCOLS) throw $ERR_HTTP2_STATUS_101();
       if (statusCode < 100 || statusCode >= 200) {

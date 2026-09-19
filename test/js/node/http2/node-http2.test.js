@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -5024,6 +5024,115 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
     server.close();
   }
 });
+
+it("http2 additionalHeaders/respondWithFile/respondWithFD coerce :status to an integer before the status checks", async () => {
+  // Expected values are what node v26.3.0 reports for the same calls.
+  using dir = tempDir("http2-status-coercion", { "body.txt": "file body" });
+  const file = path.join(String(dir), "body.txt");
+  const statCheck = seen => (_stat, headers) => void (seen.statCheck = headers[":status"]);
+  const calls = {
+    "/info/string-101": stream => stream.additionalHeaders({ ":status": "101" }),
+    "/info/fraction-101": stream => stream.additionalHeaders({ ":status": 101.5 }),
+    "/info/not-a-number": stream => stream.additionalHeaders({ ":status": "abc" }),
+    "/info/string-103": stream => stream.additionalHeaders({ ":status": "103" }),
+    "/info/fraction-103": stream => stream.additionalHeaders({ ":status": 103.5 }),
+    "/file/string-204": stream => stream.respondWithFile(file, { ":status": "204" }),
+    "/file/fraction-304": stream => stream.respondWithFile(file, { ":status": 304.2 }),
+    "/file/string-404": (stream, seen) =>
+      stream.respondWithFile(file, { ":status": "404" }, { statCheck: statCheck(seen) }),
+    "/fd/string-204": (stream, _seen, fd) => stream.respondWithFD(fd, { ":status": "204" }),
+    "/fd/fraction-304": (stream, _seen, fd) => stream.respondWithFD(fd, { ":status": 304.2 }),
+    "/fd/string-404": (stream, seen, fd) =>
+      stream.respondWithFD(fd, { ":status": "404" }, { statCheck: statCheck(seen) }),
+  };
+
+  const serverSeen = {};
+  const serverStreamsClosed = [];
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    const requestPath = headers[":path"];
+    const seen = (serverSeen[requestPath] = {});
+    const closed = Promise.withResolvers();
+    serverStreamsClosed.push(closed.promise);
+    stream.on("error", err => (seen.streamError = err.code));
+    let fd;
+    if (requestPath.startsWith("/fd/")) fd = fs.openSync(file, "r");
+    stream.on("close", () => {
+      if (fd !== undefined) fs.closeSync(fd);
+      closed.resolve();
+    });
+    try {
+      calls[requestPath](stream, seen, fd);
+      if (requestPath.startsWith("/info/")) seen.sentInfoStatus = stream.sentInfoHeaders.map(h => h[":status"]);
+    } catch (err) {
+      seen.threw = { code: err.code, message: err.message };
+    }
+    // A call that threw sent nothing, and an informational block is not a response.
+    if (seen.threw !== undefined || requestPath.startsWith("/info/")) {
+      stream.respond({ ":status": 200 });
+      stream.end("fallback");
+    }
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  // One session per call: a status that reaches the wire malformed must not disturb the other calls.
+  async function request(requestPath) {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const seen = { info: [] };
+    const { promise, resolve } = Promise.withResolvers();
+    client.on("error", err => (seen.sessionError = err.code));
+    const req = client.request({ ":path": requestPath });
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("headers", headers => seen.info.push(headers[":status"]));
+    req.on("response", headers => (seen.status = headers[":status"]));
+    req.on("data", chunk => (body += chunk));
+    req.on("error", err => (seen.error = err.code));
+    req.on("close", () => {
+      seen.body = body;
+      client.close();
+      resolve();
+    });
+    req.end();
+    await promise;
+    return { server: serverSeen[requestPath], client: seen };
+  }
+
+  try {
+    const paths = Object.keys(calls);
+    const results = Object.fromEntries((await Promise.all(paths.map(request))).map((result, i) => [paths[i], result]));
+    await Promise.all(serverStreamsClosed);
+
+    const threw = (code, message) => ({
+      server: { threw: { code, message } },
+      client: { info: [], status: 200, body: "fallback" },
+    });
+    const status101 = threw(
+      "ERR_HTTP2_STATUS_101",
+      "HTTP status code 101 (Switching Protocols) is forbidden in HTTP/2",
+    );
+    const sentInfo103 = { server: { sentInfoStatus: [103] }, client: { info: [103], status: 200, body: "fallback" } };
+    const payloadForbidden = status =>
+      threw("ERR_HTTP2_PAYLOAD_FORBIDDEN", `Responses with ${status} status must not have a payload`);
+    const sentFile404 = { server: { statCheck: 404 }, client: { info: [], status: 404, body: "file body" } };
+    expect(results).toEqual({
+      "/info/string-101": status101,
+      "/info/fraction-101": status101,
+      "/info/not-a-number": threw("ERR_HTTP2_INVALID_INFO_STATUS", "Invalid informational status code: 0"),
+      "/info/string-103": sentInfo103,
+      "/info/fraction-103": sentInfo103,
+      "/file/string-204": payloadForbidden(204),
+      "/file/fraction-304": payloadForbidden(304),
+      "/file/string-404": sentFile404,
+      "/fd/string-204": payloadForbidden(204),
+      "/fd/fraction-304": payloadForbidden(304),
+      "/fd/string-404": sentFile404,
+    });
+  } finally {
+    server.close();
+  }
+});
+
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

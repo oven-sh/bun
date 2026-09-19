@@ -555,10 +555,10 @@ it("chrome: two views have independent sessions", async () => {
   }
 });
 
-// Every view shares the one Chrome's default context unless it asks for a
-// context of its own with dataStore: "ephemeral". Then its cookies are its
-// own, and gone once it closes (#43416).
-it('chrome: dataStore: "ephemeral" gives each view its own cookie jar', async () => {
+// An ephemeral view (the default) has a browser context of its own: its
+// cookies are its own, and gone once it closes. Views with a
+// dataStore.directory share the one Chrome's default context (#43416).
+it("chrome: each ephemeral view has its own cookie jar", async () => {
   const cookiesSeen: (string | null)[] = [];
   using server = Bun.serve({
     port: 0,
@@ -570,15 +570,18 @@ it('chrome: dataStore: "ephemeral" gives each view its own cookie jar', async ()
     },
   });
   const url = `http://127.0.0.1:${server.port}/`;
-  await using shared = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  // Chrome is already running, so the directory only selects the shared context.
+  using profile = tempDir("webview-shared-profile", {});
+  const shared = { directory: String(profile) };
+  await using sharedView = new Bun.WebView({ backend: chrome, width: 100, height: 100, dataStore: shared });
   const a = new Bun.WebView({ backend: chrome, width: 100, height: 100, dataStore: "ephemeral" });
-  await using b = new Bun.WebView({ backend: chrome, width: 100, height: 100, dataStore: "ephemeral" });
+  await using b = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
   try {
-    await shared.navigate(url);
+    await sharedView.navigate(url);
     await a.navigate(url);
     await b.navigate(url);
     expect([
-      await shared.evaluate("document.cookie"),
+      await sharedView.evaluate("document.cookie"),
       await a.evaluate("document.cookie"),
       await b.evaluate("document.cookie"),
     ]).toEqual(["jar=1", "jar=2", "jar=3"]);
@@ -590,7 +593,7 @@ it('chrome: dataStore: "ephemeral" gives each view its own cookie jar', async ()
     a.close();
   }
   // The context went with the view. A later shared view still has the default jar.
-  await using later = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  await using later = new Bun.WebView({ backend: chrome, width: 100, height: 100, dataStore: shared });
   await later.navigate(url);
   expect(cookiesSeen[4]).toBe("jar=1");
 });

@@ -2448,12 +2448,9 @@ impl<'a> Resolver<'a> {
         let source_dir = bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO);
 
         if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
-            // A tsconfig `paths` alias or a `baseUrl` lookup lands in the
-            // directories the tsconfig maps it to, not next to the importer.
             let mut busted = false;
             self.for_each_tsconfig_target(source_dir, specifier, &mut |this, abs| {
-                // `import "@/dir/"` maps to a path that ends in a separator,
-                // which is not a valid cache key.
+                // `@/dir/` maps to a path that ends in a separator.
                 let abs = strings::without_trailing_slash_windows_path(abs);
                 let dir = bun_paths::dirname_platform(abs, bun_paths::Platform::AUTO);
                 busted |= this.bust_dir_cache(dir);
@@ -4754,9 +4751,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Calls `visit` with each absolute path that the tsconfig `paths` map
-    /// `path` to, in the order `match_tsconfig_paths` tries them. Stops and
-    /// returns true as soon as `visit` returns true.
+    /// Visits each target the `paths` map `path` to. Stops when `visit` returns true.
     fn for_each_tsconfig_paths_target(
         &mut self,
         tsconfig: &TSConfigJSON,
@@ -4937,10 +4932,7 @@ impl<'a> Resolver<'a> {
         false
     }
 
-    /// Calls `visit` with each absolute path that the tsconfig enclosing
-    /// `source_dir` maps a non-relative `specifier` to, through `paths` and
-    /// then `baseUrl`. Used after a failed lookup to evict or watch the
-    /// directories a later file creation can land in.
+    /// Visits each path the tsconfig enclosing `source_dir` maps `specifier` to.
     pub fn for_each_tsconfig_target(
         &mut self,
         source_dir: &[u8],

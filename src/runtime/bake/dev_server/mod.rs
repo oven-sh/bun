@@ -1237,16 +1237,11 @@ impl DirectoryWatchStore {
             bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source);
         let is_relative = specifier.starts_with(b"./") || specifier.starts_with(b"../");
 
-        // The directories a later file creation can land in, and the
-        // specifier to resolve again when one of them changes.
         let mut dirs: Vec<Box<[u8]>> = Vec::new();
         let mut specifier_to_resolve: Box<[u8]> = Box::from(specifier);
         match loader {
             Loader::Tsx | Loader::Ts | Loader::Jsx | Loader::Js => {
                 if !is_relative {
-                    // Only the directories a tsconfig `paths` alias or a
-                    // `baseUrl` lookup maps to are watched. A specifier that
-                    // matches neither (a package) gets no watch.
                     let dev = self.owner();
                     // SAFETY: `server_transpiler` is initialized before the
                     // bundler can report a failure. `owner()` recovers the

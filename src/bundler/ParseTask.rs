@@ -2265,7 +2265,7 @@ pub mod parse_worker {
             .unwrap_or(Loader::File);
 
         let mut contents_came_from_plugin: bool = false;
-        let result = get_code_for_parse_task(
+        let entry = match get_code_for_parse_task(
             task,
             log,
             transpiler,
@@ -2274,12 +2274,19 @@ pub mod parse_worker {
             &mut file_path,
             &mut loader,
             &mut contents_came_from_plugin,
-        );
-        if result.is_err() {
-            // SAFETY: `transpiler` is live; no other borrow of it is held here.
-            unsafe { (*transpiler).reset_store() };
-        }
-        result
+        ) {
+            Ok(entry) => entry,
+            Err(e) => {
+                // SAFETY: `transpiler` is live; no other borrow of it is held here.
+                unsafe { (*transpiler).reset_store() };
+                return Err(e);
+            }
+        };
+        // An onBeforeParse plugin may have chosen a different loader for the
+        // source it handed back. `run_with_source_code` (the next stage, possibly
+        // on another thread) re-derives the loader from `task`, so store it there.
+        task.loader = Some(loader);
+        Ok(entry)
     }
 
     // ───────────────────────────────────────────────────────────────────────────

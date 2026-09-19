@@ -744,6 +744,169 @@ console.log(JSON.stringify(json))
     expect(exitCode).toBe(0);
   });
 
+  // `OnBeforeParseResult.loader` lets the plugin choose how Bun parses the file,
+  // overriding the loader implied by the extension.
+  describe("result loader", () => {
+    async function buildWithLoaderPlugin(opts: {
+      dir: string;
+      files: Record<string, string>;
+      entrypoint: string;
+      filter: RegExp;
+      symbol: string;
+      external?: unknown;
+    }) {
+      const dir = path.join(tempdir, "loader_tests", opts.dir);
+      await Promise.all(
+        Object.entries(opts.files).map(([name, contents]) => Bun.write(path.join(dir, name), contents)),
+      );
+      const napiModule = loadPlugin();
+
+      const result = await Bun.build({
+        outdir: path.join(dir, "out"),
+        entrypoints: [path.join(dir, opts.entrypoint)],
+        target: "bun",
+        plugins: [
+          {
+            name: "loader-test",
+            setup(build) {
+              build.onBeforeParse(
+                { filter: opts.filter },
+                { napiModule, symbol: opts.symbol, external: opts.external },
+              );
+            },
+          },
+        ],
+      });
+      expect(result.logs).toBeEmpty();
+      expect(result.success).toBeTrue();
+      return result;
+    }
+
+    function loadPlugin() {
+      return require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+    }
+
+    async function run(entrypoint: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), entrypoint],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout;
+    }
+
+    it("parses replaced source with the loader the plugin set", async () => {
+      const napiModule = loadPlugin();
+      const external = napiModule.createExternal();
+      const result = await buildWithLoaderPlugin({
+        dir: "compile_to_js_import",
+        files: {
+          "index.ts": `import message from "./message.foo";\nconsole.log(message);\n`,
+          "message.foo": "hello from foo",
+        },
+        entrypoint: "index.ts",
+        filter: /\.foo$/,
+        symbol: "plugin_impl_compile_to_js",
+        external,
+      });
+
+      // With the extension's `file` loader, message.foo would be copied to the
+      // outdir as an asset and the import would evaluate to its path.
+      expect(result.outputs.map(output => output.kind)).toEqual(["entry-point"]);
+      expect(await run(result.outputs[0].path)).toBe("hello from foo\n");
+      expect(napiModule.getCompilationCtxFreedCount(external)).toBe(1);
+    });
+
+    it("parses a replaced entry point with the loader the plugin set", async () => {
+      const result = await buildWithLoaderPlugin({
+        dir: "compile_to_js_entry",
+        files: {
+          "page.foo": "hello from the entry point",
+        },
+        entrypoint: "page.foo",
+        filter: /\.foo$/,
+        symbol: "plugin_impl_compile_to_js",
+      });
+
+      expect(result.outputs.map(output => [output.kind, path.basename(output.path)])).toEqual([
+        ["entry-point", "page.js"],
+      ]);
+      expect(await result.outputs[0].text()).toContain('"hello from the entry point"');
+    });
+
+    it("parses the original source with the loader the plugin set", async () => {
+      const result = await buildWithLoaderPlugin({
+        dir: "parse_as_js",
+        files: {
+          "index.ts": `import answer from "./answer.txt";\nconsole.log(answer);\n`,
+          // The extension's `text` loader would export this string verbatim.
+          "answer.txt": "export default 40 + 2;",
+        },
+        entrypoint: "index.ts",
+        filter: /\.txt$/,
+        symbol: "plugin_impl_parse_as_js",
+      });
+
+      expect(await run(result.outputs[0].path)).toBe("42\n");
+    });
+
+    it("honors a non-JavaScript loader set by the plugin", async () => {
+      const result = await buildWithLoaderPlugin({
+        dir: "parse_as_json",
+        files: {
+          "index.ts": `import data from "./data.txt";\nconsole.log(JSON.stringify(data), typeof data);\n`,
+          "data.txt": `{ "answer": 42 }`,
+        },
+        entrypoint: "index.ts",
+        filter: /\.txt$/,
+        symbol: "plugin_impl_parse_as_json",
+      });
+
+      expect(await run(result.outputs[0].path)).toBe('{"answer":42} object\n');
+    });
+
+    it("keeps the side effects of a file the plugin moved off the file loader", async () => {
+      const result = await buildWithLoaderPlugin({
+        dir: "file_to_js_side_effects",
+        files: {
+          "index.ts": `import "./effect.foo";\nconsole.log("index");\n`,
+          // .foo defaults to the `file` loader, and a bare import of a `file`
+          // loader module is dropped as side-effect free.
+          "effect.foo": `console.log("effect");`,
+        },
+        entrypoint: "index.ts",
+        filter: /\.foo$/,
+        symbol: "plugin_impl_parse_as_js",
+      });
+
+      expect(await run(result.outputs[0].path)).toBe("effect\nindex\n");
+    });
+
+    it("copies the file as an asset when the plugin switches it to the file loader", async () => {
+      const result = await buildWithLoaderPlugin({
+        dir: "js_to_file",
+        files: {
+          "index.ts": `import url from "./thing.js";\nconsole.log(url);\n`,
+          "thing.js": `export default "bundled as js";`,
+        },
+        entrypoint: "index.ts",
+        // Nothing else in this build uses the file loader, so the asset only
+        // gets written if the plugin's choice is accounted for.
+        filter: /thing\.js$/,
+        symbol: "plugin_impl_parse_as_file",
+      });
+
+      expect(result.outputs.map(output => output.kind)).toEqual(["entry-point", "asset"]);
+      const [entry, asset] = result.outputs;
+      expect(await asset.text()).toBe(`export default "bundled as js";`);
+      expect(await run(entry.path)).toBe(`./${path.basename(asset.path)}\n`);
+    });
+  });
+
   type AdditionalFile = {
     name: string;
     contents: BunFile | string;

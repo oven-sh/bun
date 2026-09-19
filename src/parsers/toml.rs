@@ -23,10 +23,12 @@
 //! - strings are UTF-8; non-ASCII content is re-encoded to UTF-16 EStrings
 //!   so both the JS conversion and the printer paths agree
 
+#![forbid(unsafe_code)]
+
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec;
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::{self, E, Expr, Loc, Log, Source};
+use bun_ast::{self, E, Expr, Loc, Log, Source, StoreRef};
 use bun_collections::HashMap;
 use bun_core::{self, StackCheck};
 
@@ -1482,19 +1484,23 @@ struct Parser<'a, 'log> {
     scanner: Scanner<'a, 'log>,
     bump: &'a Bump,
     stack_check: StackCheck,
-    /// Keyed by `E::Object::as_ptr()` / `E::Array::as_ptr()` addresses.
+    /// Keyed by `meta_key`: `E::Object` and `E::Array` nodes share one map.
     meta: HashMap<usize, Meta>,
     /// Current definition block: bumped per table header and per inline table.
     block: u32,
 }
 
+fn meta_key<T>(node: StoreRef<T>) -> usize {
+    node.as_ptr() as usize
+}
+
 impl<'a, 'log> Parser<'a, 'log> {
     /// Every table/array reachable during parsing was created by this parser
     /// and registered in `meta` at construction.
-    fn meta_of(&self, ptr: usize) -> Meta {
+    fn meta_of<T>(&self, node: StoreRef<T>) -> Meta {
         *self
             .meta
-            .get(&ptr)
+            .get(&meta_key(node))
             .expect("table/array was registered at creation")
     }
 
@@ -1504,13 +1510,9 @@ impl<'a, 'log> Parser<'a, 'log> {
         let start = self.scanner.init_document()?;
 
         let root = Expr::init(E::Object::default(), loc_of(start));
-        let root_ptr = root
-            .data
-            .e_object()
-            .expect("infallible: just constructed")
-            .as_ptr();
+        let root_ptr = root.data.e_object().expect("infallible: just constructed");
 
-        let mut current: *mut E::Object = root_ptr;
+        let mut current: StoreRef<E::Object> = root_ptr;
         loop {
             match self.scanner.scan_line_start()? {
                 LineStart::Eof => return Ok(root),
@@ -1530,10 +1532,10 @@ impl<'a, 'log> Parser<'a, 'log> {
     /// Returns the table that becomes current.
     fn parse_table_header(
         &mut self,
-        root: *mut E::Object,
+        root: StoreRef<E::Object>,
         aot: bool,
         header_pos: usize,
-    ) -> PResult<*mut E::Object> {
+    ) -> PResult<StoreRef<E::Object>> {
         let mut path: ArenaVec<'a, KeySeg<'a>> = ArenaVec::with_capacity_in(0, self.bump);
         path.push(self.scanner.scan_key_after_sep()?);
         loop {
@@ -1549,18 +1551,15 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     fn navigate_header(
         &mut self,
-        root: *mut E::Object,
+        root: StoreRef<E::Object>,
         path: &[KeySeg<'a>],
         is_aot: bool,
         header_pos: usize,
-    ) -> PResult<*mut E::Object> {
-        let mut cur: *mut E::Object = root;
+    ) -> PResult<StoreRef<E::Object>> {
+        let mut cur: StoreRef<E::Object> = root;
         for (i, seg) in path.iter().enumerate() {
             let last = i + 1 == path.len();
-            // SAFETY: `cur` always points at an E::Object inside the AST store,
-            // created earlier in this parse; the store lives in `self.bump`.
-            let cur_obj: &mut E::Object = unsafe { &mut *cur };
-            let existing = cur_obj.as_property(seg.text).map(|q| q.expr);
+            let existing = cur.as_property(seg.text).map(|q| q.expr);
             match existing {
                 None => {
                     if last && is_aot {
@@ -1581,8 +1580,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                 }
                 Some(found) => {
                     if let Some(obj) = found.data.e_object() {
-                        let ptr = obj.as_ptr();
-                        let meta = self.meta_of(ptr as usize);
+                        let meta = self.meta_of(obj);
                         if last {
                             if is_aot {
                                 return Err(self.scanner.err_keyed(
@@ -1595,13 +1593,13 @@ impl<'a, 'log> Parser<'a, 'log> {
                             match meta.kind {
                                 Kind::HeaderImplicit => {
                                     self.meta.insert(
-                                        ptr as usize,
+                                        meta_key(obj),
                                         Meta {
                                             kind: Kind::Header,
                                             block: self.block,
                                         },
                                     );
-                                    cur = ptr;
+                                    cur = obj;
                                 }
                                 Kind::Inline => {
                                     return Err(self.scanner.err_keyed(
@@ -1629,11 +1627,10 @@ impl<'a, 'log> Parser<'a, 'log> {
                                     "",
                                 ));
                             }
-                            cur = ptr;
+                            cur = obj;
                         }
                     } else if let Some(arr) = found.data.e_array() {
-                        let ptr = arr.as_ptr();
-                        let meta = self.meta_of(ptr as usize);
+                        let meta = self.meta_of(arr);
                         if meta.kind != Kind::AotArray {
                             return Err(self.scanner.err_keyed(
                                 header_pos,
@@ -1651,18 +1648,11 @@ impl<'a, 'log> Parser<'a, 'log> {
                                     " as a table",
                                 ));
                             }
-                            cur = self.append_aot_elem(ptr, seg.pos)?;
+                            cur = self.append_aot_elem(arr, seg.pos)?;
                         } else {
                             // Descend into the most recent element.
-                            // SAFETY: AoT arrays only ever contain E::Object
-                            // elements appended by `append_aot_elem`.
-                            let items = unsafe { (*ptr).items.as_slice() };
-                            let last_elem = items.last().expect("AoT arrays are never empty");
-                            cur = last_elem
-                                .data
-                                .e_object()
-                                .expect("AoT elements are tables")
-                                .as_ptr();
+                            let last_elem = arr.items.last().expect("AoT arrays are never empty");
+                            cur = last_elem.data.e_object().expect("AoT elements are tables");
                         }
                     } else {
                         return Err(self.scanner.err_keyed(
@@ -1684,7 +1674,7 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     /// The rest of `key = value` (including dotted keys) after the first key
     /// segment, inserted into `table`.
-    fn parse_keyval(&mut self, table: *mut E::Object, first: KeySeg<'a>) -> PResult<()> {
+    fn parse_keyval(&mut self, table: StoreRef<E::Object>, first: KeySeg<'a>) -> PResult<()> {
         let mut path: ArenaVec<'a, KeySeg<'a>> = ArenaVec::with_capacity_in(0, self.bump);
         path.push(first);
         loop {
@@ -1702,15 +1692,13 @@ impl<'a, 'log> Parser<'a, 'log> {
     /// and inserts `value` at the final segment.
     fn assign_path(
         &mut self,
-        table: *mut E::Object,
+        table: StoreRef<E::Object>,
         path: &[KeySeg<'a>],
         value: Expr,
     ) -> PResult<()> {
         let mut cur = table;
         for seg in &path[..path.len() - 1] {
-            // SAFETY: `cur` points at a live E::Object in the AST store.
-            let cur_obj: &mut E::Object = unsafe { &mut *cur };
-            match cur_obj.as_property(seg.text).map(|q| q.expr) {
+            match cur.as_property(seg.text).map(|q| q.expr) {
                 None => {
                     let (expr, ptr) = self.new_table(seg.pos, Kind::Dotted);
                     self.insert_key(cur, *seg, expr)?;
@@ -1725,8 +1713,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                             "",
                         ));
                     };
-                    let ptr = obj.as_ptr();
-                    let meta = self.meta_of(ptr as usize);
+                    let meta = self.meta_of(obj);
                     let extendable = meta.kind == Kind::Dotted && meta.block == self.block;
                     if !extendable {
                         return Err(self.scanner.err_keyed(
@@ -1736,7 +1723,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                             " with a dotted key",
                         ));
                     }
-                    cur = ptr;
+                    cur = obj;
                 }
             }
         }
@@ -1774,7 +1761,7 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     /// The rest of `[ ... ]` after the opening bracket.
     fn parse_array(&mut self, pos: usize) -> PResult<Expr> {
-        let (array, ptr) = self.new_array(pos, Kind::StaticArray);
+        let (array, mut ptr) = self.new_array(pos, Kind::StaticArray);
 
         loop {
             match self.scanner.scan_array_item()? {
@@ -1784,8 +1771,7 @@ impl<'a, 'log> Parser<'a, 'log> {
                 }
                 ArrayItem::Value(token) => {
                     let value = self.parse_value(token)?;
-                    // SAFETY: `ptr` points at the E::Array constructed above.
-                    unsafe { (*ptr).push(self.bump, value)? };
+                    ptr.push(self.bump, value)?;
                 }
             }
             match self
@@ -1833,7 +1819,7 @@ impl<'a, 'log> Parser<'a, 'log> {
 
         // Inline tables are closed: nothing may extend them later.
         self.meta.insert(
-            ptr as usize,
+            meta_key(ptr),
             Meta {
                 kind: Kind::Inline,
                 block: self.block,
@@ -1845,15 +1831,11 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     // ── table bookkeeping ──────────────────────────────────────────────────
 
-    fn new_table(&mut self, pos: usize, kind: Kind) -> (Expr, *mut E::Object) {
+    fn new_table(&mut self, pos: usize, kind: Kind) -> (Expr, StoreRef<E::Object>) {
         let expr = Expr::init(E::Object::default(), loc_of(pos));
-        let ptr = expr
-            .data
-            .e_object()
-            .expect("infallible: just constructed")
-            .as_ptr();
+        let ptr = expr.data.e_object().expect("infallible: just constructed");
         self.meta.insert(
-            ptr as usize,
+            meta_key(ptr),
             Meta {
                 kind,
                 block: self.block,
@@ -1862,15 +1844,11 @@ impl<'a, 'log> Parser<'a, 'log> {
         (expr, ptr)
     }
 
-    fn new_array(&mut self, pos: usize, kind: Kind) -> (Expr, *mut E::Array) {
+    fn new_array(&mut self, pos: usize, kind: Kind) -> (Expr, StoreRef<E::Array>) {
         let expr = Expr::init(E::Array::default(), loc_of(pos));
-        let ptr = expr
-            .data
-            .e_array()
-            .expect("infallible: just constructed")
-            .as_ptr();
+        let ptr = expr.data.e_array().expect("infallible: just constructed");
         self.meta.insert(
-            ptr as usize,
+            meta_key(ptr),
             Meta {
                 kind,
                 block: self.block,
@@ -1879,16 +1857,22 @@ impl<'a, 'log> Parser<'a, 'log> {
         (expr, ptr)
     }
 
-    fn append_aot_elem(&mut self, array: *mut E::Array, pos: usize) -> PResult<*mut E::Object> {
+    fn append_aot_elem(
+        &mut self,
+        mut array: StoreRef<E::Array>,
+        pos: usize,
+    ) -> PResult<StoreRef<E::Object>> {
         let (elem, ptr) = self.new_table(pos, Kind::ArrayElem);
-        // SAFETY: `array` points at a live E::Array in the AST store.
-        unsafe { (*array).push(self.bump, elem)? };
+        array.push(self.bump, elem)?;
         Ok(ptr)
     }
 
-    fn insert_key(&mut self, obj: *mut E::Object, seg: KeySeg<'a>, value: Expr) -> PResult<()> {
-        // SAFETY: `obj` points at a live E::Object in the AST store.
-        let obj: &mut E::Object = unsafe { &mut *obj };
+    fn insert_key(
+        &mut self,
+        mut obj: StoreRef<E::Object>,
+        seg: KeySeg<'a>,
+        value: Expr,
+    ) -> PResult<()> {
         // The duplicate check must use the UTF-8 key bytes: `as_property`
         // compares correctly against both 8-bit and UTF-16 stored keys.
         if obj.as_property(seg.text).is_some() {

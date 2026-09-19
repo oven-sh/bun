@@ -171,31 +171,6 @@ impl<'a> CssModule<'a> {
         Some(the_hash)
     }
 
-    pub(crate) fn handle_composes(
-        &mut self,
-        _dest: &mut css::Printer,
-        selectors: &css::selector::parser::SelectorList,
-        _composes: &css::css_properties::css_modules::Composes,
-        _source_index: u32,
-    ) -> css::Maybe<(), css::PrinterErrorKind> {
-        // let bump = dest.arena;
-        for sel in selectors.v.slice() {
-            if sel.len() == 1
-                && matches!(
-                    sel.components[0],
-                    css::selector::parser::Component::Class(_)
-                )
-            {
-                continue;
-            }
-
-            // The composes property can only be used within a simple class selector.
-            return Err(css::PrinterErrorKind::invalid_composes_selector);
-        }
-
-        Ok(())
-    }
-
     pub(crate) fn add_dashed(&mut self, bump: &'a Bump, local: &'a [u8], source_index: u32) {
         use bun_collections::array_hash_map::MapEntry;
         if let MapEntry::Vacant(v) =

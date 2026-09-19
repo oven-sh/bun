@@ -278,28 +278,6 @@ class DockerComposeHelper {
     return process.env.BUN_DOCKER_TEST_HOST || "127.0.0.1";
   }
 
-  async waitForPort(port: number, timeout: number = 10000): Promise<void> {
-    const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      try {
-        const socket = new net.Socket();
-        await new Promise<void>((resolve, reject) => {
-          socket.once("connect", () => {
-            socket.destroy();
-            resolve();
-          });
-          socket.once("error", reject);
-          socket.connect(port, this.testHost);
-        });
-        return;
-      } catch {
-        // Wait 100ms before retrying
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    }
-    throw new Error(`Port ${port} did not become ready within ${timeout}ms`);
-  }
-
   // Ask the shard's coordinator (test/docker/coordinator.ts, spawned by
   // scripts/runner.node.mjs) to start the service, and wait for its ready
   // message with the port mapping. The coordinator owns every `compose up`
@@ -475,25 +453,6 @@ class DockerComposeHelper {
     this.upPromises.clear();
   }
 
-  async waitTcp(host: string, port: number, timeout = 30000): Promise<void> {
-    const start = Date.now();
-
-    while (Date.now() - start < timeout) {
-      try {
-        const socket = await Bun.connect({
-          hostname: host,
-          port,
-        });
-        socket.end();
-        return;
-      } catch {
-        await Bun.sleep(500);
-      }
-    }
-
-    throw new Error(`TCP connection to ${host}:${port} timed out`);
-  }
-
   /**
    * Pull all Docker images explicitly - useful for CI
    */
@@ -558,10 +517,6 @@ export async function envFor(service: ServiceName): Promise<Record<string, strin
 
 export async function down(): Promise<void> {
   return getHelper().down();
-}
-
-export async function waitTcp(host: string, port: number, timeout?: number): Promise<void> {
-  return getHelper().waitTcp(host, port, timeout);
 }
 
 export async function pullImages(): Promise<void> {

@@ -4736,6 +4736,24 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
+        if self.for_each_tsconfig_paths_target(tsconfig, path, &mut |this, abs| {
+            this.load_as_file_or_directory(abs, kind, out).is_success()
+        }) {
+            MatchStatus::Success
+        } else {
+            MatchStatus::NotFound
+        }
+    }
+
+    /// Calls `visit` with each absolute path that the tsconfig `paths` map
+    /// `path` to, in the order `match_tsconfig_paths` tries them. Stops and
+    /// returns true as soon as `visit` returns true.
+    fn for_each_tsconfig_paths_target(
+        &mut self,
+        tsconfig: &TSConfigJSON,
+        path: &[u8],
+        visit: &mut dyn FnMut(&mut Self, &[u8]) -> bool,
+    ) -> bool {
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Matching \"{}\" against \"paths\" in \"{}\"",
@@ -4784,11 +4802,8 @@ impl<'a> Resolver<'a> {
                                 self.fs_ref().abs_buf(&parts, bufs!(tsconfig_path_abs));
                         }
 
-                        if self
-                            .load_as_file_or_directory(absolute_original_path, kind, out)
-                            .is_success()
-                        {
-                            return MatchStatus::Success;
+                        if visit(self, absolute_original_path) {
+                            return true;
                         }
                     }
                 }
@@ -4904,16 +4919,49 @@ impl<'a> Resolver<'a> {
                     continue;
                 };
 
-                if self
-                    .load_as_file_or_directory(absolute_original_path, kind, out)
-                    .is_success()
-                {
-                    return MatchStatus::Success;
+                if visit(self, absolute_original_path) {
+                    return true;
                 }
             }
         }
 
-        MatchStatus::NotFound
+        false
+    }
+
+    /// Calls `visit` with each absolute path that the tsconfig enclosing
+    /// `source_dir` maps a non-relative `specifier` to, through `paths` and
+    /// then `baseUrl`. Used after a failed lookup to evict or watch the
+    /// directories a later file creation can land in.
+    pub fn for_each_tsconfig_target(
+        &mut self,
+        source_dir: &[u8],
+        specifier: &[u8],
+        visit: &mut dyn FnMut(&mut Self, &[u8]),
+    ) {
+        if !bun_paths::is_absolute(source_dir) {
+            return;
+        }
+        let Some(dir_info) = self.dir_info_cached(source_dir).ok().flatten() else {
+            return;
+        };
+        let Some(tsconfig) = dir_info.enclosing_tsconfig_json else {
+            return;
+        };
+        if tsconfig.paths.count() > 0 {
+            self.for_each_tsconfig_paths_target(tsconfig, specifier, &mut |this, abs| {
+                visit(this, abs);
+                false
+            });
+        }
+        if tsconfig.has_base_url() {
+            let base: &[u8] = &tsconfig.base_url;
+            if let Some(abs) = self.fs_ref().abs_buf_checked(
+                &[base, specifier],
+                bufs!(load_as_file_or_directory_via_tsconfig_base_path),
+            ) {
+                visit(self, abs);
+            }
+        }
     }
 
     /// A `paths` substitution written as a declaration file exists for type checking

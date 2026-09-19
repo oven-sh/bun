@@ -905,23 +905,25 @@ describe.skipIf(!isPosix)("exit signals are named with the OS's own numbering", 
   });
 });
 
-// A Linux real-time signal has no name in Bun's table. It is reported as its
-// number rather than as a death with neither a code nor a signal.
-describe.skipIf(!isLinux)("exit signals with no name are reported as numbers", () => {
-  it.concurrent.each([40, 64])("spawn: 'exit' and 'close' carry signal %d", async signal => {
+// A Linux real-time signal has no name. Bun.spawn reports it as its number, but
+// node:child_process has only names: the number must not reach `signalCode`,
+// the 'exit'/'close' arguments or `spawnSync().signal`. (Node itself reports
+// this death as exit code 0 with no signal, and `signal: ""` from spawnSync.)
+describe.skipIf(!isLinux)("an exit signal with no name is not a number in node:child_process", () => {
+  it.concurrent.each([40, 64])("spawn: 'exit' and 'close' after signal %d", async signal => {
     const child = spawn("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
     const [exit, close] = await Promise.all([once(child, "exit"), once(child, "close")]);
     expect({ exit, close, exitCode: child.exitCode, signalCode: child.signalCode }).toEqual({
-      exit: [null, signal],
-      close: [null, signal],
+      exit: [null, null],
+      close: [null, null],
       exitCode: null,
-      signalCode: signal,
+      signalCode: null,
     });
   });
 
-  it.concurrent.each([40, 64])("spawnSync: signal is %d", signal => {
+  it.concurrent.each([40, 64])("spawnSync: signal after signal %d", signal => {
     const { status, signal: reported } = spawnSync("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
-    expect({ status, signal: reported }).toEqual({ status: null, signal });
+    expect({ status, signal: reported }).toEqual({ status: null, signal: null });
   });
 });
 

@@ -594,7 +594,7 @@ function spawnSync(file, args, options) {
   const outputStderr = typeof stderr === "number" ? null : stderr;
 
   const result = {
-    signal: signalCode ?? null,
+    signal: typeof signalCode === "string" ? signalCode : null,
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, outputStdout, outputStderr],
@@ -1121,7 +1121,8 @@ class ChildProcess extends EventEmitter {
   }
 
   #handleOnExit(exitCode, signalCode, err) {
-    if (signalCode) {
+    // Bun.spawn gives a number for a signal with no name. Node has only names here.
+    if (typeof signalCode === "string") {
       this.signalCode = signalCode;
     } else {
       this.exitCode = exitCode;

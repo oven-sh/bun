@@ -20,8 +20,7 @@ struct State {
     incomplete_phis: Vec<IncompletePhi>,
 }
 
-/// Not in upstream. The identifier that `get_id_at` returns for a block, known
-/// before `get_id_at` makes anything.
+/// Not in upstream. What `get_id_at` returns for a block, known before it makes anything.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Reaching {
     /// An identifier that is in `defs` already.
@@ -70,9 +69,7 @@ struct SSABuilder {
     passed_blocks: Vec<BlockId>,
     /// Not in upstream. Empty between two calls of `reaching`, kept for its capacity.
     asked: Vec<Asked>,
-    /// Not in upstream. Counts the lookups that start outside `get_id_at`. Each
-    /// is for one identifier, and nothing else adds that identifier to `defs`
-    /// while the lookup runs, so what `passed` says stays true until it ends.
+    /// Not in upstream. Counts the lookups from outside `get_id_at`. Each is for one identifier.
     lookup: u64,
     /// Not in upstream. The identifier of the current lookup, once `reaching` ran for it.
     looked_up: Option<IdentifierId>,
@@ -256,15 +253,11 @@ impl SSABuilder {
             return new_id;
         }
 
-        // Not in upstream, which makes a phi and an identifier at every join that a
-        // lookup passes. EliminateRedundantPhi drops the phi of a join whose
-        // predecessors all have the same identifier, but the identifier stays: n
-        // values that are live across n joins make n^2 of them. Such a join takes
-        // the identifier of its predecessors here. Every identifier that is still
-        // made is made in the order of upstream.
+        // Not in upstream, which makes a phi here also when all predecessors have one identifier.
         let new_id = match self.reaching(old_place.identifier, block_id) {
             Reaching::Def(new_id) => Some(new_id),
             Reaching::MadeAt(at) if at != block_id => Some(self.get_id_at(old_place, at, env)),
+            // The upstream code below makes every identifier that is still made, in its order.
             Reaching::MadeAt(_) | Reaching::Unknown => None,
         };
         if let Some(new_id) = new_id {
@@ -292,24 +285,14 @@ impl SSABuilder {
         new_id
     }
 
-    /// Not in upstream. A block with the identifier in `defs` is `Def`, a block
-    /// without predecessors is `Unknown`, and an unsealed block is `MadeAt`
-    /// itself. Every other block has the `Reaching` of its predecessors when
-    /// they all have the same one, and is `MadeAt` itself, the place of a phi,
-    /// when they do not. A block that is asked again while it waits for its
-    /// predecessors closes a loop. It answers `MadeAt` itself, as upstream
-    /// answers with its phi. A join of `Unknown` stays a phi too, because
-    /// `unmark_unknown` tells the old identifier from a phi of it.
-    ///
-    /// These are the cases of `get_id_at`. A change to one needs the same change
-    /// in the other. This does not recurse: a lookup can pass every block of the
-    /// function.
+    /// Not in upstream. The cases of `get_id_at` without its side effects: change the two together.
     fn reaching(&mut self, old_id: IdentifierId, block_id: BlockId) -> Reaching {
         debug_assert!(
             self.looked_up.is_none_or(|id| id == old_id),
             "the lookup before this one did not call end_lookup"
         );
         self.looked_up = Some(old_id);
+        // A work list and no recursion: a lookup can pass every block of the function.
         let mut asked = std::mem::take(&mut self.asked);
         let mut block_id = block_id;
         let reaching = loop {
@@ -332,6 +315,7 @@ impl SSABuilder {
             } else if self.unsealed_preds[index].unwrap_or(0) > 0 {
                 Some(Reaching::MadeAt(block_id))
             } else {
+                // A block that is asked again before it is done closes a loop: it is its phi.
                 self.passed[index] = Passed {
                     lookup: self.lookup,
                     reaching: Reaching::MadeAt(block_id),
@@ -345,8 +329,7 @@ impl SSABuilder {
                 });
                 None
             };
-            // Give what was found to the block that asked, then ask its next
-            // predecessor, or find out what the block itself is.
+            // Give `found` to the block that asked, then ask its next predecessor or finish it.
             let next_pred = loop {
                 let Some(top) = asked.last_mut() else {
                     break None;
@@ -363,6 +346,7 @@ impl SSABuilder {
                     break Some(pred);
                 }
                 let mut reaching = top.reaching.expect("a block that asks has predecessors");
+                // `unmark_unknown` tells the old identifier from a phi of it: the join stays a phi.
                 if reaching == Reaching::Unknown && preds.len() > 1 {
                     reaching = Reaching::MadeAt(top.block_id);
                 }
@@ -379,10 +363,7 @@ impl SSABuilder {
         reaching
     }
 
-    /// Not in upstream, which adds the identifier to `defs` of every block that
-    /// a lookup passes. A later lookup comes to a passed block only from a
-    /// successor that this lookup did not come from, so only a block with such
-    /// a successor gets the identifier.
+    /// Not in upstream, which adds the identifier to `defs` of every block that a lookup passes.
     fn end_lookup(&mut self, old_id: IdentifierId) {
         debug_assert!(self.looked_up.is_none_or(|id| id == old_id));
         self.looked_up = None;
@@ -393,6 +374,7 @@ impl SSABuilder {
                 came_from,
                 ..
             } = self.passed[index];
+            // A later lookup comes to this block only from a successor that this one skipped.
             if came_from == self.successors[index] {
                 continue;
             }

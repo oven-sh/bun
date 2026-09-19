@@ -1,5 +1,5 @@
 // Measure stripped binary sizes for every release platform and compare them
-// against the latest finished `main` build ("canary").
+// against the newest `main` build that recorded its own ("canary").
 //
 // CI mode (invoked from .buildkite/ci.mjs after all *-build-bun jobs finish):
 //   bun scripts/binary-size.ts \
@@ -8,10 +8,19 @@
 //     [--no-fail] [--release]
 //
 //   Always posts an annotation with sizes and deltas. On PR builds it fails if
-//   any binary grew by more than --threshold-mb vs canary; on main it never
-//   fails (--no-fail) but still shows the comparison against the previous main
+//   any binary grew by more than --threshold-mb vs canary, and also if no
+//   canary baseline could be found: this step is the only size gate, so a run
+//   that compared nothing must not pass as if it had. On main it never fails
+//   (--no-fail) but still shows the comparison against the previous main
 //   build. Escape hatch: put `[skip size check]` in the commit message, which
 //   makes ci.mjs set soft_fail on this step (it still runs and annotates).
+//
+//   The baseline comes from Buildkite alone: the pipeline's public build list
+//   names the recent main builds, and buildkite-agent downloads the
+//   binary-sizes.json this step uploaded on the newest usable one. (It used to
+//   map main commits to builds through the GitHub API; CI shares that token,
+//   and every time it was rate limited this step had nothing to compare
+//   against and passed anyway.)
 //
 // Local mode (no args):
 //   bun scripts/binary-size.ts
@@ -52,18 +61,15 @@ const org = process.env.BUILDKITE_ORGANIZATION_SLUG || "bun";
 const pipeline = process.env.BUILDKITE_PIPELINE_SLUG || "bun";
 const buildNumber = process.env.BUILDKITE_BUILD_NUMBER;
 const branch = process.env.BUILDKITE_BRANCH;
+// https://buildkite.com/<org>/<pipeline>/builds/<n> -> https://buildkite.com/<org>/<pipeline>
+const pipelineUrl =
+  process.env.BUILDKITE_BUILD_URL?.replace(/\/builds\/.*$/, "") || `https://buildkite.com/${org}/${pipeline}`;
 
 function agent(args: string[], opts: { quiet?: boolean } = {}): string | undefined {
   const { exitCode, stdout } = Bun.spawnSync(["buildkite-agent", ...args], {
     stderr: opts.quiet ? "ignore" : "inherit",
   });
   return exitCode === 0 ? stdout.toString().trim() : undefined;
-}
-
-async function getSecret(name: string): Promise<string | undefined> {
-  const { exitCode, stdout } = Bun.spawnSync(["buildkite-agent", "secret", "get", name], { stderr: "ignore" });
-  if (exitCode !== 0) return undefined;
-  return stdout.toString().trim() || undefined;
 }
 
 // ─── Collect current build's sizes from meta-data ───
@@ -88,72 +94,94 @@ await Bun.write(
 );
 agent(["artifact", "upload", "binary-sizes.json"]);
 
-// ─── Baselines ───
+// ─── Baseline: the newest main build with a usable binary-sizes.json ───
 
-type Baseline = { label: string; href?: string; sizes: Sizes };
+type Baseline = { label: string; href: string; sizes: Sizes };
 
-const ghToken = (await getSecret("GITHUB_TOKEN")) ?? process.env.GITHUB_TOKEN;
-const ghHeaders: Record<string, string> = ghToken ? { Authorization: `Bearer ${ghToken}` } : {};
+// A main build superseded by the next push is canceled before its build-bun
+// jobs finish and records nothing; merge bursts produce 20+ such builds in a
+// row, so look well past one page of the build list. Without credentials the
+// list ends after page 4 (80 builds; HTTP 403 beyond that).
+const MAX_MAIN_BUILDS_TO_TRY = 60;
 
-async function githubJson<T>(path: string): Promise<T> {
-  const res = await fetch(`https://api.github.com/repos/oven-sh/bun/${path}`, { headers: ghHeaders });
-  if (!res.ok) throw new Error(`github ${path}: ${res.status}`);
-  return res.json() as Promise<T>;
+// Numbers of the recent main builds, newest first, from the pipeline's public
+// build list (HTML, 20 builds per page, no credentials). Ends after the last
+// page, or sooner if the list stops linking to builds.
+async function* recentMainBuilds(): AsyncGenerator<number> {
+  const buildLink = new RegExp(`${RegExp.escape(new URL(pipelineUrl).pathname)}/builds/(\\d+)`, "g");
+  const seen = new Set<number>();
+  for (let page = 1; ; page++) {
+    const url = `${pipelineUrl}/builds?branch=main&page=${page}`;
+    const res = await fetch(url, { headers: { Accept: "text/html" } });
+    if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+    const linked = Array.from((await res.text()).matchAll(buildLink), m => parseInt(m[1], 10));
+    const numbers = [...new Set(linked)].filter(n => !seen.has(n));
+    if (numbers.length === 0) return;
+    for (const n of numbers) seen.add(n);
+    yield* numbers.sort((a, b) => b - a);
+  }
 }
 
-async function buildNumberForCommit(sha: string): Promise<number | undefined> {
-  const { statuses } = await githubJson<{ statuses: { context: string; target_url: string }[] }>(
-    `commits/${sha}/status`,
-  );
-  const bk = statuses.find(s => s.context.startsWith("buildkite/"));
-  const m = bk?.target_url.match(/\/builds\/(\d+)/);
-  return m ? parseInt(m[1], 10) : undefined;
-}
-
-async function sizesFromBuild(n: number): Promise<{ sizes: Sizes; release?: boolean } | undefined> {
-  const res = await fetch(`https://buildkite.com/${org}/${pipeline}/builds/${n}.json`);
-  if (!res.ok) return;
-  const { id } = (await res.json()) as { id: string };
+// The sizes this step recorded on main build `n`, or undefined (with the reason
+// logged) if that build has nothing this build can be compared against.
+async function baselineSizes(n: number): Promise<Sizes | undefined> {
+  const skip = (why: string) => {
+    console.log(`  main #${n} ${why}`);
+    return undefined;
+  };
+  const res = await fetch(`${pipelineUrl}/builds/${n}.json`);
+  if (!res.ok) return skip(`could not be read: HTTP ${res.status}`);
+  const { id, branch_name } = (await res.json()) as { id: string; branch_name?: string };
+  // The list was filtered by branch; this only matters if its markup changes.
+  if (branch_name !== "main") return skip(`is not a main build (branch: ${branch_name})`);
   const dir = "binary-size-tmp";
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  const ok = agent(["artifact", "download", "binary-sizes.json", dir, "--build", id], { quiet: true });
-  if (ok === undefined) return;
-  return (await Bun.file(`${dir}/binary-sizes.json`).json()) as { sizes: Sizes; release?: boolean };
-}
-
-async function baselineFromCommit(sha: string, label: (n: number) => string): Promise<Baseline | undefined> {
-  const n = await buildNumberForCommit(sha);
-  if (!n || String(n) === String(buildNumber)) return;
-  const record = await sizesFromBuild(n);
-  if (!record) return;
+  if (agent(["artifact", "download", "binary-sizes.json", dir, "--build", id], { quiet: true }) === undefined) {
+    return skip("has no binary-sizes.json (its binary-size step did not run)");
+  }
+  const record = (await Bun.file(`${dir}/binary-sizes.json`).json()) as { sizes?: Sizes; release?: boolean };
   // Only compare like-for-like: canary builds against canary baselines, release
   // against release. Windows binaries differ by several MB between the two, so
   // a release build on main would otherwise trip every PR's threshold.
-  if ((record.release ?? false) !== isRelease) return;
-  return { label: label(n), href: `https://buildkite.com/${org}/${pipeline}/builds/${n}`, sizes: record.sizes };
+  if ((record.release ?? false) !== isRelease) return skip(`is a ${record.release ? "release" : "canary"} build`);
+  // An all-targets build failure on main uploads a record with no sizes;
+  // comparing against it would compare nothing.
+  if (!targets.some(({ triplet }) => record.sizes?.[triplet])) return skip("recorded no sizes for these targets");
+  return record.sizes;
 }
 
-// Canary: walk recent main commits until one whose build has a matching
-// (canary vs release) binary-sizes.json.
-console.log(`--- Fetching ${buildKind} baseline`);
-let canaryNote = "";
-const canary: Baseline | undefined = await (async () => {
-  const commits = await githubJson<{ sha: string }[]>("commits?sha=main&per_page=15");
-  for (const { sha } of commits) {
-    const b = await baselineFromCommit(sha, n => `main #${n}`);
-    if (b) return b;
+console.log(`--- Looking for the newest main build with ${buildKind} sizes`);
+let baseline: Baseline | undefined;
+let baselineNote = "";
+try {
+  let unusable = 0;
+  for await (const n of recentMainBuilds()) {
+    if (String(n) === buildNumber) continue;
+    const sizes = await baselineSizes(n);
+    if (sizes) {
+      baseline = { label: `main #${n}`, href: `${pipelineUrl}/builds/${n}`, sizes };
+      break;
+    }
+    if (++unusable === MAX_MAIN_BUILDS_TO_TRY) break;
   }
-  canaryNote = `no recent main ${buildKind} build has binary-sizes.json yet`;
-})().catch(e => ((canaryNote = String(e?.message || e)), undefined));
-console.log(canary ? `  ${canary.label}` : `  unavailable: ${canaryNote}`);
+  if (!baseline) {
+    baselineNote =
+      unusable === 0
+        ? `no main builds listed at ${pipelineUrl}/builds?branch=main`
+        : `the last ${unusable} main build(s) recorded no ${buildKind} sizes`;
+  }
+} catch (e: any) {
+  baselineNote = String(e?.message || e);
+}
+console.log(baseline ? `  ${baseline.label}: ${baseline.href}` : `  none: ${baselineNote}`);
 
 // ─── Compare & annotate ───
 
 console.log("--- Results");
 
 type Delta = { base: number; bytes: number };
-type Row = { triplet: string; now: number; canary?: Delta };
+type Row = { triplet: string; now: number; delta?: Delta };
 
 function delta(now: number, base: number | undefined): Delta | undefined {
   if (!base) return undefined;
@@ -166,14 +194,16 @@ const rows: Row[] = targets
   .map(({ triplet }) => ({
     triplet,
     now: sizes[triplet],
-    canary: delta(sizes[triplet], canary?.sizes[triplet]),
+    delta: delta(sizes[triplet], baseline?.sizes[triplet]),
   }));
 
-const overThreshold = rows.filter(r => r.canary && r.canary.bytes > thresholdBytes);
-const failed = !noFail && overThreshold.length > 0;
-
-const link = (b: Baseline | undefined, fallback: string) =>
-  b?.href ? `<a href="${b.href}">${b.label}</a>` : (b?.label ?? `${fallback} (n/a)`);
+const overThreshold = rows.filter(r => r.delta && r.delta.bytes > thresholdBytes);
+// Built binaries with nothing to compare them against fail the step (see the
+// header comment), with two exceptions: a release baseline only exists for a
+// while after a release ran on main, and a build that produced no binaries is
+// already red from its build-bun jobs.
+const blind = !baseline && rows.length > 0 && !isRelease;
+const failed = !noFail && (overThreshold.length > 0 || blind);
 
 const deltaCells = (d: Delta | undefined, over: boolean) => {
   if (!d) return `<td align="right">—</td><td align="right">—</td>`;
@@ -185,11 +215,11 @@ const deltaCells = (d: Delta | undefined, over: boolean) => {
 
 const tableRows = rows
   .map(r => {
-    const over = !!r.canary && r.canary.bytes > thresholdBytes;
+    const over = !!r.delta && r.delta.bytes > thresholdBytes;
     return (
       `<tr><td>${over ? "❌ " : ""}<code>${r.triplet}</code></td>` +
       `<td align="right">${fmtBytes(r.now)}</td>` +
-      deltaCells(r.canary, over) +
+      deltaCells(r.delta, over) +
       `</tr>`
     );
   })
@@ -199,9 +229,19 @@ const limit = fmtBytes(thresholdBytes);
 const header =
   overThreshold.length > 0
     ? `<b>${overThreshold.length}</b> over ${limit}`
-    : canary
-      ? `all within ${limit}`
-      : `no ${buildKind} comparison (${canaryNote})`;
+    : rows.length === 0
+      ? "nothing to measure, no build-bun job recorded a size"
+      : baseline
+        ? `all within ${limit}`
+        : `no ${buildKind} baseline, nothing compared (${Bun.escapeHTML(baselineNote)})`;
+const style = failed ? "error" : baseline && rows.length > 0 ? "info" : "warning";
+
+const advice = !failed
+  ? ""
+  : blind
+    ? `<p>This step fails rather than pass without comparing anything. Retry it if buildkite.com was unavailable; ` +
+      `otherwise its log lists the main builds it tried.</p>`
+    : `<p>Add <code>[skip size check]</code> to the commit message if this increase is intentional.</p>`;
 
 const annotation = `
 <details${failed ? " open" : ""}>
@@ -209,35 +249,30 @@ const annotation = `
 <table>
 <tr>
   <th rowspan="2">target</th><th rowspan="2">this build</th>
-  <th colspan="2">${buildKind}: ${link(canary, "main")}</th>
+  <th colspan="2">${buildKind}: ${baseline ? `<a href="${baseline.href}">${baseline.label}</a>` : "main (n/a)"}</th>
 </tr>
 <tr><th>size</th><th>Δ</th></tr>
 ${tableRows}
 </table>
-${failed ? `<p>Add <code>[skip size check]</code> to the commit message if this increase is intentional.</p>` : ""}
+${advice}
 </details>`;
 
 Bun.spawnSync(
-  [
-    "buildkite-agent",
-    "annotate",
-    "--style",
-    failed ? "error" : "info",
-    "--context",
-    "binary-size",
-    "--priority",
-    failed ? "5" : "2",
-  ],
+  ["buildkite-agent", "annotate", "--style", style, "--context", "binary-size", "--priority", failed ? "5" : "2"],
   { stdin: new Blob([annotation]), stderr: "inherit" },
 );
 
 for (const r of rows) {
-  const c = r.canary ? `  ${buildKind} ${fmtDelta(r.canary.bytes).padStart(10)}` : "";
+  const c = r.delta ? `  ${buildKind} ${fmtDelta(r.delta.bytes).padStart(10)}` : "";
   console.log(`  ${r.triplet.padEnd(30)} ${fmtBytes(r.now).padStart(10)}${c}`);
 }
 
 if (failed) {
-  console.error(`\nerror: ${overThreshold.length} target(s) exceeded ${limit} vs ${buildKind}`);
+  console.error(
+    blind
+      ? `\nerror: nothing to compare against: ${baselineNote}`
+      : `\nerror: ${overThreshold.length} target(s) exceeded ${limit} vs ${buildKind}`,
+  );
   // Suppress the generic fallback in .buildkite/hooks/pre-exit; this script
   // owns its failure annotation.
   markBuildkiteStepReported();

@@ -4899,15 +4899,14 @@ function streamSocketClosed(stream: Http2Stream) {
     stream.destroy();
   }
 }
-// The GOAWAY's last-stream-id counts the streams this side initiated (RFC 9113 6.8). A pushed
-// stream is the peer's and keeps running (nghttp2 session_close_stream_on_goaway skips it).
+// A stream whose session was close()d before the socket finished connecting never reached the
+// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION (no $ERR intrinsic exists for this code).
 function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream) {
+  // RFC 9113 6.8: the last-stream-id covers only the streams this side opened, not a pushed stream.
   if (typeof stream?.id === "number" && stream.id > lastStreamId && !stream[kPush]) {
     streamRejectedByGoawaySession(stream);
   }
 }
-// A stream whose session was close()d before the socket finished connecting never reached the
-// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION (no $ERR intrinsic exists for this code).
 function streamRejectedByGoawaySession(stream: Http2Stream) {
   if (!stream.destroyed) {
     const err = new Error("New streams cannot be created after receiving a GOAWAY");
@@ -4960,8 +4959,6 @@ class ClientHttp2Session extends Http2Session {
 
   static #Handlers = {
     binaryType: "buffer",
-    // Only for request(): HEADERS from the server never open a stream on a client, and the parser
-    // reports a pushed stream through streamPush.
     streamStart(self: ClientHttp2Session) {
       if (!self) return;
       self.#connections++;
@@ -5006,9 +5003,7 @@ class ClientHttp2Session extends Http2Session {
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: pushedStream, headers });
       }
-      // node ends the writable side of a pushed stream when it creates it: a client never sends
-      // on a stream the server reserved (RFC 9113 5.1), so closing it is not an abort.
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L409-L425
+      // Like node's onSessionHeaders: a client never sends on a pushed stream, so close() is not an abort.
       pushedStream.end();
       self.emit("stream", pushedStream, headers, flags, rawheaders);
     },

@@ -3358,7 +3358,6 @@ impl H2FrameParser {
     }
 
     /// The `streams` entry for `stream_identifier`, and whether this call created it (in `state`).
-    /// The stream id marks stay with the callers: they advance on different events.
     fn register_stream(&self, stream_identifier: u32, state: StreamState) -> (*mut Stream, bool) {
         if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
             return (stream, false);
@@ -3953,16 +3952,13 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn is_local_stream(&self, stream_id: u32) -> bool {
-        // The legacy outbound created an entry in the legacy streams map for every locally
-        // initiated stream (request/respond). The peer's streams have entries there too, so the
-        // id parity decides whose stream it is.
+        // `streams` also holds the peer's streams, so an id is local only with the local parity.
         let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
         stream_id % 2 != peer_parity && self.streams.get().contains_key(&stream_id)
     }
 
     fn highest_started_stream_id(&self) -> u32 {
-        // handle_received_stream_id raises this for every stream it registers (including
-        // locally-initiated ones) and eviction never lowers it. on_push_promise leaves it alone.
+        // Raised by handle_received_stream_id only (not for a promised stream), never lowered.
         self.last_stream_id.get()
     }
 
@@ -3975,10 +3971,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
-        // The outbound host fns (rstStream, writeStream, getStreamState) look a stream up in
-        // `streams`, so the promised stream gets an entry there like any other stream. Its sending
-        // half starts closed: a client never sends on a stream the server reserved (RFC 9113 5.1,
-        // reserved (remote)). `last_stream_id` stays: a push must not make request ids skip.
+        // Host fns find streams in `streams`. A client never sends on a promised stream (§5.1).
         self.register_stream(promised_id, StreamState::HALF_CLOSED_LOCAL);
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.
@@ -5067,10 +5060,9 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            // An id with no entry (the stream's slot was already released) gets the RST_STREAM
-            // written directly. The frame is built here rather than through the engine so this
-            // stays callable from inside an engine dispatch (the engine cell may already be
-            // borrowed).
+            // No entry (the slot was already released): the RST_STREAM is written directly. It is
+            // built here rather than through the engine so this stays callable from inside an
+            // engine dispatch (the engine cell may already be borrowed).
             //
             // A NO_ERROR reset for an unknown id is always a no-op: it reaches here from the
             // deferred JS close path (rstNextTick after _destroy) once a cleanly-completed

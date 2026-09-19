@@ -210,8 +210,7 @@ pub trait Sink {
     /// Highest stream id the embedder has ever registered, in either direction. Monotonic across
     /// stream eviction: ids at or below it have existed (closed at worst, never idle), which the
     /// engine cannot tell on its own for locally-initiated streams whose HEADERS it never sent
-    /// (nghttp2's session_detect_idle_stream uses the same allocation high-water marks). A stream
-    /// that a PUSH_PROMISE reserved need not count: `last_stream_id` here already covers it.
+    /// (nghttp2's session_detect_idle_stream uses the same allocation high-water marks).
     fn highest_started_stream_id(&self) -> u32 {
         0
     }
@@ -578,10 +577,9 @@ impl Connection {
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
         // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
-        // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. On a server a late
-        // HEADERS for an evicted id re-opens a fresh entry (the parity check still applies); that
-        // matches how trailers-after-close are treated as a new block by the legacy parser as well.
-        // On a client it takes the closed-stream path (handle_headers).
+        // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
+        // evicted id re-opens a fresh entry on a server (parity check applies); that matches how
+        // trailers-after-close are treated as a new block by the legacy parser as well.
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
         for (id, s) in self.streams.iter() {
@@ -933,11 +931,7 @@ impl Connection {
             return true;
         }
         let refused = is_new && self.is_server && !sink.can_open_stream();
-        // On a client a stream exists because the embedder opened it (a request) or because
-        // PUSH_PROMISE reserved it here (§8.4: a server opens a stream in no other way). HEADERS
-        // for any other id are for a stream that is already closed (the client reset it and the
-        // response was in flight) or that never existed. Neither opens a stream: both take the
-        // closed-stream path.
+        // On a client only request() (embedder entry) or PUSH_PROMISE (entry here) opens a stream.
         let unknown_on_client = is_new && !self.is_server && !sink.is_local_stream(hdr.stream_id);
         let mut disposition = if refused {
             BlockDisposition::Refused
@@ -1925,8 +1919,7 @@ impl Connection {
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
     /// has the same observable behavior as scan-eviction of a Closed stream: late frames
     /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
-    /// answer) and a late HEADERS re-opens a fresh entry on a server. On a client it takes the
-    /// closed-stream path too.
+    /// answer) and, on a server, a late HEADERS re-opens a fresh entry.
     pub fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }

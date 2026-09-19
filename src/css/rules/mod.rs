@@ -1219,8 +1219,7 @@ pub(crate) const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 pub struct MinifyContext<'a, 'bump> {
     /// Arena that owns the AST being minified (same arena it was parsed into).
     pub(crate) arena: &'bump bun_alloc::Arena,
-    /// The stylesheet's targets, narrowed while inside an `@supports` block
-    /// (see `SupportsRule::minify`). `handler_context.targets` is kept equal.
+    /// `SupportsRule::minify` narrows these for its block and keeps `handler_context.targets` equal.
     pub(crate) targets: css::targets::Targets,
     pub(crate) handler: &'a mut css::DeclarationHandler<'bump>,
     pub(crate) important_handler: &'a mut css::DeclarationHandler<'bump>,

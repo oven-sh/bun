@@ -833,9 +833,7 @@ impl TokenList {
         fallbacks
     }
 
-    /// The features that the colors in these tokens use. `None` if the tokens
-    /// have a `var()` or an `env()`: a browser accepts such a value at parse
-    /// time without a check of the rest.
+    /// The features these colors use. `None` with `var()` or `env()`: such a value is valid whatever the rest is.
     pub(crate) fn get_features(&self) -> Option<css::targets::Features> {
         use css::targets::Features;
         let mut features = Features::empty();

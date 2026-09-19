@@ -142,8 +142,7 @@ impl crate::generics::CssEql for SupportsCondition {
 }
 
 impl SupportsCondition {
-    /// The features that the condition tests for. The rules inside the
-    /// `@supports` block can use them without fallbacks.
+    /// The features the condition tests for. The rules in the block need no fallbacks for them.
     pub(crate) fn get_supported_features(&self, arena: &bun_alloc::Arena) -> css::Features {
         self.supported_features(arena).unwrap_or_default()
     }
@@ -161,8 +160,7 @@ impl SupportsCondition {
             SupportsCondition::Declaration(declaration) => {
                 Some(declaration.supported_features(arena))
             }
-            // `parse_in_parens` keeps a `(property: value)` group as the raw
-            // text of an `Unknown`.
+            // `parse_in_parens` keeps a `(property: value)` group as the raw text of an `Unknown`.
             SupportsCondition::Unknown(group) => {
                 let declaration = css::parse_utility::parse_string(arena, group, |parser| {
                     parser.expect_parenthesis_block()?;
@@ -489,9 +487,6 @@ impl<R> SupportsRule<R> {
         // behind it multiply against the enclosing nesting levels exactly like
         // plain nested rules — leaving them unvisited here lets the printer
         // expand them exponentially.
-        //
-        // The nested rules need no fallbacks for the features the condition
-        // tests for, so exclude those features while minifying them.
         let exclude = context.targets.exclude;
         context
             .targets
@@ -518,12 +513,12 @@ impl<R> SupportsRule<R> {
         dest.targets
             .exclude
             .insert(self.condition.get_supported_features(dest.arena));
-        dest.block(|d| {
+        let result = dest.block(|d| {
             d.newline()?;
             self.rules.to_css(d)
-        })?;
+        });
         dest.targets.exclude = exclude;
-        Ok(())
+        result
     }
 }
 

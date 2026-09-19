@@ -753,10 +753,8 @@ pub fn exit(code: u32) -> ! {
 }
 
 pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
-    match sig.platform_number() {
-        Some(number) => raise_ignoring_panic_handler_raw(number),
-        None => libc_abort(),
-    }
+    // A signal this platform lacks dies by SIGABRT, as when `raise` returns below.
+    raise_ignoring_panic_handler_raw(sig.platform_number().unwrap_or(libc::SIGABRT))
 }
 
 /// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state. Callers may

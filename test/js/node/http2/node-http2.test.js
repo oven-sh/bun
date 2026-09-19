@@ -5991,6 +5991,70 @@ it("sendTrailers({}) ends the stream without a trailer block", async () => {
   }
 });
 
+it("additionalHeaders() sends a 1xx block on a HEAD request", async () => {
+  // node throws ERR_HTTP2_PAYLOAD_FORBIDDEN from respondWithFD() and respondWithFile() only. A 1xx
+  // block never carries a payload, so additionalHeaders() sends it for every method.
+  const server = http2.createServer();
+  let client;
+  try {
+    const events = [];
+    server.on("stream", stream => {
+      try {
+        stream.additionalHeaders({ ":status": 103, link: "</style.css>; rel=preload" });
+      } catch (err) {
+        events.push(["additionalHeaders threw", err.code]);
+      }
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    const req = client.request({ ":method": "HEAD", ":path": "/" });
+    req.on("headers", headers => events.push(["headers", headers[":status"], headers.link]));
+    req.on("response", headers => events.push(["response", headers[":status"]]));
+    await new Promise((resolve, reject) => {
+      client.on("error", reject);
+      req.on("error", reject);
+      req.on("close", resolve);
+      req.resume();
+      req.end();
+    });
+    expect(events).toEqual([
+      ["headers", 103, "</style.css>; rel=preload"],
+      ["response", 200],
+    ]);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("compat server answers a HEAD request that carries expect: 100-continue", async () => {
+  // With no 'checkContinue' listener the compat layer calls response.writeContinue() itself, from
+  // inside its 'stream' handler. A throw there is an uncaught exception that any peer can trigger.
+  const server = http2.createServer((req, res) => res.end());
+  let client;
+  try {
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    const req = client.request({ ":method": "HEAD", ":path": "/", expect: "100-continue" });
+    const events = [];
+    req.on("continue", () => events.push(["continue"]));
+    req.on("response", headers => events.push(["response", headers[":status"]]));
+    await new Promise((resolve, reject) => {
+      client.on("error", reject);
+      req.on("error", reject);
+      req.on("close", resolve);
+      req.resume();
+      req.end();
+    });
+    expect(events).toEqual([["continue"], ["response", 200]]);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
 it("client connects over a user Duplex that already has a 'data' listener", async () => {
   // A 'data' listener attached before connect() puts the stream in flowing mode, so the
   // peer's first frames can arrive before the connect callback has run. The preface must

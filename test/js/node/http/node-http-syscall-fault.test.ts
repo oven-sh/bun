@@ -252,6 +252,61 @@ describe.skipIf(skip)("node:http pipelining under short sends", () => {
   });
 });
 
+describe.skipIf(skip)("node:http pipelining under stalled sends", () => {
+  // The second request is parsed while the first response still has a backlog,
+  // so the connection's reads are paused behind it. The next writable events
+  // then move nothing (send() reports 0, as it does for ENOBUFS). The client is
+  // alive and reading: the server has to retry, not take the stall for a dead
+  // peer and close over both responses.
+  test("a writable event that moves nothing does not close a live connection whose reads are paused (subprocess server)", async () => {
+    const SIZE = 8 * 1024 * 1024;
+    const fixture = /* js */ `
+      const http = require("node:http");
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const body = Buffer.alloc(${SIZE}, "A");
+      const server = http.createServer((req, res) => {
+        if (req.url === "/first") return res.end(body);
+        fault.set({ syscall: "send", action: "zero", repeat: 6 });
+        res.end("second", () => process.exit(0));
+      });
+      server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stderr: "inherit",
+      stdout: "pipe",
+    });
+    let portLine = "";
+    for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+      portLine += chunk;
+      if (portLine.includes("\n")) break;
+    }
+
+    const socket = net.connect(Number(portLine), "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("error", () => {});
+    socket.on("connect", () =>
+      socket.write(
+        "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+      ),
+    );
+    await once(socket, "close");
+
+    const bytes = Buffer.concat(chunks);
+    const firstBody = bytes.indexOf("\r\n\r\n") + 4;
+    const secondHead = bytes.indexOf("HTTP/1.1 200 OK\r\n", firstBody);
+    const firstEnd = secondHead < 0 ? bytes.length : secondHead;
+    expect({
+      first: firstEnd - firstBody,
+      firstIntact: bytes.subarray(firstBody, firstEnd).equals(Buffer.alloc(SIZE, "A")),
+      second: secondHead < 0 ? null : bytes.subarray(bytes.indexOf("\r\n\r\n", secondHead) + 4).toString("latin1"),
+    }).toEqual({ first: SIZE, firstIntact: true, second: "second" });
+    expect(await proc.exited).toBe(0);
+  });
+});
+
 describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
   const seed = Number(process.env.BUN_SOCKET_FUZZ_SEED ?? 0x5e1d) >>> 0 || 1;
   function makePrng(s: number) {

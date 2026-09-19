@@ -419,11 +419,7 @@ static void us_internal_rearm_writable(struct us_socket_t *s) {
  * the peer is gone. Only the libuv backend has to ask the kernel. */
 int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
-    if (us_socket_is_closed(s)) {
-        return 1;
-    }
-    return us_socket_get_error(s) != 0 ||
-           us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p));
+    return us_socket_peer_is_gone(s);
 #else
     return 1;
 #endif
@@ -544,6 +540,18 @@ static int us_internal_send_errno_is_peer_gone(int e) {
  * surfacing a genuinely wedged transport within microseconds. */
 #define US_UNCLASSIFIED_SEND_RETRY_LIMIT 32
 #endif
+
+/* See libusockets.h. */
+int us_socket_peer_is_gone(struct us_socket_t *s) {
+    if (us_socket_is_closed(s) || us_socket_get_error(s) != 0) {
+        return 1;
+    }
+#ifdef LIBUS_USE_LIBUV
+    return us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p));
+#else
+    return bsd_send(us_poll_fd(&s->p), "", 0) < 0 && us_internal_send_errno_is_peer_gone(errno);
+#endif
+}
 
 int us_socket_write_check_error(struct us_socket_t *s, const char *data, int length, int *fatal_write_error) {
     if (fatal_write_error) *fatal_write_error = 0;

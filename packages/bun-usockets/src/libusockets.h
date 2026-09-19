@@ -734,6 +734,11 @@ int us_socket_get_error(us_socket_r s);
  * making a stall there routine backpressure, so it asks the kernel
  * (SO_ERROR, then a zero-byte send probe). */
 int us_socket_stalled_write_means_peer_gone(us_socket_r s);
+/* Asks the kernel whether the connection is dead: a pending socket error, or
+ * a zero-byte send that fails with a peer-gone errno. The probe moves no
+ * bytes, so it does not disturb a TLS stream. For callers that have no FIN to
+ * go by, where a stalled write can also be ENOBUFS or a TLS WANT_READ. */
+int us_socket_peer_is_gone(us_socket_r s);
 
 void us_socket_ref(us_socket_r s);
 void us_socket_unref(us_socket_r s);

@@ -1259,10 +1259,23 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 // pnpm records injected workspace packages as `name@file:<workspace dir>`.
                 if res.tag == resolution::Tag::Folder {
-                    if let Some(workspace_pkg_id) =
+                    let Some(folder_path) =
                         join_top_level_dir(&[res.folder().slice(string_bytes!(lockfile))])
-                            .and_then(|path| pkg_map.get(path.slice()).copied())
-                            .filter(|id| (*id as usize) < workspace_pkgs_end)
+                    else {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "pnpm-lock.yaml package '{}' has a directory path that is too long",
+                                bstr::BStr::new(name_str)
+                            ),
+                        );
+                        return Err(invalid_pnpm_lockfile());
+                    };
+                    if let Some(workspace_pkg_id) = pkg_map
+                        .get(folder_path.slice())
+                        .copied()
+                        .filter(|id| (*id as usize) < workspace_pkgs_end)
                     {
                         pkg_map.put(key_str, workspace_pkg_id)?;
                         continue;

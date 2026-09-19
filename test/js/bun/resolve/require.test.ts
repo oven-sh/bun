@@ -252,11 +252,20 @@ describe("require(specifier)", () => {
     // import() of it gets the error it threw. Node decides by the extension,
     // then package.json "type", then the syntax.
     it.each([
-      ["ES module syntax", { "bad.mjs": flakyModule(1) + `export const attempt = globalThis.evaluations;` }],
-      [".mjs without module syntax", { "bad.mjs": flakyModule(1) }],
-      ['"type": "module" without module syntax', { "package.json": `{ "type": "module" }`, "bad.js": flakyModule(1) }],
-    ])("an ES module is not evaluated again: %s", async (_, files) => {
-      const specifier = "./" + Object.keys(files).find(name => name.startsWith("bad."));
+      [
+        ".js with an export",
+        "./bad.js",
+        { "bad.js": flakyModule(1) + `export const attempt = globalThis.evaluations;` },
+      ],
+      [".js with import.meta", "./bad.js", { "bad.js": flakyModule(1) + `globalThis.url = import.meta.url;` }],
+      [".mjs without module syntax", "./bad.mjs", { "bad.mjs": flakyModule(1) }],
+      [".mjs with a query", "./bad.mjs?v=1", { "bad.mjs": flakyModule(1) }],
+      [
+        '"type": "module" without module syntax',
+        "./bad.js",
+        { "package.json": `{ "type": "module" }`, "bad.js": flakyModule(1) },
+      ],
+    ])("an ES module is not evaluated again: %s", async (_, specifier, files) => {
       const result = await runEntry({
         ...files,
         "entry.cjs": /* js */ `
@@ -289,17 +298,17 @@ describe("require(specifier)", () => {
     // require(), also for a file that the next require() would run again.
     it("import() of a module that failed under require() rejects with the original error", async () => {
       const result = await runEntry({
-        "bad.mjs": flakyModule(Infinity),
+        "bad.js": flakyModule(Infinity),
         "entry.js": /* js */ `
           (async () => {
             let requireError, importError;
             try {
-              require("./bad.mjs");
+              require("./bad.js");
             } catch (e) {
               requireError = e;
             }
             try {
-              await import("./bad.mjs");
+              await import("./bad.js");
             } catch (e) {
               importError = e;
             }

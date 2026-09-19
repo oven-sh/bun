@@ -151,6 +151,7 @@ impl<'a> Transpiler<'a> {
     /// field is a raw pointer for that reason.
     pub fn set_log(&mut self, log: *mut bun_ast::Log) {
         self.log = log;
+        self.options.log = log;
         self.linker.log = log;
         // SAFETY: caller (`ThreadPool::Worker::create`) passes the per-worker
         // arena-allocated `Log`, which outlives this `Transpiler<'a>`.

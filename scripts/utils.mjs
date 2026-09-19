@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { connect } from "node:net";
-import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
+import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, totalmem, userInfo } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
@@ -3017,6 +3017,120 @@ export function getLoggedInUserCountOrDetails() {
 
     return message;
   }
+}
+
+/**
+ * How many leaked TCP sockets a bare-metal macOS agent tolerates before it reboots instead of
+ * running tests.
+ *
+ * macOS does not free every TCP socket the test suite closes. About 1,000 per test job stay in
+ * the kernel with no owning process (`sysctl net.inet.tcp.pcbcount` counts them, netstat and
+ * lsof do not show them) until the next reboot, and these agents reboot once a day.
+ *
+ * macOS 26 caps TCP memory at 1/32 of RAM (`tcp_init`, xnu `bsd/kern/mem_acct.c`), and a leaked
+ * socket keeps about 3.3 KB of it, so the cap is about 10,000 leaked sockets per GiB. From 80%
+ * of the cap `tcp_input` drops most received data and the artifact download times out. At the
+ * cap `socket()` fails with ENOBUFS, which `Bun.serve` reports as "Failed to start server. Is
+ * port 0 in use?". An 8 GB mini got there after 60 jobs and then failed every job until its
+ * nightly reboot. The limit is half of the cap: that mini's jobs passed up to 72% of it.
+ *
+ * @param {number} totalMemory bytes of RAM
+ */
+export function getDarwinLeakedSocketLimit(totalMemory) {
+  return Math.floor((totalMemory / 2 ** 30) * 5_000);
+}
+
+/**
+ * @typedef {object} DarwinAgentHost
+ * @property {string} os
+ * @property {string} release Darwin kernel version, "25.6.0" on macOS 26.6
+ * @property {Record<string, string | undefined>} env the job's environment
+ * @property {number} totalMemory bytes of RAM
+ * @property {() => number | undefined} readPcbCount
+ * @property {() => boolean} reboot false when the reboot did not start
+ * @property {(pid: number, signal: NodeJS.Signals) => void} kill
+ * @property {(ms: number) => Promise<void>} sleep
+ */
+
+/** @type {DarwinAgentHost} */
+const thisDarwinAgentHost = {
+  os: process.platform,
+  release: release(),
+  env: process.env,
+  totalMemory: totalmem(),
+  readPcbCount() {
+    const { error, stdout } = spawnSync(["sysctl", "-n", "net.inet.tcp.pcbcount"]);
+    const count = error ? NaN : parseInt(stdout);
+    return isFinite(count) ? count : undefined;
+  },
+  reboot() {
+    const { error } = spawnSync(["sudo", "-n", "shutdown", "-r", "now"], { timeout: 30_000 });
+    if (error) {
+      console.warn(error);
+    }
+    return !error;
+  },
+  kill: (pid, signal) => process.kill(pid, signal),
+  sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+};
+
+/**
+ * Reboots the macOS agent this job runs on when it is over `getDarwinLeakedSocketLimit()`, so
+ * that the job runs on an agent that can still use the network.
+ *
+ * Only on the agents `scripts/agent.mjs` tags `ephemeral=false`: they run jobs on the host
+ * itself, so one kernel carries the leak from job to job. The tart agents (`tart=true`) boot a
+ * fresh guest for every job. Only from macOS 26 (Darwin 25): older kernels leak the same way
+ * but have no cap on TCP memory.
+ *
+ * The reboot does not fail the build. On SIGQUIT buildkite-agent cancels its job at once with
+ * `signal_reason: agent_stop`, and `getRetry()` in `.buildkite/ci.mjs` retries that on another
+ * agent. The nightly reboot of these agents ends a running job the same way.
+ *
+ * @param {DarwinAgentHost} [host]
+ */
+export async function rebootDarwinAgentIfOutOfSockets(host = thisDarwinAgentHost) {
+  const { os, env } = host;
+  if (os !== "darwin" || env.BUILDKITE !== "true" || env.BUILDKITE_AGENT_META_DATA_EPHEMERAL !== "false") {
+    return;
+  }
+  if (!(parseInt(host.release) >= 25)) {
+    return;
+  }
+
+  // A closed socket stays in the count for 2*MSL (30 seconds), so right after the previous
+  // job a healthy host can be over the limit too.
+  const limit = getDarwinLeakedSocketLimit(host.totalMemory);
+  const settleMs = 45_000;
+  const sampleMs = 5_000;
+  let count = host.readPcbCount();
+  for (let waited = 0; count >= limit && waited < settleMs; waited += sampleMs) {
+    await host.sleep(sampleMs);
+    count = host.readPcbCount();
+  }
+  if (count === undefined) {
+    return;
+  }
+  console.log(`TCP sockets held by the kernel: ${count} (this agent reboots at ${limit})`);
+  if (count < limit) {
+    return;
+  }
+
+  startGroup("Rebooting this agent: macOS has leaked too many sockets to run the tests");
+  if (!host.reboot()) {
+    console.warn("The reboot did not start, running the tests on this agent anyway");
+    return;
+  }
+  const agentPid = parseInt(env.BUILDKITE_AGENT_PID);
+  if (agentPid > 1) {
+    try {
+      host.kill(agentPid, "SIGQUIT");
+    } catch (error) {
+      console.warn(`Could not signal buildkite-agent (pid ${agentPid}):`, error);
+    }
+  }
+  await host.sleep(5 * 60_000);
+  console.warn("The agent did not stop this job within 5 minutes, running the tests on it anyway");
 }
 
 /** @typedef {keyof typeof emojiMap} Emoji */

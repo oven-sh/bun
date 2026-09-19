@@ -66,6 +66,7 @@ import {
   markBuildkiteStepReported,
   parseJunitFileSuites,
   printEnvironment,
+  rebootDarwinAgentIfOutOfSockets,
   reportAnnotationToBuildKite,
   startGroup,
   tmpdir,
@@ -3431,6 +3432,7 @@ export async function main() {
 
   let ok = true;
   if (doRunTests) {
+    await rebootDarwinAgentIfOutOfSockets();
     const results = await runTests();
     ok = results.every(({ ok }) => ok);
   }

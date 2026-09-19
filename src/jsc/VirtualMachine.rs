@@ -1901,7 +1901,10 @@ impl VirtualMachine {
         // frees the printer while this VM survives with the flag still set —
         // the next macro on the same pool thread would otherwise skip re-init
         // and panic at `SOURCE_CODE_PRINTER.get().expect(...)`.
-        claim_source_code_printer_for_macro();
+        if SOURCE_CODE_PRINTER.get().is_none() {
+            SOURCE_CODE_PRINTER_FROM_MACRO.set(true);
+        }
+        ensure_source_code_printer();
         self.transpiler.options.target = bun_ast::Target::BunMacro;
         self.transpiler
             .resolver
@@ -3942,17 +3945,6 @@ fn ensure_source_code_printer() {
     }
 }
 
-/// [`ensure_source_code_printer`] for script that runs on behalf of a macro.
-/// A printer allocated here is the macro's to free
-/// ([`drop_source_code_printer_if_macro_owned`]); one a runtime VM already
-/// owns stays its own.
-fn claim_source_code_printer_for_macro() {
-    if SOURCE_CODE_PRINTER.get().is_none() {
-        SOURCE_CODE_PRINTER_FROM_MACRO.set(true);
-    }
-    ensure_source_code_printer();
-}
-
 /// Free this thread's [`SOURCE_CODE_PRINTER`] Box (if any).
 fn drop_source_code_printer() {
     if let Some(printer) = SOURCE_CODE_PRINTER.take() {
@@ -4015,8 +4007,10 @@ pub fn drop_source_code_printer_if_macro_owned() {
 /// where re-entering `run_gc` would be a recursion hazard.
 pub fn collect_macro_vm_garbage() {
     let Some(vm) = VM.get() else { return };
-    // SAFETY: `VM` is this thread's per-JS-thread VM singleton; we only read
-    // plain fields and call `jsc_vm()` (which the C++ side locks internally).
+    // SAFETY: `VM` is this thread's per-JS-thread VM singleton. The shared
+    // borrow is held across a tick that runs script and mutates the VM
+    // through `event_loop_mut()`, under the same single-JS-thread contract
+    // that accessor documents; no `&mut VirtualMachine` is formed here.
     let vm_ref = unsafe { &*vm };
     if !vm_ref.has_enabled_macro_mode {
         return;
@@ -4030,11 +4024,20 @@ pub fn collect_macro_vm_garbage() {
     // job runs. Nothing else ticks this thread's regular loop: a macro VM only
     // ticks its macro loop, and only while a macro waits on a promise. Run the
     // job here, which also folds the release of its keep-alive and adopts what
-    // a macro started and did not await. The job runs script, so it needs the
-    // printer that `__bun_macro_context_deinit` has just freed.
-    claim_source_code_printer_for_macro();
+    // a macro started and did not await.
+    //
+    // The job runs script, so it needs the printer that
+    // `__bun_macro_context_deinit` has just freed. It is allocated here as
+    // this function's own, not as macro-owned: a `Bun.Transpiler` call inside
+    // the job deinits a nested `MacroContext` at guard depth 0, and
+    // `drop_source_code_printer_if_macro_owned` would free a macro-owned
+    // printer in the middle of the tick.
+    let printer_allocated_here = SOURCE_CODE_PRINTER.get().is_none();
+    ensure_source_code_printer();
     vm_ref.run_with_api_lock(|| vm_ref.event_loop_mut().tick());
-    drop_source_code_printer_if_macro_owned();
+    if printer_allocated_here {
+        drop_source_code_printer();
+    }
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {

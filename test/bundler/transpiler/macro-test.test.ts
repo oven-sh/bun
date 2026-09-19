@@ -531,7 +531,14 @@ test("a FinalizationRegistry cleanup scheduled by the GC after a Bun.build() run
     "m.ts": [
       `import { getEventLoopStats } from "bun:internal-for-testing";`,
       `import { readdirSync, writeFileSync } from "node:fs";`,
-      `const registry = new FinalizationRegistry(() => {});`,
+      // The cleanup runs outside a macro. A Bun.Transpiler call deinits a macro context of its own, and a
+      // module load after it still needs this thread's source code printer.
+      `let cleanups = 0;`,
+      `const registry = new FinalizationRegistry(() => {`,
+      `  if (cleanups++ > 0) return;`,
+      `  new Bun.Transpiler({ loader: "ts" }).transformSync("let x: number = 1;");`,
+      `  import("./late.ts").then(m => console.log("cleanup loaded", m.late));`,
+      `});`,
       `export function arrive(round) {`,
       `  const prefix = "arrived-" + round + "-";`,
       `  writeFileSync(import.meta.dir + "/" + prefix + crypto.randomUUID(), "");`,
@@ -551,6 +558,7 @@ test("a FinalizationRegistry cleanup scheduled by the GC after a Bun.build() run
       `}`,
       ``,
     ].join("\n"),
+    "late.ts": `export const late = "late";\n`,
     "a1.ts": entry(1, `export const garbage = makeGarbage();`),
     "b1.ts": entry(1, `export const garbage = makeGarbage();`),
     "a2.ts": entry(2, ``),
@@ -571,14 +579,23 @@ test("a FinalizationRegistry cleanup scheduled by the GC after a Bun.build() run
     cmd: [bunExe(), "run", "build.ts"],
     // Two pool threads, so the probe build lands on the threads of the first build. bunEnv turns the
     // timed GC off, so the only collection is the one at the end of each build.
-    env: { ...bunEnv, GOMAXPROCS: "2" },
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const { baseline, probe } = JSON.parse(stdout.trim().split("\n").pop()!);
-  expect({ probe, stderr }).toEqual({ probe: baseline, stderr: "" });
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .filter(line => !line.startsWith("[macro]"));
+  const { baseline, probe } = JSON.parse(lines.pop()!);
+  // One cleanup per worker thread, at the end of the first build.
+  expect({ probe, lines, stderr }).toEqual({
+    probe: baseline,
+    lines: ["cleanup loaded late", "cleanup loaded late"],
+    stderr: "",
+  });
   expect(exitCode).toBe(0);
 });
 

@@ -10,6 +10,30 @@ const platformPath = (path: string) => path;
 
 setDefaultTimeout(1000 * 60 * 5);
 
+const registry = new VerdaccioRegistry();
+
+beforeAll(async () => {
+  await registry.start();
+});
+
+afterAll(() => {
+  registry.stop();
+});
+
+// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`. Two of these concurrent
+// tests install the same tarball spec; sharing one cache, they replace each other's `@T@<hash>` folder on Windows.
+async function runBun(cwd: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 describe("error messages", () => {
   test("'bun patch' with no package name shows a usage example", async () => {
     await using dir = tempDir("bun-patch-noarg", {
@@ -71,16 +95,6 @@ describe("error messages", () => {
 // stack buffers (512 bytes in the installer itself), so a long enough spec crashed
 // every command that formatted it.
 describe("packages whose label is longer than 1024 bytes", () => {
-  const registry = new VerdaccioRegistry();
-
-  beforeAll(async () => {
-    await registry.start();
-  });
-
-  afterAll(() => {
-    registry.stop();
-  });
-
   // `x/../` normalizes away, so the tarball still lives at a short path that is valid
   // on every platform while the recorded spec stays long.
   const longSpec = (tarball: string) => `./${Buffer.alloc(1050, "x/../").toString()}${tarball}`;
@@ -94,20 +108,6 @@ describe("packages whose label is longer than 1024 bytes", () => {
       },
     });
     return packageDir;
-  }
-
-  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`. Two of these concurrent
-  // tests install the same tarball spec; sharing one cache, they replace each other's `@T@<hash>` folder on Windows.
-  async function runBun(cwd: string, ...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
   }
 
   async function install(cwd: string) {
@@ -1239,29 +1239,6 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
 // `bun patch` prints the package's own name and keys the patch by it (`no-deps@1.0.0`), so that
 // name has to select the package too, not only the alias.
 describe("an npm: aliased dependency", () => {
-  const registry = new VerdaccioRegistry();
-
-  beforeAll(async () => {
-    await registry.start();
-  });
-
-  afterAll(() => {
-    registry.stop();
-  });
-
-  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`.
-  async function runBun(cwd: string, ...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
   async function writeProject(dependencies: Record<string, string>, linker: "hoisted" | "isolated" = "hoisted") {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker },

@@ -593,6 +593,26 @@ extern "C" const char bun_internal_modules_data[];
 `,
 );
 
+// process.moduleLoadList names, indexed by Field, in Node's format: "NativeModule fs",
+// "NativeModule internal/streams/readable", "Internal Binding buffer" (bun:* keep their prefix).
+function moduleLoadListName(id: string, n: number) {
+  if (n >= nativeStartIndex) return "Internal Binding " + id.replace(/^node:/, "");
+  return (
+    "NativeModule " +
+    idToPublicSpecifierOrEnumName(id)
+      .replace(/^node:/, "")
+      .replace(/^internal:/, "internal/")
+  );
+}
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "InternalModuleRegistry+names.h"),
+  `// clang-format off
+static constexpr ASCIILiteral internalModuleNames[] = {
+  ${moduleList.map((id, n) => JSON.stringify(moduleLoadListName(id, n)) + "_s,").join("\n  ")}
+};
+`,
+);
+
 // This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
 // JS modules (ids below nativeStartIndex, in enum order) are rows of the section index above rather
 // than switch arms; native modules keep a switch.

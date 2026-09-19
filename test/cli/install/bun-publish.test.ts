@@ -10,6 +10,7 @@ import {
   isWindows,
   pack,
   runBunInstall,
+  substDrive,
   tempDir,
   tmpdirSync,
 } from "harness";
@@ -1241,6 +1242,31 @@ it("$npm_lifecycle_event is accurate during publish", async () => {
     ``,
   ]);
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/29273
+// `C:` is the current directory of drive C, it is not the root `C:\`.
+it.skipIf(!isWindows)("publishes a package in the root of a drive", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "publish-pkg-drive-root",
+      version: "1.0.0",
+      scripts: { prepack: "touch prepack.txt", publish: "touch publish.txt" },
+    }),
+  );
+  await write(join(packageDir, "bunfig.toml"), await registry.authBunfig("driveroot"));
+  await rm(join(registry.packagesPath, "publish-pkg-drive-root"), { recursive: true, force: true });
+  using drive = substDrive(packageDir);
+
+  const { out, err, exitCode } = await publish(env, drive.root);
+  expect(err).toBe("$ touch prepack.txt\n$ touch publish.txt\n");
+  expect(out).toContain(" + publish-pkg-drive-root@1.0.0");
+  expect(exitCode).toBe(0);
+  // Each script ran in the root.
+  expect(existsSync(join(packageDir, "prepack.txt"))).toBe(true);
+  expect(existsSync(join(packageDir, "publish.txt"))).toBe(true);
 });
 
 describe("readme", () => {

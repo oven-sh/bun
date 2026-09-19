@@ -162,15 +162,8 @@ function onServerResponseClose() {
   }
 }
 
-// Node's strictContentLength(msg) in lib/_http_outgoing.js reads msg._contentLength, which
-// _storeHeader copies from the Content-Length header with `+value`. Headers render lazily
-// here, so the header stands in. `headerState` is the state before this call's implicit
-// header: Node's write_() checks before _implicitHeader(), so a write() that first renders
-// the headers is counted but not checked. end() assigns _contentLength before the implicit
-// header and checks again after _storeHeader, so it is always checked against the header.
-// Node also tests !_removedContLen, which _storeHeader clears when it stores a Content-Length
-// header. The handle path never runs _storeHeader, so the stored header is the truth and a
-// removeHeader() before the current value (writeHead's flat array form does one) is not.
+// Node's write_() checks before _implicitHeader(), so the write that renders the headers
+// (`headerState` none) is counted but not checked. end() is always checked.
 function strictContentLength(response, headerState, fromEnd) {
   if (!response.strictContentLength) return;
   if (!fromEnd && headerState === NodeHTTPHeaderState.none) return;

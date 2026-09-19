@@ -287,6 +287,24 @@ fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> 
     Err(err_throw_cold(global, code, msg))
 }
 
+/// Same text as the `ERR_HTTP_CONTENT_LENGTH_MISMATCH` row of `simpleErrorMessages` in ErrorCode.cpp.
+#[cold]
+#[inline(never)]
+fn err_throw_content_length_mismatch(
+    global: &JSGlobalObject,
+    actual: usize,
+    expected: u64,
+) -> jsc::JsError {
+    global
+        .err(
+            ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+            format_args!(
+                "Response body's content-length of {actual} byte(s) does not match the content-length of {expected} byte(s) set in header"
+            ),
+        )
+        .throw()
+}
+
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
 #[inline]
 fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
@@ -1974,20 +1992,17 @@ impl NodeHTTPResponse {
         if let Some(content_length) = strict_content_length {
             let bytes_written = self.bytes_written.get() + bytes.len();
 
-            if IS_END {
-                if bytes_written as u64 != content_length {
-                    return err_throw(
-                        global_object,
-                        ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                        "Content-Length mismatch",
-                    );
-                }
-            } else if bytes_written as u64 > content_length {
-                return err_throw(
+            let mismatch = if IS_END {
+                bytes_written as u64 != content_length
+            } else {
+                bytes_written as u64 > content_length
+            };
+            if mismatch {
+                return Err(err_throw_content_length_mismatch(
                     global_object,
-                    ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                    "Content-Length mismatch",
-                );
+                    bytes_written,
+                    content_length,
+                ));
             }
             self.bytes_written.set(bytes_written);
         } else {

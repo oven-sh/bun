@@ -7083,21 +7083,39 @@ impl H2FrameParser {
         if this.max_send_header_block_length.get() != 0
             && encoded_size > this.max_send_header_block_length.get() as usize
         {
-            stream.state = StreamState::CLOSED;
-            stream.rst_code = ErrorCode::REFUSED_STREAM.0;
-
+            let identifier = stream.get_identifier();
+            identifier.ensure_still_alive();
             this.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onFrameError,
-                stream.get_identifier(),
+                identifier,
                 JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                 JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
             );
 
-            this.dispatch_with_extra(
-                JSH2FrameParser::Gc::onStreamError,
-                stream.get_identifier(),
-                JSValue::js_number(stream.rst_code as f64),
-            );
+            if this.is_server.get() {
+                // The peer opened this stream, so it must hear that the response
+                // failed. Node resets it with FRAME_SIZE_ERROR and then closes the
+                // session (onFrameError in lib/internal/http2/core.js).
+                let triggering_id = stream.id;
+                this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
+                this.send_go_away(
+                    triggering_id,
+                    ErrorCode::NO_ERROR,
+                    b"",
+                    this.last_stream_id.get(),
+                    true,
+                );
+            } else {
+                // A client stream that never reached the wire is closed locally,
+                // the way nghttp2 refuses an unsent request.
+                stream.state = StreamState::CLOSED;
+                stream.rst_code = ErrorCode::REFUSED_STREAM.0;
+                this.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamError,
+                    identifier,
+                    JSValue::js_number(stream.rst_code as f64),
+                );
+            }
             return Ok(JSValue::js_number(stream_id as f64));
         }
 

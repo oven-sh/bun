@@ -3293,3 +3293,84 @@ test("react-compiler compile time is not exponential in the function nesting dep
   expect(stdout).toMatch(/\b_c\(\d+\)/);
   expect(exitCode).toBe(0);
 });
+
+// A value that a literal or a call captures while it is still mutable is an
+// operand of that instruction and also one of its lvalues. PruneNonEscapingScopes
+// kept a set of operands for each lvalue, so N such operands made N sets of N
+// entries, and it copied them all for the walk from the returned value. An
+// array of 4000 objects took 1 GB, and an array of 8000 took 4 GB.
+test("react-compiler memory does not grow with the square of the operands of an instruction", async () => {
+  // A debug build takes 3 seconds for four components of 800 elements.
+  const small = isDebug || isASAN;
+  const objects = Array.from({ length: small ? 800 : 2000 }, () => "{}").join(", ");
+  const array = `
+    export default function App(p) {
+      const rows = [${objects}];
+      return <List rows={rows} x={p.x} />;
+    }
+  `;
+  // A method with a known signature. The arguments of a call to an unknown
+  // function can all capture each other, which costs far more in other passes.
+  const push = `
+    export default function App(p) {
+      const rows = [];
+      rows.push(${objects});
+      return <List rows={rows} x={p.x} />;
+    }
+  `;
+  using dir = tempDir("react-compiler-operands", {
+    "empty.jsx": `export default function App() { return null; }`,
+    "array0.jsx": array,
+    "array1.jsx": array,
+    "push0.jsx": push,
+    "push1.jsx": push,
+    // On Linux the peak RSS of a child is never below the peak of the process
+    // that spawned it, and this test runner has reached 400 MB on a debug build.
+    // So a new process spawns the builds.
+    "peaks.js": `
+      import { readdirSync, readFileSync } from "node:fs";
+      const build = async (outdir, entries) => {
+        const proc = Bun.spawn({
+          cmd: [process.execPath, "build", "--react-compiler", "--target=browser", "--external=*", "--outdir=" + outdir, ...entries],
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const outputs = readdirSync(outdir).map(file => readFileSync(outdir + "/" + file, "utf8"));
+        const memoized = outputs.filter(output => /\\b_c\\(\\d+\\)/.test(output)).length;
+        return { stderr, exitCode, memoized, peakMB: Math.round(proc.resourceUsage().maxRSS / 1024 / 1024) };
+      };
+      const builds = [
+        build("empty", ["empty.jsx"]),
+        build("operands", ["array0.jsx", "array1.jsx", "push0.jsx", "push1.jsx"]),
+      ];
+      console.log(JSON.stringify(await Promise.all(builds)));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "peaks.js"],
+    env: {
+      ...bunEnv,
+      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [empty, operands] = JSON.parse(stdout);
+  expect({ empty, operands }).toEqual({
+    empty: { stderr: "", exitCode: 0, memoized: 0, peakMB: expect.any(Number) },
+    operands: { stderr: "", exitCode: 0, memoized: 4, peakMB: expect.any(Number) },
+  });
+  expect(exitCode).toBe(0);
+
+  // Above the empty build: 160 MB without the fix and 50 MB with it for the
+  // small inputs, 1080 MB and 130 MB for the large ones.
+  expect(operands.peakMB - empty.peakMB).toBeLessThan(small ? 100 : 300);
+});

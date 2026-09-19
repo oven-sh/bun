@@ -749,6 +749,71 @@ describe("workspace aliases", async () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/23264
+// An install with a lockfile first parses every package.json into a temporary lockfile. An `npm:`
+// alias recorded from that parse must still name its target when a later dependency follows it. A
+// stale name is a slice of unrelated lockfile strings, and the registry answers 404. The target
+// name is longer than 8 bytes, so it is an offset into a string buffer and not inline.
+// `one-range-dep` depends on `no-deps@^1.0.0`.
+describe("a new dependency follows the npm: alias of an unchanged workspace", () => {
+  const writeWorkspace = (packageDir: string, name: string, dependencies: Record<string, string>) =>
+    write(join(packageDir, "packages", name, "package.json"), JSON.stringify({ name, version: "1.0.0", dependencies }));
+  // The package installed as `no-deps` for the package at `owner`.
+  const noDepsOf = (packageDir: string, ...owner: string[]) =>
+    file(join(packageDir, ...owner, "node_modules", "no-deps", "package.json")).json();
+
+  test.concurrent.each([
+    { lockfile: "bun.lock", saveTextLockfile: true },
+    { lockfile: "bun.lockb", saveTextLockfile: false },
+  ])("bun add with $lockfile", async ({ lockfile, saveTextLockfile }) => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    await Promise.all([
+      verdaccio.writeBunfig(packageDir, { saveTextLockfile, linker: "hoisted" }),
+      write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] })),
+      writeWorkspace(packageDir, "pkg1", { "no-deps": "npm:no-deps-bins@1.0.0" }),
+    ]);
+    await runBunInstall(env, packageDir);
+    expect(await exists(join(packageDir, lockfile))).toBeTrue();
+
+    await runBunInstall(env, packageDir, { packages: ["one-range-dep@1.0.0"] });
+    expect(await exists(join(packageDir, "node_modules", "one-range-dep", "package.json"))).toBeTrue();
+    expect(await noDepsOf(packageDir)).toMatchObject({ name: "no-deps-bins", version: "1.0.0" });
+    // Any other resolution of one-range-dep's `no-deps` conflicts with the hoisted alias and nests here.
+    expect(await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules"))).toBeFalse();
+  });
+
+  // pkg1 (edited) sorts before pkg2 (the alias), so it is parsed first. The `one-range-dep` name it
+  // adds (over 8 bytes, so not inline) moves the alias in the temporary lockfile away from its
+  // offset in bun.lock. With the alias's workspace first, both offsets are equal and this passes
+  // without the fix. pkg1's plain `no-deps@2.0.0` is outside the alias (1.0.0) and keeps the root
+  // folder, so one-range-dep's copy nests and shows which package it resolved to.
+  test.concurrent("bun install after a sibling workspace adds the dependency", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] })),
+      writeWorkspace(packageDir, "pkg1", { "no-deps": "2.0.0" }),
+      writeWorkspace(packageDir, "pkg2", { "no-deps": "npm:no-deps-bins@1.0.0" }),
+    ]);
+    await runBunInstall(env, packageDir);
+
+    await writeWorkspace(packageDir, "pkg1", { "no-deps": "2.0.0", "one-range-dep": "1.0.0" });
+    await runBunInstall(env, packageDir);
+    expect(
+      await Promise.all([
+        noDepsOf(packageDir),
+        noDepsOf(packageDir, "packages", "pkg2"),
+        noDepsOf(packageDir, "node_modules", "one-range-dep"),
+      ]),
+    ).toMatchObject([
+      { name: "no-deps", version: "2.0.0" },
+      { name: "no-deps-bins", version: "1.0.0" },
+      { name: "no-deps-bins", version: "1.0.0" },
+    ]);
+  });
+});
+
 for (const glob of [true, false]) {
   test.concurrent(`does not crash when root package.json is in "workspaces"${glob ? " (glob)" : ""}`, async () => {
     using ctx = await setupTest();

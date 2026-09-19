@@ -929,6 +929,98 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
   });
 });
 
+describe("END_STREAM on a 1xx HEADERS block (RFC 9113 §8.1)", () => {
+  const END_STREAM = 0x1;
+  const END_HEADERS = 0x4;
+  // `:status` is static-table index 8: 0x88 is the indexed field `:status: 200`, 0x08 opens a
+  // literal value for that name.
+  const STATUS_200 = Buffer.from([0x88]);
+  const STATUS_100 = Buffer.concat([Buffer.from([0x08]), hpackLiteral("100")]);
+
+  type Seen = { events: string[]; rstCode: number };
+
+  /** Resolves when `stream` closes, with its header blocks, 'end' or 'error', and rstCode. */
+  function observe(stream: http2.ClientHttp2Stream): Promise<Seen> {
+    const { promise, resolve } = Promise.withResolvers<Seen>();
+    const events: string[] = [];
+    // A 1xx block arrives as 'headers'. The final block arrives as 'response' on a request and
+    // as 'push' on a pushed stream.
+    const onHeaders = (headers: http2.IncomingHttpHeaders) => events.push(`headers ${headers[":status"]}`);
+    stream.on("headers", onHeaders).on("response", onHeaders).on("push", onHeaders);
+    stream.on("end", () => events.push("end"));
+    stream.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+    stream.on("close", () => resolve({ events, rstCode: stream.rstCode }));
+    stream.resume();
+    return promise;
+  }
+
+  /**
+   * Answers one request with HEADERS `blocks`, on the request stream or on a stream pushed from it.
+   * Reports what that stream saw and the RST_STREAM code the client put on the wire for it.
+   */
+  async function probe(blocks: [flags: number, block: Buffer][], pushed: boolean) {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const seen = Promise.withResolvers<Seen>();
+      const req = client.request({ ":path": "/" });
+      if (pushed) {
+        req.on("error", () => {});
+        client.on("stream", stream => seen.resolve(observe(stream)));
+      } else {
+        seen.resolve(observe(req));
+      }
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      const id = pushed ? 2 : 1;
+      if (pushed) {
+        // PUSH_PROMISE on stream 1 reserving stream 2: GET http://localhost/
+        const promised = Buffer.alloc(4);
+        promised.writeUInt32BE(id, 0);
+        raw.sendFrame(FrameType.PUSH_PROMISE, END_HEADERS, 1, Buffer.concat([promised, requestHeaderBlock("GET")]));
+      }
+      for (const [flags, block] of blocks) raw.sendFrame(FrameType.HEADERS, flags, id, block);
+      // PING as a barrier: its ACK follows every frame the client wrote for the response, and
+      // only a session that is still up sends it.
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      const observed = await seen.promise;
+      const rst = raw.frames.find(f => f.type === FrameType.RST_STREAM && f.streamId === id);
+      return { ...observed, rstStream: rst?.payload.readUInt32BE(0) };
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  }
+
+  describe.each([
+    ["a request", false],
+    ["a pushed stream", true],
+  ])("on %s", (_, pushed) => {
+    test("is a stream PROTOCOL_ERROR, and the block is not delivered", async () => {
+      expect(await probe([[END_HEADERS | END_STREAM, STATUS_100]], pushed)).toEqual({
+        events: ["error ERR_HTTP2_STREAM_ERROR"],
+        rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
+        rstStream: ErrorCode.PROTOCOL_ERROR,
+      });
+    });
+
+    test("END_STREAM on the final HEADERS block after it still ends the response", async () => {
+      const blocks: [number, Buffer][] = [
+        [END_HEADERS, STATUS_100],
+        [END_HEADERS | END_STREAM, STATUS_200],
+      ];
+      expect(await probe(blocks, pushed)).toEqual({
+        events: ["headers 100", "headers 200", "end"],
+        rstCode: http2.constants.NGHTTP2_NO_ERROR,
+        rstStream: undefined,
+      });
+    });
+  });
+});
+
 function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc(0)): Buffer {
   return Buffer.concat([
     Buffer.from([method === "POST" ? 0x83 : 0x82, 0x86, 0x84, 0x01]),

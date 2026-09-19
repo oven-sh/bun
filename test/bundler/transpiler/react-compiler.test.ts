@@ -3100,12 +3100,13 @@ describe.skipIf(!isDebug && !isASAN)(
 
     // The bound of a pass is on the time it takes for `size` repetitions in one
     // component, divided by its time for the same source in components of
-    // `controlSize`. A linear pass takes the same time for both: the ratio is 0.6
-    // to 1.3 with the fixes. Without them it is 3 to 3.7 for
-    // MergeOverlappingReactiveScopesHIR and over 6 for the other passes, on a
-    // debug build and on an ASAN build.
+    // `controlSize`. A linear pass takes the same time for both. With the fixes
+    // the ratio is 0.3 to 1.2. Without them it is over 5, on a debug build and on
+    // an ASAN build. MergeOverlappingReactiveScopesHIR has less room: 0.6 to 0.8
+    // against 3.2 to 3.7 on a debug build, and 0.6 to 1.5 against 3.5 to 5 on an
+    // ASAN build.
     test.each([
-      ["overlapping scopes", overlappingScopes, 100, 5, { MergeOverlappingReactiveScopesHIR: 2 }],
+      ["overlapping scopes", overlappingScopes, 100, 5, { MergeOverlappingReactiveScopesHIR: isDebug ? 2 : 2.5 }],
       ["useMemo calls", useMemoCalls, isDebug ? 600 : 1500, 20, { ValidateUseMemo: 3, DropManualMemoization: 3 }],
       [
         "function expressions",

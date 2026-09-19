@@ -1890,7 +1890,7 @@ async function probeHostedRunner() {
 
   /** @param {string} label @param {string | undefined} image */
   const probe = (label, image) => ({
-    key: `probe-${label}`,
+    key: `probe-${label.replace(/[^a-zA-Z0-9_:-]/g, "-")}`,
     label: `:mag: probe ${label}`,
     agents: { queue: "build-image" },
     ...(image ? { image } : {}),
@@ -1901,7 +1901,7 @@ async function probeHostedRunner() {
       "whoami",
       "node --version",
       'node -p "process.features.typescript"',
-      "echo 'const x: number = 1; console.log(\"typescript ran:\", x);' > /tmp/probe.ts",
+      "echo 'const x = 1 as number; console.log(\"typescript ran\", x);' > /tmp/probe.ts",
       'node /tmp/probe.ts || echo "typescript did not run"',
       "git --version",
       "bash --version | head -1",

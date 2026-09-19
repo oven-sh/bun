@@ -286,4 +286,65 @@ describe("node:http server timeout enforcement", () => {
       server.close();
     }
   });
+
+  // A POST whose body stalls is pipelined behind a GET that is never answered,
+  // so the GET's response still owns the socket when the inactivity timeout
+  // fires. Like Node's socketOnTimeout (`parser.incoming`), the request that is
+  // still being received sees 'timeout', not the one that owns the response.
+  const pipelinedStalledPost =
+    "GET /a HTTP/1.1\r\nHost: a\r\n\r\n" + "POST /b HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n0123456789";
+
+  test("a pipelined request that is still being received gets 'timeout' and can keep the socket", async () => {
+    const events: string[] = [];
+    const { promise: timedOut, resolve: onTimedOut } = Promise.withResolvers<void>();
+    const server = http.createServer(req => {
+      if (req.url !== "/b") return;
+      req.setTimeout(200, () => events.push(`POST /b 'timeout' complete=${req.complete}`));
+      // Runs after the server's own socket 'timeout' listener, which is the
+      // one that destroys the socket when nothing handled the timeout.
+      req.socket.on("timeout", () => {
+        events.push(`socket destroyed=${req.socket.destroyed}`);
+        onTimedOut();
+      });
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.on("connect", () => client.write(pipelinedStalledPost));
+      await timedOut;
+      expect(events).toEqual(["POST /b 'timeout' complete=false", "socket destroyed=false"]);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("with pipelining, 'timeout' goes to the incoming request, the response that owns the socket, then the server", async () => {
+    const events: string[] = [];
+    const { promise: timedOut, resolve: onTimedOut } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      const name = `${req.method} ${req.url}`;
+      req.on("timeout", () => events.push(`req ${name} complete=${req.complete}`));
+      res.on("timeout", () => events.push(`res ${name}`));
+      if (req.url === "/b") req.socket.setTimeout(200);
+    });
+    server.on("timeout", socket => {
+      events.push(`server destroyed=${socket.destroyed}`);
+      onTimedOut();
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.on("connect", () => client.write(pipelinedStalledPost));
+      await timedOut;
+      expect(events).toEqual(["req POST /b complete=false", "res GET /a", "server destroyed=false"]);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
 });

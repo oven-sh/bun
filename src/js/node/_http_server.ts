@@ -38,7 +38,6 @@ const {
   headerStateSymbol,
   NodeHTTPHeaderState,
   kPendingCallbacks,
-  kRequest,
   kCloseCallback,
   NodeHTTPResponseFlags,
   callCloseCallback,
@@ -219,7 +218,7 @@ function releaseServerParserShim(socket, req?) {
 }
 
 function onNodeHTTPServerSocketTimeout() {
-  const req = this[kRequest];
+  const req = this.parser?.incoming;
   // Like Node.js's socketOnTimeout: the request only sees 'timeout' while its
   // message is still being received. A body-less request was fully received
   // when it was dispatched, even if its (empty) stream was never consumed.
@@ -865,9 +864,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           server.emit("connection", socket);
         }
 
-        if (!isPipelined) {
-          socket[kRequest] = http_req;
-        }
         // Node.js (llhttp) only flags a request as an upgrade when it carries
         // both an Upgrade header and a Connection header with the "upgrade"
         // token; the server then consults shouldUpgradeCallback (default: an
@@ -1624,14 +1620,11 @@ function getNodeHTTPServerSocket() {
       // not yet finished (`resOnFinish` does `incoming.shift()`). Our
       // equivalent of "still in the queue" is `_httpMessage` being non-null:
       // `detachSocket()` (called from `res.end()` / on `"finish"`) clears it.
-      // Do NOT fall back to `this[kRequest]` here — `_httpMessage` is the
-      // canonical "response still attached" indicator. (`detachSocket()` now
-      // clears `kRequest` alongside `_httpMessage`, so the two agree after a
-      // finished response; historically `kRequest` was never cleared and the
-      // fallback aborted the request on every keep-alive close even after a
-      // fully successful response, racing `req._dump()`'s nextTick into a
-      // spurious `"aborted"` — seen as flakes in the express `res.sendFile`
-      // suite where supertest closes the socket right after reading the body.)
+      // Do NOT fall back to any other request reference here: aborting a
+      // request whose response already finished raced `req._dump()`'s nextTick
+      // into a spurious `"aborted"` on a keep-alive close (flakes in the
+      // express `res.sendFile` suite, where supertest closes the socket right
+      // after reading the body).
       //
       // Gate on `!req.destroyed` rather than `!req.complete`: a body-less GET
       // flips `complete` before the response is written, so an aborted
@@ -2613,7 +2606,6 @@ function advanceResponsePipeline(server, socket) {
     }
     res.assignSocket(socket);
   }
-  socket[kRequest] = res.req;
 
   // Replay the writes buffered while the response was queued.
   // The buffered bytes are handed to the native handle below, so they no
@@ -3475,12 +3467,6 @@ ServerResponse.prototype.detachSocket = function (socket) {
     if (socket[kCloseCallback]) socket[kCloseCallback] = undefined;
     socket.removeListener("close", onServerResponseClose);
     socket._httpMessage = null;
-    // Drop the request reference so a kept-alive idle connection does not
-    // pin the last request in memory (Node.js frees the parser's incoming
-    // reference when the response finishes).
-    if (socket[kRequest] === this.req) {
-      socket[kRequest] = undefined;
-    }
   }
 
   this.socket = null;

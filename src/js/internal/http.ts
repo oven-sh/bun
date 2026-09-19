@@ -38,7 +38,6 @@ const kAbortController = Symbol.for("kAbortController");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
-const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -528,7 +527,6 @@ export {
   kPerRequestCheckServerIdentity,
   kProxyConfig,
   kRealListen,
-  kRequest,
   kWaitForProxyTunnel,
   noBodySymbol,
   onDataIncomingMessage,

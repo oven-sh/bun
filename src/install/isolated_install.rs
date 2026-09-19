@@ -827,6 +827,15 @@ pub(crate) fn build_store(
                 continue;
             }
 
+            if lockfile::pruned_workspaces::skips_link_to_pruned_workspace(
+                manager,
+                lockfile,
+                entry.pkg_id,
+                resolved_pkg_id,
+            ) {
+                continue;
+            }
+
             for &visited_parent_id in &visited_parent_node_ids {
                 let ctx = store::node::TransitivePeerOrderedArraySetCtx {
                     string_buf,

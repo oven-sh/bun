@@ -7,7 +7,7 @@ use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile_real::{CatalogMap, Lockfile};
-use crate::{PackageID, PackageNameHash, ResolutionTag};
+use crate::{PackageID, PackageManager, PackageNameHash, ResolutionTag};
 
 pub(crate) fn workspace_is_missing_on_disk(
     lockfile: &Lockfile,
@@ -21,6 +21,27 @@ pub(crate) fn workspace_is_missing_on_disk(
         package_json_path.append(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()));
     let _ = package_json_path.append(b"package.json");
     !bun_sys::exists_z(package_json_path.slice_z())
+}
+
+// A remaining workspace that depends on a pruned one must fail the install, so the link is skipped only for
+// another dependent. A registry package can share the pruned workspace's name, so the name alone does not decide.
+pub(crate) fn skips_link_to_pruned_workspace(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    dependent: PackageID,
+    target: PackageID,
+) -> bool {
+    let pruned = &manager.summary.pruned_workspaces;
+    if pruned.is_empty() {
+        return false;
+    }
+    let pkgs = lockfile.packages.slice();
+    let pkg_res = pkgs.items_resolution();
+    !matches!(
+        pkg_res[dependent as usize].tag,
+        ResolutionTag::Root | ResolutionTag::Workspace
+    ) && pkg_res[target as usize].tag == ResolutionTag::Workspace
+        && pruned.contains(&pkgs.items_name_hash()[target as usize])
 }
 
 pub(crate) fn lockfile_lists_workspace_path(lockfile: &Lockfile, workspace_path: &[u8]) -> bool {

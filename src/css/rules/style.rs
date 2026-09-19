@@ -1,5 +1,5 @@
 use crate as css;
-use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
+use crate::css_rules::{CssRuleList, Location, MinifyContext};
 use crate::declaration::DeclarationBlock;
 use crate::error::MinifyErr;
 use crate::selectors::selector;
@@ -72,39 +72,33 @@ impl<R> StyleRule<R> {
 
 // ─── to_css ───────────────────────────────────────────────────────────────
 
-/// Maximum number of bytes the per-vendor-prefix serialization may emit from
-/// duplicate passes across a whole stylesheet.
-///
-/// When a style rule's selector list carries more than one vendor prefix (e.g.
-/// a list mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a
-/// single pseudo downleveled to several prefixes), `StyleRule::to_css`
-/// serializes the rule once per prefix, and every pass after the first
-/// re-serializes the rule's whole body — declarations, nested rules, and
-/// everything under them. Nesting such rules repeats that body once per prefix
-/// at every level, so the output grows by (prefix count)^depth. The bytes
-/// emitted by each duplicate pass are measured and bounded, so a few kilobytes
-/// of deeply nested input cannot expand into gigabytes — whatever the
-/// duplicated payload is (nested rules, a large declaration block, etc.). Real
-/// stylesheets repeat only a little output across prefixes; anything past this
-/// limit is a runaway expansion, so bail out with an error instead of
-/// allocating gigabytes. Complements `MAX_NESTING_EXPANSIONS`
-/// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
+/// Stylesheet-wide byte budget for vendor prefix passes after the first, which repeat the nested rules when nesting is preserved (#31642).
 const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        if self.vendor_prefix.is_empty() {
-            self.to_css_base(dest, true)?;
+        // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
+        let supports_nesting = self.rules.v.len() == 0
+            || !css::targets::Targets::should_compile_same(&dest.targets, css::Feature::Nesting);
+
+        // With nesting compiled away, a rule without passes of its own prints in its ancestor's passes, which change what `&` prints.
+        let passes = if self.vendor_prefix.is_empty() {
+            dest.ctx
+                .map_or(VendorPrefix::empty(), |ctx| ctx.prefix_passes)
+        } else {
+            self.vendor_prefix
+        };
+
+        if passes.is_empty() {
+            self.to_css_base(dest, supports_nesting)?;
         } else {
             let mut first_rule = true;
             let mut emitted_first_pass = false;
-            let mut remaining_prefixes = self.vendor_prefix;
             // `inline for (css.VendorPrefix.FIELDS) |field|` — iterate the bool fields of the
             // packed struct in declared order. In Rust the bitflags type exposes the same
             // ordered single-bit table directly.
             for &prefix in VendorPrefix::FIELDS {
-                if self.vendor_prefix.contains(prefix) {
-                    remaining_prefixes.remove(prefix);
+                if passes.contains(prefix) {
                     if !first_rule {
                         if !dest.minify {
                             dest.write_char(b'\n')?; // no indent
@@ -114,22 +108,14 @@ impl<R> StyleRule<R> {
 
                     dest.vendor_prefix = prefix;
                     let (line, col) = (dest.line, dest.col);
-                    // The first prefix pass is the original; every later pass
-                    // re-serializes the same body (declarations + nested rules),
-                    // so its output is a duplicate produced by the fan-out.
-                    // Measure how much it emits and charge it against the
-                    // expansion-byte budget so nesting fanning-out rules can't
-                    // expand a few kilobytes into gigabytes. The first pass
-                    // (and a single-prefix rule, which has no later pass) does
-                    // not charge; a flat multi-prefix rule's later passes do,
-                    // but without nesting to compound them that stays linear.
+                    // Every pass after the first duplicates the body, so its bytes count against the expansion budget.
                     let is_duplicate_pass = emitted_first_pass;
                     let bytes_before = if is_duplicate_pass {
                         dest.bytes_written()
                     } else {
                         0
                     };
-                    self.to_css_base(dest, remaining_prefixes.is_empty())?;
+                    self.to_css_base(dest, supports_nesting)?;
                     if is_duplicate_pass {
                         let emitted = dest.bytes_written().saturating_sub(bytes_before);
                         dest.prefix_expansion_bytes =
@@ -141,10 +127,7 @@ impl<R> StyleRule<R> {
                             );
                         }
                     }
-                    // A non-final pass emits nothing when the rule has no
-                    // declarations of its own and all of its nested rules are
-                    // deferred to the final pass; don't write a separator
-                    // after such a pass.
+                    // With nesting compiled away, a pass of a rule without declarations emits nothing: no separator.
                     if dest.line != line || dest.col != col {
                         first_rule = false;
                         emitted_first_pass = true;
@@ -154,16 +137,25 @@ impl<R> StyleRule<R> {
 
             dest.vendor_prefix = VendorPrefix::empty();
         }
+
+        // Nested rules print once, after the passes, so a browser that parses only some prefix variants still applies the rules in source order.
+        if !supports_nesting {
+            if !dest.minify && !self.declarations.is_empty() {
+                dest.write_char(b'\n')?;
+                dest.newline()?;
+            }
+            // `with_context` keeps the (closure-data, fn) split so the `Printer` reborrow lives only inside `func`.
+            dest.with_context(&self.selectors, passes, &self.rules, |rules, d| {
+                rules.to_css(d)
+            })?;
+        }
         Ok(())
     }
 
-    fn to_css_base(&self, dest: &mut Printer, is_final_prefix_pass: bool) -> Result<(), PrintErr> {
+    /// Prints the prelude and the declarations, plus the nested rules when nesting is preserved.
+    fn to_css_base(&self, dest: &mut Printer, supports_nesting: bool) -> Result<(), PrintErr> {
         use css::error::PrinterErrorKind;
         use css::properties::Property;
-
-        // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
-        let supports_nesting = self.rules.v.len() == 0
-            || !css::targets::Targets::should_compile_same(&dest.targets, css::Feature::Nesting);
 
         let len =
             self.declarations.declarations.len() + self.declarations.important_declarations.len();
@@ -246,64 +238,19 @@ impl<R> StyleRule<R> {
             }
         }
 
-        fn helpers_newline<R>(
-            self_: &StyleRule<R>,
-            d: &mut Printer,
-            supports_nesting2: bool,
-            len1: usize,
-        ) -> Result<(), PrintErr> {
-            if !d.minify && (supports_nesting2 || len1 > 0) && self_.rules.v.len() > 0 {
-                if len1 > 0 {
-                    d.write_char(b'\n')?;
-                }
-                d.newline()?;
-            }
-            Ok(())
-        }
-
-        fn helpers_end(d: &mut Printer, has_decls: bool) -> Result<(), PrintErr> {
-            if has_decls {
-                d.dedent();
-                d.newline()?;
-                d.write_char(b'}')?;
-            }
-            Ok(())
-        }
-
-        // Write nested rules after the parent.
         if supports_nesting {
-            helpers_newline(self, dest, supports_nesting, len)?;
-            self.rules.to_css(dest)?;
-            helpers_end(dest, has_declarations)?;
-        } else {
-            // This rule is serialized once per vendor prefix, and each pass
-            // re-serializes the nested rules. Nested style rules that carry
-            // their own vendor prefixes override `dest.vendor_prefix`, so they
-            // produce identical output in every pass; mark non-final passes so
-            // they are skipped and emitted only in the final pass. Otherwise
-            // they would be duplicated once per ancestor prefix, which grows
-            // exponentially with nesting depth.
-            let saved_skip = dest.skip_prefixed_nested_rules;
-            let skip_prefixed_nested = saved_skip || !is_final_prefix_pass;
-            // Whether any nested rule is emitted in this pass; if not, don't
-            // write the separator between the declarations and the nested
-            // rules (nothing would follow it).
-            let has_nested_output = !skip_prefixed_nested
-                || self.rules.v.iter().any(|rule| {
-                    !matches!(rule, CssRule::Ignored) && !rule.is_deferred_to_final_prefix_pass()
-                });
-
-            helpers_end(dest, has_declarations)?;
-            if has_nested_output {
-                helpers_newline(self, dest, supports_nesting, len)?;
+            if !dest.minify && self.rules.v.len() > 0 {
+                if len > 0 {
+                    dest.write_char(b'\n')?;
+                }
+                dest.newline()?;
             }
-            dest.skip_prefixed_nested_rules = skip_prefixed_nested;
-            // `with_context` keeps the (closure-data, fn) split so the
-            // `Printer` reborrow lives only inside `func`.
-            let result =
-                dest.with_context(&self.selectors, &self.rules, |rules, d| rules.to_css(d));
-            dest.skip_prefixed_nested_rules = saved_skip;
-            result?;
+            self.rules.to_css(dest)?;
+        }
+        if has_declarations {
+            dest.dedent();
+            dest.newline()?;
+            dest.write_char(b'}')?;
         }
         Ok(())
     }

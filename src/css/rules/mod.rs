@@ -401,21 +401,6 @@ impl<R> media::MediaRule<R> {
     }
 }
 
-impl<R> CssRule<R> {
-    /// Whether this rule is skipped while `Printer::skip_prefixed_nested_rules`
-    /// is set (a non-final vendor prefix pass of an ancestor style rule) and
-    /// emitted only in the ancestor's final pass: a style rule with its own
-    /// vendor prefixes overrides `Printer::vendor_prefix`, so its output is
-    /// identical in every ancestor pass.
-    fn is_deferred_to_final_prefix_pass(&self) -> bool {
-        match self {
-            CssRule::Style(style) => !style.vendor_prefix.is_empty(),
-            CssRule::Nesting(nesting) => !nesting.style.vendor_prefix.is_empty(),
-            _ => false,
-        }
-    }
-}
-
 // ─── CssRuleList::{to_css,minify,deep_clone} ──────────────────────────────
 
 impl<R> CssRuleList<R> {
@@ -425,15 +410,6 @@ impl<R> CssRuleList<R> {
 
         for rule in self.v.iter() {
             if matches!(rule, CssRule::Ignored) {
-                continue;
-            }
-
-            // While re-serializing nested rules for a non-final vendor prefix
-            // pass of an ancestor style rule, skip style rules that carry
-            // their own vendor prefixes: they override `dest.vendor_prefix`,
-            // so this pass would emit an exact duplicate of what the final
-            // pass emits.
-            if dest.skip_prefixed_nested_rules && rule.is_deferred_to_final_prefix_pass() {
                 continue;
             }
 
@@ -1191,6 +1167,8 @@ pub use crate::Location;
 pub struct StyleContext<'a> {
     pub(crate) selectors: &'a crate::selectors::SelectorList,
     pub(crate) parent: Option<&'a StyleContext<'a>>,
+    /// The vendor prefix passes `selectors` print in; a nested rule without passes of its own prints in them too.
+    pub(crate) prefix_passes: crate::VendorPrefix,
 }
 
 /// Upper bound on the number of selectors that compiling nested rules away for

@@ -503,7 +503,6 @@ describe("backpressure", () => {
       const called: string[] = [];
       let drained = false;
       const wrote = Promise.withResolvers<boolean[]>();
-      const clientGotBody = Promise.withResolvers<void>();
       const finished = Promise.withResolvers<{ drained: boolean; afterDrain: boolean }>();
       finished.promise.catch(() => {});
 
@@ -529,11 +528,9 @@ describe("backpressure", () => {
             res.write("x", callback("x")),
             res.write(Buffer.alloc(0), callback("empty Buffer")),
           ]);
-          // 'drain' and the callbacks come before the client can see the last
-          // byte. Racing them against it turns a lost 'drain' or callback
-          // into a failed assertion, not a timeout.
-          await Promise.race([once(res, "drain"), clientGotBody.promise]);
-          await Promise.race([Promise.all(callbacks), clientGotBody.promise]);
+          // A callback that waits for the drain runs after 'drain' is
+          // emitted, so `drained` is final once all of them have run.
+          await Promise.all(callbacks);
           const afterDrain = res.write("");
           res.end();
           finished.resolve({ drained, afterDrain });
@@ -567,20 +564,23 @@ describe("backpressure", () => {
           } else {
             body += chunk.length;
           }
-          if (body >= BODY + 1) clientGotBody.resolve();
         });
         const closed = once(socket, "close");
         socket.resume();
         const [result] = await Promise.all([finished.promise, closed]);
 
+        const order = ["payload", "empty string", "x", "empty Buffer"];
         expect({ returned, beforeClientRead, ...result, called, body }).toEqual({
           returned: [false, false, false, false],
-          // Winsock can take the whole payload in one send(). Then nothing is
-          // pending, and 'drain' and the callbacks are free to come at once.
-          beforeClientRead: process.platform === "win32" ? expect.any(Object) : { called: [], drained: false },
+          // Winsock can take the whole payload in one send(). The callbacks
+          // of the writes it took, in order, and 'drain' can then come at once.
+          beforeClientRead:
+            process.platform === "win32"
+              ? { called: order.slice(0, beforeClientRead.called.length), drained: expect.any(Boolean) }
+              : { called: [], drained: false },
           drained: true,
           afterDrain: true,
-          called: ["payload", "empty string", "x", "empty Buffer"],
+          called: order,
           body: BODY + 1,
         });
       } finally {
@@ -624,7 +624,11 @@ describe("backpressure", () => {
       const BODY = 8 * 1024 * 1024;
       const payload = Buffer.alloc(BODY, "a");
       const called: string[] = [];
-      const wrote = Promise.withResolvers<{ res: http.ServerResponse; returned: boolean[] }>();
+      const wrote = Promise.withResolvers<{
+        res: http.ServerResponse;
+        earlierResponsePending: boolean;
+        returned: boolean[];
+      }>();
       await using server = http.createServer((req, res) => {
         if (req.url !== "/ignored") {
           res.end(payload);
@@ -633,12 +637,15 @@ describe("backpressure", () => {
         try {
           res.statusCode = req.method === "HEAD" ? 200 : 204;
           res.on("drain", () => called.push("drain"));
+          // Bun counts the unsent bytes of the earlier response on this
+          // response, Node counts them on the socket.
+          const earlierResponsePending = res.writableLength + req.socket.writableLength > 0;
           const returned = [
             res.write("x", () => called.push("x")),
             res.write("", () => called.push("empty string")),
             res.write(Buffer.alloc(0), () => called.push("empty Buffer")),
           ];
-          wrote.resolve({ res, returned });
+          wrote.resolve({ res, earlierResponsePending, returned });
         } catch (e) {
           wrote.reject(e);
           res.destroy();
@@ -653,9 +660,11 @@ describe("backpressure", () => {
         `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n${requestLine}\r\nHost: localhost\r\nConnection: close\r\n\r\n`,
       );
       try {
-        const { res, returned } = await wrote.promise;
+        const { res, earlierResponsePending, returned } = await wrote.promise;
         await new Promise(resolve => setImmediate(resolve));
-        expect({ returned, called }).toEqual({
+        expect({ earlierResponsePending, returned, called }).toEqual({
+          // Winsock can take the whole first response in one send().
+          earlierResponsePending: process.platform === "win32" ? expect.any(Boolean) : true,
           returned: [true, true, true],
           called: ["x", "empty string", "empty Buffer"],
         });

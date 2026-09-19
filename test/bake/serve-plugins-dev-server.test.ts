@@ -137,3 +137,219 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup resolves
   expect(out).toEqual({ status: 200, fromPlugin: true });
   expect(exitCode).toBe(0);
 });
+
+// Same reject path but the deferred request is a *framework* route
+// (DeferredRequest::Handler::ServerHandler) rather than a BundledHtmlPage.
+// on_plugins_rejected drains the deferred list; the ServerHandler arm must
+// write a response and release both RequestContext refs (the
+// prepare_and_save +1 and defer_request's ctx.ref_() +1) so the server's
+// pending_requests reaches zero and DevServer::drop runs after stop(true).
+test.concurrent(
+  "on_plugins_rejected responds and releases a deferred framework-route RequestContext",
+  async () => {
+    using dir = tempDir("serve-plugins-devserver-reject-framework", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": `
+        export default {
+          name: "boom-plugin",
+          async setup() {
+            await Promise.resolve();
+            throw new Error("plugin setup failed on purpose");
+          },
+        };
+      `,
+      "minimal.server.ts": `
+        export function render(req, meta) {
+          return meta.pageModule.default(req, meta);
+        }
+        export function registerClientReference(value, file, uid) {
+          return { value, file, uid };
+        }
+      `,
+      "routes/index.ts": `
+        export default function () {
+          return new Response("unreachable: plugin load fails first");
+        }
+      `,
+      "server.ts": `
+        import { getDevServerDeinitCount } from "bun:internal-for-testing";
+        const server = Bun.serve({
+          port: 0,
+          development: true,
+          app: {
+            framework: {
+              fileSystemRouterTypes: [
+                { root: "./routes", style: "nextjs-pages", serverEntryPoint: "./minimal.server.ts" },
+              ],
+              serverComponents: {
+                separateSSRGraph: false,
+                serverRuntimeImportSource: "./minimal.server.ts",
+                serverRegisterClientReferenceExport: "registerClientReference",
+              },
+            },
+          },
+          fetch() { return new Response("fallback"); },
+        } as any);
+
+        // First request defers into next_bundle.requests as Handler::ServerHandler
+        // while [serve.static] plugins are Pending; the plugin then rejects and
+        // on_plugins_rejected drains the list. The deferred entry must be answered
+        // (500) and its RequestContext fully released so stop(true) can deinit.
+        // The reject runs on the next microtask after the request is deferred, so
+        // the fixed path answers well under a second.
+        let result;
+        try {
+          const res = await fetch(server.url, { signal: AbortSignal.timeout(3_000) });
+          result = String(res.status);
+        } catch (e) {
+          result = (e as Error).name;
+        }
+
+        const before = getDevServerDeinitCount();
+        server.stop(true);
+        let deinit = false;
+        for (let i = 0; i < 250; i++) {
+          Bun.gc(true);
+          await new Promise(r => setTimeout(r, 1));
+          if (getDevServerDeinitCount() > before) { deinit = true; break; }
+        }
+        console.log(JSON.stringify({ result, deinit }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("plugin setup failed on purpose");
+
+    const line = stdout.split("\n").find(l => l.startsWith("{"));
+    expect(line).toBeDefined();
+    // Without the fix the ServerHandler arm wrote nothing and dropped only the
+    // js_request Strong, so the fetch hit the AbortSignal timeout
+    // ("TimeoutError") and the stranded RequestContext ref kept
+    // pending_requests > 0 (deinit: false).
+    expect(JSON.parse(line!)).toEqual({ result: "500", deinit: true });
+    expect(exitCode).toBe(0);
+  },
+  20_000,
+);
+
+// Same as above but server.stop() takes the listener *before* the plugin
+// promise rejects. on_plugins_rejected now drives pending_requests to zero
+// inside its drain, so without a keep-alive that would re-enter
+// deinit_if_we_can() and drop Box<DevServer> mid-loop (UAF on the deferred
+// request pool and next_bundle list head).
+test.concurrent(
+  "on_plugins_rejected after server.stop(): deferred framework request is released without tearing down the DevServer mid-drain",
+  async () => {
+    using dir = tempDir("serve-plugins-devserver-reject-framework-stopped", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": `
+        import * as fs from "node:fs";
+        import * as path from "node:path";
+        export default {
+          name: "boom-plugin",
+          async setup() {
+            // setup() is only reached after the first request has triggered
+            // get_or_load_plugins and been deferred into next_bundle.requests,
+            // so by the time this marker lands the DeferredRequest exists.
+            fs.writeFileSync(path.join(import.meta.dir, "entered"), "");
+            const stopped = path.join(import.meta.dir, "stopped");
+            while (!fs.existsSync(stopped)) {
+              await new Promise(r => setTimeout(r, 5));
+            }
+            throw new Error("plugin setup failed on purpose");
+          },
+        };
+      `,
+      "minimal.server.ts": `
+        export function render(req, meta) {
+          return meta.pageModule.default(req, meta);
+        }
+        export function registerClientReference(value, file, uid) {
+          return { value, file, uid };
+        }
+      `,
+      "routes/index.ts": `
+        export default function () {
+          return new Response("unreachable: plugin load fails first");
+        }
+      `,
+      "server.ts": `
+        import * as fs from "node:fs";
+        import * as path from "node:path";
+        import { getDevServerDeinitCount } from "bun:internal-for-testing";
+        const entered = path.join(import.meta.dir, "entered");
+        const stopped = path.join(import.meta.dir, "stopped");
+        const server = Bun.serve({
+          port: 0,
+          development: true,
+          app: {
+            framework: {
+              fileSystemRouterTypes: [
+                { root: "./routes", style: "nextjs-pages", serverEntryPoint: "./minimal.server.ts" },
+              ],
+              serverComponents: {
+                separateSSRGraph: false,
+                serverRuntimeImportSource: "./minimal.server.ts",
+                serverRegisterClientReferenceExport: "registerClientReference",
+              },
+            },
+          },
+          fetch() { return new Response("fallback"); },
+        } as any);
+
+        // Issue the request (defers as Handler::ServerHandler while plugin setup
+        // is spinning), then take the listener away before letting setup throw.
+        const pending = fetch(server.url, { signal: AbortSignal.timeout(5_000) })
+          .then(r => String(r.status))
+          .catch(e => (e as Error).name);
+        // Wait until the plugin has actually been entered: that only happens
+        // after the request was deferred, so the DeferredRequest is in place.
+        while (!fs.existsSync(entered)) {
+          await new Promise(r => setTimeout(r, 5));
+        }
+
+        const before = getDevServerDeinitCount();
+        // Graceful: closes the listen socket only; the deferred request's
+        // connection stays open and pending_requests stays > 0.
+        server.stop();
+        // Now let the plugin throw so on_plugins_rejected drains the list with
+        // the listener already gone.
+        fs.writeFileSync(stopped, "");
+
+        const result = await pending;
+        let deinit = false;
+        for (let i = 0; i < 250; i++) {
+          Bun.gc(true);
+          await new Promise(r => setTimeout(r, 1));
+          if (getDevServerDeinitCount() > before) { deinit = true; break; }
+        }
+        console.log(JSON.stringify({ result, deinit }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("plugin setup failed on purpose");
+
+    const line = stdout.split("\n").find(l => l.startsWith("{"));
+    expect(line).toBeDefined();
+    expect(JSON.parse(line!)).toEqual({ result: "500", deinit: true });
+    expect(exitCode).toBe(0);
+  },
+  20_000,
+);

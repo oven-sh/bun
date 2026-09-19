@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
 import http from "http";
+import https from "node:https";
+import tls from "node:tls";
 
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
@@ -231,13 +233,22 @@ describe("HTTP server CONNECT", () => {
     connect: "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
     upgrade: "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: custom\r\n\r\n",
   };
-  test.concurrent.each(["connect", "upgrade"] as const)(
-    "a paused %s socket stops reading the connection instead of buffering everything",
-    async event => {
+  test.concurrent.each([
+    ["connect", "http"],
+    ["upgrade", "http"],
+    ["connect", "https"],
+    ["upgrade", "https"],
+  ] as const)(
+    "a paused %s socket stops reading the %s connection instead of buffering everything",
+    async (event, protocol) => {
       const totalBytes = 64 * 1024 * 1024;
       const chunk = Buffer.alloc(1024 * 1024, "x");
 
-      await using server = http.createServer((req, res) => res.end("ok"));
+      const onRequest = (req, res) => res.end("ok");
+      await using server =
+        protocol === "https"
+          ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }, onRequest)
+          : http.createServer(onRequest);
       const handedOff = Promise.withResolvers<net.Socket>();
       server.on(event, (req, socket) => {
         socket.pause();
@@ -246,9 +257,12 @@ describe("HTTP server CONNECT", () => {
       await once(server.listen(0, "127.0.0.1"), "listening");
       const { port } = server.address() as AddressInfo;
 
-      const client = net.connect({ port, host: "127.0.0.1" });
+      const client =
+        protocol === "https"
+          ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+          : net.connect({ port, host: "127.0.0.1" });
       client.on("error", () => {});
-      await once(client, "connect");
+      await once(client, protocol === "https" ? "secureConnect" : "connect");
       client.write(tunnelRequests[event]);
       const socket = await handedOff.promise;
 

@@ -98,10 +98,7 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // Chrome: the view gets a browser context of its own (cookies, storage,
-    // proxy) instead of the shared default one. The attach chain sends
-    // Target.createBrowserContext first and stores the id here; close()
-    // and Target.detachedFromTarget dispose it.
+    // Chrome: a browser context of the view's own (cookies, storage, proxy).
     bool m_ownBrowserContext = false;
     WTF::String m_browserContextId;
     WTF::String m_proxyServer;

@@ -749,12 +749,8 @@ static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char
         WTF::move(url), WTF::move(stack));
 }
 
-// Browser-level. newWindow:true is required for width/height — without it
-// Chrome reuses an existing window and rejects position params. Headless
-// has no visible window either way; "new window" just means "new top-level
-// browsing context". browserContextId puts the tab in the view's own
-// context when it has one; omitted, the tab lands in the shared default
-// context.
+// Browser-level. newWindow:true is what makes Chrome honour width/height.
+// Without browserContextId the tab lands in the shared default context.
 static Command createTargetCommand(uint32_t id, JSWebView* view)
 {
     Command cmd(id, "Target.createTarget"_s);
@@ -768,9 +764,7 @@ static Command createTargetCommand(uint32_t id, JSWebView* view)
     return cmd;
 }
 
-// Browser-level. disposeOnDetach makes Chrome drop the context when our
-// connection goes away, so a context survives nothing Bun does not see.
-// proxyBypassList is one comma-separated string, like --proxy-bypass-list.
+// Browser-level. disposeOnDetach: Chrome drops the context with our connection.
 static Command createBrowserContextCommand(uint32_t id, JSWebView* view)
 {
     Command cmd(id, "Target.createBrowserContext"_s);
@@ -783,8 +777,7 @@ static Command createBrowserContextCommand(uint32_t id, JSWebView* view)
     return cmd;
 }
 
-// Fire-and-forget, like Target.closeTarget. Chrome closes every target in
-// the context and forgets its cookies and storage.
+// Fire-and-forget, like Target.closeTarget.
 static void disposeBrowserContext(Transport& t, const WTF::String& browserContextId)
 {
     t.send(0, Command(t.nextId(), "Target.disposeBrowserContext"_s).str("browserContextId"_s, browserContextId));
@@ -804,13 +797,10 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     auto& vm = g->vm();
     JSWebView* view = viewFor(entry.viewId);
     if (!view) {
-        // close() ran while Target.createBrowserContext was in flight
-        // (Ops::close keeps that one entry so the reply gets here). The
-        // context exists and no view will ever dispose it.
+        // The view closed while this was in flight (Ops::close keeps the entry): nothing else will dispose the context.
         if (entry.method == Method::TargetCreateBrowserContext) {
             if (error.empty())
                 disposeBrowserContext(*this, WTF::String::fromUTF8(jsonString(jsonField(result, { "browserContextId", 16 }))));
-            // That entry was the last thing holding the loop open.
             updateKeepAlive();
         }
         return; // user dropped both view and the awaited promise
@@ -823,14 +813,10 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         if (errStr.isEmpty()) errStr = "CDP error"_s;
         switch (entry.method) {
         case Method::TargetCreateBrowserContext:
-            // Chrome's own text ("Failed to create browser context") names
-            // no cause. The usual one is a policy that disables incognito.
             errStr = makeString("Chrome refused a browser context for this view (incognito may be disabled by policy; omit dataStore to share the default context): "_s, errStr);
             break;
         case Method::TargetCreateTarget:
-            // The context exists but has no tab. Drop it now: a retry
-            // creates a fresh one, and a view that is never closed leaks
-            // nothing.
+            // The context has no tab; a retry creates a fresh one.
             if (!view->m_browserContextId.isEmpty())
                 disposeBrowserContext(*this, std::exchange(view->m_browserContextId, WTF::String()));
             break;
@@ -843,12 +829,12 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     switch (entry.method) {
     // --- Attach chain --------------------------------------------------
-    // First navigate() sends Target.createTarget (or, for a view with a
-    // context of its own, Target.createBrowserContext first); each
-    // response chains into the next command by re-adding to m_pending
-    // with WTFMove'd Weak. The chain carries entry.slot (= Navigate) so
-    // errors at any stage reject the right promise. The promise RESOLVES
-    // on Page.loadEventFired — not on any response in this chain.
+    // First navigate() sends Target.createTarget (after
+    // Target.createBrowserContext for a view with its own context); each
+    // response chains into the next command by re-adding to m_pending with
+    // WTFMove'd Weak. The chain carries entry.slot (= Navigate) so errors at
+    // any stage reject the right promise. The promise RESOLVES on
+    // Page.loadEventFired — not on any response in this chain.
     case Method::TargetCreateBrowserContext: {
         // {"browserContextId":"<hex>"}
         auto cid = jsonString(jsonField(result, { "browserContextId", 16 }));
@@ -1535,9 +1521,7 @@ JSPromise* navigate(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
     // Page.loadEventFired. The chain carries the same Weak<view> forward
     // so the pending activity count keeps this object rooted the whole time.
     //
-    // A view with a context of its own creates the context first; the
-    // reply chains into Target.createTarget. A createTarget error disposes
-    // the context again, so a retry starts from createBrowserContext.
+    // A view with its own context creates it first, then the tab.
     view->m_pendingChromeNavigateUrl = url;
     uint32_t id = t.nextId();
     if (view->m_ownBrowserContext && view->m_browserContextId.isEmpty()) {
@@ -1846,12 +1830,10 @@ void close(JSWebView* view)
     // continue on a closed view: m_sessions.add re-registers it,
     // PageEnable sends Page.navigate, the tab navigates after dispose.
     // removeIf breaks the chain at the next reply — handleResponse's
-    // find(id)==end() early-return drops it. The one exception is a
-    // Target.createBrowserContext that already reached Chrome: its reply
-    // carries the only copy of the new context's id, so handleResponse
-    // keeps the entry and disposes the context when it finds the view
-    // gone. One still queued behind the WebSocket handshake never goes
-    // out (wsOnOpen skips ids no longer pending), so it is dropped too.
+    // find(id)==end() early-return drops it. A Target.createBrowserContext
+    // that reached Chrome stays: its reply is the only copy of the context
+    // id, and handleResponse disposes it. One still queued behind the
+    // WebSocket handshake is never sent, so it goes too.
     bool contextRequestSent = t.m_mode != TransportMode::WebSocket || t.m_wsOpen;
     t.m_pending.removeIf([vid = view->m_viewId, contextRequestSent](auto& pair) {
         if (pair.value.viewId != vid) return false;

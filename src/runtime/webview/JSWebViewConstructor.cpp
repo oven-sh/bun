@@ -122,9 +122,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     bool stderrInherit = false;
     bool consoleIsGlobal = false;
     JSObject* consoleCallback = nullptr;
-    // Chrome: an explicit dataStore: "ephemeral" (or a proxy) gives the view
-    // a browser context of its own. Omitted, the view shares the default
-    // context of the one Chrome per process.
+    // Chrome: explicit "ephemeral" (or a proxy) means a browser context of the view's own.
     bool explicitEphemeral = false;
     bool persistDirGiven = false;
     WTF::String proxyServer;
@@ -334,8 +332,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
             explicitEphemeral = true;
         }
 
-        // proxy: "scheme://host:port" | { server, bypass? }. Chrome-only,
-        // per view: it rides on the view's own browser context.
+        // proxy: "scheme://host:port" | { server, bypass? }. Chrome-only.
         JSValue proxy = opts->get(globalObject, Identifier::fromString(vm, "proxy"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!proxy.isUndefined()) {

@@ -3703,8 +3703,10 @@ pub mod args {
                             break 'parse;
                         };
                         current = next;
-                        if current.is_string() {
-                            args.encoding = Encoding::assert(current, ctx, args.encoding)?;
+                        // Like Node's ParseEncoding(args[3], UTF8): an unknown value means UTF-8.
+                        if current.is_string_literal() {
+                            args.encoding =
+                                Encoding::from_js(current, ctx)?.unwrap_or(args.encoding);
                             arguments.eat();
                             // `bv` was converted to UTF-8 before the encoding
                             // argument was parsed; re-encode it now. Node

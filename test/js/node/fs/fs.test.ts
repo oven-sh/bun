@@ -2578,6 +2578,56 @@ describe("writeSync", () => {
       });
     }
   });
+
+  // Node's binding reads the encoding with ParseEncoding(args[3], UTF8) and
+  // never rejects it. Every expected value below is what Node v26.3.0 wrote.
+  it("writes UTF-8 when the encoding argument does not name an encoding", () => {
+    using dir = tempDir("writeSync-unknown-encoding", {});
+    const dest = join(String(dir), "out.bin");
+    // "é" tells UTF-8 (c3 a9) from latin1 (e9), and it ends a hex decode after "ab".
+    const data = "ab\u00e9d";
+    const utf8 = [0x61, 0x62, 0xc3, 0xa9, 0x64];
+    const utf16le = [0x61, 0, 0x62, 0, 0xe9, 0, 0x64, 0];
+    const cases: [label: string, encoding: unknown, expected: number[]][] = [
+      ["'bogus'", "bogus", utf8],
+      ["'BOGUS'", "BOGUS", utf8],
+      ["'he'", "he", utf8],
+      ["'hexx'", "hexx", utf8],
+      ["' hex'", " hex", utf8],
+      // Not one of Node's names, though it looks like "utf-16le".
+      ["'utf16-le'", "utf16-le", utf8],
+      ["'\\u00fctf8'", "\u00fctf8", utf8],
+      ["'\\u{1F600}'", "\u{1F600}", utf8],
+      // Only a primitive string names an encoding.
+      ["new String('hex')", new String("hex"), utf8],
+      ["new String('bogus')", new String("bogus"), utf8],
+      ["{ toString: () => 'hex' }", { toString: () => "hex" }, utf8],
+      ["['hex']", ["hex"], utf8],
+      // A known name is still matched case-insensitively.
+      ["'HeX'", "HeX", [0xab]],
+      // "utf-16le" is one of Node's names. This slot never throws, so a name
+      // missing from Bun's table would write UTF-8 here and report nothing.
+      ["'utf-16le'", "utf-16le", utf16le],
+      ["'UTF-16LE'", "UTF-16LE", utf16le],
+    ];
+    for (const [label, encoding, expected] of cases) {
+      for (const position of [0, null]) {
+        const fd = openSync(dest, "w");
+        let written: number;
+        try {
+          written = (writeSync as Function)(fd, data, position, encoding);
+        } finally {
+          closeSync(fd);
+        }
+        expect({ label, position, written, bytes: [...readFileSync(dest)] }).toEqual({
+          label,
+          position,
+          written: expected.length,
+          bytes: expected,
+        });
+      }
+    }
+  });
 });
 
 // Node's native GetOffset (src/node_file.cc) returns -1 ("current file offset")
@@ -5396,6 +5446,49 @@ describe("fs.write", () => {
         await handle.close();
       }
       expect([...readFileSync(dest)]).toEqual(expected);
+    }
+  });
+
+  // Same parser as the writeSync case. Node v26.3.0 writes UTF-8 for each of these.
+  it("writes UTF-8 when the encoding argument does not name an encoding", async () => {
+    using dir = tempDir("fs-write-unknown-encoding", {});
+    const dest = join(String(dir), "out.bin");
+    const data = "ab\u00e9d";
+    const utf8 = [0x61, 0x62, 0xc3, 0xa9, 0x64];
+    const encodings: [label: string, encoding: unknown][] = [
+      ["'bogus'", "bogus"],
+      ["'hexx'", "hexx"],
+      ["new String('hex')", new String("hex")],
+    ];
+    for (const [label, encoding] of encodings) {
+      // fs.write(fd, string, position, encoding, callback)
+      {
+        const fd = fs.openSync(dest, "w");
+        const { promise, resolve, reject } = Promise.withResolvers<[number, string]>();
+        try {
+          (fs.write as Function)(fd, data, 0, encoding, (err, written, string) =>
+            err ? reject(err) : resolve([written, string]),
+          );
+          expect({ label, result: await promise }).toEqual({ label, result: [utf8.length, data] });
+        } finally {
+          closeSync(fd);
+        }
+        expect({ label, bytes: [...readFileSync(dest)] }).toEqual({ label, bytes: utf8 });
+      }
+
+      // filehandle.write(string, position, encoding)
+      {
+        const handle = await promises.open(dest, "w");
+        try {
+          expect({ label, result: await (handle.write as Function)(data, 0, encoding) }).toEqual({
+            label,
+            result: { bytesWritten: utf8.length, buffer: data },
+          });
+        } finally {
+          await handle.close();
+        }
+        expect({ label, bytes: [...readFileSync(dest)] }).toEqual({ label, bytes: utf8 });
+      }
     }
   });
 

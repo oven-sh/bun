@@ -1260,6 +1260,30 @@ mod border_handler_body {
                 }};
             }
 
+            macro_rules! rect_shorthand_helper {
+                ($prop:ident, $val:expr) => {{
+                    // Buffered logical values stay live only for a target that rejects the shorthand.
+                    let rejected_by_a_target = match context.targets.browsers {
+                        Some(browsers) => [&$val.top, &$val.right, &$val.bottom, &$val.left]
+                            .into_iter()
+                            .any(|side| !css::generic::is_compatible(side, &browsers)),
+                        None => false,
+                    };
+                    if !rejected_by_a_target {
+                        // Dead in every writing mode; clear before `property_helper!` flushes them.
+                        self.border_block_start.$prop = None;
+                        self.border_block_end.$prop = None;
+                        self.border_inline_start.$prop = None;
+                        self.border_inline_end.$prop = None;
+                    }
+
+                    property_helper!(border_top, $prop, &$val.top, Physical);
+                    property_helper!(border_right, $prop, &$val.right, Physical);
+                    property_helper!(border_bottom, $prop, &$val.bottom, Physical);
+                    property_helper!(border_left, $prop, &$val.left, Physical);
+                }};
+            }
+
             use PropertyCategory::{Logical, Physical};
 
             match property {
@@ -1375,42 +1399,9 @@ mod border_handler_body {
                     set_border_helper!(border_inline_start, val, Logical);
                     set_border_helper!(border_inline_end, val, Logical);
                 }
-                Property::BorderWidth(val) => {
-                    property_helper!(border_top, width, &val.top, Physical);
-                    property_helper!(border_right, width, &val.right, Physical);
-                    property_helper!(border_bottom, width, &val.bottom, Physical);
-                    property_helper!(border_left, width, &val.left, Physical);
-
-                    self.border_block_start.width = None;
-                    self.border_block_end.width = None;
-                    self.border_inline_start.width = None;
-                    self.border_inline_end.width = None;
-                    self.has_any = true;
-                }
-                Property::BorderStyle(val) => {
-                    property_helper!(border_top, style, &val.top, Physical);
-                    property_helper!(border_right, style, &val.right, Physical);
-                    property_helper!(border_bottom, style, &val.bottom, Physical);
-                    property_helper!(border_left, style, &val.left, Physical);
-
-                    self.border_block_start.style = None;
-                    self.border_block_end.style = None;
-                    self.border_inline_start.style = None;
-                    self.border_inline_end.style = None;
-                    self.has_any = true;
-                }
-                Property::BorderColor(val) => {
-                    property_helper!(border_top, color, &val.top, Physical);
-                    property_helper!(border_right, color, &val.right, Physical);
-                    property_helper!(border_bottom, color, &val.bottom, Physical);
-                    property_helper!(border_left, color, &val.left, Physical);
-
-                    self.border_block_start.color = None;
-                    self.border_block_end.color = None;
-                    self.border_inline_start.color = None;
-                    self.border_inline_end.color = None;
-                    self.has_any = true;
-                }
+                Property::BorderWidth(val) => rect_shorthand_helper!(width, val),
+                Property::BorderStyle(val) => rect_shorthand_helper!(style, val),
+                Property::BorderColor(val) => rect_shorthand_helper!(color, val),
                 Property::Border(val) => {
                     self.border_top.set_border(arena, val);
                     self.border_bottom.set_border(arena, val);

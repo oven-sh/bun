@@ -51,7 +51,7 @@ If you pass `url`, the view begins navigating before the constructor returns, th
 
 ### Persistent storage
 
-By default, each view uses **ephemeral** in-memory storage — cookies, `localStorage`, IndexedDB, and cache are discarded when the view closes. To persist state across runs, pass a directory:
+With `dataStore: "ephemeral"`, a view uses in-memory storage of its own — cookies, `localStorage`, IndexedDB, and cache are shared with no other view and are discarded when the view closes. This is the default on the WebKit backend. On the Chrome backend, views that omit `dataStore` share one process-wide context (see the note below). To persist state across runs, pass a directory:
 
 ```ts
 const view = new Bun.WebView({
@@ -59,19 +59,18 @@ const view = new Bun.WebView({
 });
 ```
 
-Views that share the same `directory` share cookies and storage. Pass `dataStore: "ephemeral"` (the default) to opt back into in-memory storage explicitly.
+Views that share the same `directory` share cookies and storage. Pass `dataStore: "ephemeral"` to opt back into in-memory storage explicitly.
 
 <Note>
   With the Chrome backend, `dataStore.directory` maps to `--user-data-dir` and applies to the **entire Chrome process**,
   not per-view. Bun spawns Chrome once per Bun process, so the first view's directory wins for all subsequent views.
-  Views that omit `dataStore` share that process-wide default context, cookies included. Pass `dataStore: "ephemeral"`
-  explicitly to give a view a browser context of its own: its cookies and storage are shared with no other view and are
-  discarded when it closes.
+  Views that omit `dataStore` share that process-wide default context, cookies included. Isolation is not the default
+  here: pass `dataStore: "ephemeral"` explicitly to give a view a browser context of its own.
 </Note>
 
 ### Per-view proxy (Chrome)
 
-With the Chrome backend, `proxy` routes one view's requests through a proxy server. Each view can have a different one. A string names the server; the object form adds `bypass`, a list of hosts that skip the proxy in Chrome's bypass-rule syntax.
+With the Chrome backend, `proxy` routes one view's requests through a proxy server. Each view can have a different one. A string names the server; the object form adds `bypass`, a list of hosts that skip the proxy in Chrome's bypass-rule syntax. Chrome skips the proxy for loopback addresses on its own; the rule `"<-loopback>"` removes that implicit bypass.
 
 ```ts
 const view = new Bun.WebView({

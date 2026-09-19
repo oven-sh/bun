@@ -126,6 +126,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     // a browser context of its own. Omitted, the view shares the default
     // context of the one Chrome per process.
     bool explicitEphemeral = false;
+    bool persistDirGiven = false;
     WTF::String proxyServer;
     WTF::StringBuilder proxyBypass; // comma-joined, CDP's proxyBypassList shape
 
@@ -318,6 +319,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
             if (dir.isString()) {
                 persistDir = dir.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
+                persistDirGiven = true;
             } else {
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                     "dataStore.directory must be a string"_s);
@@ -382,7 +384,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
                     "proxy requires backend: \"chrome\""_s);
             }
-            if (!persistDir.isEmpty()) {
+            if (persistDirGiven) {
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
                     "proxy cannot be combined with dataStore.directory (a proxied view uses in-memory storage)"_s);
             }

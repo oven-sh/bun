@@ -29,10 +29,13 @@ const noTitleReply = process.argv.includes("--no-title-reply");
 // navigating.
 const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?.slice("--navigate-error=".length);
 
-// `--cdp-error-on=<method>`: that method's reply is a CDP protocol error
-// ({"error":{"code":-32000,...}}), the way real Chrome rejects e.g.
-// Page.navigate for a URL it cannot parse.
-const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
+// `--cdp-error-on=<method>[:<times>]`: that method's reply is a CDP protocol
+// error ({"error":{"code":-32000,...}}), the way real Chrome rejects e.g.
+// Page.navigate for a URL it cannot parse. With `:<times>`, only the first
+// that many calls fail and later ones are answered normally.
+const cdpErrorSpec = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
+const [cdpErrorOn, cdpErrorTimesText] = cdpErrorSpec?.split(":") ?? [];
+let cdpErrorsLeft = cdpErrorTimesText ? Number(cdpErrorTimesText) : Infinity;
 
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
@@ -84,7 +87,7 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
 
-  if (method === cdpErrorOn) {
+  if (method === cdpErrorOn && cdpErrorsLeft-- > 0) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
     return send(sessionId ? { id, error, sessionId } : { id, error });
   }

@@ -9707,18 +9707,22 @@ declare module "bun" {
       /**
        * Storage backing for cookies, localStorage, IndexedDB, etc.
        *
-       * - `"ephemeral"` (default): in-memory only, nothing written to disk.
+       * - `"ephemeral"`: in-memory only, nothing written to disk. The
+       *   view's cookies and storage are shared with no other view and
+       *   are discarded when it closes.
        * - `{ directory }`: persistent storage rooted at the given path.
        *   Multiple views with the same directory share state.
        *
+       * The default when omitted depends on the backend. **WebKit**:
+       * `"ephemeral"`. **Chrome**: the shared default context of the one
+       * Chrome process, so views that omit `dataStore` share cookies and
+       * storage with each other. Pass `"ephemeral"` explicitly for a
+       * browser context of the view's own (a CDP
+       * `Target.createBrowserContext`).
+       *
        * **Chrome backend**: `directory` is per-Chrome-process
        * (`--user-data-dir`), not per-view. The first view's directory
-       * applies to all views spawned in the same Bun process. An explicit
-       * `"ephemeral"` gives the view a browser context of its own (a
-       * CDP `Target.createBrowserContext`): its cookies and storage are
-       * shared with no other view and are discarded when it closes. When
-       * `dataStore` is omitted, the view shares the default context of
-       * the one Chrome process with every other view that omits it.
+       * applies to all views spawned in the same Bun process.
        */
       dataStore?: "ephemeral" | { directory: string };
       /**
@@ -9727,7 +9731,10 @@ declare module "bun" {
        * A string is the proxy server (`"http://host:port"`,
        * `"socks5://host:port"`, or a Chrome proxy rule list). The object
        * form adds `bypass`: hosts that skip the proxy, in Chrome's
-       * bypass-rule syntax (`"*.internal"`, `"<-loopback>"`).
+       * bypass-rule syntax (`"*.internal"`, `"10.0.0.0/8"`). Chrome skips
+       * the proxy for loopback addresses on its own. The rule
+       * `"<-loopback>"` removes that implicit bypass and sends loopback
+       * traffic through the proxy too.
        *
        * The proxy rides on a browser context of the view's own, so each
        * view can have a different proxy. It cannot be combined with

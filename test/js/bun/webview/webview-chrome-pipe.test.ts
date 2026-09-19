@@ -194,6 +194,53 @@ test.concurrent("close() before the browser context reply still disposes the con
   });
 });
 
+// Target.createTarget failing after the context was made: the context is
+// disposed with the failure, and the retry creates a new one instead of
+// reusing an id nothing else would ever clean up.
+test.concurrent("a failed createTarget disposes the view's context and the retry creates a new one", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--cdp-error-on=Target.createTarget:1"] },
+      width: 100,
+      height: 100,
+      dataStore: "ephemeral",
+    });
+    const first = await outcome(view.navigate("http://fake/first"));
+    await view.navigate("http://fake/second");
+    print({ first, targets: await view.evaluate("__fake_targets()") });
+    view.close();
+  `);
+  const tab = { url: "about:blank", newWindow: true, width: 100, height: 100 };
+  expect(result).toEqual({
+    first: { rejected: "Cannot navigate to invalid URL" },
+    targets: [
+      { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+      { method: "Target.createTarget", params: { ...tab, browserContextId: "C1" } },
+      { method: "Target.disposeBrowserContext", params: { browserContextId: "C1" } },
+      { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+      { method: "Target.createTarget", params: { ...tab, browserContextId: "C2" } },
+    ],
+  });
+});
+
+// A Target.createBrowserContext failure (a Chrome that refuses incognito under
+// policy) rejects navigate() with a message that names the option to drop.
+test.concurrent("a refused browser context rejects navigate() with the cause", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--cdp-error-on=Target.createBrowserContext"] },
+      width: 100,
+      height: 100,
+      dataStore: "ephemeral",
+    });
+    print(await outcome(view.navigate("http://fake/refused")));
+    view.close();
+  `);
+  expect(result).toEqual({
+    rejected: expect.stringMatching(/^Chrome refused a browser context for this view .*: Cannot navigate to invalid URL$/),
+  });
+});
+
 test("proxy option validates", () => {
   const chrome = { type: "chrome" as const, url: false as const };
   expect(() => new Bun.WebView({ backend: chrome, proxy: 42 as any })).toThrow(
@@ -214,6 +261,9 @@ test("proxy option validates", () => {
   expect(
     () => new Bun.WebView({ backend: chrome, proxy: "http://p:1", dataStore: { directory: "/tmp/never-used" } }),
   ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("directory") }));
+  expect(() => new Bun.WebView({ backend: chrome, proxy: "http://p:1", dataStore: { directory: "" } })).toThrow(
+    expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE", message: expect.stringContaining("directory") }),
+  );
 });
 
 test.concurrent("an expression that throws rejects", async () => {

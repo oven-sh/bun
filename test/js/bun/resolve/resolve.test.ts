@@ -334,6 +334,17 @@ it.if(isWindows)("directory cache key computation", () => {
   expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
 });
 
+// The failed resolution busts the directory cache for the dirname, which for
+// `C:\\\x` is `C:\\`. That used to reach the cache as-is and fail the cache key
+// assertion (debug and ASAN builds) instead of the import rejecting.
+it.if(isWindows)("directory cache key computation at the drive root", async () => {
+  const drive = process.cwd().slice(0, 2);
+  for (const separators of [2, 3, 4]) {
+    await expect(import(drive + "\\".repeat(separators) + "doesnotexist.ts")).rejects.toThrow();
+  }
+  await expect(import(`${drive}///doesnotexist.ts`)).rejects.toThrow();
+});
+
 describe("NODE_PATH test", () => {
   const prepareTest = () => {
     const tempDir = tempDirWithFiles("node_path", {

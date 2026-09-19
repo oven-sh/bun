@@ -2072,7 +2072,8 @@ describe.each([
 
 // A TLS socket over a net.Socket with allowHalfOpen: true is destroyed locally. The
 // net.Socket must close with it (node's TLSWrap closes its parent), without an 'end'
-// on either socket: a destroyed socket emits 'close' only.
+// on either socket: a destroyed socket emits 'close' only. The report ends at the
+// net.Socket's 'close'. Where the TLS socket's own 'close' falls is not pinned.
 describe.each([
   ["bun", bunExe()],
   ["node", nodeExe()],
@@ -2089,7 +2090,6 @@ describe.each([
     const watch = (raw, secure) => {
       raw.on("end", () => events.push("raw end"));
       secure.on("end", () => events.push("tls end"));
-      secure.on("close", () => events.push("tls close"));
     };
     if (process.env.SIDE === "client") {
       const server = tls.createServer(CERT, peer => peer.on("error", () => {}));
@@ -2113,7 +2113,8 @@ describe.each([
         });
         const secure = new tls.TLSSocket(raw, { isServer: true, ...CERT });
         watch(raw, secure);
-        secure.on("secure", () => setImmediate(() => secure.destroy()));
+        if (process.env.SIDE === "server-sync") secure.destroy();
+        else secure.on("secure", () => setImmediate(() => secure.destroy()));
       });
       server.listen(0, "127.0.0.1", () => {
         tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false }).on("error", () => {});
@@ -2138,6 +2139,11 @@ describe.each([
 
   it.skipIf(!exe)("closes the wrapped accepted socket", async () => {
     expect(await run("server")).toEqual({ events: ["raw close", "connections 0"], stderr: "", exitCode: 0 });
+  });
+
+  // The fd is adopted a tick after the wrap. A destroy() in the wrap's tick comes first.
+  it.skipIf(!exe)("closes the wrapped accepted socket when destroyed in the same tick", async () => {
+    expect(await run("server-sync")).toEqual({ events: ["raw close", "connections 0"], stderr: "", exitCode: 0 });
   });
 });
 

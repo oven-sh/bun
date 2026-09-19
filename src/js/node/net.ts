@@ -2439,7 +2439,9 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
   this[kupgraded] = connection;
   process.nextTick(() => {
     if (this.destroyed || connection.destroyed) {
+      // One side went down before the adoption: the other goes with it.
       this.destroy();
+      connection.destroy();
       return;
     }
     const handle = connection._handle;

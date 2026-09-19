@@ -2460,8 +2460,7 @@ function emitResponseFinish() {
 function onResponseFinishHandleSocket(server, socket, res) {
   if (res[kMustCloseConnection]) {
     if (socket?.[kPendingHandoff] !== undefined) {
-      // A hand-off waiting behind this response: its bytes go out before the FIN, and the
-      // connection closes after it, like Node's destroySoon() (native leaves that to this end).
+      // A hand-off behind this response writes before the FIN; then destroySoon(), like Node.
       activatePipelinedHandoff(socket);
       socket.once("finish", destroyHandoffSocketNT);
     }

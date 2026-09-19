@@ -299,3 +299,41 @@ describe("res.destroy() defers 'close'", () => {
     expect(events).toEqual(["destroy()", "destroy() returned (closed: false)", "res.close (closed: true)"]);
   });
 });
+
+// Like Node.js's socketOnClose → abortIncoming: destroying a response that is
+// still queued behind a pipelined response also aborts its request once the
+// pipeline reaches it. Node emits res 'close' first (from destroy()), then
+// the request's 'aborted', 'error' (ECONNRESET) and 'close'.
+test("destroying a queued pipelined response aborts its request", async () => {
+  const events: string[] = [];
+  const reqClosed = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    if (req.url === "/1") {
+      setImmediate(() => res.end("one"));
+      return;
+    }
+    req.on("aborted", () => events.push("req2 aborted"));
+    req.on("error", e => events.push("req2 error:" + (e as NodeJS.ErrnoException).code));
+    req.on("close", () => {
+      events.push("req2 close");
+      reqClosed.resolve();
+    });
+    res.on("close", () => events.push("res2 close"));
+    req.resume();
+    res.destroy();
+  });
+  let client: ReturnType<typeof connect> | undefined;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    client = connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    client.write("GET /1 HTTP/1.1\r\nHost: a\r\n\r\nPOST /2 HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\nabc");
+    await reqClosed.promise;
+    expect(events).toEqual(["res2 close", "req2 aborted", "req2 error:ECONNRESET", "req2 close"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});

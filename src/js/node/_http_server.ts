@@ -2522,6 +2522,21 @@ function queuePipelinedResponse(socket, res, isAncient) {
   (socket[kPipelinedResponses] ??= []).push(res);
 }
 
+// Abort the request of a pipelined response that never got the socket, like
+// Node.js's abortIncoming. The request is not reachable from the socket close
+// path (its response never became socket._httpMessage), so it must be
+// destroyed here or it never emits 'aborted', 'error' or 'close'.
+function abortPipelinedRequest(req) {
+  if (req && !req.destroyed) {
+    req[kHandle] = undefined;
+    if (req.listenerCount("error") > 0) {
+      req.destroy(new ConnResetException("aborted"));
+    } else {
+      req.destroy();
+    }
+  }
+}
+
 // When the connection dies with pipelined responses still queued behind the
 // in-flight one, abort them and their requests, like Node.js's socketOnClose
 // (abortIncoming). Runs from the native socket's close path and from the
@@ -2533,15 +2548,7 @@ function abortQueuedPipelinedResponses(socket) {
     socket[kPipelinedResponses] = undefined;
     for (let i = 0; i < pipelinedLength; i++) {
       const queuedRes = pipelined[i];
-      const queuedReq = queuedRes.req;
-      if (queuedReq && !queuedReq.destroyed) {
-        queuedReq[kHandle] = undefined;
-        if (queuedReq.listenerCount("error") > 0) {
-          queuedReq.destroy(new ConnResetException("aborted"));
-        } else {
-          queuedReq.destroy();
-        }
-      }
+      abortPipelinedRequest(queuedRes.req);
       if (!queuedRes.destroyed) {
         queuedRes.destroy();
       } else if (!queuedRes._closed) {
@@ -2575,10 +2582,13 @@ function advanceResponsePipeline(server, socket) {
     // connection cannot produce a response for this slot, so it is unusable.
     // Deliberate divergence from Node v26, which assigns the destroyed
     // message and wedges the connection until requestTimeout: an HTTP/1.1
-    // connection cannot skip a response slot, so reset it instead.
+    // connection cannot skip a response slot, so reset it instead. The socket
+    // is destroyed first so the request's _destroy sees a dead socket, as it
+    // does from Node.js's socketOnClose.
     if (!socket.destroyed) {
       socket.destroy();
     }
+    abortPipelinedRequest(res.req);
     return;
   }
 
@@ -2590,7 +2600,12 @@ function advanceResponsePipeline(server, socket) {
       !socketHandle.startPipelinedResponse(handle, !!queued.isAncient, !requestShouldKeepAlive(res.req))
     ) {
       // The connection is already gone; the socket close path destroys queued
-      // responses, but make sure this (already dequeued) one is not skipped.
+      // responses, but make sure this (already dequeued) one and its request
+      // are not skipped.
+      if (!socket.destroyed) {
+        socket.destroy();
+      }
+      abortPipelinedRequest(res.req);
       if (!res.destroyed) {
         res.destroy();
       }

@@ -1,8 +1,11 @@
 import { pathToFileURL } from "bun";
-import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import { afterAll, describe, expect, it, test } from "bun:test";
+import { randomBytes } from "crypto";
+import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
-import { join, resolve, sep } from "path";
+import Module from "module";
+import { tmpdir } from "os";
+import { join, parse, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
@@ -1940,5 +1943,175 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(stderr).toBe("");
     expect(stdout).toBe("index\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("a module in the filesystem root", () => {
+  // "/", or the drive of the temp directory on Windows ("C:\").
+  const root = parse(realpathSync(tmpdir())).root;
+  const id = `bun-root-module-${process.pid}-${randomBytes(6).toString("hex")}`;
+  const rootFiles = {
+    [`${id}-dep.cjs`]: `module.exports = "cjs dep";`,
+    [`${id}-dep.mjs`]: `export default "esm dep";`,
+    [`${id}-main.cjs`]: `console.log(JSON.stringify({
+      dep: require("./${id}-dep.cjs"),
+      resolved: require.resolve("./${id}-dep.cjs"),
+      __dirname,
+      __filename,
+      path: module.path,
+    }));`,
+    [`${id}-main.mjs`]: `import dep from "./${id}-dep.mjs";
+    console.log(JSON.stringify({
+      dep,
+      dir: import.meta.dir,
+      dirname: import.meta.dirname,
+      file: import.meta.file,
+      path: import.meta.path,
+    }));`,
+    [`${id}-bundled.cjs`]: `console.log(JSON.stringify({ dep: require("./${id}-dep.cjs"), __dirname, __filename }));`,
+  };
+
+  // A container runs as root and can write to "/". macOS cannot.
+  let canWriteRoot = true;
+  try {
+    for (const [name, contents] of Object.entries(rootFiles)) {
+      writeFileSync(root + name, contents, { flag: "wx" });
+    }
+  } catch {
+    canWriteRoot = false;
+  }
+  afterAll(() => {
+    for (const name of Object.keys(rootFiles)) rmSync(root + name, { force: true });
+  });
+
+  // The cwd is never the root, so a specifier that resolves from the cwd does not find the dependency.
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const esmOutput = {
+    dep: "esm dep",
+    dir: root,
+    dirname: root,
+    file: `${id}-main.mjs`,
+    path: `${root}${id}-main.mjs`,
+  };
+
+  test.skipIf(!canWriteRoot)("ESM: imports a sibling, and import.meta.dir is the root", async () => {
+    using dir = tempDir("root-module-esm", {});
+    const { stdout, stderr, exitCode } = await run(String(dir), `${root}${id}-main.mjs`);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(esmOutput);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!canWriteRoot)("CommonJS: requires a sibling, and __dirname is the root", async () => {
+    using dir = tempDir("root-module-cjs", {});
+    const { stdout, stderr, exitCode } = await run(String(dir), `${root}${id}-main.cjs`);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      dep: "cjs dep",
+      resolved: `${root}${id}-dep.cjs`,
+      __dirname: root,
+      __filename: `${root}${id}-main.cjs`,
+      path: root,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!canWriteRoot)("bun build: bundles a sibling, and the inlined __dirname is the root", async () => {
+    using dir = tempDir("root-module-build", {});
+    const build = await run(String(dir), "build", "--target=bun", "--outdir=out", `${root}${id}-bundled.cjs`);
+    expect(build.stderr).toBe("");
+    expect(build.exitCode).toBe(0);
+
+    // The name of the output has no directory part: the entry point is in the root, not in the cwd.
+    const { stdout, stderr, exitCode } = await run(String(dir), join("out", `${id}-bundled.js`));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      dep: "cjs dep",
+      __dirname: root,
+      __filename: `${root}${id}-bundled.cjs`,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!canWriteRoot)("bun build --format=cjs: the inlined import.meta.dir is the root", async () => {
+    using dir = tempDir("root-module-build-cjs", {});
+    const entry = `${root}${id}-main.mjs`;
+    const build = await run(String(dir), "build", "--target=bun", "--format=cjs", "--outdir=out", entry);
+    expect(build.stderr).toBe("");
+    expect(build.exitCode).toBe(0);
+
+    const { stdout, stderr, exitCode } = await run(String(dir), join("out", `${id}-main.js`));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(esmOutput);
+    expect(exitCode).toBe(0);
+  });
+
+  // "/entry.js" is the usual name of an in-memory entry point. It is not a file in the root:
+  // what the file map does not have resolves from the cwd, and the output is named from the outdir.
+  test("Bun.build: an in-memory file in the root resolves from the cwd", async () => {
+    using dir = tempDir("root-module-in-memory", {
+      "real.js": `export const real = "real file in the cwd";`,
+      "build.js": `
+        const result = await Bun.build({
+          entrypoints: ["/entry.js"],
+          files: { "/entry.js": 'import { real } from "./real.js"; console.log(real);' },
+          outdir: "out",
+        });
+        console.log(JSON.stringify(result.outputs.map(output => require("path").relative(process.cwd(), output.path))));
+      `,
+    });
+    const build = await run(String(dir), "build.js");
+    expect(build.stderr).toBe("");
+    expect(JSON.parse(build.stdout)).toEqual([join("out", "entry.js")]);
+    expect(build.exitCode).toBe(0);
+
+    const { stdout, stderr, exitCode } = await run(String(dir), join("out", "entry.js"));
+    expect(stderr).toBe("");
+    expect(stdout).toBe("real file in the cwd\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.build: a path in the root that a plugin made up resolves from the cwd", async () => {
+    using dir = tempDir("root-module-plugin", {
+      "real.js": `export const real = "real file in the cwd";`,
+      "build.js": `
+        const result = await Bun.build({
+          entrypoints: ["virtual-entry.js"],
+          plugins: [
+            {
+              name: "virtual entry",
+              setup(build) {
+                build.onResolve({ filter: /^virtual-entry\\.js$/ }, () => ({ path: "/virtual-entry.js", namespace: "virtual" }));
+                build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+                  contents: 'import { real } from "./real.js"; console.log(real);',
+                  loader: "js",
+                }));
+              },
+            },
+          ],
+        });
+        console.log(await result.outputs[0].text());
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "build.js");
+    expect(stderr).toBe("");
+    expect(stdout).toContain("real file in the cwd");
+    expect(exitCode).toBe(0);
+  });
+
+  test("new Module() of a file in the root has the root as its path", () => {
+    expect(new Module(`/${id}.js`).path).toBe("/");
+    expect(new Module(`/dir/${id}.js`).path).toBe("/dir");
   });
 });

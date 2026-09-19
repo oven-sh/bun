@@ -656,11 +656,21 @@ pub mod fs {
             }
         }
 
+        /// Whether `dir` is a filesystem root (`/`, `C:\`): the path names an
+        /// entry directly in the root.
+        pub fn dir_is_root(&self) -> bool {
+            match *self.dir {
+                [sep] => is_sep_any(sep),
+                [drive, b':', sep] => drive.is_ascii_alphabetic() && is_sep_any(sep),
+                _ => false,
+            }
+        }
+
         /// `/bar/foo/index.js` → `foo`; `/bar/foo.js` → `foo`.
         pub fn non_unique_name_string_base(&self) -> &'a [u8] {
             // /bar/foo/index.js -> foo
-            if !self.dir.is_empty() && self.base == b"index" {
-                // "/index" -> "index"
+            // "/index" -> "index": a root has no name
+            if !self.dir.is_empty() && !self.dir_is_root() && self.base == b"index" {
                 return PathName::init(self.dir).base;
             }
             debug_assert!(!crate::strings::contains_char(self.base, b'/'));
@@ -709,22 +719,23 @@ pub mod fs {
             let mut path = path_;
             let mut base = path;
             let ext: &[u8];
-            let mut dir = path;
-            let mut is_absolute = true;
+            let mut dir: &[u8] = b"";
+            let mut filename = path_;
             let has_disk_designator = path.len() > 2
                 && path[1] == b':'
                 && path[0].is_ascii_alphabetic()
                 && is_sep_any(path[2]);
-            if has_disk_designator {
-                path = &path[2..];
-            }
+            let disk_designator_len = if has_disk_designator { 2 } else { 0 };
+            path = &path[disk_designator_len..];
 
             while let Some(i) = last_index_of_sep(path) {
                 // Stop if we found a non-trailing slash
                 if i + 1 != path.len() && path.len() > i + 1 {
                     base = &path[i + 1..];
-                    dir = &path[0..i];
-                    is_absolute = false;
+                    // A root keeps its separator: `/a.js` is in `/` and `C:\a.js` is in `C:\`.
+                    // Without it the dir is empty or `C:`, which is relative to the cwd.
+                    dir = &path_[..disk_designator_len + i.max(1)];
+                    filename = &path_[disk_designator_len + i + 1..];
                     break;
                 }
 
@@ -741,23 +752,9 @@ pub mod fs {
                 ext = b"";
             }
 
-            if is_absolute {
-                dir = b"";
-            }
-
             if base.len() > 1 && is_sep_any(base[base.len() - 1]) {
                 base = &base[0..base.len() - 1];
             }
-
-            if !is_absolute && has_disk_designator {
-                dir = &path_[0..dir.len() + 2];
-            }
-
-            let filename = if !dir.is_empty() {
-                &path_[dir.len() + 1..]
-            } else {
-                path_
-            };
 
             PathName {
                 dir,
@@ -983,6 +980,119 @@ pub mod fs {
             self.text = to;
             self.pretty = old_path;
             self.is_symlink = true;
+        }
+    }
+
+    // Run with `cargo test -p bun_paths`. The reverse byte searches reference two
+    // more highway kernels than the stubs in resolve_path.rs cover.
+    #[cfg(test)]
+    mod tests {
+        use super::PathName;
+
+        /// Returns `haystack_len` when `needle` does not occur, like the kernel.
+        #[unsafe(no_mangle)]
+        unsafe extern "C" fn highway_last_index_of_char(
+            haystack: *const u8,
+            haystack_len: usize,
+            needle: u8,
+        ) -> usize {
+            // SAFETY: test stub; callers pass a valid (ptr, len) pair.
+            let haystack = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+            haystack
+                .iter()
+                .rposition(|&b| b == needle)
+                .unwrap_or(haystack_len)
+        }
+
+        /// Returns `usize::MAX` when `needle` does not occur, like the kernel.
+        /// Callers pass a `needle` that is not longer than `haystack`.
+        #[unsafe(no_mangle)]
+        unsafe extern "C" fn highway_memrmem16(
+            haystack: *const u16,
+            haystack_len: usize,
+            needle: *const u16,
+            needle_len: usize,
+        ) -> usize {
+            // SAFETY: test stub; callers pass valid (ptr, len) pairs.
+            let (haystack, needle) = unsafe {
+                (
+                    core::slice::from_raw_parts(haystack, haystack_len),
+                    core::slice::from_raw_parts(needle, needle_len),
+                )
+            };
+            (0..=haystack_len - needle_len)
+                .rev()
+                .find(|&i| haystack[i..i + needle_len] == *needle)
+                .unwrap_or(usize::MAX)
+        }
+
+        /// `[dir, base, ext, filename, dir_with_trailing_slash]`
+        fn parts(path: &[u8]) -> [&[u8]; 5] {
+            let name = PathName::init(path);
+            [
+                name.dir,
+                name.base,
+                name.ext,
+                name.filename,
+                name.dir_with_trailing_slash(),
+            ]
+        }
+
+        #[test]
+        fn path_name_of_a_file_in_a_directory() {
+            assert_eq!(
+                parts(b"/bar/foo.js"),
+                [&b"/bar"[..], b"foo", b".js", b"foo.js", b"/bar/"]
+            );
+            assert_eq!(
+                parts(b"bar/foo.js"),
+                [&b"bar"[..], b"foo", b".js", b"foo.js", b"bar/"]
+            );
+            assert_eq!(
+                parts(b"C:/bar/foo.js"),
+                [&b"C:/bar"[..], b"foo", b".js", b"foo.js", b"C:/bar/"]
+            );
+            assert_eq!(
+                parts(b"/bar/foo/"),
+                [&b"/bar"[..], b"foo", b"", b"foo/", b"/bar/"]
+            );
+        }
+
+        #[test]
+        fn path_name_of_a_file_in_a_root_keeps_the_root() {
+            assert_eq!(
+                parts(b"/foo.js"),
+                [&b"/"[..], b"foo", b".js", b"foo.js", b"/"]
+            );
+            assert_eq!(parts(b"/foo"), [&b"/"[..], b"foo", b"", b"foo", b"/"]);
+            assert_eq!(parts(b"/foo/"), [&b"/"[..], b"foo", b"", b"foo/", b"/"]);
+            assert_eq!(
+                parts(b"C:/foo.js"),
+                [&b"C:/"[..], b"foo", b".js", b"foo.js", b"C:/"]
+            );
+        }
+
+        #[test]
+        fn path_name_without_a_directory() {
+            assert_eq!(
+                parts(b"foo.js"),
+                [&b""[..], b"foo", b".js", b"foo.js", b"./"]
+            );
+            assert_eq!(parts(b"foo/"), [&b""[..], b"foo", b"", b"foo/", b"./"]);
+            assert_eq!(parts(b"/"), [&b""[..], b"", b"", b"/", b"./"]);
+            assert_eq!(parts(b"C:/"), [&b""[..], b"", b"", b"C:/", b"./"]);
+            assert_eq!(parts(b""), [&b""[..], b"", b"", b"", b"./"]);
+        }
+
+        #[test]
+        fn non_unique_name_string_base_names_an_index_file_after_its_directory() {
+            let base = |path: &'static [u8]| PathName::init(path).non_unique_name_string_base();
+            assert_eq!(base(b"/bar/foo.js"), b"foo");
+            assert_eq!(base(b"/bar/foo/index.js"), b"foo");
+            assert_eq!(base(b"/index.js"), b"index");
+            assert_eq!(base(b"C:/index.js"), b"index");
+            assert_eq!(base(b"index.js"), b"index");
+            assert_eq!(base(b"./index.js"), b"");
         }
     }
 }

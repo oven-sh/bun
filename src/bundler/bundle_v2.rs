@@ -2362,8 +2362,10 @@ pub mod bv2_impl {
             // direct `self.transpiler.options.*` accesses are shared reads that occur after the
             // last `&mut *transpiler` deref on their control path.
             let transpiler: *mut Transpiler<'a> = self.transpiler_for_target(target);
-            let source_dir =
-                Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
+            // SAFETY: see `transpiler` note above.
+            let source_dir = unsafe { &mut *transpiler }
+                .resolver
+                .source_dir_for_imports(&Fs::Path::init(&import_record.source_file));
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
@@ -6221,7 +6223,10 @@ pub mod bv2_impl {
         ) -> ResolveImportRecordResult {
             let source = ctx.source;
             let loader = ctx.loader;
-            let source_dir = source.path.source_dir();
+            let source_dir = self
+                .transpiler
+                .resolver
+                .source_dir_for_imports(&source.path);
             let only_records = ctx.only_records;
             debug_assert!(only_records.is_none_or(<[u32]>::is_sorted));
             let mut estimated_resolve_queue_count: usize = 0;

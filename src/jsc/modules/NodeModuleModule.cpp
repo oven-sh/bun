@@ -169,7 +169,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
         auto index = idString->tryGetValue()->reverseFind('/', idString->length());
 
         if (index != WTF::notFound) {
-            dirname = JSC::jsSubstring(globalObject, idString, 0, index);
+            // The root keeps its separator: "/a.js" is in "/".
+            dirname = JSC::jsSubstring(globalObject, idString, 0, index == 0 ? 1 : index);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }

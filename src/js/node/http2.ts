@@ -3489,9 +3489,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     const session = this[bunHTTP2Session];
     assertSession(session);
-    // request() validates the header names and values and throws before it sends anything. node
-    // validates before it records the block, so a block that throws never shows in sentInfoHeaders
-    // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3208-L3216).
+    // request() throws on an invalid header, before it sends anything.
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     if (!this[kInfoHeaders]) {
       this[kInfoHeaders] = [headers];

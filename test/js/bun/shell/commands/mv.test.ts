@@ -280,37 +280,41 @@ describe("mv", async () => {
       }
     });
 
-    // The copy gets its mode only after the last entry moves, so a sample can never fail on a correct build.
+    // The copy gets its mode only after the last entry moves, so each sample of a move in flight must show 700.
     test.skipIf(skip)("a directory in flight across devices is private to the mover", async () => {
-      const [src, dst] = crossDevicePair("in-flight");
-      try {
-        const srcDir = join(src, "tree");
-        mkdirSync(srcDir);
-        const entries = Array.from({ length: 200 }, (_, i) => join(srcDir, `f${i}`));
-        for (const entry of entries) writeFileSync(entry, "");
-        chmodSync(srcDir, 0o755);
+      const inFlightModes = new Set<string>();
+      // A move can end before the first sample. Then a larger tree gives the sampler more time.
+      for (const count of [200, 2000]) {
+        const [src, dst] = crossDevicePair("in-flight");
+        try {
+          const srcDir = join(src, "tree");
+          mkdirSync(srcDir);
+          const entries = Array.from({ length: count }, (_, i) => join(srcDir, `f${i}`));
+          for (const entry of entries) writeFileSync(entry, "");
+          chmodSync(srcDir, 0o755);
 
-        let done = false;
-        const moving = $`mv ${srcDir} ${dst}`.quiet().then(r => ((done = true), r));
-        const otherModes = new Set<string>();
-        let next = 0;
-        while (!done) {
-          const copy = statSync(join(dst, "tree"), { throwIfNoEntry: false });
-          // An entry that is still in the source after the sample proves that the move was in flight.
-          while (next < entries.length && !existsSync(entries[next])) next++;
-          if (copy && next < entries.length && (copy.mode & 0o7777) !== 0o700) {
-            otherModes.add((copy.mode & 0o7777).toString(8));
+          let done = false;
+          const moving = $`mv ${srcDir} ${dst}`.quiet().finally(() => (done = true));
+          let next = 0;
+          while (!done) {
+            for (let burst = 0; burst < 64; burst++) {
+              const copy = statSync(join(dst, "tree"), { throwIfNoEntry: false });
+              // An entry that is still in the source after the sample proves that the move was in flight.
+              while (next < entries.length && !existsSync(entries[next])) next++;
+              if (copy && next < entries.length) inFlightModes.add((copy.mode & 0o7777).toString(8));
+            }
+            await new Promise(resolve => setImmediate(resolve));
           }
-          await new Promise(resolve => setImmediate(resolve));
+          const r = await moving;
+          expect(r.stderr.toString()).toBe("");
+          expect(r.exitCode).toBe(0);
+        } finally {
+          rmSync(src, { recursive: true, force: true });
+          rmSync(dst, { recursive: true, force: true });
         }
-        const r = await moving;
-        expect(r.stderr.toString()).toBe("");
-        expect(r.exitCode).toBe(0);
-        expect([...otherModes]).toEqual([]);
-      } finally {
-        rmSync(src, { recursive: true, force: true });
-        rmSync(dst, { recursive: true, force: true });
+        if (inFlightModes.size > 0) break;
       }
+      expect([...inFlightModes]).toEqual(["700"]);
     });
 
     const nobody = 65534;

@@ -27,6 +27,9 @@ pub struct Cmd {
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
+    /// The wait for the subprocess failed, so it has no exit status. `Done`
+    /// reports this on stderr and the command exits with 1.
+    pub(crate) wait_error: Option<bun_sys::Error>,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -216,6 +219,7 @@ impl Cmd {
             redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
+            wait_error: None,
         }))
     }
 
@@ -293,6 +297,24 @@ impl Cmd {
                 }
                 CmdState::WaitingWriteErr => return Yield::suspended(),
                 CmdState::Done => {
+                    if let Some(err) = interp.as_cmd_mut(this).wait_error.take() {
+                        let argv0 = interp
+                            .as_cmd(this)
+                            .args
+                            .first()
+                            .map(|a| &a[..a.len().saturating_sub(1)])
+                            .unwrap_or(b"<unknown>")
+                            .to_vec();
+                        return Builtin::cmd_write_failing_error(
+                            interp,
+                            this,
+                            format_args!(
+                                "bun: failed to wait for {}: {}\n",
+                                bstr::BStr::new(&argv0),
+                                err.to_shell_system_error().message,
+                            ),
+                        );
+                    }
                     let exit = interp.as_cmd(this).exit_code.unwrap_or(0);
                     let parent = interp.as_cmd(this).base.parent;
                     return interp.child_done(parent, this, exit);

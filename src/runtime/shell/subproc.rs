@@ -942,7 +942,7 @@ impl ShellSubprocess {
             }
 
             if matches!(status, Status::Err(_)) {
-                // TODO: handle error
+                break 'brk Some(1);
             }
 
             if matches!(status, Status::Signaled(_)) {
@@ -961,6 +961,9 @@ impl ShellSubprocess {
         // before the Yield runs.
         let cmd = unsafe { handle.cmd_mut() };
         cmd.base.interrupted |= interrupted;
+        if let Status::Err(err) = status {
+            cmd.wait_error = Some(err.clone());
+        }
         let y = cmd.on_exit(code.into());
         // May free `*this`.
         y.run(&handle.interp);

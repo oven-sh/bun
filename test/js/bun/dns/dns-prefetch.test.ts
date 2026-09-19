@@ -40,6 +40,150 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
   });
 });
 
+// The test above always misses the cache, which makes usockets resolve through a
+// us_connecting_socket_t. A completed cache hit whose result is a single
+// address takes a different path (us_socket_group_connect connects to it
+// directly), and that path has to keep the same eviction promise. Each scenario
+// seeds the process-global cache exactly like a real lookup would and runs in
+// its own process. Nothing here ever resolves a name for real: `cacheMisses`
+// staying 0 proves every connect was served by the seeded entry.
+describe.concurrent("eviction through a completed cache hit", () => {
+  async function run(body: string) {
+    const script = `
+      const { dnsCacheSeed } = require("bun:internal-for-testing");
+      const stats = () => {
+        const { cacheHitsCompleted, cacheMisses, size, errors } = Bun.dns.getCacheStats();
+        return { cacheHitsCompleted, cacheMisses, size, errors };
+      };
+      const connect = (hostname, port, tls = false) =>
+        Bun.connect({ hostname, port, tls, socket: { data() {} } }).then(
+          socket => {
+            socket.end();
+            return "connected";
+          },
+          error => error.code,
+        );
+      // A port nothing listens on any more: connects to it are refused.
+      const closed = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      const refusedPort = closed.port;
+      closed.stop();
+      console.log(JSON.stringify(await (async () => { ${body} })()));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: JSON.parse(stdout.trim() || "null"), stderr, exitCode };
+  }
+
+  // TLS is attached to the socket up front on this path (there is no later
+  // point to do it), so a refused TLS connect is checked as well.
+  test("a refused connect to a single-address entry evicts it", async () => {
+    expect(
+      await run(`
+        dnsCacheSeed("single.test", ["127.0.0.1"]);
+        dnsCacheSeed("single-tls.test", ["127.0.0.1"]);
+        const seeded = stats();
+        const plain = await connect("single.test", refusedPort);
+        const afterPlain = stats();
+        const tls = await connect("single-tls.test", refusedPort, true);
+        return { seeded, plain, afterPlain, tls, afterTls: stats() };
+      `),
+    ).toEqual({
+      result: {
+        seeded: { cacheHitsCompleted: 0, cacheMisses: 0, size: 2, errors: 0 },
+        plain: "ECONNREFUSED",
+        afterPlain: { cacheHitsCompleted: 1, cacheMisses: 0, size: 1, errors: 1 },
+        tls: "ECONNREFUSED",
+        afterTls: { cacheHitsCompleted: 2, cacheMisses: 0, size: 0, errors: 2 },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("a refused connect to a multi-address entry evicts it", async () => {
+    expect(
+      await run(`
+        dnsCacheSeed("multi.test", ["127.0.0.1", "127.0.0.1"]);
+        const code = await connect("multi.test", refusedPort);
+        return { code, after: stats() };
+      `),
+    ).toEqual({
+      result: {
+        code: "ECONNREFUSED",
+        after: { cacheHitsCompleted: 1, cacheMisses: 0, size: 0, errors: 1 },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The entry must survive a successful connect, and that connect must not
+  // keep a reference behind: once the host goes down, the entry still leaves.
+  test("a successful connect keeps the entry, and it is still evicted once the host goes down", async () => {
+    expect(
+      await run(`
+        const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        dnsCacheSeed("flaky.test", ["127.0.0.1"]);
+        const first = await connect("flaky.test", server.port);
+        const afterSuccess = stats();
+        server.stop(true);
+        const second = await connect("flaky.test", server.port);
+        return { first, afterSuccess, second, afterRefused: stats() };
+      `),
+    ).toEqual({
+      result: {
+        first: "connected",
+        afterSuccess: { cacheHitsCompleted: 1, cacheMisses: 0, size: 1, errors: 0 },
+        second: "ECONNREFUSED",
+        afterRefused: { cacheHitsCompleted: 2, cacheMisses: 0, size: 0, errors: 1 },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A connect torn down before it has an outcome says nothing about the host.
+  // The worker issues the connect and then never returns to its event loop, so
+  // terminating it is the only thing that closes the still-connecting socket;
+  // terminate() resolves after the worker's sockets are closed. The entry must
+  // stay, and the reference the worker held must be gone, which the refused
+  // connect afterwards shows by still being able to remove the entry.
+  // (Explicit timeout: starting a worker alone takes ~3s in a debug build.)
+  test("a connect abandoned before it completes keeps the entry and drops its reference", async () => {
+    expect(
+      await run(`
+        const { Worker } = require("node:worker_threads");
+        dnsCacheSeed("abandoned.test", ["127.0.0.1"]);
+        const worker = new Worker(
+          'const { parentPort, workerData: port } = require("node:worker_threads");' +
+            'Bun.connect({ hostname: "abandoned.test", port, socket: { data() {} } }).catch(() => {});' +
+            'parentPort.postMessage("connecting");' +
+            "for (;;) {}",
+          { eval: true, workerData: refusedPort },
+        );
+        await new Promise((resolve, reject) => {
+          worker.once("message", resolve);
+          worker.once("error", reject);
+        });
+        const whileConnecting = stats();
+        await worker.terminate();
+        const afterAbandon = stats();
+        const code = await connect("abandoned.test", refusedPort);
+        return { whileConnecting, afterAbandon, code, afterRefused: stats() };
+      `),
+    ).toEqual({
+      result: {
+        whileConnecting: { cacheHitsCompleted: 1, cacheMisses: 0, size: 1, errors: 0 },
+        afterAbandon: { cacheHitsCompleted: 1, cacheMisses: 0, size: 1, errors: 0 },
+        code: "ECONNREFUSED",
+        afterRefused: { cacheHitsCompleted: 2, cacheMisses: 0, size: 0, errors: 1 },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 30_000);
+});
+
 describe("dns.prefetch", () => {
   it("should prefetch", async () => {
     // A local server keeps the test off the external network. "localhost" gets a

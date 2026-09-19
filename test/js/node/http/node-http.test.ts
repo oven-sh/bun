@@ -2896,6 +2896,7 @@ it("a pipelined response is started when no response is in flight to hand it the
   // The dispatcher kicks the pipeline when it queues a response and nothing is in flight (the
   // previous response finished and detached while it still counts as pending). Clearing
   // socket._httpMessage by hand reaches that state: only the kick can start /second then.
+  // Bun only: Node.js v26.3.0 fails an internal assertion (resOnFinish) on this use of its internals.
   const server = createServer((req, res) => {
     if (req.url === "/first") {
       (req.socket as any)._httpMessage = null;
@@ -2903,10 +2904,11 @@ it("a pipelined response is started when no response is in flight to hand it the
     }
     res.end("second-response");
   });
+  let socket: ReturnType<typeof connect> | undefined;
   try {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
-    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
     const { promise: started, resolve: onStarted, reject: onFailure } = Promise.withResolvers<void>();
     let received = "";
     socket.on("data", chunk => {
@@ -2917,9 +2919,14 @@ it("a pipelined response is started when no response is in flight to hand it the
     socket.on("close", () => onFailure(new Error("closed before the queued response was started")));
     socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
     await started;
-    expect(received).toContain("second-response");
-    socket.destroy();
+    // /first never writes, so the stream is the one response to /second and nothing else.
+    const [head, ...bodies] = received.split("\r\n\r\n");
+    expect({ status: head.split("\r\n")[0], bodies }).toEqual({
+      status: "HTTP/1.1 200 OK",
+      bodies: ["second-response"],
+    });
   } finally {
+    socket?.destroy();
     server.close();
   }
 });

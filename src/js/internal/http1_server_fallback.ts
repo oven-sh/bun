@@ -6,6 +6,7 @@ const { SafeSet } = require("internal/primordials");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
+const reportError = globalThis.reportError;
 
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
@@ -154,8 +155,8 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   }
 
   // The callback of the empty write that end() queues behind the response. A destroyed socket
-  // finishes the response from its 'close' instead: net.Socket fails its pending writes inside
-  // destroy(), where 'finish' must not run, and a TLS socket never calls back.
+  // finishes the response from its 'close' instead: a stream can fail its pending writes inside
+  // destroy(), where 'finish' must not run, or never call back.
   function onEndWritten() {
     if (!socket.destroyed) flushed();
   }
@@ -523,7 +524,12 @@ function connectionListenerHTTP1(server, socket, options) {
   // its failed last write, and detaches itself: its request is not aborted below. Prepended, because
   // in Node that 'finish' comes before the socket's 'close'.
   socket.prependOnceListener("close", () => {
-    socket._httpMessage?.[kHttp1ResponseHandle]?.flushed();
+    try {
+      socket._httpMessage?.[kHttp1ResponseHandle]?.flushed();
+    } catch (err) {
+      // A 'finish' listener that throws must not skip the cleanup in the listener below.
+      reportError(err);
+    }
   });
   socket.once("close", () => {
     connections.delete(socket);

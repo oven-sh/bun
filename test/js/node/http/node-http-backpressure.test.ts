@@ -1074,6 +1074,69 @@ describe("backpressure", () => {
         for (const side of [clientSide, serverSide, pingClientSide, pingServerSide]) side.destroy();
       }
     });
+
+    // The first response completes because its connection dies. Its 'finish'
+    // listener throws, and the response queued behind it is still aborted.
+    it("a 'finish' listener that throws does not keep a dying connection from closing its queued response", async () => {
+      const child = spawn(
+        process.execPath,
+        [
+          "-e",
+          `const events = [];
+          process.on("uncaughtException", err => events.push("uncaughtException: " + err.message));
+          const server = require("node:http").createServer((req, res) => {
+            const name = req.url.slice(1);
+            res.on("close", () => {
+              events.push("close " + name);
+              if (events.includes("close first") && events.includes("close second")) {
+                console.log(JSON.stringify(events));
+                process.exit(0);
+              }
+            });
+            if (name === "first") {
+              res.on("finish", () => {
+                events.push("finish first");
+                throw new Error("from 'finish'");
+              });
+              res.end(Buffer.alloc(${BODY}, "a"));
+            } else {
+              res.end("second");
+              const socket = req.socket;
+              setImmediate(() => socket.destroy());
+            }
+          });
+          const acceptor = require("node:net").createServer(socket => server.emit("connection", socket));
+          acceptor.listen(0, "127.0.0.1", () => console.log(acceptor.address().port));`,
+        ],
+        { stdio: ["ignore", "pipe", "inherit"] },
+      );
+      try {
+        // 'close' comes after the child's stdout has ended.
+        const exited = once(child, "close");
+        let stdout = "";
+        child.stdout!.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+        await Promise.race([
+          once(child.stdout!, "data"),
+          exited.then(([code, signal]) => {
+            throw new Error(`server exited before listening: code ${code}, signal ${signal}`);
+          }),
+        ]);
+        // The client reads nothing, so the first response is still draining when the socket is destroyed.
+        using client = pausedClient(
+          parseInt(stdout),
+          "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\n\r\n",
+          { collect: false },
+        );
+        expect(await exited).toEqual([0, null]);
+        const events: string[] = JSON.parse(stdout.slice(stdout.indexOf("\n") + 1));
+        expect({ first: events.slice(0, 2), closed: events.slice(2).sort() }).toEqual({
+          first: ["finish first", "uncaughtException: from 'finish'"],
+          closed: ["close first", "close second"],
+        });
+      } finally {
+        child.kill();
+      }
+    });
   });
 
   // Request-body direction: once the handler stops reading the body (req.pause(),

@@ -57,6 +57,7 @@ pub struct ExecState {
 pub struct EbusyState {
     pub(crate) tasks: Vec<*mut ShellCpTask>,
     pub(crate) idx: usize,
+    /// 1 once any task, deferred or not, has been reported as failed.
     pub(crate) main_exit_code: ExitCode,
     /// Absolute target paths that some task copied successfully — used to
     /// suppress a sibling task's EBUSY on the same target.
@@ -317,8 +318,11 @@ impl Cp {
 
         let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
             let s = Builtin::shell_err_to_string(interp, cmd, Kind::Cp, &e).to_vec();
-            if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.err = Some(e);
+            match &mut Self::state_mut(interp, cmd).state {
+                State::Exec(exec) => exec.err = Some(e),
+                #[cfg(windows)]
+                State::Ebusy(eb) => eb.main_exit_code = 1,
+                _ => {}
             }
             // `e` drops here when not stored.
             s

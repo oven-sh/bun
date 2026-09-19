@@ -5039,6 +5039,13 @@ it("http2 respondWithFD never calls options.onError and a header error never rea
       const withOnError = { name, ...(await request(call, { onError: "must not run" })) };
       expect(withOnError).toEqual({ ...withoutOnError, onError: [] });
     }
+    // onError belongs to one call. A respondWithFile() that starts on the same stream before the
+    // fstat of respondWithFD() returns does not hand it to that fstat callback.
+    const bothInFlight = (stream, options) => {
+      stream.respondWithFD(badFd, ok, { ...options, statCheck });
+      stream.respondWithFile(import.meta.path, ok);
+    };
+    expect(await request(bothInFlight, { onError: "must not run" })).toMatchObject({ onError: [] });
     for (const [code, call] of Object.entries(callsOnError)) {
       expect(await request(call, { onError: "answers 404" })).toEqual({
         onError: [code],

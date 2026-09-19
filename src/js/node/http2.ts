@@ -3041,8 +3041,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   } catch (err) {
     // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
     // for the file never reaches a read stream, so close it here before the stream is destroyed.
-    // node destroys the stream here for both entry points and never calls onError:
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2714-L2719
+    // node never calls onError: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2714-L2719
     if (this[kOwnsFd] === true) tryClose(fd);
     this.destroy(err);
     return;
@@ -3092,8 +3091,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   });
   fileStream.pipe(sink);
 }
-// respond() throws when the stream is already destroyed and when it rejects the headers. A throw
-// from an fs callback is an uncaught exception, so the error destroys the stream instead.
+// respond() can throw, and a throw from an fs callback is an uncaught exception.
 function respondOrDestroy(this: ServerHttp2Stream, headers, options) {
   try {
     this.respond(headers, options);
@@ -3422,10 +3420,7 @@ class ServerHttp2Stream extends Http2Stream {
     // The caller owns this fd; clear any stale flag left by a prior respondWithFile()
     // on the same stream so doSendFileFD will not close it (node semantics).
     this[kOwnsFd] = false;
-    // node's respondWithFD() never reads options.onError, only respondWithFile() does:
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2755-L2790
-    // Cleared on this call's copy of the options: kOwnsFd is per stream and can change before
-    // fstat returns.
+    // node never reads onError: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2755-L2790
     options.onError = undefined;
     if (options.statCheck === undefined) {
       // node's processRespondWithFD runs synchronously when no statCheck is given: the

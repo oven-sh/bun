@@ -99,9 +99,9 @@ const {
   // instance. This is so that it can emit the `worker` event on the process with the
   // node:worker_threads instance instead of the Web Worker instance.
   new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
-  () => SharedArrayBuffer,
-  // true: this call took the claim. false: another thread took it first. undefined: not a claim flag.
-  (claim: unknown) => boolean | undefined,
+  () => number,
+  // true: the id was live, and the caller now owns the resource in transit.
+  (claim: unknown) => boolean,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -360,11 +360,8 @@ function setupWorkerStdio(stdio) {
 // on receive, markers are swapped back for reconstructed instances.
 // A plain string key on purpose: Symbols don't survive structured clone, and
 // Bun has no native HostObject hook, so the marker must ride along inside the
-// cloned graph (including Map/Set entries). This is in-band signaling: a user
-// object that fabricates the whole marker (key, data and claim flag) in
-// workerData will deserialize on the worker side where node would deliver it
-// unchanged. That's accepted - it is not a privilege boundary (worker threads
-// share the parent's fd table anyway).
+// cloned graph (including Map/Set entries). A user object with the same key
+// stays plain data, as in node: it cannot hold a live claim id.
 const kJSTransferableMarker = "__bunNodeWorkerJSTransferable";
 
 function isJSTransferableMarker(value: object): boolean {
@@ -374,17 +371,10 @@ function isJSTransferableMarker(value: object): boolean {
   );
 }
 
-// Between kTransfer() on the parent and kDeserialize() on the worker the
-// resource (a bare fd) has no owner. Each marker carries a claim flag (4 shared
-// bytes, made and flipped natively), and the resource belongs to the thread
-// that flips it first: the worker when it deserializes the marker, or the
-// parent when it rolls the transfer back or finds the marker undelivered after
-// the worker exited. Node closes the fd of a message that is destroyed
-// undelivered:
-// https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L318-L327
-function closeIfUnclaimed(data: unknown, claim: SharedArrayBuffer) {
+// The first thread to take a marker's claim id owns its fd, so one fd is never closed or restored twice.
+function closeIfUnclaimed(data: unknown, claim: number) {
   const fd = (data as any)?.fd;
-  if (typeof fd !== "number" || fd < 0 || _claimJSTransferable(claim) !== true) return;
+  if (typeof fd !== "number" || fd < 0 || !_claimJSTransferable(claim)) return;
   try {
     require("node:fs").closeSync(fd);
   } catch {
@@ -392,17 +382,14 @@ function closeIfUnclaimed(data: unknown, claim: SharedArrayBuffer) {
   }
 }
 
-// Module scope on purpose. The Worker keeps this closure until it exits, and a
-// closure made inside packJSTransferables() would keep that call's whole scope
-// alive with it, the user's workerData graph included.
-function makeReclaimJSTransferables(pending: Array<[data: unknown, claim: SharedArrayBuffer]>) {
+// Module scope: a closure made in packJSTransferables() would pin the user's workerData graph until the worker exits.
+function makeReclaimJSTransferables(pending: Array<[data: unknown, claim: number]>) {
   return function reclaimJSTransferables() {
     for (const { 0: data, 1: claim } of pending) closeIfUnclaimed(data, claim);
   };
 }
 
-// Returns undefined for user data that only looks like a marker. It stays plain
-// data, as in node, and must not throw here: this runs in the worker bootstrap.
+// undefined: user data that only looks like a marker. It stays plain data and must not throw in the worker bootstrap.
 function deserializeJSTransferable(marker: Record<string, any>): unknown {
   const deserializeInfo = marker[kJSTransferableMarker];
   switch (deserializeInfo) {
@@ -411,11 +398,9 @@ function deserializeJSTransferable(marker: Record<string, any>): unknown {
       if (data === null || typeof data !== "object" || typeof data.fd !== "number") return undefined;
       const { FileHandle, kDeserialize } = require("node:fs").promises.$data;
       const handle = new FileHandle(-1);
-      // Claim last. A terminate() that lands between the claim and kDeserialize()
-      // leaks the fd, so nothing slow (the node:fs load above) may sit in between.
-      const claimed = _claimJSTransferable(marker.claim);
-      if (claimed === undefined) return undefined;
-      if (claimed) handle[kDeserialize](data);
+      // Claim last: a terminate() between the claim and kDeserialize() leaks the fd, so the node:fs load stays above.
+      if (!_claimJSTransferable(marker.claim)) return undefined;
+      handle[kDeserialize](data);
       return handle;
     }
     default:
@@ -504,10 +489,10 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
   // kTransfer() neuters the handle (extracts the bare fd); if anything later
   // in the pack/construct sequence throws, restore the already-neutered
   // handles so their fds aren't orphaned.
-  const neutered: Array<[item: any, data: unknown, claim: SharedArrayBuffer]> = [];
+  const neutered: Array<[item: any, data: unknown, claim: number]> = [];
   function restoreNeutered() {
     for (const { 0: item, 1: data, 2: claim } of neutered) {
-      if (_claimJSTransferable(claim) !== true) continue;
+      if (!_claimJSTransferable(claim)) continue;
       try {
         item[kDeserialize](data);
       } catch {
@@ -528,10 +513,9 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
           );
         }
         const extraTransfers = item[kTransferList]?.();
-        // Allocated before kTransfer() so nothing can throw between neutering and the push.
-        const claim = _createJSTransferableClaim();
         // May throw DataCloneError (e.g. FileHandle in use); propagate synchronously like Node.
         const { data, deserializeInfo } = item[kTransfer]();
+        const claim = _createJSTransferableClaim();
         neutered.push([item, data, claim]);
         (replacements ??= new Map()).set(item, {
           [kJSTransferableMarker]: deserializeInfo,
@@ -622,10 +606,8 @@ function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
       if (!usedMarkers.has(item)) closeIfUnclaimed(data, claim);
     }
   };
-  // A worker that exits before it unpacks its workerData (the entry did not
-  // resolve, or terminate() got there first) leaves every marker undelivered.
-  // Runs on 'close', which the worker thread posts after its VM is destroyed.
-  const pending: Array<[data: unknown, claim: SharedArrayBuffer]> = [];
+  // Runs on 'close', which the worker thread posts after its VM is destroyed, so every claim is final by then.
+  const pending: Array<[data: unknown, claim: number]> = [];
   for (const { 1: data, 2: claim } of neutered) pending.push([data, claim]);
   packed[kReclaimJSTransferables] = makeReclaimJSTransferables(pending);
   return packed;
@@ -1220,7 +1202,7 @@ class Worker extends EventEmitter {
       messaging.destroyMainThreadPort(this.#messagingThreadId);
       this.#messagingThreadId = undefined;
     }
-    // Close the transferred FileHandles that the worker never received.
+    // node closes an undelivered fd too: https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L318-L327
     this.#reclaimJSTransferables?.();
     this.#reclaimJSTransferables = undefined;
     // End captured stdio readables when the worker exits, even if it was

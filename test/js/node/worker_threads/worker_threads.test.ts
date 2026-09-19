@@ -1037,9 +1037,6 @@ test("FileHandles nested in Map and Set workerData are transferred", async () =>
   expect(message).toEqual({ sameInstance: true, text: "hello" });
 });
 
-// The fd of a transferred FileHandle has no owner until the worker unpacks its workerData. The
-// parent closes the fd of a handle that the worker never received, as node does (~TransferData),
-// and leaves alone the fd of a handle that the worker did receive.
 // These tests watch descriptor numbers, so they stay serial.
 describe("the fd of a FileHandle transferred through workerData", () => {
   // False once the descriptor is closed, or once its number belongs to another file.
@@ -1053,8 +1050,7 @@ describe("the fd of a FileHandle transferred through workerData", () => {
     }
   }
 
-  // A FileHandle to transfer. Disposal closes what a failed expectation leaves open: the handle
-  // if it still owns the fd, or the bare fd.
+  // Disposal closes what a failed expectation leaves open: the handle if it still owns the fd, else the bare fd.
   async function openToTransfer(path: string) {
     const fh = await fs.promises.open(path, "r");
     const fd = fh.fd;
@@ -1070,8 +1066,7 @@ describe("the fd of a FileHandle transferred through workerData", () => {
     };
   }
 
-  // open() returns the lowest free descriptor, so these take the number `fd` again once it is
-  // closed. A second close of that number then closes one of them.
+  // open() returns the lowest free descriptor, so these take the closed number `fd` again. A second close hits one.
   function reopenUpTo(fd: number, path: string) {
     const held = [fs.openSync(path, "r")];
     const file = fs.fstatSync(held[0]);
@@ -1100,9 +1095,7 @@ describe("the fd of a FileHandle transferred through workerData", () => {
     });
   });
 
-  // terminate() in the same tick as the constructor stops the thread before it unpacks its
-  // workerData. A thread that wins that race receives the handle and owns the fd, so that
-  // attempt proves nothing and the next one runs.
+  // A thread that wins the race against terminate() receives the handle and owns the fd, so that attempt is repeated.
   test("is closed when terminate() stops the worker before it starts", async () => {
     using dir = tempDir("worker-fh-undelivered", { "x.txt": "hello" });
     let closed = false;
@@ -1122,13 +1115,11 @@ describe("the fd of a FileHandle transferred through workerData", () => {
     expect(closed).toBe(true);
   });
 
-  // A handle that workerData does not reference is closed by the constructor. The exit of a
-  // worker that never started must not close that number a second time.
+  // The constructor closes a handle that workerData does not reference. The worker's exit must not close it again.
   test("is closed only once when workerData does not reference the handle", async () => {
     using dir = tempDir("worker-fh-unreferenced", { "x.txt": "hello", "y.txt": "world" });
     const other = join(String(dir), "y.txt");
-    // A starting worker thread opens descriptors of its own. It takes these lower numbers, which
-    // leaves the number of the handle for reopenUpTo().
+    // A starting worker thread opens descriptors of its own. It takes these lower numbers, not the handle's.
     const parked = Array.from({ length: 16 }, () => fs.openSync(other, "r"));
     await using transferred = await openToTransfer(join(String(dir), "x.txt"));
     for (const descriptor of parked) fs.closeSync(descriptor);
@@ -1147,8 +1138,7 @@ describe("the fd of a FileHandle transferred through workerData", () => {
     });
   });
 
-  // Fails when the claim of the worker does not reach the parent: the parent then closes the
-  // number of a handle that the worker received and closed, which by then is another file's.
+  // Fails when the worker's claim does not reach the parent: the parent then closes a number that is another file's.
   test("is not closed by the parent when the worker received the handle", async () => {
     using dir = tempDir("worker-fh-delivered", { "x.txt": "hello", "y.txt": "world" });
     await using transferred = await openToTransfer(join(String(dir), "x.txt"));
@@ -1170,9 +1160,8 @@ describe("the fd of a FileHandle transferred through workerData", () => {
     });
   });
 
-  // The claim flag is made and flipped natively. Code that replaces these globals (a DOM shim, a
-  // hardened realm) keeps the transfer that it had before the flag existed.
-  test("is transferred when user code removed SharedArrayBuffer and Atomics", async () => {
+  // The claim is a plain number, so the transfer needs neither the SharedArrayBuffer global nor the JSC option.
+  test("is transferred when SharedArrayBuffer is not available", async () => {
     using dir = tempDir("worker-fh-no-sab", { "x.txt": "hello" });
     await using proc = Bun.spawn({
       cmd: [
@@ -1180,7 +1169,7 @@ describe("the fd of a FileHandle transferred through workerData", () => {
         "-e",
         `const { Worker } = require("node:worker_threads");
          const fs = require("node:fs");
-         globalThis.SharedArrayBuffer = globalThis.Atomics = globalThis.Int32Array = undefined;
+         globalThis.SharedArrayBuffer = globalThis.Atomics = undefined;
          fs.promises.open("x.txt", "r").then(fh => {
            const worker = new Worker(
              \`const { workerData, parentPort } = require("node:worker_threads");
@@ -1190,7 +1179,7 @@ describe("the fd of a FileHandle transferred through workerData", () => {
            worker.on("message", text => console.log(JSON.stringify({ text, parentFd: fh.fd })));
          });`,
       ],
-      env: bunEnv,
+      env: { ...bunEnv, BUN_JSC_useSharedArrayBuffer: "0" },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -1205,11 +1194,11 @@ describe("the fd of a FileHandle transferred through workerData", () => {
 
   // The worker unpacks workerData before user code runs, so a lookalike must not throw there.
   test.each([
-    ["no claim flag", { data: { fd: 1 << 20 } }],
-    ["a claim flag of the wrong type", { data: { fd: 1 << 20 }, claim: new Int32Array(1) }],
-    ["a claim flag that is too small", { data: { fd: 1 << 20 }, claim: new SharedArrayBuffer(2) }],
-    ["a claim flag and no fd", { data: {}, claim: new SharedArrayBuffer(4) }],
-    ["a claim flag and no data", { claim: new SharedArrayBuffer(4) }],
+    ["no claim id", { data: { fd: 1 << 20 } }],
+    ["a claim id that is not live", { data: { fd: 1 << 20 }, claim: 12345 }],
+    ["a claim id of the wrong type", { data: { fd: 1 << 20 }, claim: "12345" }],
+    ["no fd", { data: {}, claim: 12345 }],
+    ["no data", { claim: 12345 }],
   ])("workerData that imitates a marker with %s stays plain data", async (_, rest) => {
     const imitation = { __bunNodeWorkerJSTransferable: "internal/fs/promises:FileHandle", ...rest };
     await using worker = new Worker(

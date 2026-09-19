@@ -37,6 +37,10 @@
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Scope.h>
+#include <wtf/CryptographicallyRandomNumber.h>
+#include <wtf/HashSet.h>
+#include <wtf/Lock.h>
+#include <wtf/NeverDestroyed.h>
 #include "SerializedScriptValue.h"
 #include "ScriptExecutionContext.h"
 #include <JavaScriptCore/JSMap.h>
@@ -286,34 +290,36 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(jsUndefined());
 }
 
-// The claim flag of a resource in transit to a worker (worker_threads.ts, packJSTransferables): one
-// shared int32 that rides inside the cloned workerData. Native so that neither side depends on the
-// SharedArrayBuffer and Atomics globals, which user code can replace.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateJSTransferableClaim, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+// Ids of resources in transit to a worker (worker_threads.ts). Process-wide: the parent VM makes one, the worker VM takes it.
+static Lock s_transferClaimsLock;
+static HashSet<uint64_t>& transferClaims() WTF_REQUIRES_LOCK(s_transferClaimsLock)
 {
-    auto& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RefPtr<ArrayBuffer> buffer = ArrayBuffer::tryCreate(sizeof(int32_t), 1);
-    if (!buffer) [[unlikely]] {
-        throwOutOfMemoryError(lexicalGlobalObject, scope);
-        return {};
-    }
-    buffer->makeShared();
-    return JSValue::encode(JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(buffer)));
+    static NeverDestroyed<HashSet<uint64_t>> claims;
+    return claims.get();
 }
 
-// true: this call flipped the flag, so the caller now owns the resource. false: another caller
-// flipped it first. undefined: the argument is not a claim flag.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateJSTransferableClaim, (JSGlobalObject*, CallFrame*))
+{
+    Locker locker { s_transferClaimsLock };
+    uint64_t id;
+    do {
+        // 53 bits, so the id is exact as a JS number. 0 is the empty value of the set.
+        id = cryptographicallyRandomNumber<uint64_t>() >> 11;
+    } while (!id || !transferClaims().add(id).isNewEntry);
+    return JSValue::encode(jsNumber(static_cast<double>(id)));
+}
+
+// true: the id was live and the caller now owns the resource. Anything else that user data can hold is false.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionClaimJSTransferable, (JSGlobalObject*, CallFrame* callFrame))
 {
-    auto* jsBuffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(0));
-    if (!jsBuffer)
-        return JSValue::encode(jsUndefined());
-    auto* buffer = jsBuffer->impl();
-    if (!buffer->isShared() || buffer->byteLength() < sizeof(int32_t))
-        return JSValue::encode(jsUndefined());
-    auto* flag = static_cast<int32_t*>(buffer->data());
-    return JSValue::encode(jsBoolean(WTF::atomicCompareExchangeStrong(flag, 0, 1) == 0));
+    JSValue value = callFrame->argument(0);
+    if (!value.isNumber())
+        return JSValue::encode(jsBoolean(false));
+    double number = value.asNumber();
+    if (!(number >= 1 && number < 9007199254740992.0) || number != std::trunc(number))
+        return JSValue::encode(jsBoolean(false));
+    Locker locker { s_transferClaimsLock };
+    return JSValue::encode(jsBoolean(transferClaims().remove(static_cast<uint64_t>(number))));
 }
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)

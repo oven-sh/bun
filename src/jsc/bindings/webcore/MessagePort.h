@@ -115,6 +115,11 @@ public:
 
     void jsRef(JSGlobalObject*);
     void jsUnref(JSGlobalObject*);
+    // The .onmessage setter installed a callable handler. Installing one is a listener add,
+    // which refs the port like any first 'message' listener; but node's setter also
+    // re-registers a replaced handler (removeListener, then newListener), so replacing the
+    // port's only 'message' listener refs it again even after an unref(). This covers that.
+    void didSetMessageHandler();
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 
@@ -159,17 +164,24 @@ private:
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
     std::atomic<bool> m_hasCloseEventListener { false };
+    // The explicit .ref() hold: an event-loop ref plus a self-ref, so a ref()'d port with no
+    // listener pins the loop and outlives its wrapper (node never collects an open port).
     bool m_hasRef { false };
 
-    // Whether .ref()/.unref() want this port to keep the loop alive (default refd);
-    // independent of m_hasRef (the .onmessage=/.ref() keepalive).
-    bool m_isRefd { true };
+    // Node's ref flag as far as listeners are concerned: set by .ref() and by the first
+    // 'message' listener (node's setupPortReferencing calls port.ref() for it), cleared by
+    // .unref() and by close()/transfer/peer close. A fresh port is unref'd, as in node. It
+    // keeps the loop alive only while a 'message' listener is present.
+    bool m_isRefd { false };
     // Whether the message-listener mechanism currently holds an event-loop ref
     // (held iff m_isRefd && m_messageEventCount > 0).
     bool m_listenerLoopRefActive { false };
 
     uint32_t m_messageEventCount { 0 };
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
+    // Sets m_isRefd for .ref() and for the first 'message' listener; declines (returning false)
+    // once the port can no longer receive, see the definition.
+    bool setRefd();
     // Reconciles the listener event-loop ref with (m_isRefd && m_messageEventCount > 0).
     void updateListenerEventLoopRef();
 };

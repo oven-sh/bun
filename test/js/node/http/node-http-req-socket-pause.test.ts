@@ -157,8 +157,11 @@ async function connectTo(server: Server) {
 }
 
 async function disconnectAndClose(socket: Socket, server: Server) {
-  socket.destroy();
-  await once(socket, "close");
+  // The server closes the connection itself after a `Connection: close` request.
+  if (!socket.closed) {
+    socket.destroy();
+    await once(socket, "close");
+  }
   // The server's 'close' event waits for every request the server still
   // counts as in flight, so a request that is never released keeps it from
   // ever firing.
@@ -369,6 +372,38 @@ describe("request whose whole body is in the segment that paused the connection"
       await once(client.socket, "close");
       server.close();
       await once(server, "close");
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  // The body is already in the request's buffer, so the end of the response
+  // cannot take a part of it away from a reader that comes late.
+  it.each([
+    ["right after the response ends", "", false],
+    ["just before the response ends, on a connection the response closes", "Connection: close\r\n", true],
+    ["right after the response ends, on a connection the response closes", "Connection: close\r\n", false],
+  ])("hands the whole body to a reader attached %s", async (_name, headers, readerFirst) => {
+    const { promise: body, resolve: gotBody } = Promise.withResolvers<string>();
+    const server = createServer({ highWaterMark: 1024 }, (req, res) => {
+      setImmediate(() => {
+        let received = "";
+        const read = () => {
+          req.on("data", chunk => (received += chunk));
+          req.on("end", () => gotBody(received));
+        };
+        if (readerFirst) read();
+        res.end("alpha");
+        if (!readerFirst) read();
+      });
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(chunkedPost("/read", headers));
+      await client.receive("alpha");
+      expect(await body).toBe(BODY_HEAD + BODY_TAIL);
+      await disconnectAndClose(client.socket, server);
     } finally {
       server.closeAllConnections();
       if (server.listening) server.close();

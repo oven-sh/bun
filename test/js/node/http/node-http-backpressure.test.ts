@@ -8,10 +8,13 @@
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http from "node:http";
+import http2 from "node:http2";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import path from "node:path";
+import type { Duplex } from "node:stream";
+import { duplexPair, Readable } from "node:stream";
 import nodeTls from "node:tls";
 
 describe("backpressure", () => {
@@ -486,6 +489,246 @@ describe("backpressure", () => {
         expect(response).toStartWith("HTTP/1.1 200 ");
       } finally {
         sock.destroy();
+      }
+    });
+  });
+
+  // A socket handed over with server.emit("connection") and an HTTP/1.1 client
+  // of an http2 server with allowHTTP1 are served over the socket's stream
+  // interface. Node applies the socket's backpressure to their responses like
+  // to any other: write() returns false while the socket is over its high
+  // water mark, 'drain' follows the socket's 'drain', and a write() callback
+  // runs once the socket has flushed its chunk.
+  describe("a response on a connection from server.emit('connection') or http2's allowHTTP1 waits for the socket", () => {
+    const TOTAL = 16 * 1024 * 1024;
+    // Larger than a socket's high water mark, so every write() reports backpressure.
+    const CHUNK = Buffer.alloc(256 * 1024, "a");
+
+    const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+    const tlsOptions = {
+      cert: readFileSync(path.join(keysDir, "agent1-cert.pem")),
+      key: readFileSync(path.join(keysDir, "agent1-key.pem")),
+    };
+
+    type Connection = {
+      // A client connection that reads nothing until readBody().
+      connect(): Promise<Duplex>;
+      // At least one whole turn of the event loop: an exchange on a second
+      // connection where there is a port to connect to.
+      turn(): Promise<void>;
+      close(): void;
+    };
+
+    function ping(module: typeof http | typeof https, port: number) {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      module
+        .get({ port, host: "127.0.0.1", path: "/ping", agent: false, rejectUnauthorized: false }, res => {
+          res.resume();
+          res.on("end", () => resolve());
+        })
+        .on("error", reject);
+      return promise;
+    }
+
+    function answerPing(listener: http.RequestListener): http.RequestListener {
+      return (req, res) => (req.url === "/ping" ? res.end("pong") : listener(req, res));
+    }
+
+    const entryPoints: Record<string, (listener: http.RequestListener) => Promise<Connection>> = {
+      "server.emit('connection', socket) with a net.Socket": async listener => {
+        const server = http.createServer(answerPing(listener));
+        const acceptor = net.createServer(socket => server.emit("connection", socket));
+        await once(acceptor.listen(0, "127.0.0.1"), "listening");
+        const port = (acceptor.address() as AddressInfo).port;
+        return {
+          async connect() {
+            const socket = net.connect(port, "127.0.0.1");
+            socket.pause();
+            await once(socket, "connect");
+            return socket;
+          },
+          turn: () => ping(http, port),
+          close: () => void acceptor.close(),
+        };
+      },
+      "server.emit('connection', duplex) with a stream.duplexPair() side": async listener => {
+        const server = http.createServer(listener);
+        return {
+          async connect() {
+            const [clientSide, serverSide] = duplexPair();
+            clientSide.pause();
+            server.emit("connection", serverSide);
+            return clientSide;
+          },
+          turn: () => new Promise<void>(resolve => setImmediate(resolve)),
+          close() {},
+        };
+      },
+      "http2.createSecureServer({ allowHTTP1: true }) with an HTTP/1.1 client": async listener => {
+        const server = http2.createSecureServer({ ...tlsOptions, allowHTTP1: true }, answerPing(listener) as never);
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const port = (server.address() as AddressInfo).port;
+        return {
+          async connect() {
+            const socket = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+            socket.pause();
+            await once(socket, "secureConnect");
+            return socket;
+          },
+          turn: () => ping(https, port),
+          close: () => void server.close(),
+        };
+      },
+    };
+
+    // Reads until `bodies` bodies of TOTAL bytes, each behind a head of the
+    // same length, have arrived or the connection has closed. Resolves with
+    // the number of body bytes.
+    function readBody(client: Duplex, bodies = 1) {
+      const { promise, resolve } = Promise.withResolvers<number>();
+      let head = "";
+      let headLength = -1;
+      let received = 0;
+      client.on("data", (chunk: Buffer) => {
+        received += chunk.length;
+        if (headLength < 0) {
+          head += chunk.toString("latin1");
+          const i = head.indexOf("\r\n\r\n");
+          if (i >= 0) headLength = i + 4;
+        }
+        if (headLength >= 0 && received >= bodies * (headLength + TOTAL)) resolve(received - bodies * headLength);
+      });
+      client.on("error", () => {});
+      client.on("close", () => resolve(received - bodies * Math.max(headLength, 0)));
+      client.resume();
+      return promise;
+    }
+
+    describe.each(Object.keys(entryPoints))("%s", name => {
+      it("write() reports the socket's backpressure, and 'drain' and the write() callbacks wait for the socket", async () => {
+        const seen = { written: 0, callbacks: 0, drainsOverBacklog: 0, callbacksBeforeFlush: 0 };
+        let maxBacklog = 0;
+        let finished = false;
+        const arrived = Promise.withResolvers<http.ServerResponse>();
+        const handled = Promise.withResolvers<void>();
+        // The usual pump: write until write() returns false, go on at 'drain'.
+        async function writeBody(req: http.IncomingMessage, res: http.ServerResponse) {
+          const socket = req.socket;
+          res.setHeader("Content-Length", TOTAL);
+          res.on("drain", () => {
+            if (socket.writableLength > 0) seen.drainsOverBacklog++;
+          });
+          while (seen.written < TOTAL) {
+            const end = (seen.written += CHUNK.length);
+            const ok = res.write(CHUNK, () => {
+              seen.callbacks++;
+              // The socket may hold what was written after this chunk, and nothing more.
+              if (socket.writableLength > seen.written - end) seen.callbacksBeforeFlush++;
+            });
+            maxBacklog = Math.max(maxBacklog, socket.writableLength);
+            if (!ok) await once(res, "drain");
+          }
+          res.end();
+          finished = true;
+        }
+        const connection = await entryPoints[name]((req, res) => {
+          arrived.resolve(res);
+          writeBody(req, res).then(handled.resolve, handled.reject);
+        });
+        const client = await connection.connect();
+        try {
+          client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          const res = await arrived.promise;
+          // The client reads nothing. The handler goes on until the socket
+          // stops taking bytes, or to the end of the body if nothing stops it.
+          let before: number;
+          do {
+            before = seen.written;
+            await connection.turn();
+          } while (!finished && seen.written !== before);
+          if (!finished) {
+            // The handler waits for 'drain', and the last chunk's callback with it.
+            expect({
+              needDrain: res.writableNeedDrain,
+              waitingCallbacks: seen.written / CHUNK.length - seen.callbacks,
+            }).toEqual({ needDrain: true, waitingCallbacks: 1 });
+          }
+
+          expect(await readBody(client)).toBe(TOTAL);
+          await handled.promise;
+          expect(seen).toEqual({
+            written: TOTAL,
+            callbacks: TOTAL / CHUNK.length,
+            drainsOverBacklog: 0,
+            callbacksBeforeFlush: 0,
+          });
+          // The handler waited at every false: the socket never held more than the head and one chunk.
+          expect(maxBacklog).toBeLessThan(2 * CHUNK.length);
+        } finally {
+          client.destroy();
+          connection.close();
+        }
+      });
+    });
+
+    // The remaining cases use the duplexPair() side: it takes less than one
+    // CHUNK from a client that does not read, on every platform.
+    const pair = entryPoints["server.emit('connection', duplex) with a stream.duplexPair() side"];
+
+    it("an empty write() behind a chunk the socket still holds waits with it", async () => {
+      const order: string[] = [];
+      const wrote = Promise.withResolvers<{ res: http.ServerResponse; returned: boolean[] }>();
+      const connection = await pair((req, res) => {
+        res.setHeader("Content-Length", CHUNK.length);
+        const returned = [res.write(CHUNK, () => order.push("chunk")), res.write("", () => order.push("empty"))];
+        wrote.resolve({ res, returned });
+      });
+      const client = await connection.connect();
+      try {
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        const { res, returned } = await wrote.promise;
+        await connection.turn();
+        expect({ returned, order }).toEqual({ returned: [false, false], order: [] });
+
+        const drained = once(res, "drain");
+        client.resume();
+        await drained;
+        // The callbacks run in the tick of the 'drain'.
+        await connection.turn();
+        expect(order).toEqual(["chunk", "empty"]);
+        res.end();
+      } finally {
+        client.destroy();
+      }
+    });
+
+    // The socket can still hold the previous response's bytes when the next
+    // request arrives. The next response has not written anything, so it does
+    // not need a 'drain': pipe() waits for one whenever writableNeedDrain says
+    // so, and none would come.
+    it("the next response on a socket that still holds the previous body can be piped into", async () => {
+      const firstEnded = Promise.withResolvers<void>();
+      const needDrain = Promise.withResolvers<boolean>();
+      const connection = await pair((req, res) => {
+        res.setHeader("Content-Length", TOTAL);
+        if (req.url === "/first") {
+          res.end(Buffer.alloc(TOTAL, "a"));
+          firstEnded.resolve();
+        } else {
+          needDrain.resolve(res.writableNeedDrain);
+          Readable.from(Array.from({ length: TOTAL / CHUNK.length }, () => CHUNK)).pipe(res);
+        }
+      });
+      const client = await connection.connect();
+      try {
+        client.write("GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await firstEnded.promise;
+        await connection.turn();
+        client.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        expect(await needDrain.promise).toBe(false);
+        expect(await readBody(client, 2)).toBe(2 * TOTAL);
+      } finally {
+        client.destroy();
       }
     });
   });

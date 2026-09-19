@@ -332,7 +332,7 @@ describe("request whose whole body is in the segment that paused the connection"
     const paused: string[] = [];
     const { promise: sampled, resolve: gotSample } = Promise.withResolvers<Sample>();
     const server = createServer({ highWaterMark: 1024 }, (req, res) => {
-      req.socket.once("pause", () => paused.push(req.url!));
+      req.socket.on("pause", () => paused.push(req.url!));
       pause(req);
       sampleThenRead(req, sample => {
         gotSample(sample);

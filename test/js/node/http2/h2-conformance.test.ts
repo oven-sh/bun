@@ -1198,7 +1198,7 @@ describe("a response starts with HEADERS (RFC 9113 §8.1)", () => {
   });
 
   // RFC 9113 §8.1: a server may answer before the request body is complete and then reset the
-  // stream with NO_ERROR. The response must survive, and the request body must stop.
+  // stream with NO_ERROR. The response must survive, and a late write must not be an error.
   test("a NO_ERROR reset after an early response aborts the open request body and keeps the response", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);

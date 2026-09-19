@@ -2019,8 +2019,7 @@ enum StreamState {
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
   // The native side fully closed and freed the stream (state 7 delivered): there is
-  // nothing left to send on the wire for it. _write, _writev and _final skip the native call
-  // then: writeStream throws for a stream id it no longer knows.
+  // nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
   // END_STREAM already rode the final DATA frame from _write/_writev; _final must not
   // emit the empty END_STREAM frame on top of it.
@@ -2195,10 +2194,7 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
-// A reset from the peer closes both halves at once, so a writable side that is still open is an
-// abort (node's closeStream). The writable does not end() here: the stream can stay alive for its
-// reader, and a write() in that window would raise ERR_STREAM_WRITE_AFTER_END. NativeClosed drops
-// those writes, and _destroy ends the writable.
+// Like node's closeStream, without end(): a write() before _destroy would raise ERR_STREAM_WRITE_AFTER_END.
 function abortOpenWritable(stream: Http2Stream) {
   if (stream._writableState.ending || stream[kPush] || stream.aborted) return;
   stream[kAborted] = true;
@@ -2688,10 +2684,9 @@ class Http2Stream extends Duplex {
       const native = session[bunHTTP2Native];
       if (native && (status & StreamState.NativeClosed) === 0) {
         if (this instanceof ServerHttp2Stream && !this.headersSent) {
-          // RFC 9113 §8.1: a response begins with HEADERS, so DATA here is a connection error.
-          // A pushed stream (even id) stashes the callback for the respond() that follows; a
-          // client-initiated stream just settles the writable, with any reset already scheduled.
+          // RFC 9113 §8.1: a response begins with HEADERS, so no DATA frame can end the stream here.
           if ((this.id & 1) === 0) {
+            // A pushed stream: the END_STREAM on respond()'s HEADERS completes this callback.
             this[bunHTTP2StreamFinal] = callback;
           } else {
             this[bunHTTP2StreamStatus] |= StreamState.FinalCalled | StreamState.WritableClosed;
@@ -3619,8 +3614,7 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_RESET_CONTENT ||
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest === true ||
-      // end() ran before any HEADERS went out, so _final settled the writable without a frame
-      // and nothing else will end the stream (node: SubmitResponse sets EMPTY_PAYLOAD).
+      // _final ran before any HEADERS went out, so this frame ends the stream (node: EMPTY_PAYLOAD).
       (this[bunHTTP2StreamStatus] & StreamState.WritableClosed) !== 0
     ) {
       // When endStream is true the HEADERS frame itself carries END_STREAM

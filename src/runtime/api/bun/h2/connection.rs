@@ -66,10 +66,7 @@ impl Stream {
         if !stream::can_receive_data(self.state) {
             return Some(ErrorCode::StreamClosed);
         }
-        // RFC 9113 §8.1: a response starts with HEADERS, and a 1xx block is not the response.
-        // DATA ahead of the final block is malformed (§8.1.1): a stream error of type
-        // PROTOCOL_ERROR, as in the fetch() client (h2_client/dispatch.rs). nghttp2 ends the
-        // whole session instead when no HEADERS arrived at all.
+        // RFC 9113 §8.1.1, as a stream error like the fetch() client (nghttp2 ends the session).
         if !is_server && !self.recv_final_headers {
             return Some(ErrorCode::ProtocolError);
         }

@@ -372,8 +372,9 @@ function isJSTransferableMarker(value: object): boolean {
 
 // The first thread to take a marker's claim id owns its fd, so one fd is never closed or restored twice.
 function closeIfUnclaimed(data: unknown, claim: number) {
+  if (!_claimJSTransferable(claim)) return;
   const fd = (data as any)?.fd;
-  if (typeof fd !== "number" || fd < 0 || !_claimJSTransferable(claim)) return;
+  if (typeof fd !== "number" || fd < 0) return;
   try {
     require("node:fs").closeSync(fd);
   } catch {

@@ -880,10 +880,9 @@ impl TarballStream {
             FileKind::File => {
                 #[cfg(windows)]
                 let mode: Mode = 0;
-                // Mask to permission bits so setuid/setgid/sticky bits from the
-                // archive never reach `openat`'s mode argument.
                 #[cfg(not(windows))]
-                let mode: Mode = Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
+                let mode: Mode =
+                    bun_libarchive::file_mode(entry.perm(), bun_libarchive::FileReaders::Everyone);
                 let fd = open_output_file(dest, path, path_slice, mode)?;
                 self.entry_count += 1;
 
@@ -1388,10 +1387,10 @@ fn open_output_file(
     path_slice: &[OSPathChar],
     mode: Mode,
 ) -> crate::Result<Fd> {
-    let flags = O::WRONLY | O::CREAT | O::TRUNC;
     #[cfg(windows)]
     {
         let _ = mode;
+        let flags = O::WRONLY | O::CREAT | O::TRUNC;
         return match bun_sys::openat_windows(dest_fd, path, flags, 0) {
             Ok(fd) => Ok(fd),
             Err(e) => match e.get_errno() {
@@ -1409,7 +1408,7 @@ fn open_output_file(
     }
     #[cfg(not(windows))]
     {
-        match bun_sys::openat(dest_fd, path, flags, mode) {
+        match bun_libarchive::create_entry_file(dest_fd, path, mode) {
             Ok(fd) => Ok(fd),
             Err(e) => match e.get_errno() {
                 bun_sys::E::EACCES | bun_sys::E::ENOENT => 'brk: {
@@ -1417,7 +1416,7 @@ fn open_output_file(
                         return Err(e.to_zig_err().into());
                     };
                     let _ = dest_fd.make_path(dir);
-                    break 'brk bun_sys::openat(dest_fd, path, flags, mode)
+                    break 'brk bun_libarchive::create_entry_file(dest_fd, path, mode)
                         .map_err(|e| e.to_zig_err().into());
                 }
                 _ => Err(e.to_zig_err().into()),

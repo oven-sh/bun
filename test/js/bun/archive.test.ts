@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
-import { join } from "path";
+import { mkfifo } from "mkfifo";
+import fs, { existsSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
@@ -642,6 +644,360 @@ describe("Bun.Archive", () => {
       expect(JSON.parse(stdout)).toEqual({ count: 3, dir: true, inner: "inner", top: "top" });
       expect(exitCode).toBe(0);
     });
+
+    const isRoot = !isWindows && process.getuid?.() === 0;
+    const nobody = (() => {
+      if (!isRoot) return null;
+      // /etc/passwd format: name:x:uid:gid:gecos:home:shell. macOS lists
+      // nobody as -2, which chown does not take.
+      let passwd: string;
+      try {
+        passwd = fs.readFileSync("/etc/passwd", "utf8");
+      } catch {
+        return null;
+      }
+      const line = passwd.split("\n").find(l => l.startsWith("nobody:"));
+      if (!line) return null;
+      const [, , uid, gid] = line.split(":").map(Number);
+      return Number.isInteger(uid) && Number.isInteger(gid) && uid >= 0 && gid >= 0 ? { uid, gid } : null;
+    })();
+    const canLockDir = !isWindows && (!isRoot || nobody !== null);
+
+    // The test runner puts TMPDIR in a 0700 directory. `nobody` must reach
+    // the fixtures, so the ancestors of the temp dir get o+x for the duration.
+    const widened: [string, number][] = [];
+    beforeAll(() => {
+      if (!nobody) return;
+      for (let p = fs.realpathSync.native(tmpdir()); p !== dirname(p); p = dirname(p)) {
+        const mode = fs.statSync(p).mode;
+        if ((mode & 0o011) !== 0o011) {
+          widened.push([p, mode]);
+          fs.chmodSync(p, mode | 0o011);
+        }
+      }
+    });
+    afterAll(() => {
+      for (const [p, mode] of widened) fs.chmodSync(p, mode);
+    });
+
+    // GNU tar removes a file the destination already holds and creates a new
+    // one. Writing into the old inode would reach every other name linked to it.
+    describe.each([
+      ["without a glob", undefined],
+      ["with a glob", { glob: "**" }],
+    ])("replaces an existing file %s", (_, options) => {
+      test.skipIf(isWindows)("does not write through a hard link", async () => {
+        using dir = tempDir("archive-replace-hardlink", {
+          "store/a.txt": "old",
+        });
+        fs.linkSync(join(String(dir), "store/a.txt"), join(String(dir), "a.txt"));
+
+        const count = await new Bun.Archive({ "a.txt": "new" }).extract(String(dir), options);
+
+        expect(count).toBe(1);
+        expect(fs.readFileSync(join(String(dir), "a.txt"), "utf8")).toBe("new");
+        expect(fs.readFileSync(join(String(dir), "store/a.txt"), "utf8")).toBe("old");
+        expect(fs.statSync(join(String(dir), "a.txt")).ino).not.toBe(fs.statSync(join(String(dir), "store/a.txt")).ino);
+      });
+
+      test.skipIf(isWindows)("does not write through a symlink", async () => {
+        using dir = tempDir("archive-replace-symlink", {
+          "target.txt": "old",
+        });
+        fs.symlinkSync("target.txt", join(String(dir), "a.txt"));
+
+        const count = await new Bun.Archive({ "a.txt": "new" }).extract(String(dir), options);
+
+        expect(count).toBe(1);
+        expect(fs.lstatSync(join(String(dir), "a.txt")).isSymbolicLink()).toBe(false);
+        expect(fs.readFileSync(join(String(dir), "a.txt"), "utf8")).toBe("new");
+        expect(fs.readFileSync(join(String(dir), "target.txt"), "utf8")).toBe("old");
+      });
+
+      // root can open a read-only file for writing. A write into the old
+      // file keeps its 0444, the new file has the mode of the entry.
+      test.skipIf(isWindows)("replaces a read-only file", async () => {
+        using dir = tempDir("archive-replace-readonly", {
+          "a.txt": "old",
+        });
+        fs.chmodSync(join(String(dir), "a.txt"), 0o444);
+
+        const count = await new Bun.Archive({ "a.txt": "new" }).extract(String(dir), options);
+
+        expect(count).toBe(1);
+        expect(fs.readFileSync(join(String(dir), "a.txt"), "utf8")).toBe("new");
+        expect(fs.statSync(join(String(dir), "a.txt")).mode & 0o777).toBe(0o644 & ~process.umask());
+      });
+
+      // The old name cannot be removed from a directory the user cannot write.
+      // Root bypasses that check, so as root the extraction runs in a child
+      // with the uid of `nobody`.
+      async function extractInLockedDir(dir: string): Promise<{ count?: number; error?: string }> {
+        const locked = join(dir, "locked");
+        const fixture = join(dir, "fixture.js");
+        fs.writeFileSync(
+          fixture,
+          `const [dir, glob] = process.argv.slice(2);
+           new Bun.Archive({ "locked/a.txt": "new" })
+             .extract(dir, glob ? { glob } : undefined)
+             .then(count => console.log(JSON.stringify({ count })), e => console.log(JSON.stringify({ error: e.message })));`,
+        );
+        if (nobody) {
+          for (const p of fs.readdirSync(dir, { recursive: true })) {
+            fs.lchownSync(join(dir, String(p)), nobody.uid, nobody.gid);
+          }
+          fs.chownSync(dir, nobody.uid, nobody.gid);
+        }
+        fs.chmodSync(locked, 0o555);
+        try {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), fixture, dir, options?.glob ?? ""],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+            ...(nobody ?? {}),
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(exitCode).toBe(0);
+          return JSON.parse(stdout);
+        } finally {
+          fs.chmodSync(locked, 0o755);
+        }
+      }
+
+      function expectLockedFailure(result: { count?: number; error?: string }) {
+        expect(result).toEqual(options ? { count: 0 } : { error: "ReadError" });
+      }
+
+      test.concurrent.skipIf(!canLockDir)("writes in place when the old name cannot be removed", async () => {
+        using dir = tempDir("archive-replace-in-place", {
+          "locked/a.txt": "old",
+        });
+        const before = fs.statSync(join(String(dir), "locked/a.txt")).ino;
+
+        expect(await extractInLockedDir(String(dir))).toEqual({ count: 1 });
+
+        expect(fs.readFileSync(join(String(dir), "locked/a.txt"), "utf8")).toBe("new");
+        expect(fs.statSync(join(String(dir), "locked/a.txt")).ino).toBe(before);
+      });
+
+      test.concurrent.skipIf(!canLockDir)("does not write through a symlink that cannot be removed", async () => {
+        using dir = tempDir("archive-replace-locked-symlink", {
+          "target.txt": "old",
+          "locked/.keep": "",
+        });
+        fs.symlinkSync("../target.txt", join(String(dir), "locked/a.txt"));
+
+        expectLockedFailure(await extractInLockedDir(String(dir)));
+
+        expect(fs.readFileSync(join(String(dir), "target.txt"), "utf8")).toBe("old");
+      });
+
+      test.concurrent.skipIf(!canLockDir)("does not write through a hard link that cannot be removed", async () => {
+        using dir = tempDir("archive-replace-locked-hardlink", {
+          "store/a.txt": "old",
+          "locked/.keep": "",
+        });
+        fs.linkSync(join(String(dir), "store/a.txt"), join(String(dir), "locked/a.txt"));
+
+        expectLockedFailure(await extractInLockedDir(String(dir)));
+
+        expect(fs.readFileSync(join(String(dir), "store/a.txt"), "utf8")).toBe("old");
+      });
+
+      // Opening a FIFO for writing waits for a reader. The extraction must fail instead.
+      test.concurrent.skipIf(!canLockDir)("does not wait on a FIFO that cannot be removed", async () => {
+        using dir = tempDir("archive-replace-locked-fifo", {
+          "locked/.keep": "",
+        });
+        mkfifo(join(String(dir), "locked/a.txt"), 0o644);
+
+        expectLockedFailure(await extractInLockedDir(String(dir)));
+
+        expect(fs.lstatSync(join(String(dir), "locked/a.txt")).isFIFO()).toBe(true);
+      });
+
+      test.skipIf(isWindows)("gives an existing file the mode of the entry", async () => {
+        const tarball = Buffer.concat([
+          ustarHeader("secret.txt", 3, "0", { mode: Buffer.from("0000600\0") }),
+          Buffer.concat([Buffer.from("new"), Buffer.alloc(512 - 3)]),
+          Buffer.alloc(1024),
+        ]);
+        using dir = tempDir("archive-replace-mode", {
+          "secret.txt": "old",
+        });
+        fs.chmodSync(join(String(dir), "secret.txt"), 0o644);
+
+        const count = await new Bun.Archive(tarball).extract(String(dir), options);
+
+        expect(count).toBe(1);
+        expect(fs.readFileSync(join(String(dir), "secret.txt"), "utf8")).toBe("new");
+        expect(fs.statSync(join(String(dir), "secret.txt")).mode & 0o777).toBe(0o600);
+      });
+    });
+
+    // The fixtures below are child processes, because the umask is process-wide.
+    // Each one runs both extractors: the one without `glob` and the one with it.
+    const modeField = (mode: number) => Buffer.from(mode.toString(8).padStart(7, "0") + "\0");
+    const fileWithMode = (name: string, mode: number, data: string) => [
+      ustarHeader(name, data.length, "0", { mode: modeField(mode) }),
+      Buffer.concat([Buffer.from(data), Buffer.alloc(512 - data.length)]),
+    ];
+    type User = { uid: number; gid: number };
+    async function runFixture(dir: string, args: string[], user?: User | null) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts", ...args],
+        env: bunEnv,
+        cwd: dir,
+        ...(user ?? {}),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // Both extractors create a file with the permission bits of the entry, and
+    // the umask applies. `bun install` keeps adding 0o666 (npm's fmode).
+    test.concurrent.skipIf(isWindows)("creates files with the mode of the entry, with and without a glob", async () => {
+      const members = [
+        // mode in the archive, mode on disk under umask 022, under umask 000
+        [0o600, "0600", "0600"],
+        [0o640, "0640", "0640"],
+        [0o644, "0644", "0644"],
+        [0o700, "0700", "0700"],
+        [0o755, "0755", "0755"],
+        [0o666, "0644", "0666"],
+        // A read-only member stays read-only. See the next test.
+        [0o400, "0400", "0400"],
+        [0o444, "0444", "0444"],
+        // setuid, setgid and sticky are dropped.
+        [0o4755, "0755", "0755"],
+        [0o2755, "0755", "0755"],
+        [0o1755, "0755", "0755"],
+        // No permission bits, with or without a special bit: the mode Bun.Archive itself writes.
+        [0, "0644", "0644"],
+        [0o4000, "0644", "0644"],
+      ] as const;
+      const name = (mode: number) => "f" + mode.toString(8).padStart(4, "0");
+      using dir = tempDir("archive-extract-file-modes", {
+        "input.tar": Buffer.concat([
+          ...members.flatMap(([mode]) => fileWithMode(name(mode), mode, "x")),
+          // No directory entry comes first. The extractor without `glob` opens such
+          // a file a second time, after it creates the parent directory.
+          ...fileWithMode("new/dir/f0600", 0o600, "x"),
+          Buffer.alloc(1024),
+        ]),
+        "extract.ts": `
+          import { readdirSync, readFileSync, statSync } from "node:fs";
+          const tarball = readFileSync("input.tar");
+          const modes = (root: string) =>
+            Object.fromEntries(
+              readdirSync(root, { recursive: true })
+                .map(name => [String(name), statSync(root + "/" + name)] as const)
+                .filter(([, stat]) => stat.isFile())
+                .map(([name, stat]) => [name, (stat.mode & 0o7777).toString(8).padStart(4, "0")]),
+            );
+          const result: Record<string, unknown> = {};
+          for (const umask of ["022", "000"]) {
+            process.umask(parseInt(umask, 8));
+            await new Bun.Archive(tarball).extract("plain-" + umask);
+            await new Bun.Archive(tarball).extract("glob-" + umask, { glob: "**" });
+            result[umask] = { plain: modes("plain-" + umask), glob: modes("glob-" + umask) };
+          }
+          console.log(JSON.stringify(result));
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await runFixture(String(dir), []);
+
+      const expected = (column: 1 | 2) => {
+        const modes = {
+          ...Object.fromEntries(members.map(member => [name(member[0]), member[column]])),
+          "new/dir/f0600": "0600",
+        };
+        return { plain: modes, glob: modes };
+      };
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ "022": expected(1), "000": expected(2) });
+      expect(exitCode).toBe(0);
+    });
+
+    // These two tests extract `file.txt` a second time, over the file that the
+    // first extraction created. Argument 1 of the fixture is the umask, argument
+    // 2 the archive. The fixture creates each destination itself, as `mkdir` does:
+    // the umask decides who can write to it.
+    const overwriteFixture = (mode: number) => ({
+      "v1.tar": Buffer.concat([...fileWithMode("file.txt", mode, "v1"), Buffer.alloc(1024)]),
+      "v2.tar": Buffer.concat([...fileWithMode("file.txt", mode, "v2"), Buffer.alloc(1024)]),
+      "extract.ts": `
+        import { mkdirSync, readFileSync, statSync } from "node:fs";
+        process.umask(parseInt(process.argv[2], 8));
+        const tarball = readFileSync(process.argv[3]);
+        const result: Record<string, unknown> = {};
+        for (const [dest, options] of [["plain", undefined], ["glob", { glob: "**" }]] as const) {
+          mkdirSync(dest, { recursive: true });
+          const count = await new Bun.Archive(tarball).extract(dest, options);
+          const stat = statSync(dest + "/file.txt");
+          result[dest] = {
+            count,
+            content: readFileSync(dest + "/file.txt", "utf8"),
+            mode: (stat.mode & 0o777).toString(8),
+            uid: stat.uid,
+          };
+        }
+        console.log(JSON.stringify(result));
+      `,
+    });
+    // Every user can read the fixture files, whatever the umask of the test run is.
+    const giveTo = (user: User, dir: string) => {
+      fs.chownSync(dir, user.uid, user.gid);
+      for (const entry of readdirSync(dir)) {
+        fs.chownSync(join(dir, entry), user.uid, user.gid);
+        fs.chmodSync(join(dir, entry), 0o644);
+      }
+    };
+    const extracted = (content: string, mode: string, uid: number) => {
+      const one = { count: 1, content, mode, uid };
+      return { stdout: JSON.stringify({ plain: one, glob: one }) + "\n", stderr: "", exitCode: 0 };
+    };
+
+    // Permission bits do not bind root, so as root the fixture runs as `nobody`.
+    // Windows makes a file read-only when its mode has no owner write bit, so
+    // there the extractors do not pass the mode of the entry.
+    test.concurrent.skipIf(isRoot && !nobody)(
+      "a second extract() replaces a file the archive marks read-only",
+      async () => {
+        using dir = tempDir("archive-extract-read-only", overwriteFixture(0o444));
+        if (nobody) giveTo(nobody, String(dir));
+        const mode = isWindows ? "666" : "444";
+        const uid = nobody?.uid ?? process.getuid?.() ?? 0;
+
+        expect(await runFixture(String(dir), ["022", "v1.tar"], nobody)).toEqual(extracted("v1", mode, uid));
+        expect(await runFixture(String(dir), ["022", "v2.tar"], nobody)).toEqual(extracted("v2", mode, uid));
+      },
+    );
+
+    // The second user cannot write to the file of the first user, but can remove
+    // it from a directory that the group can write. GNU tar does the same.
+    test.concurrent.skipIf(!nobody)(
+      "a second user of the group replaces a file in a directory the group can write",
+      async () => {
+        using dir = tempDir("archive-extract-shared-directory", overwriteFixture(0o644));
+        const firstUser = nobody!;
+        const secondUser = { uid: firstUser.uid - 1, gid: firstUser.gid };
+        giveTo(firstUser, String(dir));
+        fs.chmodSync(String(dir), 0o770);
+
+        expect(await runFixture(String(dir), ["002", "v1.tar"], firstUser)).toEqual(
+          extracted("v1", "644", firstUser.uid),
+        );
+        expect(await runFixture(String(dir), ["002", "v2.tar"], secondUser)).toEqual(
+          extracted("v2", "644", secondUser.uid),
+        );
+      },
+    );
   });
 
   describe("corrupted archives", () => {

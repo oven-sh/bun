@@ -465,6 +465,18 @@ Object.defineProperty(execFile, kCustomPromisifySymbol, {
 
 execFile[kCustomPromisifySymbol][kCustomPromisifySymbol] = execFile[kCustomPromisifySymbol];
 
+function spawnSyncFailureResult(error) {
+  return {
+    signal: null,
+    status: null,
+    output: null,
+    pid: 0,
+    stdout: undefined,
+    stderr: undefined,
+    error,
+  };
+}
+
 /**
  * Spawns a new process synchronously using the given `file`.
  * @param {string} file
@@ -511,15 +523,7 @@ function spawnSync(file, args, options) {
       "EINVAL",
     );
     error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
-    return {
-      signal: null,
-      status: null,
-      output: [null, null, null],
-      pid: 0,
-      stdout: null,
-      stderr: null,
-      error,
-    };
+    return spawnSyncFailureResult(error);
   }
 
   const maxBuffer = options.maxBuffer;
@@ -550,7 +554,6 @@ function spawnSync(file, args, options) {
     }
   }
 
-  var error;
   try {
     var {
       stdout = null,
@@ -583,9 +586,9 @@ function spawnSync(file, args, options) {
       maxBuffer: options.maxBuffer,
     });
   } catch (err) {
-    error = err;
-    stdout = null;
-    stderr = null;
+    err.syscall = "spawnSync " + options.file;
+    err.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
+    return spawnSyncFailureResult(err);
   }
 
   // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
@@ -601,10 +604,6 @@ function spawnSync(file, args, options) {
     pid,
   };
 
-  if (error) {
-    result.error = error;
-  }
-
   if (outputStdout && encoding && encoding !== "buffer") {
     result.output[1] = result.output[1]?.toString(encoding);
   }
@@ -616,7 +615,7 @@ function spawnSync(file, args, options) {
   result.stdout = result.output[1];
   result.stderr = result.output[2];
 
-  if (exitedDueToTimeout && error == null) {
+  if (exitedDueToTimeout) {
     result.error = new SystemError(
       "spawnSync " + options.file + " ETIMEDOUT",
       options.file,
@@ -625,7 +624,7 @@ function spawnSync(file, args, options) {
       "ETIMEDOUT",
     );
   }
-  if (exitedDueToMaxBuffer && error == null) {
+  if (exitedDueToMaxBuffer) {
     result.error = new SystemError(
       "spawnSync " + options.file + " ENOBUFS (stdout or stderr buffer reached maxBuffer size limit)",
       options.file,

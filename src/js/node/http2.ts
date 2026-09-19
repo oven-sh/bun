@@ -2951,22 +2951,41 @@ function tryClose(fd) {
   } catch {}
 }
 
+// node's respondWithFD() sends the headers before it reads the descriptor (at once without
+// statCheck, after statCheck otherwise) and a descriptor that cannot be read fails afterwards with
+// NGHTTP2_INTERNAL_ERROR. Bun learns about the bad descriptor from fstat first, so it replays that
+// outcome here. A stream that is already gone gets nothing, like node, whose native read never
+// runs on a closed stream.
+function failFdResponseAsStreamError(this: Http2Stream, headers, options) {
+  if (this.destroyed || this.closed) return;
+  if (!this.headersSent) {
+    try {
+      this.respond(headers, options);
+    } catch (err) {
+      this.destroy(err);
+      return;
+    }
+  }
+  this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
+}
+
 // Shared by respondWithFile (the stream owns the descriptor it opened: every terminal path closes
 // it exactly once) and respondWithFD (the caller owns the descriptor: nothing here may close it,
 // matching node's doSendFD).
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   const ownsFd = this[kOwnsFd] === true;
+  // node stats before it sends headers only in these two paths (doSendFileFD and doSendFD), so a
+  // stat failure there destroys the stream with the stat error and sends no headers.
+  const statsBeforeHeaders = ownsFd || options.statCheck !== undefined;
   if (err) {
     if (ownsFd && err.code !== "EBADF") {
       tryClose(fd);
     }
 
     if (onError) onError(err);
-    else {
-      this.respond(headers, options);
-      this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
-    }
+    else if (statsBeforeHeaders) this.destroy(err);
+    else failFdResponseAsStreamError.$call(this, headers, options);
     return;
   }
 
@@ -2982,10 +3001,8 @@ function doSendFileFD(options, fd, headers, err, stat) {
       const err = isDirectory ? $ERR_HTTP2_SEND_FILE() : $ERR_HTTP2_SEND_FILE_NOSEEK();
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
-      else {
-        this.respond(headers, options);
-        this.destroy(err);
-      }
+      else if (ownsFd) this.destroy(err);
+      else failFdResponseAsStreamError.$call(this, headers, options);
       return;
     }
 

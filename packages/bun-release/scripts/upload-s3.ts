@@ -113,6 +113,11 @@ if (release?.assets?.[0]?.name !== local) {
 }
 
 for (const asset of release.assets) {
+  // Two-phase canary upload stages under this prefix before renaming into
+  // place; see .buildkite/scripts/upload-release.sh. Don't mirror them.
+  if (asset.name.startsWith("incoming-")) {
+    continue;
+  }
   const url = asset.browser_download_url;
   const response = await fetch(url);
   if (!response.ok) {

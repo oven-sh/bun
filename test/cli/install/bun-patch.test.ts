@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
+import { existsSync, lstatSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, readdirSorted, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -1387,6 +1387,19 @@ describe("an npm: aliased dependency", () => {
     },
   );
 
+  // The refused name comes from the lockfile, so the message must not print its control characters.
+  test.concurrent("bun patch escapes the unsafe name that it refuses", async () => {
+    const packageDir = await writeProject({ "a/\x1b[31mRED\x1b[0m\rFAKE\nsecond": "npm:no-deps@1.0.0" });
+    expect((await runBun(packageDir, "install")).exitCode).toBe(1);
+
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "no-deps");
+    expect(stderr).toContain(
+      String.raw`error: refusing to patch dependency with unsafe name "a/\u001B[31mRED\u001B[0m\rFAKE\nsecond"` + "\n",
+    );
+    expect(stdout).not.toContain("To patch");
+    expect(exitCode).toBe(1);
+  });
+
   // `bun.lockb` is read as is. One resolution id past the end of the package list used to be an
   // index out of bounds when the id belonged to the named dependency. The name lookup now reads
   // the id of every dependency, so it must not trust any of them.
@@ -1415,8 +1428,9 @@ describe("an npm: aliased dependency", () => {
 
     const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "--commit", "no-deps");
     expect(stderr).toContain(message);
-    expect(stdout).not.toContain("To patch");
     expect(exitCode).toBe(1);
+    expect(existsSync(join(packageDir, "patches"))).toBe(false);
+    expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toBeUndefined();
   });
 
   // The alias names the folder. `bun install` refuses to write `node_modules/a/b`, because only
@@ -1428,7 +1442,7 @@ describe("an npm: aliased dependency", () => {
     expect(install.exitCode).toBe(1);
 
     const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", argument);
-    expect(stderr).toContain("error: refusing to patch dependency with unsafe name a/b\n");
+    expect(stderr).toContain('error: refusing to patch dependency with unsafe name "a/b"\n');
     expect(stdout).not.toContain("To patch");
     expect(exitCode).toBe(1);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([]);

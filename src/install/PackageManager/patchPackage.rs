@@ -1271,8 +1271,8 @@ fn pkg_info_for_name_and_version(
         let folder_name = dependencies[dep_id as usize].name.slice(strbuf);
         if !alias_is_safe_install_target(folder_name) {
             bun_core::pretty_errorln!(
-                "<r><red>error<r>: refusing to patch dependency with unsafe name <b>{}<r>",
-                bstr::BStr::new(folder_name),
+                "<r><red>error<r>: refusing to patch dependency with unsafe name {}",
+                bun_fmt::quote(folder_name),
             );
             Global::crash();
         }

@@ -8,25 +8,9 @@ import { homedir, release } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
-import {
-  curl,
-  getAbi,
-  getAbiVersion,
-  getArch,
-  getDistro,
-  getDistroVersion,
-  getEnv,
-  getHostname,
-  getKernel,
-  getOs,
-  isLinux,
-  isMacOS,
-  isPosix,
-  isWindows,
-  spawn,
-  spawnSafe,
-  which,
-} from "./utils.ts";
+import { curl } from "./buildkite.ts";
+import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getKernel, getOs } from "./host.ts";
+import { getEnv, isLinux, isMacOS, isPosix, isWindows, spawn, spawnSafe, which } from "./process.ts";
 
 type Cloud = "aws" | "google" | "azure";
 
@@ -519,6 +503,13 @@ function writeFile(filename: string, content: string, mode?: number): void {
   }
 }
 
+/**
+ * This script and everything it imports, by file name: what `install` copies
+ * into the agent's home and what the Windows image bake uploads
+ * (scripts/packer/). A source lint checks it against the imports.
+ */
+const agentFiles = ["agent.ts", "process.ts", "host.ts", "buildkite.ts"];
+
 async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions = {}): Promise<void> {
   const username = "buildkite-agent";
   const command = which("buildkite-agent", { required: true });
@@ -535,7 +526,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
       throw new Error("BUILDKITE_AGENT_TOKEN not set and no existing buildkite-agent.cfg to reuse");
     }
 
-    // The service runs a copy of this script and the utils.ts it imports from
+    // The service runs a copy of this script and the files it imports from
     // the agent's home, so it does not depend on the checkout that ran
     // `install` sticking around. When `install` is run from the home itself
     // (the Windows image bake uploads both files there first), they are
@@ -543,7 +534,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
     mkdirSync(homePath, { recursive: true });
     const srcDir = fileURLToPath(new URL(".", import.meta.url));
     if (realpathSync(srcDir) !== realpathSync(homePath)) {
-      for (const f of ["agent.ts", "utils.ts"]) {
+      for (const f of agentFiles) {
         copyFileSync(join(srcDir, f), join(homePath, f));
       }
     }

@@ -7,29 +7,24 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Arch, Abi as HostAbi, Os } from "../scripts/utils.ts";
 import {
   curl,
   getBuildMetadata,
   getCommit,
   getCommitMessage,
-  getEnv,
   getLastSuccessfulBuild,
   getRepositoryUrl,
   getSecret,
-  isBuildkite,
   isFork,
-  isGithubAction,
   isMainBranch,
   isMergeQueue,
   isPullRequest,
-  isWindows,
   parseGitUrl,
-  spawn,
-  spawnSafe,
   startGroup,
   uploadArtifact,
-} from "../scripts/utils.ts";
+} from "../scripts/buildkite.ts";
+import type { Arch, Abi as HostAbi, Os } from "../scripts/host.ts";
+import { getEnv, isBuildkite, isGithubAction, isWindows, spawn, spawnSafe } from "../scripts/process.ts";
 
 function parseGitRepository(url: string | URL): string | undefined {
   const parsed = parseGitUrl(url);
@@ -1105,7 +1100,7 @@ function getLinuxBuildImageSteps(platform: Platform, options: PipelineOptions): 
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    // `install` copies agent.ts and the utils.ts it imports out of this
+    // `install` copies agent.ts and the files it imports out of this
     // checkout into the agent's home, so the unit outlives the build directory.
     // ($$ is a literal $ after pipeline-upload interpolation.)
     command: [

@@ -22,6 +22,6 @@
     "types": ["../packages/bun-types"],
     "verbatimModuleSyntax": true
   },
-  "include": ["utils.ts", "agent.ts", "runner.node.ts", "machine.ts", "../.buildkite/ci.ts"],
+  "include": ["process.ts", "host.ts", "buildkite.ts", "agent.ts", "runner.node.ts", "machine.ts", "../.buildkite/ci.ts"],
   "exclude": ["node_modules"]
 }

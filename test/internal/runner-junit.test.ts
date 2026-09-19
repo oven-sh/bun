@@ -2,12 +2,12 @@
  * scripts/runner.node.ts runs the bucket of parallel-safe test files as a single
  * `bun test --parallel` and reads the junit report it writes to decide which files
  * failed (to re-run them alone), what to print per file and what to put in the flaky
- * annotation. parseJunitFileSuites() in scripts/utils.ts is that parsing step.
+ * annotation. parseJunitFileSuites() in scripts/buildkite.ts is that parsing step.
  */
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { parseJunitFileSuites } from "../../scripts/utils.ts";
+import { parseJunitFileSuites } from "../../scripts/buildkite.ts";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
 

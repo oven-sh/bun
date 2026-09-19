@@ -11,7 +11,7 @@
 
 import { readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { markBuildkiteStepReported } from "./utils.ts";
+import { markBuildkiteStepReported } from "./buildkite.ts";
 
 const { parseArgs } = require("node:util");
 

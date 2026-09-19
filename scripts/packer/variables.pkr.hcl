@@ -61,14 +61,9 @@ variable "bootstrap_script" {
   default = "scripts/bootstrap.ps1"
 }
 
-variable "agent_script" {
+variable "scripts_dir" {
   type        = string
-  description = "Path to scripts/agent.ts."
-}
-
-variable "utils_script" {
-  type        = string
-  description = "Path to scripts/utils.ts, which agent.ts imports."
+  description = "Path to scripts/, where agent.ts and the files it imports are."
 }
 
 variable "repo_ref" {

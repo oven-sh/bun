@@ -36,21 +36,25 @@ import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
 import {
-  getAbi,
-  getAbiVersion,
-  getArch,
   getBranch,
   getBuildLabel,
   getBuildMetadata,
   getBuildUrl,
   getCommit,
-  getDistro,
-  getDistroVersion,
-  getEnv,
   getFileUrl,
-  getHostname,
-  getOs,
   getSecret,
+  markBuildkiteStepReported,
+  parseJunitFileSuites,
+  printEnvironment,
+  reportAnnotationToBuildKite,
+  startGroup,
+  stripAnsi as stripAnsiEscapes,
+  uploadArtifact,
+  type JunitFileSuite,
+} from "./buildkite.ts";
+import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getOs } from "./host.ts";
+import {
+  getEnv,
   getWindowsExitReason,
   isAndroid,
   isBuildkite,
@@ -59,19 +63,11 @@ import {
   isLinux,
   isMacOS,
   isWindows,
-  markBuildkiteStepReported,
-  parseJunitFileSuites,
-  printEnvironment,
-  reportAnnotationToBuildKite,
   spawnSafe as spawnCommandSafe,
   spawnSync as spawnCommandSync,
-  startGroup,
-  stripAnsi as stripAnsiEscapes,
   tmpdir,
-  uploadArtifact,
   which,
-  type JunitFileSuite,
-} from "./utils.ts";
+} from "./process.ts";
 
 const isX64 = process.arch === "x64";
 

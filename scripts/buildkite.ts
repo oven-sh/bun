@@ -1,50 +1,38 @@
-// Contains utility functions for various scripts, including:
-// CI, running tests, and code generation.
+// The CI environment the scripts run in: what Buildkite and GitHub say about
+// the build (branch, commit, pull request, fork), cluster secrets, build
+// meta-data, artifacts, annotations and log groups.
 
+import { spawnSync as nodeSpawnSync } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { userInfo } from "node:os";
+import { basename, dirname, relative, resolve } from "node:path";
+import { getAbi, getAbiVersion, getArch, getDistro, getDistroVersion, getHostname, getKernel, getOs } from "./host.ts";
 import {
-  spawn as nodeSpawn,
-  spawnSync as nodeSpawnSync,
-  type SpawnOptions as NodeSpawnOptions,
-  type SpawnSyncOptions as NodeSpawnSyncOptions,
-  type StdioOptions,
-} from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { hostname, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
-import { normalize as normalizeWindows } from "node:path/win32";
+  debugLog,
+  getEnv,
+  isBuildkite,
+  isCI,
+  isGithubAction,
+  isLinux,
+  isMacOS,
+  isPosix,
+  isWindows,
+  spawn,
+  spawnSafe,
+  spawnSync,
+  tmpdir,
+  which,
+} from "./process.ts";
 
-export const isWindows = process.platform === "win32";
-export const isMacOS = process.platform === "darwin";
-// Node built for Termux/bionic reports "android"; CI models that as linux + abi=android.
-export const isAndroid = process.platform === "android";
-export const isLinux = process.platform === "linux" || isAndroid;
-const isFreeBSD = process.platform === "freebsd";
-export const isPosix = isMacOS || isLinux || isFreeBSD;
-
-export function getEnv(name: string, required?: true): string;
-export function getEnv(name: string, required: boolean | undefined): string | undefined;
-export function getEnv(name: string, required = true): string | undefined {
-  const value = process.env[name];
-
-  if (required && !value) {
-    throw new Error(`Environment variable is missing: ${name}`);
-  }
-
-  return value;
-}
-
-export const isBuildkite = getEnv("BUILDKITE", false) === "true";
-export const isGithubAction = getEnv("GITHUB_ACTIONS", false) === "true";
-export const isCI = getEnv("CI", false) === "true" || isBuildkite || isGithubAction;
-const isDebug = getEnv("DEBUG", false) === "1";
-
-export type SecretOptions = {
+type SecretOptions = {
   required?: boolean;
   redact?: boolean;
 };
 
 export function getSecret(name: string, options?: SecretOptions & { required?: true }): string;
+
 export function getSecret(name: string, options: SecretOptions): string | undefined;
+
 export function getSecret(name: string, options: SecretOptions = { required: true, redact: true }): string | undefined {
   const value = getEnv(name, false);
   if (value) {
@@ -80,12 +68,6 @@ export function getSecret(name: string, options: SecretOptions = { required: tru
   return getEnv(name, options["required"]);
 }
 
-function debugLog(...args: unknown[]): void {
-  if (isDebug) {
-    console.log(...args);
-  }
-}
-
 function setEnv(name: string, value: string | undefined): void {
   process.env[name] = value;
 
@@ -97,263 +79,6 @@ function setEnv(name: string, value: string | undefined): void {
       appendFileSync(envFilePath, content);
     }
   }
-}
-
-export type SpawnOptions = {
-  cwd?: string | undefined;
-  timeout?: number;
-  env?: Record<string, string | undefined>;
-  throwOnError?: boolean | ((error: Error) => boolean);
-  retryOnError?: (error: Error) => boolean;
-  stdin?: string;
-  stdio?: StdioOptions;
-};
-
-export type SpawnResult = {
-  exitCode: number | null;
-  signalCode: string | null | undefined;
-  stdout: string;
-  stderr: string;
-  error: Error | undefined;
-};
-
-export async function spawn(command: string[], options: SpawnOptions = {}): Promise<SpawnResult> {
-  const [cmd, ...args] = command;
-  debugLog("$", cmd, ...args);
-
-  const stdin = options["stdin"];
-  const spawnOptions: NodeSpawnOptions = {
-    cwd: options["cwd"] ?? process.cwd(),
-    timeout: options["timeout"] ?? undefined,
-    env: options["env"] ?? undefined,
-    stdio: stdin === "inherit" ? "inherit" : [stdin ? "pipe" : "ignore", "pipe", "pipe"],
-    ...options,
-  };
-
-  let exitCode: number | null = 1;
-  let signalCode: string | null | undefined;
-  let stdout = "";
-  let stderr = "";
-  let spawnError: unknown;
-  let error: Error | undefined;
-
-  const result = new Promise<void>((resolve, reject) => {
-    if (cmd === undefined) {
-      throw new TypeError("The command is empty");
-    }
-    const subprocess = nodeSpawn(cmd, args, spawnOptions);
-
-    if (typeof stdin !== "undefined") {
-      subprocess.stdin?.on("error", error => {
-        if (!("code" in error) || error.code !== "EPIPE") {
-          reject(error);
-        }
-      });
-      subprocess.stdin?.write(stdin);
-      subprocess.stdin?.end();
-    }
-
-    subprocess.stdout?.on("data", chunk => {
-      stdout += chunk;
-    });
-    subprocess.stderr?.on("data", chunk => {
-      stderr += chunk;
-    });
-
-    subprocess.on("error", error => reject(error));
-    subprocess.on("exit", (code, signal) => {
-      exitCode = code;
-      signalCode = signal;
-      resolve();
-    });
-  });
-
-  try {
-    await result;
-  } catch (cause) {
-    spawnError = cause;
-  }
-
-  if (exitCode !== 0 && isWindows) {
-    const exitReason = getWindowsExitReason(exitCode);
-    if (exitReason) {
-      signalCode = exitReason;
-    }
-  }
-
-  if (spawnError || signalCode || exitCode !== 0) {
-    const description = command.map(arg => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg)).join(" ");
-    const cause = spawnError || stderr.trim() || stdout.trim() || undefined;
-
-    if (signalCode) {
-      error = new Error(`Command killed with ${signalCode}: ${description}`, { cause });
-    } else {
-      error = new Error(`Command exited with code ${exitCode}: ${description}`, { cause });
-    }
-  }
-
-  if (error) {
-    const retryOnError = options["retryOnError"];
-    if (typeof retryOnError === "function") {
-      if (retryOnError(error)) {
-        return spawn(command, options);
-      }
-    }
-
-    const throwOnError = options["throwOnError"];
-    if (typeof throwOnError === "function") {
-      if (throwOnError(error)) {
-        throw error;
-      }
-    } else if (throwOnError) {
-      throw error;
-    }
-  }
-
-  return {
-    exitCode,
-    signalCode,
-    stdout,
-    stderr,
-    error,
-  };
-}
-
-export async function spawnSafe(command: string[], options: SpawnOptions = {}): Promise<SpawnResult> {
-  return spawn(command, { throwOnError: true, ...options });
-}
-
-// With `retryOnError`, a retry goes through the asynchronous spawn(), so the result is a promise.
-export function spawnSync(command: string[], options?: SpawnOptions & { retryOnError?: never }): SpawnResult;
-export function spawnSync(command: string[], options: SpawnOptions): SpawnResult | Promise<SpawnResult>;
-export function spawnSync(command: string[], options: SpawnOptions = {}): SpawnResult | Promise<SpawnResult> {
-  const [cmd, ...args] = command;
-  debugLog("$", cmd, ...args);
-
-  const stdin = options["stdin"];
-  const spawnOptions: NodeSpawnSyncOptions = {
-    cwd: options["cwd"] ?? process.cwd(),
-    timeout: options["timeout"] ?? undefined,
-    env: options["env"] ?? undefined,
-    stdio: stdin === "inherit" ? "inherit" : [typeof stdin === "undefined" ? "ignore" : "pipe", "pipe", "pipe"],
-    input: stdin,
-    ...options,
-  };
-
-  let exitCode = 1;
-  let signalCode: string | undefined;
-  let stdout = "";
-  let stderr = "";
-  let error: Error | undefined;
-
-  let result: {
-    error?: unknown;
-    status?: number | null;
-    signal?: NodeJS.Signals | null;
-    stdout?: string | Buffer;
-    stderr?: string | Buffer;
-  };
-  try {
-    if (cmd === undefined) {
-      throw new TypeError("The command is empty");
-    }
-    result = nodeSpawnSync(cmd, args, spawnOptions);
-  } catch (error) {
-    result = { error };
-  }
-
-  const { error: spawnError, status, signal, stdout: stdoutBuffer, stderr: stderrBuffer } = result;
-  if (!spawnError) {
-    exitCode = status ?? 1;
-    signalCode = signal || undefined;
-    stdout = stdoutBuffer?.toString?.() ?? "";
-    stderr = stderrBuffer?.toString?.() ?? "";
-  }
-
-  if (exitCode !== 0 && isWindows) {
-    const exitReason = getWindowsExitReason(exitCode);
-    if (exitReason) {
-      signalCode = exitReason;
-    }
-  }
-
-  if (spawnError || signalCode || exitCode !== 0) {
-    const description = command.map(arg => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg)).join(" ");
-    const cause = spawnError || stderr?.trim() || stdout?.trim() || undefined;
-
-    if (signalCode) {
-      error = new Error(`Command killed with ${signalCode}: ${description}`, { cause });
-    } else {
-      error = new Error(`Command exited with code ${exitCode}: ${description}`, { cause });
-    }
-  }
-
-  if (error) {
-    const retryOnError = options["retryOnError"];
-    if (typeof retryOnError === "function") {
-      if (retryOnError(error)) {
-        return spawn(command, options);
-      }
-    }
-
-    const throwOnError = options["throwOnError"];
-    if (typeof throwOnError === "function") {
-      if (throwOnError(error)) {
-        throw error;
-      }
-    } else if (throwOnError) {
-      throw error;
-    }
-  }
-
-  return {
-    exitCode,
-    signalCode,
-    stdout,
-    stderr,
-    error,
-  };
-}
-
-export function getWindowsExitReason(exitCode: number | null): string | undefined {
-  const windowsKitPath = "C:\\Program Files (x86)\\Windows Kits";
-  if (!existsSync(windowsKitPath)) {
-    return;
-  }
-
-  const windowsKitPaths = readdirSync(windowsKitPath)
-    .filter(filename => isFinite(parseInt(filename)))
-    .sort((a, b) => parseInt(b) - parseInt(a));
-
-  let ntStatusPath: string | undefined;
-  for (const windowsKitPath of windowsKitPaths) {
-    const includePath = `${windowsKitPath}\\Include`;
-    if (!existsSync(includePath)) {
-      continue;
-    }
-
-    const windowsSdkPaths = readdirSync(includePath).sort();
-    for (const windowsSdkPath of windowsSdkPaths) {
-      const statusPath = `${includePath}\\${windowsSdkPath}\\shared\\ntstatus.h`;
-      if (existsSync(statusPath)) {
-        ntStatusPath = statusPath;
-        break;
-      }
-    }
-  }
-
-  if (!ntStatusPath) {
-    return;
-  }
-
-  const nthStatus = readFileSync(ntStatusPath, "utf8");
-  const match = nthStatus.match(new RegExp(`(STATUS_\\w+).*0x${exitCode?.toString(16)}`, "i"));
-  if (match) {
-    const [, exitReason] = match;
-    return exitReason;
-  }
-
-  return undefined;
 }
 
 export function parseGitUrl(url: string | URL): URL | undefined {
@@ -587,7 +312,7 @@ function getGithubToken(): string | undefined {
   return token || undefined;
 }
 
-export type CurlOptions = {
+type CurlOptions = {
   method?: string;
   body?: string;
   headers?: Record<string, string> | undefined;
@@ -599,7 +324,7 @@ export type CurlOptions = {
   filename?: string;
 };
 
-export type CurlResult = {
+type CurlResult = {
   status: number | undefined;
   statusText: string | undefined;
   error: Error | undefined;
@@ -701,36 +426,6 @@ export async function curl(url: string | URL, options: CurlOptions = {}): Promis
   };
 }
 
-export type WhichOptions = {
-  required?: boolean;
-};
-
-export function which(command: string | string[], options: WhichOptions & { required: true }): string;
-export function which(command: string | string[], options?: WhichOptions): string | undefined;
-export function which(command: string | string[], options: WhichOptions = {}): string | undefined {
-  const commands = Array.isArray(command) ? command : [command];
-  const executables = isWindows ? commands.flatMap(name => [name, `${name}.exe`, `${name}.cmd`]) : commands;
-
-  const path = getEnv("PATH", false) || "";
-  const binPaths = path.split(isWindows ? ";" : ":");
-
-  for (const binPath of binPaths) {
-    for (const executable of executables) {
-      const executablePath = join(binPath, executable);
-      if (existsSync(executablePath)) {
-        return executablePath;
-      }
-    }
-  }
-
-  if (options["required"]) {
-    const description = commands.join(" or ");
-    throw new Error(`Command not found: ${description}`);
-  }
-
-  return undefined;
-}
-
 function getBuildId(): string | undefined {
   if (isBuildkite) {
     return getEnv("BUILDKITE_BUILD_ID");
@@ -804,7 +499,7 @@ export function getFileUrl(filename?: string, line?: number | string): URL | str
 }
 
 /** The fields of Buildkite's build JSON (`<build url>.json`) that are read here and in .buildkite/ci.ts. */
-export type BuildkiteBuild = {
+type BuildkiteBuild = {
   id: string;
   state: string;
   prev_branch_build?: { url: string } | null;
@@ -929,148 +624,6 @@ export function parseJunitFileSuites(xml: string): Map<string, JunitFileSuite> {
   return files;
 }
 
-export type Os = "darwin" | "linux" | "windows" | "freebsd";
-export type Arch = "x64" | "aarch64";
-export type Abi = "musl" | "gnu" | "android";
-
-export function tmpdir(): string {
-  if (isWindows) {
-    for (const key of ["TMPDIR", "TEMP", "TEMPDIR", "TMP", "RUNNER_TEMP"]) {
-      const tmpdir = getEnv(key, false);
-      if (!tmpdir || /cygwin|cygdrive/i.test(tmpdir) || !/^[a-z]/i.test(tmpdir)) {
-        continue;
-      }
-      return normalizeWindows(tmpdir);
-    }
-
-    const appData = process.env["LOCALAPPDATA"];
-    if (appData) {
-      const appDataTemp = join(appData, "Temp");
-      if (existsSync(appDataTemp)) {
-        return appDataTemp;
-      }
-    }
-  }
-
-  if (isMacOS || isLinux) {
-    if (existsSync("/tmp")) {
-      return "/tmp";
-    }
-  }
-
-  return nodeTmpdir();
-}
-
-function parseOs(string: string): Os {
-  if (/darwin|apple|mac/i.test(string)) {
-    return "darwin";
-  }
-  if (/linux|android/i.test(string)) {
-    return "linux";
-  }
-  if (/freebsd/i.test(string)) {
-    return "freebsd";
-  }
-  if (/win/i.test(string)) {
-    return "windows";
-  }
-  throw new Error(`Unsupported operating system: ${string}`);
-}
-
-export function getOs(): Os {
-  return parseOs(process.platform);
-}
-
-function parseArch(string: string): Arch {
-  if (/x64|amd64|x86_64/i.test(string)) {
-    return "x64";
-  }
-  if (/arm64|aarch64/i.test(string)) {
-    return "aarch64";
-  }
-  throw new Error(`Unsupported architecture: ${string}`);
-}
-
-export function getArch(): Arch {
-  return parseArch(process.arch);
-}
-
-export function getKernel(): string | undefined {
-  if (isWindows) {
-    return;
-  }
-
-  const kernel = release();
-  const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(kernel);
-
-  if (match) {
-    const [, major, minor, patch] = match;
-    if (patch) {
-      return `${major}.${minor}.${patch}`;
-    }
-    return `${major}.${minor}`;
-  }
-
-  return kernel;
-}
-
-export function getAbi(): Abi | undefined {
-  if (!isLinux) {
-    return;
-  }
-
-  if (isAndroid || existsSync("/system/bin/linker64")) {
-    return "android";
-  }
-
-  if (existsSync("/etc/alpine-release")) {
-    return "musl";
-  }
-
-  const arch = getArch() === "x64" ? "x86_64" : "aarch64";
-  const muslLibPath = `/lib/ld-musl-${arch}.so.1`;
-  if (existsSync(muslLibPath)) {
-    return "musl";
-  }
-
-  const gnuLibPath = `/lib/ld-linux-${arch}.so.2`;
-  if (existsSync(gnuLibPath)) {
-    return "gnu";
-  }
-
-  const { error, stdout } = spawnSync(["ldd", "--version"]);
-  if (!error) {
-    if (/musl/i.test(stdout)) {
-      return "musl";
-    }
-    if (/gnu|glibc/i.test(stdout)) {
-      return "gnu";
-    }
-  }
-
-  return undefined;
-}
-
-export function getAbiVersion(): string | undefined {
-  if (!isLinux) {
-    return;
-  }
-
-  const { error, stdout } = spawnSync(["ldd", "--version"]);
-  if (!error) {
-    const match = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(stdout);
-    if (match) {
-      const [, major, minor, patch] = match;
-      if (patch) {
-        return `${major}.${minor}.${patch}`;
-      }
-      return `${major}.${minor}`;
-    }
-  }
-
-  return undefined;
-}
-
 function getTailscale(): string {
   if (isMacOS) {
     const tailscaleApp = "/Applications/Tailscale.app/Contents/MacOS/tailscale";
@@ -1110,109 +663,9 @@ function getPublicIp(): string | undefined {
   return undefined;
 }
 
-export function getHostname(): string {
-  if (isBuildkite) {
-    const agent = getEnv("BUILDKITE_AGENT_NAME", false);
-    if (agent) {
-      return agent;
-    }
-  }
-
-  if (isGithubAction) {
-    const runner = getEnv("RUNNER_NAME", false);
-    if (runner) {
-      return runner;
-    }
-  }
-
-  return hostname();
-}
-
 function getUsername(): string {
   const { username } = userInfo();
   return username;
-}
-
-export function getDistro(): string | undefined {
-  if (isMacOS) {
-    return "macOS";
-  }
-
-  if (isLinux) {
-    const alpinePath = "/etc/alpine-release";
-    if (existsSync(alpinePath)) {
-      return "alpine";
-    }
-
-    const releasePath = "/etc/os-release";
-    if (existsSync(releasePath)) {
-      const releaseFile = readFileSync(releasePath, "utf8");
-      const match = releaseFile.match(/^ID=(.*)/m);
-      if (match) {
-        const id = match[1]!;
-        return id.includes('"') ? (JSON.parse(id) as string) : id;
-      }
-    }
-
-    const { error, stdout } = spawnSync(["lsb_release", "-is"]);
-    if (!error) {
-      return stdout.trim().toLowerCase();
-    }
-  }
-
-  if (isWindows) {
-    const { error, stdout } = spawnSync(["cmd", "/c", "ver"]);
-    if (!error) {
-      return stdout.trim();
-    }
-  }
-
-  return undefined;
-}
-
-export function getDistroVersion(): string | undefined {
-  if (isMacOS) {
-    const { error, stdout } = spawnSync(["sw_vers", "-productVersion"]);
-    if (!error) {
-      return stdout.trim();
-    }
-  }
-
-  if (isLinux) {
-    const alpinePath = "/etc/alpine-release";
-    if (existsSync(alpinePath)) {
-      const release = readFileSync(alpinePath, "utf8").trim();
-      if (release.includes("_")) {
-        const [version] = release.split("_");
-        return `${version}-edge`;
-      }
-      return release;
-    }
-
-    const releasePath = "/etc/os-release";
-    if (existsSync(releasePath)) {
-      const releaseFile = readFileSync(releasePath, "utf8");
-      const match = releaseFile.match(/^VERSION_ID=(.*)/m);
-      if (match) {
-        const release = match[1]!;
-        return release.includes('"') ? (JSON.parse(release) as string) : release;
-      }
-    }
-
-    const { error, stdout } = spawnSync(["lsb_release", "-rs"]);
-    if (!error) {
-      return stdout.trim();
-    }
-  }
-
-  if (isWindows) {
-    const { error, stdout } = spawnSync(["cmd", "/c", "ver"]);
-    if (!error) {
-      return stdout.trim();
-    }
-  }
-
-  return undefined;
 }
 
 export async function getBuildMetadata(name: string): Promise<string | undefined> {
@@ -1229,7 +682,7 @@ export async function getBuildMetadata(name: string): Promise<string | undefined
   return undefined;
 }
 
-export type BuildkiteAnnotation = {
+type BuildkiteAnnotation = {
   context?: string | undefined;
   label: string;
   content: string;
@@ -1305,7 +758,9 @@ export function markBuildkiteStepReported(): void {
 let lastGroup: string | undefined;
 
 export function startGroup<T>(title: string, fn: () => Promise<T>): Promise<T>;
+
 export function startGroup(title: string, fn?: () => unknown): void;
+
 export function startGroup(title: string, fn?: () => unknown): Promise<unknown> | void {
   if (lastGroup && lastGroup !== title) {
     lastGroup = title;

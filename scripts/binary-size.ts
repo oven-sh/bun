@@ -22,7 +22,7 @@
 
 import { mkdirSync, rmSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { markBuildkiteStepReported } from "./utils.ts";
+import { markBuildkiteStepReported } from "./buildkite.ts";
 
 type Target = { triplet: string };
 type Sizes = Record<string, number>;

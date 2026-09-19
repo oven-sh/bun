@@ -1,6 +1,7 @@
 // Compiler output captured from a build step, turned into Buildkite annotations.
 
-import { getBuildLabel, getBuildUrl, getFileUrl, isBuildkite, stripAnsi } from "../utils.ts";
+import { getBuildLabel, getBuildUrl, getFileUrl, stripAnsi } from "../buildkite.ts";
+import { isBuildkite } from "../process.ts";
 
 export function unescapeGitHubAction(string: string): string {
   return string.replace(/%25/g, "%").replace(/%0D/g, "\r").replace(/%0A/g, "\n");

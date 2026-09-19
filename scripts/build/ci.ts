@@ -2,7 +2,7 @@
  * CI integration: collapsible log groups, environment dump, Buildkite
  * annotations on build failure.
  *
- * Thin layer over `scripts/utils.ts` — the same helpers the CMake build
+ * Thin layer over `scripts/buildkite.ts` — the same helpers the CMake build
  * uses. We import rather than reimplement so CI logs look identical and
  * annotation regex stays in one place.
  */
@@ -21,8 +21,16 @@ import {
 } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  curl,
+  endGroup,
+  markBuildkiteStepReported,
+  printEnvironment,
+  reportAnnotationToBuildKite,
+  startGroup,
+} from "../buildkite.ts";
 import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
-import * as utils from "../utils.ts";
+import { isBuildkite, isCI, isGithubAction } from "../process.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
@@ -31,29 +39,7 @@ import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
 
-/** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
-export const isCI: boolean = utils.isCI;
-
-/** True if running under Buildkite specifically. */
-export const isBuildkite: boolean = utils.isBuildkite;
-
-/** True if running under GitHub Actions specifically. */
-export const isGithubAction: boolean = utils.isGithubAction;
-
-/**
- * Print machine/environment/repository info in collapsible groups.
- * Call at the top of a CI run so you can diagnose without SSH access.
- */
-export const printEnvironment: () => void = utils.printEnvironment;
-
-/**
- * Start a collapsible log group. Buildkite: `--- Title`. GitHub: `::group::`.
- * If `fn` is given, runs it and closes the group (handles async).
- */
-export const startGroup: (title: string, fn?: () => unknown) => unknown = utils.startGroup;
-
-/** Close the most recent group opened with `startGroup`. */
-export const endGroup: () => void = utils.endGroup;
+export { endGroup, isBuildkite, isCI, isGithubAction, printEnvironment, startGroup };
 
 interface SpawnAnnotatedOptions {
   /** Working directory for the subprocess. */
@@ -170,7 +156,7 @@ export async function spawnWithAnnotations(
         .join("\n");
       const { annotations } = parseAnnotations(annotatable);
       for (const ann of annotations) {
-        utils.reportAnnotationToBuildKite({
+        reportAnnotationToBuildKite({
           priority: 10,
           label: ann.title,
           content: formatAnnotationToHtml(ann),
@@ -191,7 +177,7 @@ export async function spawnWithAnnotations(
         source: "build",
         level: "error",
       });
-      utils.reportAnnotationToBuildKite({
+      reportAnnotationToBuildKite({
         priority: 10,
         label: "build failed",
         content,
@@ -205,7 +191,7 @@ export async function spawnWithAnnotations(
     console.error(`Command exited: code ${exitCode}`);
   }
 
-  utils.markBuildkiteStepReported();
+  markBuildkiteStepReported();
   process.exit(exitCode ?? 1);
 }
 
@@ -748,7 +734,7 @@ export function reportOrderFileCannotTrace(cfg: Config): void {
     `appears on every build, that step is failing or missing.`;
   console.log(`~ symbol order: ${msg}`);
   if (!isBuildkite) return;
-  utils.reportAnnotationToBuildKite({
+  reportAnnotationToBuildKite({
     style: "warning",
     priority: 5,
     label: "symbol order file",
@@ -814,7 +800,7 @@ export interface BuildLookups {
 
 const buildkiteLookups: BuildLookups = {
   async build(url) {
-    const response: { error?: unknown; body?: any } = await utils.curl(url, { json: true, cache: true });
+    const response: { error?: unknown; body?: any } = await curl(url, { json: true, cache: true });
     return response.error ? undefined : response.body;
   },
   async redirect(url) {
@@ -860,7 +846,7 @@ export async function* candidateBuilds(
 
   // The branch was quiet for longer than the probe reaches: fall back to its
   // newest passed build. Buildkite dropped `prev_branch_build` from the public
-  // build JSON, so `utils.getLastSuccessfulBuild()` always returns undefined.
+  // build JSON, so `getLastSuccessfulBuild()` always returns undefined.
   // This redirect is what works unauthenticated. Its Location repeats the query
   // (`<pipeline>/builds/116199?branch=main&state=passed`), so `.json` goes on
   // the path: after the query, Buildkite answers with the HTML page.
@@ -955,7 +941,7 @@ export function reportOrderFileBootstrap(cfg: Config): void {
     `this, inheriting is broken — check the "Inherit symbol order file" step.`;
   console.log(`~ symbol order: ${message}`);
   if (!isBuildkite) return;
-  utils.reportAnnotationToBuildKite({
+  reportAnnotationToBuildKite({
     style: "warning",
     priority: 5,
     label: "symbol order file",
@@ -977,7 +963,7 @@ export function reportOrderFileFailure(error: Error): void {
   console.error(`- symbol order: FAILED to generate — ${error.message}`);
   console.error("- symbol order: linking unordered. The binary is correct; it just faults in more pages at startup.");
   if (!isBuildkite) return;
-  utils.reportAnnotationToBuildKite({
+  reportAnnotationToBuildKite({
     // Not an error: the build is fine. A red annotation would read as a failure.
     style: "warning",
     priority: 5,

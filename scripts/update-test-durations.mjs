@@ -203,7 +203,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
 
   const paths = new Set(Object.values(samples).flatMap(s => Object.keys(s)));
-  // Guard the implicit contract with utils.ts startGroup(): if the group-header
+  // Guard the implicit contract with startGroup() in scripts/buildkite.ts: if the group-header
   // format ever changes, parseLog() quietly returns nothing. Fail loudly rather
   // than committing an empty table that would collapse every shard onto shard 0.
   if (paths.size < 1000) {

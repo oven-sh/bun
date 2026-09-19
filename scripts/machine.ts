@@ -16,7 +16,8 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { getBranch, getSecret, spawnSafe, which } from "./utils.ts";
+import { getBranch, getSecret } from "./buildkite.ts";
+import { spawnSafe, which } from "./process.ts";
 
 type Arch = "x64" | "aarch64";
 
@@ -139,12 +140,9 @@ async function buildWindowsImage(arch: Arch, imageDefName: string): Promise<void
     `image_name=${imageDefName}`,
     "-var",
     `bootstrap_script=${resolve(import.meta.dirname, "bootstrap.ps1")}`,
-    // The image's agent service: agent.ts and the utils.ts it imports, from
-    // this checkout.
+    // The image's agent service is uploaded from this checkout.
     "-var",
-    `agent_script=${resolve(import.meta.dirname, "agent.ts")}`,
-    "-var",
-    `utils_script=${resolve(import.meta.dirname, "utils.ts")}`,
+    `scripts_dir=${import.meta.dirname}`,
     "-var",
     `repo_ref=${/^[\w./-]+$/.test(branch) ? branch : "main"}`,
     templateDir,

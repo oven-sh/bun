@@ -2957,6 +2957,13 @@ function tryClose(fd) {
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   const ownsFd = this[kOwnsFd] === true;
+  // node's file responders read waitForTrailers and sendDate before statCheck runs, and never read
+  // endStream: the file is the payload. statCheck is given `options` and can write to it.
+  const respondOptions = {
+    waitForTrailers: options.waitForTrailers,
+    sendDate: options.sendDate,
+    paddingStrategy: options.paddingStrategy,
+  };
   if (err) {
     if (ownsFd && err.code !== "EBADF") {
       tryClose(fd);
@@ -2964,7 +2971,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
     if (onError) onError(err);
     else {
-      this.respond(headers, options);
+      this.respond(headers, respondOptions);
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -2983,7 +2990,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
       else {
-        this.respond(headers, options);
+        this.respond(headers, respondOptions);
         this.destroy(err);
       }
       return;
@@ -3040,7 +3047,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
   try {
-    this.respond(headers, options);
+    this.respond(headers, respondOptions);
   } catch (err) {
     // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
     // for the file never reaches a read stream, so close it here before the stream is destroyed.
@@ -3334,8 +3341,7 @@ class ServerHttp2Stream extends Http2Stream {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
     const statusCode = headers[HTTP2_HEADER_STATUS];
-    // node's file responders never read endStream: the file is the payload.
-    options = { ...options, endStream: false };
+    options = { ...options };
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -3406,8 +3412,7 @@ class ServerHttp2Stream extends Http2Stream {
     ) {
       throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
     }
-    // node's file responders never read endStream: the file is the payload.
-    options = { ...options, endStream: false };
+    options = { ...options };
     if (options.offset !== undefined && typeof options.offset !== "number") {
       throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
     }

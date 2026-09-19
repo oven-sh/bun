@@ -5134,6 +5134,14 @@ describe("http2 response options", () => {
       "weight: 0": { weight: 0 },
       "silent: 1": { silent: 1 },
       "endStream: true": { endStream: true },
+      // bun gives statCheck the options as a third argument. node gives it { offset, length } or
+      // nothing, and reads its stream options before statCheck runs.
+      "statCheck sets endStream and weight": {
+        statCheck(stat, headers, options) {
+          options.endStream = true;
+          options.weight = 0;
+        },
+      },
     };
     const expected = everyShape(shapes, ["200 file body", "200 file body"]);
 

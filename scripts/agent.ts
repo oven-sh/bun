@@ -526,7 +526,7 @@ async function getCloudMetadata(
     return;
   }
 
-  // Without the json, arrayBuffer or filename option, the body of a response is its text.
+  // Without the json option, the body of a response is its text.
   return typeof body === "string" ? body.trim() : undefined;
 }
 
@@ -595,8 +595,8 @@ type AwsRequest = {
 };
 
 /**
- * Signs an AWS API request (SigV4). Only this script and the files it imports
- * are installed on a CI machine, so there is no SDK to call.
+ * Signs an AWS API request (SigV4). Only this script is installed on a CI
+ * machine, so there is no SDK to call.
  * @returns headers, including Authorization
  */
 function signAwsRequest({
@@ -1191,6 +1191,12 @@ async function main(): Promise<void> {
     await doBuildkiteAgent("start", values);
     console.log("Agent started.");
   }
+}
+
+// A Node that can load this file but is older than 24.2 has no import.meta.main,
+// and the check below would make the script do nothing and exit 0.
+if (typeof import.meta.main !== "boolean") {
+  throw new Error(`scripts/agent.ts needs Node 24.2 or newer, and this is ${process.version}`);
 }
 
 // Not when the other CI scripts import this file for what it knows about the machine.

@@ -13,6 +13,7 @@ import type { AddressInfo } from "node:net";
 import net from "node:net";
 import path from "node:path";
 import nodeTls from "node:tls";
+import { Worker } from "node:worker_threads";
 
 describe("backpressure", () => {
   // Writes `total` bytes to `res` in `chunk`-sized pieces, waiting for "drain"
@@ -68,6 +69,122 @@ describe("backpressure", () => {
     const PORT = (server.address() as AddressInfo).port;
     const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.arrayBuffer());
     expect(bytes.byteLength).toBe(1024 * 1024 * 3);
+  });
+
+  // Once write() has returned false, 'drain' is due when the backlog is gone, also when a later
+  // write() is the call that flushes it. The client reads from a worker thread while the server
+  // thread is blocked, so the kernel has room again before the event loop can dispatch the
+  // socket's writable event, and the next write() flushes the backlog inline.
+  describe("'drain' after a later write() flushes the backlog", () => {
+    // The request is HTTP/1.0 so that the body is not chunked: the client counts the exact bytes
+    // the server wrote. The message { port, bodyBytesRead } opens a paused connection and sends
+    // the request. A later { port } makes that connection read.
+    const clientSource = `
+      const { parentPort } = require("node:worker_threads");
+      const net = require("node:net");
+      const sockets = new Map();
+      parentPort.on("message", ({ port, bodyBytesRead }) => {
+        if (!bodyBytesRead) return sockets.get(port).resume();
+        let head = "";
+        let body = -1;
+        const socket = net.connect(port, "127.0.0.1");
+        sockets.set(port, socket);
+        socket.on("connect", () => {
+          socket.pause();
+          socket.write("GET / HTTP/1.0\\r\\n\\r\\n");
+        });
+        socket.on("data", chunk => {
+          if (body === -1) {
+            head += chunk.toString("latin1");
+            const end = head.indexOf("\\r\\n\\r\\n");
+            if (end === -1) return;
+            body = head.length - (end + 4);
+          } else {
+            body += chunk.length;
+          }
+          Atomics.store(bodyBytesRead, 0, body);
+          Atomics.notify(bodyBytesRead, 0);
+        });
+        socket.on("error", () => {});
+        socket.on("close", () => parentPort.postMessage({ port, body }));
+      });
+      parentPort.postMessage("ready");
+    `;
+    let client: Worker;
+    beforeAll(async () => {
+      client = new Worker(clientSource, { eval: true });
+      await once(client, "message");
+    });
+    afterAll(() => client.terminate());
+
+    // Blocks this thread, and so its event loop, until the client has read `target` body bytes.
+    function blockUntilClientHasRead(bodyBytesRead: Int32Array, target: number) {
+      const deadline = Date.now() + 10_000;
+      for (let read = Atomics.load(bodyBytesRead, 0); read < target; read = Atomics.load(bodyBytesRead, 0)) {
+        if (Date.now() > deadline) throw new Error(`the client read ${read} of ${target} body bytes`);
+        Atomics.wait(bodyBytesRead, 0, read, 1000);
+      }
+    }
+
+    // Bun copies the unsent part of a write() of at most 16 KB and holds a larger one by
+    // reference. The cases cover both kinds as the backlog and as the write that flushes it.
+    it.each([
+      ["a small write() behind buffered writes", 16 * 1024, 1],
+      ["a small write() behind a large write", 64 * 1024, 1],
+      ["a large write() behind buffered writes", 16 * 1024, 32 * 1024],
+    ] as const)("%s", async (_name, firstSize, secondSize) => {
+      const first = Buffer.alloc(firstSize, "a");
+      const second = Buffer.alloc(secondSize, "b");
+      const bodyBytesRead = new Int32Array(new SharedArrayBuffer(4));
+      const outcome = Promise.withResolvers<{ needDrain: boolean; drained: boolean; written: number }>();
+      // The high-water mark is above every write here (the default is 16 KB on Windows), so
+      // write() returns false only when the socket pushes back.
+      await using server = http.createServer({ highWaterMark: 1024 * 1024 }, async (req, res) => {
+        try {
+          // Write until a backlog is still there a turn later: the socket pushed back.
+          let written = 0;
+          do {
+            while (res.write(first)) written += first.length;
+            written += first.length;
+            await new Promise(resolve => setImmediate(resolve));
+          } while (res.writableLength === 0);
+
+          let drained = false;
+          res.once("drain", () => (drained = true));
+          // Every byte that is not in the backlog is in the kernel. Once the client has read them
+          // all, the kernel has room for the backlog.
+          client.postMessage({ port });
+          blockUntilClientHasRead(bodyBytesRead, written - res.writableLength);
+          res.write(second);
+          written += second.length;
+          const needDrain = res.writableNeedDrain;
+
+          // The 'drain' is due in the first turn. If it does not fire, the byte count ends the
+          // wait: once the client has every byte, nothing is left that can emit it.
+          do {
+            await new Promise(resolve => setImmediate(resolve));
+          } while (!drained && Atomics.load(bodyBytesRead, 0) < written);
+          res.end();
+          outcome.resolve({ needDrain, drained, written });
+        } catch (e) {
+          res.destroy();
+          outcome.reject(e);
+        }
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
+
+      // The client reports its body byte count when its connection to `port` closes.
+      const clientClosed = (async () => {
+        for (;;) {
+          const [message] = await once(client, "message");
+          if (message.port === port) return message.body as number;
+        }
+      })();
+      client.postMessage({ port, bodyBytesRead });
+      const [{ needDrain, drained, written }, body] = await Promise.all([outcome.promise, clientClosed]);
+      expect({ needDrain, drained, body }).toEqual({ needDrain: true, drained: true, body: written });
+    });
   });
 
   // The closing FIN must be sequenced after the response bytes still sitting in

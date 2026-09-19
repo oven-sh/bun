@@ -1835,6 +1835,22 @@ impl NodeHTTPResponse {
         true
     }
 
+    /// A write that leaves nothing buffered has no drain of its own to wait for.
+    /// A callback that an earlier write armed stays armed: that write reported
+    /// backpressure, and the socket still gets its writable event after this
+    /// write flushed the backlog inline.
+    fn disarm_on_writable_unless_owed(
+        raw_response: uws::AnyResponse,
+        js_this: JSValue,
+        global_object: &JSGlobalObject,
+    ) {
+        if js::on_writable_get_cached(js_this).is_some_and(|callback| callback.is_cell()) {
+            return;
+        }
+        raw_response.clear_on_writable();
+        js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
+    }
+
     fn write_or_end<const IS_END: bool>(
         &self,
         global_object: &JSGlobalObject,
@@ -2049,8 +2065,7 @@ impl NodeHTTPResponse {
                 scoped_log!(NodeHTTPResponse, "tryWriteBody({} bytes)", bytes_len);
                 let consumed = raw_response.try_write_body(bytes, true);
                 if consumed >= bytes_len {
-                    raw_response.clear_on_writable();
-                    js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
+                    Self::disarm_on_writable_unless_owed(raw_response, js_this, global_object);
                     return Ok(JSValue::js_number_from_uint64(bytes_len as u64));
                 }
                 scoped_log!(
@@ -2113,8 +2128,7 @@ impl NodeHTTPResponse {
 
             match raw_response.write(bytes) {
                 uws::WriteResult::WantMore(written) => {
-                    raw_response.clear_on_writable();
-                    js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
+                    Self::disarm_on_writable_unless_owed(raw_response, js_this, global_object);
                     Ok(JSValue::js_number_from_uint64(written as u64))
                 }
                 uws::WriteResult::Backpressure(written) => {
@@ -2153,7 +2167,14 @@ impl NodeHTTPResponse {
     }
 
     pub(crate) fn get_on_writable(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        js::on_writable_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+        // Only the armed drain callback of a live response: `end()` and a close
+        // leave the slot as it was, and the setter stores any value.
+        if self.is_done() {
+            return JSValue::UNDEFINED;
+        }
+        js::on_writable_get_cached(this_value)
+            .filter(|callback| callback.is_cell())
+            .unwrap_or(JSValue::UNDEFINED)
     }
 
     pub(crate) fn get_on_abort(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {

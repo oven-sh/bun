@@ -2621,7 +2621,7 @@ function advanceResponsePipeline(server, socket) {
   res.outputSize = 0;
   const ops = queued.ops;
   const opsLength = ops.length;
-  let lastWriteResult = true;
+  let hitBackpressure = false;
   if (opsLength) {
     // `finished` was set when the user called end() on the queued response;
     // clear it for the replay so the real write()/end() (end re-sets it) do
@@ -2640,7 +2640,7 @@ function advanceResponsePipeline(server, socket) {
           handle.writeInformational(op[1], op[2]);
           if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
-          lastWriteResult = res.write(op[1], op[2], op[3]);
+          if (res.write(op[1], op[2], op[3]) === false) hitBackpressure = true;
         } else {
           res.end(op[1], op[2], op[3]);
         }
@@ -2652,9 +2652,10 @@ function advanceResponsePipeline(server, socket) {
   if (queued.needDrain && !queued.ended) {
     // write() reported backpressure to the user while the response was queued.
     // If the flush itself hit transport backpressure the native drain callback
-    // registered by write() emits 'drain'; otherwise emit it now that the
-    // buffered bytes have been handed to the transport.
-    if (lastWriteResult !== false) {
+    // registered by write() emits 'drain', also when a later replayed write
+    // went through; otherwise emit it now that the buffered bytes have been
+    // handed to the transport.
+    if (!hitBackpressure) {
       process.nextTick(emitPipelinedDrainNT, res);
     }
   }
@@ -3495,12 +3496,15 @@ ServerResponse.prototype._implicitHeader = function () {
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get() {
     // True between a write() that returned false and the next 'drain': either
-    // the native handle still has buffered bytes, or this turn's accounting
+    // the native handle still has buffered bytes or an armed drain callback
+    // (a later write flushed the bytes), or this turn's accounting
     // (kBytesBuffered) crossed the high-water mark and a 'drain' is pending.
+    const handle = this[kHandle];
     return (
       !this.destroyed &&
       !this.finished &&
-      ((this[kHandle]?.bufferedAmount ?? 0) !== 0 ||
+      ((handle?.bufferedAmount ?? 0) !== 0 ||
+        handle?.onwritable !== undefined ||
         (this[kBytesBuffered] ?? 0) >= this.writableHighWaterMark ||
         (this[kPipelinedQueuedState]?.needDrain ?? false))
     );

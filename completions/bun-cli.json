@@ -427,7 +427,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -748,7 +748,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1079,7 +1079,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1351,7 +1351,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1769,7 +1769,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2149,7 +2149,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2432,7 +2432,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2691,7 +2691,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2943,7 +2943,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3248,7 +3248,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3677,7 +3677,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,

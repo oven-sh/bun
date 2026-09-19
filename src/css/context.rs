@@ -132,8 +132,8 @@ impl<'a> PropertyHandlerContext<'a> {
                 rules: css::CssRuleList {
                     v: vec![css::CssRule::Style(css::StyleRule {
                         selectors: style_rule.selectors.deep_clone(),
-                        // Unlike the rules from `get_additional_rules`, this one is never
-                        // minified, so `update_prefix` does not run on it. The cloned
+                        // `minify_style_arm` minifies the rules from `get_additional_rules`,
+                        // but not this one, so `update_prefix` does not run on it. The cloned
                         // selectors print in the vendor prefix passes of `style_rule`.
                         vendor_prefix: style_rule.vendor_prefix,
                         declarations: css::DeclarationBlock {

@@ -129,6 +129,10 @@ pub struct Printer<'a> {
     /// they are skipped while this is set and emitted once in the final pass,
     /// keeping the output linear in nesting depth instead of exponential.
     pub(crate) skip_prefixed_nested_rules: bool,
+    /// What `CssRule::is_deferred_to_final_prefix_pass` found for the rules that
+    /// hold other rules, by rule address. Every level of nesting asks about the
+    /// same subtree again, and without this each one would walk it again.
+    pub(crate) deferred_rules: bun_collections::HashMap<usize, bool>,
     pub(crate) in_calc: bool,
     pub(crate) css_module: Option<css::CssModule<'a>>,
     pub(crate) dependencies: Option<BumpVec<'a, css::Dependency>>,
@@ -306,6 +310,7 @@ impl<'a> Printer<'a> {
             col: 0,
             vendor_prefix: css::VendorPrefix::default(),
             skip_prefixed_nested_rules: false,
+            deferred_rules: bun_collections::HashMap::new(),
             in_calc: false,
             css_module: None,
             ctx: None,

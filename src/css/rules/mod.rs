@@ -408,8 +408,12 @@ impl<R> CssRule<R> {
     /// vendor prefixes overrides `Printer::vendor_prefix`, so its output is
     /// identical in every ancestor pass. A rule that prints nothing but such
     /// rules (a block at-rule, or a style rule with no declarations) is
-    /// deferred with them, or the at-rule would print an empty block.
-    fn is_deferred_to_final_prefix_pass(&self) -> bool {
+    /// deferred with them, or the at-rule would print an empty block. `memo` is
+    /// `Printer::deferred_rules`.
+    fn is_deferred_to_final_prefix_pass(
+        &self,
+        memo: &mut bun_collections::HashMap<usize, bool>,
+    ) -> bool {
         let rules = match self {
             CssRule::Style(style) | CssRule::Nesting(nesting::NestingRule { style, .. }) => {
                 if !style.vendor_prefix.is_empty() {
@@ -429,10 +433,16 @@ impl<R> CssRule<R> {
             // Not `@layer`: an empty block still declares the layer's order.
             _ => return false,
         };
-        !rules.v.is_empty()
+        let key = core::ptr::from_ref(self).addr();
+        if let Some(&deferred) = memo.get(&key) {
+            return deferred;
+        }
+        let deferred = !rules.v.is_empty()
             && rules.v.iter().all(|rule| {
-                matches!(rule, CssRule::Ignored) || rule.is_deferred_to_final_prefix_pass()
-            })
+                matches!(rule, CssRule::Ignored) || rule.is_deferred_to_final_prefix_pass(memo)
+            });
+        memo.insert(key, deferred);
+        deferred
     }
 }
 
@@ -452,8 +462,10 @@ impl<R> CssRuleList<R> {
             // pass of an ancestor style rule, skip style rules that carry
             // their own vendor prefixes: they override `dest.vendor_prefix`,
             // so this pass would emit an exact duplicate of what the final
-            // pass emits.
-            if dest.skip_prefixed_nested_rules && rule.is_deferred_to_final_prefix_pass() {
+            // pass emits. Rules that print nothing else are skipped with them.
+            if dest.skip_prefixed_nested_rules
+                && rule.is_deferred_to_final_prefix_pass(&mut dest.deferred_rules)
+            {
                 continue;
             }
 

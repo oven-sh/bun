@@ -290,7 +290,8 @@ impl<R> StyleRule<R> {
             // rules (nothing would follow it).
             let has_nested_output = !skip_prefixed_nested
                 || self.rules.v.iter().any(|rule| {
-                    !matches!(rule, CssRule::Ignored) && !rule.is_deferred_to_final_prefix_pass()
+                    !matches!(rule, CssRule::Ignored)
+                        && !rule.is_deferred_to_final_prefix_pass(&mut dest.deferred_rules)
                 });
 
             helpers_end(dest, has_declarations)?;

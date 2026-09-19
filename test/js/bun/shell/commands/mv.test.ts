@@ -4,6 +4,7 @@ import { bunEnv, bunExe, isLinux, isPosix } from "harness";
 import {
   accessSync,
   chmodSync,
+  chownSync,
   constants,
   existsSync,
   lstatSync,
@@ -401,18 +402,60 @@ describe("mv", async () => {
       }
     });
 
-    // A checkout under /root is out of reach for `nobody`.
-    function nobodyCanRunBun() {
+    // A checkout under /root is out of reach for another user, and `setpriv` can be missing.
+    function canRunBun(prefix: string[], ids: { uid?: number; gid?: number }) {
       try {
-        const asNobody = { env: bunEnv, cwd: "/", uid: nobody, gid: nobody };
-        return Bun.spawnSync({ cmd: [bunExe(), "--revision"], ...asNobody }).success;
+        return Bun.spawnSync({ cmd: [...prefix, bunExe(), "--revision"], env: bunEnv, cwd: "/", ...ids }).success;
       } catch {
         return false;
       }
     }
 
+    // This mover has CAP_CHOWN but not CAP_FOWNER: it can give a copy away, but it cannot chmod the copy after that.
+    const chownOnly =
+      "setpriv --reuid=65533 --regid=65533 --clear-groups --inh-caps=+chown --ambient-caps=+chown".split(" ");
+
+    test.skipIf(!isRoot || !publicRootsDiffer || !canRunBun(chownOnly, {}))(
+      "modes are kept across devices when the mover cannot chmod a copy that it gave away",
+      async () => {
+        const [src, dst] = crossDevicePair("chown-only", publicRoots);
+        try {
+          writeFileSync(join(src, "file"), "file");
+          chmodSync(join(src, "file"), 0o644);
+          mkdirSync(join(src, "dir"));
+          chmodSync(join(src, "dir"), 0o755);
+          for (const name of ["file", "dir"]) chownSync(join(src, name), nobody, nobody);
+          chmodSync(src, 0o777);
+          chmodSync(dst, 0o777);
+
+          const script = `
+            import { $ } from "bun";
+            const [src, dst] = ${JSON.stringify([src, dst])};
+            const r = await $\`mv \${src}/file \${src}/dir \${dst}\`.nothrow();
+            process.exit(r.exitCode);
+          `;
+          await using proc = Bun.spawn({
+            cmd: [...chownOnly, bunExe(), "-e", script],
+            env: bunEnv,
+            cwd: "/",
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+          expect(ownerAndMode(dst, ["file", "dir"])).toEqual({
+            file: `644 uid=${nobody}`,
+            dir: `755 uid=${nobody}`,
+          });
+        } finally {
+          rmSync(src, { recursive: true, force: true });
+          rmSync(dst, { recursive: true, force: true });
+        }
+      },
+    );
+
     // Root only: no other user can create a file that someone else owns.
-    test.skipIf(!isRoot || !publicRootsDiffer || !nobodyCanRunBun())(
+    test.skipIf(!isRoot || !publicRootsDiffer || !canRunBun([], { uid: nobody, gid: nobody }))(
       "set-uid and set-gid are dropped across devices when the owner cannot be kept",
       async () => {
         const [src, dst] = crossDevicePair("setid", publicRoots);

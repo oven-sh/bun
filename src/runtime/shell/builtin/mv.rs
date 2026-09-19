@@ -636,12 +636,14 @@ impl ShellMvBatchedTask {
     /// POSIX `mv`: the copy gets set-uid and set-gid only if it also gets the owner.
     #[cfg(unix)]
     fn copy_owner_and_mode(fd: bun_sys::Fd, st: &bun_sys::Stat) {
-        let mut mode = st.st_mode as bun_core::Mode & 0o7777;
-        // `fchown` first: Linux clears S_ISUID/S_ISGID on chown.
-        if bun_sys::fchown(fd, st.st_uid as _, st.st_gid as _).is_err() {
-            mode &= !(bun_sys::S::ISUID | bun_sys::S::ISGID);
+        let mode = st.st_mode as bun_core::Mode & 0o7777;
+        let set_id = mode & (bun_sys::S::ISUID | bun_sys::S::ISGID);
+        // Before `fchown`: a mover with CAP_CHOWN but no CAP_FOWNER cannot `fchmod` a copy it gave away.
+        let _ = bun_sys::fchmod(fd, mode & !set_id);
+        // After `fchown`: Linux clears S_ISUID/S_ISGID on chown.
+        if bun_sys::fchown(fd, st.st_uid as _, st.st_gid as _).is_ok() && set_id != 0 {
+            let _ = bun_sys::fchmod(fd, mode);
         }
-        let _ = bun_sys::fchmod(fd, mode);
     }
 
     /// `renameat(cwd, src, target_fd, basename(src))`. A free fn over the

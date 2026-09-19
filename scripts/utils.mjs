@@ -3073,6 +3073,8 @@ export function ignoreTerminationSignals() {
  * @property {Record<string, string | undefined>} env the job's environment
  * @property {number} totalMemory bytes of RAM
  * @property {() => number | undefined} readPcbCount
+ * @property {() => number | string | undefined} loggedInUsers truthy when `who` shows a remote login. It sees
+ * interactive sessions only: an ssh command that runs without a terminal is not in `who`
  * @property {() => boolean} reboot false when the reboot did not start
  * @property {(content: string) => void} annotate
  * @property {() => () => void} ignoreSignals stops SIGTERM, SIGHUP and SIGINT from ending this process; returns the undo
@@ -3091,6 +3093,7 @@ const thisDarwinAgentHost = {
     const count = error ? NaN : parseInt(stdout);
     return isFinite(count) ? count : undefined;
   },
+  loggedInUsers: getLoggedInUserCountOrDetails,
   reboot() {
     const { error } = spawnSync(["sudo", "-n", "shutdown", "-r", "now"], { timeout: 30_000 });
     if (error) {
@@ -3126,6 +3129,9 @@ const thisDarwinAgentHost = {
  * exited by itself first, the job would be an ordinary failure with no retry. Nothing here
  * stops the agent, so a reboot that never happens leaves it running.
  *
+ * Not while someone is logged in: as at the end of `main()` in the runner, a remote login is a
+ * person at work on this host, and a reboot would also wipe the kernel state they look at.
+ *
  * @param {DarwinAgentHost} [host]
  */
 export async function rebootDarwinAgentIfOutOfSockets(host = thisDarwinAgentHost) {
@@ -3155,17 +3161,27 @@ export async function rebootDarwinAgentIfOutOfSockets(host = thisDarwinAgentHost
     return;
   }
 
+  const report = (why, next) => {
+    console.warn(`${host.hostname} ${why}, running the tests on it anyway`);
+    host.annotate(
+      `\`${host.hostname}\` holds ${count} leaked kernel TCP sockets (limit ${limit}) and ${why}. ` +
+        `Its network fails at about 1.6 times the limit. ${next}\n`,
+    );
+  };
+
+  const users = host.loggedInUsers();
+  if (users) {
+    console.warn(users);
+    return report("was not rebooted because someone is logged in", "It needs a reboot when they are done.");
+  }
+
   startGroup("Rebooting this agent: macOS has leaked too many sockets to run the tests");
   const restoreSignals = host.ignoreSignals();
   if (host.reboot()) {
     await host.sleep(5 * 60_000);
   }
   restoreSignals();
-  console.warn(`${host.hostname} did not reboot, running the tests on it anyway`);
-  host.annotate(
-    `\`${host.hostname}\` holds ${count} leaked kernel TCP sockets (limit ${limit}) and did not reboot when a test job asked it to. ` +
-      "Its network fails at about 1.6 times the limit. Reboot it by hand.\n",
-  );
+  report("did not reboot when a test job asked it to", "Reboot it by hand.");
 }
 
 /** @typedef {keyof typeof emojiMap} Emoji */

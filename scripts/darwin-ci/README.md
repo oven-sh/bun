@@ -58,6 +58,11 @@ leaves a warning annotation on the build that names the host. Reboot that host
 by hand. The beta lane has no automatic retry, so its host never does this.
 `tart` guests are fresh for every job and never do it either.
 
+The job does not reboot a host while `who` shows a remote login. It leaves the
+same kind of annotation and runs its tests. `who` lists interactive sessions
+only. An ssh command that runs without a terminal is not in it, so it does not
+hold off a reboot, and nothing on the host shows that it ran.
+
 ## Bringing up a host
 
 Prerequisites on a freshly imaged host: an admin account you can ssh into

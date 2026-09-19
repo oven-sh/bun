@@ -414,6 +414,17 @@ test("Error.captureStackTrace: reading the stack leaves a frozen or sealed targe
     sealed: Object.isSealed(targets.sealed),
     error: Object.isFrozen(targets.error),
   }).toEqual({ frozen: true, sealed: true, error: true });
+
+  // What was made of the property before the first read is kept.
+  const enumerable = { name: "Enumerable" };
+  Error.captureStackTrace(enumerable);
+  Object.defineProperty(enumerable, "stack", { enumerable: true });
+  const fixed = { name: "Fixed" };
+  Error.captureStackTrace(fixed);
+  Object.defineProperty(fixed, "stack", { configurable: false });
+  expect([enumerable.stack.split("\n")[0], fixed.stack.split("\n")[0]]).toEqual(["Enumerable", "Fixed"]);
+  expect(Object.keys(enumerable)).toEqual(["name", "stack"]);
+  expect(Object.getOwnPropertyDescriptor(fixed, "stack").configurable).toBe(false);
 });
 
 test("console.trace() from a Console instance starts with Trace and its message", async () => {

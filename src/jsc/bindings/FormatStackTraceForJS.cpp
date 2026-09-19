@@ -820,14 +820,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
     return JSC::JSValue::encode(result);
 }
 
-// `stack` stops being the lazy accessor and becomes `value`, as sealed or frozen as `object` is.
+// `stack` stops being the lazy accessor and becomes `value`, keeping what was made of the property
+// since (Object.defineProperty, Object.seal) and read-only if `object` is frozen.
 static void replaceLazyStack(JSC::VM& vm, JSC::JSObject* object, JSC::JSValue value)
 {
     unsigned attributes = JSC::PropertyAttribute::DontEnum | 0;
+    unsigned accessorAttributes;
+    if (object->structure()->get(vm, vm.propertyNames->stack, accessorAttributes) != invalidOffset)
+        attributes = accessorAttributes & (JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
     if (object->isFrozen(vm))
-        attributes |= JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete;
-    else if (object->isSealed(vm))
-        attributes |= JSC::PropertyAttribute::DontDelete;
+        attributes |= JSC::PropertyAttribute::ReadOnly | 0;
     object->putDirect(vm, vm.propertyNames->stack, value, attributes);
 }
 

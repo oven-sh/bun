@@ -215,12 +215,12 @@ async function ensurePacker(): Promise<string> {
   return localPacker;
 }
 
-type AwsImage = {
+interface AwsImage {
   ImageId: string;
   State: string;
   CreationDate: string;
   StateReason?: { Message?: string };
-};
+}
 
 function describeImages(filters: string[]): AwsImage[] {
   const { error, status, stdout, stderr } = spawnSync(

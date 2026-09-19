@@ -21,17 +21,7 @@ import {
 } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  curl,
-  endGroup,
-  isBuildkite,
-  isCI,
-  isGithubAction,
-  markBuildkiteStepReported,
-  printEnvironment,
-  reportAnnotationToBuildKite,
-  startGroup,
-} from "../buildkite.ts";
+import { curl, isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
@@ -40,8 +30,6 @@ import { webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
-
-export { endGroup, isBuildkite, isCI, isGithubAction, printEnvironment, startGroup };
 
 interface SpawnAnnotatedOptions {
   /** Working directory for the subprocess. */
@@ -158,7 +146,7 @@ export async function spawnWithAnnotations(
         .join("\n");
       const { annotations } = parseAnnotations(annotatable);
       for (const ann of annotations) {
-        reportAnnotationToBuildKite({
+        reportAnnotationToBuildkite({
           priority: 10,
           label: ann.title,
           content: formatAnnotationToHtml(ann),
@@ -179,7 +167,7 @@ export async function spawnWithAnnotations(
         source: "build",
         level: "error",
       });
-      reportAnnotationToBuildKite({
+      reportAnnotationToBuildkite({
         priority: 10,
         label: "build failed",
         content,
@@ -736,7 +724,7 @@ export function reportOrderFileCannotTrace(cfg: Config): void {
     `appears on every build, that step is failing or missing.`;
   console.log(`~ symbol order: ${msg}`);
   if (!isBuildkite) return;
-  reportAnnotationToBuildKite({
+  reportAnnotationToBuildkite({
     style: "warning",
     priority: 5,
     label: "symbol order file",
@@ -943,7 +931,7 @@ export function reportOrderFileBootstrap(cfg: Config): void {
     `this, inheriting is broken — check the "Inherit symbol order file" step.`;
   console.log(`~ symbol order: ${message}`);
   if (!isBuildkite) return;
-  reportAnnotationToBuildKite({
+  reportAnnotationToBuildkite({
     style: "warning",
     priority: 5,
     label: "symbol order file",
@@ -965,7 +953,7 @@ export function reportOrderFileFailure(error: Error): void {
   console.error(`- symbol order: FAILED to generate — ${error.message}`);
   console.error("- symbol order: linking unordered. The binary is correct; it just faults in more pages at startup.");
   if (!isBuildkite) return;
-  reportAnnotationToBuildKite({
+  reportAnnotationToBuildkite({
     // Not an error: the build is fine. A red annotation would read as a failure.
     style: "warning",
     priority: 5,

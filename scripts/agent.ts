@@ -26,7 +26,7 @@ export const isPosix = isMacOS || isLinux || process.platform === "freebsd";
 /** The path of the first of `names` found on PATH. */
 export function which(names: string[]): string | undefined {
   const executables = isWindows ? names.flatMap(name => [name, `${name}.exe`, `${name}.cmd`]) : names;
-  for (const directory of (process.env["PATH"] || "").split(isWindows ? ";" : ":")) {
+  for (const directory of (process.env.PATH || "").split(isWindows ? ";" : ":")) {
     for (const executable of executables) {
       const path = join(directory, executable);
       if (existsSync(path)) {
@@ -80,7 +80,7 @@ export async function run(command: Command, options: { cwd?: string } = {}): Pro
   }
 }
 
-type RequestOptions = {
+interface RequestOptions {
   method?: string;
   headers?: Record<string, string> | undefined;
   body?: string;
@@ -88,7 +88,7 @@ type RequestOptions = {
   json?: boolean;
   /** How many times to try. */
   attempts: number;
-};
+}
 
 /**
  * A request to the cloud's metadata or secret service. Those are not always up
@@ -136,7 +136,7 @@ export function tmpdir(): string {
       return normalizeWindows(tmpdir);
     }
 
-    const appData = process.env["LOCALAPPDATA"];
+    const appData = process.env.LOCALAPPDATA;
     if (appData) {
       const appDataTemp = join(appData, "Temp");
       if (existsSync(appDataTemp)) {
@@ -400,7 +400,7 @@ async function isAws(): Promise<boolean | undefined> {
     }
 
     if (isWindows) {
-      if (process.env["AWS_EXECUTION_ENV"] === "EC2") {
+      if (process.env.AWS_EXECUTION_ENV === "EC2") {
         return true;
       }
 
@@ -589,11 +589,11 @@ async function getCloudMetadataTag(tag: string, cloud?: Cloud): Promise<string |
   return getCloudMetadata(metadata, cloud);
 }
 
-type AwsCredentials = {
+interface AwsCredentials {
   AccessKeyId: string;
   SecretAccessKey: string;
   Token?: string;
-};
+}
 
 /**
  * Instance-role credentials from IMDS.
@@ -614,7 +614,7 @@ async function getAwsInstanceCredentials(): Promise<AwsCredentials | undefined> 
   }
 }
 
-type AwsRequest = {
+interface AwsRequest {
   method: string;
   host: string;
   path: string;
@@ -624,7 +624,7 @@ type AwsRequest = {
   headers: Record<string, string>;
   credentials: AwsCredentials;
   date?: Date;
-};
+}
 
 /**
  * Signs an AWS API request (SigV4). Only this script is installed on a CI
@@ -677,12 +677,12 @@ function signAwsRequest({
   };
 }
 
-type AwsSecretOptions = {
+interface AwsSecretOptions {
   /** defaults to the instance's region */
   region?: string;
   /** defaults to IMDS credentials */
   credentials?: AwsCredentials;
-};
+}
 
 /** The field of the Secrets Manager GetSecretValue response that is read here. */
 type AwsSecretValue = { SecretString?: string } | null | undefined;
@@ -691,8 +691,8 @@ type AwsSecretValue = { SecretString?: string } | null | undefined;
  * Reads a secret from AWS Secrets Manager using the instance role.
  */
 async function getAwsSecret(secretId: string, options: AwsSecretOptions = {}): Promise<string | undefined> {
-  const region = options["region"] || (await getCloudMetadata("placement/region", "aws")) || "us-east-1";
-  const credentials = options["credentials"] || (await getAwsInstanceCredentials());
+  const region = options.region || (await getCloudMetadata("placement/region", "aws")) || "us-east-1";
+  const credentials = options.credentials || (await getAwsInstanceCredentials());
   if (!credentials) {
     console.warn("Failed to get AWS secret: no instance credentials");
     return;
@@ -726,7 +726,7 @@ async function getAwsSecret(secretId: string, options: AwsSecretOptions = {}): P
     return;
   }
 
-  return (response as AwsSecretValue)?.["SecretString"];
+  return (response as AwsSecretValue)?.SecretString;
 }
 
 /** The field of the managed identity token response that is read here. */
@@ -746,7 +746,7 @@ async function getAzureSecret(vaultName: string, secretName: string): Promise<st
     json: true,
     attempts: 10,
   });
-  const accessToken = (identity as AzureIdentityToken)?.["access_token"];
+  const accessToken = (identity as AzureIdentityToken)?.access_token;
   if (identityError || !accessToken) {
     console.warn("Failed to get Azure managed identity token:", identityError);
     return;
@@ -763,7 +763,7 @@ async function getAzureSecret(vaultName: string, secretName: string): Promise<st
     return;
   }
 
-  return (body as AzureSecretValue)?.["value"];
+  return (body as AzureSecretValue)?.value;
 }
 
 function sha256(string: string): string {
@@ -799,11 +799,11 @@ function darwinReleaseTier(distroVersion: string | undefined): DarwinReleaseTier
 
 type AgentAction = "install" | "start";
 
-type AgentCliOptions = {
+interface AgentCliOptions {
   queue?: string;
-};
+}
 
-type AgentPaths = {
+interface AgentPaths {
   homePath: string;
   cachePath: string;
   logsPath: string;
@@ -812,7 +812,7 @@ type AgentPaths = {
   pidPath?: string;
   // Only set on macOS.
   cfgPath?: string;
-};
+}
 
 function getAgentPaths(): AgentPaths {
   if (isWindows) {
@@ -868,7 +868,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
 
     // Checked before anything is written, so a Mac that cannot be given a
     // token is left as it was.
-    const token = process.env["BUILDKITE_AGENT_TOKEN"];
+    const token = process.env.BUILDKITE_AGENT_TOKEN;
     if (isMacOS && cfgPath !== undefined && !token && !existsSync(cfgPath)) {
       throw new Error("BUILDKITE_AGENT_TOKEN not set and no existing buildkite-agent.cfg to reuse");
     }
@@ -930,7 +930,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
 
     // cfgPath is set exactly when isMacOS is; the second check is for the type checker.
     if (isMacOS && cfgPath !== undefined) {
-      const queue = cliOptions.queue || process.env["BUILDKITE_AGENT_QUEUE"] || "test-darwin";
+      const queue = cliOptions.queue || process.env.BUILDKITE_AGENT_QUEUE || "test-darwin";
       // `install` runs via sudo, so process.env.USER is "root". The launchd
       // service must run as the real login user (whose ~/Library the cfg and
       // build dirs live under), and the files we write here must be owned by
@@ -1071,7 +1071,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
   async function start(): Promise<void> {
     const cloud = await getCloud();
 
-    let token = process.env["BUILDKITE_AGENT_TOKEN"];
+    let token = process.env.BUILDKITE_AGENT_TOKEN;
     if (!token && cloud === "aws") {
       token = await getAwsSecret(BUILDKITE_TOKEN_SECRET);
     }
@@ -1120,9 +1120,9 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
     // pass it via --config so re-running `install` is the single edit point.
     // On other platforms, keep passing the token directly as before.
     if (hasCfg) {
-      options["config"] = cfgPath;
+      options.config = cfgPath;
     } else {
-      options["token"] = token || "xxx";
+      options.token = token || "xxx";
     }
 
     let ephemeral: boolean | undefined;
@@ -1171,7 +1171,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
       }
     }
 
-    options["tags"] = Object.entries(tags)
+    options.tags = Object.entries(tags)
       .filter(([, value]) => value !== undefined && value !== null && value !== "")
       .map(([key, value]) => `${key}=${value}`)
       .join(",");

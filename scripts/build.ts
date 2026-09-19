@@ -27,19 +27,16 @@ import {
   canTraceOrderFile,
   downloadArtifacts,
   inheritOrderFile,
-  isCI,
   mustGenerateOrderFile,
   orderFileContext,
   orderFileEligible,
   packageAndUpload,
-  printEnvironment,
   regenerateOrderFile,
   reportOrderFileBootstrap,
   reportOrderFileCannotTrace,
   reportOrderFileFailure,
   shouldGenerateOrderFile,
   spawnWithAnnotations,
-  startGroup,
   uploadArtifacts,
   verifyOrderFileApplied,
 } from "./build/ci.ts";
@@ -48,6 +45,7 @@ import { configure, type ConfigureInput, type ConfigureResult } from "./build/co
 import { BuildError } from "./build/error.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
+import { isCI, printEnvironment, startGroup } from "./buildkite.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Main

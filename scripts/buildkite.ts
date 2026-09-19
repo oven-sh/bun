@@ -38,9 +38,9 @@ export function getEnv(name: string): string {
   return value;
 }
 
-type SecretOptions = {
+interface SecretOptions {
   required?: boolean;
-};
+}
 
 export function getSecret(name: string, options?: SecretOptions & { required?: true }): string;
 
@@ -79,7 +79,7 @@ function setEnv(name: string, value: string | undefined): void {
   process.env[name] = value;
 
   if (isGithubAction && !/^GITHUB_/i.test(name)) {
-    const envFilePath = process.env["GITHUB_ENV"];
+    const envFilePath = process.env.GITHUB_ENV;
     if (envFilePath) {
       const delimeter = Math.random().toString(36).substring(2, 15);
       const content = `${name}<<${delimeter}\n${value}\n${delimeter}\n`;
@@ -226,12 +226,12 @@ export function isMainBranch(cwd?: string): boolean {
 }
 
 /** The fields of the GitHub Actions event payload (`GITHUB_EVENT_PATH`) that are read here. */
-type GithubEvent = {
+interface GithubEvent {
   pull_request?: {
     number: number;
     head: { repo: { fork: boolean } };
   };
-};
+}
 
 export function isPullRequest(): boolean {
   if (isBuildkite) {
@@ -257,9 +257,9 @@ function getPullRequest(): number | undefined {
     const eventPath = process.env.GITHUB_EVENT_PATH;
     if (eventPath && existsSync(eventPath)) {
       const event = JSON.parse(readFileSync(eventPath, "utf8")) as GithubEvent;
-      const pullRequest = event["pull_request"];
+      const pullRequest = event.pull_request;
       if (pullRequest) {
-        return parseInt(`${pullRequest["number"]}`);
+        return parseInt(`${pullRequest.number}`);
       }
     }
   }
@@ -291,9 +291,9 @@ export function isFork(): boolean {
     const eventPath = process.env.GITHUB_EVENT_PATH;
     if (eventPath && existsSync(eventPath)) {
       const event = JSON.parse(readFileSync(eventPath, "utf8")) as GithubEvent;
-      const pullRequest = event["pull_request"];
+      const pullRequest = event.pull_request;
       if (pullRequest) {
-        return !!pullRequest["head"]["repo"]["fork"];
+        return !!pullRequest.head.repo.fork;
       }
     }
   }
@@ -318,17 +318,17 @@ function getGithubToken(): string | undefined {
   return token || undefined;
 }
 
-type CurlOptions = {
+interface CurlOptions {
   /** Parse the body of a successful response as JSON. */
   json?: boolean;
   /** Answer a repeated request for the same URL from the first one's result. */
   cache?: boolean;
-};
+}
 
-type CurlResult = {
+interface CurlResult {
   error: Error | undefined;
   body: unknown;
-};
+}
 
 let cachedResults: Record<string, CurlResult | undefined> | undefined;
 
@@ -346,7 +346,7 @@ export async function curl(url: string | URL, options: CurlOptions = {}): Promis
   if (hostname === "api.github.com" || hostname === "uploads.github.com") {
     const githubToken = getGithubToken();
     if (githubToken) {
-      headers["Authorization"] = `Bearer ${githubToken}`;
+      headers.Authorization = `Bearer ${githubToken}`;
     }
   }
 
@@ -458,12 +458,12 @@ export function getFileUrl(filename?: string, line?: number | string): URL | str
 }
 
 /** The fields of Buildkite's build JSON (`<build url>.json`) that are read here and in .buildkite/ci.ts. */
-type BuildkiteBuild = {
+interface BuildkiteBuild {
   id: string;
   state: string;
   prev_branch_build?: { url: string } | null;
   steps: { label: string; outcome: string }[];
-};
+}
 
 export async function getLastSuccessfulBuild(): Promise<BuildkiteBuild | undefined> {
   if (isBuildkite) {
@@ -497,7 +497,7 @@ export async function getLastSuccessfulBuild(): Promise<BuildkiteBuild | undefin
         return;
       }
 
-      url = new URL(previousBuild["url"], url);
+      url = new URL(previousBuild.url, url);
     }
   }
 
@@ -547,14 +547,14 @@ function unescapeXml(string: string): string {
     .replace(/&amp;/g, "&");
 }
 
-export type JunitFileSuite = {
+export interface JunitFileSuite {
   /** failed tests in the whole file, describe blocks included */
   failures: number;
   /** wall clock of the whole file, loading it included */
   seconds: number;
   /** the failed tests, in report order */
   cases: { name: string; message: string }[];
-};
+}
 
 /**
  * Reads the report written by `bun test --reporter=junit` into one entry per test file,
@@ -650,16 +650,16 @@ export function getBuildMetadata(name: string): string | undefined {
   return undefined;
 }
 
-type BuildkiteAnnotation = {
+interface BuildkiteAnnotation {
   context?: string | undefined;
   label: string;
   content: string;
   style?: "error" | "warning" | "info";
   priority?: number;
   attempt?: number;
-};
+}
 
-export function reportAnnotationToBuildKite({
+export function reportAnnotationToBuildkite({
   context,
   label,
   content,
@@ -690,7 +690,7 @@ export function reportAnnotationToBuildKite({
   const cause = error?.message || signal || (status == null ? "timed out" : `exit code ${status}`);
   if (attempt === 0) {
     console.error(`buildkite-agent annotate failed for '${label}' (${cause}), retrying...`);
-    return reportAnnotationToBuildKite({ context, label, content, style, priority, attempt: attempt + 1 });
+    return reportAnnotationToBuildkite({ context, label, content, style, priority, attempt: attempt + 1 });
   }
   // Annotations are best-effort: log and move on rather than throwing, which
   // would abort the test runner mid-suite over a cosmetic failure.
@@ -750,7 +750,7 @@ export function startGroup(title: string, fn?: () => unknown): Promise<unknown> 
   }
 }
 
-export function endGroup(): void {
+function endGroup(): void {
   if (isGithubAction) {
     console.log("::endgroup::");
   } else {

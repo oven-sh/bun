@@ -21,7 +21,7 @@ function parseLevel(level?: string): "notice" | "warning" | "error" {
   return "notice";
 }
 
-export type Annotation = {
+export interface Annotation {
   title: string;
   content: string;
   source?: string | undefined;
@@ -31,10 +31,10 @@ export type Annotation = {
   line?: number | undefined;
   column?: number | undefined;
   metadata?: Record<string, string> | undefined;
-};
+}
 
 /** What a log line was matched into, before parseAnnotation() normalizes it. */
-type AnnotationInput = {
+interface AnnotationInput {
   title?: string | undefined;
   content?: string | string[] | undefined;
   source?: string | undefined;
@@ -43,25 +43,25 @@ type AnnotationInput = {
   line?: string | undefined;
   column?: string | undefined;
   metadata?: Record<string, string | undefined> | undefined;
-};
+}
 
-type AnnotationContext = {
+interface AnnotationContext {
   cwd?: string;
   command?: string[];
-};
+}
 
 export function parseAnnotation(options: AnnotationInput, context?: AnnotationContext): Annotation {
-  const cwd = (context?.["cwd"] || process.cwd()).replace(/\\/g, "/");
-  const source = options["source"];
-  const level = parseLevel(options["level"]);
-  const title = options["title"] || (source ? `${source} ${level}` : level);
-  const path = options["filename"]?.replace(/\\/g, "/");
-  const line = parseInt(options["line"] ?? "") || undefined;
-  const column = parseInt(options["column"] ?? "") || undefined;
-  const content = options["content"];
+  const cwd = (context?.cwd || process.cwd()).replace(/\\/g, "/");
+  const source = options.source;
+  const level = parseLevel(options.level);
+  const title = options.title || (source ? `${source} ${level}` : level);
+  const path = options.filename?.replace(/\\/g, "/");
+  const line = parseInt(options.line ?? "") || undefined;
+  const column = parseInt(options.column ?? "") || undefined;
+  const content = options.content;
   const lines = Array.isArray(content) ? content : content?.split(/\r?\n/) || [];
   const metadata = Object.fromEntries(
-    Object.entries(options["metadata"] || {}).filter((entry): entry is [string, string] => entry[1] !== undefined),
+    Object.entries(options.metadata || {}).filter((entry): entry is [string, string] => entry[1] !== undefined),
   );
 
   // Drop leading blank lines, collapse runs of blank lines, and drop the
@@ -99,10 +99,10 @@ export function parseAnnotation(options: AnnotationInput, context?: AnnotationCo
   };
 }
 
-type AnnotationFormatOptions = {
+interface AnnotationFormatOptions {
   concise?: boolean;
   buildkite?: boolean;
-};
+}
 
 export function formatAnnotationToHtml(annotation: Annotation, options: AnnotationFormatOptions = {}): string {
   const { title, content, source, level, filename, line } = annotation;
@@ -168,10 +168,10 @@ export function formatAnnotationToHtml(annotation: Annotation, options: Annotati
   return html;
 }
 
-type AnnotationResult = {
+interface AnnotationResult {
   annotations: Annotation[];
   content: string;
-};
+}
 
 export function parseAnnotations(content: string): AnnotationResult {
   const annotations: Annotation[] = [];

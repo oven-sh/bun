@@ -117,10 +117,14 @@ function setBuildMetadata(name: string, value: string): void {
 }
 
 /** The fields of GitHub's "get the latest release" response that are read here. */
-type GithubRelease = { tag_name: string };
+interface GithubRelease {
+  tag_name: string;
+}
 
 /** The fields of GitHub's "compare two commits" response that are read here. */
-type GithubComparison = { ahead_by?: unknown };
+interface GithubComparison {
+  ahead_by?: unknown;
+}
 
 async function getCanaryRevision(): Promise<number> {
   if (isPullRequest() || isFork()) {
@@ -265,7 +269,7 @@ type Distro = "debian" | "ubuntu" | "alpine" | "amazonlinux";
 type Tier = "latest" | "previous" | "oldest" | "eol" | "beta";
 type Profile = "release" | "assert" | "debug" | "asan";
 
-type Target = {
+interface Target {
   os: Os;
   arch: Arch;
   abi?: Abi | undefined;
@@ -279,7 +283,7 @@ type Target = {
    * this — they already imply a Linux host.
    */
   crossCompile?: boolean;
-};
+}
 
 function getTargetKey(target: Target): string {
   const { os, arch, abi, baseline, profile } = target;
@@ -527,10 +531,10 @@ function getPriority(): number {
  * Agents
  */
 
-type Ec2Options = {
+interface Ec2Options {
   /** `undefined` when getAzureVmSize() has no size for the machine asked for. */
   instanceType: string | undefined;
-};
+}
 
 function getEc2Agent(platform: Platform, options: PipelineOptions, ec2Options: Ec2Options): Ec2Agent {
   const { os, arch, abi, distro, release, crossCompile } = platform;
@@ -926,10 +930,10 @@ function getTraceOrderStep(target: Target, tracePlatform: Platform, options: Pip
   };
 }
 
-type TestOptions = {
+interface TestOptions {
   buildId?: string | undefined;
   testFiles?: string[] | undefined;
-};
+}
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
   const { os, profile } = platform;
@@ -1230,10 +1234,10 @@ function getReleaseStep(
   };
 }
 
-type Pipeline = {
+interface Pipeline {
   steps?: Step[];
   priority?: number;
-};
+}
 
 /**
  * The agent tags a step targets. toYaml() drops the `undefined` ones.
@@ -1241,7 +1245,7 @@ type Pipeline = {
 type Agent = Ec2Agent | QueueAgent;
 
 /** A machine created for the job from `image-name` and `instance-type`. */
-type Ec2Agent = {
+interface Ec2Agent {
   os: Os;
   arch: Arch;
   abi: Abi | undefined;
@@ -1254,43 +1258,43 @@ type Ec2Agent = {
   preemptible: boolean;
   /** Image the machine as `image-name` once the step passes (see getLinuxBuildImageSteps). */
   bake?: boolean;
-};
+}
 
 /** A standing agent: the hosted queues, and the bare-metal darwin test fleet. */
-type QueueAgent = {
+interface QueueAgent {
   queue: string | undefined;
   os?: Os;
   arch?: Arch;
   "release-tier"?: Tier;
-};
+}
 
 /**
  * @link https://buildkite.com/docs/pipelines/configure/retry
  */
-type Retry = {
+interface Retry {
   manual: { permit_on_passed: boolean };
   automatic: AutomaticRetry[] | false;
-};
+}
 
-type AutomaticRetry = {
+interface AutomaticRetry {
   exit_status?: number | "*";
   signal_reason?: "none" | "agent_stop" | "process_run_error";
   limit: number;
-};
+}
 
 type Step = GroupStep | CommandStep | BlockStep;
 
-type GroupStep = {
+interface GroupStep {
   key: string;
   group: string;
   steps: CommandStep[];
   depends_on?: string[];
-};
+}
 
 /**
  * @link https://buildkite.com/docs/pipelines/command-step
  */
-type CommandStep = {
+interface CommandStep {
   key: string;
   label?: string;
   agents?: Agent;
@@ -1303,23 +1307,23 @@ type CommandStep = {
   soft_fail?: boolean;
   parallelism?: number;
   timeout_in_minutes?: number;
-};
+}
 
-type BlockStep = {
+interface BlockStep {
   key: string;
   block: string;
   blocked_state?: "passed" | "failed" | "running";
   fields?: (SelectInput | TextInput)[];
-};
+}
 
-type TextInput = {
+interface TextInput {
   key: string;
   text: string;
   required?: boolean;
   hint?: string;
-};
+}
 
-type SelectInput = {
+interface SelectInput {
   key: string;
   select: string;
   default?: string | string[];
@@ -1327,12 +1331,12 @@ type SelectInput = {
   multiple?: boolean;
   hint?: string;
   options?: SelectOption[];
-};
+}
 
-type SelectOption = {
+interface SelectOption {
   label: string;
   value: string;
-};
+}
 
 /**
  * An on/off option. From a commit subject it is the text of the `[tag]` that
@@ -1341,7 +1345,7 @@ type SelectOption = {
  */
 type OptionFlag = string | boolean | undefined;
 
-type PipelineOptions = {
+interface PipelineOptions {
   skipEverything?: OptionFlag;
   skipBuilds?: OptionFlag;
   skipTests?: OptionFlag;
@@ -1359,7 +1363,7 @@ type PipelineOptions = {
   testPlatforms?: Platform[];
   testFiles?: string[] | undefined;
   changedFiles?: string[];
-};
+}
 
 function getStepWithDependsOn<T extends GroupStep | CommandStep>(step: T, ...dependsOn: (string | undefined)[]): T {
   const { depends_on: existingDependsOn = [] } = step;
@@ -1594,7 +1598,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     const buildPlatformKeys = parseArray(options["build-platforms"]);
     const testPlatformKeys = parseArray(options["test-platforms"]);
     return {
-      canary: parseBoolean(options["canary"] ?? "") ? canary : 0,
+      canary: parseBoolean(options.canary ?? "") ? canary : 0,
       skipBuilds: parseBoolean(options["skip-builds"] ?? ""),
       forceBuilds: parseBoolean(options["force-builds"] ?? ""),
       skipTests: parseBoolean(options["skip-tests"] ?? ""),
@@ -1668,10 +1672,15 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
 }
 
 /** The fields of Buildkite's "list agents" response that are read here. */
-type BuildkiteAgent = { connection_state: string; meta_data?: string[] };
+interface BuildkiteAgent {
+  connection_state: string;
+  meta_data?: string[];
+}
 
 /** The fields of Buildkite's "list builds" response that are read here. */
-type BuildkiteBuildJobs = { jobs?: { state: string; agent_query_rules?: string[] }[] };
+interface BuildkiteBuildJobs {
+  jobs?: { state: string; agent_query_rules?: string[] }[];
+}
 
 /**
  * True when the darwin beta queue can take one more job right now: an
@@ -2022,7 +2031,10 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
 }
 
 /** The fields of GitHub's "list pull requests files" response that are read here. */
-type GithubPullRequestFile = { filename: string; status: string };
+interface GithubPullRequestFile {
+  filename: string;
+  status: string;
+}
 
 async function main() {
   startGroup("Generating options...");

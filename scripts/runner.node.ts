@@ -67,7 +67,7 @@ import {
   markBuildkiteStepReported,
   parseJunitFileSuites,
   printEnvironment,
-  reportAnnotationToBuildKite,
+  reportAnnotationToBuildkite,
   startGroup,
   stripAnsi,
   unescapeGitHubAction,
@@ -108,12 +108,12 @@ function getShell(): string | undefined {
   return process.env.SHELL;
 }
 
-type LiveOutputFilterOptions = {
+interface LiveOutputFilterOptions {
   /** the runner itself runs in GitHub Actions */
   github?: boolean;
   /** the runner itself runs in Buildkite */
   buildkite?: boolean;
-};
+}
 
 type LiveOutputFilter = ((chunk: string) => string) & { end: () => string };
 
@@ -285,7 +285,7 @@ function getNodeParallelTestTimeout(testPath: string): number {
   // 85400). 120s lets the safety timer fire.
   if (testPath.includes("test-fs-read-stream-pos")) return 120_000;
   if (!isCI) return 60_000; // everything slower in debug mode
-  if (options["step"]?.includes("-asan-")) return 60_000;
+  if (options.step?.includes("-asan-")) return 60_000;
   return 20_000;
 }
 
@@ -390,12 +390,15 @@ if (cliOptions.junit) {
   }
 }
 
-if (options["quiet"]) {
+if (options.quiet) {
   isQuiet = true;
 }
 
 /** The fields of GitHub's "list pull request files" response that are read here. */
-type GithubPullRequestFile = { filename: string; status: string };
+interface GithubPullRequestFile {
+  filename: string;
+  status: string;
+}
 
 let allFiles: string[] = [];
 let newFiles: string[] = [];
@@ -471,13 +474,13 @@ if (options["coredump-upload"]) {
 
 let remapPort: number | undefined = undefined;
 
-type TestExpectation = {
+interface TestExpectation {
   filename: string;
   expectations: string[];
   bugs: string[] | undefined;
   modifiers: string[] | undefined;
   comment: string | undefined;
-};
+}
 
 function getTestExpectations(): TestExpectation[] {
   const expectationsPath = join(cwd, "test", "expectations.txt");
@@ -571,7 +574,10 @@ const flakyTests = (() => {
 const isKnownFlakyTest = (title: string) => flakyTests.has(title.replaceAll("\\", "/"));
 
 /** The fields of test/parallel-allowlist.json that are read here. */
-type ParallelAllowlist = { dirs: string[]; excludeFiles: string[] };
+interface ParallelAllowlist {
+  dirs: string[];
+  excludeFiles: string[];
+}
 
 const parallelAllowlist = (() => {
   try {
@@ -665,19 +671,19 @@ function getTestModifiers(testPath: string): string[] {
  * results for a whole shard.
  */
 function assertExpectedPlatform() {
-  const expectedOs = process.env["EXPECTED_PLATFORM_OS"];
+  const expectedOs = process.env.EXPECTED_PLATFORM_OS;
   if (!expectedOs) {
     return; // step does not declare expectations (e.g. local runs)
   }
 
   const checks: [key: string, expected: string | undefined, actual: string | undefined][] = [
     ["os", expectedOs, getOs()],
-    ["arch", process.env["EXPECTED_PLATFORM_ARCH"], getArch()],
-    ["abi", process.env["EXPECTED_PLATFORM_ABI"], getAbi()],
-    ["distro", process.env["EXPECTED_PLATFORM_DISTRO"], getDistro()],
+    ["arch", process.env.EXPECTED_PLATFORM_ARCH, getArch()],
+    ["abi", process.env.EXPECTED_PLATFORM_ABI, getAbi()],
+    ["distro", process.env.EXPECTED_PLATFORM_DISTRO, getDistro()],
   ];
 
-  const expectedRelease = process.env["EXPECTED_PLATFORM_RELEASE"];
+  const expectedRelease = process.env.EXPECTED_PLATFORM_RELEASE;
   if (expectedRelease) {
     // Major-version prefix match: "26" accepts "26.4", "25.04" accepts "25.04.1".
     const actualRelease = getDistroVersion();
@@ -738,8 +744,8 @@ async function runTests(): Promise<TestResult[]> {
   assertExpectedPlatform();
 
   let execPath: string;
-  if (options["step"]) {
-    execPath = await getExecPathFromBuildKite(options["step"], options["build-id"]);
+  if (options.step) {
+    execPath = await getExecPathFromBuildkite(options.step, options["build-id"]);
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
@@ -817,8 +823,8 @@ async function runTests(): Promise<TestResult[]> {
   let vendorTests: VendorTest[] | undefined;
   let vendorTotal = 0;
   if (
-    (options["vendor"] !== undefined && /true|1|yes|on/i.test(options["vendor"])) ||
-    (isCI && typeof options["vendor"] === "undefined")
+    (options.vendor !== undefined && /true|1|yes|on/i.test(options.vendor)) ||
+    (isCI && typeof options.vendor === "undefined")
   ) {
     vendorTests = await getVendorTests(cwd);
     if (vendorTests.length) {
@@ -835,9 +841,9 @@ async function runTests(): Promise<TestResult[]> {
   const flakyResultsTitles: string[] = [];
   const failedResults: TestResult[] = [];
   const failedResultsTitles: string[] = [];
-  const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
+  const maxAttempts = 1 + (parseInt(options.retries) || 0);
 
-  const parallelism = options["parallel"] ? availableParallelism() : 1;
+  const parallelism = options.parallel ? availableParallelism() : 1;
   console.log("parallelism", parallelism);
   const limit = createLimit(parallelism);
 
@@ -947,12 +953,12 @@ async function runTests(): Promise<TestResult[]> {
       const result = title.startsWith("vendor") ? { ...failure, testPath: title } : failure;
       const content = formatTestToMarkdown(result, false, attempt - 1, newFlaky);
       if (content) {
-        reportAnnotationToBuildKite({ context, label: title, content, style, priority });
+        reportAnnotationToBuildkite({ context, label: title, content, style, priority });
       }
     }
 
     if (isGithubAction) {
-      const summaryPath = process.env["GITHUB_STEP_SUMMARY"];
+      const summaryPath = process.env.GITHUB_STEP_SUMMARY;
       if (summaryPath) {
         const longMarkdown = formatTestToMarkdown(failure, false, attempt - 1);
         appendFileSync(summaryPath, longMarkdown);
@@ -961,7 +967,7 @@ async function runTests(): Promise<TestResult[]> {
       appendFileSync("comment.md", shortMarkdown);
     }
 
-    if (options["bail"]) {
+    if (options.bail) {
       markBuildkiteStepReported();
       process.exit(getExitCode("fail"));
     }
@@ -1183,7 +1189,7 @@ async function runTests(): Promise<TestResult[]> {
       const range = `${getAnsi("gray")}[${i + 1}-${i + bucketFiles.length}/${total}]${getAnsi("reset")}`;
       const junitPath = join(
         cwd,
-        `parallel-bucket-junit-${(options["step"] || getOs()).replace(/[^a-zA-Z0-9._-]/g, "_")}-shard${options["shard"] ?? 0}.xml`,
+        `parallel-bucket-junit-${(options.step || getOs()).replace(/[^a-zA-Z0-9._-]/g, "_")}-shard${options.shard ?? 0}.xml`,
       );
       const isAsan = basename(execPath).includes("asan");
       const perTestTimeout = Math.ceil(testTimeout / 2) * (isAsan ? 3 : 1);
@@ -1236,7 +1242,7 @@ async function runTests(): Promise<TestResult[]> {
       try {
         suites = parseJunitFileSuites(readFileSync(junitPath, "utf-8"));
       } catch {}
-      if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
+      if (suites.size && isBuildkite) uploadArtifactsToBuildkite(junitPath);
       else rmSync(junitPath, { force: true });
 
       const failed = new Set<string>(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
@@ -1324,7 +1330,7 @@ async function runTests(): Promise<TestResult[]> {
               ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
               : "";
             const unlisted = !isKnownFlakyTest(title);
-            reportAnnotationToBuildKite({
+            reportAnnotationToBuildkite({
               context: unlisted ? "flaky-new" : "flaky",
               label: title,
               style: "warning",
@@ -1427,7 +1433,7 @@ async function runTests(): Promise<TestResult[]> {
   }
 
   // Generate and upload JUnit reports if requested
-  if (options["junit"]) {
+  if (options.junit) {
     const junitTempDir = options["junit-temp-dir"];
     mkdirSync(junitTempDir, { recursive: true });
 
@@ -1450,7 +1456,7 @@ async function runTests(): Promise<TestResult[]> {
 
       // Upload this report immediately if we're on BuildKite
       if (isBuildkite && options["junit-upload"]) {
-        const uploadSuccess = await uploadJUnitToBuildKite(nonBunTestJunitPath);
+        const uploadSuccess = await uploadJUnitToBuildkite(nonBunTestJunitPath);
         if (uploadSuccess) {
           // Delete the file after successful upload to prevent redundant uploads
           try {
@@ -1488,7 +1494,7 @@ async function runTests(): Promise<TestResult[]> {
 
             if (existsSync(filePath)) {
               try {
-                const uploadSuccess = await uploadJUnitToBuildKite(filePath);
+                const uploadSuccess = await uploadJUnitToBuildkite(filePath);
                 if (uploadSuccess) {
                   // Delete the file after successful upload
                   try {
@@ -1629,7 +1635,7 @@ type SpawnEnv = Record<string, string | undefined>;
 /** Called per chunk; `end` when the stream closes. */
 type SpawnOutputHandler = ((chunk: string) => void) & { end?: () => void };
 
-type SpawnOptions = {
+interface SpawnOptions {
   command: string;
   args: string[];
   cwd?: string | undefined;
@@ -1643,9 +1649,9 @@ type SpawnOptions = {
   idleTimeout?: number | undefined;
   /** How many times spawning has already been retried after EBUSY or UNKNOWN. */
   retries?: number;
-};
+}
 
-type SpawnResult = {
+interface SpawnResult {
   ok: boolean;
   error: string | undefined;
   spawnError: NodeJS.ErrnoException | undefined;
@@ -1656,7 +1662,7 @@ type SpawnResult = {
   duration: number;
   stdout: string;
   pid: number | undefined;
-};
+}
 
 /**
  * Node creates the "pipe" streams of a child process as net.Socket, which is what has
@@ -1980,7 +1986,11 @@ type SpawnBunOptions = Omit<SpawnOptions, "command">;
 type SpawnBunResult = SpawnResult & { crashes?: string };
 
 /** One entry of the response of the ci-remap server to `/traces`. */
-type RemappedTrace = { failed_parse?: string; failed_remap?: unknown; remap?: string };
+interface RemappedTrace {
+  failed_parse?: string;
+  failed_remap?: unknown;
+  remap?: string;
+}
 
 /**
  * @param execPath Path to bun binary
@@ -2026,12 +2036,12 @@ async function spawnBun(
   }
 
   if (isWindows) {
-    delete bunEnv["PATH"];
-    bunEnv["Path"] = path;
+    delete bunEnv.PATH;
+    bunEnv.Path = path;
     for (const tmpdir of ["TMPDIR", "TEMP", "TEMPDIR", "TMP"]) {
       delete bunEnv[tmpdir];
     }
-    bunEnv["TEMP"] = tmpdirPath;
+    bunEnv.TEMP = tmpdirPath;
   }
   if (timeout === undefined) {
     timeout = spawnBunTimeout;
@@ -2139,7 +2149,7 @@ async function spawnBun(
   }
 }
 
-type TestResult = {
+interface TestResult {
   testPath: string;
   ok: boolean;
   status: string;
@@ -2152,9 +2162,9 @@ type TestResult = {
   exitCode?: SpawnResult["exitCode"];
   signalCode?: SpawnResult["signalCode"];
   duration?: number;
-};
+}
 
-type TestEntry = {
+interface TestEntry {
   url?: URL | string | undefined;
   file: string | undefined;
   test: string;
@@ -2163,10 +2173,10 @@ type TestEntry = {
   error?: TestError;
   errors?: TestError[];
   duration?: number | undefined;
-};
+}
 
 /** A `::error` workflow command printed by `bun test`; its properties are strings as printed. */
-type TestError = {
+interface TestError {
   url?: URL | string | undefined;
   file: string | undefined;
   line: string | undefined;
@@ -2175,15 +2185,15 @@ type TestError = {
   stack: string;
   /** the name of the test the error belongs to */
   test?: string;
-};
+}
 
-type SpawnBunTestOptions = {
+interface SpawnBunTestOptions {
   cwd: string;
   args?: string[];
   env?: SpawnEnv;
   stdout?: SpawnOutputHandler;
   stderr?: SpawnOutputHandler;
-};
+}
 
 async function spawnBunTest(
   execPath: string,
@@ -2193,9 +2203,9 @@ async function spawnBunTest(
   const timeout = getTestTimeout(testPath);
   const isAsan = basename(execPath).includes("asan");
   const perTestTimeout = Math.ceil(timeout / 2) * (isAsan ? 3 : 1);
-  const absPath = join(opts["cwd"], testPath);
+  const absPath = join(opts.cwd, testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
-  const args = opts["args"] ?? [];
+  const args = opts.args ?? [];
 
   const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`, "--reporter=dots"];
 
@@ -2221,7 +2231,7 @@ async function spawnBunTest(
 
   const env: SpawnEnv = {
     GITHUB_ACTIONS: "true", // always true so annotations are parsed
-    ...opts["env"],
+    ...opts.env,
   };
   if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(relative(cwd, absPath))) {
     env.BUN_JSC_validateExceptionChecks = "1";
@@ -2243,7 +2253,7 @@ async function spawnBunTest(
 
   const { ok, error, stdout, crashes } = await spawnBun(execPath, {
     args: isReallyTest ? testArgs : [...args, absPath],
-    cwd: opts["cwd"],
+    cwd: opts.cwd,
     // release-asan with debug-assertions on runs every spawned subprocess
     // slower; give each file more headroom so tests with heavy beforeAll
     // setup (napi node-gyp compiles) or many subprocess spawns don't hit
@@ -2306,11 +2316,11 @@ function pipeTestStdout(io: NodeJS.WritableStream): ((chunk: string) => void) & 
   return write;
 }
 
-type TestOutput = {
+interface TestOutput {
   stdout: string;
   tests: TestEntry[];
   errors: TestError[];
-};
+}
 
 function parseTestStdout(stdout: string, testPath?: string): TestOutput {
   const tests: TestEntry[] = [];
@@ -2544,7 +2554,7 @@ function getTests(cwd: string): string[] {
 }
 
 /** An entry of test/vendor.json. */
-type Vendor = {
+interface Vendor {
   package: string;
   repository: string;
   tag: string;
@@ -2553,14 +2563,14 @@ type Vendor = {
   testRunner?: string;
   testExtensions?: string[];
   skipTests?: boolean | Record<string, boolean | string>;
-};
+}
 
-type VendorTest = {
+interface VendorTest {
   cwd: string;
   packageManager: string;
   testRunner: string;
   testPaths: string[];
-};
+}
 
 async function getVendorTests(cwd: string): Promise<VendorTest[]> {
   const vendorPath = join(cwd, "test", "vendor.json");
@@ -2572,7 +2582,7 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
     (a, b) => a.package.localeCompare(b.package) || a.tag.localeCompare(b.tag),
   );
 
-  const shardId = parseInt(options["shard"]);
+  const shardId = parseInt(options.shard);
   const maxShards = parseInt(options["max-shards"]);
 
   let relevantVendors: Vendor[] = [];
@@ -2682,7 +2692,7 @@ function loadExpectedDurations(cwd: string): Record<string, number> {
       string,
       Record<string, unknown>
     >;
-    const step = options["step"] || "";
+    const step = options.step || "";
     // Most specific column first, then the nearest lane, then anything.
     const columns = step.includes("asan")
       ? ["asan"]
@@ -2727,7 +2737,7 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     );
   };
 
-  const includes = options["include"]?.flatMap(getFilter);
+  const includes = options.include?.flatMap(getFilter);
   if (includes?.length) {
     availableTests.push(...tests.filter(testPath => includes.some(filter => isMatch(testPath, filter))));
     !isQuiet && console.log("Including tests:", includes, availableTests.length, "/", tests.length);
@@ -2735,7 +2745,7 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     availableTests.push(...tests);
   }
 
-  const excludes = options["exclude"]?.flatMap(getFilter);
+  const excludes = options.exclude?.flatMap(getFilter);
   if (excludes?.length) {
     const excludedTests = availableTests.filter(testPath => excludes.some(filter => isMatch(testPath, filter)));
     if (excludedTests.length) {
@@ -2768,13 +2778,13 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     }
   }
 
-  const shardId = parseInt(options["shard"]);
+  const shardId = parseInt(options.shard);
   const maxShards = parseInt(options["max-shards"]);
   if (filters?.length) {
     filteredTests.push(...availableTests.filter(testPath => filters.some(filter => isMatch(testPath, filter))));
     !isQuiet && console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
-  } else if (options["smoke"] !== undefined) {
-    const smokePercent = parseFloat(options["smoke"]) || 0.01;
+  } else if (options.smoke !== undefined) {
+    const smokePercent = parseFloat(options.smoke) || 0.01;
     const smokeCount = Math.ceil(availableTests.length * smokePercent);
     const smokeTests = new Set<string>();
     for (let i = 0; i < smokeCount; i++) {
@@ -2896,7 +2906,7 @@ function getExecPath(bunExe: string): string {
   throw new Error(`Could not find executable: ${bunExe}`, { cause: error });
 }
 
-async function getExecPathFromBuildKite(target: string, buildId?: string): Promise<string> {
+async function getExecPathFromBuildkite(target: string, buildId?: string): Promise<string> {
   if (existsSync(target) || target.includes("/")) {
     return getExecPath(target);
   }
@@ -3067,7 +3077,7 @@ function formatTestToMarkdown(
   return markdown;
 }
 
-function uploadArtifactsToBuildKite(glob: string): void {
+function uploadArtifactsToBuildkite(glob: string): void {
   spawn("buildkite-agent", ["artifact", "upload", glob], {
     stdio: ["ignore", "ignore", "ignore"],
     timeout: spawnTimeout,
@@ -3076,7 +3086,7 @@ function uploadArtifactsToBuildKite(glob: string): void {
 }
 
 function reportOutputToGitHubAction(name: string, value: string | number): void {
-  const outputPath = process.env["GITHUB_OUTPUT"];
+  const outputPath = process.env.GITHUB_OUTPUT;
   if (!outputPath) {
     return;
   }
@@ -3177,15 +3187,15 @@ let getBuildkiteAnalyticsToken = () => {
   return token;
 };
 
-type JUnitTestCase = {
+interface JUnitTestCase {
   name: string;
   classname: string;
   time: number;
   failure?: { message: string; type: string; content: string | undefined };
   skipped?: { message: string };
-};
+}
 
-type JUnitTestSuite = {
+interface JUnitTestSuite {
   name: string;
   tests: JUnitTestCase[];
   failures: number;
@@ -3195,7 +3205,7 @@ type JUnitTestSuite = {
   timestamp: string;
   hostname: string;
   stdout: string;
-};
+}
 
 /**
  * Generate a JUnit XML report from test results
@@ -3360,21 +3370,21 @@ function generateJUnitReport(outfile: string, results: TestResult[]): void {
   !isQuiet && console.log(`JUnit XML report written to ${outfile}`);
 }
 
-let isUploadingToBuildKite = false;
+let isUploadingToBuildkite = false;
 const junitUploadQueue: string[] = [];
 async function addToJunitUploadQueue(junitFilePath: string): Promise<void> {
   junitUploadQueue.push(junitFilePath);
 
-  if (!isUploadingToBuildKite) {
+  if (!isUploadingToBuildkite) {
     drainJunitUploadQueue();
   }
 }
 
 async function drainJunitUploadQueue(): Promise<void> {
-  isUploadingToBuildKite = true;
+  isUploadingToBuildkite = true;
   while (junitUploadQueue.length > 0) {
     const testPath = junitUploadQueue.shift()!; // junitUploadQueue.length > 0
-    await uploadJUnitToBuildKite(testPath)
+    await uploadJUnitToBuildkite(testPath)
       .then(uploadSuccess => {
         unlink(testPath, () => {
           if (!uploadSuccess) {
@@ -3386,7 +3396,7 @@ async function drainJunitUploadQueue(): Promise<void> {
         console.error(`Error uploading JUnit report for ${testPath}:`, err);
       });
   }
-  isUploadingToBuildKite = false;
+  isUploadingToBuildkite = false;
 }
 
 /**
@@ -3394,7 +3404,7 @@ async function drainJunitUploadQueue(): Promise<void> {
  * @param junitFile - Path to the JUnit XML file to upload
  * @returns Whether the upload was successful
  */
-async function uploadJUnitToBuildKite(junitFile: string): Promise<boolean> {
+async function uploadJUnitToBuildkite(junitFile: string): Promise<boolean> {
   const fileName = basename(junitFile);
   !isQuiet && console.log(`Uploading JUnit file "${fileName}" to BuildKite Test Analytics...`);
 
@@ -3515,7 +3525,7 @@ async function disableSmartAppControl(): Promise<void> {
   }
 }
 
-export async function main(): Promise<void> {
+async function main(): Promise<void> {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => onExit(signal));
   }

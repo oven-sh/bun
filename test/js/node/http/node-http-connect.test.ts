@@ -471,9 +471,14 @@ describe("HTTP server CONNECT", () => {
           if (paused) socket.pause();
           socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
           // Paused: every tunnel byte arrives before anything reads the request or the socket.
+          // The deadline is below the default test timeout, so a stalled tunnel reports its byte count.
+          const deadline = Date.now() + 4000;
           while (paused && socket.readableLength < payload.length) {
             if (tunnelClosed) {
               throw new Error(`tunnel closed with ${socket.readableLength} of ${payload.length} bytes buffered`);
+            }
+            if (Date.now() > deadline) {
+              throw new Error(`only ${socket.readableLength} of ${payload.length} bytes buffered in the paused socket`);
             }
             await new Promise(tick => setImmediate(tick));
           }

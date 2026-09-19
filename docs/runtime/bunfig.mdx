@@ -342,6 +342,17 @@ retry = 3
 
 The `--retry` CLI flag overrides this setting.
 
+### `test.concurrent`
+
+Treat all tests as `test.concurrent()` tests, as if you passed the `--concurrent` flag. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+concurrent = true
+```
+
+Equivalent CLI flag: `--concurrent`. When both values are valid, the CLI value takes precedence. Invalid `test.concurrent` values still fail validation.
+
 ### `test.concurrentTestGlob`
 
 Test files matching this glob pattern run all of their tests concurrently, as if you passed the `--concurrent` flag.

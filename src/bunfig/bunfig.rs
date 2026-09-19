@@ -580,6 +580,14 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
+                if let Some(expr) = test.get(b"concurrent") {
+                    self.expect(&expr, ExprTag::EBoolean)?;
+                    if !self.ctx.test_options.concurrent_from_cli {
+                        self.ctx.test_options.concurrent =
+                            expr.as_bool().expect("infallible: type checked");
+                    }
+                }
+
                 if let Some(expr) = test.get(b"concurrentTestGlob") {
                     match &expr.data {
                         ExprData::EString(s) => {

@@ -581,10 +581,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             await doHttp2Request(HTTPS_SERVER, HTTPS_SERVER, { ":path": "/", "test-header": "A".repeat(90000) });
             expect("unreachable").toBe(true);
           } catch (err) {
-            // Verified against node v26.3.0: a header block the encoder cannot emit fails the
-            // session with COMPRESSION_ERROR (9), it does not just reset the stream.
-            expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(err.message).toBe("Session closed with error code 9");
+            // Verified against node v26.3.0: nghttp2 refuses a block over the default
+            // maxSendHeaderBlockLength (65536) before it deflates it, so only this request fails.
+            expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
+            expect(err.message).toBe("Stream closed with error code NGHTTP2_REFUSED_STREAM");
           }
         });
         it("should be destroyed after close", async () => {

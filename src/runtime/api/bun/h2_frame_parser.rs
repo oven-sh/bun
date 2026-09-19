@@ -246,6 +246,8 @@ const WRITE_FLUSHED_WITHOUT_CALLBACK: u32 = 0x10;
 // RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
 // for the HPACK dynamic table entry structure
 const HPACK_ENTRY_OVERHEAD: usize = 32;
+// nghttp2's default `max_send_header_block_length`
+const NGHTTP2_MAX_HEADERSLEN: usize = 65536;
 // Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
 const MAX_CUSTOM_SETTINGS: usize = 10;
 
@@ -2481,6 +2483,64 @@ impl H2FrameParser {
         // event loop, so that call still returns with its stream usable for the rest of the tick.
         self.pending_header_compression_error.set(true);
         self.register_auto_flush();
+    }
+
+    /// Node's `onFrameError` for a HEADERS block that is over the send limit.
+    fn refuse_header_block(&self, stream: &mut Stream) {
+        let identifier = stream.get_identifier();
+        identifier.ensure_still_alive();
+        self.dispatch_with_2_extra(
+            JSH2FrameParser::Gc::onFrameError,
+            identifier,
+            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+        );
+        if self.is_server.get() {
+            // The peer opened this stream (or was promised it) and waits for a response:
+            // node resets it with the frame error's code.
+            self.end_stream(stream, ErrorCode::FRAME_SIZE_ERROR);
+        } else {
+            // The request never reached the wire, so there is nothing to reset. nghttp2
+            // closes it locally with REFUSED_STREAM so the application can retry. The entry
+            // stays in the map: JS calls rst_stream() for it from _destroy, and for an id
+            // the map does not have, rst_stream() writes the frame. The peer has never seen
+            // this id, so that RST_STREAM would be a connection error.
+            stream.state = StreamState::CLOSED;
+            stream.rst_code = ErrorCode::REFUSED_STREAM.0;
+            self.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                identifier,
+                JSValue::js_number(stream.rst_code as f64),
+            );
+        }
+    }
+
+    /// nghttp2 refuses a block over `maxSendHeaderBlockLength` (default 65536) before deflating it.
+    fn fail_unencodable_header_field(
+        &self,
+        global_object: &JSGlobalObject,
+        stream_id: u32,
+        stream_ctx_arg: JSValue,
+        name: &[u8],
+        value: &[u8],
+    ) -> JSValue {
+        let Some(stream_ptr) = self.handle_received_stream_id(stream_id) else {
+            return JSValue::js_number(-1.0);
+        };
+        let mut stream = self.enter_stream_dispatch(stream_ptr);
+        if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
+            stream.set_context(stream_ctx_arg, global_object);
+        }
+        let limit = match self.max_send_header_block_length.get() {
+            0 => NGHTTP2_MAX_HEADERSLEN,
+            limit => limit as usize,
+        };
+        if name.len() + value.len() > limit {
+            self.refuse_header_block(&mut stream);
+        } else {
+            self.schedule_header_compression_session_error();
+        }
+        JSValue::js_number(stream_id as f64)
     }
 
     fn set_corked(parser: Option<RefPtr<H2FrameParser>>) -> Option<RefPtr<H2FrameParser>> {
@@ -6634,18 +6694,13 @@ impl H2FrameParser {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
-                        };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
-                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                            && stream_ctx_arg.is_object()
-                        {
-                            stream.set_context(stream_ctx_arg, global_object);
-                        }
-                        this.schedule_header_compression_session_error();
-                        return Ok(JSValue::js_number(stream_id as f64));
+                        return Ok(this.fail_unencodable_header_field(
+                            global_object,
+                            stream_id,
+                            stream_ctx_arg,
+                            validated_name,
+                            value,
+                        ));
                     }
                 }
             }
@@ -6804,18 +6859,13 @@ impl H2FrameParser {
                                 return Err(global_object
                                     .throw(format_args!("Failed to allocate header buffer")));
                             }
-                            let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                                return Ok(JSValue::js_number(-1.0));
-                            };
-                            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                            let stream = unsafe { &mut *stream };
-                            if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                                && stream_ctx_arg.is_object()
-                            {
-                                stream.set_context(stream_ctx_arg, global_object);
-                            }
-                            this.schedule_header_compression_session_error();
-                            return Ok(JSValue::UNDEFINED);
+                            return Ok(this.fail_unencodable_header_field(
+                                global_object,
+                                stream_id,
+                                stream_ctx_arg,
+                                validated_name,
+                                value,
+                            ));
                         }
                     }
                 } else if !js_value.is_empty_or_undefined_or_null() {
@@ -6874,18 +6924,13 @@ impl H2FrameParser {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
-                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
-                            return Ok(JSValue::js_number(-1.0));
-                        };
-                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
-                        let stream = unsafe { &mut *stream };
-                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
-                            && stream_ctx_arg.is_object()
-                        {
-                            stream.set_context(stream_ctx_arg, global_object);
-                        }
-                        this.schedule_header_compression_session_error();
-                        return Ok(JSValue::js_number(stream_id as f64));
+                        return Ok(this.fail_unencodable_header_field(
+                            global_object,
+                            stream_id,
+                            stream_ctx_arg,
+                            validated_name,
+                            value,
+                        ));
                     }
                 }
             }
@@ -7103,33 +7148,7 @@ impl H2FrameParser {
         if this.max_send_header_block_length.get() != 0
             && encoded_size > this.max_send_header_block_length.get() as usize
         {
-            let identifier = stream.get_identifier();
-            identifier.ensure_still_alive();
-            this.dispatch_with_2_extra(
-                JSH2FrameParser::Gc::onFrameError,
-                identifier,
-                JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-            );
-
-            if this.is_server.get() {
-                // The peer opened this stream (or was promised it) and waits for a response:
-                // node resets it with the frame error's code.
-                this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
-            } else {
-                // The request never reached the wire, so there is nothing to reset. nghttp2
-                // closes it locally with REFUSED_STREAM so the application can retry. The entry
-                // stays in the map: JS calls rst_stream() for it from _destroy, and for an id
-                // the map does not have, rst_stream() writes the frame. The peer has never seen
-                // this id, so that RST_STREAM would be a connection error.
-                stream.state = StreamState::CLOSED;
-                stream.rst_code = ErrorCode::REFUSED_STREAM.0;
-                this.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamError,
-                    identifier,
-                    JSValue::js_number(stream.rst_code as f64),
-                );
-            }
+            this.refuse_header_block(&mut stream);
             return Ok(JSValue::js_number(stream_id as f64));
         }
 

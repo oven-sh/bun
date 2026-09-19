@@ -14,6 +14,7 @@ import tls from "node:tls";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
+import { collect as collectSentInfoHeaders } from "./http2-sent-info-headers.fixture.js";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx, mock } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
 // there; the 10k-request maxSessionMemory stress test takes ~105s under
@@ -1832,66 +1833,54 @@ it("Symbol keys of the headers object are not sent as headers", async () => {
   }
 });
 
-// node's getter returns the slot as is, and only additionalHeaders() creates the array
-// (lib/internal/http2/core.js, Http2Stream#sentInfoHeaders).
-it("stream.sentInfoHeaders is undefined until additionalHeaders() sends a 1xx block", async () => {
-  const server = http2.createServer();
-  let client;
-  try {
-    let serverSeen;
-    let onServerStreamClose;
-    server.on("stream", (stream, headers) => {
-      serverSeen = { beforeRespond: stream.sentInfoHeaders };
-      if (headers[":path"] === "/info") {
-        stream.additionalHeaders({ ":status": 102 });
-        serverSeen.afterAdditionalHeaders = stream.sentInfoHeaders;
-      }
-      stream.respond({ ":status": 200 });
-      serverSeen.afterRespond = stream.sentInfoHeaders;
-      stream.on("close", () => {
-        serverSeen.atClose = stream.sentInfoHeaders;
-        onServerStreamClose();
-      });
-      stream.end("ok");
-    });
-    await new Promise(resolve => server.listen(0, resolve));
-    client = http2.connect(`http://localhost:${server.address().port}`);
-    const { promise: sessionFailed, reject: onSessionError } = Promise.withResolvers();
-    client.on("error", onSessionError);
-
-    // Sends one request and resolves once its stream is closed on both sides.
-    async function sentInfoHeadersFor(path) {
-      const serverStreamClosed = new Promise(resolve => (onServerStreamClose = resolve));
-      const { promise: clientStreamClosed, resolve, reject } = Promise.withResolvers();
-      const req = client.request({ ":path": path });
-      const clientSeen = { afterRequest: req.sentInfoHeaders };
-      req.on("error", reject);
-      req.on("close", () => {
-        clientSeen.atClose = req.sentInfoHeaders;
-        resolve();
-      });
-      req.resume();
-      req.end();
-      await Promise.race([Promise.all([clientStreamClosed, serverStreamClosed]), sessionFailed]);
-      return { client: clientSeen, server: serverSeen };
-    }
-
-    expect(await sentInfoHeadersFor("/plain")).toStrictEqual({
-      client: { afterRequest: undefined, atClose: undefined },
-      server: { beforeRespond: undefined, afterRespond: undefined, atClose: undefined },
-    });
-    expect(await sentInfoHeadersFor("/info")).toStrictEqual({
-      client: { afterRequest: undefined, atClose: undefined },
+// node's getter returns the slot as is, and only a block that additionalHeaders() sends creates
+// the array (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2192-L2194).
+// The fixture collects the value at each point of a stream's life. Bun runs it in this process
+// and Node.js runs it as a script: both must produce the same document.
+it("stream.sentInfoHeaders lists only the 1xx blocks that were sent, like Node.js", async () => {
+  const unset = { afterRequest: "undefined", atClose: "undefined" };
+  const info = [{ ":status": 102 }];
+  const expected = [
+    {
+      path: "/plain",
+      client: unset,
+      server: { onStream: "undefined", additionalHeaders: [], afterRespond: "undefined", atClose: "undefined" },
+    },
+    {
+      path: "/invalid",
+      client: unset,
       server: {
-        beforeRespond: undefined,
-        afterAdditionalHeaders: [{ ":status": 102 }],
-        afterRespond: [{ ":status": 102 }],
-        atClose: [{ ":status": 102 }],
+        onStream: "undefined",
+        additionalHeaders: [{ result: "ERR_INVALID_HTTP_TOKEN", sentInfoHeaders: "undefined" }],
+        afterRespond: "undefined",
+        atClose: "undefined",
       },
-    });
-  } finally {
-    server.close();
-    client?.close?.();
+    },
+    {
+      path: "/info-then-invalid",
+      client: unset,
+      server: {
+        onStream: "undefined",
+        additionalHeaders: [
+          { result: "sent", sentInfoHeaders: info },
+          { result: "ERR_INVALID_HTTP_TOKEN", sentInfoHeaders: info },
+        ],
+        afterRespond: info,
+        atClose: info,
+      },
+    },
+  ];
+
+  expect(await collectSentInfoHeaders()).toEqual(expected);
+
+  const node = nodeExe();
+  if (node) {
+    const fixture = path.join(import.meta.dir, "http2-sent-info-headers.fixture.js");
+    await using proc = Bun.spawn({ cmd: [node, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A crash leaves stdout empty. Show stderr in the failure then.
+    expect(stdout ? JSON.parse(stdout) : stderr).toEqual(expected);
+    expect(exitCode).toBe(0);
   }
 });
 

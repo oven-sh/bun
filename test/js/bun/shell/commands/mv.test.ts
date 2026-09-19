@@ -15,6 +15,7 @@ import {
   statSync,
   symlinkSync,
   writeFileSync,
+  type Stats,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "path";
@@ -235,6 +236,50 @@ describe("mv", async () => {
       }
     });
 
+    test.skipIf(skip)("directory and file modes are kept across devices", async () => {
+      const [src, dst] = crossDevicePair("modes");
+      try {
+        const srcDir = join(src, "tree");
+        mkdirSync(srcDir);
+        writeFileSync(join(srcDir, "f.txt"), "F\n");
+        chmodSync(join(srcDir, "f.txt"), 0o604);
+        chmodSync(srcDir, 0o750);
+
+        const r = await $`mv ${srcDir} ${dst}`.quiet();
+        expect(r.stderr.toString()).toBe("");
+        expect(r.exitCode).toBe(0);
+        expect({
+          tree: (statSync(join(dst, "tree")).mode & 0o7777).toString(8),
+          file: (statSync(join(dst, "tree", "f.txt")).mode & 0o7777).toString(8),
+        }).toEqual({ tree: "750", file: "604" });
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
+    // The copy belongs to the mover until the move gives it its owner. The FIFO
+    // stops the move partway, which shows the mode the copy has until then.
+    test.skipIf(skip)("a directory in flight across devices is private to the mover", async () => {
+      const [src, dst] = crossDevicePair("in-flight");
+      try {
+        const srcDir = join(src, "tree");
+        mkdirSync(srcDir);
+        chmodSync(srcDir, 0o755);
+        const { exitCode: mk } = Bun.spawnSync({ cmd: ["mkfifo", join(srcDir, "pipe")] });
+        expect(mk).toBe(0);
+
+        const r = await $`mv ${srcDir} ${dst}`.quiet();
+        expect(r.stderr.toString()).toContain("not supported");
+        expect(r.exitCode).not.toBe(0);
+        expect((statSync(join(dst, "tree")).mode & 0o7777).toString(8)).toBe("700");
+        expect(lstatSync(join(srcDir, "pipe")).isFIFO()).toBe(true);
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
     // Needs root: only root can create a file that another user owns. The move
     // runs as `nobody`, who cannot enter the harness TMPDIR (mode 0700), so both
     // ends are world-writable mounts.
@@ -275,20 +320,21 @@ describe("mv", async () => {
       if (!isLinux || isRoot) return undefined;
       const mover = process.getuid!();
       for (const path of ["/usr/bin/passwd", "/usr/bin/sudo", "/bin/su", "/usr/bin/chsh", "/usr/bin/gpasswd"]) {
-        let uid: number;
-        let mode: number;
+        // `lstat`: `mv` copies a symlink as a symlink, and Alpine links these names to busybox.
+        let st: Stats;
         try {
-          ({ uid, mode } = statSync(path));
+          st = lstatSync(path);
         } catch {
           continue;
         }
-        mode &= 0o7777;
+        if (!st.isFile()) continue;
+        const { uid, dev } = st;
+        const mode = st.mode & 0o7777;
         // `fchown` fails only for an owner that this user cannot set.
         if ((mode & (0o4000 | 0o2000)) === 0 || uid === mover) continue;
         if (!canAccess(path, constants.R_OK)) continue;
         // A writable parent would let `mv` delete the system file.
         if (canAccess(join(path, ".."), constants.W_OK)) continue;
-        const { dev } = statSync(path);
         for (const root of [other, "/dev/shm", tmp]) {
           if (root === undefined) continue;
           try {

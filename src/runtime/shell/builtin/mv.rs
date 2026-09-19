@@ -507,6 +507,10 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::{Dir, E, File, O, S, Tag};
 
+        // The copy belongs to the mover until `copy_owner_and_mode` runs. Until then
+        // no other user can reach it, and it has no set-id bits (coreutils `omitted_permissions`).
+        const OWNER_ONLY: bun_core::Mode = 0o700;
+
         let st = bun_sys::lstatat(src_dir, src)?;
         let mode = st.st_mode as bun_core::Mode;
 
@@ -545,15 +549,13 @@ impl ShellMvBatchedTask {
                 return Err(bun_sys::Error::from_code(E::ENOENT, Tag::rename));
             }
             let st = sst;
-            let mode = st.st_mode as bun_core::Mode;
-            // `| 0o700` so children can be written even when the source mode is read-only; restored via `fchmod` below.
-            if let Err(e) = bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700) {
+            if let Err(e) = bun_sys::mkdirat(dst_dir, dst, OWNER_ONLY) {
                 if e.get_errno() != E::EEXIST {
                     return Err(e);
                 }
                 // Refuse to merge into a non-empty dest (matches same-device `ENOTEMPTY`).
                 bun_sys::rmdirat(dst_dir, dst)?;
-                bun_sys::mkdirat(dst_dir, dst, (mode & 0o7777) | 0o700)?;
+                bun_sys::mkdirat(dst_dir, dst, OWNER_ONLY)?;
             }
             let dd = Dir::from_fd(shell_openat(
                 dst_dir,
@@ -577,7 +579,7 @@ impl ShellMvBatchedTask {
             #[cfg(unix)]
             Self::copy_owner_and_mode(dd.fd(), &st);
             #[cfg(windows)]
-            let _ = bun_sys::fchmod(dd.fd(), mode & 0o7777);
+            let _ = bun_sys::fchmod(dd.fd(), st.st_mode as bun_core::Mode & 0o7777);
             drop((sd, dd));
             return bun_sys::rmdirat(src_dir, src);
         }
@@ -605,7 +607,7 @@ impl ShellMvBatchedTask {
             dst_dir,
             dst.as_bytes(),
             O::WRONLY | O::CREAT | O::TRUNC | O::CLOEXEC | O::NOFOLLOW,
-            mode & 0o7777,
+            mode & OWNER_ONLY,
         )?;
         let _ = bun_sys::preallocate_file(out.fd().native(), 0, st.st_size as _);
         if let Err(e) = bun_sys::copy_file(in_.fd(), out.fd()) {

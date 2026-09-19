@@ -772,6 +772,10 @@ fn refetch_manifest_for_missing_version(
     id: DependencyID,
     is_root: bool,
 ) -> crate::Result<bool> {
+    if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        return Ok(false);
+    }
+
     let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();
     let task_id = Task::Id::for_manifest(&name_str);
 
@@ -990,18 +994,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
-                            // Only for failures reported as errors: an
-                            // optional dependency skips silently and an unmet
-                            // peer only warns, and neither warranted a network
-                            // request before.
+                            // Not for peers: an unmet peer only warns, and
+                            // bun-lock.test.ts pins that it makes no request.
                             if matches!(
                                 err,
                                 crate::Error::DistTagNotFound | crate::Error::NoMatchingVersion
                             ) && matches!(
                                 version.tag,
                                 dependency::version::Tag::Npm | dependency::version::Tag::DistTag
-                            ) && dependency.behavior.is_required()
-                                && !dependency.behavior.is_peer()
+                            ) && !dependency.behavior.is_peer()
                                 && refetch_manifest_for_missing_version(
                                     this, name, dependency, id, is_root,
                                 )?

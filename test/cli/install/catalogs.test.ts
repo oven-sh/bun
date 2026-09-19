@@ -1821,6 +1821,112 @@ describe("version published after the manifest was cached", () => {
     expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
   });
 
+  const optionalOn = (version: string) =>
+    JSON.stringify({ name: "root", optionalDependencies: { "fresh-pkg": version } });
+
+  test.concurrent("an optional dependency bump to the new version installs it", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    using dir = writeRegistryProject({ "package.json": optionalOn("1.0.0") }, server.url.href);
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    versions.push("1.0.1");
+    await write(join(String(dir), "package.json"), optionalOn("1.0.1"));
+
+    // Without the refetch this install also exits 0: it skips the optional
+    // dependency without a message and saves a lockfile that never retries it.
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir));
+    expect(second.err).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
+    expect((await file(join(String(dir), "node_modules", "fresh-pkg", "package.json")).json()).version).toBe("1.0.1");
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain('"fresh-pkg@1.0.1"');
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+  });
+
+  test.concurrent("an optional dependency on a version that does not exist is skipped after one refetch", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    using dir = writeRegistryProject({ "package.json": optionalOn("1.0.0") }, server.url.href);
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    await write(join(String(dir), "package.json"), optionalOn("9.9.9"));
+
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir));
+    expect(second.err).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
+    expect(await file(join(String(dir), "bun.lock")).text()).not.toContain('"fresh-pkg@');
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+
+    // The lockfile records the skip, so an unchanged project makes no request.
+    const third = await install(String(dir));
+    expect(third.err).not.toContain("error:");
+    expect(third.exitCode).toBe(0);
+    expect(manifestRequests.slice(requestsBefore + 1)).toEqual([]);
+  });
+
+  test.concurrent("--offline reports the missing version and makes no request", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    using dir = writeRegistryProject(
+      { "package.json": JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.0" } }) },
+      server.url.href,
+    );
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    versions.push("1.0.1");
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.1" } }),
+    );
+
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir), "--offline");
+    expect(second.err).toContain('No version matching "1.0.1" found for specifier "fresh-pkg"');
+    expect(second.exitCode).not.toBe(0);
+    expect(manifestRequests.slice(requestsBefore)).toEqual([]);
+  });
+
+  test.concurrent("--prefer-offline fetches the manifest again for a version the cache lacks", async () => {
+    const versions = ["1.0.0"];
+    const { server, manifestRequests } = serveMutableRegistry({ "fresh-pkg": versions });
+    await using _server = server;
+    using dir = writeRegistryProject(
+      { "package.json": JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.0" } }) },
+      server.url.href,
+    );
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+
+    versions.push("1.0.1");
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "root", dependencies: { "fresh-pkg": "1.0.1" } }),
+    );
+
+    const requestsBefore = manifestRequests.length;
+    const second = await install(String(dir), "--prefer-offline");
+    expect(second.err).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
+    expect((await file(join(String(dir), "node_modules", "fresh-pkg", "package.json")).json()).version).toBe("1.0.1");
+    expect(manifestRequests.slice(requestsBefore)).toEqual([{ name: "fresh-pkg", ifNoneMatch: null }]);
+  });
+
   test.concurrent("a bump to a dist-tag published after the manifest was cached installs it", async () => {
     const versions = ["1.0.0"];
     const tags: Record<string, string> = {};

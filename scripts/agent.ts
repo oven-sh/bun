@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 
-// An agent that starts buildkite-agent and runs others services.
+// Installs and starts the Buildkite agent service on a CI machine.
+//
+// This is the one file of Bun's that runs on a CI machine outside a checkout:
+// `install` copies it into the agent's home, and the machine's service runs the
+// copy. So it imports nothing but Node. The rest of the CI scripts import what
+// it knows about the machine (os, arch, abi, distro, ...) from here.
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
@@ -10,11 +15,6 @@ import { dirname, join } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
-
-// This is the one file of Bun's that runs on a CI machine outside a checkout:
-// `install` copies it into the agent's home, and the machine's service runs the
-// copy. So it imports nothing but Node. The rest of the CI scripts import what
-// it knows about the machine (os, arch, abi, distro, ...) from here.
 
 export const isWindows = process.platform === "win32";
 export const isMacOS = process.platform === "darwin";
@@ -160,38 +160,31 @@ export type Arch = "x64" | "aarch64";
 
 export type Abi = "musl" | "gnu" | "android";
 
-function parseOs(string: string): Os {
-  if (/darwin|apple|mac/i.test(string)) {
-    return "darwin";
-  }
-  if (/linux|android/i.test(string)) {
-    return "linux";
-  }
-  if (/freebsd/i.test(string)) {
-    return "freebsd";
-  }
-  if (/win/i.test(string)) {
-    return "windows";
-  }
-  throw new Error(`Unsupported operating system: ${string}`);
-}
-
 export function getOs(): Os {
-  return parseOs(process.platform);
-}
-
-function parseArch(string: string): Arch {
-  if (/x64|amd64|x86_64/i.test(string)) {
-    return "x64";
+  switch (process.platform) {
+    case "darwin":
+      return "darwin";
+    case "linux":
+    case "android":
+      return "linux";
+    case "freebsd":
+      return "freebsd";
+    case "win32":
+      return "windows";
+    default:
+      throw new Error(`Unsupported operating system: ${process.platform}`);
   }
-  if (/arm64|aarch64/i.test(string)) {
-    return "aarch64";
-  }
-  throw new Error(`Unsupported architecture: ${string}`);
 }
 
 export function getArch(): Arch {
-  return parseArch(process.arch);
+  switch (process.arch) {
+    case "x64":
+      return "x64";
+    case "arm64":
+      return "aarch64";
+    default:
+      throw new Error(`Unsupported architecture: ${process.arch}`);
+  }
 }
 
 export function getKernel(): string | undefined {
@@ -372,91 +365,48 @@ export function getDistroVersion(): string | undefined {
 
 type Cloud = "aws" | "google" | "azure";
 
-let detectedCloud: Cloud | undefined;
-
-async function isAws(): Promise<boolean | undefined> {
-  if (typeof detectedCloud === "string") {
-    return detectedCloud === "aws";
-  }
-
-  async function checkAws(): Promise<boolean | undefined> {
-    if (isLinux) {
-      const kernel = release();
-      if (kernel.endsWith("-aws")) {
-        return true;
-      }
-
-      if (output(["systemd-detect-virt"])?.includes("amazon")) {
-        return true;
-      }
-
-      const dmiPath = "/sys/devices/virtual/dmi/id/board_asset_tag";
-      if (existsSync(dmiPath)) {
-        const dmiFile = readFileSync(dmiPath, { encoding: "utf-8" });
-        if (dmiFile.startsWith("i-")) {
-          return true;
-        }
-      }
+function isAws(): boolean {
+  if (isLinux) {
+    if (release().endsWith("-aws")) {
+      return true;
     }
 
-    if (isWindows) {
-      if (process.env.AWS_EXECUTION_ENV === "EC2") {
-        return true;
-      }
-
-      const manufacturer = output([
-        "powershell",
-        "-Command",
-        "Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object Manufacturer",
-      ]);
-      if (manufacturer !== undefined) {
-        return manufacturer.includes("Amazon");
-      }
+    if (output(["systemd-detect-virt"])?.includes("amazon")) {
+      return true;
     }
 
-    return undefined;
+    const dmiPath = "/sys/devices/virtual/dmi/id/board_asset_tag";
+    if (existsSync(dmiPath) && readFileSync(dmiPath, "utf8").startsWith("i-")) {
+      return true;
+    }
   }
 
-  if (await checkAws()) {
-    detectedCloud = "aws";
-    return true;
+  if (isWindows) {
+    if (process.env.AWS_EXECUTION_ENV === "EC2") {
+      return true;
+    }
+
+    const manufacturer = output([
+      "powershell",
+      "-Command",
+      "Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object Manufacturer",
+    ]);
+    return manufacturer?.includes("Amazon") ?? false;
   }
 
-  return undefined;
+  return false;
 }
 
-async function isGoogleCloud(): Promise<boolean | undefined> {
-  if (typeof detectedCloud === "string") {
-    return detectedCloud === "google";
+function isGoogleCloud(): boolean {
+  if (!isLinux) {
+    return false;
   }
-
-  async function detectGoogleCloud(): Promise<boolean | undefined> {
-    if (isLinux) {
-      const vendorPaths = [
-        "/sys/class/dmi/id/sys_vendor",
-        "/sys/class/dmi/id/bios_vendor",
-        "/sys/class/dmi/id/product_name",
-      ];
-
-      for (const vendorPath of vendorPaths) {
-        if (existsSync(vendorPath)) {
-          const vendorFile = readFileSync(vendorPath, { encoding: "utf-8" });
-          if (vendorFile.includes("Google")) {
-            return true;
-          }
-        }
-      }
-    }
-
-    return undefined;
-  }
-
-  if (await detectGoogleCloud()) {
-    detectedCloud = "google";
-    return true;
-  }
-
-  return undefined;
+  const vendorPaths = [
+    "/sys/class/dmi/id/sys_vendor",
+    "/sys/class/dmi/id/bios_vendor",
+    "/sys/class/dmi/id/product_name",
+  ];
+  return vendorPaths.some(path => existsSync(path) && readFileSync(path, "utf8").includes("Google"));
 }
 
 /** The fields of the Azure IMDS instance document that are read here. */
@@ -467,76 +417,43 @@ type AzureInstanceMetadata = {
   };
 } | null;
 
-async function isAzure(): Promise<boolean | undefined> {
-  if (typeof detectedCloud === "string") {
-    return detectedCloud === "azure";
+async function isAzure(): Promise<boolean> {
+  // Azure IMDS (Instance Metadata Service) — the official way to detect Azure VMs.
+  // https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service
+  const { error, body } = await request("http://169.254.169.254/metadata/instance?api-version=2021-02-01", {
+    headers: { "Metadata": "true" },
+    attempts: 1,
+  });
+  if (error || typeof body !== "string") {
+    return false;
   }
-
-  async function detectAzure(): Promise<boolean | undefined> {
-    // Azure IMDS (Instance Metadata Service) — the official way to detect Azure VMs.
-    // https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service
-    const { error, body } = await request("http://169.254.169.254/metadata/instance?api-version=2021-02-01", {
-      headers: { "Metadata": "true" },
-      attempts: 1,
-    });
-    if (!error && typeof body === "string" && body) {
-      try {
-        const metadata = JSON.parse(body) as AzureInstanceMetadata;
-        if (metadata?.compute?.azEnvironment) {
-          return true;
-        }
-      } catch {}
-    }
-
-    return undefined;
+  try {
+    const metadata = JSON.parse(body) as AzureInstanceMetadata;
+    return Boolean(metadata?.compute?.azEnvironment);
+  } catch {
+    return false;
   }
-
-  if (await detectAzure()) {
-    detectedCloud = "azure";
-    return true;
-  }
-
-  return undefined;
 }
 
+/** The cloud this machine is in, if any. */
 async function getCloud(): Promise<Cloud | undefined> {
-  if (typeof detectedCloud === "string") {
-    return detectedCloud;
-  }
-
-  if (await isAws()) {
+  if (isAws()) {
     return "aws";
   }
-
-  if (await isGoogleCloud()) {
+  if (isGoogleCloud()) {
     return "google";
   }
-
   if (await isAzure()) {
     return "azure";
   }
-
   return undefined;
 }
 
 /**
- * `name` is the path of the metadata entry, or one path per cloud. There is
- * no azure path: Azure serves one JSON document, and the caller picks fields
- * out of it.
+ * The metadata entry at `name`. Azure has no entries: it serves one JSON
+ * document, which is what this returns whatever the name.
  */
-async function getCloudMetadata(
-  name: string | { aws: string; google: string },
-  cloud?: Cloud,
-): Promise<string | undefined> {
-  cloud ??= await getCloud();
-  if (!cloud) {
-    return;
-  }
-
-  if (typeof name === "object") {
-    name = cloud === "azure" ? "" : name[cloud];
-  }
-
+async function getCloudMetadata(name: string, cloud: Cloud): Promise<string | undefined> {
   let url;
   let headers;
   if (cloud === "aws") {
@@ -562,9 +479,7 @@ async function getCloudMetadata(
   return typeof body === "string" ? body.trim() : undefined;
 }
 
-async function getCloudMetadataTag(tag: string, cloud?: Cloud): Promise<string | undefined> {
-  cloud ??= await getCloud();
-
+async function getCloudMetadataTag(tag: string, cloud: Cloud): Promise<string | undefined> {
   if (cloud === "azure") {
     // Azure IMDS returns all tags in a single JSON response.
     // Tags are in compute.tagsList as [{name, value}, ...].
@@ -581,12 +496,7 @@ async function getCloudMetadataTag(tag: string, cloud?: Cloud): Promise<string |
     return;
   }
 
-  const metadata = {
-    "aws": `tags/instance/${tag}`,
-    "google": `labels/${tag.replace(":", "-")}`,
-  };
-
-  return getCloudMetadata(metadata, cloud);
+  return getCloudMetadata(cloud === "aws" ? `tags/instance/${tag}` : `labels/${tag.replace(":", "-")}`, cloud);
 }
 
 interface AwsCredentials {
@@ -869,7 +779,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
     // Checked before anything is written, so a Mac that cannot be given a
     // token is left as it was.
     const token = process.env.BUILDKITE_AGENT_TOKEN;
-    if (isMacOS && cfgPath !== undefined && !token && !existsSync(cfgPath)) {
+    if (cfgPath !== undefined && !token && !existsSync(cfgPath)) {
       throw new Error("BUILDKITE_AGENT_TOKEN not set and no existing buildkite-agent.cfg to reuse");
     }
 
@@ -928,8 +838,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
       await run(["rc-update", "add", "buildkite-agent", "default"]);
     }
 
-    // cfgPath is set exactly when isMacOS is; the second check is for the type checker.
-    if (isMacOS && cfgPath !== undefined) {
+    if (cfgPath !== undefined) {
       const queue = cliOptions.queue || process.env.BUILDKITE_AGENT_QUEUE || "test-darwin";
       // `install` runs via sudo, so process.env.USER is "root". The launchd
       // service must run as the real login user (whose ~/Library the cfg and
@@ -1080,10 +989,10 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
     }
     // Images baked before the secret stores existed only had the tag.
     if (!token && cloud) {
-      token = await getCloudMetadataTag("buildkite:token");
+      token = await getCloudMetadataTag("buildkite:token", cloud);
     }
 
-    const hasCfg = isMacOS && cfgPath !== undefined && existsSync(cfgPath);
+    const hasCfg = cfgPath !== undefined && existsSync(cfgPath);
     if (!token && !hasCfg) {
       throw new Error(
         "Buildkite token not found: set BUILDKITE_AGENT_TOKEN or grant this machine access to the buildkite agent-token secret",
@@ -1118,16 +1027,16 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
 
     // On macOS, token/queue/spawn live in the cfg file written by `install`;
     // pass it via --config so re-running `install` is the single edit point.
-    // On other platforms, keep passing the token directly as before.
+    // On other platforms the token is passed directly.
     if (hasCfg) {
       options.config = cfgPath;
-    } else {
-      options.token = token || "xxx";
+    } else if (token) {
+      options.token = token;
     }
 
-    let ephemeral: boolean | undefined;
+    let ephemeral = false;
     if (cloud) {
-      const jobId = await getCloudMetadataTag("buildkite:job-uuid");
+      const jobId = await getCloudMetadataTag("buildkite:job-uuid", cloud);
       if (jobId) {
         options["acquire-job"] = jobId;
         flags.push("disconnect-after-job");
@@ -1157,14 +1066,14 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
       // distinct OS-age pools without needing per-box config. arm64 uses
       // latest+previous; x64 uses previous+oldest (Intel can't run latest).
       "release-tier": isMacOS ? darwinReleaseTier(distroVersion) : undefined,
-      "ephemeral": ephemeral || false,
+      "ephemeral": ephemeral,
       "cloud": cloud,
     };
 
     if (cloud) {
       const requiredTags = ["robobun", "robobun2"];
       for (const tag of requiredTags) {
-        const value = await getCloudMetadataTag(tag);
+        const value = await getCloudMetadataTag(tag, cloud);
         if (typeof value === "string") {
           tags[tag] = value;
         }
@@ -1172,7 +1081,7 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
     }
 
     options.tags = Object.entries(tags)
-      .filter(([, value]) => value !== undefined && value !== null && value !== "")
+      .filter(([, value]) => value !== undefined && value !== "")
       .map(([key, value]) => `${key}=${value}`)
       .join(",");
 

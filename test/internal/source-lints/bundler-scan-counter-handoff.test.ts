@@ -97,6 +97,21 @@ function blocksOpenAt(block: string, index: number): number {
   return open.filter(Boolean).length;
 }
 
+// The body of the block that `if !….enqueue_on_load_plugin_if_needed(…) {` opens,
+// as offsets into `block`, when the onLoad check at `index` has that form.
+function onLoadCheckBody(block: string, index: number): { start: number; end: number } | null {
+  if (!/\bif\s*!\s*[\w.]*$/.test(block.slice(Math.max(0, index - 80), index))) return null;
+  let close = block.indexOf("(", index);
+  for (let depth = 0; close < block.length; close++) {
+    if (block[close] === "(") depth++;
+    else if (block[close] === ")" && --depth === 0) break;
+  }
+  const open = block.slice(close + 1).match(/^\s*\{/);
+  if (open === null) return null;
+  const start = close + 1 + open[0].length;
+  return { start, end: start + restOfBlock(block.slice(start)).length };
+}
+
 function check(source: string, raw: string): { callSites: number; offenders: string[] } {
   const content = blank(raw);
   const lineOf = (index: number) => content.slice(0, index).split("\n").length;
@@ -111,23 +126,26 @@ function check(source: string, raw: string): { callSites: number; offenders: str
 
     const why = "a count that no task pays back never lets wait_for_parse() return.";
     let handOff = firstIndex(HAND_OFF, block);
-    const onLoadCheck = firstIndex(ON_LOAD_CHECK, block);
-    const viaOnLoadCheck = onLoadCheck !== -1 && (handOff === -1 || onLoadCheck < handOff);
-    if (viaOnLoadCheck) handOff = firstIndex(HAND_OFF, block, onLoadCheck);
 
-    // The hand-off has to run on every path. The one block it may sit in is the
-    // `if !…enqueue_on_load_plugin_if_needed(…) {` of an onLoad check: on the other
-    // path the plugin has the task.
-    if (handOff !== -1) {
-      const skippable = viaOnLoadCheck
-        ? blocksOpenAt(block, onLoadCheck) > 0 || blocksOpenAt(block, handOff) > 1
-        : blocksOpenAt(block, handOff) > 0;
-      if (skippable) {
-        offenders.push(
-          `${at}: the hand-off at line ${lineOf(after + handOff)} is inside a block that opens after increment_scan_counter(), so a path can skip it. Hand off on every path, at the level of the count: ${why}`,
-        );
-        continue;
+    // The hand-off has to run on every path, so it sits at the level of the
+    // count. The one block it may sit in is the body of
+    // `if !….enqueue_on_load_plugin_if_needed(…) {`, when that check is itself at
+    // the level of the count: on the other path the plugin has the task.
+    let onEveryPath = handOff === -1 || blocksOpenAt(block, handOff) === 0;
+    const onLoadCheck = firstIndex(ON_LOAD_CHECK, block);
+    if (onLoadCheck !== -1 && (handOff === -1 || onLoadCheck < handOff) && blocksOpenAt(block, onLoadCheck) === 0) {
+      const body = onLoadCheckBody(block, onLoadCheck);
+      const inBody = body === null ? -1 : firstIndex(HAND_OFF, block.slice(0, body.end), body.start);
+      if (body !== null && inBody !== -1 && blocksOpenAt(block.slice(body.start), inBody - body.start) === 0) {
+        handOff = inBody;
+        onEveryPath = true;
       }
+    }
+    if (!onEveryPath) {
+      offenders.push(
+        `${at}: the hand-off at line ${lineOf(after + handOff)} is inside a block that opens after increment_scan_counter(), so a path can skip it. Hand off on every path: at the level of the count, or directly inside \`if !….enqueue_on_load_plugin_if_needed(…) {\`. ${why[0].toUpperCase()}${why.slice(1)}`,
+      );
+      continue;
     }
 
     // A count with no hand-off in its block moves a unit that is already owed
@@ -180,6 +198,11 @@ test("the scan recognizes the shapes it claims to", () => {
       `self.increment_scan_counter();\nif !self.enqueue_on_load_plugin_if_needed(task) {\n    self.graph.pool().schedule(task);\n}\nOk(())`,
     ),
   ).toEqual([]);
+  expect(
+    fixture(
+      `self.increment_scan_counter();\nif !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {\n    self.graph.pool().schedule(task);\n}\nOk(())`,
+    ),
+  ).toEqual([]);
   // An `unsafe` block always runs, so a hand-off in it is on every path.
   expect(fixture(`self.increment_scan_counter();\nunsafe { (*pool).schedule(task) };\nOk(())`)).toEqual([]);
   // A unit that is already owed moves back into the count: no hand-off, no exit.
@@ -217,6 +240,13 @@ test("the scan recognizes the shapes it claims to", () => {
   expect(
     fixture(
       `self.increment_scan_counter();\nif ready {\n    if !self.enqueue_on_load_plugin_if_needed(task) {\n        self.graph.pool().schedule(task);\n    }\n}`,
+    ),
+  ).toEqual([expect.stringContaining("fixture.rs:2: the hand-off at line 5 is inside a block")]);
+
+  // Only the block of the onLoad check itself may hold the hand-off.
+  expect(
+    fixture(
+      `self.increment_scan_counter();\nself.enqueue_on_load_plugin_if_needed(task);\nif ready {\n    self.graph.pool().schedule(task);\n}`,
     ),
   ).toEqual([expect.stringContaining("fixture.rs:2: the hand-off at line 5 is inside a block")]);
 

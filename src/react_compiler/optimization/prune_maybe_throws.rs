@@ -16,7 +16,7 @@ use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, remove_dead_do_while_statements,
     remove_unnecessary_try_catch, remove_unreachable_for_updates,
 };
-use crate::hir::{BlockId, HirFunction, Instruction, InstructionValue, Terminal};
+use crate::hir::{BlockId, BlockKind, HirFunction, Instruction, InstructionValue, Terminal};
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
 
@@ -34,6 +34,25 @@ pub(crate) fn prune_maybe_throws(
         remove_dead_do_while_statements(&mut func.body);
         remove_unnecessary_try_catch(&mut func.body);
         mark_instruction_ids(&mut func.body, &mut func.instructions);
+        // Not in upstream. The fallthrough of a removed `try` can have one predecessor left
+        // while a phi still has an operand of the removed handler. For a block that it
+        // merges, the merge asserts on this where upstream raises the invariant.
+        for block in func.body.blocks.values() {
+            if block.kind == BlockKind::Block && block.preds.len() == 1 {
+                if let Some(phi) = block.phis.iter().find(|phi| phi.operands.len() != 1) {
+                    return Err(cold_invariant(
+                        "Found a block with a single predecessor but where a phi has multiple operands",
+                        Some(format!(
+                            "Block bb{} has a phi with {} operands",
+                            block.id.0,
+                            phi.operands.len(),
+                        )),
+                        None,
+                    )
+                    .into());
+                }
+            }
+        }
         merge_consecutive_blocks(func, functions);
 
         // Rewrite phi operands to reference the updated predecessor blocks

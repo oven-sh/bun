@@ -1,7 +1,16 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { access, appendFile, exists, mkdir, readFile, rm, writeFile } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, pack, readdirSorted, toBeValidBin, toHaveBins } from "harness";
+import {
+  VerdaccioRegistry,
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  pack,
+  readdirSorted,
+  toBeValidBin,
+  toHaveBins,
+} from "harness";
 import { basename, dirname, join } from "path";
 import {
   dummyAfterAll,
@@ -2808,15 +2817,22 @@ describe("bun update <name> semantics", () => {
     const GLOBAL_PINNED = { "no-deps": "1.0.0", "a-dep": "1.0.1" };
     const GLOBAL_WIDENED = { "no-deps": "^1.0.0", "a-dep": "^1.0.1" };
 
-    async function globalRepo() {
+    async function globalRepo(pinned: Json = GLOBAL_PINNED, widened: Json = GLOBAL_WIDENED) {
       const dir = await createDir({ "project/package.json": PROJECT });
       const project = join(dir, "project");
       const globalDir = join(dir, ".global", "install", "global");
+      const globalBinDir = join(dir, ".global", "bin");
       const runGlobal = async (...args: string[]) => {
         await using proc = spawn({
           cmd: [bunExe(), ...args, "-g", `--config=${join(dir, "bunfig.toml")}`],
           cwd: project,
-          env: { ...envFor(dir), BUN_INSTALL: join(dir, ".global") },
+          // Every global-dir variable is set so an inherited one can never point a test at the developer's real global folder.
+          env: {
+            ...envFor(dir),
+            BUN_INSTALL: join(dir, ".global"),
+            BUN_INSTALL_GLOBAL_DIR: globalDir,
+            BUN_INSTALL_BIN: globalBinDir,
+          },
           stdout: "pipe",
           stderr: "pipe",
           stdin: "ignore",
@@ -2824,14 +2840,14 @@ describe("bun update <name> semantics", () => {
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         return { stdout, stderr, exitCode };
       };
-      const added = await runGlobal("add", "no-deps@1.0.0", "a-dep@1.0.1");
+      const added = await runGlobal("add", ...Object.entries(pinned).map(([name, version]) => `${name}@${version}`));
       expect(added.stderr).not.toContain("error:");
       expect(added.exitCode).toBe(0);
       const globalJson = await packageJsonOf(globalDir);
-      expect(globalJson.dependencies).toStrictEqual(GLOBAL_PINNED);
-      await writeFile(join(globalDir, "package.json"), stringify({ ...globalJson, dependencies: GLOBAL_WIDENED }));
+      expect(globalJson.dependencies).toStrictEqual(pinned);
+      await writeFile(join(globalDir, "package.json"), stringify({ ...globalJson, dependencies: widened }));
       const projectBefore = await packageJsonText(project);
-      return { project, globalDir, runGlobal, projectBefore };
+      return { project, globalDir, globalBinDir, runGlobal, projectBefore };
     }
 
     async function expectGlobalInSync(globalDir: string, dependencies: Json) {
@@ -2891,6 +2907,105 @@ describe("bun update <name> semantics", () => {
       expect(await installedVersion(globalDir, "no-deps")).toBe(noDeps);
       expect(await installedVersion(globalDir, "a-dep")).toBe(aDep);
       await expectProjectUntouched(project, projectBefore);
+    });
+
+    // bin-change-dir 1.0.1 moves its bin to another file and map-bin 1.0.2 adds two bins. uses-what-bin has no bin:
+    // the bin of its dependency what-bin belongs in the global node_modules/.bin, not in the global bin dir.
+    const BINS_PINNED = { "bin-change-dir": "1.0.0", "map-bin": "1.0.1", "uses-what-bin": "1.0.0" };
+    const BINS_WIDENED = { "bin-change-dir": "^1.0.0", "map-bin": "^1.0.1", "uses-what-bin": "^1.0.0" };
+    const binFiles = (...names: string[]) =>
+      (isWindows ? names.flatMap(name => [`${name}.bunx`, `${name}.exe`]) : names).sort();
+    const globalBinTarget = (...path: string[]) => join("..", "install", "global", "node_modules", ...path);
+
+    it.concurrent.each([[[]], [["--latest"]], [["bin-change-dir", "map-bin", "uses-what-bin"]]])(
+      "bun update -g %p links the bins of the new versions into the global bin dir",
+      async args => {
+        const { globalDir, globalBinDir, runGlobal } = await globalRepo(BINS_PINNED, BINS_WIDENED);
+        expect(await readdirSorted(globalBinDir)).toEqual(binFiles("bin-change-dir"));
+
+        const { stderr, exitCode } = await runGlobal("update", ...args);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect(await installedVersion(globalDir, "what-bin")).toBe("1.5.0");
+        expect(await readdirSorted(join(globalDir, "node_modules", ".bin"))).toEqual(binFiles("what-bin"));
+        expect(await readdirSorted(globalBinDir)).toEqual(binFiles("bin-change-dir", "map-bin", "map_bin"));
+        expect(join(globalBinDir, "bin-change-dir")).toBeValidBin(
+          globalBinTarget("bin-change-dir", "bin-1.0.1", "bin.js"),
+        );
+        expect(join(globalBinDir, "map-bin")).toBeValidBin(globalBinTarget("map-bin", "bin", "map-bin"));
+        expect(join(globalBinDir, "map_bin")).toBeValidBin(globalBinTarget("map-bin", "bin", "map-bin"));
+      },
+    );
+
+    // Both name a package and reach the installer with no update request. The run installs bin-change-dir again.
+    it.concurrent.each([[["add", "--only-missing", "map-bin"]], [["patch", "map-bin"]]])(
+      "bun %p -g links no other global package",
+      async args => {
+        const { globalDir, globalBinDir, runGlobal } = await globalRepo(BINS_PINNED, BINS_PINNED);
+        await Promise.all([
+          rm(join(globalDir, "node_modules", "bin-change-dir"), { recursive: true, force: true }),
+          ...binFiles("bin-change-dir").map(name => rm(join(globalBinDir, name))),
+        ]);
+
+        const { stderr, exitCode } = await runGlobal(...args);
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect(await installedVersion(globalDir, "bin-change-dir")).toBe("1.0.0");
+        expect(await readdirSorted(globalBinDir)).toEqual([]);
+      },
+    );
+
+    it.concurrent("bun add -g <package> links only that package when it installs another one again", async () => {
+      const { globalDir, globalBinDir, runGlobal } = await globalRepo(BINS_PINNED, BINS_PINNED);
+      await Promise.all([
+        rm(join(globalDir, "node_modules", "bin-change-dir"), { recursive: true, force: true }),
+        ...binFiles("bin-change-dir").map(name => rm(join(globalBinDir, name))),
+      ]);
+
+      const { stderr, exitCode } = await runGlobal("add", "map-bin-multiple@1.0.2");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await installedVersion(globalDir, "bin-change-dir")).toBe("1.0.0");
+      expect(await readdirSorted(globalBinDir)).toEqual(binFiles("map-bin", "map_bin"));
+    });
+
+    // map-bin and map-bin-multiple declare the same two bins. The package the user named last owns them.
+    it.concurrent("bun update -g leaves the bins of a package it did not update alone", async () => {
+      const { globalBinDir, runGlobal } = await globalRepo(
+        { "bin-change-dir": "1.0.0", "map-bin": "1.0.2" },
+        { "bin-change-dir": "^1.0.0", "map-bin": "1.0.2" },
+      );
+      const added = await runGlobal("add", "map-bin-multiple@1.0.2");
+      expect(added.stderr).not.toContain("error:");
+      expect(added.exitCode).toBe(0);
+      expect(join(globalBinDir, "map-bin")).toBeValidBin(globalBinTarget("map-bin-multiple", "bin", "map-bin"));
+
+      const { stderr, exitCode } = await runGlobal("update");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await readdirSorted(globalBinDir)).toEqual(binFiles("bin-change-dir", "map-bin", "map_bin"));
+      expect(join(globalBinDir, "bin-change-dir")).toBeValidBin(
+        globalBinTarget("bin-change-dir", "bin-1.0.1", "bin.js"),
+      );
+      expect(join(globalBinDir, "map-bin")).toBeValidBin(globalBinTarget("map-bin-multiple", "bin", "map-bin"));
+      expect(join(globalBinDir, "map_bin")).toBeValidBin(globalBinTarget("map-bin-multiple", "bin", "map-bin"));
+    });
+
+    it.concurrent("bun ci -g links the bins of the packages it installs into the global bin dir", async () => {
+      const { globalDir, globalBinDir, runGlobal } = await globalRepo(BINS_PINNED, BINS_PINNED);
+      await Promise.all([
+        rm(join(globalDir, "node_modules"), { recursive: true, force: true }),
+        rm(globalBinDir, { recursive: true, force: true }),
+      ]);
+
+      const { stderr, exitCode } = await runGlobal("ci");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await readdirSorted(join(globalDir, "node_modules", ".bin"))).toEqual(binFiles("what-bin"));
+      expect(await readdirSorted(globalBinDir)).toEqual(binFiles("bin-change-dir"));
+      expect(join(globalBinDir, "bin-change-dir")).toBeValidBin(
+        globalBinTarget("bin-change-dir", "bin-1.0.0", "bin.js"),
+      );
     });
   });
 });

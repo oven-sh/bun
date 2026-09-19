@@ -299,3 +299,17 @@ bun --heap-prof --heap-prof-dir ./profiles script.js
 | `--heap-prof-name <filename>`  | Set output filename                                                                                                                        |
 | `--heap-prof-dir <dir>`        | Set output directory                                                                                                                       |
 | `--heap-prof-interval <bytes>` | Accepted for Node.js compatibility (the snapshot is taken once at exit; JavaScriptCore has no allocation sampling to apply an interval to) |
+
+### Profiling tests
+
+CPU and heap profiling flags also work with `bun test`:
+
+```sh terminal icon="terminal"
+bun test --cpu-prof-md
+bun test --heap-prof-md
+```
+
+<Note>
+  Profiling is not supported with multiple `--parallel` workers. Run tests without `--parallel`, or use `--parallel=1`,
+  to profile the test process.
+</Note>

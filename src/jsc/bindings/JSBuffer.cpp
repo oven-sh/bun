@@ -331,9 +331,7 @@ static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JS
     return encoded.value();
 }
 
-// Node's getEncodingOps does `encoding += ''`: ToPrimitive with no hint, so
-// valueOf() runs before toString() on an object encoding and a Symbol throws.
-// A plain toString() would use hint "string" and call toString() first.
+// Node's getEncodingOps does `encoding += ''`: valueOf() before toString(), a Symbol throws.
 static JSString* encodingToString(JSC::ThrowScope& scope, JSC::JSGlobalObject* lexicalGlobalObject, JSValue arg)
 {
     JSValue primitive = arg.toPrimitive(lexicalGlobalObject, JSC::NoPreference);
@@ -843,9 +841,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlo
 
     if (arg0.value().isString()) [[likely]] {
         auto* str = asString(arg0.value());
-        // Node: a non-string input and an empty string return before the
-        // encoding is coerced, a falsy encoding is utf8, and an unknown
-        // encoding (after getEncodingOps coercion) falls back to utf8.
+        // Same order as Node: the encoding is coerced only for a non-empty string.
         if (str->length() == 0)
             return JSValue::encode(jsNumber(0));
 

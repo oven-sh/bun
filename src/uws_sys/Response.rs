@@ -194,6 +194,13 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_send_when_complete(Self::ssl_flag(), self.as_raw())
     }
 
+    /// node:http socket.destroy() while uws is parsing this socket: uws closes it once the
+    /// current message's body from that read is delivered. Returns false when uws is not
+    /// parsing this socket (or it is a tunnel), so the caller closes it now.
+    pub fn close_after_message_if_parsing(&mut self) -> bool {
+        c::uws_res_close_after_message_if_parsing(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn pause(&mut self) {
         c::uws_res_pause(Self::ssl_flag(), self.as_raw())
     }
@@ -901,6 +908,15 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
     }
 
+    /// HTTP/1 only: an HTTP/2 or HTTP/3 stream has no socket read to finish.
+    pub fn close_after_message_if_parsing(self) -> bool {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).close_after_message_if_parsing(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).close_after_message_if_parsing(),
+            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
+        }
+    }
+
     pub fn force_close(self) {
         match self {
             AnyResponse::SSL(ptr) => {
@@ -1195,6 +1211,7 @@ pub mod c {
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_corked(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_when_complete(ssl: i32, res: &mut uws_res);
+        pub(crate) safe fn uws_res_close_after_message_if_parsing(ssl: i32, res: &mut uws_res) -> bool;
         pub(crate) fn uws_res_end(
             ssl: i32,
             res: *mut uws_res,

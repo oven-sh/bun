@@ -302,18 +302,23 @@ describe("res.destroy() defers 'close'", () => {
 
 // Like Node.js, whose parser runs to the end of the read before the destroyed
 // handle closes: the body bytes that arrived in the same read as the head still
-// reach the request after the 'request' listener destroyed the socket.
-describe.concurrent("req.socket.destroy() inside the 'request' listener", () => {
+// reach the request after the 'request' listener destroyed the connection.
+describe.concurrent.each(["req.socket.destroy()", "res.destroy()"])("%s inside the 'request' listener", destroyCall => {
   // Serves one POST whose head and body arrive in one write, destroys the
-  // socket from the 'request' listener (or from the first 'data' event), and
-  // returns the request events once the request and the connection have closed.
+  // connection from the 'request' listener (or from the first 'data' event),
+  // and returns the events once the request and the connection have closed.
   async function destroyAndRecord(body: string, destroyFrom: "request" | "data", { respondOnEnd = false } = {}) {
     const events: string[] = [];
     const reqClosed = Promise.withResolvers<void>();
     const server = createServer((req, res) => {
+      const destroy = () => {
+        if (req.socket.destroyed) return;
+        if (destroyCall === "res.destroy()") res.destroy();
+        else req.socket.destroy();
+      };
       req.on("data", chunk => {
         events.push("req.data:" + chunk.length);
-        if (destroyFrom === "data" && !req.socket.destroyed) req.socket.destroy();
+        if (destroyFrom === "data") destroy();
       });
       req.on("aborted", () => events.push("req.aborted"));
       req.on("error", e => events.push("req.error:" + (e as NodeJS.ErrnoException).code));
@@ -326,7 +331,7 @@ describe.concurrent("req.socket.destroy() inside the 'request' listener", () => 
         reqClosed.resolve();
       });
       res.on("finish", () => events.push("res.finish"));
-      if (destroyFrom === "request") req.socket.destroy();
+      if (destroyFrom === "request") destroy();
     });
     try {
       server.listen(0, "127.0.0.1");

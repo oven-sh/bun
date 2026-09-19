@@ -1556,6 +1556,16 @@ impl NodeHTTPResponse {
             return Ok(JSValue::UNDEFINED);
         }
 
+        // res.destroy() while uws is parsing this socket: the body bytes of
+        // that read are still owed to the request, as in Node, whose parser
+        // runs on after the handle is destroyed. uws closes the socket once
+        // they are delivered, and that close runs the abort path (on_abort).
+        if let Some(raw_response) = self.raw_response.get()
+            && raw_response.close_after_message_if_parsing()
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+
         // Re-arm the poll before marking SOCKET_CLOSED (resume_socket is a no-op
         // once that flag is set) so a paused socket's deferred EOF can fire.
         self.resume_socket();

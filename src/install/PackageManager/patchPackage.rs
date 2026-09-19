@@ -1061,8 +1061,11 @@ fn global_store_link_in(path: &[u8]) -> Option<bun_paths::Path<u8>> {
         let end =
             strings::index_of_char_usize(&path[start..], SEP).map_or(path.len(), |i| start + i);
         let component = &path[start..end];
-        if !component.is_empty() {
-            if parents == [b"node_modules".as_slice(), b".bun".as_slice()] {
+        if !component.is_empty() && component != b"." {
+            // The volume can be case-insensitive.
+            if strings::eql_case_insensitive_ascii(parents[0], b"node_modules", true)
+                && strings::eql_case_insensitive_ascii(parents[1], b".bun", true)
+            {
                 let mut link = bun_paths::Path::<u8>::from(&path[..end]).ok()?;
                 if is_symlink(&mut link) {
                     return Some(link);
@@ -1076,11 +1079,15 @@ fn global_store_link_in(path: &[u8]) -> Option<bun_paths::Path<u8>> {
 }
 
 /// Whether `folder`, or its deepest ancestor that exists, resolves into `<cache>/links/`.
-fn is_inside_global_store(manager: &mut PackageManager, folder: &[u8]) -> bool {
+fn is_inside_global_store(manager: &mut PackageManager, folder: &[u8]) -> sys::Maybe<bool> {
+    // Without the option, the install that `bun patch` runs first has detached every entry.
+    if !manager.options.enable.global_virtual_store() {
+        return Ok(false);
+    }
     let _ = get_cache_directory(manager);
     let cache_dir_path = manager.cache_directory_path.as_bytes();
     if cache_dir_path.is_empty() {
-        return false;
+        return Ok(false);
     }
     let mut store_buf = bun_paths::path_buffer_pool::get();
     let store = resolve_path::join_abs_string_buf_z::<platform::Auto>(
@@ -1089,33 +1096,35 @@ fn is_inside_global_store(manager: &mut PackageManager, folder: &[u8]) -> bool {
         &[b"links"],
     );
     let mut real_store_buf = bun_paths::path_buffer_pool::get();
-    let Ok(real_store) = sys::realpath(store, &mut real_store_buf) else {
-        return false;
+    let real_store = match sys::realpath(store, &mut real_store_buf) {
+        Ok(real_store) => real_store,
+        Err(e) if e.get_errno() == sys::E::ENOENT => return Ok(false),
+        Err(e) => return Err(e),
     };
 
     let Ok(mut existing) = bun_paths::Path::<u8>::from(folder) else {
-        return false;
+        return Ok(false);
     };
     let mut real_buf = bun_paths::path_buffer_pool::get();
     loop {
         let len = existing.slice().len();
         if len == 0 {
-            return false;
+            return Ok(false);
         }
         match sys::realpath(existing.slice_z(), &mut real_buf) {
             Ok(real) => {
-                return !matches!(
+                return Ok(!matches!(
                     resolve_path::is_parent_or_equal(real_store, real),
                     resolve_path::ParentEqual::Unrelated
-                );
+                ));
             }
             Err(e) if e.get_errno() == sys::E::ENOENT => {
                 existing.undo(1);
                 if existing.slice().len() == len {
-                    return false;
+                    return Ok(false);
                 }
             }
-            Err(_) => return false,
+            Err(e) => return Err(e),
         }
     }
 }
@@ -1138,31 +1147,49 @@ fn detach_module_folder_from_shared_store(manager: &mut PackageManager, module_f
     #[cfg(not(windows))]
     let native: &[u8] = module_folder;
 
+    // The Windows `dirname` does not skip a trailing separator.
+    let native = strings::without_trailing_slash(native);
     let parent = resolve_path::dirname::<platform::Auto>(native);
 
-    let mut link = match global_store_link_in(native) {
-        // Goes first: a link at `module_folder` below it is inside the shared entry.
-        Some(store_link) => store_link,
-        None => {
-            // Other links stay, e.g. a workspace link, unless one leads into the store.
-            if is_inside_global_store(manager, parent) {
-                Output::err_generic(
-                    "{} resolves into the global store, which other projects share; refusing to patch through it",
-                    (bun_fmt::quote(module_folder),),
-                );
-                bun_core::note!(
-                    "pass the package's own folder instead: bun patch node_modules/.bun/\\<name\\>@\\<version\\>/node_modules/\\<name\\>"
-                );
-                Global::crash();
-            }
-            let Ok(mut leaf) = bun_paths::Path::<u8>::from(native) else {
-                return;
-            };
-            if !is_symlink(&mut leaf) {
-                return;
-            }
-            leaf
+    let Ok(mut leaf) = bun_paths::Path::<u8>::from(native) else {
+        return;
+    };
+    let leaf_is_link = is_symlink(&mut leaf);
+    let store_link = global_store_link_in(native);
+
+    let resolves_into_store = match store_link {
+        // A link below the store link is a dependency link inside the shared entry.
+        Some(_) => Ok(leaf_is_link),
+        // A dependency link leads into the store with no `.bun/<storepath>` in the path.
+        None => is_inside_global_store(manager, parent),
+    };
+    match resolves_into_store {
+        Ok(false) => {}
+        Ok(true) => {
+            Output::err_generic(
+                "{} resolves into the global store, which other projects share; refusing to patch through it",
+                (bun_fmt::quote(module_folder),),
+            );
+            bun_core::note!(
+                "pass the package's folder in its own store entry instead: node_modules/.bun/\\<entry\\>/node_modules/\\<name\\>"
+            );
+            Global::crash();
         }
+        Err(e) => {
+            Output::err(
+                e,
+                "failed to resolve <b>{s}<r> to check it against the global store; refusing to patch through it",
+                (bstr::BStr::new(parent),),
+            );
+            Global::crash();
+        }
+    }
+
+    // Every other link on the way stays, e.g. a workspace link.
+    let mut link = match store_link {
+        Some(store_link) => store_link,
+        None if leaf_is_link => leaf,
+        None => return,
     };
 
     // Windows directory symlinks/junctions are removed with rmdir,

@@ -1168,25 +1168,40 @@ describe.concurrent("bun patch and the symlinks above the package folder", () =>
     await expectTwoRangeDepsLoads(packageDir);
   });
 
-  // Here node_modules/two-range-deps resolves into the shared entry, and the path has no
-  // node_modules/.bun/<storepath> part that `bun patch` can replace.
-  test("isolated linker with the global store: refuses a package folder that resolves into a shared entry", async () => {
-    const packageDir = await installNestedUnderDependency(true);
-    const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
-    expect(isLink(entry)).toBe(true);
-    const shared = join(readlinkSync(entry), "node_modules", "two-range-deps");
-    const before = readdirSync(shared).sort();
+  // Both folders are inside the shared entry of two-range-deps. The first has no
+  // node_modules/.bun/<storepath> part that `bun patch` can replace. The second is a dependency
+  // link of that entry, so to replace the store link would take two-range-deps out of the project.
+  test.each([
+    ["no-deps@1.1.0", "node_modules/two-range-deps/node_modules/no-deps"],
+    [
+      "node_modules/.bun/two-range-deps@1.0.0/node_modules/no-deps",
+      "node_modules/.bun/two-range-deps@1.0.0/node_modules/no-deps",
+    ],
+  ])(
+    "isolated linker with the global store: refuses %s, a package folder that resolves into a shared entry",
+    async (arg, folder) => {
+      const packageDir = await installNestedUnderDependency(true);
+      const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
+      expect(isLink(entry)).toBe(true);
+      const shared = join(readlinkSync(entry), "node_modules");
+      const sharedState = () => ({
+        packageFiles: readdirSync(join(shared, "two-range-deps")).sort(),
+        noDepsIsLink: isLink(shared, "no-deps"),
+      });
+      const before = sharedState();
 
-    const { stderr, exitCode } = await runBun(packageDir, "patch", "no-deps@1.1.0");
-    expect(stderr).toContain(
-      `error: "node_modules/two-range-deps/node_modules/no-deps" resolves into the global store`,
-    );
-    expect(exitCode).toBe(1);
+      const { stderr, exitCode } = await runBun(packageDir, "patch", arg);
+      expect(stderr).toContain(`error: "${folder}" resolves into the global store`);
+      expect(exitCode).toBe(1);
 
-    expect(isLink(packageDir, "node_modules", "two-range-deps")).toBe(true);
-    expect(readdirSync(shared).sort()).toEqual(before);
-    await expectTwoRangeDepsLoads(packageDir);
-  });
+      expect({
+        entryIsLink: isLink(entry),
+        dependencyIsLink: isLink(packageDir, "node_modules", "two-range-deps"),
+      }).toEqual({ entryIsLink: true, dependencyIsLink: true });
+      expect(sharedState()).toEqual(before);
+      await expectTwoRangeDepsLoads(packageDir);
+    },
+  );
 
   test("keeps a symlinked node_modules folder", async () => {
     const { packageDir } = await registry.createTestDir({
@@ -1212,49 +1227,61 @@ describe.concurrent("bun patch and the symlinks above the package folder", () =>
     expect(readdirSync(join(packageDir, "real-node-modules", "no-deps")).sort()).toEqual(["index.js", "package.json"]);
   });
 
-  // A path through node_modules/.bun/<storepath> reaches into the shared entry. In the entry of
-  // no-deps the package folder is a real directory. In the entry of two-range-deps it is a link
-  // to the entry of no-deps, and that link is inside the shared entry too.
-  test.each(["no-deps@1.1.0", "two-range-deps@1.0.0"])(
-    "detaches node_modules/.bun/%s from the global store and leaves the shared entry as it was",
-    async storepath => {
-      const { packageDir } = await registry.createTestDir({
-        bunfigOpts: { linker: "isolated", globalStore: true },
-        files: {
-          "package.json": JSON.stringify({ name: "root", dependencies: { "two-range-deps": "1.0.0" } }),
-        },
-      });
+  // The package folder in the package's own entry is a real directory inside the shared entry.
+  test.each([
+    "node_modules/.bun/no-deps@1.1.0/node_modules/no-deps",
+    "node_modules/./.bun/no-deps@1.1.0/node_modules/no-deps/",
+  ])("detaches the store entry of %s and leaves the shared entry as it was", async arg => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+      files: {
+        "package.json": JSON.stringify({ name: "root", dependencies: { "two-range-deps": "1.0.0" } }),
+      },
+    });
 
-      await install(packageDir);
-      const entry = join(packageDir, "node_modules", ".bun", storepath);
-      expect(isLink(entry)).toBe(true);
+    await install(packageDir);
+    const entry = join(packageDir, "node_modules", ".bun", "no-deps@1.1.0");
+    expect(isLink(entry)).toBe(true);
 
-      const shared = join(readlinkSync(entry), "node_modules", "no-deps");
-      const sharedState = async () => ({
-        isLink: isLink(shared),
-        files: readdirSync(shared).sort(),
-        index: await Bun.file(join(shared, "index.js")).text(),
-      });
-      const before = await sharedState();
+    const shared = join(readlinkSync(entry), "node_modules", "no-deps");
+    const sharedState = async () => ({
+      files: readdirSync(shared).sort(),
+      index: await Bun.file(join(shared, "index.js")).text(),
+    });
+    const before = await sharedState();
 
-      const { stdout, stderr, exitCode } = await runBun(
-        packageDir,
-        "patch",
-        `node_modules/.bun/${storepath}/node_modules/no-deps`,
-      );
-      expect(stderr).not.toContain("error:");
-      expect(stdout).toContain(`node_modules/.bun/${storepath}/node_modules/no-deps`);
-      expect(exitCode).toBe(0);
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", arg);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain(arg);
+    expect(exitCode).toBe(0);
 
-      // The copy is in a project-local directory, and an edit of it does not reach the store.
-      expect(isLink(entry)).toBe(false);
-      const copy = join(entry, "node_modules", "no-deps");
-      expect(isLink(copy)).toBe(false);
-      expect(await Bun.file(join(copy, "package.json")).json()).toEqual({ name: "no-deps", version: "1.1.0" });
-      await Bun.write(join(copy, "index.js"), `module.exports = "edited copy";\n`);
-      expect(await sharedState()).toEqual(before);
-    },
-  );
+    // The copy is in a project-local directory, and an edit of it does not reach the store.
+    expect(isLink(entry)).toBe(false);
+    const copy = join(entry, "node_modules", "no-deps");
+    expect(isLink(copy)).toBe(false);
+    expect(await Bun.file(join(copy, "package.json")).json()).toEqual({ name: "no-deps", version: "1.1.0" });
+    await Bun.write(join(copy, "index.js"), `module.exports = "edited copy";\n`);
+    expect(await sharedState()).toEqual(before);
+  });
+
+  // The parent of the package folder is the project's node_modules, not the folder itself.
+  test("isolated linker with the global store: accepts a package folder with a trailing separator", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+      files: {
+        "package.json": JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0" } }),
+      },
+    });
+
+    await install(packageDir);
+    expect(isLink(packageDir, "node_modules", "no-deps")).toBe(true);
+
+    const { stderr, exitCode } = await runBun(packageDir, "patch", "node_modules/no-deps/");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(isLink(packageDir, "node_modules", "no-deps")).toBe(false);
+    expect(readdirSync(join(packageDir, "node_modules", "no-deps")).sort()).toEqual(["index.js", "package.json"]);
+  });
 });
 
 // `bun patch --commit` derives the pristine copy's cache folder from the

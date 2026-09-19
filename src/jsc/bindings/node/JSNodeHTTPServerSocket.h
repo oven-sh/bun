@@ -108,10 +108,7 @@ public:
      * truncate the response. Returns true after handing the close to uWS. */
     bool shutdownAfterResponseDrains();
 
-    /* node:http pipelining: the next queued response can never be sent, so the
-     * response that just ended was the last one. Close the connection once its
-     * bytes have left: now when none are buffered, otherwise from uWS's close
-     * gate. close() would discard them, and end() would wait for the peer's FIN. */
+    /* Close once the bytes of the responses that ended have left. close() discards them, end() waits for the peer. */
     void closeWhenDrained();
 
     /* Switch the connection into CONNECT-style tunnel mode after an accepted

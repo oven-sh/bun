@@ -1460,14 +1460,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     )
                 };
 
-                if !node_http_response.is_null() {
+                // A pipelined response stays queued: `raw_response` describes the one ahead of it.
+                let threw_while_queued = !node_http_response.is_null()
+                    // SAFETY: see `nhr` above.
+                    && unsafe { &*node_http_response }.mark_dispatch_threw_if_queued();
+
+                if !node_http_response.is_null() && !threw_while_queued {
                     // SAFETY: see `nhr` above.
                     let nhr = unsafe { &*node_http_response };
                     let nhr_flags = nhr.flags.get();
-                    // A pipelined dispatch: the pending response that
-                    // `raw_response` reports is the one ahead of this one.
-                    let is_queued = nhr.is_queued_behind_current_response();
-                    if !nhr_flags.contains(NhrFlags::UPGRADED) && !is_queued {
+                    if !nhr_flags.contains(NhrFlags::UPGRADED) {
                         if let Some(raw) = nhr.raw_response.get() {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
@@ -1481,22 +1483,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             }
                         }
                     }
-                    if is_queued {
-                        // Nothing was ended, so this response stays queued
-                        // like any other one.
-                        nhr.flags
-                            .set(nhr.flags.get() | NhrFlags::DISPATCH_THREW_WHILE_QUEUED);
-                    } else {
-                        // The handler threw before `res.end()`; we just ended (or
-                        // will never end) the raw response above. Mark ENDED so
-                        // `on_request_complete()` → `mark_request_as_done()` runs
-                        // and releases the `IS_REQUEST_PENDING` ref (one of the
-                        // initial 3). Without this the box leaks: the later
-                        // `on_abort` socket-close path early-returns once
-                        // `REQUEST_HAS_COMPLETED` is set and never balances it.
-                        nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
-                        nhr.on_request_complete();
-                    }
+                    // The handler threw before `res.end()`; we just ended (or
+                    // will never end) the raw response above. Mark ENDED so
+                    // `on_request_complete()` → `mark_request_as_done()` runs
+                    // and releases the `IS_REQUEST_PENDING` ref (one of the
+                    // initial 3). Without this the box leaks: the later
+                    // `on_abort` socket-close path early-returns once
+                    // `REQUEST_HAS_COMPLETED` is set and never balances it.
+                    nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
+                    nhr.on_request_complete();
                 }
             }
             HttpResult::Success | HttpResult::Pending => {}

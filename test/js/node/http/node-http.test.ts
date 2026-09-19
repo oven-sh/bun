@@ -2892,6 +2892,38 @@ it("pipelined responses buffered past the high water mark pause reads on the con
   }
 });
 
+it("a pipelined response is started when no response is in flight to hand it the socket", async () => {
+  // The dispatcher kicks the pipeline when it queues a response and nothing is in flight (the
+  // previous response finished and detached while it still counts as pending). Clearing
+  // socket._httpMessage by hand reaches that state: only the kick can start /second then.
+  const server = createServer((req, res) => {
+    if (req.url === "/first") {
+      (req.socket as any)._httpMessage = null;
+      return;
+    }
+    res.end("second-response");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const { promise: started, resolve: onStarted, reject: onFailure } = Promise.withResolvers<void>();
+    let received = "";
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      if (received.includes("second-response")) onStarted();
+    });
+    socket.on("error", onFailure);
+    socket.on("close", () => onFailure(new Error("closed before the queued response was started")));
+    socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+    await started;
+    expect(received).toContain("second-response");
+    socket.destroy();
+  } finally {
+    server.close();
+  }
+});
+
 // The native dispatch tail answers a throw by ending the connection's current response. For a
 // pipelined request that was the response ahead of it: the client got "first" of a 10-byte body,
 // then the close. The throw is an uncaught exception, so each scenario runs in a child process.

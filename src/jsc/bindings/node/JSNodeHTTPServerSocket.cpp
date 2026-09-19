@@ -284,9 +284,7 @@ template<bool SSL>
 static void closeWhenDrainedImpl(us_socket_t* socket)
 {
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
-    /* What a response that closes the connection leaves behind: the close gates
-     * (here, or HttpContext<SSL>::onWritable once the send buffer has flushed)
-     * shut down and close a connection marked like this with no response pending. */
+    /* uWS's close gates (below, or onWritable after the flush) close a connection marked like this. */
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
     /* A response that ended inside the read being parsed is still in the cork buffer. */
     reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->uncork();

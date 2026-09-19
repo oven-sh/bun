@@ -691,18 +691,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         if (isPipelinedDispatch) {
-          // The native queue already holds this request's turn. Hold it here too,
-          // with the native handle, until the response exists and replaces it
-          // below: a throw on the way (the constructor of a user's IncomingMessage
-          // or ServerResponse subclass) must not let a later response take it.
+          // The native handle holds this request's turn until its response exists, also when a throw prevents that.
           (socket[kPipelinedResponses] ??= []).push(handle);
-          // A pipelined dispatch can arrive after the previous response finished and detached
-          // (bytes still flushing keep it pending), leaving nothing in flight to advance the
-          // queue. Kick the pipeline once this dispatch settles.
-          if (socket._httpMessage == null && !socket[kPipelineKickScheduled]) {
-            socket[kPipelineKickScheduled] = true;
-            process.nextTick(advancePipelineIfIdleNT, server, socket);
-          }
+          // For a throw before the kick below. drainMicrotasks() further down runs this one when nothing throws.
+          kickPipelineIfIdle(server, socket);
         }
 
         // Like Node.js's resetSocketTimeout (parserOnIncoming): a new request
@@ -904,10 +896,13 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // A previous response on this connection has not finished yet: like
           // Node.js, this response is queued (res.socket === null) and its
           // writes are buffered until the in-flight response finishes and the
-          // pipeline assigns it the socket (advanceResponsePipeline). It takes
-          // the turn that the native handle held since the top of this dispatch.
-          socket[kPipelinedResponses]?.pop();
+          // pipeline assigns it the socket (advanceResponsePipeline).
+          socket[kPipelinedResponses]?.pop(); // the turn that the native handle held
           queuePipelinedResponse(socket, http_res, !!isAncientHTTP);
+          // A pipelined dispatch can arrive after the previous response finished and detached
+          // (bytes still flushing keep it pending), leaving nothing in flight to advance the
+          // queue. Kick the pipeline once this dispatch settles.
+          kickPipelineIfIdle(server, socket);
           // Node's parserOnIncoming stops reading the connection once the bytes
           // queued on responses that do not own the socket yet reach the
           // socket's high water mark, so pipelined requests cannot flood it.
@@ -2508,6 +2503,12 @@ function releasePipelineOutgoingData(socket, bytes) {
 // connection's current response, is assigned the socket, and its buffered
 // output is flushed.
 const kPipelineKickScheduled = Symbol("kPipelineKickScheduled");
+function kickPipelineIfIdle(server, socket) {
+  if (socket._httpMessage == null && !socket[kPipelineKickScheduled]) {
+    socket[kPipelineKickScheduled] = true;
+    process.nextTick(advancePipelineIfIdleNT, server, socket);
+  }
+}
 function advancePipelineIfIdleNT(server, socket) {
   socket[kPipelineKickScheduled] = false;
   if (socket._httpMessage == null && socket[kPipelinedResponses]?.length) {
@@ -2543,8 +2544,7 @@ function abortQueuedPipelinedResponses(socket) {
     socket[kPipelinedResponses] = undefined;
     for (let i = 0; i < pipelinedLength; i++) {
       const queuedRes = pipelined[i];
-      // A turn that the native handle still holds (its dispatch queued no
-      // response): nothing to abort here, the native close path notifies it.
+      // A turn that the native handle still holds: the native close path notifies that one.
       if (queuedRes[kPipelinedQueuedState] === undefined) continue;
       const queuedReq = queuedRes.req;
       if (queuedReq && !queuedReq.destroyed) {
@@ -2564,11 +2564,7 @@ function abortQueuedPipelinedResponses(socket) {
   }
 }
 
-// The response at the head of the queue can never be sent, and an HTTP/1.1
-// connection cannot skip its turn, so the response that just finished was the
-// last one. A native socket closes once the bytes still buffered for that
-// response have left: destroy() would discard them, and end() would wait for
-// the client's FIN. The close path then aborts what is queued.
+// The head of the queue can never be sent: close once the bytes of the responses ahead of it have left.
 function closeAfterLastSendableResponse(socket) {
   if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) {
     socket[kHandle]?.closeWhenDrained();
@@ -2593,8 +2589,7 @@ function advanceResponsePipeline(server, socket) {
   const res = queue[0];
   const queued = res[kPipelinedQueuedState];
   if (queued === undefined) {
-    // Still the native handle that holds the turn of a pipelined dispatch: the
-    // dispatch queued no response. If it threw, none can come.
+    // The native handle still holds this turn: its dispatch queued no response, and after a throw none can come.
     if ((res.flags & NodeHTTPResponseFlags.dispatch_threw_while_queued) !== 0) {
       closeAfterLastSendableResponse(socket);
     }
@@ -2605,18 +2600,15 @@ function advanceResponsePipeline(server, socket) {
   if (
     res.destroyed ||
     !handle ||
+    // Its dispatch threw and nothing ended it since: natively only the current response is answered for a throw.
     (!queued.ended && (handle.flags & NodeHTTPResponseFlags.dispatch_threw_while_queued) !== 0)
   ) {
-    // The queued response was destroyed before it could be sent, or the
-    // dispatch of its request threw and nothing ended it since (the native
-    // dispatch tail answers a throw at once only for the connection's current
-    // response). The connection cannot produce a response for this slot, so it
-    // is unusable. Deliberate divergence from Node v26, which assigns the
+    // The queued response was destroyed before it could be sent; the
+    // connection cannot produce a response for this slot, so it is unusable.
+    // Deliberate divergence from Node v26, which assigns the destroyed
     // message and wedges the connection until requestTimeout: an HTTP/1.1
-    // connection cannot skip a response slot, so reset it instead. The entry
-    // stays queued: nothing behind it can start, and the close path aborts it,
-    // and its request, with the rest.
-    closeAfterLastSendableResponse(socket);
+    // connection cannot skip a response slot, so reset it instead.
+    closeAfterLastSendableResponse(socket); // it stays queued for the close path
     return;
   }
 

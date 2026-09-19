@@ -205,8 +205,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing, (JSC::JSGlob
     return JSValue::encode(JSC::jsUndefined());
 }
 
-// node:http pipelining: the response that just ended was the connection's last
-// one (see JSNodeHTTPServerSocket::closeWhenDrained).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseWhenDrained, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());

@@ -1,10 +1,14 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
-const timeout = isDebug ? Infinity : 10_000;
+// `bun build --watch` re-executes itself on every save, so the two tests that
+// drive it start 50 bundler processes each. A sanitizer build starts a process
+// much slower than a release build: each of those tests takes up to 7 seconds
+// on the ASAN lane, against 0.6 seconds on a release build.
+const timeout = isDebug ? Infinity : isASAN ? 30_000 : 10_000;
 const longTimeout = isDebug ? Infinity : 30_000;
 
 /**

@@ -124,8 +124,7 @@ fn join_aliases(kind1: MemoizationLevel, kind2: MemoizationLevel) -> Memoization
 struct IdentifierNode {
     level: MemoizationLevel,
     memoized: bool,
-    /// Indices into `CollectState::operands`. Not in upstream, whose set per lvalue is
-    /// N sets of N entries for a call or a literal with N mutable operands.
+    /// Not in upstream: indices into `CollectState::operands`, not one set of operands per lvalue.
     dependencies: Vec<usize>,
     scopes: IndexSet<ScopeId>,
     seen: bool,
@@ -969,8 +968,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                     seen: false,
                 });
             node.level = join_aliases(node.level, lv.level);
-            // Not in upstream, which skips the lvalue itself and a repeated operand:
-            // both are seen when the walk gets to them, so the visit has no effect.
+            // Not in upstream, which skips the lvalue itself: a visit of a seen node has no effect.
             if let Some(operands_idx) = operands_idx {
                 node.dependencies.push(operands_idx);
             }
@@ -1146,18 +1144,16 @@ fn compute_memoized_identifiers(
 
         // Visit dependencies, determine if any of them are memoized
         let dependencies = std::mem::take(&mut node.dependencies);
+        let reads_result = level == MemoizationLevel::Conditional && !force_memoize;
         let mut has_memoized_dependency = false;
         for &operands_idx in &dependencies {
-            if level == MemoizationLevel::Conditional && !force_memoize {
+            if reads_result {
                 for i in 0..state.operands[operands_idx].ids.len() {
                     let dep = state.operands[operands_idx].ids[i];
                     has_memoized_dependency |= visit(dep, false, state, memoized)?;
                 }
             } else {
-                // Not in upstream, which visits every operand from every lvalue. Only the first
-                // visit of a node has an effect, and only the branch above reads a result, so
-                // these lvalues share one cursor. That makes a call or a literal linear: all of
-                // its lvalues but its own are `Memoized`.
+                // Not in upstream: only a first visit has an effect, so lvalues share a cursor.
                 while let Some(dep) = state.operands[operands_idx].next_unvisited() {
                     visit(dep, false, state, memoized)?;
                 }

@@ -1540,6 +1540,8 @@ test("a stack that a collection materializes reads the same as one materialized 
       "message is a number": () => Object.assign(new Error(), { message: 42.5 }),
       "message is null": () => Object.assign(new Error(), { message: null }),
       "message is a BigInt": () => Object.assign(new Error(), { message: 10n ** 30n }),
+      "message is a Symbol": () => Object.assign(new Error(), { message: Symbol("m") }),
+      "message changed before the first read": () => new Error("boom"),
       // Frames whose text says more than a function name and a position.
       "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
       "created in an anonymous function in eval": () => (0, eval)("(function () { const error = new Error('boom'); return error; })")(),
@@ -1555,9 +1557,19 @@ test("a stack that a collection materializes reads the same as one materialized 
         return error;
       }
     }
+    // The name and the message head the stack when it is first read, whichever way the frames were formatted.
+    const beforeTheFirstRead = { "message changed before the first read": error => void (error.message = "changed") };
+    const read = (shape, error) => {
+      beforeTheFirstRead[shape]?.(error);
+      try {
+        return error.stack;
+      } catch (thrown) {
+        return "throws " + thrown.message;
+      }
+    };
     // The same trace three times per shape: read on access, read after the collections, and one to
     // see which way the second went (a prepareStackTrace is consulted only if the stack is not a string yet).
-    const cases = Object.entries(shapes).map(([shape, make]) => ({ shape, expected: capture(make).stack, materialized: capture(make), witness: capture(make) }));
+    const cases = Object.entries(shapes).map(([shape, make]) => ({ shape, expected: read(shape, capture(make)), materialized: capture(make), witness: capture(make) }));
     for (let i = 0; i < 6; i++) {
       Bun.gc(true);
       await new Promise(resolve => setImmediate(resolve));
@@ -1568,9 +1580,10 @@ test("a stack that a collection materializes reads the same as one materialized 
       let consulted = false;
       const builtin = Error.prepareStackTrace;
       Error.prepareStackTrace = () => ((consulted = true), "");
-      void witness.stack;
+      read(shape, witness);
       Error.prepareStackTrace = builtin;
-      rows[shape] = { materializedByACollection: !consulted, header: materialized.stack.split("\\n")[0], sameText: columns(materialized.stack) === columns(expected) };
+      const text = read(shape, materialized);
+      rows[shape] = { materializedByACollection: !consulted, header: text.split("\\n")[0], sameText: columns(text) === columns(expected) };
     }
     console.log(JSON.stringify(rows));
   `;
@@ -1595,6 +1608,8 @@ test("a stack that a collection materializes reads the same as one materialized 
     "message is a number": row("Error: 42.5"),
     "message is null": row("Error: null"),
     "message is a BigInt": row("Error: 1000000000000000000000000000000"),
+    "message is a Symbol": row("throws Cannot convert a symbol to a string"),
+    "message changed before the first read": row("Error: changed"),
     "created in a constructor": row("Error: boom"),
     "created in an anonymous function in eval": row("Error: boom"),
     "created under a builtin": row("Error: boom"),

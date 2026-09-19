@@ -19,7 +19,7 @@ pub enum FontFaceProperty {
     /// The `src` property.
     Source(ArrayList<Source>),
     /// The `font-family` property.
-    FontFamily(crate::css_properties::font::FontFamily),
+    FontFamily(FontFaceFamily),
     /// The `font-style` property.
     FontStyle(FontStyle),
     /// The `font-weight` property.
@@ -30,6 +30,30 @@ pub enum FontFaceProperty {
     UnicodeRange(ArrayList<UnicodeRange>),
     /// An unknown or unsupported property.
     Custom(crate::css_properties::custom::CustomProperty),
+}
+
+pub enum FontFaceFamily {
+    Parsed(crate::css_properties::font::FontFamily),
+    Quoted(*const [u8]),
+}
+
+impl FontFaceFamily {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        match self {
+            FontFaceFamily::Parsed(value) => value.to_css(dest),
+            FontFaceFamily::Quoted(value) => {
+                // SAFETY: arena-owned slice valid for the parse session.
+                dest.serialize_string(unsafe { crate::arena_str(*value) })
+            }
+        }
+    }
+
+    fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+        match self {
+            FontFaceFamily::Parsed(value) => FontFaceFamily::Parsed(value.deep_clone(arena)),
+            FontFaceFamily::Quoted(value) => FontFaceFamily::Quoted(*value),
+        }
+    }
 }
 
 impl FontFaceProperty {
@@ -394,6 +418,14 @@ impl FontStyle {
 /// [src](https://drafts.csswg.org/css-fonts/#src-desc)
 /// property of an `@font-face` rule.
 pub enum FontFormat {
+    Keyword(FontFormatKeyword),
+    QuotedKeyword(FontFormatKeyword),
+    /// An unknown format.
+    String(Vec<u8>),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FontFormatKeyword {
     /// A WOFF 1.0 font.
     Woff,
     /// A WOFF 2.0 font.
@@ -408,53 +440,70 @@ pub enum FontFormat {
     Collection,
     /// An SVG font.
     Svg,
-    /// An unknown format.
-    // Arena-owned slice from parser input; TODO(refactor): thread `'i`.
-    String(&'static [u8]),
+}
+
+impl FontFormatKeyword {
+    fn parse(ident: &[u8]) -> Option<Self> {
+        Some(crate::match_ignore_ascii_case! { ident, {
+            b"woff" => FontFormatKeyword::Woff,
+            b"woff2" => FontFormatKeyword::Woff2,
+            b"truetype" => FontFormatKeyword::Truetype,
+            b"opentype" => FontFormatKeyword::Opentype,
+            b"embedded-opentype" => FontFormatKeyword::EmbeddedOpentype,
+            b"collection" => FontFormatKeyword::Collection,
+            b"svg" => FontFormatKeyword::Svg,
+            _ => return None,
+        }})
+    }
+
+    fn as_css_bytes(&self) -> &'static [u8] {
+        match self {
+            FontFormatKeyword::Woff => b"woff",
+            FontFormatKeyword::Woff2 => b"woff2",
+            FontFormatKeyword::Truetype => b"truetype",
+            FontFormatKeyword::Opentype => b"opentype",
+            FontFormatKeyword::EmbeddedOpentype => b"embedded-opentype",
+            FontFormatKeyword::Collection => b"collection",
+            FontFormatKeyword::Svg => b"svg",
+        }
+    }
 }
 
 impl FontFormat {
     fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
+        let state = input.state();
+        let was_quoted = matches!(input.next()?, css::Token::QuotedString(_));
+        input.reset(&state);
         let s = input.expect_ident_or_string_cloned()?;
-        Ok(crate::match_ignore_ascii_case! { s, {
-            b"woff" => FontFormat::Woff,
-            b"woff2" => FontFormat::Woff2,
-            b"truetype" => FontFormat::Truetype,
-            b"opentype" => FontFormat::Opentype,
-            b"embedded-opentype" => FontFormat::EmbeddedOpentype,
-            b"collection" => FontFormat::Collection,
-            b"svg" => FontFormat::Svg,
-            _ => FontFormat::String(s),
-        }})
+
+        if let Some(keyword) = FontFormatKeyword::parse(s) {
+            if was_quoted {
+                return Ok(FontFormat::QuotedKeyword(keyword));
+            }
+
+            return Ok(FontFormat::Keyword(keyword));
+        }
+
+        Ok(FontFormat::String(s.to_vec()))
     }
 
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Browser support for keywords rather than strings is very limited.
         // https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/src
         match self {
-            FontFormat::Woff => dest.write_str("woff"),
-            FontFormat::Woff2 => dest.write_str("woff2"),
-            FontFormat::Truetype => dest.write_str("truetype"),
-            FontFormat::Opentype => dest.write_str("opentype"),
-            FontFormat::EmbeddedOpentype => dest.write_str("embedded-opentype"),
-            FontFormat::Collection => dest.write_str("collection"),
-            FontFormat::Svg => dest.write_str("svg"),
-            FontFormat::String(s) => dest.serialize_string(*s),
+            FontFormat::Keyword(keyword) => dest.write_str(keyword.as_css_bytes()),
+            FontFormat::QuotedKeyword(keyword) => dest.serialize_string(keyword.as_css_bytes()),
+            FontFormat::String(s) => dest.serialize_string(s.as_slice()),
         }
     }
 
     fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
-        // `css.implementDeepClone` variant-walk. All payloads are
-        // `Copy` / arena-slice idents → identity copy.
+        // `css.implementDeepClone` variant-walk. Keyword and arena-backed
+        // identifier variants are copied directly; owned String bytes are cloned.
         match self {
-            FontFormat::Woff => FontFormat::Woff,
-            FontFormat::Woff2 => FontFormat::Woff2,
-            FontFormat::Truetype => FontFormat::Truetype,
-            FontFormat::Opentype => FontFormat::Opentype,
-            FontFormat::EmbeddedOpentype => FontFormat::EmbeddedOpentype,
-            FontFormat::Collection => FontFormat::Collection,
-            FontFormat::Svg => FontFormat::Svg,
-            FontFormat::String(s) => FontFormat::String(s),
+            FontFormat::Keyword(keyword) => FontFormat::Keyword(*keyword),
+            FontFormat::QuotedKeyword(keyword) => FontFormat::QuotedKeyword(*keyword),
+            FontFormat::String(s) => FontFormat::String(s.clone()),
         }
     }
 }
@@ -741,9 +790,17 @@ const _: () = {
                 b"src" => if let Ok(sources) = input.parse_comma_separated(Source::parse) {
                     return Ok(FontFaceProperty::Source(sources));
                 },
-                b"font-family" => if let Ok(c) = FontFamily::parse(input) {
-                    if input.expect_exhausted().is_ok() {
-                        return Ok(FontFaceProperty::FontFamily(c));
+                b"font-family" => {
+                    if let Ok(value) = input.try_parse(|i| i.expect_string().map(std::ptr::from_ref::<[u8]>)) {
+                        if input.expect_exhausted().is_ok() {
+                            return Ok(FontFaceProperty::FontFamily(FontFaceFamily::Quoted(value)));
+                        }
+                        input.reset(&state);
+                    }
+                    if let Ok(c) = FontFamily::parse(input) {
+                        if input.expect_exhausted().is_ok() {
+                            return Ok(FontFaceProperty::FontFamily(FontFaceFamily::Parsed(c)));
+                        }
                     }
                 },
                 b"font-weight" => if let Ok(c) = Size2D::<FontWeight>::parse(input) {

@@ -5,7 +5,7 @@ pub mod bun_install_js_bindings {
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
         use bun_jsc::JSFunction;
-        let obj = JSValue::create_empty_object(global, 2);
+        let obj = JSValue::create_empty_object(global, 3);
         obj.put(
             global,
             b"parseLockfile",
@@ -30,7 +30,34 @@ pub mod bun_install_js_bindings {
                 Default::default(),
             ),
         );
+        obj.put(
+            global,
+            b"workspaceRef",
+            JSFunction::create(
+                global,
+                "workspaceRef",
+                __jsc_host_js_workspace_ref,
+                3,
+                Default::default(),
+            ),
+        );
         obj
+    }
+
+    fn throw_log(
+        global: &JSGlobalObject,
+        log: &bun_ast::Log,
+        err: bun_install::Error,
+    ) -> bun_jsc::JsError {
+        use bun_jsc::LogJsc as _;
+
+        if log.msgs.is_empty() {
+            return global.throw(format_args!("{}", err.name()));
+        }
+        match log.to_js(global, format_args!("{}", err.name())) {
+            Ok(value) => global.throw_value(value),
+            Err(err) => err,
+        }
     }
 
     #[bun_jsc::host_fn]
@@ -39,7 +66,6 @@ pub mod bun_install_js_bindings {
         frame: &bun_jsc::CallFrame,
     ) -> bun_jsc::JsResult<JSValue> {
         use bun_install::lockfile::package::workspace_map::members_for_testing;
-        use bun_jsc::LogJsc as _;
         use bun_jsc::bun_string_jsc::create_utf8_for_js;
 
         let package_json_path = frame.argument(0).to_utf8(global)?;
@@ -57,7 +83,29 @@ pub mod bun_install_js_bindings {
                     Ok(member)
                 })
             }
-            Err(err) => Err(global.throw_value(log.to_js(global, format_args!("{}", err.name()))?)),
+            Err(err) => Err(throw_log(global, &log, err)),
+        }
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_workspace_ref(
+        global: &JSGlobalObject,
+        frame: &bun_jsc::CallFrame,
+    ) -> bun_jsc::JsResult<JSValue> {
+        use bun_install::lockfile::override_map::workspace_ref_for_testing;
+        use bun_jsc::bun_string_jsc::create_utf8_for_js;
+
+        let package_json_path = frame.argument(0).to_utf8(global)?;
+        let package_json = frame.argument(1).to_utf8(global)?;
+        let ref_name = frame.argument(2).to_utf8(global)?;
+        let source =
+            bun_ast::Source::init_path_string(package_json_path.slice(), package_json.slice());
+
+        let mut log = bun_ast::Log::init();
+        match workspace_ref_for_testing(&source, &mut log, ref_name.slice()) {
+            Ok(Some(spec)) => create_utf8_for_js(global, &spec),
+            Ok(None) => Ok(JSValue::NULL),
+            Err(err) => Err(throw_log(global, &log, err)),
         }
     }
 

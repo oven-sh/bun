@@ -953,6 +953,18 @@ pub mod fs {
             self.name().dir_with_trailing_slash()
         }
 
+        /// Directory of `text`: `name().dir`, except for a file in a filesystem root. There
+        /// `name().dir` has lost the root's separator: it is empty for `/a.js`, and for
+        /// `C:\a.js` it is `C:`, which is relative to the cwd of that drive. This returns
+        /// `/` and `C:\`, so the directory of an absolute `text` is an absolute path.
+        pub fn dir_keeping_root(&self) -> &'a [u8] {
+            let dir = self.name().dir;
+            if crate::is_absolute(dir) {
+                return dir;
+            }
+            crate::dirname(self.text).unwrap_or_default()
+        }
+
         /// Directory used for display purposes, with trailing separator.
         #[inline]
         pub fn pretty_dir(&self) -> &'a [u8] {

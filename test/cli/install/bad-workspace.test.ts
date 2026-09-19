@@ -195,8 +195,18 @@ async function expectOnlyPkg1Found(dir: string) {
 }
 
 // A test cannot write to the root of the filesystem, so the root package.json here is only a
-// path: `workspaceMembers` takes its text as an argument and reads nothing but the members
-// from disk. The entries name the same real directories by their path from either root.
+// path: the helpers take its text as an argument and read nothing but the members from disk.
+// The entries name the same real directories by their path from either root.
+const MEMBERS = {
+  "pkgs/a/package.json": JSON.stringify({ name: "a", dependencies: { "no-deps": "1.0.0" } }),
+  "pkgs/b/package.json": JSON.stringify({ name: "b" }),
+};
+
+// `<dir>/pkgs` from `root`, spelled the way a `workspaces` entry is.
+function pkgsFrom(root: string, dir: string) {
+  return relative(root, join(dir, "pkgs")).replaceAll("\\", "/");
+}
+
 describe.each([
   ["the root of the filesystem", (dir: string) => parse(dir).root],
   ["a directory", (dir: string) => dir],
@@ -207,13 +217,9 @@ describe.each([
     // The parent of the first directory in `pkgs` is the root again. It is not a member.
     ["the root itself and path", (pkgs: string) => [`${pkgs.split("/")[0]}/..`, `${pkgs}/a`, `${pkgs}/b`]],
   ])("%s entries resolve", (_, entries) => {
-    using dir = tempDir("workspace-root-directory", {
-      "pkgs/a/package.json": JSON.stringify({ name: "a" }),
-      "pkgs/b/package.json": JSON.stringify({ name: "b" }),
-    });
+    using dir = tempDir("workspace-root-directory", MEMBERS);
     const root = rootOf(String(dir));
-    // `<dir>/pkgs` from the root, spelled the way a `workspaces` entry is.
-    const pkgs = relative(root, join(String(dir), "pkgs")).replaceAll("\\", "/");
+    const pkgs = pkgsFrom(root, String(dir));
 
     const members = install_test_helpers.workspaceMembers(join(root, "package.json"), rootPackageJson(entries(pkgs)));
 
@@ -222,6 +228,31 @@ describe.each([
       { path: `${pkgs}/b`, name: "b" },
     ]);
   });
+
+  test("$name in overrides takes the spec that a member declares", () => {
+    using dir = tempDir("workspace-root-directory", MEMBERS);
+    const root = rootOf(String(dir));
+    const packageJson = rootPackageJson([`${pkgsFrom(root, String(dir))}/*`]);
+
+    expect(install_test_helpers.workspaceRef(join(root, "package.json"), packageJson, "no-deps")).toBe("1.0.0");
+  });
+});
+
+// On Windows `bun install` reads the root package.json through a path with `/` separators.
+test.skipIf(!isWindows)("workspaces of a package.json in a drive root spelled with /", () => {
+  using dir = tempDir("workspace-root-directory", MEMBERS);
+  const root = parse(String(dir)).root.replaceAll("\\", "/");
+  const pkgs = pkgsFrom(root, String(dir));
+
+  const members = install_test_helpers.workspaceMembers(
+    `${root}package.json`,
+    rootPackageJson([`${pkgs}/a`, `${pkgs}/*`]),
+  );
+
+  expect(members).toEqual([
+    { path: `${pkgs}/a`, name: "a" },
+    { path: `${pkgs}/b`, name: "b" },
+  ]);
 });
 
 describe.concurrent("workspaces entries longer than the path buffer", () => {

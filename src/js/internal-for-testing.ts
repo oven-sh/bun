@@ -148,6 +148,11 @@ export const install_test_helpers = $rust("install_binding.rs", "bun_install_js_
    * so the workspace root can be a directory that a test cannot write to.
    */
   workspaceMembers: (packageJsonPath: string, packageJson: string) => { path: string; name: string }[];
+  /**
+   * Returns the spec that `$name` in the "overrides" of the same kind of package.json takes from the
+   * "dependencies" of a workspace member, or null when no member (or more than one spec) declares `name`.
+   */
+  workspaceRef: (packageJsonPath: string, packageJson: string, name: string) => string | null;
 };
 
 export const jscInternals = $cpp("JSCTestingHelpers.cpp", "createJSCTestingHelpers");

@@ -224,17 +224,18 @@ fn process_workspace_name(
     Ok(entry)
 }
 
-// Both directories come from `path::dirname`, which keeps the filesystem root (`/`, `C:\`).
-// `source.path.name().dir` does not: it is empty for `/package.json`, and for
-// `C:\package.json` it is `C:`, which is relative to the cwd on that drive.
-
 fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
-    path::dirname(abs_package_json_path).unwrap_or_default()
+    path::fs::Path::init(abs_package_json_path).dir_keeping_root()
 }
 
+/// Not `source.path.name().dir`: that is not an absolute path for a package.json in a
+/// filesystem root.
 pub(crate) fn package_json_dir(source: &bun_ast::Source) -> &[u8] {
-    path::dirname(source.path.text)
-        .unwrap_or_else(|| bun_resolver::fs::FileSystem::instance().top_level_dir())
+    let dir = source.path.dir_keeping_root();
+    if dir.is_empty() {
+        return bun_resolver::fs::FileSystem::instance().top_level_dir();
+    }
+    dir
 }
 
 fn relative_workspace_path<'b>(
@@ -622,13 +623,14 @@ impl WorkspaceMap {
     }
 }
 
-/// For `bun:internal-for-testing`: the `(path, name)` of each member of the `workspaces` in
-/// `source`. The package.json that `source` names does not have to exist, so a test can put
-/// the workspace root where it cannot write, such as the filesystem root.
-pub fn members_for_testing(
+/// For `bun:internal-for-testing`: the members of the `workspaces` in `source`. The
+/// package.json that `source` names does not have to exist, so a test can put the workspace
+/// root where it cannot write, such as the filesystem root.
+pub(crate) fn parse_for_testing(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
-) -> crate::Result<Vec<(Box<[u8]>, Box<[u8]>)>> {
+    json_cache: &mut WorkspacePackageJSONCache,
+) -> crate::Result<WorkspaceMap> {
     crate::initialize_store();
     let package_json = crate::bun_json::ParsedJson::parse_package_json(source, log)?;
     let mut members = WorkspaceMap::init();
@@ -636,7 +638,7 @@ pub fn members_for_testing(
         let value_loc = super::value_loc_of(source, workspaces.loc);
         if let Some(names) = NamesArray::from_expr(&workspaces.expr, value_loc) {
             members.process_names_array(
-                &mut WorkspacePackageJSONCache::default(),
+                json_cache,
                 log,
                 names,
                 source,
@@ -646,6 +648,15 @@ pub fn members_for_testing(
             )?;
         }
     }
+    Ok(members)
+}
+
+/// The `(path, name)` of each member that [`parse_for_testing`] finds.
+pub fn members_for_testing(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+) -> crate::Result<Vec<(Box<[u8]>, Box<[u8]>)>> {
+    let members = parse_for_testing(source, log, &mut WorkspacePackageJSONCache::default())?;
     Ok(members
         .keys()
         .iter()

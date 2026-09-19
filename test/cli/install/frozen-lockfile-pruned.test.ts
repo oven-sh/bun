@@ -693,10 +693,25 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent.each(["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"])(
+  // main fails the optional peer too, at link time (`FileNotFound: failed linking dependency/workspace`).
+  test.concurrent.each([
+    ["dependencies", { dependencies: { "no-deps": linkedRange } }],
+    ["devDependencies", { devDependencies: { "no-deps": linkedRange } }],
+    ["optionalDependencies", { optionalDependencies: { "no-deps": linkedRange } }],
+    ["peerDependencies", { peerDependencies: { "no-deps": linkedRange } }],
+    [
+      "optional peerDependencies",
+      { peerDependencies: { "no-deps": linkedRange }, peerDependenciesMeta: { "no-deps": { optional: true } } },
+    ],
+    // The peer takes the sibling workspace without a link, so only the `dependencies` row is a link.
+    [
+      "dependencies (with a peerDependencies range that does not link)",
+      { dependencies: { "no-deps": linkedRange }, peerDependencies: { "no-deps": "^2.0.0" } },
+    ],
+  ] as [string, PackageJson][])(
     "a survivor's %s range that bun.lock links to a pruned workspace fails",
-    async group => {
-      const tree = linkedRangeTree({}, { [group]: { "no-deps": linkedRange } });
+    async (_, app) => {
+      const tree = linkedRangeTree({}, app);
       const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
       expect(full).toContain(linkedRangeLockLine);
       expect(full).not.toContain('"no-deps@1.');

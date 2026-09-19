@@ -4,8 +4,8 @@ use bun_semver::String;
 use bun_semver::string::Builder as StringBuilderNs;
 
 use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _};
-use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::{DependencySlice, PackageIDSlice};
 use crate::lockfile_real::{CatalogMap, Lockfile};
 use crate::{PackageID, PackageNameHash, ResolutionTag};
 
@@ -32,18 +32,25 @@ pub(crate) fn lockfile_lists_workspace_path(lockfile: &Lockfile, workspace_path:
         .any(|path| path.slice(string_bytes) == workspace_path)
 }
 
-/// A workspace that is on disk: its name and dependencies in the reparsed lockfile, and the
-/// dependencies bun.lock records for it.
+/// The dependencies that bun.lock records for a package, with the package each one is bound to.
+#[derive(Clone, Copy)]
+pub(crate) struct Recorded {
+    pub(crate) dependencies: DependencySlice,
+    pub(crate) resolutions: PackageIDSlice,
+}
+
+/// A workspace that is on disk: its name and dependencies in the reparsed lockfile, and what
+/// bun.lock records for it.
 pub(crate) struct Survivor {
     pub(crate) name: String,
     pub(crate) to_dependencies: DependencySlice,
-    pub(crate) from_dependencies: DependencySlice,
+    pub(crate) recorded: Recorded,
 }
 
 pub(crate) fn exit_if_survivor_depends_on_missing(
     from_lockfile: &Lockfile,
     missing: &[PackageID],
-    from_root_dependencies: DependencySlice,
+    recorded_root: Recorded,
     to_lockfile: &Lockfile,
     to_root_dependencies: DependencySlice,
     survivors: &[Survivor],
@@ -59,11 +66,13 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
     let to_deps = to_lockfile.buffers.dependencies.as_slice();
 
     let from_deps = from_lockfile.buffers.dependencies.as_slice();
+    let from_resolutions = from_lockfile.buffers.resolutions.as_slice();
 
     // A frozen install keeps what bun.lock binds. A range that links a missing workspace cannot
     // fall back to the registry there, the way it does when a plain install re-resolves it. A range
     // that bun.lock binds to another package (written with linkWorkspacePackages off) stays bound.
-    let missing_target = |dep: &Dependency, recorded: DependencySlice| -> Option<PackageID> {
+    // Rows pair by name and group, as in `Diff::generate`: a package can list a name in two groups.
+    let missing_target = |dep: &Dependency, recorded: Recorded| -> Option<PackageID> {
         let workspace_name_hash = match dep.version.tag {
             DependencyVersionTag::Workspace => dep.name_hash,
             DependencyVersionTag::Npm => {
@@ -79,10 +88,18 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
                     to_buf,
                     from_buf,
                 )?;
-                let bound_elsewhere = recorded.get(from_deps).iter().any(|from_dep| {
-                    from_dep.name_hash == dep.name_hash
-                        && from_dep.version.tag != DependencyVersionTag::Workspace
-                });
+                let bound_elsewhere = recorded
+                    .dependencies
+                    .get(from_deps)
+                    .iter()
+                    .zip(recorded.resolutions.get(from_resolutions))
+                    .any(|(from_dep, &bound)| {
+                        from_dep.name_hash == dep.name_hash
+                            && from_dep.behavior == dep.behavior
+                            && pkg_res
+                                .get(bound as usize)
+                                .is_some_and(|res| res.tag != ResolutionTag::Workspace)
+                    });
                 if bound_elsewhere {
                     return None;
                 }
@@ -101,7 +118,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
         if dep.behavior.is_workspace() {
             continue;
         }
-        let Some(target) = missing_target(dep, from_root_dependencies) else {
+        let Some(target) = missing_target(dep, recorded_root) else {
             continue;
         };
         found = true;
@@ -119,7 +136,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
 
     for survivor in survivors {
         for dep in survivor.to_dependencies.get(to_deps) {
-            let Some(target) = missing_target(dep, survivor.from_dependencies) else {
+            let Some(target) = missing_target(dep, survivor.recorded) else {
                 continue;
             };
             found = true;

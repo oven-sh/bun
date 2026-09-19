@@ -1522,7 +1522,10 @@ impl Diff {
                         survivors.push(lockfile::pruned_workspaces::Survivor {
                             name: workspace_pkg.name,
                             to_dependencies: workspace_pkg.dependencies,
-                            from_dependencies: from_pkg.dependencies,
+                            recorded: lockfile::pruned_workspaces::Recorded {
+                                dependencies: from_pkg.dependencies,
+                                resolutions: from_pkg.resolutions,
+                            },
                         });
 
                         let diff = Self::generate_inner(
@@ -1618,7 +1621,10 @@ impl Diff {
             lockfile::pruned_workspaces::exit_if_survivor_depends_on_missing(
                 &*from_lockfile,
                 &missing_workspaces,
-                from.dependencies,
+                lockfile::pruned_workspaces::Recorded {
+                    dependencies: from.dependencies,
+                    resolutions: from.resolutions,
+                },
                 &*to_lockfile,
                 to.dependencies,
                 &survivors,

@@ -6565,8 +6565,7 @@ function onErrorSecureServerSession(err, socket) {
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
   stream.emit("frameError", frameType, errorCode);
 }
-// node's onFrameError: the stream and the session stay usable for the rest of the tick, then the
-// session closes gracefully so the other streams finish. Both calls are no-ops once closed.
+// node's onFrameError (lib/internal/http2/core.js#L661-L681 at v26.3.0). Both calls are no-ops once closed.
 function closeAfterFrameError(session: ServerHttp2Session, stream: ServerHttp2Stream, code: number) {
   stream.close(code);
   session.close();

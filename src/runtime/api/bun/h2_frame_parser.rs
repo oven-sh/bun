@@ -1962,9 +1962,7 @@ impl AbortListener for SignalRef {
     }
 }
 
-/// The fields of one outbound header block, staged so the block can be measured before any
-/// field reaches the HPACK encoder. A field that is encoded and never sent desyncs the peer's
-/// dynamic table for the rest of the connection.
+/// Header fields staged so a block can be measured before any of them reaches the HPACK encoder.
 #[derive(Default)]
 struct HeaderList {
     bytes: Vec<u8>,
@@ -2000,8 +1998,7 @@ impl HeaderList {
         Ok(())
     }
 
-    /// Same formula as nghttp2_hd_deflate_bound:
-    /// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_hd.c#L1578-L1603
+    /// nghttp2_hd_deflate_bound: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_hd.c#L1578-L1603
     fn deflate_bound(&self) -> usize {
         12 + self.fields.len() * 12 + self.bytes.len()
     }
@@ -7167,9 +7164,7 @@ impl H2FrameParser {
             flags |= HeadersFrameFlags::PRIORITY as u8;
         }
 
-        // nghttp2 refuses the block on its pre-compression bound (it always counts the priority
-        // fields) before it deflates it, so the peer's HPACK table stays in step:
-        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
+        // Like nghttp2, priority bytes always counted: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
         if let Some(staged) = &staged
             && staged.deflate_bound() + StreamPriority::BYTE_SIZE
                 > this.max_send_header_block_length.get() as usize
@@ -7184,9 +7179,7 @@ impl H2FrameParser {
                     JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                     JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
                 );
-                // Nothing can follow a refused final response: DATA without HEADERS is a
-                // connection error for the peer. A refused 1xx block leaves the stream open for
-                // the final response.
+                // DATA cannot follow a refused final response. A refused 1xx block keeps the stream open.
                 if !staged.is_informational() {
                     this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
                 }

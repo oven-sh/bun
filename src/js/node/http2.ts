@@ -3685,8 +3685,11 @@ function scheduleSettingsAckGraceNT(session) {
   timer.unref?.();
   session[kSettingsAckGraceTimer] = timer;
 }
-function destroyIfNotDestroyedNT(target, error?) {
-  if (!target.destroyed) target.destroy(error);
+function destroyIfNotDestroyedNT(target) {
+  if (!target.destroyed) target.destroy();
+}
+function rethrowUncaught(err) {
+  throw err;
 }
 function scheduleDestroyIfNotDestroyed(target) {
   if (!target.destroyed) {
@@ -5665,10 +5668,14 @@ class ClientHttp2Session extends Http2Session {
       const destroyedInNode = this.destroyed || (this.#closed && !hasLivePendingRequest(this.#pendingRequests));
       if (settingsRejected && !destroyedInNode) {
         // node destroys the socket with the error. Here #onError drops a socket error once close()
-        // was called, so destroy the session. One tick later, because a throw from inside the
-        // socket's connect callback is reported on the socket: an 'error' with no listener would
-        // never reach the process.
-        process.nextTick(destroyIfNotDestroyedNT, this, settingsError);
+        // was called, so destroy the session.
+        try {
+          this.destroy(settingsError);
+        } catch (e) {
+          // An 'error' with no listener. The socket layer reports a throw from its connect
+          // callback on the socket, where this destroyed session no longer listens.
+          process.nextTick(rethrowUncaught, e);
+        }
         return;
       }
       try {

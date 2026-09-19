@@ -2736,8 +2736,8 @@ describe("http2.connect reports a rejected options.settings where Node.js does",
     expect(exitCode).toBe(0);
   });
 
-  // The session is destroyed one tick after the socket's connect callback. A throw from inside
-  // that callback is reported on the socket, so the error would never reach the process.
+  // With no 'error' listener the destroy throws. A throw from inside the socket's connect callback
+  // is reported on the socket, so the connect handler throws it again from the next tick.
   const noErrorListener = `
     const http2 = require("node:http2");
     const server = http2.createServer();

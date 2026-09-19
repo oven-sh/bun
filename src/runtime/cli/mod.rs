@@ -1412,19 +1412,8 @@ pub mod command {
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
     fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
-        // The AutoCommand arm swallows
-        // `error.MissingEntryPoint` from `Command.init` and prints help;
-        // every other tag (including RunCommand) propagates the error.
-        // Note: nothing currently produces `MissingEntryPoint`; bare
-        // `bun` help is served by the empty-positionals fallthrough. This arm
-        // exists in case a producer is ever added (Arguments.rs).
-        let ctx = match init(tag, log) {
-            Ok(ctx) => ctx,
-            Err(e) if tag == Tag::AutoCommand && matches!(e, crate::Error::MissingEntryPoint) => {
-                return HelpCommand::exec();
-            }
-            Err(e) => return Err(e),
-        };
+        // Bare `bun` help is served by the empty-positionals fallthrough.
+        let ctx = init(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
         if ctx.parallel || ctx.sequential {
@@ -1558,8 +1547,7 @@ pub mod command {
     #[inline(never)]
     fn exec_audit(log: &mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::AuditCommand, log)?;
-        super::audit_command::AuditCommand::exec(ctx)?;
-        Ok(())
+        match super::audit_command::AuditCommand::exec(ctx)? {}
     }
 
     #[cold]

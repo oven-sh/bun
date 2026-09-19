@@ -6,7 +6,8 @@
  * can configure once then run specific targets.
  */
 
-import { existsSync, globSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, globSync, mkdirSync, utimesSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
@@ -137,12 +138,14 @@ export interface ConfigureResult {
  * on the next reconfigure (since adding a .ts usually means editing
  * an existing one to import it).
  *
- * Excludes runtime-only files (fetch-cli.ts, download.ts, ci.ts) and
- * runtime-only scripts — changes to those don't affect the build graph.
+ * Excludes scripts that only run as ninja subprocesses (ci.ts, stream.ts,
+ * npm-ci.ts) — changes to those don't affect the build graph. fetch-cli.ts
+ * and download.ts count: configure computes fetch URLs and checks source
+ * staleness through them.
  */
 function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");
-  const excluded = new Set(["fetch-cli.ts", "download.ts", "ci.ts", "stream.ts", "npm-ci.ts"]);
+  const excluded = new Set(["ci.ts", "stream.ts", "npm-ci.ts"]);
 
   const scripts = globSync("*.ts", { cwd: buildDir })
     .filter(f => !excluded.has(f))
@@ -159,9 +162,8 @@ function configureInputs(cwd: string): string[] {
  * We persist the profile NAME (not its expanded values) so that editing
  * profiles.ts propagates to existing build dirs on the next regen. The old
  * scheme persisted the post-merge PartialConfig, which froze whatever the
- * profile said at first-configure time — a build dir created from
- * `--profile=release --build-dir=build/btg` would keep replaying
- * `lto:false` forever even after a `btg` profile with `lto:true` was added.
+ * profile said at first-configure time — a build dir would keep replaying
+ * a value forever even after the profile changed it.
  */
 export interface ConfigureInput {
   /** Profile name to resolve via getProfile(). Omitted = no profile base. */
@@ -250,7 +252,12 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * no buildDir is set, one is computed from the build type (build/debug,
  * build/release, etc).
  */
-export async function configure(input: ConfigureInput): Promise<ConfigureResult> {
+/**
+ * `fromNinja`: this run is ninja's own `regen` edge replaying configure.json
+ * (build.ts --config-file), as opposed to build.ts configuring before it
+ * spawns ninja.
+ */
+export async function configure(input: ConfigureInput, fromNinja = false): Promise<ConfigureResult> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
@@ -262,26 +269,6 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     ...(input.profile !== undefined ? getProfile(input.profile) : {}),
     ...(input.overrides ?? {}),
   };
-
-  // Guard: build/btg is reserved for the LTO bench profile. Configuring it
-  // with any other profile (e.g. `--profile=release --build-dir=build/btg`,
-  // or a legacy configure.json migrated to {profile:"release",overrides:{…}})
-  // persists lto:false and silently links the non-LTO WebKit prebuilt — the
-  // bench suite then reports a phantom ~6-8% time / ~1 MB RSS "regression"
-  // that is pure binary layout (.data.rel.ro vtables, outlined JSC slow-
-  // paths), not src/ code. Fail loudly so the bench harness can't produce a
-  // de-LTO'd comparison binary. See profiles.ts:btg.
-  if (
-    partial.buildDir !== undefined &&
-    resolve(partial.buildDir) === resolve("build", "btg") &&
-    input.profile !== "btg"
-  ) {
-    throw new BuildError(`build/btg must be configured with --profile=btg (lto:true)`, {
-      hint:
-        `Got profile=${input.profile ?? "<none>"}. Run \`bun run build:btg\` ` +
-        `(or \`rm build/btg/configure.json\` first if regen is replaying a stale config).`,
-    });
-  }
 
   const toolchain = resolveToolchain(partial.os, partial.packageManager);
   mark("resolveToolchain");
@@ -339,12 +326,16 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // Emit ninja.
   const n = new Ninja({ buildDir: cfg.buildDir });
   registerAllRules(n, cfg);
-  emitGeneratorRule(n, cfg, input);
+  // emitBun writes configure-time files into the build dir (dep `headers`,
+  // the Windows .rc); it exists before anything is emitted.
+  mkdirSync(cfg.buildDir, { recursive: true });
   const output = emitBun(n, cfg, sources);
   mark("emitBun");
+  emitGeneratorRule(n, cfg, input);
 
   // Default targets. cpp-only sets its own default inside emitBun (archive,
-  // no smoke test). Full/link-only: `bun` phony (or stripped file) + `check`.
+  // no smoke test). Full/link-only: `bun` phony (or stripped file); the
+  // smoke test rides along as a validation of the link.
   // Release builds produce both bun-profile and stripped bun; `bun` is the
   // stripped one. Debug produces bun-debug; `bun` is a phony pointing at it.
   // dsym: darwin release only — pulled into defaults so ninja actually builds
@@ -352,7 +343,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // auto-trigger).
   if (output.exe !== undefined) {
     const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun";
-    const targets = [defaultTarget, "check"];
+    const targets = [defaultTarget];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
     for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
     n.default(targets);
@@ -360,12 +351,32 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
 
   // Write build.ninja (only if changed).
   const changed = await n.write();
+  const ninjaPath = resolve(cfg.buildDir, "build.ninja");
   mark("n.write");
 
-  // Pre-create all object file parent directories. Ninja doesn't mkdir;
-  // CMake pre-creates CMakeFiles/<target>.dir/* at generate time, we do
-  // the same. Derived from output.objects so there's no hidden state —
-  // the orchestrator already knows every .o path.
+  // build.ninja is also the output of the `regen` edge, whose inputs are the
+  // build scripts and configure.json. ninja compares those against the mtime
+  // it *recorded* for build.ninja when it last ran that edge itself, so after
+  // a script edit a manifest brought up to date here (outside ninja) still
+  // looks stale and ninja would run configure a second time on startup.
+  // Having just configured, the manifest is current as of now: stamp it and
+  // let `-t restat` record that. (Not when ninja is the one running us — it
+  // records its own edge — and nothing to record into in a fresh dir.)
+  if (!fromNinja) {
+    const now = new Date();
+    utimesSync(ninjaPath, now, now);
+    if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
+      spawnSync("ninja", ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
+    }
+  }
+  mark("restat");
+
+  // Pre-create all object file parent directories (ninja would create them
+  // edge by edge; having the tree up front serves tools that read
+  // compile_commands.json before any edge ran). CMake pre-creates
+  // CMakeFiles/<target>.dir/* at generate time, we do the same. Derived
+  // from output.objects so there's no hidden state — the orchestrator
+  // already knows every .o path.
   mkdirAll(output.objects.map(dirname));
   mark("mkdirAll");
 
@@ -380,7 +391,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   }
   mark("orderFile");
 
-  const ninjaFile = resolve(cfg.buildDir, "build.ninja");
+  const ninjaFile = ninjaPath;
 
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");

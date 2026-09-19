@@ -69,11 +69,11 @@ class JSStreamsRuntime;
 
 // The Bun-native layer cells & classes.
 class JSDirectStreamController;
+class JSDirectStreamSource; // a converted type:"direct" underlying source (JSDirectStreamSource.h)
 class JSBunStandaloneTextSink; // the standalone Text sink (BunStandaloneTextSink.h)
 class JSOneShotDirectSink; // consumeDirectStreamToArrayBuffer's throwaway controller
 class JSReadableStreamIntoArrayOperation; // the array pump's reader/chunks/result state
 class JSNativeStreamSourceAdapter;
-class JSDirectSinkCloseState;
 class JSAsyncIteratorSourceOperation;
 class JSReadStreamIntoSinkOperation;
 class JSTextEncoderStream;
@@ -204,7 +204,7 @@ enum class ReadIntoRequestKind : uint8_t {
 
 // The 3 direct sink flavors carried by ONE JSDirectStreamController.
 enum class DirectSinkKind : uint8_t {
-    ArrayBuffer, // a real Bun.ArrayBufferSink
+    ArrayBuffer, // a byte buffer the reader drains as Uint8Array chunks
     Text, // the rope + pieces accumulator
     Array, // chunks pushed into a JSArray
 };

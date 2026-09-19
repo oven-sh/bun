@@ -279,6 +279,50 @@ it.skipIf(isWindows)("reuses the connection (keep-alive)", async () => {
   }
 });
 
+it.skipIf(isWindows)("a unix request never consults the proxy environment", async () => {
+  using dir = tempDir("fetch-unix-proxy-env", {});
+  const sockPath = join(String(dir), "proxy-env.sock");
+  const heads: string[] = [];
+  const srv = createServer(sock => {
+    sock.on("error", () => {});
+    sock.once("data", d => {
+      heads.push(d.toString("latin1").split("\r\n\r\n")[0]);
+      sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+    });
+  });
+  srv.listen(sockPath);
+  await once(srv, "listening");
+  try {
+    // The proxy env must be the child's own; NO_PROXY is unset so nothing exempts the host.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = await fetch("http://example.com/over-unix", { unix: ${JSON.stringify(sockPath)} }); console.log(await r.text());`,
+      ],
+      env: {
+        ...bunEnv,
+        HTTP_PROXY: "http://user:secret@127.0.0.1:1",
+        http_proxy: undefined,
+        ALL_PROXY: "http://user:secret@127.0.0.1:1",
+        NO_PROXY: undefined,
+        no_proxy: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "ok\n", stderr: "" });
+    expect(heads.length).toBe(1);
+    const lines = heads[0].split("\r\n");
+    expect(lines[0]).toBe("GET /over-unix HTTP/1.1");
+    expect(lines.filter(line => /^proxy-/i.test(line))).toEqual([]);
+    expect(exitCode).toBe(0);
+  } finally {
+    srv.close();
+  }
+});
+
 it.skipIf(isWindows)("keep-alive pool is keyed by socket path", async () => {
   function makeServer(name: string) {
     let connections = 0;

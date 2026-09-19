@@ -144,7 +144,7 @@ impl Cp {
             }
             #[cfg(windows)]
             State::Ebusy(_) => return Self::ignore_ebusy_error_if_possible(interp, cmd),
-            State::WaitingWriteErr => return Yield::failed(),
+            State::WaitingWriteErr => return Yield::suspended(),
             State::Done => return Builtin::done(interp, cmd, 0),
         };
         match action {
@@ -758,6 +758,10 @@ impl bun_event_loop::Taskable for ShellCpTask {
             (*this).task.unref_unrun();
             drop(bun_core::heap::take(this));
         }
+    }
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

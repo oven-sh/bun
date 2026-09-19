@@ -171,6 +171,7 @@ describe("test-fs-assert-encoding-error", () => {
   const expectedError = expect.objectContaining({
     code: "ERR_INVALID_ARG_VALUE",
     name: "TypeError",
+    message: "The argument 'encoding' is invalid encoding. Received 'test'",
   });
 
   it("readFile throws on invalid encoding", () => {
@@ -273,6 +274,83 @@ describe("test-fs-assert-encoding-error", () => {
     expect(() => {
       fs.WriteStream(testPath, options);
     }).toThrow(expectedError);
+  });
+});
+
+describe("invalid encoding error renders the received value like node", () => {
+  const testPath = join(tmpdirSync(), "assert-encoding-received");
+  const invalidEncoding = (received: string) =>
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_VALUE",
+      name: "TypeError",
+      message: `The argument 'encoding' is invalid encoding. Received ${received}`,
+    });
+
+  // [how node's util.inspect renders the value, the value passed as options.encoding]
+  const values: [string, unknown][] = [
+    ["'nope'", "nope"],
+    [`"it's"`, "it's"],
+    ["[ 1 ]", [1]],
+    ["{ a: 1 }", { a: 1 }],
+    ["1", 1],
+    ["true", true],
+    ["10n", 10n],
+    ["Symbol(nope)", Symbol("nope")],
+  ];
+
+  it.each(values)("readFileSync(path, { encoding: %s })", (received, encoding) => {
+    expect(() => fs.readFileSync(testPath, { encoding } as any)).toThrow(invalidEncoding(received));
+  });
+
+  it.each(values)("fs.promises.readFile(path, { encoding: %s })", async (received, encoding) => {
+    await expect(promises.readFile(testPath, { encoding } as any)).rejects.toThrow(invalidEncoding(received));
+  });
+
+  const encoding = [1];
+  const received = "[ 1 ]";
+
+  it("readFile callback form", () => {
+    expect(() => fs.readFile(testPath, { encoding } as any, () => {})).toThrow(invalidEncoding(received));
+  });
+
+  it("writeFileSync", () => {
+    expect(() => fs.writeFileSync(testPath, "data", { encoding } as any)).toThrow(invalidEncoding(received));
+  });
+
+  it("appendFileSync", () => {
+    expect(() => fs.appendFileSync(testPath, "data", { encoding } as any)).toThrow(invalidEncoding(received));
+  });
+
+  it("readdirSync", () => {
+    expect(() => fs.readdirSync(testPath, { encoding } as any)).toThrow(invalidEncoding(received));
+  });
+
+  it("readlinkSync", () => {
+    expect(() => fs.readlinkSync(testPath, { encoding } as any)).toThrow(invalidEncoding(received));
+  });
+
+  it("realpathSync", () => {
+    expect(() => fs.realpathSync(testPath, { encoding } as any)).toThrow(invalidEncoding(received));
+  });
+
+  it("realpathSync.native", () => {
+    expect(() => fs.realpathSync.native(testPath, { encoding } as any)).toThrow(invalidEncoding(received));
+  });
+
+  it("mkdtempSync", () => {
+    expect(() => fs.mkdtempSync(testPath, { encoding } as any)).toThrow(invalidEncoding(received));
+  });
+
+  it("watch", () => {
+    expect(() => fs.watch(testPath, { encoding } as any, () => {})).toThrow(invalidEncoding(received));
+  });
+
+  it("fs.promises.readdir", async () => {
+    await expect(promises.readdir(testPath, { encoding } as any)).rejects.toThrow(invalidEncoding(received));
+  });
+
+  it("fs.promises.mkdtemp", async () => {
+    await expect(promises.mkdtemp(testPath, { encoding } as any)).rejects.toThrow(invalidEncoding(received));
   });
 });
 

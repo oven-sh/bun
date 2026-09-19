@@ -379,6 +379,43 @@ test("Error.captureStackTrace: the first line of a target's stack is its name an
   expect(assigned.stack).toBe("replaced");
 });
 
+test("Error.captureStackTrace: a target's stack is found through an object that inherits from it", () => {
+  const proto = { name: "Proto" };
+  Error.captureStackTrace(proto);
+  const derived = Object.create(proto);
+  derived.name = "Derived";
+  // The first line comes from the object that was captured on, as in V8.
+  expect(derived.stack.split("\n")[0]).toBe("Proto");
+  expect(proto.stack.split("\n")[0]).toBe("Proto");
+
+  function Widget() {}
+  Widget.prototype.name = "WidgetProto";
+  Error.captureStackTrace(Widget.prototype);
+  expect(new Widget().stack.split("\n")[0]).toBe("WidgetProto");
+
+  const unrelated = { name: "Unrelated" };
+  Error.captureStackTrace(unrelated);
+  expect(Reflect.get(unrelated, "stack", { name: "Receiver" })).toBeUndefined();
+});
+
+test("Error.captureStackTrace: reading the stack leaves a frozen or sealed target as it was", () => {
+  const targets = { frozen: { name: "Frozen" }, sealed: { name: "Sealed" }, error: new TypeError("boom") };
+  for (const target of Object.values(targets)) Error.captureStackTrace(target);
+  Object.freeze(targets.frozen);
+  Object.seal(targets.sealed);
+  Object.freeze(targets.error);
+  expect({
+    frozen: targets.frozen.stack.split("\n")[0],
+    sealed: targets.sealed.stack.split("\n")[0],
+    error: targets.error.stack.split("\n")[0],
+  }).toEqual({ frozen: "Frozen", sealed: "Sealed", error: "TypeError: boom" });
+  expect({
+    frozen: Object.isFrozen(targets.frozen),
+    sealed: Object.isSealed(targets.sealed),
+    error: Object.isFrozen(targets.error),
+  }).toEqual({ frozen: true, sealed: true, error: true });
+});
+
 test("console.trace() from a Console instance starts with Trace and its message", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `new console.Console(process.stdout, process.stdout).trace("hello %s", "world");`],
@@ -400,8 +437,9 @@ test("Error.captureStackTrace installs .stack as non-enumerable", () => {
       enumerable: false,
       configurable: true,
     });
-    // V8 installs an accessor (no `writable`), Bun installs a data property; both
-    // must allow assignment. Only `writable: false` would be a regression.
+    // Until the stack is first read this is an accessor (no `writable`), in V8 and in Bun; after
+    // that Bun has a data property. Either way it must allow assignment: only `writable: false`
+    // would be a regression.
     expect(d.writable).not.toBe(false);
     expect(Object.prototype.propertyIsEnumerable.call(target, "stack")).toBe(false);
   };

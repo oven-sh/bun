@@ -820,6 +820,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
     return JSC::JSValue::encode(result);
 }
 
+// `stack` stops being the lazy accessor and becomes `value`, as sealed or frozen as `object` is.
+static void replaceLazyStack(JSC::VM& vm, JSC::JSObject* object, JSC::JSValue value)
+{
+    unsigned attributes = JSC::PropertyAttribute::DontEnum | 0;
+    if (object->isFrozen(vm))
+        attributes |= JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete;
+    else if (object->isSealed(vm))
+        attributes |= JSC::PropertyAttribute::DontDelete;
+    object->putDirect(vm, vm.propertyNames->stack, value, attributes);
+}
+
 JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -827,11 +838,20 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     auto* errorObject = dynamicDowncast<ErrorInstance>(JSValue::decode(thisValue));
 
     if (!errorObject) {
-        // A target of Error.captureStackTrace() that is not an Error. Its frames were formatted then;
-        // its name and message are read now, when the stack is first read, as V8 does.
-        JSObject* target = JSValue::decode(thisValue).getObject();
-        JSValue frames = target ? target->getDirect(vm, builtinNames(vm).capturedStackFramesPrivateName()) : JSValue();
-        if (!frames)
+        // A target of Error.captureStackTrace() that is not an Error, or an object that inherits `stack`
+        // from one: a custom accessor is given the receiver, so look for the object that has the frames.
+        // They were formatted at the capture; the target's name and message are read now, when the
+        // stack is first read, as V8 does.
+        JSObject* target = nullptr;
+        JSValue frames;
+        for (JSObject* object = JSValue::decode(thisValue).getObject(); object; object = object->getPrototypeDirect().getObject()) {
+            frames = object->getDirect(vm, builtinNames(vm).capturedStackFramesPrivateName());
+            if (frames) {
+                target = object;
+                break;
+            }
+        }
+        if (!target)
             return JSValue::encode(jsUndefined());
         WTF::String name = stackTraceHeaderName(vm, globalObject, target);
         RETURN_IF_EXCEPTION(scope, {});
@@ -845,7 +865,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         DeletePropertySlot slot;
         JSObject::deleteProperty(target, globalObject, builtinNames(vm).capturedStackFramesPrivateName(), slot);
         RETURN_IF_EXCEPTION(scope, {});
-        target->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        replaceLazyStack(vm, target, result);
         return JSValue::encode(result);
     }
 
@@ -875,7 +895,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
             errorObject->setStackFrames(vm, {});
     }
     RETURN_IF_EXCEPTION(scope, {});
-    errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+    replaceLazyStack(vm, errorObject, result);
     return JSValue::encode(result);
 }
 
@@ -888,7 +908,7 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
         DeletePropertySlot slot;
         JSObject::deleteProperty(object, globalObject, builtinNames(vm).capturedStackFramesPrivateName(), slot);
         RETURN_IF_EXCEPTION(scope, false);
-        object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
+        replaceLazyStack(vm, object, JSValue::decode(value));
     }
 
     return true;

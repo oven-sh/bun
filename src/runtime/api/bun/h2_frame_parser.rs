@@ -6455,6 +6455,22 @@ impl H2FrameParser {
         Ok(JSValue::js_number(this.flush() as f64))
     }
 
+    /// Write the corked control frames (GOAWAY, RST_STREAM) to the transport. Unlike
+    /// `flush()` this does not drain the per-stream DATA queues, so a session that is
+    /// being destroyed does not complete streams on the way out.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn flush_corked(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if this.js_socket_flushing.get() || !this.tx_tracker.get().at_boundary() {
+            return Ok(JSValue::js_number(0.0));
+        }
+        let _keepalive = this.keepalive();
+        Ok(JSValue::js_number(this.uncork() as f64))
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn request(
         this: &Self,

@@ -513,8 +513,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         );
     }
 
-    // may or may not be the package json we are editing. When it is, this path has to be the
-    // bytes of `original_package_json_path`: the two are one key of the package.json cache.
+    // One spelling with `original_package_json_path`: the package.json cache is keyed by path.
     let mut root_package_json_path_buf: Vec<u8> = FileSystem::instance().top_level_dir().to_vec();
     super::push_package_json(&mut root_package_json_path_buf);
     let root_package_json_path: &ZStr = 'root_package_json_path: {

@@ -1473,8 +1473,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
-/// Appends `package.json` and a NUL to the directory in `path`. A filesystem root (`/`, `C:\`)
-/// already ends in a separator, so it gets no second one.
+/// Appends `package.json\0` to a directory. A filesystem root already ends in the separator.
 fn push_package_json(path: &mut Vec<u8>) {
     if !path.last().is_some_and(|&c| bun_paths::is_sep_native(c)) {
         path.push(SEP);

@@ -1525,33 +1525,39 @@ test("lazy error-info materialization does not store an empty stack value when t
 // trace), a SyntaxError's "at <parse>" line, and the positions of node:vm frames in a transpiled file.
 //
 // Whether the collection materializes a given stack is not up to the test, so each shape makes several
-// errors, each under its own functions that are garbage once they return. A prepareStackTrace installed
-// for the read is consulted only if the stack is not a string yet, which tells the ones the collection
-// materialized from the rest; those are the ones compared, and there must be at least one.
+// errors, each under its own functions that are garbage once they return, and each with a twin: a plain
+// Error made in the same frames, so a collection that materializes the twin's stack (its frames are
+// among the error's) materializes the error's too. A prepareStackTrace installed for a read is consulted
+// only if the stack is not a string yet, which the twin tells whatever the error's name, message or
+// realm is. The errors whose twin was materialized are the ones compared, and there must be one.
 const materializedByACollection = `
   const SAMPLES = 8;
+  const twins = new WeakMap();
   // The finally blocks keep every return out of tail position.
-  const capture = make =>
-    new Function("make", '"use strict"; function thrower() { try { return make(); } finally {} } try { return thrower(); } finally {}')(make);
+  const capture = make => {
+    const [error, twin] = new Function(
+      "make",
+      '"use strict"; function thrower() { try { return [make(), new Error("twin")]; } finally {} } try { return thrower(); } finally {}',
+    )(make);
+    twins.set(error, twin);
+    return error;
+  };
   // One on-access error and SAMPLES more from one call site, so every trace reads the same to the column.
   const captureAll = make => Array.from({ length: 1 + SAMPLES }, () => capture(make));
   const collect = async () => {
     await new Promise(resolve => setImmediate(resolve));
     Bun.gc(true);
   };
-  // read(error) for each sample the collection materialized.
-  const readMaterialized = (samples, read) => {
-    const results = [];
-    for (const sample of samples) {
-      let consulted = false;
-      const builtin = Error.prepareStackTrace;
-      Error.prepareStackTrace = () => ((consulted = true), "");
-      const result = read(sample);
-      Error.prepareStackTrace = builtin;
-      if (!consulted) results.push(result);
-    }
-    return results;
+  const materialized = error => {
+    let consulted = false;
+    const builtin = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => ((consulted = true), "");
+    void twins.get(error).stack;
+    Error.prepareStackTrace = builtin;
+    return !consulted;
   };
+  // read(error) for each sample the collection materialized.
+  const readMaterialized = (samples, read) => samples.filter(materialized).map(read);
 `;
 
 test("a stack that a collection materializes reads the same as one materialized on access", async () => {

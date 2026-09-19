@@ -4730,9 +4730,7 @@ class ServerHttp2Session extends Http2Session {
       if (!this.#connected) return;
       this.#closed = true;
       if (socket && (!this[kGoawaySent] || code)) {
-        // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-        // and double-fires the peer's 'goaway' event. An error code is new information, though:
-        // a destroy(err) after close() must still put the error GOAWAY on the wire.
+        // close() already sent a NO_ERROR GOAWAY. An error code is new information.
         this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       }
       // Corked frames reach a JS transport only while connected.
@@ -5813,9 +5811,7 @@ class ClientHttp2Session extends Http2Session {
       }
       this.#closed = true;
       if (socket && (!this[kGoawaySent] || code)) {
-        // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-        // and double-fires the peer's 'goaway' event. An error code is new information, though:
-        // a destroy(err) after close() must still put the error GOAWAY on the wire.
+        // close() already sent a NO_ERROR GOAWAY. An error code is new information.
         this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       }
       // Corked frames reach a JS transport only while connected.

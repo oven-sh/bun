@@ -1758,7 +1758,7 @@ describe("existing node_modules, missing node_modules/.bun", () => {
     expect(await readdirSorted(globalNm)).toEqual(["@scope", "both", "gone", "linked", "tool"]);
     expect(await readdirSorted(join(globalNm, "@scope"))).toEqual(["linked", "tool"]);
 
-    // `both` is registered and installed: the install owns the name, like it does with the hoisted linker.
+    // `both` is registered and installed: the install writes its own link at that name.
     const add = await run(
       globalEnv(root),
       root,

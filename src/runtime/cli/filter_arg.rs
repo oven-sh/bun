@@ -376,8 +376,7 @@ impl<'a> PackageFilterIterator<'a> {
         })
     }
 
-    /// Whether a later `!` entry removes the package. As in `bun install`, only what a glob entry
-    /// matched can be removed: a path that is listed as is stays a member.
+    /// As in `bun install`, a later `!` entry removes a glob match but never a path listed as is.
     fn is_excluded(&self, package_json_path: &[u8]) -> bool {
         if !glob::detect_glob_syntax(&self.patterns[self.pattern_idx]) {
             return false;

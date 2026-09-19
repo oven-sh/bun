@@ -247,14 +247,12 @@ fn relative_workspace_path<'b>(
     &buf[..len]
 }
 
-/// A `workspaces` entry with an odd number of leading `!`. It only removes directories that the
-/// globs before it matched, so it is never walked for members of its own.
+/// A `workspaces` entry with an odd number of leading `!` only removes members: never walk it.
 pub fn is_negated_pattern(pattern: &[u8]) -> bool {
     strip_negations(pattern).1
 }
 
-/// The first of `later_patterns` (the `workspaces` globs after the one that matched
-/// `workspace_dir`) that removes `workspace_dir`, a path relative to the workspace root.
+/// The first `!` entry after the glob that matched `workspace_dir` (root-relative) that removes it.
 pub fn negated_by<'a>(later_patterns: &'a [Box<[u8]>], workspace_dir: &[u8]) -> Option<&'a [u8]> {
     later_patterns
         .iter()

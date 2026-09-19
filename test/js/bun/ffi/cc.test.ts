@@ -199,6 +199,25 @@ describe.skip("given a strlen(cstring) function", () => {
 
 // =============================================================================
 
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+it.skipIf(isWindows || isASAN)("cc() library closes at the end of a `using` block", () => {
+  using dir = tempDir("bun-ffi-cc-dispose", {
+    "add.c": `int add(int a, int b) { return a + b; }`,
+  });
+  let library: Disposable;
+  {
+    using lib = cc({
+      source: path.join(String(dir), "add.c"),
+      symbols: { add: { args: ["int", "int"], returns: "int" } },
+    });
+    library = lib;
+    expect(typeof lib[Symbol.dispose]).toBe("function");
+    expect(lib.symbols.add(40, 2)).toBe(42);
+  }
+  // Disposing twice is a no-op, like close().
+  expect(library[Symbol.dispose]()).toBeUndefined();
+});
+
 function makeValidCase<Fns extends Record<string, FFIFunction>>(
   name: string,
   source: string,

@@ -41,6 +41,29 @@ const {
 console.log(`SQLite 3 version: ${sqlite3_libversion()}`);
 ```
 
+### Closing a library
+
+Call `close()` to unload the library and free the memory allocated for its symbols. Once closed, the symbols must not be called again.
+
+The returned object also implements the explicit resource management protocol, so it can be used with a `using` declaration. Disposing the returned object closes the library.
+
+```ts
+import { dlopen, FFIType, suffix } from "bun:ffi";
+
+{
+  using lib = dlopen(`libsqlite3.${suffix}`, {
+    sqlite3_libversion: {
+      args: [],
+      returns: FFIType.cstring,
+    },
+  });
+
+  console.log(`SQLite 3 version: ${lib.symbols.sqlite3_libversion()}`);
+} // lib.close() is invoked automatically here
+```
+
+The objects returned by `cc()` and `linkSymbols()`, `CFunction`, and `JSCallback` implement the same protocol.
+
 ---
 
 ## Performance
@@ -335,7 +358,7 @@ setTimeout(() => {
 }, 5000);
 ```
 
-When you're done with a `JSCallback`, call `close()` to free the memory.
+When you're done with a `JSCallback`, call `close()` to free the memory. `JSCallback` also implements the explicit resource management protocol, so it can be used with a `using` declaration.
 
 ### Experimental thread-safe callbacks
 

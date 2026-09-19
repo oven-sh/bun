@@ -45,10 +45,9 @@ pub struct NodeHTTPResponse {
     pub(crate) promise: JsCell<StrongOptional>, // Strong.Optional
     pub(crate) server: AnyServer,
 
-    /// When you call pause() on the node:http IncomingMessage
-    /// We might've already read from the socket.
-    /// So we need to buffer that data.
-    /// This should be pretty uncommon though.
+    /// Body bytes that arrived while no `ondata` callback was armed (see
+    /// `on_data_or_aborted`). The reader takes them with `drainRequestBody()`
+    /// or `resume()`. A pause parks nothing here: it only stops the socket reads.
     pub(crate) buffered_request_body_data_during_pause: JsCell<Vec<u8>>,
     /// node:http: the raw trailer section that followed THIS request's chunked
     /// body. Moved off the connection's single per-parse buffer the moment the
@@ -90,7 +89,7 @@ bitflags! {
         const HAS_CUSTOM_ON_DATA                  = 1 << 4;
         const IS_REQUEST_PENDING                  = 1 << 5;
         const IS_DATA_BUFFERED_DURING_PAUSE       = 1 << 6;
-        /// Did we receive the last chunk of data during pause?
+        /// The body's last chunk is in `buffered_request_body_data_during_pause`.
         const IS_DATA_BUFFERED_DURING_PAUSE_LAST  = 1 << 7;
         /// node:http handed this connection to a raw 'upgrade'/'connect'
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
@@ -303,10 +302,6 @@ fn on_timeout_shim(this: *mut NodeHTTPResponse, resp: uws::AnyResponse) {
 fn on_data_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) {
     // SAFETY: see on_timeout_shim.
     unsafe { (*this.cast_const()).on_data(chunk, last) }
-}
-fn on_buffer_paused_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) {
-    // SAFETY: see on_timeout_shim.
-    unsafe { (*this.cast_const()).on_buffer_request_body_while_paused(chunk, last) }
 }
 fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) -> bool {
     // SAFETY: see on_timeout_shim.
@@ -655,13 +650,8 @@ impl NodeHTTPResponse {
             return false;
         }
 
-        // The body keeps the request pending only while uws still owes it
-        // chunks. A fin that arrived while the request was paused leaves
-        // `body_read_state` at `Pending` so JS can still drain the buffered
-        // tail (`drainRequestBody`), but uws will not deliver anything further,
-        // so for this accounting that body is complete as well.
-        let body_pending = self.body_read_state.get() == BodyReadState::Pending
-            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
+        // The body keeps the request pending only while uws still owes it chunks.
+        let body_pending = self.body_read_state.get() == BodyReadState::Pending;
 
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
         // same way, except an Upgrade carrying a body keeps parsing as HTTP
@@ -709,7 +699,7 @@ impl NodeHTTPResponse {
             }
         });
 
-        // A body whose fin was buffered during a pause is still owed to the
+        // A body whose fin was parked with no reader armed is still owed to the
         // IncomingMessage, which drains it through `drainRequestBody` when it
         // next reads (possibly only after the response has ended). Keep it while
         // JS can still get at it; `set_on_data` frees it once the reader lets go.
@@ -785,13 +775,6 @@ impl NodeHTTPResponse {
         }
         if self.buffered_request_body_data_during_pause.get().len() > 0 {
             result |= 1 << 3;
-        }
-        if self
-            .flags
-            .get()
-            .contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-        {
-            result |= 1 << 2;
         }
 
         JSValue::js_number_from_int32(result)
@@ -1322,26 +1305,17 @@ impl NodeHTTPResponse {
     ) -> JsResult<JSValue> {
         scoped_log!(NodeHTTPResponse, "doPause");
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else {
-            return Ok(JSValue::FALSE);
-        };
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
+        if self.raw_response.get().is_none()
+            || flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
         {
             return Ok(JSValue::FALSE);
         }
-        // Body already delivered: nothing to buffer, and re-arming onData would
-        // overwrite a pipelined request's userData on the shared HttpResponseData.
-        // pause_socket() still runs so pausePipelineReads can gate the fd.
-        if self.body_read_state.get() == BodyReadState::Pending
-            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-        {
-            self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
-            raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
-        }
-
+        // Like Node's readStop(): only the kernel reads stop. The body handler
+        // stays armed, so the rest of the read that uws is parsing right now
+        // still reaches `ondata`, including the fin.
         self.pause_socket();
         Ok(JSValue::TRUE)
     }
@@ -1407,10 +1381,8 @@ impl NodeHTTPResponse {
         }
         // Body already delivered: re-arming onData/onTimeout would overwrite a
         // pipelined request's userData on the shared HttpResponseData. The drain
-        // below still runs so a body buffered-while-paused reaches its own caller.
-        if self.body_read_state.get() == BodyReadState::Pending
-            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-        {
+        // below still runs so a body parked with no reader armed reaches its own caller.
+        if self.body_read_state.get() == BodyReadState::Pending {
             self.set_on_aborted_handler();
             raw.on_data(on_data_shim, self.as_ctx_ptr());
         }
@@ -1559,26 +1531,6 @@ impl NodeHTTPResponse {
         Ok(JSValue::UNDEFINED)
     }
 
-    fn on_buffer_request_body_while_paused(&self, chunk: &[u8], last: bool) {
-        scoped_log!(
-            NodeHTTPResponse,
-            "onBufferRequestBodyWhilePaused({}, {})",
-            chunk.len(),
-            last
-        );
-
-        self.buffered_request_body_data_during_pause
-            .with_mut(|b| b.append_slice(chunk));
-        if last {
-            self.capture_request_trailers();
-            self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST));
-            if self.body_read_ref.get().has {
-                self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-                self.mark_request_as_done_if_necessary();
-            }
-        }
-    }
-
     fn get_bytes(&self, global_this: &JSGlobalObject, chunk: &[u8]) -> JSValue {
         // TODO: we should have a error event for this but is better than ignoring it
         // right now the socket instead of emitting an error event it will reportUncaughtException
@@ -1643,8 +1595,8 @@ impl NodeHTTPResponse {
         let on_data_armed = js::on_data_get_cached(this_value).is_some_and(|cb| cb.is_cell());
         if !on_data_armed && body_was_pending && event == AbortEvent::None {
             // No reader armed yet: pipelined request whose body arrived in the same parse burst
-            // as its headers, before JS ran _read() to install ondata. Park it where pause parks;
-            // the reader-arm drain picks it up. (Dumped requests move to Done first, never here.)
+            // as its headers, before JS ran _read() to install ondata. Park it; the reader-arm
+            // drain picks it up. (Dumped requests move to Done first, never here.)
             self.buffered_request_body_data_during_pause
                 .with_mut(|b| b.append_slice(chunk));
             self.update_flags(|f| {
@@ -2239,7 +2191,6 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || self.body_read_state.get() != BodyReadState::Pending
-            || flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
             || flags.contains(Flags::UPGRADED)
         {
             js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
@@ -2283,8 +2234,8 @@ impl NodeHTTPResponse {
         }
         self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
 
-        // Every site that unrefs `body_read_ref` also transitions `body_read_state` out of `.pending`
-        // or sets `is_data_buffered_during_pause_last`, both of which are rejected by the guard above.
+        // Every site that unrefs `body_read_ref` also transitions `body_read_state` out of `.pending`,
+        // which is rejected by the guard above.
         // So reaching here, `body_read_ref` is still held from create(). Do not re-acquire it or
         // `this.ref()` — there would be no balancing release (PR #18564 removed the paired derefs).
         debug_assert!(self.body_read_ref.get().has);

@@ -259,6 +259,29 @@ describe.concurrent("bunshell ls", () => {
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["dir1", "dir2"]))
         .run();
     });
+
+    // A lone `-` is an operand (a file named `-`), as with getopt(3), and
+    // ends the flags like any other operand.
+    test("a lone - is an operand", async () => {
+      using tempdir = tempDir("ls-dash-operand", { "-": "", "visible": "" });
+      await TestBuilder.command`ls -a -`.setTempdir(String(tempdir)).stdout("-\n").stderr("").exitCode(0).run();
+      await TestBuilder.command`ls - visible`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual(["-", "visible"]))
+        .stderr("")
+        .exitCode(0)
+        .run();
+    });
+
+    test("a lone - names a file that does not exist", async () => {
+      await using tempdir = tempDir("ls-dash-missing", {});
+      await TestBuilder.command`ls -`
+        .setTempdir(tempdir)
+        .stdout("")
+        .stderr("ls: -: No such file or directory\n")
+        .exitCode(1)
+        .run();
+    });
   });
 
   describe("errors", () => {

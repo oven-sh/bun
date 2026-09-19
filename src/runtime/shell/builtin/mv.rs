@@ -368,7 +368,8 @@ impl Mv {
     }
 
     fn parse_flag(flag: &[u8]) -> MvFlag {
-        if flag.is_empty() || flag[0] != b'-' {
+        // A lone `-` is an operand (a file named `-`), as in getopt(3).
+        if flag.len() < 2 || flag[0] != b'-' {
             return MvFlag::Done;
         }
         for &ch in &flag[1..] {

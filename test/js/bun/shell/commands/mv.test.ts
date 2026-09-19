@@ -27,6 +27,17 @@ $.nothrow();
 describe("mv", async () => {
   TestBuilder.command`echo foo > a; mv a b`.ensureTempDir().fileEquals("b", "foo\n").runAsTest("move file -> file");
 
+  // A lone `-` is an operand (a file named `-`), as with getopt(3); it used to
+  // be consumed as an empty cluster of flags, leaving mv with one operand.
+  TestBuilder.command`mv - b`
+    .ensureTempDir()
+    .file("-", "dash")
+    .stderr("")
+    .exitCode(0)
+    .fileEquals("b", "dash")
+    .doesNotExist("-")
+    .runAsTest("move a file named -");
+
   TestBuilder.command`touch a; mkdir foo; mv a foo; ls foo`
     .ensureTempDir()
     .stdout("a\n")

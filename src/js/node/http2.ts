@@ -4916,8 +4916,10 @@ function destroySelfOnEnd(this: Http2Stream) {
 function destroyClosedStream(stream: Http2Stream) {
   if (stream.errored) {
     // Neither event below fires on an errored Duplex. node's onStreamClose destroys at once too:
-    // an emitted 'error' makes `stream.readable` false.
-    stream.destroy();
+    // an emitted 'error' makes `stream.readable` false. When the 'error' is still queued (the
+    // END_STREAM of onStreamWriteDone closed the stream), streamOnErrored destroys after it, so
+    // its listeners observe a live stream there too.
+    if (stream._writableState.errorEmitted) stream.destroy();
   } else if (stream.readable && !stream.rstCode) {
     // Clean close while data is still buffered on the readable side (e.g. the response ended
     // before the request body was consumed): node defers the destroy until the consumer drains

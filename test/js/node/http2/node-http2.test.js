@@ -6046,6 +6046,27 @@ describe.concurrent("write() after end()", () => {
       expect(result).toEqual([lateWriteEvents, 4]);
     });
 
+    it("server stream, request already ended", async () => {
+      // The END_STREAM then closes the native stream at once, before 'error' is emitted. The late
+      // write callback and the 'error' listener still get a live stream, like node.
+      const live = [];
+      const isLive = stream => !stream.destroyed && stream.session !== undefined;
+      const result = await serve((stream, late) => {
+        stream.resume();
+        stream.on("end", () => {
+          stream.on("error", () => live.push(isLive(stream)));
+          stream.respond({ ":status": 200 });
+          stream.write("done");
+          stream.end();
+          stream.write("late", err => {
+            live.push(isLive(stream));
+            late(err);
+          });
+        });
+      }, "body");
+      expect([live, ...result]).toEqual([[true, true], lateWriteEvents, 4]);
+    });
+
     it("server stream, corked writes (_writev)", async () => {
       const result = await serve((stream, late) => {
         stream.respond({ ":status": 200 });

@@ -2279,7 +2279,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_sliceBody(JSC::JSGlobalObje
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
 }
 
-// https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L834
+// https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L904-L934
 // using byteLength and byte offsets here is intentional
 static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
@@ -2291,9 +2291,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
     size_t byteLength = end;
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
-    if (end == 0)
-        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
-
     size_t argsCount = callFrame->argumentCount();
 
     JSC::JSValue arg1 = callFrame->argument(0);
@@ -2303,29 +2300,45 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
     if (argsCount == 0)
         return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end, encoding);
 
-    if (!arg1.isUndefined()) {
-        encoding = parseEncoding(scope, lexicalGlobalObject, arg1, false);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    auto fstart = arg2.toNumber(lexicalGlobalObject);
+    // Deliberate difference: one coercion per argument. Node's JS coerces start up to three times and end twice.
+    JSValue startValue = arg2.toPrimitive(lexicalGlobalObject, JSC::PreferNumber);
     RETURN_IF_EXCEPTION(scope, {});
-    if (!(fstart >= 0)) {
+    // Node's comparisons accept a BigInt and only its MathTrunc throws, so a BigInt that a comparison settles does not throw.
+    if (startValue.isBigInt()) [[unlikely]] {
+        if (JSBigInt::compare(startValue, static_cast<int64_t>(0)) != JSBigInt::ComparisonResult::GreaterThan)
+            startValue = jsNumber(0);
+        else if (JSBigInt::compare(startValue, static_cast<uint64_t>(byteLength)) != JSBigInt::ComparisonResult::LessThan)
+            return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+    }
+    auto fstart = startValue.toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!(fstart > 0)) {
         start = 0;
-    } else if (fstart > byteLength) {
+    } else if (fstart >= byteLength) {
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     } else {
         start = static_cast<size_t>(fstart);
     }
 
     if (!arg3.isUndefined()) {
-        auto lend = arg3.toLength(lexicalGlobalObject);
+        JSValue endValue = arg3.toPrimitive(lexicalGlobalObject, JSC::PreferNumber);
         RETURN_IF_EXCEPTION(scope, {});
-        if (lend < byteLength) end = lend;
+        bool isBigIntPastLength = endValue.isBigInt() && JSBigInt::compare(endValue, static_cast<uint64_t>(byteLength)) == JSBigInt::ComparisonResult::GreaterThan;
+        if (!isBigIntPastLength) {
+            auto lend = endValue.toLength(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (lend < byteLength) end = lend;
+        }
     }
 
     if (end <= start)
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+
+    // Node resolves the encoding last, so an empty range never reaches it. User code can observe the order.
+    if (!arg1.isUndefined()) {
+        encoding = parseEncoding(scope, lexicalGlobalObject, arg1, false);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     auto offset = start;
     auto length = end > start ? end - start : 0;

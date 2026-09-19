@@ -233,6 +233,7 @@ pub(crate) fn handle_internal_message_primary(
             });
             if let Some((cb, worker)) = entry {
                 event_loop.run_callback(
+                    subprocess.context,
                     cb,
                     global,
                     worker,
@@ -250,6 +251,7 @@ pub(crate) fn handle_internal_message_primary(
         (q.cb.get().unwrap(), q.worker.get().unwrap())
     };
     event_loop.run_callback(
+        subprocess.context,
         cb,
         global,
         worker,
@@ -612,13 +614,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
             }
             addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
 
-            unsafe extern "C" {
-                fn ares_inet_pton(
-                    af: c_int,
-                    src: *const core::ffi::c_char,
-                    dst: *mut core::ffi::c_void,
-                ) -> c_int;
-            }
+            use bun_cares_sys::ares_inet_pton;
             // SAFETY: `ss` is a zeroed sockaddr_storage large enough for
             let parsed = unsafe {
                 if family == libc::AF_INET6 {

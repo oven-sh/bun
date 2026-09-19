@@ -20,7 +20,6 @@ SEL Ref::s_alloc;
 SEL Ref::s_init;
 SEL Ref::s_release;
 SEL Ref::s_retain;
-SEL Ref::s_description;
 SEL Ref::s_isKindOfClass;
 
 Class NSString::cls;
@@ -180,7 +179,6 @@ SEL WKWebView::s_canGoBack;
 SEL WKWebView::s_canGoForward;
 SEL WKWebView::s_goBack;
 SEL WKWebView::s_goForward;
-SEL WKWebView::s_isLoading;
 SEL WKWebView::s_URL;
 SEL WKWebView::s_title;
 SEL WKWebView::s_setAfterScreenUpdates;
@@ -362,7 +360,6 @@ bool ObjCRuntime::load()
     Ref::s_init = sel("init");
     Ref::s_release = sel("release");
     Ref::s_retain = sel("retain");
-    Ref::s_description = sel("description");
     Ref::s_isKindOfClass = sel("isKindOfClass:");
 
     // --- populate wrapper classes -----------------------------------------
@@ -493,7 +490,6 @@ bool ObjCRuntime::load()
     WKWebView::s_canGoForward = sel("canGoForward");
     WKWebView::s_goBack = sel("goBack");
     WKWebView::s_goForward = sel("goForward");
-    WKWebView::s_isLoading = sel("isLoading");
     WKWebView::s_URL = sel("URL");
     WKWebView::s_title = sel("title");
     WKWebView::s_setAfterScreenUpdates = sel("setAfterScreenUpdates:");

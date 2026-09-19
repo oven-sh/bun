@@ -142,6 +142,7 @@
     "WebKit/WebKitLegacy": true,
     "WebKit/WebCore": true,
     "WebKit/WebDriver": true,
+    "WebKit/WebKitBuild": true,
     "WebKit/WebInspectorUI": true,
   },
   "git.detectSubmodules": false,

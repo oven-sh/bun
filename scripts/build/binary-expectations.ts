@@ -181,6 +181,14 @@ export function binaryFormat(cfg: Config): BinaryFormat {
  * NeverDestroyed / LazyNeverDestroyed exist so they don't have to); a
  * `_GLOBAL__sub_I_<file>` from one of ours is the thing to catch, in debug
  * builds as much as release.
+ *
+ * JSC/WTF/bmalloc come from the prebuilt WebKit tarball, so "none" for them is
+ * a statement about oven-sh/WebKit's build, not about flags set here. It
+ * holds for the release tarball (a linux-x64 bun-profile linked against it has
+ * exactly the runtime's eight entries below). If another lane's tarball turns
+ * out to carry an initializer, fix it in oven-sh/WebKit; if it has to be
+ * tolerated meanwhile, give it a list of its own here named for the tarball,
+ * not an entry in this one.
  */
 function runtimeInitializers(cfg: Config): string[] {
   const gnu = cfg.linux && cfg.abi === "gnu";
@@ -219,6 +227,13 @@ function runtimeInitializers(cfg: Config): string[] {
   }
   if (cfg.arm64 && android) {
     // compiler-rt's outline-atomics probe and bionic's cpu-feature init.
+    initializers.push("init_have_lse_atomics", "__init_cpu_features");
+  }
+  if (cfg.arm64 && cfg.freebsd) {
+    // compiler-rt's outline-atomics probe and its cpu-feature init. clang 23
+    // made -moutline-atomics the FreeBSD aarch64 default
+    // (FreeBSD::IsAArch64OutlineAtomicsDefault), so both our objects and the
+    // prebuilt WebKit's call the __aarch64_* helpers that bring these in.
     initializers.push("init_have_lse_atomics", "__init_cpu_features");
   }
   return initializers;
@@ -260,20 +275,48 @@ function forbiddenImports(cfg: Config): string[] {
   return forbidden;
 }
 
+/**
+ * TEMPORARY: exports bun.exe has only because the prebuilt WebKit's bmalloc is
+ * compiled with BEXPORT=__declspec(dllexport) (bmalloc/BExport.h has no
+ * static-build carve-out the way WTF's export macros do), so every bmalloc.lib
+ * member the link pulls carries `-export:` directives. Remove once
+ * oven-sh/WebKit builds bmalloc with BEXPORT empty (`-DBEXPORT=`); the export
+ * check then holds bun.exe to the Node-API / V8 / libuv / llhttp set alone.
+ *
+ * The 23 names, from `llvm-readobj --coff-exports` on a released
+ * bun-windows-x64 bun.exe: 22 MSVC-mangled members of namespace bmalloc
+ * (`bmalloc::api::*`, `bmalloc::Mutex::lockSlowCase`, `bmalloc::Environment`'s
+ * constructor, `bmalloc::systemHeapCache`, the StaticPerProcess storage of
+ * Environment and SystemHeap) — every one contains `@bmalloc@@`, hence the
+ * pattern, which is as narrow as a pattern over mangled names gets — and the
+ * C symbol `g_config` (bmalloc/libpas' GigacageConfig slot array).
+ */
+const PREBUILT_BMALLOC_DLLEXPORTS = {
+  exact: ["g_config"],
+  patterns: ["?*@bmalloc@@*"],
+};
+
 export function binaryExpectations(cfg: Config): BinaryExpectations {
   const format = binaryFormat(cfg);
   const src = (f: string) => join(cfg.cwd, "src", f);
-  // A sanitizer build links its runtime (and, on macOS, our dyld shim for
-  // it) and gains a module constructor per translation unit; those are
+  // A sanitizer build links its runtime and gains a module constructor per
+  // translation unit; those are
   // properties of the flavour, so the library set is opened up for them and
   // the initializer audit is skipped there. Debug and release are held to
   // the same list: an initializer that only -O2 folds away is still one we
   // wrote (make it constexpr/constinit instead).
-  const sanitizerLibs = cfg.asan ? ["*clang_rt.asan*", "*asan-dyld-shim*", "libgcc_s.so.1"] : [];
+  const sanitizerLibs = cfg.asan ? ["*clang_rt.asan*", "libgcc_s.so.1"] : [];
   // Android: -llog (WTF's logging goes to logcat) is linked --as-needed, so
   // liblog.so is NEEDED exactly when a live __android_log_* reference
   // survives — a system library either way, allowed rather than pinned.
-  const allowedLibs = [...sanitizerLibs, ...(cfg.abi === "android" ? ["liblog.so"] : [])];
+  // --webkit=local on Linux links the host's ICU (bun.ts systemLibs); the
+  // prebuilt bundles its own statically. A developer-only flavour, never
+  // shipped, so the sonames (libicuuc.so.78 …) are allowed rather than pinned.
+  const localWebKitLibs =
+    cfg.webkit === "local" && cfg.linux && cfg.abi !== "android"
+      ? ["libicudata.so.*", "libicui18n.so.*", "libicuuc.so.*"]
+      : [];
+  const allowedLibs = [...sanitizerLibs, ...localWebKitLibs, ...(cfg.abi === "android" ? ["liblog.so"] : [])];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
 
   switch (format) {
@@ -376,13 +419,21 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             // `.drectve -export:` for WTF.dll's sake; statically linked, that
             // directive exports it from bun-debug.exe. Debug builds only.
             ...(cfg.debug ? ["currentStackPointer"] : []),
+            ...PREBUILT_BMALLOC_DLLEXPORTS.exact,
           ],
           // Node-API and the V8 / node C++ embedder API are exported from the
           // source with __declspec(dllexport) (NAPI_EXTERN, BUN_EXPORT), the
           // C++ ones under their MSVC-mangled names; symbols.def adds libuv.
           // llhttp_*: node.exe exports llhttp's C API (its header dllexports
           // on _WIN32) and so does bun.exe, from the same header.
-          patterns: ["napi_*", "node_api_*", "?*@v8@@*", "?*@node@@*", "llhttp_*"],
+          patterns: [
+            "napi_*",
+            "node_api_*",
+            "?*@v8@@*",
+            "?*@node@@*",
+            "llhttp_*",
+            ...PREBUILT_BMALLOC_DLLEXPORTS.patterns,
+          ],
         },
         neededLibs: {
           names: [

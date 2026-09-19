@@ -27,6 +27,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     clangVersion: "21.1.8",
     clangResourceDir: "/fake/llvm/lib/clang/21",
     ar: "/fake/llvm/bin/llvm-lib",
+    ranlib: undefined,
     ld: "/fake/llvm/bin/lld-link",
     ld64Lld: undefined,
     rustLld: undefined,
@@ -40,7 +41,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     dsymutil: undefined,
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
-    jsRuntimeArgv: ["/fake/bin/bun"],
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -49,6 +49,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: "/fake/llvm/bin/llvm-rc",
+    mt: undefined,
     nasm: "/fake/bin/nasm",
     ...overrides,
   };
@@ -86,13 +87,14 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(cfg.crossLangLto).toBe(true);
   });
 
-  test("arm64: LTO is forced off", () => {
+  test("no -lto WebKit prebuilt exists for arm64 — LTO is forced off there", () => {
     // arm64: LLVM's CodeView emitter aborts on ARM64 NEON tuple registers
-    // when JSC goes through LTO codegen.
+    // during LTO codegen, so oven-sh/WebKit ships no windows-arm64-lto.
     const arm64 = resolveWindowsCross({ arch: "aarch64" });
     expect(arm64.lto).toBe(false);
     expect(arm64.crossLangLto).toBe(false);
-    // Forced off even when explicitly requested.
+    // Forced off even when explicitly requested, so the WebKit fetch never
+    // 404s on a tarball that doesn't exist.
     expect(resolveWindowsCross({ arch: "aarch64", lto: true }).lto).toBe(false);
   });
 
@@ -163,22 +165,22 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(bareCfg.ld).toBe("/fake/llvm/bin/lld-link");
   });
 
-  test("--webkit=prebuilt: LTO selects the -lto WebKit prebuilt with a windows-keyed cache dir", () => {
-    // windows x64 cross config (baseline=true, lto=true): every x64 WebKit
-    // prebuilt is built at the nehalem floor, so the plain -lto tarball is the
+  test("LTO selects the -lto WebKit prebuilt with a windows-keyed cache dir", () => {
+    // Default windows x64 cross config (baseline=true, lto=true): every x64
+    // WebKit is built at the nehalem floor, so the plain -lto tarball is the
     // one baseline fetches too.
-    const def = webkit.source(resolveWindowsCross({ webkit: "prebuilt" }));
+    const def = webkit.source(resolveWindowsCross());
     if (def.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${def.kind}`);
     expect(def.url).toContain("bun-webkit-windows-amd64-lto.tar.gz");
     expect(def.destDir).toContain("-windows");
     expect(def.destDir).toEndWith("-lto");
 
-    const plain = webkit.source(resolveWindowsCross({ webkit: "prebuilt", lto: false }));
+    const plain = webkit.source(resolveWindowsCross({ lto: false }));
     if (plain.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${plain.kind}`);
     expect(plain.url).toContain("bun-webkit-windows-amd64.tar.gz");
     expect(plain.destDir).not.toEndWith("-lto");
 
-    const arm64 = webkit.source(resolveWindowsCross({ webkit: "prebuilt", arch: "aarch64" }));
+    const arm64 = webkit.source(resolveWindowsCross({ arch: "aarch64" }));
     if (arm64.kind !== "prebuilt") throw new Error(`expected prebuilt WebKit source, got ${arm64.kind}`);
     expect(arm64.url).toContain("bun-webkit-windows-arm64.tar.gz");
   });

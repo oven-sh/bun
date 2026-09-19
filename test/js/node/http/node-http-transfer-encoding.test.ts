@@ -1048,16 +1048,18 @@ describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding",
   test.concurrent("a FIN that arrives before the application reads the body still ends the request", async () => {
     const events: string[] = [];
     const ended = Promise.withResolvers<void>();
-    await using server = createServer({ insecureHTTPParser: true }, (req, res) => {
+    await using server = createServer({ insecureHTTPParser: true }, async (req, res) => {
       events.push(`request ${req.method} ${req.url}`);
-      setImmediate(() => {
-        let body = "";
-        req.on("data", d => (body += d));
-        req.on("end", () => {
-          events.push(`end body=${JSON.stringify(body)}`);
-          res.end("ok");
-          ended.resolve();
-        });
+      // The recorded fin is the pushed EOF: wait for it before the first reader attaches.
+      while (!req._readableState.ended) {
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      let body = "";
+      req.on("data", d => (body += d));
+      req.on("end", () => {
+        events.push(`end body=${JSON.stringify(body)}`);
+        res.end("ok");
+        ended.resolve();
       });
     });
     server.httpAllowHalfOpen = true;

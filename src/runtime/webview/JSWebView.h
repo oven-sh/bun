@@ -87,7 +87,15 @@ public:
     // synchronous but the real values live in the child.
     WTF::String m_url;
     WTF::String m_title;
+    // Main-frame HTTP status of the last completed navigation. 0 when the
+    // page came from a non-HTTP load (data:, about:blank, file:) and the
+    // getter reports null.
+    uint16_t m_status = 0;
     bool m_loading = false;
+    // Constructor `userAgent` option. WebKit ships it in the Create frame;
+    // Chrome sends Emulation.setUserAgentOverride before the first
+    // Page.navigate.
+    WTF::String m_userAgent;
 
     // Chrome session state. Empty until the Target.createTarget →
     // Target.attachToTarget → Page.enable chain completes (driven by the
@@ -182,7 +190,7 @@ public:
     // host spawn failed (caller throws).
     static JSWebView* createAndSend(JSC::JSGlobalObject*, JSC::Structure*,
         uint32_t width, uint32_t height, const WTF::String& persistDir,
-        bool stdoutInherit, bool stderrInherit);
+        const WTF::String& userAgent, bool stdoutInherit, bool stderrInherit);
 #endif
 
     // Chrome constructor. Lazy-spawns Chrome; stores width/height for the

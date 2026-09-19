@@ -1455,6 +1455,24 @@ pub fn event_loop_run_callback2(
     );
 }
 
+// HOST_EXPORT(Bun__EventLoop__runCallback3, c)
+pub fn event_loop_run_callback3(
+    global: &JSGlobalObject,
+    callback: JSValue,
+    this_value: JSValue,
+    arg0: JSValue,
+    arg1: JSValue,
+    arg2: JSValue,
+) {
+    global.bun_vm().event_loop_mut().run_callback(
+        crate::ContextId::NONE,
+        callback,
+        global,
+        this_value,
+        &[arg0, arg1, arg2],
+    );
+}
+
 // HOST_EXPORT(Bun__EventLoop__enter, c)
 pub fn event_loop_enter(global: &JSGlobalObject) {
     global.bun_vm().event_loop_mut().enter();

@@ -313,6 +313,17 @@ for (;;) {
 }
 }))js"_s;
 
+// Evaluated after Page.loadEventFired (returnByValue). `t` is the title,
+// `s` the main-frame HTTP status from PerformanceNavigationTiming. Chrome
+// has no navigation status event without Network.enable, and this rides
+// the title fetch the navigate promise already waits for. The scheme check
+// matches WKWebView, where only an NSHTTPURLResponse has a status: Chrome
+// synthesizes responseStatus 200 for a data: document.
+constexpr ASCIILiteral kPageTitleAndStatusJS = R"js((() => {
+  const e = performance.getEntriesByType("navigation")[0];
+  return { t: document.title, s: e && /^https?:/.test(e.name) ? e.responseStatus || 0 : 0 };
+})())js"_s;
+
 // --- Transport singleton ---------------------------------------------------
 // Mirror of HostClient but NUL-framed JSON instead of binary. One socketpair
 // — the child gets the peer end dup'd to fd 3 AND fd 4 (Chrome reads fd 3,

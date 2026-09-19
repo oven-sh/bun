@@ -54,6 +54,8 @@ extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 // on throw — one bad onNavigated callback won't poison the rest of the batch.
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject*, JSC::EncodedJSValue cb,
     JSC::EncodedJSValue thisVal, JSC::EncodedJSValue arg0, JSC::EncodedJSValue arg1);
+extern "C" void Bun__EventLoop__runCallback3(JSC::JSGlobalObject*, JSC::EncodedJSValue cb,
+    JSC::EncodedJSValue thisVal, JSC::EncodedJSValue arg0, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
 
 // --- HostClient singleton --------------------------------------------------
 // No Strong<>, no req_id map. Promises live in WriteBarrier slots on
@@ -327,12 +329,15 @@ void HostClient::handleReply(const Frame& h, Reader r)
     case Reply::NavEvent: {
         WTF::String url = r.str();
         WTF::String title = r.str();
+        uint16_t status = r.u16();
         view->m_url = url;
         view->m_title = title;
+        view->m_status = status;
         view->m_loading = false;
         if (JSObject* cb = view->m_onNavigated.get()) {
-            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-                JSValue::encode(jsString(vm, url)), JSValue::encode(jsString(vm, title)));
+            Bun__EventLoop__runCallback3(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+                JSValue::encode(jsString(vm, url)), JSValue::encode(jsString(vm, title)),
+                JSValue::encode(status ? jsNumber(status) : jsNull()));
         }
         return;
     }

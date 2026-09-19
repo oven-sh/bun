@@ -21,7 +21,7 @@ namespace Bun {
 // and no-op — the block's dispose (~Ref) drops the last reference.
 class WebViewHost : public RefCounted<WebViewHost> {
 public:
-    static Ref<WebViewHost> createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir);
+    static Ref<WebViewHost> createForIPC(uint32_t viewId, uint32_t width, uint32_t height, const WTF::String& persistDir, const WTF::String& userAgent);
     ~WebViewHost();
 
     void navigateIPC(const WTF::String& url);
@@ -56,6 +56,10 @@ public:
     WTF::String title();
 
     // Delegate IMP / block callbacks — fire inside CFRunLoop.
+    void onNavigationStarted();
+    // decidePolicyForNavigationResponse: for the main frame. status is the
+    // HTTP status code, or 0 when the response is not an HTTP response.
+    void onNavigationResponse(uint16_t status);
     void onNavigationFinished();
     void onNavigationFailed(const WTF::String& err);
     void onEvalComplete(id result, id error);
@@ -77,6 +81,10 @@ private:
     // (INVALID_STATE on overlap), and the block correlation in ObjCRuntime
     // (single m_evalTarget) requires it.
     bool m_navPending = false;
+    // Main-frame HTTP status of the navigation in flight. Cleared at
+    // didStartProvisionalNavigation so a data:/about:blank load (no
+    // response policy callback) reports 0, not the previous page's code.
+    uint16_t m_status = 0;
     bool m_evalPending = false;
     bool m_screenshotPending = false;
     // Stashed by screenshotIPC; read by onScreenshotComplete to pick the

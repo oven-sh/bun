@@ -324,6 +324,67 @@ it("onNavigated callback fires", async () => {
   expect(view.onNavigated).toBe(null);
 });
 
+it("status reports the main frame's HTTP status, null for non-HTTP pages", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: req =>
+      new Response(`<!doctype html><title>${new URL(req.url).pathname}</title>`, {
+        status: req.url.endsWith("/missing") ? 404 : 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  expect(view.status).toBe(null);
+
+  const seen: Array<[string, string, number | null]> = [];
+  view.onNavigated = (url, title, status) => seen.push([url, title, status]);
+
+  await view.navigate(`${base}/ok`);
+  expect(view.status).toBe(200);
+  await view.navigate(`${base}/missing`);
+  expect(view.status).toBe(404);
+  expect(seen).toEqual([
+    [`${base}/ok`, "/ok", 200],
+    [`${base}/missing`, "/missing", 404],
+  ]);
+
+  // reload() is not an IPC navigate; the status still comes from the
+  // same delegate callback.
+  await view.reload();
+  expect(view.status).toBe(404);
+
+  // A data: load has no HTTP response, and the previous page's code must
+  // not leak into it.
+  await view.navigate(html("<title>data</title>"));
+  expect(view.status).toBe(null);
+  expect(seen[seen.length - 1][2]).toBe(null);
+});
+
+it("userAgent option sets the User-Agent header and navigator.userAgent", async () => {
+  const agents: string[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch: req => {
+      // The page request only; a favicon request would add a second entry.
+      if (new URL(req.url).pathname === "/") agents.push(req.headers.get("user-agent") ?? "");
+      return new Response("<!doctype html><body>ok</body>", { headers: { "content-type": "text/html" } });
+    },
+  });
+  const ua = "bun-webview-test/1.0 (+https://example.com/bot)";
+  await using view = new Bun.WebView({ width: 200, height: 200, userAgent: ua });
+  await view.navigate(`http://127.0.0.1:${server.port}/`);
+  expect(agents).toEqual([ua]);
+  expect(await view.evaluate("navigator.userAgent")).toBe(ua);
+});
+
+it("userAgent must be a string", () => {
+  expect(() => new Bun.WebView({ width: 100, height: 100, userAgent: 42 as any })).toThrow(
+    /userAgent must be a string/,
+  );
+});
+
 it("console callback receives (type, ...args)", async () => {
   const calls: [string, ...unknown[]][] = [];
   await using view = new Bun.WebView({

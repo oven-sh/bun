@@ -97,6 +97,8 @@ extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,
     EncodedJSValue thisVal, EncodedJSValue arg0, EncodedJSValue arg1);
+extern "C" void Bun__EventLoop__runCallback3(JSGlobalObject*, EncodedJSValue cb,
+    EncodedJSValue thisVal, EncodedJSValue arg0, EncodedJSValue arg1, EncodedJSValue arg2);
 
 // --- JSON field scanner -----------------------------------------------------
 
@@ -819,6 +821,13 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         uint32_t rid = nextId();
         send(0, Command(rid, "Runtime.enable"_s, sidSpan));
 
+        // Constructor userAgent. Same session, so Chrome applies it before
+        // the Page.navigate that follows. Untracked like Runtime.enable.
+        if (!view->m_userAgent.isEmpty()) {
+            uint32_t uid = nextId();
+            send(0, Command(uid, "Emulation.setUserAgentOverride"_s, sidSpan).str("userAgent"_s, view->m_userAgent));
+        }
+
         // Page.navigate with the url stashed by the first navigate() call.
         // The response confirms the navigation STARTED; Page.loadEventFired
         // confirms completion. We keep the pending entry alive for the
@@ -856,11 +865,18 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         return;
 
     case Method::PageTitle: {
-        // Runtime.evaluate("document.title") chained from loadEventFired.
-        // result.result.value is the string. Set m_title, settle Navigate.
+        // Runtime.evaluate(kPageTitleAndStatusJS) chained from loadEventFired.
+        // result.result.value is {"t":"<title>","s":<status>}. Set m_title
+        // and m_status, settle Navigate.
         auto inner = jsonField(result, { "result", 6 });
-        auto value = jsonString(jsonField(inner, { "value", 5 }));
-        view->m_title = WTF::String::fromUTF8(value);
+        auto value = jsonField(inner, { "value", 5 });
+        view->m_title = WTF::String::fromUTF8(jsonString(jsonField(value, { "t", 1 })));
+        uint32_t status = 0;
+        for (char c : jsonField(value, { "s", 1 })) {
+            if (c < '0' || c > '9') break;
+            status = status * 10 + (c - '0');
+        }
+        view->m_status = status <= 0xFFFF ? static_cast<uint16_t>(status) : 0;
         settle(g, view, entry.slot, true, jsUndefined());
         return;
     }
@@ -1150,28 +1166,33 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
+        // The new document's status arrives with its title after load;
+        // don't report the previous page's code in between.
+        view->m_status = 0;
         // m_loading stays true — loadEventFired flips it.
 
+        // title and status are not known at commit; both are undefined here
+        // and readable from the view once navigate() resolves.
         if (JSObject* cb = view->m_onNavigated.get()) {
-            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
-                JSValue::encode(jsString(vm, urlStr)), JSValue::encode(jsUndefined()));
+            Bun__EventLoop__runCallback3(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+                JSValue::encode(jsString(vm, urlStr)), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()));
         }
         return;
     }
 
-    // Page.loadEventFired — load complete. Chain a document.title fetch
-    // so view.title is populated when navigate() resolves — matches
-    // WKWebView's NavDone which packs url+title in one reply. One extra
-    // roundtrip (~1ms), but the user-visible guarantee is worth it:
+    // Page.loadEventFired — load complete. Chain a title + status fetch
+    // so view.title and view.status are populated when navigate() resolves —
+    // matches WKWebView's NavDone which packs url+title+status in one reply.
+    // One extra roundtrip (~1ms), but the user-visible guarantee is worth it:
     // `await view.navigate(); view.title` just works.
     //
     // If no navigate is pending (uninitiated navigation, redirect), the
-    // PageTitle handler settles a no-op and m_title still updates.
+    // PageTitle handler settles a no-op and m_title/m_status still update.
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
         view->m_loading = false;
         uint32_t tid = nextId();
         m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
-        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, kPageTitleAndStatusJS).boolean("returnByValue"_s, true));
         return;
     }
 

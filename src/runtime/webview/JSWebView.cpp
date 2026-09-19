@@ -308,7 +308,7 @@ void JSWebView::doClose()
 #if OS(DARWIN)
 JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
     uint32_t width, uint32_t height, const WTF::String& persistDir,
-    bool stdoutInherit, bool stderrInherit)
+    const WTF::String& userAgent, bool stdoutInherit, bool stderrInherit)
 {
     auto* zig = defaultGlobalObject(g);
     auto& c = WK::client();
@@ -317,6 +317,7 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
     auto impl = WebViewEventTarget::create(*zig->scriptExecutionContext());
     JSWebView* view = create(structure, zig, WTF::move(impl));
     view->m_viewId = c.nextViewId++;
+    view->m_userAgent = userAgent;
     c.viewsById.emplace(view->m_viewId, Weak<JSWebView>(view, &webViewWeakOwner()));
     c.updateKeepAlive();
 
@@ -325,6 +326,7 @@ JSWebView* JSWebView::createAndSend(JSGlobalObject* g, Structure* structure,
         CreatePayload { width, height,
             static_cast<uint8_t>(persistent ? DataStoreKind::Persistent : DataStoreKind::Ephemeral) },
         persistent ? persistDir : WTF::String());
+    payload.appendVector(encodeStr(userAgent));
     c.writeFrame(Op::Create, view->m_viewId,
         payload.span().data(), static_cast<uint32_t>(payload.size()));
 

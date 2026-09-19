@@ -30,9 +30,14 @@ Class NSURL::cls;
 SEL NSURL::s_URLWithString;
 SEL NSURL::s_fileURLWithPath_isDirectory;
 SEL NSURL::s_absoluteString;
+SEL NSURL::s_isFileURL;
 
 Class NSURLRequest::cls;
 SEL NSURLRequest::s_requestWithURL;
+
+Class NSURLResponse::cls_NSHTTPURLResponse;
+SEL NSURLResponse::s_URL;
+SEL NSURLResponse::s_statusCode;
 
 SEL NSError::s_localizedDescription;
 SEL NSError::s_userInfo;
@@ -167,12 +172,17 @@ SEL WKUserContentController::s_addUserScript;
 
 SEL WKScriptMessage::s_body;
 
+SEL WKNavigationResponse::s_isForMainFrame;
+SEL WKNavigationResponse::s_response;
+SEL WKNavigationResponse::s_canShowMIMEType;
+
 Class WKWebView::cls;
 Class WKWebView::cls_WKSnapshotConfiguration;
 SEL WKWebView::s_initWithFrame_configuration;
 SEL WKWebView::s_setNavigationDelegate;
 SEL WKWebView::s_setUIDelegate;
 SEL WKWebView::s_loadRequest;
+SEL WKWebView::s_setCustomUserAgent;
 SEL WKWebView::s_stopLoading;
 SEL WKWebView::s_reload;
 SEL WKWebView::s_canGoBack;
@@ -195,6 +205,39 @@ char NavigationDelegate::s_hostKey = 0;
 // Installed on the runtime-registered BunWKNavigationDelegate class.
 
 extern "C" {
+
+static void delegateDidStartProvisionalNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
+{
+    ObjCRuntime::ARPool pool;
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationStarted();
+}
+
+// webView:decidePolicyForNavigationResponse:decisionHandler:
+// Records the main frame's HTTP status, then answers the way WebKit's
+// NavigationState does when no delegate method exists (file: URLs and
+// showable MIME types load, anything else is cancelled). The handler is
+// void(^)(WKNavigationResponsePolicy): 0 = Cancel, 1 = Allow.
+static void delegateDecidePolicyForNavigationResponse(id self, SEL, id /*webView*/, id navigationResponse, void* handler)
+{
+    ObjCRuntime::ARPool pool;
+    objc::WKNavigationResponse navResponse(navigationResponse);
+    objc::NSURLResponse response = navResponse.response();
+    if (navResponse.isForMainFrame()) {
+        if (auto* host = objc::NavigationDelegate(self).host()) {
+            long code = response.isHTTP() ? response.statusCode() : 0;
+            host->onNavigationResponse(code > 0 && code <= 0xFFFF ? static_cast<uint16_t>(code) : 0);
+        }
+    }
+    long policy = (response.url().isFileURL() || navResponse.canShowMIMEType()) ? 1 : 0;
+    struct {
+        void* isa;
+        int32_t flags;
+        int32_t reserved;
+        void (*invoke)(void*, long);
+    }* block
+        = reinterpret_cast<decltype(block)>(handler);
+    block->invoke(handler, policy);
+}
 
 static void delegateDidFinishNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
 {
@@ -382,9 +425,14 @@ bool ObjCRuntime::load()
     NSURL::s_URLWithString = sel("URLWithString:");
     NSURL::s_fileURLWithPath_isDirectory = sel("fileURLWithPath:isDirectory:");
     NSURL::s_absoluteString = sel("absoluteString");
+    NSURL::s_isFileURL = sel("isFileURL");
 
     CLS(NSURLRequest::cls, "NSURLRequest");
     NSURLRequest::s_requestWithURL = sel("requestWithURL:");
+
+    CLS(NSURLResponse::cls_NSHTTPURLResponse, "NSHTTPURLResponse");
+    NSURLResponse::s_URL = sel("URL");
+    NSURLResponse::s_statusCode = sel("statusCode");
 
     NSError::s_localizedDescription = sel("localizedDescription");
     NSError::s_userInfo = sel("userInfo");
@@ -478,12 +526,17 @@ bool ObjCRuntime::load()
 
     WKScriptMessage::s_body = sel("body");
 
+    WKNavigationResponse::s_isForMainFrame = sel("isForMainFrame");
+    WKNavigationResponse::s_response = sel("response");
+    WKNavigationResponse::s_canShowMIMEType = sel("canShowMIMEType");
+
     CLS(WKWebView::cls, "WKWebView");
     CLS(WKWebView::cls_WKSnapshotConfiguration, "WKSnapshotConfiguration");
     WKWebView::s_initWithFrame_configuration = sel("initWithFrame:configuration:");
     WKWebView::s_setNavigationDelegate = sel("setNavigationDelegate:");
     WKWebView::s_setUIDelegate = sel("setUIDelegate:");
     WKWebView::s_loadRequest = sel("loadRequest:");
+    WKWebView::s_setCustomUserAgent = sel("setCustomUserAgent:");
     WKWebView::s_stopLoading = sel("stopLoading");
     WKWebView::s_reload = sel("reload");
     WKWebView::s_canGoBack = sel("canGoBack");
@@ -522,7 +575,11 @@ bool ObjCRuntime::load()
         m_loadError = "failed to allocate delegate class"_s;
         return false;
     }
-    // Type encodings: v = void, @ = id, : = SEL.
+    // Type encodings: v = void, @ = id, : = SEL, @? = block.
+    addMethod(NavigationDelegate::cls, sel("webView:didStartProvisionalNavigation:"),
+        reinterpret_cast<IMP>(delegateDidStartProvisionalNavigation), "v@:@@");
+    addMethod(NavigationDelegate::cls, sel("webView:decidePolicyForNavigationResponse:decisionHandler:"),
+        reinterpret_cast<IMP>(delegateDecidePolicyForNavigationResponse), "v@:@@@?");
     addMethod(NavigationDelegate::cls, sel("webView:didFinishNavigation:"),
         reinterpret_cast<IMP>(delegateDidFinishNavigation), "v@:@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFailNavigation:withError:"),

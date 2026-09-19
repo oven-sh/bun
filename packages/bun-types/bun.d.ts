@@ -9716,6 +9716,16 @@ declare module "bun" {
        * applies to all views spawned in the same Bun process.
        */
       dataStore?: "ephemeral" | { directory: string };
+      /**
+       * The `User-Agent` header the view sends, and what `navigator.userAgent`
+       * reports in the page. Defaults to the engine's own string.
+       *
+       * @example
+       * ```ts
+       * const view = new Bun.WebView({ userAgent: "my-bot/1.0 (+https://example.com/bot)" });
+       * ```
+       */
+      userAgent?: string;
     }
   }
 
@@ -9769,14 +9779,29 @@ declare module "bun" {
     readonly url: string;
     /** The page's `<title>`. Updated when a navigation completes. */
     readonly title: string;
+    /**
+     * The HTTP status code of the main frame's response, for example `404`
+     * for a "not found" page the server answered with. Updated when a
+     * navigation completes. `null` before the first navigation and after a
+     * load with no HTTP response (`data:`, `about:blank`, `file:`).
+     *
+     * A navigation that the server answers with an error status still
+     * resolves `navigate()`: the page loaded. Check this to tell them apart.
+     */
+    readonly status: number | null;
     /** True while a navigation is in flight. */
     readonly loading: boolean;
 
     /**
      * Fired when a navigation completes successfully. The callback runs
      * before the corresponding `navigate()` promise resolves.
+     *
+     * **Chrome backend**: the callback fires when the navigation commits,
+     * before `title` and `status` are known, so both are `undefined`.
+     * Read {@link WebView.title} and {@link WebView.status} after
+     * `navigate()` resolves.
      */
-    onNavigated: ((url: string, title: string) => void) | null;
+    onNavigated: ((url: string, title: string, status: number | null) => void) | null;
     /**
      * Fired when a navigation fails. The callback runs before the
      * corresponding `navigate()` promise rejects.

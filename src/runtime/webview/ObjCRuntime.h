@@ -107,6 +107,9 @@ struct NSURL : Ref {
         return msgCls<id>(cls, s_fileURLWithPath_isDirectory, path.m_id, (signed char)isDir);
     }
     WTF::String absoluteString() const { return NSString(msg<id>(s_absoluteString)).toWTF(); }
+
+    static SEL s_isFileURL;
+    bool isFileURL() const { return m_id && msg<signed char>(s_isFileURL) != 0; }
 };
 
 struct NSURLRequest : Ref {
@@ -115,6 +118,20 @@ struct NSURLRequest : Ref {
     static SEL s_requestWithURL;
 
     static NSURLRequest fromURL(NSURL u) { return msgCls<id>(cls, s_requestWithURL, u.m_id); }
+};
+
+// NSURLResponse / NSHTTPURLResponse. statusCode exists only on the HTTP
+// subclass — check isKindOf(NSHTTPURLResponse::cls) first; a data: or
+// file: load delivers a plain NSURLResponse.
+struct NSURLResponse : Ref {
+    using Ref::Ref;
+    static Class cls_NSHTTPURLResponse;
+    static SEL s_URL;
+    static SEL s_statusCode;
+
+    NSURL url() const { return msg<id>(s_URL); }
+    bool isHTTP() const { return isKindOf(cls_NSHTTPURLResponse); }
+    long statusCode() const { return msg<long>(s_statusCode); }
 };
 
 struct NSError : Ref {
@@ -570,6 +587,19 @@ struct WKScriptMessage : Ref {
     id body() const { return msg<id>(s_body); }
 };
 
+// WKNavigationResponse — the argument of
+// webView:decidePolicyForNavigationResponse:decisionHandler:.
+struct WKNavigationResponse : Ref {
+    using Ref::Ref;
+    static SEL s_isForMainFrame;
+    static SEL s_response;
+    static SEL s_canShowMIMEType;
+
+    bool isForMainFrame() const { return msg<signed char>(s_isForMainFrame) != 0; }
+    NSURLResponse response() const { return msg<id>(s_response); }
+    bool canShowMIMEType() const { return msg<signed char>(s_canShowMIMEType) != 0; }
+};
+
 struct WKWebView : Ref {
     using Ref::Ref;
     static Class cls;
@@ -600,6 +630,12 @@ struct WKWebView : Ref {
     static SEL s_setUIDelegate;
     void setUIDelegate(id d) { msg<void>(s_setUIDelegate, d); }
     void loadRequest(NSURLRequest r) { msg<void>(s_loadRequest, r.m_id); }
+
+    // customUserAgent — replaces the default Safari-like string for every
+    // request this view makes, and for navigator.userAgent. Public API,
+    // macOS 10.11+.
+    static SEL s_setCustomUserAgent;
+    void setCustomUserAgent(NSString ua) { msg<void>(s_setCustomUserAgent, ua.m_id); }
 
     // callAsyncJavaScript:arguments:inFrame:inContentWorld:completionHandler:
     // (public API, macOS 11.0+). The body is wrapped in an async function;

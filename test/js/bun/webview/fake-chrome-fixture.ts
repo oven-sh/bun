@@ -87,6 +87,10 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
 
+  if (method === "Target.createBrowserContext" || method === "Target.createTarget" || method === "Target.disposeBrowserContext") {
+    targetLog.push({ method, params });
+  }
+
   if (method === cdpErrorOn && cdpErrorsLeft-- > 0) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
     return send(sessionId ? { id, error, sessionId } : { id, error });
@@ -94,13 +98,10 @@ async function handle(command: { id: number; method: string; params?: any; sessi
 
   switch (method) {
     case "Target.createBrowserContext":
-      targetLog.push({ method, params });
       return reply({ browserContextId: "C" + ++contexts });
     case "Target.disposeBrowserContext":
-      targetLog.push({ method, params });
       return reply({});
     case "Target.createTarget":
-      targetLog.push({ method, params });
       return reply({ targetId: "T" + ++targets });
     case "Target.attachToTarget":
       return reply({ sessionId: "S" + params.targetId.slice(1) });

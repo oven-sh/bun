@@ -1046,6 +1046,18 @@ fn is_symlink(path: &mut bun_paths::Path<u8>) -> bool {
     }
 }
 
+/// Exact where volumes are case-sensitive by default, as in `resolve_path::is_parent_or_equal`.
+fn eql_path_component(a: &[u8], b: &[u8]) -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        a == b
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        strings::eql_case_insensitive_ascii(a, b, true)
+    }
+}
+
 /// The `node_modules/.bun/<storepath>` prefix of `path`, when it is the link into the global store.
 fn global_store_link_in(path: &[u8]) -> Option<bun_paths::Path<u8>> {
     let mut parents: [&[u8]; 2] = [b"", b""];
@@ -1055,9 +1067,8 @@ fn global_store_link_in(path: &[u8]) -> Option<bun_paths::Path<u8>> {
             strings::index_of_char_usize(&path[start..], SEP).map_or(path.len(), |i| start + i);
         let component = &path[start..end];
         if !component.is_empty() && component != b"." {
-            // The volume can be case-insensitive.
-            if strings::eql_case_insensitive_ascii(parents[0], b"node_modules", true)
-                && strings::eql_case_insensitive_ascii(parents[1], b".bun", true)
+            if eql_path_component(parents[0], b"node_modules")
+                && eql_path_component(parents[1], b".bun")
             {
                 let mut link = bun_paths::Path::<u8>::from(&path[..end]).ok()?;
                 if is_symlink(&mut link) {

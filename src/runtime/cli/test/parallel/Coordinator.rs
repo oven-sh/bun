@@ -944,6 +944,7 @@ fn terminate_process_group(pid: libc::pid_t) {
 /// 3, indistinguishable from process.exit(3), and stays a per-file
 /// failure, recognizable only by its banner in stderr.
 fn is_panic_status(status: &SpawnStatus) -> bool {
+    #[cfg(unix)]
     if let Some(sig) = status.signal_code() {
         use bun_core::SignalCode;
         return matches!(

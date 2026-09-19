@@ -560,12 +560,7 @@ impl Process {
         } else {
             0
         };
-        let signal_code: Option<u8> =
-            if term_signal > 0 && term_signal < bun_core::SignalCode::SIGSYS as c_int {
-                Some(term_signal as u8)
-            } else {
-                None
-            };
+        let signal_code: Option<u8> = u8::try_from(term_signal).ok().filter(|&signal| signal != 0);
 
         bun_sys::windows::libuv::log!(
             "Process.onExit({}) code: {}, signal: {:?}",
@@ -827,9 +822,9 @@ impl Status {
         Some(bun_sys::SignalCode(raw))
     }
 
-    /// The table entry for `signal()`, for naming it; `None` also when the number has no entry.
+    /// `signal()` as a named signal, to name or classify it; `None` also when the platform names none.
     pub fn signal_code(&self) -> Option<bun_core::SignalCode> {
-        self.signal()?.canonical()
+        self.signal()?.named()
     }
 }
 

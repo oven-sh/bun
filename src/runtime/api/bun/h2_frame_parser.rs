@@ -94,9 +94,7 @@ const MAX_PAYLOAD_SIZE_WITHOUT_FRAME: usize = 16384 - FrameHeader::BYTE_SIZE - 1
 /// The padding of a PADDED frame: zeros (RFC 9113 6.1), at most as many as Pad Length can count.
 static ZERO_PADDING: [u8; u8::MAX as usize] = [0; u8::MAX as usize];
 
-/// nghttp2 never pads a HEADERS frame past this payload size (NGHTTP2_MAX_PAYLOADLEN), whatever
-/// frame size the peer allows:
-/// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L1883-L1884
+/// NGHTTP2_MAX_PAYLOADLEN: nghttp2 never pads a HEADERS frame past it, whatever the peer allows.
 const MAX_PADDED_HEADERS_PAYLOAD: usize = 16384;
 
 /// `Copy` view of [`NativeSocket`] for call sites to snapshot across
@@ -1450,11 +1448,7 @@ impl PendingFrame {
 // PendingFrame::deinit handled by Drop (Vec frees, Strong deinits)
 
 impl Stream {
-    /// Pad Length for a frame whose unpadded payload is `frame_len` bytes, or `None` for a frame
-    /// without the PADDED flag. The Pad Length octet is part of the padded payload: it counts
-    /// toward `max_payload_len` and toward the length that `Aligned` rounds up, so `Some(0)` is a
-    /// PADDED frame that grows by that octet alone. This is nghttp2's select_padding contract:
-    /// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L1840-L1870
+    /// The Pad Length to send (`None`: not PADDED), sized like nghttp2's select_padding callback.
     pub fn get_padding(&self, frame_len: usize, max_payload_len: usize) -> Option<u8> {
         if frame_len >= max_payload_len {
             return None;
@@ -1463,9 +1457,7 @@ impl Stream {
         let max_padded_len = max_payload_len.min(frame_len + 1 + u8::MAX as usize);
         let padded_len = match self.padding_strategy {
             PaddingStrategy::None => return None,
-            // Frame header plus padded payload is a multiple of 8, unless `max_payload_len` cuts
-            // the padding short:
-            // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L910-L927
+            // node's OnDWordAlignedPadding: frame header plus padded payload is a multiple of 8.
             PaddingStrategy::Aligned => {
                 let remainder = (frame_len + FrameHeader::BYTE_SIZE) % 8;
                 if remainder == 0 {
@@ -1478,8 +1470,7 @@ impl Stream {
         Some((padded_len - frame_len - 1) as u8)
     }
 
-    /// Payload bytes that a `get_padding` result adds to a frame: the Pad Length octet plus the
-    /// padding it counts.
+    /// Payload bytes a `get_padding` result adds: the Pad Length octet plus the padding it counts.
     fn padding_overhead(padding: Option<u8>) -> usize {
         padding.map_or(0, |pad_length| 1 + pad_length as usize)
     }
@@ -1518,7 +1509,7 @@ impl Stream {
                 owned_frame = Some(frame);
                 break 'brk data_header.write(&mut writer, &client.frames_sent_legacy);
             } else {
-                // Bounds the whole payload: the room past `frame_remaining` is what padding may use.
+                // Bounds the whole payload: padding may use the room past `frame_remaining`.
                 let max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME
                     .min(
                         (self
@@ -7104,9 +7095,7 @@ impl H2FrameParser {
         } else {
             0
         };
-        // Padding aligns the whole payload, priority fields included. CONTINUATION frames cannot
-        // carry padding: get_padding() only pads a payload that fits one frame, so the
-        // CONTINUATION branch below never sees a padded block.
+        // Only a payload that fits one frame gets padding: CONTINUATION frames cannot carry any.
         let padding = stream.get_padding(
             encoded_size + priority_overhead,
             actual_max_frame_size.min(MAX_PADDED_HEADERS_PAYLOAD),

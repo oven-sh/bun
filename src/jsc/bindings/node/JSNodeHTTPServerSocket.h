@@ -115,6 +115,14 @@ public:
      * body deliver it through the request first, like Node 26). */
     void upgradeToTunnelMode(bool afterBody = false);
 
+    /* Read flow control of a CONNECT/Upgrade tunnel, like Node's
+     * handle.readStop()/readStart(): the JS stream stops kernel reads when
+     * its buffer is full and restarts them from _read(). No-ops while the
+     * connection still parses HTTP, where the parser owns the read state. */
+    bool isTunnel() const;
+    void readStop();
+    void readStart();
+
     /* Trailer fields received after the current request's chunked body, as a
      * flat [name, value, ...] JS array preserving wire casing; jsUndefined()
      * when there are none. Clears the captured section. */

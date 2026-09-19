@@ -143,6 +143,38 @@ void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody)
 }
 
 template<bool SSL>
+static bool isTunnelImpl(us_socket_t* socket)
+{
+    return reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->isConnectRequest;
+}
+
+/* True once the connection is a CONNECT/Upgrade tunnel: bytes bypass the HTTP
+ * parser and reach the ondata callback as opaque data. */
+bool JSNodeHTTPServerSocket::isTunnel() const
+{
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
+        return false;
+    }
+    return is_ssl ? isTunnelImpl<true>(socket) : isTunnelImpl<false>(socket);
+}
+
+void JSNodeHTTPServerSocket::readStop()
+{
+    if (!isTunnel()) {
+        return;
+    }
+    us_socket_pause(socket);
+}
+
+void JSNodeHTTPServerSocket::readStart()
+{
+    if (!isTunnel()) {
+        return;
+    }
+    us_socket_resume(socket);
+}
+
+template<bool SSL>
 static std::string* requestTrailersFor(us_socket_t* socket)
 {
     /* A JSNodeHTTPServerSocket only exists for node:http compat connections,

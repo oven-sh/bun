@@ -1573,7 +1573,11 @@ function getNodeHTTPServerSocket() {
     #onData(chunk, last) {
       this._unrefTimer();
       if (chunk) {
-        this.push(chunk);
+        // Node's onStreamRead: a full Readable buffer stops kernel reads of
+        // the tunnel; _read() restarts them.
+        if (!this.push(chunk)) {
+          this[kHandle]?.readStop();
+        }
       }
       if (last) {
         const handle = this[kHandle];
@@ -1803,6 +1807,9 @@ function getNodeHTTPServerSocket() {
 
     _read(_size) {
       // https://github.com/nodejs/node/blob/13e3aef053776be9be262f210dc438ecec4a3c8d/lib/net.js#L725-L737
+      if (this[kStreamingEnabled]) {
+        this[kHandle]?.readStart();
+      }
       this.#resumeSocket();
     }
 

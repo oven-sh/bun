@@ -224,59 +224,74 @@ describe("HTTP server CONNECT", () => {
     expect(response).toContain("408 Request Timeout");
   });
 
-  //TODO pause and resume only not supported in bun socket yet
-  test.todo("should handle socket pause and resume", async () => {
-    await using proxyServer = http.createServer();
-    let pauseCount = 0;
-    let resumeCount = 0;
+  // Node stops reading the connection once the handed-off socket's Readable
+  // buffer is full (onStreamRead -> readStop), so a paused or unread tunnel
+  // holds at most its highWaterMark and the client backs up instead.
+  const tunnelRequests = {
+    connect: "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+    upgrade: "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: custom\r\n\r\n",
+  };
+  test.concurrent.each(["connect", "upgrade"] as const)(
+    "a paused %s socket stops reading the connection instead of buffering everything",
+    async event => {
+      const totalBytes = 64 * 1024 * 1024;
+      const chunk = Buffer.alloc(1024 * 1024, "x");
 
-    proxyServer.on("connect", (req, socket, head) => {
-      socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
-
-      // Simulate backpressure scenario
-      const interval = setInterval(() => {
-        const canWrite = socket.write("X".repeat(1024));
-        if (!canWrite) {
-          pauseCount++;
-          socket.pause();
-          setTimeout(() => {
-            resumeCount++;
-            socket.resume();
-          }, 50);
-        }
-      }, 10);
-
-      socket.on("end", () => {
-        clearInterval(interval);
-        socket.end();
+      await using server = http.createServer((req, res) => res.end("ok"));
+      const handedOff = Promise.withResolvers<net.Socket>();
+      server.on(event, (req, socket) => {
+        socket.pause();
+        handedOff.resolve(socket);
       });
-    });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
 
-    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
-    const proxyAddress = proxyServer.address() as AddressInfo;
+      const client = net.connect({ port, host: "127.0.0.1" });
+      client.on("error", () => {});
+      await once(client, "connect");
+      client.write(tunnelRequests[event]);
+      const socket = await handedOff.promise;
 
-    const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      client.write("CONNECT example.com:80 HTTP/1.1\r\nHost: example.com\r\n\r\n");
+      for (let written = 0; written < totalBytes; written += chunk.length) {
+        client.write(chunk);
+      }
 
-      setTimeout(() => client.end(), 200);
-    });
+      // The server reads until its Readable buffer is full, then stops. Poll
+      // until the client's queue stops shrinking; a server that keeps reading
+      // drains it to zero.
+      let previous = -1;
+      let stableSince = 0;
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        const queued = client.writableLength;
+        if (queued === 0) break;
+        if (queued !== previous) {
+          previous = queued;
+          stableSince = Date.now();
+        } else if (Date.now() - stableSince >= 500) {
+          break;
+        }
+        await Bun.sleep(10);
+      }
 
-    const { promise, resolve } = Promise.withResolvers<number>();
-    let bytesReceived = 0;
+      expect(socket.readableLength).toBeLessThan(16 * 1024 * 1024);
+      expect(client.writableLength).toBeGreaterThan(16 * 1024 * 1024);
 
-    client.on("data", data => {
-      bytesReceived += data.length;
-    });
+      // Resuming restarts reads and delivers every byte.
+      let received = 0;
+      const drained = Promise.withResolvers<void>();
+      socket.on("data", (data: Buffer) => {
+        received += data.length;
+        if (received === totalBytes) drained.resolve();
+      });
+      socket.resume();
+      await drained.promise;
+      expect(received).toBe(totalBytes);
 
-    client.on("end", () => {
-      resolve(bytesReceived);
-    });
-
-    const totalBytes = await promise;
-    expect(totalBytes).toBeGreaterThan(0);
-    expect(pauseCount).toBeGreaterThan(0);
-    expect(resumeCount).toBeGreaterThan(0);
-  });
+      client.destroy();
+      socket.destroy();
+    },
+  );
 
   test("should deliver bytes following a CONNECT request with Content-Length: 0 to the connect socket, not as a new request", async () => {
     const requestUrls: string[] = [];

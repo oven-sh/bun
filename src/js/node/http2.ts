@@ -5651,20 +5651,18 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
         return;
       }
-      // 'connect' is emitted outside the try: a throw from a 'connect' listener is an uncaught
-      // exception and never reaches the session. node emits on the tick after the socket's
-      // connect event, or on the first tick for a transport that was connected already. That
-      // first tick is this call (connectOnNextTick), so the emit happens at its end.
-      let emitNow = false;
+      // 'connect' is emitted outside the try, so a throw from a listener never reaches destroy().
+      let emitInThisTick = false;
       try {
         this.#onConnect(socket, () => {
-          if (connectOnNextTick) emitNow = true;
+          // A transport that was connected already runs this on the tick node emits on.
+          if (connectOnNextTick) emitInThisTick = true;
           else process.nextTick(emitConnectNT, this, socket);
         });
       } catch (e) {
         this.destroy(e);
       }
-      if (emitNow) emitConnectNT(this, socket);
+      if (emitInThisTick) emitConnectNT(this, socket);
     }
 
     // h2 with ALPNProtocols

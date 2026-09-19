@@ -905,6 +905,7 @@ describe("PUSH_PROMISE parent stream (RFC 9113 §6.6)", () => {
   }
 
   type Peer = {
+    raw: RawH2Server;
     client: http2.ClientHttp2Session;
     /** Session 'error' events so far. */
     errors: Error[];
@@ -950,7 +951,7 @@ describe("PUSH_PROMISE parent stream (RFC 9113 §6.6)", () => {
         });
         return answer.type === FrameType.GOAWAY ? ("GOAWAY" as const) : ("PING ACK" as const);
       }
-      await body({ client, errors, pushedIds, sessionClosed, send });
+      await body({ raw, client, errors, pushedIds, sessionClosed, send });
     } finally {
       client.destroy();
       raw.close();
@@ -1057,6 +1058,19 @@ describe("PUSH_PROMISE parent stream (RFC 9113 §6.6)", () => {
       expect(peer.errors).toEqual([]);
     }),
   );
+
+  // RFC 9113 §5.1.1: the first use of a stream id closes every lower idle id of the same
+  // initiator. Stream 3 is closed once the client opens stream 5, so node does not fail the
+  // session (it answers RST_STREAM(CANCEL) for the promised stream).
+  test("a PUSH_PROMISE on a stream id the client skipped does not fail the session", () =>
+    withRequest("GET", async peer => {
+      (peer.client as any).setNextStreamID(5);
+      const req = peer.client.request({ ":path": "/" });
+      req.on("error", () => {});
+      await peer.raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 5);
+      expect(await peer.send(pushPromise(3, 2))).toBe("PING ACK");
+      expect(peer.errors).toEqual([]);
+    }));
 });
 
 describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {

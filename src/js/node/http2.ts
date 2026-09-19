@@ -4728,17 +4728,17 @@ class ServerHttp2Session extends Http2Session {
 
       const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
+      this.#closed = true;
+      if (socket && (!this[kGoawaySent] || code)) {
+        // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
+        // and double-fires the peer's 'goaway' event. An error code is new information, though:
+        // a destroy(err) after close() must still put the error GOAWAY on the wire.
+        this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+      }
       // Corked frames reach a JS transport only while connected.
       this.#parser?.flush?.();
-      this.#closed = true;
       this.#connected = false;
       if (socket) {
-        if (!this[kGoawaySent] || code) {
-          // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-          // and double-fires the peer's 'goaway' event. An error code is new information, though:
-          // a destroy(err) after close() must still put the error GOAWAY on the wire.
-          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
-        }
         if (error) {
           // node's finishSessionClose destroys the socket when the session dies
           // with an error (a misbehaving peer must observe the connection going
@@ -5811,9 +5811,15 @@ class ClientHttp2Session extends Http2Session {
         // Streams torn down by this destroy surface the same session error (node semantics).
         this[kSessionDestroyError] = error;
       }
+      this.#closed = true;
+      if (socket && (!this[kGoawaySent] || code)) {
+        // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
+        // and double-fires the peer's 'goaway' event. An error code is new information, though:
+        // a destroy(err) after close() must still put the error GOAWAY on the wire.
+        this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+      }
       // Corked frames reach a JS transport only while connected.
       this.#parser?.flush?.();
-      this.#closed = true;
       this.#connected = false;
       {
         // Requests still queued (waiting for connect or for a concurrency slot) never reached the

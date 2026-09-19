@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import { once } from "node:events";
-import { Agent, createServer, request, type Server } from "node:http";
+import { Agent, createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { connect } from "node:net";
 
@@ -293,4 +293,105 @@ it("upgrade request whose whole body arrived while it was paused still hands the
     server.closeAllConnections();
     if (server.listening) server.close();
   }
+});
+
+describe("request that its handler pause()d, with a body below the highWaterMark", () => {
+  // req.pause() does not stop the connection: Node's parser keeps filling the
+  // paused IncomingMessage and only stops reading once push() reports the
+  // buffer full. A small body is therefore received to its end while paused.
+  const POST_HEAD = "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\n";
+
+  function stateOf(req: IncomingMessage) {
+    return { complete: req.complete, readableLength: req.readableLength, readableEnded: req.readableEnded };
+  }
+
+  /** Resumes the request and answers with its body once it has ended. */
+  function echoOnceResumed(req: IncomingMessage, res: ServerResponse) {
+    let received = "";
+    req.on("data", chunk => (received += chunk));
+    req.on("end", () => res.end(`body=${received};`));
+    req.resume();
+  }
+
+  it("is complete while paused when the body came with the request head", async () => {
+    const { promise: whilePaused, resolve: sampled } = Promise.withResolvers<ReturnType<typeof stateOf>>();
+    const server = createServer((req, res) => {
+      req.pause();
+      // setImmediate runs after the read callback that dispatched the request,
+      // which has parsed the rest of the segment by then.
+      setImmediate(() => {
+        sampled(stateOf(req));
+        echoOnceResumed(req, res);
+      });
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(POST_HEAD + "hello");
+      expect(await whilePaused).toEqual({ complete: true, readableLength: 5, readableEnded: false });
+      await client.receive("body=hello;");
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  it("is complete while paused when the body came after pause()", async () => {
+    const { promise: arrived, resolve: onRequest } = Promise.withResolvers<[IncomingMessage, ServerResponse]>();
+    const server = createServer((req, res) => {
+      if (req.url === "/ping") return void res.end("pong");
+      req.pause();
+      onRequest([req, res]);
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(POST_HEAD);
+      const [req, res] = await arrived;
+      client.socket.write("hello");
+      // A paused request emits nothing when its body arrives. The body was
+      // readable before this second connection existed, so the server has
+      // read it by the time the second connection has been answered.
+      const ping = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      ping.write("GET /ping HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+      ping.resume();
+      await once(ping, "close");
+      expect(stateOf(req)).toEqual({ complete: true, readableLength: 5, readableEnded: false });
+      echoOnceResumed(req, res);
+      await client.receive("body=hello;");
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  it("learns that the client disconnected while it is still paused", async () => {
+    const { promise: arrived, resolve: onRequest } = Promise.withResolvers<void>();
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<object>();
+    const server = createServer(req => {
+      const events: string[] = [];
+      req.pause();
+      req.on("aborted", () => events.push("aborted"));
+      req.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
+      req.on("close", () => onClose({ events, ...stateOf(req) }));
+      onRequest();
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(POST_HEAD + "hello");
+      await arrived;
+      client.socket.destroy();
+      expect(await closed).toEqual({
+        events: ["aborted", "error ECONNRESET"],
+        complete: true,
+        readableLength: 5,
+        readableEnded: false,
+      });
+      server.close();
+      await once(server, "close");
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
 });

@@ -52,13 +52,6 @@ function readStop(socket) {
   if (socket) socket.pause();
 }
 
-function onIncomingMessagePauseNodeHTTPResponse(this: IncomingMessage) {
-  const handle = this[kHandle];
-  if (handle && !this.destroyed) {
-    handle.pause();
-  }
-}
-
 function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
   const handle = this[kHandle];
   if (handle && !this.destroyed) {
@@ -114,11 +107,8 @@ function IncomingMessage(socket) {
     // socket's highWaterMark (which carries createServer({ highWaterMark })).
     Readable.$call(this, arguments[7] ? { highWaterMark: arguments[7].readableHighWaterMark } : undefined);
 
-    // If there's a body, pay attention to pause/resume events
-    if (arguments[6]) {
-      this.on("pause", onIncomingMessagePauseNodeHTTPResponse);
-      this.on("resume", onIncomingMessageResumeNodeHTTPResponse);
-    }
+    // Like Node, no 'pause'/'resume' hooks: only push() === false stops the socket and only _read() restarts it.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L128-L141
   } else {
     // Node.js-style construction from a net.Socket (used by the HTTP client
     // and anything driving the llhttp parser through node:_http_common).

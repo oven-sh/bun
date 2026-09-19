@@ -458,32 +458,101 @@ describe("backpressure", () => {
       });
     });
 
-    it("delivers a body and FIN that arrived while the request was paused once it resumes", async () => {
-      // The whole body and the client's FIN land on the paused connection; the
-      // EOF has to stay parked until the handler resumes and then still be
-      // delivered as 'end' (paused sockets defer EOF rather than dropping it).
-      const BODY = 64 * 1024;
+    it("delivers the rest of a body and the FIN that arrived while the connection was paused once the request resumes", async () => {
+      // req.pause() alone leaves the connection reading (like Node), so the
+      // first part of the body has to fill the paused request's buffer to stop
+      // it. The rest of the body and the client's FIN then land on the paused
+      // connection; the EOF has to stay parked until the handler resumes and
+      // then still be delivered as 'end' (paused sockets defer EOF rather than
+      // dropping it).
+      const FILL = 64 * 1024;
+      const REST = 16 * 1024;
       const arrived = Promise.withResolvers<{ req: http.IncomingMessage; received: Promise<number> }>();
-      await using server = http.createServer((req, res) => {
+      const connectionPaused = Promise.withResolvers<void>();
+      await using server = http.createServer({ highWaterMark: FILL }, (req, res) => {
+        if (req.url === "/ping") return void res.end("pong");
         req.pause();
+        req.socket.once("pause", () => connectionPaused.resolve());
         arrived.resolve({ req, received: countBody(req, res) });
       });
       await once(server.listen(0, "127.0.0.1"), "listening");
+      const port = (server.address() as AddressInfo).port;
 
-      const sock = await transports.http.connect((server.address() as AddressInfo).port);
+      const sock = await transports.http.connect(port);
       let response = "";
       sock.on("data", chunk => (response += chunk.toString("latin1")));
       const closed = once(sock, "close");
       try {
-        sock.write(`POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${BODY}\r\nConnection: close\r\n\r\n`);
+        sock.write(`POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${FILL + REST}\r\nConnection: close\r\n\r\n`);
         const { req, received } = await arrived.promise;
-        sock.end(Buffer.alloc(BODY, "c"));
+        sock.write(Buffer.alloc(FILL, "c"));
+        await connectionPaused.promise;
+        sock.end(Buffer.alloc(REST, "c"));
         await once(sock, "finish");
 
+        // A full exchange on a second connection takes several turns of the
+        // server's event loop, so the loop polls while the FIN waits on the
+        // paused connection. The connection must not react to it yet.
+        const ping = await transports.http.connect(port);
+        ping.write("GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        ping.resume();
+        await once(ping, "close");
+        expect({ complete: req.complete, destroyed: req.destroyed, response }).toEqual({
+          complete: false,
+          destroyed: false,
+          response: "",
+        });
+
         req.resume();
-        expect(await received).toBe(BODY);
+        expect(await received).toBe(FILL + REST);
         await closed;
         expect(response).toStartWith("HTTP/1.1 200 ");
+      } finally {
+        sock.destroy();
+      }
+    });
+
+    it("keeps the buffer of a chunked upload bounded while the handler pauses on every 'data'", async () => {
+      // Each resume() lets one buffered chunk out, because the handler pauses
+      // again in 'data'. The connection has to stay stopped until the buffer is
+      // below the highWaterMark again (Node restarts it from _read() only). If
+      // every resume() restarted it, each cycle would admit a whole socket read
+      // and take one chunk out, and the buffer would grow with the upload.
+      const UPLOAD = 8 * 1024 * 1024;
+      const frame = Buffer.concat([Buffer.from("10000\r\n"), Buffer.alloc(0x10000, "d"), Buffer.from("\r\n")]);
+      const result = Promise.withResolvers<{ received: number; maxBuffered: number }>();
+      // Awaited only after the upload loop; an abort must surface there.
+      result.promise.catch(() => {});
+      await using server = http.createServer((req, res) => {
+        let received = 0;
+        let maxBuffered = 0;
+        req.on("data", (chunk: Buffer) => {
+          received += chunk.byteLength;
+          maxBuffered = Math.max(maxBuffered, req.readableLength);
+          req.pause();
+          setImmediate(() => req.resume());
+        });
+        req.on("end", () => {
+          res.end("ok");
+          result.resolve({ received, maxBuffered });
+        });
+        req.on("aborted", () => result.reject(new Error(`request aborted after ${received} body bytes`)));
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const sock = await transports.http.connect((server.address() as AddressInfo).port);
+      sock.resume();
+      try {
+        sock.write("POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n");
+        for (let sent = 0; sent < UPLOAD; sent += 0x10000) {
+          if (!sock.write(frame)) await once(sock, "drain");
+        }
+        sock.write("0\r\n\r\n");
+
+        const { received, maxBuffered } = await result.promise;
+        expect(received).toBe(UPLOAD);
+        // One highWaterMark plus one socket read stays far below this.
+        expect(maxBuffered).toBeLessThan(UPLOAD / 4);
       } finally {
         sock.destroy();
       }

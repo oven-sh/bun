@@ -238,6 +238,17 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // overwriting the exe makes this dir's stamp stale → the shim is rebuilt
   // for the right arch on the next build here.
   //
+  // So the edge rewrites one of its own inputs, and that is what `restat` is
+  // for here (not pruning: the stamp is touched unconditionally, so nothing
+  // downstream is ever pruned). For a non-restat edge, ninja 1.11+ logs the
+  // time the command *started* as the output's mtime; the exe copied during
+  // the command is newer than that, so the stamp is dirty again on the build
+  // right after every real shim rebuild: one more cargo round for the shim,
+  // then one for bun_bin, whose edge has the stamp as an input. With restat,
+  // ninja logs the stamp's mtime as re-stat'ed after the command, and the
+  // touch runs after the copy, so the next build is a no-op. A sibling build
+  // dir's overwrite lands later than that, so it still invalidates the stamp.
+  //
   // Registered for windows *targets* only; the shell dialect follows the
   // HOST (cmd.exe natively, sh when cross-compiling from linux/macOS).
   if (cfg.windows) {
@@ -249,9 +260,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
           `( cmp -s $shim_src $shim_dest 2>/dev/null || cp $shim_src $shim_dest ) && touch $out`,
       description: "cargo bun_shim_impl → $shim_dest",
       pool: "console",
-      // No restat: the stamp ($out) is touched unconditionally, so there's
-      // nothing for ninja to prune on; the content-conditional copy above
-      // exists for cargo's dep-info on $shim_dest, not for restat.
+      restat: true,
     });
   }
 }

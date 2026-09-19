@@ -45,6 +45,7 @@ impl Default for CodeCoverageOptions {
             reporters: Reporters {
                 text: true,
                 lcov: false,
+                cobertura: false,
             },
             reports_directory: Box::from(b"coverage" as &[u8]),
             fractions: Fraction::default(),
@@ -56,8 +57,12 @@ impl Default for CodeCoverageOptions {
     }
 }
 
-#[derive(Clone, Copy)]
+/// `Default` is the "no reporters" reset the CLI/bunfig parsers apply before
+/// enabling each reporter the user listed; the out-of-the-box default
+/// (`text: true`) lives in `CodeCoverageOptions::default`.
+#[derive(Clone, Copy, Default)]
 pub struct Reporters {
     pub text: bool,
     pub lcov: bool,
+    pub cobertura: bool,
 }

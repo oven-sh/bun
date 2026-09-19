@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
+import { parseStringPromise } from "xml2js";
 
 test("coverage crash", () => {
   using dir = tempDir("cov", {
@@ -55,6 +56,210 @@ export class Y {
   expect(normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir)).toMatchSnapshot(
     "lcov-coverage-reporter-output",
   );
+});
+
+test("cobertura coverage reporter", () => {
+  using dir = tempDir("cov", {
+    "src/foo.ts": `
+export function fooOne(x) {
+  if (x === 1) {
+    return x + 1;
+  }
+
+  if (x === 2) {
+    return x + 1;
+  }
+
+  const result = x + 1;
+
+  return result + 1;
+}
+`,
+    "src/foo.test.ts": `
+import { describe, it, expect } from 'bun:test';
+import { fooOne } from './foo';
+
+describe('fooTest', () => {
+  it('returns result', () => {
+    const result = fooOne(12);
+    expect(result).toBe(14);
+  });
+
+  it('handles when x equals to 2', () => {
+    const result = fooOne(2);
+    expect(result).toBe(3);
+  });
+});
+`,
+  });
+  const result = Bun.spawnSync(
+    [bunExe(), "test", "--coverage", "--coverage-reporter", "cobertura", "./src/foo.test.ts"],
+    {
+      cwd: dir,
+      env: {
+        ...bunEnv,
+      },
+      stdio: ["inherit", "inherit", "inherit"],
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+  let coberturaXml = normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "cobertura.xml"), "utf-8"), dir);
+  coberturaXml = coberturaXml.replace(/timestamp="\d+"/, 'timestamp="0"');
+  expect(coberturaXml).toMatchSnapshot("cobertura-coverage-reporter-output");
+});
+
+test("cobertura coverage reporter writes alongside lcov", () => {
+  using dir = tempDir("cov", {
+    "demo.ts": `
+export function covered() {
+  return 1;
+}
+covered();
+`,
+  });
+  const result = Bun.spawnSync(
+    [bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "--coverage-reporter", "cobertura", "./demo.ts"],
+    {
+      cwd: dir,
+      env: { ...bunEnv },
+      stdio: ["inherit", "inherit", "inherit"],
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+  expect(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8")).toContain("SF:demo.ts");
+  const xml = readFileSync(path.join(dir, "coverage", "cobertura.xml"), "utf-8");
+  expect(xml).toContain('filename="demo.ts"');
+  expect(xml).toContain('<!DOCTYPE coverage SYSTEM "http://cobertura.sourceforge.net/xml/coverage-04.dtd">');
+});
+
+test("cobertura xml follows the coverage-04.dtd hierarchy", async () => {
+  using dir = tempDir("cov", {
+    "src/a.ts": `export const a = 1;\n`,
+    "a.test.ts": `
+import { test, expect } from "bun:test";
+import { a } from "./src/a";
+test("a", () => expect(a).toBe(1));
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "cobertura"], {
+    cwd: dir,
+    env: { ...bunEnv },
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  // coverage (sources?, packages); packages (package*); package (classes);
+  // classes (class*); class (methods, lines)
+  const parsed = await parseStringPromise(readFileSync(path.join(dir, "coverage", "cobertura.xml"), "utf-8"));
+  const packages = parsed.coverage.packages[0].package;
+  expect(packages.length).toBeGreaterThan(0);
+  const classes = packages.flatMap((pkg: any) => pkg.classes[0].class);
+  expect(classes.map((cls: any) => cls.$.filename)).toContain("src/a.ts");
+  for (const cls of classes) {
+    expect(cls.methods).toHaveLength(1);
+    expect(cls.lines).toHaveLength(1);
+    expect(cls.$["line-rate"]).toMatch(/^\d\.\d{4}$/);
+  }
+  expect(result.exitCode).toBe(0);
+});
+
+test("cobertura coverage reporter escapes special characters in paths", () => {
+  using dir = tempDir("cov", {
+    "foo&bar.ts": `
+export function covered() {
+  return 1;
+}
+covered();
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "cobertura", "./foo&bar.ts"], {
+    cwd: dir,
+    env: { ...bunEnv },
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  expect(result.exitCode).toBe(0);
+  const xml = readFileSync(path.join(dir, "coverage", "cobertura.xml"), "utf-8");
+  expect(xml).toContain("foo&amp;bar.ts");
+  expect(xml).not.toContain('filename="foo&bar.ts"');
+});
+
+test("invalid coverage reporter lists cobertura", () => {
+  using dir = tempDir("cov", {
+    "demo.test.ts": `test("ok", () => {});`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "jacoco"], {
+    cwd: dir,
+    env: { ...bunEnv },
+    stdio: [null, "pipe", "pipe"],
+  });
+  const stderr = result.stderr.toString("utf-8");
+  expect(stderr).toContain("invalid coverage reporter 'jacoco'");
+  expect(stderr).toContain("cobertura");
+  expect(result.exitCode).not.toBe(0);
+});
+
+test("coveragePathIgnorePatterns - cobertura reporter", () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `
+[test]
+coveragePathIgnorePatterns = "ignore-me.ts"
+coverageSkipTestFiles = false
+`,
+    "include-me.ts": `
+export function includeMe() {
+  return "included";
+}
+`,
+    "ignore-me.ts": `
+export function ignoreMe() {
+  return "ignored";
+}
+`,
+    "test.test.ts": `
+import { test, expect } from "bun:test";
+import { includeMe } from "./include-me";
+import { ignoreMe } from "./ignore-me";
+
+test("should call both functions", () => {
+  expect(includeMe()).toBe("included");
+  expect(ignoreMe()).toBe("ignored");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "cobertura"], {
+    cwd: dir,
+    env: { ...bunEnv },
+    stdio: [null, null, "pipe"],
+  });
+
+  let xml = readFileSync(path.join(dir, "coverage", "cobertura.xml"), "utf-8");
+  xml = normalizeBunSnapshot(xml, dir).replace(/timestamp="\d+"/, 'timestamp="0"');
+  expect(xml).toContain('filename="include-me.ts"');
+  expect(xml).not.toContain("ignore-me.ts");
+  expect(result.exitCode).toBe(0);
+});
+
+test("cobertura reporter via bunfig.toml", () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `
+[test]
+coverage = true
+coverageReporter = ["cobertura"]
+coverageSkipTestFiles = false
+`,
+    "demo.test.ts": `
+import { test, expect } from "bun:test";
+test("ok", () => expect(1).toBe(1));
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test"], {
+    cwd: dir,
+    env: { ...bunEnv },
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  expect(result.exitCode).toBe(0);
+  expect(readFileSync(path.join(dir, "coverage", "cobertura.xml"), "utf-8")).toContain("<coverage ");
 });
 
 test("coverage excludes node_modules directory", () => {

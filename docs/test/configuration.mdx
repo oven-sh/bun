@@ -174,7 +174,7 @@ junit = "./reports/junit.xml"
 [test]
 # Also enable coverage reporting
 coverage = true
-coverageReporter = ["text", "lcov"]
+coverageReporter = ["text", "lcov"]  # or ["text", "cobertura"]
 ```
 
 ## Memory Usage
@@ -266,7 +266,7 @@ rerunEach = 3
 coverage = true
 
 # Set coverage reporter
-coverageReporter = ["text", "lcov"]
+coverageReporter = ["text", "lcov"]  # or ["text", "cobertura"]
 
 # Set coverage output directory
 coverageDir = "./coverage"
@@ -428,7 +428,7 @@ smol = true
 
 # Coverage configuration
 coverage = true
-coverageReporter = ["text", "lcov"]
+coverageReporter = ["text", "lcov"]  # or ["text", "cobertura"]
 coverageDir = "./coverage"
 coverageThreshold = { lines = 0.85, functions = 0.90 }
 coverageSkipTestFiles = true

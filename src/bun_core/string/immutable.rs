@@ -21,7 +21,7 @@ pub use self::unicode::{
 pub mod escape_html;
 #[path = "immutable/exact_size_matcher.rs"]
 pub mod exact_size_matcher;
-pub use escape_html::{html_escape_entity, xml_escape_entity};
+pub use escape_html::{html_escape_entity, write_xml_escaped, xml_escape_entity};
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
 #[path = "immutable/visible.rs"]

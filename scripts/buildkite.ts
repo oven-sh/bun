@@ -3,7 +3,7 @@
 // meta-data, artifacts, annotations and log groups.
 
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
 import {
@@ -20,6 +20,7 @@ import {
   isPosix,
   isWindows,
   output,
+  request,
   run,
   tmpdir,
   which,
@@ -68,24 +69,11 @@ export function getSecret(name: string, options: SecretOptions = { required: tru
       throw new Error(`Secret not found: ${name} (hint: go to ${hint} and create a secret)`);
     }
 
-    setEnv(name, secret);
+    process.env[name] = secret;
     return secret;
   }
 
   return options.required ? getEnv(name) : undefined;
-}
-
-function setEnv(name: string, value: string | undefined): void {
-  process.env[name] = value;
-
-  if (isGithubAction && !/^GITHUB_/i.test(name)) {
-    const envFilePath = process.env.GITHUB_ENV;
-    if (envFilePath) {
-      const delimeter = Math.random().toString(36).substring(2, 15);
-      const content = `${name}<<${delimeter}\n${value}\n${delimeter}\n`;
-      appendFileSync(envFilePath, content);
-    }
-  }
 }
 
 export function parseGitUrl(url: string | URL): URL | undefined {
@@ -153,17 +141,15 @@ export function getCommit(cwd?: string): string | undefined {
   return undefined;
 }
 
-export function getCommitMessage(cwd?: string): string | undefined {
-  if (!cwd) {
-    if (isBuildkite) {
-      const message = process.env.BUILDKITE_MESSAGE;
-      if (message) {
-        return message;
-      }
+export function getCommitMessage(): string | undefined {
+  if (isBuildkite) {
+    const message = process.env.BUILDKITE_MESSAGE;
+    if (message) {
+      return message;
     }
   }
 
-  const stdout = output(["git", "log", "-1", "--pretty=%B"], { cwd });
+  const stdout = output(["git", "log", "-1", "--pretty=%B"]);
   if (stdout !== undefined) {
     return stdout.trim();
   }
@@ -171,24 +157,22 @@ export function getCommitMessage(cwd?: string): string | undefined {
   return undefined;
 }
 
-export function getBranch(cwd?: string): string | undefined {
-  if (!cwd) {
-    if (isBuildkite) {
-      const branch = process.env.BUILDKITE_BRANCH;
-      if (branch) {
-        return branch;
-      }
-    }
-
-    if (isGithubAction) {
-      const ref = process.env.GITHUB_REF_NAME;
-      if (ref) {
-        return ref;
-      }
+export function getBranch(): string | undefined {
+  if (isBuildkite) {
+    const branch = process.env.BUILDKITE_BRANCH;
+    if (branch) {
+      return branch;
     }
   }
 
-  const stdout = output(["git", "rev-parse", "--abbrev-ref", "HEAD"], { cwd });
+  if (isGithubAction) {
+    const ref = process.env.GITHUB_REF_NAME;
+    if (ref) {
+      return ref;
+    }
+  }
+
+  const stdout = output(["git", "rev-parse", "--abbrev-ref", "HEAD"]);
   if (stdout !== undefined) {
     return stdout.trim();
   }
@@ -196,24 +180,22 @@ export function getBranch(cwd?: string): string | undefined {
   return undefined;
 }
 
-function getMainBranch(cwd?: string): string | undefined {
-  if (!cwd) {
-    if (isBuildkite) {
-      const branch = process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH;
-      if (branch) {
-        return branch;
-      }
-    }
-
-    if (isGithubAction) {
-      const headRef = process.env.GITHUB_HEAD_REF;
-      if (headRef) {
-        return headRef;
-      }
+function getMainBranch(): string | undefined {
+  if (isBuildkite) {
+    const branch = process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH;
+    if (branch) {
+      return branch;
     }
   }
 
-  const stdout = output(["git", "symbolic-ref", "refs/remotes/origin/HEAD"], { cwd });
+  if (isGithubAction) {
+    const headRef = process.env.GITHUB_HEAD_REF;
+    if (headRef) {
+      return headRef;
+    }
+  }
+
+  const stdout = output(["git", "symbolic-ref", "refs/remotes/origin/HEAD"]);
   if (stdout !== undefined) {
     return stdout.trim().replace("refs/remotes/origin/", "");
   }
@@ -221,8 +203,8 @@ function getMainBranch(cwd?: string): string | undefined {
   return undefined;
 }
 
-export function isMainBranch(cwd?: string): boolean {
-  return !isFork() && getBranch(cwd) === getMainBranch(cwd);
+export function isMainBranch(): boolean {
+  return !isFork() && getBranch() === getMainBranch();
 }
 
 /** The fields of the GitHub Actions event payload (`GITHUB_EVENT_PATH`) that are read here. */
@@ -301,8 +283,8 @@ export function isFork(): boolean {
   return false;
 }
 
-export function isMergeQueue(cwd?: string): boolean {
-  return /^gh-readonly-queue/.test(getBranch(cwd) ?? "");
+export function isMergeQueue(): boolean {
+  return /^gh-readonly-queue/.test(getBranch() ?? "");
 }
 
 function getGithubToken(): string | undefined {
@@ -314,76 +296,19 @@ function getGithubToken(): string | undefined {
 
   const token = output(["gh", "auth", "token"])?.trim() ?? "";
 
-  setEnv("GITHUB_TOKEN", token);
+  process.env.GITHUB_TOKEN = token;
   return token || undefined;
 }
 
-interface CurlOptions {
-  /** Parse the body of a successful response as JSON. */
-  json?: boolean;
-  /** Answer a repeated request for the same URL from the first one's result. */
-  cache?: boolean;
-}
-
-interface CurlResult {
-  error: Error | undefined;
-  body: unknown;
-}
-
-let cachedResults: Record<string, CurlResult | undefined> | undefined;
-
-/** A GET, tried up to three times. A 400, 404 or 422 is an answer, not a failure to repeat. */
-export async function curl(url: string | URL, options: CurlOptions = {}): Promise<CurlResult> {
+/** The JSON at `url`, asked for up to three times; GitHub's API gets the token when there is one. */
+export async function getJson(url: string | URL): Promise<{ error: Error | undefined; body: unknown }> {
   const { hostname, href } = new URL(url);
-  const { json, cache } = options;
-
-  const cachedResult = cache ? cachedResults?.[href] : undefined;
-  if (cachedResult) {
-    return cachedResult;
-  }
-
-  const headers: Record<string, string> = {};
-  if (hostname === "api.github.com" || hostname === "uploads.github.com") {
-    const githubToken = getGithubToken();
-    if (githubToken) {
-      headers.Authorization = `Bearer ${githubToken}`;
-    }
-  }
-
-  let body: unknown;
-  let error: Error | undefined;
-  for (let i = 0; i < 3; i++) {
-    if (i > 0) {
-      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
-    }
-
-    let response;
-    try {
-      response = await fetch(href, { headers });
-      body = json && response.ok ? await response.json() : await response.text();
-    } catch (cause) {
-      error = new Error(`Fetch failed: GET ${url}`, { cause });
-      continue;
-    }
-
-    if (response.ok) {
-      // An earlier attempt's failure is not this request's.
-      error = undefined;
-      break;
-    }
-
-    error = new Error(`Fetch failed: GET ${url}: ${response.status} ${response.statusText}`, { cause: body });
-    if (response.status === 400 || response.status === 404 || response.status === 422) {
-      break;
-    }
-  }
-
-  const result = { error, body };
-  if (cache) {
-    cachedResults ||= {};
-    cachedResults[href] = result;
-  }
-  return result;
+  const githubToken = hostname === "api.github.com" ? getGithubToken() : undefined;
+  return request(href, {
+    headers: githubToken ? { Authorization: `Bearer ${githubToken}` } : {},
+    json: true,
+    attempts: 3,
+  });
 }
 
 function getBuildId(): string | undefined {
@@ -433,9 +358,9 @@ export function getBuildLabel(): string | undefined {
   return undefined;
 }
 
-export function getFileUrl(filename?: string, line?: number | string): URL | string | undefined {
+export function getFileUrl(filename: string, line?: number | string): string | undefined {
   let cwd: string | undefined;
-  if (filename?.startsWith("vendor")) {
+  if (filename.startsWith("vendor")) {
     const parentPath = resolve(dirname(filename));
     cwd = output(["git", "rev-parse", "--show-toplevel"], { cwd: parentPath })?.trim();
     if (cwd === undefined) {
@@ -444,17 +369,10 @@ export function getFileUrl(filename?: string, line?: number | string): URL | str
   }
 
   const baseUrl = getRepositoryUrl(cwd);
-  if (!filename) {
-    return baseUrl;
-  }
-
   const filePath = (cwd ? relative(cwd, filename) : filename).replace(/\\/g, "/");
   const commit = getCommit(cwd);
   const url = new URL(`blob/${commit}/${filePath}`, `${baseUrl}/`).toString();
-  if (typeof line !== "undefined") {
-    return new URL(`#L${line}`, url);
-  }
-  return url;
+  return line === undefined ? url : `${url}#L${line}`;
 }
 
 /** The fields of Buildkite's build JSON (`<build url>.json`) that are read here and in .buildkite/ci.ts. */
@@ -474,7 +392,7 @@ export async function getLastSuccessfulBuild(): Promise<BuildkiteBuild | undefin
     }
 
     while (url) {
-      const { error, body } = await curl(`${url}.json`, { json: true, cache: true });
+      const { error, body } = await getJson(`${url}.json`);
       if (error) {
         return;
       }
@@ -637,11 +555,6 @@ function getPublicIp(): string | undefined {
   return undefined;
 }
 
-function getUsername(): string {
-  const { username } = userInfo();
-  return username;
-}
-
 export function getBuildMetadata(name: string): string | undefined {
   if (isBuildkite) {
     return output(["buildkite-agent", "meta-data", "get", name])?.trim() || undefined;
@@ -656,7 +569,6 @@ interface BuildkiteAnnotation {
   content: string;
   style?: "error" | "warning" | "info";
   priority?: number;
-  attempt?: number;
 }
 
 export function reportAnnotationToBuildkite({
@@ -665,7 +577,6 @@ export function reportAnnotationToBuildkite({
   content,
   style = "error",
   priority = 3,
-  attempt = 0,
 }: BuildkiteAnnotation): void {
   if (!isBuildkite) {
     return;
@@ -674,28 +585,30 @@ export function reportAnnotationToBuildkite({
   // context is too long`). rustc diagnostic titles routinely exceed that and
   // were silently dropped, leaving only short warnings visible in the UI.
   const ctx = `${context || label}`.slice(0, 100);
-  const { error, status, signal, stderr } = spawnSync(
-    "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", ctx, "--priority", `${priority}`],
-    {
-      input: content,
-      stdio: ["pipe", "ignore", "pipe"],
-      encoding: "utf-8",
-      timeout: 30_000,
-    },
-  );
-  if (status === 0) {
-    return;
+  for (const attempt of [1, 2]) {
+    const { error, status, signal, stderr } = spawnSync(
+      "buildkite-agent",
+      ["annotate", "--append", "--style", `${style}`, "--context", ctx, "--priority", `${priority}`],
+      {
+        input: content,
+        stdio: ["pipe", "ignore", "pipe"],
+        encoding: "utf-8",
+        timeout: 30_000,
+      },
+    );
+    if (status === 0) {
+      return;
+    }
+    const cause = error?.message || signal || (status == null ? "timed out" : `exit code ${status}`);
+    if (attempt === 1) {
+      console.error(`buildkite-agent annotate failed for '${label}' (${cause}), retrying...`);
+      continue;
+    }
+    // Annotations are best-effort: log and move on rather than throwing, which
+    // would abort the test runner mid-suite over a cosmetic failure.
+    console.error(`buildkite-agent annotate failed for '${label}' after retry (${cause}), giving up`);
+    if (stderr) console.error(stderr);
   }
-  const cause = error?.message || signal || (status == null ? "timed out" : `exit code ${status}`);
-  if (attempt === 0) {
-    console.error(`buildkite-agent annotate failed for '${label}' (${cause}), retrying...`);
-    return reportAnnotationToBuildkite({ context, label, content, style, priority, attempt: attempt + 1 });
-  }
-  // Annotations are best-effort: log and move on rather than throwing, which
-  // would abort the test runner mid-suite over a cosmetic failure.
-  console.error(`buildkite-agent annotate failed for '${label}' after retry (${cause}), giving up`);
-  if (stderr) console.error(stderr);
 }
 
 /**
@@ -776,7 +689,7 @@ export function printEnvironment(): void {
       console.log("Tailscale IP:", getTailscaleIp());
       console.log("Public IP:", getPublicIp());
     }
-    console.log("Username:", getUsername());
+    console.log("Username:", userInfo().username);
     console.log("Working Directory:", process.cwd());
     console.log("Temporary Directory:", tmpdir());
     if (process.isBun) {

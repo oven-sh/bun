@@ -2165,7 +2165,7 @@ interface TestResult {
 }
 
 interface TestEntry {
-  url?: URL | string | undefined;
+  url?: string | undefined;
   file: string | undefined;
   test: string;
   status: string;
@@ -2175,7 +2175,7 @@ interface TestEntry {
 
 /** A `::error` workflow command printed by `bun test`; its properties are strings as printed. */
 interface TestError {
-  url?: URL | string | undefined;
+  url?: string | undefined;
   file: string | undefined;
   line: string | undefined;
   col: string | undefined;
@@ -2371,7 +2371,7 @@ function parseTestStdout(stdout: string, testPath?: string): TestOutput {
 
       const errorPath = file || testPath;
       const error: TestError = {
-        url: getFileUrl(errorPath, line),
+        url: errorPath === undefined ? undefined : getFileUrl(errorPath, line),
         file: errorPath,
         line,
         col,
@@ -2399,7 +2399,7 @@ function parseTestStdout(stdout: string, testPath?: string): TestOutput {
       const duration = eol ? string.substring(eol + 2, string.lastIndexOf("]")) : undefined;
 
       tests.push({
-        url: getFileUrl(testPath),
+        url: testPath === undefined ? undefined : getFileUrl(testPath),
         file: testPath,
         test,
         status: text,

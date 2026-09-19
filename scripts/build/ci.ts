@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { curl, isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
+import { getJson, isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
@@ -781,17 +781,24 @@ export function mustGenerateOrderFile(cfg: Config, ctx: OrderFileContext, inheri
  * The unauthenticated Buildkite lookups candidateBuilds() makes. Passed in, like
  * OrderFileContext, so the walk runs offline in a test.
  */
+/** The fields of a build's public JSON (`<pipeline>/builds/<n>.json`) that are read here. */
+interface BuildJson {
+  id?: string;
+  number?: number;
+  branch_name?: string;
+}
+
 export interface BuildLookups {
-  /** A build's public JSON (`<pipeline>/builds/<n>.json`), or undefined when it cannot be read. */
-  build(url: string): Promise<{ id?: string; number?: number; branch_name?: string } | undefined>;
+  /** A build's public JSON, or undefined when it cannot be read. */
+  build(url: string): Promise<BuildJson | undefined>;
   /** Where `url` redirects to, without following it. */
   redirect(url: string): Promise<string | null>;
 }
 
 const buildkiteLookups: BuildLookups = {
   async build(url) {
-    const response: { error?: unknown; body?: any } = await curl(url, { json: true, cache: true });
-    return response.error ? undefined : response.body;
+    const { error, body } = await getJson(url);
+    return error ? undefined : (body as BuildJson);
   },
   async redirect(url) {
     try {

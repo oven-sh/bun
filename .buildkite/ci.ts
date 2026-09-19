@@ -10,11 +10,11 @@ import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
 import { isWindows, output, run } from "../scripts/agent.ts";
 import {
-  curl,
   getBuildMetadata,
   getCommit,
   getCommitMessage,
   getEnv,
+  getJson,
   getLastSuccessfulBuild,
   getRepositoryUrl,
   getSecret,
@@ -132,9 +132,8 @@ async function getCanaryRevision(): Promise<number> {
   }
 
   const repository = getRepository() || "oven-sh/bun";
-  const { error: releaseError, body: release } = await curl(
+  const { error: releaseError, body: release } = await getJson(
     new URL(`repos/${repository}/releases/latest`, getGithubApiUrl()),
-    { json: true },
   );
   if (releaseError) {
     return 1;
@@ -142,9 +141,8 @@ async function getCanaryRevision(): Promise<number> {
 
   const commit = getCommit();
   const { tag_name: latest } = release as GithubRelease;
-  const { error: compareError, body: compare } = await curl(
+  const { error: compareError, body: compare } = await getJson(
     new URL(`repos/${repository}/compare/${latest}...${commit}`, getGithubApiUrl()),
-    { json: true },
   );
   if (compareError) {
     return 1;

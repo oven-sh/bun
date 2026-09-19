@@ -798,6 +798,40 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       raw.close();
     }
   });
+
+  test("a promised stream the engine reset gets exactly one RST_STREAM", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    const pushedClosed = Promise.withResolvers<number>();
+    client.on("stream", pushed => {
+      pushed.on("error", () => {});
+      pushed.on("close", () => pushedClosed.resolve(pushed.rstCode));
+    });
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      const promised = Buffer.alloc(4);
+      promised.writeUInt32BE(2, 0);
+      const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block]));
+      // DATA on the reserved stream: the engine answers RST_STREAM(STREAM_CLOSED) itself.
+      raw.sendFrame(FrameType.DATA, 0, 2, Buffer.from("x"));
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+      // The JS stream is destroyed with that code. Its deferred close must not write the frame again.
+      expect(await pushedClosed.promise).toBe(ErrorCode.STREAM_CLOSED);
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      const resets = raw.frames.filter(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+      expect(resets.map(f => f.payload.readUInt32BE(0))).toEqual([ErrorCode.STREAM_CLOSED]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
 });
 
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {

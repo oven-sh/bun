@@ -4457,9 +4457,7 @@ class ServerHttp2Session extends Http2Session {
       this.#advertisedMaxConcurrentStreams = advertisedMaxConcurrentStreams;
     }
 
-    if (options?.settings !== undefined) {
-      validateSettings(options.settings);
-    }
+    validateSettings(options?.settings);
     const nativeSettings = serverNativeSettings(options);
     this.#localSettings = initialLocalSettings(nativeSettings);
     this.#parser = new H2FrameParser({
@@ -5694,9 +5692,7 @@ class ClientHttp2Session extends Http2Session {
     const nativeSocket = socket._handle;
     this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
 
-    if (options?.settings !== undefined) {
-      validateSettings(options.settings);
-    }
+    validateSettings(options?.settings);
     const nativeSettings = { ...options, ...options?.settings };
     this.#localSettings = initialLocalSettings(nativeSettings);
     // #onConnect attaches the native socket; frames written before that (the preface) queue.

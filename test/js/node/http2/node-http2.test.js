@@ -5005,7 +5005,10 @@ it.each([
     // The empty updates keep the earlier value: a new session still advertises it.
     let client;
     try {
-      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
       client = http2.connect(`${scheme}://127.0.0.1:${server.address().port}`, connectOptions);
       const remoteSettings = await new Promise((resolve, reject) => {
         client.once("error", reject);

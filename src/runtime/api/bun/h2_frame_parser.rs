@@ -3357,6 +3357,34 @@ impl H2FrameParser {
         bun_core::String::clone_latin1(payload).into_js(&global)
     }
 
+    /// The `streams` entry for `stream_identifier`, and whether this call created it (in `state`).
+    /// The stream id marks stay with the callers: they advance on different events.
+    fn register_stream(&self, stream_identifier: u32, state: StreamState) -> (*mut Stream, bool) {
+        if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
+            return (stream, false);
+        }
+
+        let local_window_size = if self.outstanding_settings.get() > 0 {
+            DEFAULT_WINDOW_SIZE as u32
+        } else {
+            self.local_settings.get().initial_window_size
+        };
+        let mut stream = Box::new(Stream::init(
+            stream_identifier,
+            local_window_size,
+            self.remote_settings
+                .get()
+                .map(|s| s.initial_window_size)
+                .unwrap_or(DEFAULT_WINDOW_SIZE as u32),
+            self.padding_strategy.get(),
+        ));
+        stream.state = state;
+        let stream = bun_core::heap::into_raw(stream);
+        self.streams
+            .with_mut(|s| s.insert(stream_identifier, stream));
+        (stream, true)
+    }
+
     /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
     fn handle_received_stream_id(&self, stream_identifier: u32) -> Option<*mut Stream> {
         // connection stream
@@ -3364,8 +3392,8 @@ impl H2FrameParser {
             return None;
         }
 
-        // already exists
-        if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
+        let (stream, is_new) = self.register_stream(stream_identifier, StreamState::OPEN);
+        if !is_new {
             return Some(stream);
         }
 
@@ -3378,24 +3406,6 @@ impl H2FrameParser {
         {
             self.last_peer_stream_id.set(stream_identifier);
         }
-
-        // new stream open
-        let local_window_size = if self.outstanding_settings.get() > 0 {
-            DEFAULT_WINDOW_SIZE as u32
-        } else {
-            self.local_settings.get().initial_window_size
-        };
-        let stream = bun_core::heap::into_raw(Box::new(Stream::init(
-            stream_identifier,
-            local_window_size,
-            self.remote_settings
-                .get()
-                .map(|s| s.initial_window_size)
-                .unwrap_or(DEFAULT_WINDOW_SIZE as u32),
-            self.padding_strategy.get(),
-        )));
-        self.streams
-            .with_mut(|s| s.insert(stream_identifier, stream));
 
         let Some(this_value) = self.strong_this.get().try_get() else {
             return Some(stream);
@@ -3944,13 +3954,15 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
 
     fn is_local_stream(&self, stream_id: u32) -> bool {
         // The legacy outbound created an entry in the legacy streams map for every locally
-        // initiated stream (request/respond), so membership there means "we sent HEADERS on it".
-        self.streams.get().contains_key(&stream_id)
+        // initiated stream (request/respond). The peer's streams have entries there too, so the
+        // id parity decides whose stream it is.
+        let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
+        stream_id % 2 != peer_parity && self.streams.get().contains_key(&stream_id)
     }
 
     fn highest_started_stream_id(&self) -> u32 {
-        // handle_received_stream_id raises this for every stream registered on this side
-        // (including locally-initiated ones) and eviction never lowers it.
+        // handle_received_stream_id raises this for every stream it registers (including
+        // locally-initiated ones) and eviction never lowers it. on_push_promise leaves it alone.
         self.last_stream_id.get()
     }
 
@@ -3963,6 +3975,11 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
+        // The outbound host fns (rstStream, writeStream, getStreamState) look a stream up in
+        // `streams`, so the promised stream gets an entry there like any other stream. Its sending
+        // half starts closed: a client never sends on a stream the server reserved (RFC 9113 5.1,
+        // reserved (remote)). `last_stream_id` stays: a push must not make request ids skip.
+        self.register_stream(promised_id, StreamState::HALF_CLOSED_LOCAL);
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.
         self.rewrite_pending_push.set(promised_id);
@@ -5050,10 +5067,10 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            // Streams the legacy bookkeeping never registered (e.g. peer-initiated pushed streams
-            // surfaced by the rewrite engine) get the RST_STREAM written directly. The frame is
-            // built here rather than through the engine so this stays callable from inside an
-            // engine dispatch (the engine cell may already be borrowed).
+            // An id with no entry (the stream's slot was already released) gets the RST_STREAM
+            // written directly. The frame is built here rather than through the engine so this
+            // stays callable from inside an engine dispatch (the engine cell may already be
+            // borrowed).
             //
             // A NO_ERROR reset for an unknown id is always a no-op: it reaches here from the
             // deferred JS close path (rstNextTick after _destroy) once a cleanly-completed

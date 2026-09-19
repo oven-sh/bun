@@ -1042,7 +1042,25 @@ impl Drop for IOWriter {
         }
         // The source goes before the fd it was opened on.
         #[cfg(windows)]
-        s.writer.close_without_reporting();
+        {
+            s.writer.close_without_reporting();
+            if !s.flags.classified {
+                Self::classify(s);
+            }
+            // Closing a disk file that was written to (or truncated by its
+            // open) waits for what the system hangs on that close: the
+            // metadata update, and filter drivers such as an antivirus scan.
+            // That is hundreds of microseconds, and the next open of the same
+            // file waits behind it, so it goes to the work pool, where
+            // `uv_fs_close` had it. What a reader is waiting on (a pipe, a
+            // console) is cheap to close and is closed here.
+            if s.flags.pollable {
+                let _ = sys::close(s.fd);
+            } else {
+                bun_io::closer::Closer::close(s.fd, ());
+            }
+        }
+        #[cfg(not(windows))]
         let _ = sys::close(s.fd);
         s.writer
             .disable_keeping_process_alive(s.evtloop.as_event_loop_ctx());

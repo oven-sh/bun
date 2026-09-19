@@ -2951,9 +2951,9 @@ function tryClose(fd) {
   } catch {}
 }
 
-// Shared by respondWithFile (the stream owns the descriptor it opened: every terminal path closes
-// it exactly once) and respondWithFD (the caller owns the descriptor: nothing here may close it,
-// matching node's doSendFD).
+// The fstat callback shared by respondWithFile (the stream owns the descriptor it opened: every
+// terminal path closes it exactly once) and respondWithFD with a statCheck (the caller owns the
+// descriptor: nothing here may close it, matching node's doSendFD).
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   const ownsFd = this[kOwnsFd] === true;
@@ -2963,10 +2963,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     }
 
     if (onError) onError(err);
-    else {
-      this.respond(headers, options);
-      this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
-    }
+    else this.destroy(err);
     return;
   }
 
@@ -3039,12 +3036,31 @@ function doSendFileFD(options, fd, headers, err, stat) {
     }
     headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
+  // node: only a regular file is read at `offset`. Anything else (a FIFO, say) cannot seek and is
+  // read from its current position.
+  processRespondWithFD.$call(
+    this,
+    options,
+    fd,
+    headers,
+    stat.isFile() ? statOptions.offset : -1,
+    statOptions.length ?? -1,
+  );
+}
+
+// node processRespondWithFD + startFilePipe. respondWithFD() without a statCheck calls this before
+// it returns, so `headersSent` is true for its caller; the fstat paths get here from doSendFileFD.
+// `offset` and `length` are node's FileHandle arguments: read as integers (NaN is 0), a negative
+// offset reads from the descriptor's current position, a negative length reads to EOF.
+function processRespondWithFD(this: ServerHttp2Stream, options, fd, headers, offset: number, length: number) {
+  const onError = options.onError;
+  const ownsFd = this[kOwnsFd] === true;
   try {
     this.respond(headers, options);
   } catch (err) {
     // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
     // for the file never reaches a read stream, so close it here before the stream is destroyed.
-    if (this[kOwnsFd] === true) tryClose(fd);
+    if (ownsFd) tryClose(fd);
     if (typeof onError === "function") {
       onError(err);
     } else {
@@ -3057,14 +3073,25 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // _final (END_STREAM / wantTrailers) logic returned here.
   const finishNativeStream = closeWritableForFileResponse(this);
 
+  offset = Math.trunc(offset) || 0;
+  length = Math.trunc(length) || 0;
+  if (length === 0) {
+    if (ownsFd) tryClose(fd);
+    finishNativeStream(() => {});
+    return;
+  }
+  // The headers are out, so fs.createReadStream must not throw: keep both ends in its integer range.
+  const start = offset < 0 ? undefined : Math.min(offset, Number.MAX_SAFE_INTEGER);
+  const end = length < 0 ? undefined : Math.min((start || 0) + length - 1, Number.MAX_SAFE_INTEGER);
+
   const stream = this;
   const fileStream = fs.createReadStream(null, {
     fd: fd,
     // An fd opened by respondWithFile is closed by its read stream once the transfer ends or
     // fails; an fd handed to respondWithFD stays the caller's to close (node semantics).
-    autoClose: this[kOwnsFd] === true,
-    start: statOptions.offset ? statOptions.offset : undefined,
-    end: typeof statOptions.length === "number" ? statOptions.length + (statOptions.offset || 0) - 1 : undefined,
+    autoClose: ownsFd,
+    start,
+    end,
     emitClose: false,
   });
   const sink = new Stream.Writable({
@@ -3104,16 +3131,12 @@ const kFileResponseFinal = Symbol("fileResponseFinal");
 // node processRespondWithFD: a file response closes the user-facing writable side
 // (`self._final = null; self.end()`), so a stream.end() issued by the user afterwards cannot cut
 // the transfer short. Returns the original _final, which the file sink runs once the whole file
-// has been handed to the native stream. Idempotent: respondWithFD() (no statCheck) neutralizes
-// synchronously, like node, while doSendFileFD — shared with respondWithFile — runs after fstat.
+// has been handed to the native stream.
 function closeWritableForFileResponse(stream: Http2Stream) {
-  let final = stream[kFileResponseFinal];
-  if (final === undefined) {
-    final = stream._final.bind(stream);
-    stream[kFileResponseFinal] = final;
-    stream._final = null;
-    stream.end();
-  }
+  const final = stream._final.bind(stream);
+  stream[kFileResponseFinal] = final;
+  stream._final = null;
+  stream.end();
   return final;
 }
 function afterOpen(options, headers, err, fd) {
@@ -3417,10 +3440,9 @@ class ServerHttp2Stream extends Http2Stream {
     // on the same stream so doSendFileFD will not close it (node semantics).
     this[kOwnsFd] = false;
     if (options.statCheck === undefined) {
-      // node's processRespondWithFD runs synchronously when no statCheck is given: the
-      // user-facing writable side is already closed by the time respondWithFD() returns, so a
-      // stream.end() right after it is a no-op instead of ending the stream before the file.
-      closeWritableForFileResponse(this);
+      // Like node, nothing stats the descriptor when there is no statCheck to show it to.
+      processRespondWithFD.$call(this, options, fd, headers, options.offset ?? 0, options.length ?? -1);
+      return;
     }
     if (fd instanceof FileHandle) {
       fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));

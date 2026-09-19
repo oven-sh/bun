@@ -368,6 +368,7 @@
             "icon": "puzzle",
             "pages": [
               "/guides/ecosystem/astro",
+              "/guides/ecosystem/clickhouse-managed-postgres",
               "/guides/ecosystem/discordjs",
               "/guides/ecosystem/docker",
               "/guides/ecosystem/drizzle",

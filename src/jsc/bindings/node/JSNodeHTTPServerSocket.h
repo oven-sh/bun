@@ -54,8 +54,9 @@ public:
     unsigned ended : 1 = 0;
     unsigned upgraded : 1 = 0;
     unsigned peer_cert_verified : 1 = 0;
-    /* The two holds on a tunnel's reads (see readStop). The raw socket reads while neither is set. */
+    /* The JS Duplex of a tunnel is full: readStop() to readStart(). */
     unsigned tunnelReadsStopped : 1 = 0;
+    /* queuedTunnelBytes reached one recv buffer, until JS has those bytes. */
     unsigned tunnelReadsQueuedFull : 1 = 0;
     /* onData() got the end of the stream. The task that tells JS can still be queued. */
     unsigned tunnelReadEnded : 1 = 0;
@@ -122,13 +123,7 @@ public:
      * body deliver it through the request first, like Node 26). */
     void upgradeToTunnelMode(bool afterBody = false);
 
-    /* Read backpressure for a CONNECT/Upgrade tunnel, like net.Socket's handle:
-     * the JS Duplex stops the raw reads when push() reports a full buffer
-     * (tunnelReadsStopped) and starts them again from _read(). Both do nothing
-     * outside tunnel mode, where the request body and flood prevention own the
-     * reads. onData() hands each chunk to JS in a task, so readStop() comes
-     * after the read loop, which reads on while recv() fills its buffer:
-     * tunnelReadsQueuedFull stops that loop until JS has the queued bytes. */
+    /* Tunnel read backpressure, like net.Socket's handle. Both do nothing outside tunnel mode. */
     void readStop();
     void readStart();
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }

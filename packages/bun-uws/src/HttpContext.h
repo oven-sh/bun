@@ -313,10 +313,7 @@ private:
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
-        /* Do not accept any data while in shutdown state. A node:http CONNECT/Upgrade
-         * tunnel is half-open: after socket.end() the peer's bytes still reach the
-         * socket, like in Node. Some of them can be unread when end() runs, because
-         * the tunnel stops its reads while its buffer is full. */
+        /* Do not accept any data while in shutdown state. A node:http tunnel is half-open: it still reads after socket.end(). */
         bool isHalfOpenTunnel = false;
         if constexpr (IsNodeHttp) isHalfOpenTunnel = httpResponseData->isConnectRequest;
         if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel) {

@@ -172,8 +172,7 @@ void JSNodeHTTPServerSocket::applyTunnelReads()
 
 void JSNodeHTTPServerSocket::readStop()
 {
-    // JS gets the chunks that were read ahead of the end of the stream after onData() got that end.
-    // Nothing is left to stop then, and no _read() would start the reads again.
+    // After the end of the stream no _read() comes to start the reads again.
     if (!isTunnel(this) || tunnelReadEnded) {
         return;
     }
@@ -794,8 +793,7 @@ void JSNodeHTTPServerSocket::onDrain()
         return;
     }
 
-    // us_socket_pause() and us_socket_resume() arm the writable event too. No write waits for that one,
-    // and a 'drain' for it lets a pipe() source write on into a socket that has not drained.
+    // A read pause or resume arms the writable event too: nothing was buffered, so nothing drained.
     if (this->streamBuffer.bufferedSize() == 0) {
         return;
     }
@@ -858,6 +856,7 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
             return;
         }
         gcProtect(chunk);
+        // JS gets the chunk in a task, so its readStop() comes after the read loop: bound what the loop queues.
         queuedTunnelBytes += length;
         if (queuedTunnelBytes >= LIBUS_RECV_BUFFER_LENGTH && !tunnelReadsQueuedFull) {
             tunnelReadsQueuedFull = true;

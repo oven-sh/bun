@@ -51,6 +51,9 @@ const canForceFailedWait = !isWindows && (!isLinux || hasPidfdOpen());
 // Other code in the process (here a blocking waitpid(-1) through bun:ffi) reaps
 // the command first. bun's own wait then fails with ECHILD, and the exit status
 // is gone.
+//
+// Not concurrent: if this case times out, its child never exits, and the runner
+// kills the child of a timed-out test only when the test is not concurrent.
 test.skipIf(!canForceFailedWait)("a command whose wait fails still completes", async () => {
   const script = /* js */ `
     import { $ } from "bun";

@@ -2661,6 +2661,7 @@ fn get_or_put_resolved_package(
                         name_hash,
                         &version.npm().version,
                         this.lockfile.buffers.string_bytes.as_slice(),
+                        this.lockfile.buffers.string_bytes.as_slice(),
                     )
                     .is_some()
                 {

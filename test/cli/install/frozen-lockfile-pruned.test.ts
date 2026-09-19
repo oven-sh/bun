@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { exists, lstat } from "fs/promises";
+import { appendFile, exists, lstat } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import { dirname, join } from "path";
 
@@ -101,6 +101,17 @@ const survivorError = (dependent: string, ws = "other") =>
 const rootSurvivorError =
   'the root package depends on workspace "other" (packages/other), which is listed in bun.lock but not on disk';
 const survivorNote = "note: a pruned checkout must keep every workspace that its remaining workspaces depend on";
+
+// The workspace `no-deps` is 1.5.0, so `^1.0.0` links it. The registry also has no-deps 1.0.0, 1.0.1, 1.1.0 and 2.0.0.
+const linkedRange = "^1.0.0";
+const linkedRangeTree = (root: PackageJson, app: PackageJson, workspaceVersion = "1.5.0"): Tree => ({
+  root: { name: "mono", workspaces: ["packages/*"], ...root },
+  packages: {
+    "packages/app": { name: "app", version: "1.0.0", ...app },
+    "packages/no-deps": { name: "no-deps", version: workspaceVersion },
+  },
+});
+const linkedRangeLockLine = '"no-deps": ["no-deps@workspace:packages/no-deps"]';
 
 const catalogTree: Tree = {
   root: { name: "mono", workspaces: { packages: ["packages/*"], catalog: { "a-dep": "1.0.1", "left-pad": "1.0.0" } } },
@@ -221,6 +232,26 @@ async function verbatimScenario(linker: Linker, tree: Tree, keep: string[]) {
   await writeTree(packageDir, tree, keep);
   await write(join(packageDir, "bun.lock"), full);
   return { packageDir, fullDir, full };
+}
+
+// bun.lock written with `linkWorkspacePackages = false`, so app's range is bound to the registry. The pruned checkout
+// keeps that bunfig line only when `keepSetting` is set (a Docker context often copies no bunfig.toml).
+async function unlinkedScenario(linker: Linker, keepSetting: boolean) {
+  const tree = linkedRangeTree({}, { dependencies: { "no-deps": linkedRange } });
+  const unlink = (dir: string) => appendFile(join(dir, "bunfig.toml"), "linkWorkspacePackages = false\n");
+  const { packageDir: fullDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+  await unlink(fullDir);
+  await writeTree(fullDir, tree);
+  await install(fullDir, linker);
+  const full = await lockText(fullDir);
+  expect(full).toContain(linkedRangeLockLine);
+  expect(full).toContain('"app/no-deps": ["no-deps@1.1.0"');
+
+  const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+  if (keepSetting) await unlink(packageDir);
+  await writeTree(packageDir, tree, ["packages/app"]);
+  await write(join(packageDir, "bun.lock"), full);
+  return { packageDir, full };
 }
 
 const fullLockfiles = new Map<Linker, Promise<string>>();
@@ -644,6 +675,103 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
       expect(exitCode).toBe(1);
     },
   );
+
+  test.concurrent("the root package's range that bun.lock links to a pruned workspace fails", async () => {
+    const tree = linkedRangeTree({ dependencies: { "no-deps": linkedRange } }, {});
+    const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+    expect(full).toContain(linkedRangeLockLine);
+    expect(full).not.toContain('"no-deps@1.');
+
+    const { stderr, exitCode } = await raw(packageDir, linker, ["install", "--frozen-lockfile"]);
+
+    expect(stderr).toContain(
+      'the root package depends on workspace "no-deps" (packages/no-deps), which is listed in bun.lock but not on disk',
+    );
+    expect(stderr).toContain(survivorNote);
+    expect(await lockText(packageDir)).toBe(full);
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent.each(["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"])(
+    "a survivor's %s range that bun.lock links to a pruned workspace fails",
+    async group => {
+      const tree = linkedRangeTree({}, { [group]: { "no-deps": linkedRange } });
+      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+      expect(full).toContain(linkedRangeLockLine);
+      expect(full).not.toContain('"no-deps@1.');
+
+      const { stderr, exitCode } = await raw(packageDir, linker, ["install", "--frozen-lockfile"]);
+
+      expect(stderr).toContain(survivorError("app", "no-deps"));
+      expect(stderr).toContain(survivorNote);
+      expect(stderr).not.toContain("lockfile had changes");
+      expect(await lockText(packageDir)).toBe(full);
+      expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test.concurrent("a prerelease workspace version that the range links fails the same way", async () => {
+    const tree = linkedRangeTree({}, { dependencies: { "no-deps": "^1.5.0-beta.0" } }, "1.5.0-beta.1");
+    const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+    expect(full).toContain(linkedRangeLockLine);
+
+    const { stderr, exitCode } = await raw(packageDir, linker, ["install", "--frozen-lockfile"]);
+
+    expect(stderr).toContain(survivorError("app", "no-deps"));
+    expect(await lockText(packageDir)).toBe(full);
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent.each([
+    ["with", true],
+    ["without", false],
+  ] as const)(
+    "a range that bun.lock binds to the registry (linkWorkspacePackages off) still passes %s that setting",
+    async (_, keepSetting) => {
+      const { packageDir, full } = await unlinkedScenario(linker, keepSetting);
+
+      const { stderr } = await frozen(packageDir, linker, 0);
+
+      expect(stderr).not.toContain("depends on workspace");
+      expect(await lockText(packageDir)).toBe(full);
+      expect(await file(installedPath(packageDir, linker, "no-deps", "1.1.0")).json()).toMatchObject({
+        version: "1.1.0",
+      });
+    },
+  );
+
+  test.concurrent("a plain install still takes that range from the registry and rewrites bun.lock", async () => {
+    const tree = linkedRangeTree({ dependencies: { "no-deps": linkedRange } }, {});
+    const { packageDir } = await verbatimScenario(linker, tree, ["packages/app"]);
+
+    const { stderr } = await install(packageDir, linker);
+
+    expect(stderr).toContain("Saved lockfile");
+    expect(stderr).not.toContain("depends on workspace");
+    const lock = await lockText(packageDir);
+    expect(lock).toContain('"no-deps": ["no-deps@1.1.0"');
+    expect(lock).not.toContain('"packages/no-deps"');
+    expect(await file(installedPath(packageDir, linker, "no-deps", "1.1.0")).json()).toMatchObject({
+      version: "1.1.0",
+    });
+  });
+
+  test.concurrent("a survivor's range that bun.lock binds to the registry still passes", async () => {
+    const tree = linkedRangeTree({}, { dependencies: { "no-deps": "^2.0.0" } });
+    const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+    expect(full).toContain('"no-deps@2.0.0"');
+
+    const { stderr } = await frozen(packageDir, linker, 0);
+
+    expect(stderr).toContain('note: skipped 1 workspace listed in bun.lock but not on disk: "no-deps"');
+    expect(await lockText(packageDir)).toBe(full);
+    expect(await file(installedPath(packageDir, linker, "no-deps", "2.0.0")).json()).toMatchObject({
+      version: "2.0.0",
+    });
+  });
 
   test.concurrent("a catalog entry only the pruned workspace used may be missing from bun.lock", async () => {
     const { packageDir, full } = await verbatimScenario(linker, catalogTree, ["packages/app"]);

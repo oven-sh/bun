@@ -2951,11 +2951,8 @@ function tryClose(fd) {
   } catch {}
 }
 
-// node's respondWithFD() sends the headers before it reads the descriptor (at once without
-// statCheck, after statCheck otherwise) and a descriptor that cannot be read fails afterwards with
-// NGHTTP2_INTERNAL_ERROR. Bun learns about the bad descriptor from fstat first, so it replays that
-// outcome here. A stream that is already gone gets nothing, like node, whose native read never
-// runs on a closed stream.
+// node's respondWithFD() sends the headers before it reads the descriptor, so an unreadable one
+// fails after the headers with NGHTTP2_INTERNAL_ERROR. Bun stats first and replays that here.
 function failFdResponseAsStreamError(this: Http2Stream, headers, options) {
   if (this.destroyed || this.closed) return;
   if (!this.headersSent) {
@@ -2975,8 +2972,7 @@ function failFdResponseAsStreamError(this: Http2Stream, headers, options) {
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   const ownsFd = this[kOwnsFd] === true;
-  // node stats before it sends headers only in these two paths (doSendFileFD and doSendFD), so a
-  // stat failure there destroys the stream with the stat error and sends no headers.
+  // node's doSendFileFD and doSendFD: a stat failure destroys the stream before any headers.
   const statsBeforeHeaders = ownsFd || options.statCheck !== undefined;
   if (err) {
     if (ownsFd && err.code !== "EBADF") {
@@ -3012,8 +3008,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
   if (this.destroyed || this.closed) {
     if (ownsFd) tryClose(fd);
-    // A respondWithFD() without statCheck that is closed before fstat completes stays silent:
-    // node already sent its headers and a close() after that is not an error.
+    // node sent the no-statCheck headers already, so a close() after them is not an error.
     if (statsBeforeHeaders) this.destroy($ERR_HTTP2_INVALID_STREAM());
     return;
   }

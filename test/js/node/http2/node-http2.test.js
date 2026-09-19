@@ -6032,6 +6032,134 @@ describe.concurrent("write() after end()", () => {
   });
 });
 
+describe.concurrent("end(chunk) after the writable side ended", () => {
+  // Writable#end passes the chunk to write(), which fails with ERR_STREAM_WRITE_AFTER_END: the
+  // stream emits 'error', the callback gets the same error on a later tick, and the stream still
+  // emits 'close'.
+  const lateEndEvents = [
+    "end() returned",
+    "error:ERR_STREAM_WRITE_AFTER_END",
+    "callback:ERR_STREAM_WRITE_AFTER_END",
+    "close",
+  ];
+
+  // Ends `stream` again with `chunk`. `closed` resolves with what the stream reported, in order.
+  function endAgain(stream, closed, chunk) {
+    const events = [];
+    stream.on("error", err => events.push(`error:${err.code}`));
+    stream.on("close", () => closed.resolve(events.concat("close")));
+    // A stream that the late end() does not error closes only after its readable side ended.
+    stream.resume();
+    stream.end(chunk, err => events.push(`callback:${err?.code}`));
+    events.push("end() returned");
+  }
+
+  // One GET or HEAD request against a server whose 'stream' handler is `respond`. Resolves with
+  // the server stream's events and the response the client received.
+  async function serve(respond, method = "GET") {
+    const server = http2.createServer();
+    let client;
+    try {
+      const serverClosed = Promise.withResolvers();
+      server.on("stream", stream => respond(stream, serverClosed));
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", serverClosed.reject);
+      const req = client.request({ ":path": "/", ":method": method });
+      const response = new Promise((resolve, reject) => {
+        let status;
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("error", reject);
+        req.on("response", headers => (status = headers[":status"]));
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => resolve({ status, body }));
+      });
+      req.end();
+      return await Promise.all([serverClosed.promise, response]);
+    } finally {
+      client?.close();
+      server.close();
+    }
+  }
+
+  it("server stream, after end(chunk)", async () => {
+    const result = await serve((stream, closed) => {
+      stream.respond({ ":status": 200 });
+      stream.end("first");
+      endAgain(stream, closed, "second");
+    });
+    expect(result).toEqual([lateEndEvents, { status: 200, body: "first" }]);
+  });
+
+  it.each([
+    ["a 204 status", "GET", { ":status": 204 }, undefined],
+    ["the endStream option", "GET", { ":status": 200 }, { endStream: true }],
+    ["a HEAD request", "HEAD", { ":status": 200 }, undefined],
+  ])("server stream, after respond() ended it for %s", async (_name, method, headers, options) => {
+    const result = await serve((stream, closed) => {
+      stream.respond(headers, options);
+      endAgain(stream, closed, "body");
+    }, method);
+    expect(result).toEqual([lateEndEvents, { status: headers[":status"], body: "" }]);
+  });
+
+  // One request against a server that echoes the request body once the request has ended.
+  // Resolves with whatever `drive` resolves `closed` with.
+  async function request(headers, drive) {
+    const server = http2.createServer();
+    let client;
+    try {
+      server.on("stream", stream => {
+        let body = "";
+        stream.setEncoding("utf8");
+        stream.on("error", () => {});
+        stream.on("data", chunk => (body += chunk));
+        stream.on("end", () => {
+          stream.respond({ ":status": 200 });
+          stream.end(`received ${JSON.stringify(body)}`);
+        });
+      });
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      const clientClosed = Promise.withResolvers();
+      client.on("error", clientClosed.reject);
+      drive(client.request(headers), clientClosed);
+      return await clientClosed.promise;
+    } finally {
+      client?.close();
+      server.close();
+    }
+  }
+
+  it("client stream, after request() ended a GET", async () => {
+    const events = await request({ ":path": "/" }, (req, closed) => endAgain(req, closed, "body"));
+    expect(events).toEqual(lateEndEvents);
+  });
+
+  it("client stream, after end(chunk)", async () => {
+    const events = await request({ ":path": "/", ":method": "POST" }, (req, closed) => {
+      req.end("first");
+      endAgain(req, closed, "second");
+    });
+    expect(events).toEqual(lateEndEvents);
+  });
+
+  it("an end(chunk) that throws leaves the stream open for the next end(chunk)", async () => {
+    const response = await request({ ":path": "/", ":method": "POST" }, (req, closed) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("error", closed.reject);
+      req.on("data", chunk => (body += chunk));
+      req.on("close", () => closed.resolve(body));
+      expect(() => req.end(123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      req.end("body");
+      expect(req.writableEnded).toBe(true);
+    });
+    expect(response).toBe('received "body"');
+  });
+});
+
 it("write() completes its callback on a later turn, not inside write()", async () => {
   // _write hands the chunk to the native session with the write callback deferred, so the
   // chunk is still counted in writableLength when write() returns and the Writable settles it

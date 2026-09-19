@@ -2012,7 +2012,6 @@ function endInboundHalf(stream: Http2Stream) {
 }
 
 enum StreamState {
-  EndedCalled = 1 << 0, // 00001 = 1
   WantTrailer = 1 << 1, // 00010 = 2
   FinalCalled = 1 << 2, // 00100 = 4
   Closed = 1 << 3, // 01000 = 8
@@ -2794,7 +2793,6 @@ class Http2Stream extends Duplex {
   }
 
   end(chunk, encoding, callback) {
-    const status = this[bunHTTP2StreamStatus];
     if (typeof callback === "undefined") {
       if (typeof chunk === "function") {
         callback = chunk;
@@ -2805,12 +2803,6 @@ class Http2Stream extends Duplex {
       }
     }
 
-    if ((status & StreamState.EndedCalled) !== 0) {
-      typeof callback == "function" && callback();
-      // Writable#end always returns the stream (request(...).end() chains rely on it).
-      return this;
-    }
-    this[bunHTTP2StreamStatus] = status | StreamState.EndedCalled;
     // Don't create an empty buffer for end() without data - let the Duplex stream
     // handle it naturally (just calls _final without _write for empty data).
     // Creating an empty buffer here causes an extra empty DATA frame to be sent.
@@ -4143,7 +4135,7 @@ class ServerHttp2Session extends Http2Session {
         // Set the StreamResponded bit BEFORE dispatching the 'stream' event
         // synchronously to user code. The user handler may call
         // stream.respond()/stream.end() which set other bits (WantTrailer,
-        // FinalCalled, EndedCalled, WritableClosed). If we captured `status`
+        // FinalCalled, WritableClosed). If we captured `status`
         // and wrote it back AFTER the emit, we'd clobber any bits set by the
         // user handler — in particular, losing WantTrailer/FinalCalled breaks
         // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.

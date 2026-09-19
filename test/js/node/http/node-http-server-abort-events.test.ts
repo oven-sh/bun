@@ -300,10 +300,12 @@ describe("res.destroy() defers 'close'", () => {
   });
 });
 
-// Like Node.js's socketOnClose → abortIncoming: destroying a response that is
-// still queued behind a pipelined response also aborts its request once the
-// pipeline reaches it. Node emits res 'close' first (from destroy()), then
-// the request's 'aborted', 'error' (ECONNRESET) and 'close'.
+// Destroying a response that is still queued behind a pipelined response
+// aborts its request as well: res 'close' first (from destroy()), then the
+// request's 'aborted', 'error' (ECONNRESET) and 'close'. Bun resets the
+// connection as soon as the pipeline reaches the destroyed response. Node.js
+// keeps it open until the client goes away (socketOnClose → abortIncoming),
+// so the client closes after the first response to get the same events there.
 test("destroying a queued pipelined response aborts its request", async () => {
   const events: string[] = [];
   const reqClosed = Promise.withResolvers<void>();
@@ -329,6 +331,7 @@ test("destroying a queued pipelined response aborts its request", async () => {
     const { port } = server.address() as AddressInfo;
     client = connect(port, "127.0.0.1");
     client.on("error", () => {});
+    client.once("data", () => client!.destroy());
     client.write("GET /1 HTTP/1.1\r\nHost: a\r\n\r\nPOST /2 HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\nabc");
     await reqClosed.promise;
     expect(events).toEqual(["res2 close", "req2 aborted", "req2 error:ECONNRESET", "req2 close"]);

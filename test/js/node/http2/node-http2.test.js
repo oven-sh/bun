@@ -5385,6 +5385,72 @@ it.skipIf(!isLinux)(
   },
 );
 
+// The throw is an uncaught exception, so the server gets a process of its own.
+it.skipIf(!isLinux)("http2 respondWithFile() closes the file it opened when statCheck throws", async () => {
+  using dir = tempDir("http2-stat-check-throws", { "file.txt": "0123456789" });
+  const script = `
+    const http2 = require("node:http2");
+    const fs = require("node:fs");
+    const file = fs.realpathSync(process.env.HTTP2_TEST_FILE);
+    const descriptorsOpenOnFile = () =>
+      fs.readdirSync("/proc/self/fd").filter(name => {
+        try {
+          return fs.readlinkSync("/proc/self/fd/" + name) === file;
+        } catch {
+          return false;
+        }
+      }).length;
+    let uncaught = 0;
+    let current;
+    // Nothing responds after the throw, so close the stream to let the client's request end.
+    process.on("uncaughtException", () => {
+      uncaught++;
+      current.close();
+    });
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      current = stream;
+      stream.on("error", () => {});
+      stream.respondWithFile(file, {}, {
+        statCheck() {
+          throw new Error("statCheck threw");
+        },
+      });
+    });
+    server.listen(0, "127.0.0.1", async () => {
+      const client = http2.connect("http://127.0.0.1:" + server.address().port);
+      client.on("error", () => {});
+      for (let i = 0; i < 3; i++) {
+        await new Promise(resolve => {
+          const req = client.request();
+          req.on("error", () => {});
+          req.resume();
+          req.on("close", resolve);
+        });
+      }
+      const deadline = Date.now() + 3000;
+      while (descriptorsOpenOnFile() !== 0 && Date.now() < deadline) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log(JSON.stringify({ uncaught, open: descriptorsOpenOnFile() }));
+      client.destroy();
+      server.close();
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, HTTP2_TEST_FILE: path.join(String(dir), "file.txt") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ uncaught: 3, open: 0 }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

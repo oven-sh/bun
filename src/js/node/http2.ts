@@ -3033,12 +3033,15 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // response operation. If statCheck explicitly returns false, the
   // response is canceled. The user code may also send a separate type
   // of response so check again for the HEADERS_SENT flag
-  if (
-    (typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false) ||
-    this.headersSent ||
-    this.destroyed ||
-    this.closed
-  ) {
+  let cancelled = false;
+  try {
+    cancelled =
+      typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false;
+  } catch (err) {
+    tryClose(fd);
+    throw err;
+  }
+  if (cancelled || this.headersSent || this.destroyed || this.closed) {
     tryClose(fd);
     return;
   }

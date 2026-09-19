@@ -15,7 +15,9 @@ use bun_sys::{FdDirExt as _, FdExt as _};
 use crate::bin_real;
 use crate::lockfile::package;
 use crate::lockfile_real::PackageIDSlice;
-use crate::package_install::{Method as InstallMethod, Summary as InstallSummary};
+use crate::package_install::{
+    Method as InstallMethod, StagingPath, Summary as InstallSummary, rename_staging_into_place,
+};
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
@@ -403,35 +405,18 @@ impl<'a> Installer<'a> {
             let mut staging = AutoAbsPath::init();
             self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());
-        }
-
-        // attempt deleting the package so the next install will install it again
-        match pkg_res.tag {
-            ResolutionTag::Uninitialized
-            | ResolutionTag::SingleFileModule
-            | ResolutionTag::Root
-            | ResolutionTag::Workspace
-            | ResolutionTag::Symlink => {}
-
-            // to be safe make sure we only delete packages in the store
+        } else if matches!(
+            pkg_res.tag,
             ResolutionTag::Npm
-            | ResolutionTag::Git
-            | ResolutionTag::Github
-            | ResolutionTag::LocalTarball
-            | ResolutionTag::RemoteTarball
-            | ResolutionTag::Folder => {
-                let mut store_path = AutoRelPath::init();
-
-                // OOM/capacity: fire-and-forget
-                let _ = store_path.append_fmt(format_args!(
-                    "node_modules/{}",
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-                ));
-
-                let _ = sys::unlink(store_path.slice_z());
-            }
-
-            _ => {}
+                | ResolutionTag::Git
+                | ResolutionTag::Github
+                | ResolutionTag::LocalTarball
+                | ResolutionTag::RemoteTarball
+        ) {
+            // A staged link that failed only wrote to the staging directory.
+            let mut staging = AutoPath::init_top_level_dir();
+            self.append_real_store_path(&mut staging, entry_id, Which::Staging);
+            let _ = Fd::cwd().delete_tree(staging.slice());
         }
 
         if self.manager().options.enable.fail_early() {
@@ -886,6 +871,7 @@ impl Task {
 
         let mut step =
             Step::from_u32(entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire));
+        let mut link_in_place = false;
         'step: loop {
             match step {
                 Step::LinkPackage => {
@@ -1219,14 +1205,7 @@ impl Task {
                             }
                         }
 
-                        // hardlink/copyfile overlay an existing tree, keeping files a previous patched build added.
-                        let mut previous = AutoPath::init_top_level_dir();
-                        installer.append_real_store_path(
-                            &mut previous,
-                            self.entry_id,
-                            Which::Final,
-                        );
-                        let _ = Fd::cwd().delete_tree(previous.slice());
+                        link_in_place |= !installer.clear_local_store_package(self.entry_id);
                     }
 
                     if uses_global_store {
@@ -1263,7 +1242,11 @@ impl Task {
                         installer.append_real_store_path(
                             &mut dest_subpath,
                             self.entry_id,
-                            Which::Staging,
+                            if link_in_place {
+                                Which::Final
+                            } else {
+                                Which::Staging
+                            },
                         );
                         match backend {
                             InstallMethod::Clonefile => {
@@ -1331,8 +1314,7 @@ impl Task {
                                         },
                                     }
 
-                                    step = self.next_step(current_step);
-                                    continue 'step;
+                                    break 'backend;
                                 }
                             }
 
@@ -1401,8 +1383,7 @@ impl Task {
                                     }
                                 }
 
-                                step = self.next_step(current_step);
-                                continue 'step;
+                                break 'backend;
                             }
 
                             // fallthrough copyfile
@@ -1469,12 +1450,22 @@ impl Task {
                                     }
                                 }
 
-                                step = self.next_step(current_step);
-                                continue 'step;
+                                break 'backend;
                             }
                         }
                     }
-                    // unreachable: every backend arm continues to next_step or returns
+
+                    if !uses_global_store
+                        && !link_in_place
+                        && installer.commit_local_store_package(self.entry_id).is_err()
+                    {
+                        // The rename was refused: run the step again, linking in place.
+                        link_in_place = true;
+                        continue 'step;
+                    }
+
+                    step = self.next_step(current_step);
+                    continue 'step;
                 }
 
                 Step::SymlinkDependencies => {
@@ -2538,6 +2529,37 @@ impl<'a> Installer<'a> {
         }
     }
 
+    /// Frees a project-local entry's final and staging paths. False: link in place.
+    pub(crate) fn clear_local_store_package(&self, entry_id: StoreEntryId) -> bool {
+        debug_assert!(!self.entry_uses_global_store(entry_id));
+        let mut staging = AutoPath::init_top_level_dir();
+        self.append_real_store_path(&mut staging, entry_id, Which::Staging);
+        let mut final_ = AutoPath::init_top_level_dir();
+        self.append_real_store_path(&mut final_, entry_id, Which::Final);
+
+        if Fd::cwd().delete_tree(staging.slice()).is_err() {
+            let _ = Fd::cwd().delete_tree(final_.slice());
+            return false;
+        }
+        // A delete can be cut short, so an existing package first leaves its final path in one step.
+        match sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z()) {
+            sys::Result::Ok(()) => Fd::cwd().delete_tree(staging.slice()).is_ok(),
+            sys::Result::Err(err) if err.get_errno() == sys::Errno::ENOENT => true,
+            sys::Result::Err(_) => Fd::cwd().delete_tree(final_.slice()).is_ok(),
+        }
+    }
+
+    /// Renames a project-local entry's fully linked `StagingPath` onto its final
+    /// path, which is what the next install's skip check looks at.
+    pub(crate) fn commit_local_store_package(&self, entry_id: StoreEntryId) -> sys::Result<()> {
+        debug_assert!(!self.entry_uses_global_store(entry_id));
+        let mut staging = AutoPath::init_top_level_dir();
+        self.append_real_store_path(&mut staging, entry_id, Which::Staging);
+        let mut final_ = AutoPath::init_top_level_dir();
+        self.append_real_store_path(&mut final_, entry_id, Which::Final);
+        rename_staging_into_place(Fd::cwd(), staging.slice_z(), final_.slice_z())
+    }
+
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that
     /// points at the global virtual-store entry). Relative to top-level dir.
     pub(crate) fn append_local_store_entry_path(
@@ -2707,7 +2729,35 @@ impl<'a> Installer<'a> {
             buf.append(pkg_name.slice(string_buf));
             return;
         }
-        self.append_store_path(buf, entry_id);
+        match which {
+            Which::Final => self.append_store_path(buf, entry_id),
+            Which::Staging => self.append_store_package_path(buf, entry_id, which),
+        }
+    }
+
+    /// `node_modules/.bun/<storepath>/node_modules/<pkg>`, or with
+    /// `Which::Staging` the `StagingPath` next to it.
+    fn append_store_package_path(
+        &self,
+        buf: &mut impl paths::PathLike,
+        entry_id: StoreEntryId,
+        which: Which,
+    ) {
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize].slice(string_buf);
+
+        buf.append(NODE_MODULES_BUN.as_bytes());
+        buf.append_fmt(format_args!(
+            "{}",
+            store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
+        ));
+        buf.append(b"node_modules");
+        match which {
+            Which::Final => buf.append(pkg_name),
+            Which::Staging => buf.append_fmt(format_args!("{}", StagingPath(pkg_name))),
+        }
     }
 
     pub(crate) fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
@@ -2772,16 +2822,7 @@ impl<'a> Installer<'a> {
                 buf.append(symlink_dir_path);
                 buf.append(pkg_res.symlink().slice(string_buf));
             }
-            _ => {
-                let pkg_name = pkg_names[pkg_id as usize];
-                buf.append(NODE_MODULES_BUN.as_bytes());
-                buf.append_fmt(format_args!(
-                    "{}",
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-                ));
-                buf.append(b"node_modules");
-                buf.append(pkg_name.slice(string_buf));
-            }
+            _ => self.append_store_package_path(buf, entry_id, Which::Final),
         }
     }
 
@@ -2821,12 +2862,12 @@ impl<'a> Installer<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Which {
-    /// The published location (`<cache>/links/<entry>`). Use for symlink
-    /// *targets* that point at other entries, and for the warm-hit check.
+    /// The published location. Use for symlink *targets* that point at other
+    /// entries, and for the warm-hit check.
     Final,
-    /// The per-process temp sibling (`<entry>.tmp-<suffix>`) the build
-    /// steps write into. Use for *destinations* of clonefile/hardlink/
-    /// dep-symlink/bin-link when building this entry.
+    /// What the build steps write into, renamed onto `Final` once complete: the
+    /// whole entry (`<entry>.tmp-<suffix>`) for a global-store entry, only the
+    /// package directory (`StagingPath`) for a project-local one.
     Staging,
 }
 

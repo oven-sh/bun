@@ -1,7 +1,7 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -1253,6 +1253,62 @@ describe("Transactions", () => {
 
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
+  });
+
+  // https://github.com/oven-sh/bun/issues/43247
+  test("tagged template on a settled transaction handle returns a Query that rejects when run", async () => {
+    let stale!: Parameters<Parameters<typeof sql.begin>[0]>[0];
+    await sql.begin(async tx => {
+      stale = tx;
+    });
+
+    const query = stale`SELECT 1 AS x`;
+    expect(query.constructor.name).toBe("Query");
+    expect(query.values()).toBe(query);
+    expect(query.raw()).toBe(query);
+    expect(query.simple()).toBe(query);
+
+    const err = await query.catch(e => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("ERR_SQLITE_CONNECTION_CLOSED");
+
+    expect((await stale`SELECT 1 AS x`.values().catch(e => e)).code).toBe("ERR_SQLITE_CONNECTION_CLOSED");
+
+    // helper forms are plain values and do not depend on the connection
+    expect(stale({ a: 1 }).constructor.name).toBe("SQLHelper");
+    expect(stale([1, 2]).constructor.name).toBe("SQLHelper");
+
+    // a fragment from the closed handle is never run on its own, so it does not reject
+    expect(await sql`SELECT ${stale`1`} AS x`).toEqual([{ x: 1 }]);
+  });
+
+  test("tagged template on a settled transaction handle does not leave an unhandled rejection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { SQL } from "bun";
+        const sql = new SQL("sqlite://:memory:");
+        let stale;
+        await sql.begin(async tx => { stale = tx; });
+        try {
+          await stale\`SELECT 1\`.values();
+        } catch (err) {
+          console.log("caught:", err.code);
+        }
+        const fragment = stale\`1\`;
+        console.log(await sql\`SELECT \${fragment} AS x\`.then(rows => rows[0].x));
+        await sql.close();
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("caught: ERR_SQLITE_CONNECTION_CLOSED\n1\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 

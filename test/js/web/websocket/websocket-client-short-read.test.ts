@@ -101,6 +101,8 @@ describe("WebSocket", () => {
 });
 
 describe("WebSocket upgrade split across reads", () => {
+  const TOO_LARGE = "Response headers exceed --max-http-header-size";
+
   function makeAccept(key: string): string {
     const hasher = new Bun.CryptoHasher("sha1");
     hasher.update(key);
@@ -235,16 +237,17 @@ describe("WebSocket upgrade split across reads", () => {
 
     try {
       const msg = await promise;
-      expect(msg).toContain("Invalid response");
+      expect(msg).toContain(TOO_LARGE);
     } finally {
       ws.close();
     }
   });
 
-  // The cap is on the size of the head, not on where the reads end. A head
-  // one byte over the cap must be rejected even when the whole head arrives
-  // in a single read, and a head exactly at the cap must open.
-  const MAX_HEAD = 16384; // default max_http_header_size
+  // The bound is on the size of the head, not on where the reads end.
+  // max_http_header_size limits what llhttp counts, not framing (": ", "\r\n"),
+  // so the bound on raw bytes adds the framing of 128 header fields.
+  const MAX_HTTP_HEADER_SIZE = 16384; // default
+  const MAX_HEAD = MAX_HTTP_HEADER_SIZE + 128 * 4 + 64;
 
   // With `splitAt`, the head goes out in two writes so the client reads an
   // incomplete head of `splitAt` bytes first.
@@ -304,21 +307,27 @@ describe("WebSocket upgrade split across reads", () => {
     return promise;
   }
 
-  test("101 head of exactly the cap in one write opens", async () => {
+  test("101 head of exactly the bound in one write opens", async () => {
     using server = serve101(MAX_HEAD);
     expect(await connect(server.port)).toBe("open");
   });
 
-  test("101 head one byte over the cap in one write is rejected", async () => {
+  test("101 head one byte over the bound in one write is rejected", async () => {
     using server = serve101(MAX_HEAD + 1);
-    expect(await connect(server.port)).toContain("Invalid response");
+    expect(await connect(server.port)).toContain(TOO_LARGE);
   });
 
-  test("101 head over the cap is rejected when the first read stays under the cap", async () => {
-    // The first read is an incomplete head under the cap, so the short-read
-    // check passes. The completed head is over the cap and must still fail.
+  test("101 head over the bound is rejected when the first read stays under the bound", async () => {
+    // The first read is an incomplete head under the bound, so the short-read
+    // check passes. The completed head is over the bound and must still fail.
     using server = serve101(21000, 16000);
-    expect(await connect(server.port)).toContain("Invalid response");
+    expect(await connect(server.port)).toContain(TOO_LARGE);
+  });
+
+  test("101 head that Node accepts opens when the first read is over max_http_header_size", async () => {
+    // Node opens this 16400 byte head: the bytes llhttp counts stay under 16384.
+    using server = serve101(16400, MAX_HTTP_HEADER_SIZE + 6);
+    expect(await connect(server.port)).toBe("open");
   });
 });
 

@@ -1555,6 +1555,10 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         didReceiveClose(CleanStatus::NotClean, 1002, "Invalid response"_s, true);
         break;
     }
+    case Bun::WebSocketErrorCode::response_headers_too_large: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Response headers exceed --max-http-header-size"_s, true);
+        break;
+    }
     case Bun::WebSocketErrorCode::expected_101_status_code: {
         didReceiveClose(CleanStatus::NotClean, 1002, "Expected 101 status code"_s, true);
         break;

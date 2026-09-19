@@ -1920,6 +1920,14 @@ impl Connection {
         self.streams.remove(&stream_id);
     }
 
+    /// Whether the engine still tracks `stream_id` in a state other than closed (reserved, open,
+    /// or half-closed). `None` when it has no entry: never seen, or evicted after it closed.
+    pub fn is_stream_open(&self, stream_id: u32) -> Option<bool> {
+        self.streams
+            .get(&stream_id)
+            .map(|s| s.state != State::Closed)
+    }
+
     /// Replenish a single stream's receive window now (the embedder's reader resumed after a
     /// pause). Without this, a peer stalled on a zero stream window would only be released by the
     /// next inbound batch — which may never come, since the peer is the one waiting.

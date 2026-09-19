@@ -2562,10 +2562,11 @@ class Http2Stream extends Duplex {
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
     const { ending } = this._writableState;
+    // A pushed stream has no legacy native entry to dedupe its RST_STREAM against: close() already
+    // sent one when the stream is closed by now, and a natively closed one has nothing to send.
+    const pushAlreadyClosed = this[kPush] && (this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0;
     this.push(null);
-    // A pushed stream's request was synthesized by the server, so its local (writable) half is
-    // closed by definition — closing it is not an abort and nothing must be sent on the wire.
-    if (!ending && !this[kPush]) {
+    if (!ending) {
       // If the writable side of the Http2Stream is still open, emit the
       // 'aborted' event and set the aborted flag.
       if (!this.aborted) {
@@ -2632,6 +2633,7 @@ class Http2Stream extends Duplex {
       session &&
       typeof this.#id === "number" &&
       !this[kNeverAnnounced] &&
+      !pushAlreadyClosed &&
       // A cleanly closed stream the native side already freed has nothing to send:
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
@@ -2658,6 +2660,14 @@ class Http2Stream extends Duplex {
       return;
     }
     const status = this[bunHTTP2StreamStatus];
+    if (this[kPush]) {
+      // The server synthesized the request of a pushed stream, so the client→server half never
+      // existed: nothing goes on the wire for it (node ends the writable when it creates the
+      // stream, and its handle.shutdown is a no-op for the reserved stream).
+      this[bunHTTP2StreamStatus] = status | StreamState.FinalCalled | StreamState.WritableClosed;
+      callback();
+      return;
+    }
 
     if (onClientStreamBodySentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
       onClientStreamBodySentChannel.publish({ stream: this });
@@ -4999,6 +5009,10 @@ class ClientHttp2Session extends Http2Session {
       }
       const pushedStream = new ClientHttp2Stream(pushId, self, headers);
       pushedStream[kPush] = true;
+      // node (onSessionHeaders): the request of a pushed stream is complete when the
+      // PUSH_PROMISE arrives, so its writable half is ended at creation. close() then sees
+      // an ended writable and does not abort the stream.
+      pushedStream.end();
       pushedStream.once("close", () => {
         self.#reservedStreamsCount--;
       });
@@ -5103,7 +5117,9 @@ class ClientHttp2Session extends Http2Session {
         headersTuple: [string[], Record<string, any>, string[] | undefined],
         flags: number,
       ) => {
-        if (!self || typeof stream !== "object" || stream.rstCode) return;
+        // A block that lands after the stream closed locally (a pushed stream close()d before its
+        // response HEADERS arrived, rstCode 0) is dropped like nghttp2 drops it.
+        if (!self || typeof stream !== "object" || stream.rstCode || stream.closed) return;
         let rawheaders = headersTuple[0];
         let headers = headersTuple[1];
         if (self.#strictFieldWhitespaceValidation) {

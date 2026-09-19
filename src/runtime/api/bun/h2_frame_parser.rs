@@ -1107,6 +1107,9 @@ pub struct H2FrameParser {
     /// borrow (the normal request path: receive() -> JS handler -> respond -> END_STREAM).
     /// Drained into Connection::close_stream on the next rewrite_read batch.
     pending_engine_stream_closes: JsCell<Vec<u32>>,
+    /// `(stream id, error code)` resets of streams with no legacy entry that JS requested while
+    /// a dispatch held the engine borrow. Settled by rewrite_read once the batch is processed.
+    pending_engine_resets: JsCell<Vec<(u32, u32)>>,
     dispatch_depth: Cell<u32>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
@@ -3546,6 +3549,47 @@ impl H2FrameParser {
         }
     }
 
+    /// Write RST_STREAM for a stream with no legacy entry. `engine_open` is the engine's view of
+    /// the stream: a stream it still holds open (a pushed stream the client closes) is reset
+    /// whatever the code, like nghttp2_submit_rst_stream, and a stream it already closed gets
+    /// nothing. For an id neither side knows (a cleanly completed stream whose entries were
+    /// evicted, reached from the deferred JS close path) NO_ERROR is a no-op: node sends no
+    /// RST for such a stream, and writing one makes the peer answer with RST(STREAM_CLOSED).
+    fn reset_untracked_stream(&self, stream_id: u32, error_code: u32, engine_open: Option<bool>) {
+        if !engine_open.unwrap_or(error_code != ErrorCode::NO_ERROR.0) {
+            return;
+        }
+        // Built by hand rather than through the engine, whose outbound side the legacy
+        // encoder still owns.
+        let mut frame = [0u8; 13];
+        frame[2] = 4; // length = 4
+        frame[3] = 3; // RST_STREAM
+        frame[5..9].copy_from_slice(&stream_id.to_be_bytes());
+        frame[9..13].copy_from_slice(&error_code.to_be_bytes());
+        // Hand-serialized (bypasses FrameHeader::write), so account for it the way every other
+        // outbound frame site does.
+        self.frames_sent_legacy
+            .set(self.frames_sent_legacy.get() + 1);
+        self.write(&frame);
+        let _ = self.flush();
+    }
+
+    /// Settle the resets rst_stream queued while a dispatch held the engine borrow.
+    fn drain_pending_engine_resets(&self) {
+        if self.pending_engine_resets.get().is_empty() {
+            return;
+        }
+        let resets = self.pending_engine_resets.with_mut(std::mem::take);
+        for (stream_id, error_code) in resets {
+            let open = self
+                .engine
+                .borrow()
+                .as_ref()
+                .and_then(|engine| engine.is_stream_open(stream_id));
+            self.reset_untracked_stream(stream_id, error_code, open);
+        }
+    }
+
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
@@ -3639,6 +3683,7 @@ impl H2FrameParser {
                 // GOAWAY is on the wire and on_error tore the session down; feeding the
                 // remainder would only re-parse frames for a dead connection.
                 self.rewrite_tail.with_mut(|t| t.clear());
+                self.pending_engine_resets.with_mut(|v| v.clear());
                 let _ = self.flush();
                 return;
             }
@@ -3659,6 +3704,7 @@ impl H2FrameParser {
             };
             if feed.fatal {
                 self.rewrite_tail.with_mut(|t| t.clear());
+                self.pending_engine_resets.with_mut(|v| v.clear());
                 let _ = self.flush();
                 return;
             }
@@ -3682,6 +3728,7 @@ impl H2FrameParser {
             };
             if feed.fatal {
                 self.rewrite_tail.with_mut(|t| t.clear());
+                self.pending_engine_resets.with_mut(|v| v.clear());
                 let _ = self.flush();
                 return;
             }
@@ -3692,6 +3739,7 @@ impl H2FrameParser {
                 break;
             }
         }
+        self.drain_pending_engine_resets();
         // Uncork: flush the engine's queued control/response frames to the socket.
         let _ = self.flush();
     }
@@ -5050,27 +5098,22 @@ impl H2FrameParser {
         }
 
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            // Streams the legacy bookkeeping never registered (e.g. peer-initiated pushed streams
-            // surfaced by the rewrite engine) get the RST_STREAM written directly. The frame is
-            // built here rather than through the engine so this stays callable from inside an
-            // engine dispatch (the engine cell may already be borrowed).
-            //
-            // A NO_ERROR reset for an unknown id is always a no-op: it reaches here from the
-            // deferred JS close path (rstNextTick after _destroy) once a cleanly-completed
-            // stream's entry has been evicted. Node sends no RST for cleanly-closed streams;
-            // writing one makes the peer answer with RST(STREAM_CLOSED) per request.
-            if error_code != ErrorCode::NO_ERROR.0 {
-                let mut frame = [0u8; 13];
-                frame[2] = 4; // length = 4
-                frame[3] = 3; // RST_STREAM
-                frame[5..9].copy_from_slice(&stream_id.to_be_bytes());
-                frame[9..13].copy_from_slice(&error_code.to_be_bytes());
-                // Hand-serialized (bypasses FrameHeader::write), so account for
-                // it the way every other outbound frame site does.
-                this.frames_sent_legacy
-                    .set(this.frames_sent_legacy.get() + 1);
-                this.write(&frame);
-                let _ = this.flush();
+            // Streams the legacy bookkeeping never registered (peer-initiated pushed streams
+            // surfaced by the rewrite engine) are reset by hand, since the engine's outbound
+            // side is not wired up. Whether the stream still exists is the engine's call, and
+            // inside a dispatch rewrite_read holds the engine borrow: queue the reset and let
+            // rewrite_read settle it once the batch is processed.
+            match this.engine.try_borrow() {
+                Ok(guard) => {
+                    let open = guard
+                        .as_ref()
+                        .and_then(|engine| engine.is_stream_open(stream_id));
+                    drop(guard);
+                    this.reset_untracked_stream(stream_id, error_code, open);
+                }
+                Err(_) => this
+                    .pending_engine_resets
+                    .with_mut(|v| v.push((stream_id, error_code))),
             }
             return Ok(JSValue::TRUE);
         };
@@ -7450,6 +7493,7 @@ impl H2FrameParser {
             pending_send_window_consumed: Cell::new(0),
             pending_stream_send_consumed: JsCell::new(Vec::new()),
             pending_engine_stream_closes: JsCell::new(Vec::new()),
+            pending_engine_resets: JsCell::new(Vec::new()),
             dispatch_depth: Cell::new(0),
             pending_settings_window_submissions: JsCell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),

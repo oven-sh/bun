@@ -798,6 +798,67 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       raw.close();
     }
   });
+
+  // node ends the writable half of a pushed client stream when it creates it, so close() is
+  // not an abort: the stream emits only 'close' and one RST_STREAM with the code goes out,
+  // NO_ERROR included.
+  test.each([
+    ["close()", undefined, ErrorCode.NO_ERROR],
+    ["close(8)", ErrorCode.CANCEL, ErrorCode.CANCEL],
+  ])("%s on a pushed stream emits only 'close' and sends one RST_STREAM", async (_name, code, expectedCode) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    const events: string[] = [];
+    const pushedClosed = Promise.withResolvers<void>();
+    client.on("stream", pushed => {
+      events.push("stream");
+      pushed.on("error", (e: any) => events.push(`error ${e.code ?? e.message}`));
+      pushed.on("aborted", () => events.push("aborted"));
+      pushed.on("close", () => {
+        events.push(`close rstCode=${pushed.rstCode}`);
+        pushedClosed.resolve();
+      });
+      if (code === undefined) pushed.close();
+      else pushed.close(code);
+    });
+    try {
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      // Response HEADERS on stream 1 (:status 200), then PUSH_PROMISE reserving stream 2 with
+      // [:method GET, :scheme http, :path /, :authority localhost], then the pushed response
+      // HEADERS on stream 2.
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, Buffer.from([0x88]));
+      const promised = Buffer.alloc(4);
+      promised.writeUInt32BE(2, 0);
+      const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+      raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block]));
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 2, Buffer.from([0x88]));
+
+      const rst = await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
+      expect(rst.payload.readUInt32BE(0)).toBe(expectedCode);
+      await pushedClosed.promise;
+      // A second RST_STREAM from the stream's destroy would be queued a turn after 'close':
+      // let that turn run, then round-trip a PING so every frame the client wrote has arrived.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+      const pinged = Promise.withResolvers<void>();
+      client.ping(err => (err ? pinged.reject(err) : pinged.resolve()));
+      const ping = await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 0);
+      raw.sendFrame(FrameType.PING, 0x1, 0, ping.payload);
+      await pinged.promise;
+
+      expect(events).toEqual(["stream", `close rstCode=${expectedCode}`]);
+      expect(raw.frames.filter(f => f.type === FrameType.RST_STREAM && f.streamId === 2).length).toBe(1);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
 });
 
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {

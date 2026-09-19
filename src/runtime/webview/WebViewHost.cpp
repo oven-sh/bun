@@ -701,7 +701,6 @@ void WebViewHost::onNavigationStarted()
 {
     m_status = 0;
     m_responseSeen = false;
-    m_itemAtStart = m_webview.currentBackForwardItem();
 }
 
 void WebViewHost::onNavigationResponse(uint16_t status)
@@ -712,14 +711,17 @@ void WebViewHost::onNavigationResponse(uint16_t status)
 
 void WebViewHost::onSameDocumentNavigation()
 {
-    objc::WKBackForwardListItem(m_webview.currentBackForwardItem()).setStatus(m_documentStatus);
+    objc::WKBackForwardListItem item(m_webview.currentBackForwardItem());
+    item.setStatus(m_documentStatus);
+    m_documentItem = item.m_id;
 }
 
 void WebViewHost::onNavigationFinished()
 {
     objc::WKBackForwardListItem item(m_webview.currentBackForwardItem());
-    if (!m_responseSeen && item.m_id != m_itemAtStart) m_status = item.status();
+    if (!m_responseSeen && item.m_id != m_documentItem) m_status = item.status();
     item.setStatus(m_status);
+    m_documentItem = item.m_id;
     m_documentStatus = m_status;
     // NavEvent is unsolicited — fires for back()/forward()/reload() too,
     // which Ack immediately and don't set m_navPending. The parent updates

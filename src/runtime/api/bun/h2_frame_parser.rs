@@ -4196,10 +4196,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::UNDEFINED,
                 JSValue::js_number(old_state as f64),
             );
-        } else if code == ErrorCode::NO_ERROR.0 {
-            // A NO_ERROR reset is a clean end of stream: 'end' then 'close', no 'error'. The last
-            // argument tells JS that the peer closed the stream, so a writable side that is still
-            // open ends too.
+        } else if code == ErrorCode::NO_ERROR.0 && !self.is_server.get() {
+            // RFC 9113 §8.1: a server may answer early and then reset the stream with NO_ERROR.
+            // The client keeps what it received: 'end' then 'close', no 'error'. The last
+            // argument tells JS that a reset closed the stream, not an END_STREAM.
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onStreamEnd,
                 stream_ctx,

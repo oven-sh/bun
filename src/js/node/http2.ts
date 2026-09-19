@@ -2195,15 +2195,14 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
-// node's closeStream: a reset from the peer closes both halves at once, so a writable side that
-// is still open is an abort, and it ends now instead of writing to a stream that no longer exists.
-function endWritableOnPeerReset(stream: Http2Stream) {
-  if (stream._writableState.ending || stream[kPush]) return;
-  if (!stream.aborted) {
-    stream[kAborted] = true;
-    stream.emit("aborted");
-  }
-  stream.end();
+// A reset from the peer closes both halves at once, so a writable side that is still open is an
+// abort (node's closeStream). The writable does not end() here: the stream can stay alive for its
+// reader, and a write() in that window would raise ERR_STREAM_WRITE_AFTER_END. NativeClosed drops
+// those writes, and _destroy ends the writable.
+function abortOpenWritable(stream: Http2Stream) {
+  if (stream._writableState.ending || stream[kPush] || stream.aborted) return;
+  stream[kAborted] = true;
+  stream.emit("aborted");
 }
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
@@ -3326,7 +3325,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers, options) {
-    if (this.destroyed || this.closed || this.session === undefined) {
+    if (this.destroyed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3386,7 +3385,7 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed || this.closed || this.session === undefined) {
+    if (this.destroyed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3513,7 +3512,7 @@ class ServerHttp2Stream extends Http2Stream {
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers: any, options?: any) {
-    if (this.destroyed || this.closed || this.session === undefined) {
+    if (this.destroyed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 
@@ -4055,14 +4054,13 @@ class ServerHttp2Session extends Http2Session {
       if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
-    // `peerReset`: the close is a RST_STREAM(NO_ERROR) from the peer, not an END_STREAM.
-    streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number, peerReset?: boolean) {
+    streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
       if (state === 7 && stream[kSendingTrailers]) {
         // The trailer frame submitted by an in-flight sendTrailers() fully closed the stream:
         // re-queue the close so it is not observable from inside sendTrailers() (node defers the
         // submission itself via setImmediate, see kSendingTrailers).
-        process.nextTick(ServerHttp2Session.#Handlers.streamEnd, self, stream, state, peerReset);
+        process.nextTick(ServerHttp2Session.#Handlers.streamEnd, self, stream, state);
         return;
       }
       if (state == 6 || state == 7) {
@@ -4084,7 +4082,6 @@ class ServerHttp2Session extends Http2Session {
         markStreamClosed(stream);
         self.#connections--;
         if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
-        if (peerReset) endWritableOnPeerReset(stream);
         if (stream.readable && !stream.rstCode) {
           // Clean close while data is still buffered on the readable side (e.g. the response
           // ended before the request body was consumed): node defers the destroy until the
@@ -5056,7 +5053,7 @@ class ClientHttp2Session extends Http2Session {
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
-    // `peerReset`: the close is a RST_STREAM(NO_ERROR) from the peer, not an END_STREAM.
+    // `peerReset`: a RST_STREAM(NO_ERROR) from the server closed the stream, not an END_STREAM.
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number, peerReset?) => {
       if (!self || typeof stream !== "object") return;
       if (state === 7 && stream[kSendingTrailers]) {
@@ -5080,7 +5077,7 @@ class ClientHttp2Session extends Http2Session {
         stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
-        if (peerReset) endWritableOnPeerReset(stream);
+        if (peerReset) abortOpenWritable(stream);
         if (stream.readable && !stream.rstCode) {
           // Clean close while data is still buffered on the readable side: node defers the
           // destroy until the consumer drains it ('end'), so a late-attaching reader does not

@@ -60,6 +60,21 @@ impl Stream {
             recv_body_bytes: 0,
         }
     }
+
+    /// The stream error that answers an inbound DATA frame, if the stream must refuse it.
+    fn data_refusal(&self, is_server: bool) -> Option<ErrorCode> {
+        if !stream::can_receive_data(self.state) {
+            return Some(ErrorCode::StreamClosed);
+        }
+        // RFC 9113 §8.1: a response starts with HEADERS, and a 1xx block is not the response.
+        // DATA ahead of the final block is malformed (§8.1.1): a stream error of type
+        // PROTOCOL_ERROR, as in the fetch() client (h2_client/dispatch.rs). nghttp2 ends the
+        // whole session instead when no HEADERS arrived at all.
+        if !is_server && !self.recv_final_headers {
+            return Some(ErrorCode::ProtocolError);
+        }
+        None
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1377,15 +1392,7 @@ impl Connection {
                 discard = true;
             }
             Some(st) => {
-                let refused = if !stream::can_receive_data(st.state) {
-                    Some(ErrorCode::StreamClosed)
-                } else if !self.is_server && !st.recv_final_headers {
-                    // DATA ahead of the final response HEADERS: see handle_data.
-                    Some(ErrorCode::ProtocolError)
-                } else {
-                    None
-                };
-                if let Some(code) = refused {
+                if let Some(code) = st.data_refusal(self.is_server) {
                     self.send_rst_stream(sink, hdr.stream_id, code);
                     if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
                         st2.state = State::Closed;
@@ -1521,14 +1528,8 @@ impl Connection {
             // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
             None => DataDecision::Rst(ErrorCode::StreamClosed),
             Some(s) => {
-                if !stream::can_receive_data(s.state) {
-                    DataDecision::Rst(ErrorCode::StreamClosed)
-                } else if !self.is_server && !s.recv_final_headers {
-                    // RFC 9113 §8.1: a response starts with HEADERS, and a 1xx block is not the
-                    // response. DATA ahead of the final block is malformed (§8.1.1): a stream
-                    // error of type PROTOCOL_ERROR, as in the fetch() client (h2_client/dispatch.rs).
-                    // nghttp2 ends the whole session instead when no HEADERS arrived at all.
-                    DataDecision::Rst(ErrorCode::ProtocolError)
+                if let Some(code) = s.data_refusal(self.is_server) {
+                    DataDecision::Rst(code)
                 } else {
                     s.recv_window.on_data(consumed);
                     if s.recv_window.is_overflowed_with(recv_limit) {

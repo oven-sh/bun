@@ -1169,14 +1169,18 @@ describe("a response starts with HEADERS (RFC 9113 §8.1)", () => {
     });
   });
 
-  test("a client stream reset with NO_ERROR before any response emits 'end' before 'close'", async () => {
+  // No 'data' listener and no resume(): the readable is not flowing when the reset arrives.
+  test.each([
+    ["never read", (_: http2.ClientHttp2Stream) => {}],
+    ["paused", (req: http2.ClientHttp2Stream) => void req.pause()],
+  ])("a %s client stream reset with NO_ERROR before any response emits 'end' before 'close'", async (_, prepare) => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     client.on("error", () => {});
     try {
       const req = client.request({ ":path": "/" });
       const events: string[] = [];
-      // No 'data' listener and no resume(): the readable is not flowing when the reset arrives.
+      prepare(req);
       req.on("response", () => events.push("response"));
       req.on("end", () => events.push("end"));
       req.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
@@ -1224,66 +1228,22 @@ describe("a response starts with HEADERS (RFC 9113 §8.1)", () => {
         ]),
       );
       await aborted;
-      const writableEnded = req.writableEnded;
+      // The request body is still open. A write after the reset is dropped, it is not an error.
+      req.write("late");
       // Nothing has read the response yet. The reset must not have discarded it.
       let body = "";
       req.setEncoding("utf8");
       req.on("data", (chunk: string) => (body += chunk));
       await closed;
-      expect({ events, status, writableEnded, body, rstCode: req.rstCode }).toEqual({
+      expect({ events, status, body, rstCode: req.rstCode }).toEqual({
         events: ["aborted", "end"],
         status: 200,
-        writableEnded: true,
         body: "early response",
         rstCode: ErrorCode.NO_ERROR,
       });
     } finally {
       client.destroy();
       raw.close();
-    }
-  });
-
-  test("a server stream that the client reset with NO_ERROR refuses respond()", async () => {
-    const server = http2.createServer();
-    const opened = Promise.withResolvers<void>();
-    const closed = Promise.withResolvers<{ events: string[]; respond: string; rstCode: number }>();
-    server.on("stream", stream => {
-      const events: string[] = [];
-      let respond = "not called";
-      stream.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
-      // 'aborted' comes while the stream is closed but not destroyed yet.
-      stream.on("aborted", () => {
-        events.push("aborted");
-        try {
-          stream.respond({ ":status": 200 });
-          respond = "sent";
-        } catch (err) {
-          respond = (err as NodeJS.ErrnoException).code!;
-        }
-      });
-      stream.on("close", () => closed.resolve({ events, respond, rstCode: stream.rstCode }));
-      opened.resolve();
-    });
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
-    try {
-      c.sendPreface();
-      c.sendEmptySettings();
-      c.sendFrame(FrameType.HEADERS, END_HEADERS, 1, requestHeaderBlock("POST"));
-      await opened.promise;
-      c.sendFrame(FrameType.RST_STREAM, 0, 1, Buffer.alloc(4));
-      expect(await closed.promise).toEqual({
-        events: ["aborted"],
-        respond: "ERR_HTTP2_INVALID_STREAM",
-        rstCode: ErrorCode.NO_ERROR,
-      });
-      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
-      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
-      expect(c.frames.filter(f => f.streamId === 1)).toEqual([]);
-    } finally {
-      c.destroy();
-      server.close();
     }
   });
 

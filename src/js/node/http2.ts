@@ -4108,7 +4108,13 @@ class ServerHttp2Session extends Http2Session {
       headersTuple: [string[], Record<string, any>, string[] | undefined],
       flags: number,
     ) {
-      if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      if (!self || typeof stream !== "object" || stream.closed) return;
+      const status = stream[bunHTTP2StreamStatus];
+      // close() only stops new streams. A block on a stream that 'stream' already delivered is its
+      // trailers (the StreamResponded branch below) and still gets through: node's
+      // onSessionHeaders checks session.closed for a new stream only.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
+      if (self.closed && (status & StreamState.StreamResponded) === 0) return;
       const requestPerf = stream[kPerfState];
       if (requestPerf !== undefined && requestPerf.firstHeader === 0) {
         requestPerf.firstHeader = performance.now() - requestPerf.start;
@@ -4136,7 +4142,6 @@ class ServerHttp2Session extends Http2Session {
       if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
         stream[kHeadRequest] = true;
       }
-      const status = stream[bunHTTP2StreamStatus];
       const endOfStream = (flags & constants.NGHTTP2_FLAG_END_STREAM) !== 0;
       if ((status & StreamState.StreamResponded) !== 0) {
         if (endOfStream) endInboundHalf(stream);

@@ -5991,6 +5991,173 @@ it("sendTrailers({}) ends the stream without a trailer block", async () => {
   }
 });
 
+// A graceful close() only stops new streams. node's onSessionHeaders (lib/internal/http2/core.js)
+// checks session.closed for a header block that opens a stream, never for one on a stream it has
+// already delivered, so a request that is in flight still reports its trailers.
+// Expected values were checked against node v26.3.0.
+describe.concurrent("http2 server session closed while a request is in flight", () => {
+  function postWithTrailers(client, onError) {
+    const req = client.request({ ":method": "POST", ":path": "/" }, { waitForTrailers: true });
+    req.on("error", onError);
+    req.on("wantTrailers", () => req.sendTrailers({ "x-trailer": "1" }));
+    req.resume();
+    return req;
+  }
+
+  // Settles `result` with what the server stream reported once the stream closes.
+  function recordServerStream(stream, result) {
+    const events = [];
+    stream.on("error", result.reject);
+    stream.on("data", chunk => events.push(`data ${chunk}`));
+    stream.on("trailers", (headers, flags) =>
+      events.push(`trailers ${headers["x-trailer"]} flags=${flags} session.closed=${stream.session.closed}`),
+    );
+    stream.on("end", () => {
+      events.push("end");
+      stream.end("ok");
+    });
+    stream.on("close", () => result.resolve({ rstCode: stream.rstCode, events }));
+    stream.respond({ ":status": 200 });
+  }
+  // flags=5 is END_STREAM | END_HEADERS.
+  const expected = { rstCode: 0, events: ["data body", "trailers 1 flags=5 session.closed=true", "end"] };
+
+  it("the stream emits 'trailers' after session.close()", async () => {
+    const server = http2.createServer();
+    let client;
+    try {
+      const serverStream = Promise.withResolvers();
+      server.on("stream", stream => {
+        recordServerStream(stream, serverStream);
+        stream.session.close();
+      });
+      const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", serverStream.reject);
+      const req = postWithTrailers(client, serverStream.reject);
+      // The GOAWAY of close() has arrived, so the server session is closed before the body and
+      // the trailers leave.
+      client.on("goaway", () => req.end("body"));
+
+      expect(await serverStream.promise).toEqual(expected);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("the stream emits 'trailers' after the client's GOAWAY closed the session", async () => {
+    const server = http2.createServer();
+    let client;
+    try {
+      const serverStream = Promise.withResolvers();
+      server.on("stream", stream => recordServerStream(stream, serverStream));
+      const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", serverStream.reject);
+      const req = postWithTrailers(client, serverStream.reject);
+      // The response means the stream reached the server. close() sends a GOAWAY first, and the
+      // server session closes itself on it before the body and the trailers arrive.
+      req.on("response", () => {
+        client.close();
+        req.end("body");
+      });
+
+      expect(await serverStream.promise).toEqual(expected);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("req.trailers is filled after server.close()", async () => {
+    const received = Promise.withResolvers();
+    const server = http2.createServer((req, res) => {
+      req.stream.on("error", received.reject);
+      req.on("end", () => {
+        received.resolve({ trailers: Object.entries(req.trailers), rawTrailers: req.rawTrailers });
+        res.end("ok");
+      });
+      req.resume();
+      // Closes every session of the server gracefully.
+      server.close();
+    });
+    let client;
+    try {
+      const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      client.on("error", received.reject);
+      const req = postWithTrailers(client, received.reject);
+      client.on("goaway", () => req.end("body"));
+
+      expect(await received.promise).toEqual({ trailers: [["x-trailer", "1"]], rawTrailers: ["x-trailer", "1"] });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("a stream that opens after session.close() is still not delivered", async () => {
+    const delivered = [];
+    const server = http2.createServer();
+    server.on("session", session => session.on("error", () => {}));
+    server.on("stream", stream => {
+      delivered.push(stream.id);
+      stream.on("error", () => {});
+      stream.session.close();
+    });
+    const authority = Buffer.from("localhost");
+    const headerBlock = Buffer.concat([
+      Buffer.from([0x82]), // :method: GET   (static table index 2)
+      Buffer.from([0x86]), // :scheme: http  (static table index 6)
+      Buffer.from([0x84]), // :path: /       (static table index 4)
+      Buffer.from([0x01, authority.length]), // :authority (literal without indexing, name index 1)
+      authority,
+    ]);
+    let socket;
+    try {
+      const port = await new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server.address().port)));
+      const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
+      socket = net.connect(port, "127.0.0.1", () => {
+        socket.write(http2utils.kClientMagic);
+        socket.write(new http2utils.SettingsFrame(false).data);
+        // HEADERS on stream 1 with END_HEADERS and no END_STREAM: the stream stays open, so the
+        // closed session stays alive.
+        socket.write(new http2utils.HeadersFrame(1, headerBlock, 0, true, false).data);
+      });
+      socket.on("error", onSocketError);
+      socket.on("close", () => onSocketError(new Error("socket closed before the PING ack")));
+      let received = Buffer.alloc(0);
+      let goaway;
+      socket.on("data", chunk => {
+        received = Buffer.concat([received, chunk]);
+        while (received.length >= 9) {
+          const length = received.readUIntBE(0, 3);
+          if (received.length < 9 + length) break;
+          const type = received[3];
+          const flags = received[4];
+          const payload = received.subarray(9, 9 + length);
+          received = received.subarray(9 + length);
+          if (type === 7 && goaway === undefined) {
+            // The GOAWAY of session.close(): open stream 3 on the closed session. The PING is a
+            // barrier, its ack means the server has processed the HEADERS frame before it.
+            goaway = { lastStreamId: payload.readUInt32BE(0) & 0x7fffffff, code: payload.readUInt32BE(4) };
+            socket.write(new http2utils.HeadersFrame(3, headerBlock, 0, true, true).data);
+            socket.write(new http2utils.PingFrame(false).data);
+          } else if (type === 6 && (flags & 1) !== 0) {
+            onExchanged();
+          }
+        }
+      });
+      await exchanged;
+      expect({ goaway, delivered }).toEqual({ goaway: { lastStreamId: 1, code: 0 }, delivered: [1] });
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+});
+
 it("client connects over a user Duplex that already has a 'data' listener", async () => {
   // A 'data' listener attached before connect() puts the stream in flowing mode, so the
   // peer's first frames can arrive before the connect callback has run. The preface must

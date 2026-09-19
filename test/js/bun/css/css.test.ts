@@ -8204,7 +8204,8 @@ describe("css tests", () => {
       // After a sibling prints its own passes, the printer has no prefix. A rule
       // that follows the pass of its parent prints there. The widened prefix set
       // of the parent must print as the standard name, not as `:full-screen`,
-      // `::input-placeholder` or `::file-upload-button`.
+      // `::input-placeholder`, `::file-upload-button` or `::browse`. There is one
+      // row for each prefix that has a legacy name.
       test.each([
         {
           pseudo: ":fullscreen",
@@ -8213,11 +8214,25 @@ describe("css tests", () => {
           base: "hex",
           better: ["p3", "lab"],
         },
+        {
+          pseudo: ":fullscreen",
+          prefixed: ":-moz-full-screen",
+          browsers: { firefox: 60 << 16 },
+          base: "hex",
+          better: ["lab"],
+        },
         // Safari 10.0 has no display-p3.
         {
           pseudo: "::placeholder",
           prefixed: "::-webkit-input-placeholder",
           browsers: { safari: 10 << 16 },
+          base: "hex",
+          better: ["lab"],
+        },
+        {
+          pseudo: "::placeholder",
+          prefixed: "::-ms-input-placeholder",
+          browsers: { edge: 15 << 16 },
           base: "hex",
           better: ["lab"],
         },
@@ -8229,8 +8244,15 @@ describe("css tests", () => {
           base: "p3",
           better: ["lab"],
         },
+        {
+          pseudo: "::file-selector-button",
+          prefixed: "::-ms-browse",
+          browsers: { edge: 15 << 16 },
+          base: "hex",
+          better: ["lab"],
+        },
       ] as const)(
-        "@supports rules after a sibling with its own passes: $pseudo",
+        "@supports rules after a sibling with its own passes: $prefixed",
         ({ pseudo, prefixed, browsers, base, better }) => {
           const output = minifyTest(
             `.p${pseudo} { & .j${pseudo} { color: red } & .k { color: var(--x, lab(40% 56.6 39)) } }`,

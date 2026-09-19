@@ -163,6 +163,9 @@ pub struct RequestContext<
 
     pub(crate) sendfile: Cell<SendfileContext>,
     pub(crate) range: RangeRequest::Raw,
+    /// The request's `If-Range`, kept until `do_sendfile` can compare it with
+    /// the validators on the handler's Response. `None` when `range` is.
+    pub(crate) if_range: Option<Box<[u8]>>,
 
     pub(crate) request_body_readable_stream_ref: JsCell<readable_stream::Strong>,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
@@ -225,6 +228,7 @@ where
         core::mem::size_of::<Self>()
             + self.request_body_buf.get().capacity()
             + self.response_buf_owned.get().capacity()
+            + self.if_range.as_deref().map_or(0, <[u8]>::len)
             + self.blob.get().memory_cost()
     }
 
@@ -1411,6 +1415,9 @@ where
         let resolved_method = method
             .or_else(|| Method::which(Self::req_method(req)))
             .unwrap_or(Method::GET);
+        let any_req = Self::any_request(req);
+        let range = RangeRequest::raw_from_request(&any_req);
+        let if_range = RangeRequest::if_range_from_request(&any_req, range);
         let slot: *mut Self = this.as_mut_ptr();
         // SAFETY: writing to MaybeUninit slot
         unsafe {
@@ -1423,7 +1430,8 @@ where
                     NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
                 ),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
-                range: RangeRequest::raw_from_request(&Self::any_request(req)),
+                range,
+                if_range,
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
                 signal: Cell::new(None),
                 cookies: JsCell::new(None),
@@ -1758,6 +1766,25 @@ where
         true
     }
 
+    /// RFC 9110 §13.1.5 for a file body from a handler. The only validators
+    /// are the `ETag` and `Last-Modified` the handler put on its Response (Bun
+    /// adds none here), so without them an `If-Range` never matches.
+    fn if_range_matches_response(&self) -> bool {
+        let Some(if_range) = self.if_range.as_deref() else {
+            return true;
+        };
+        let Some(headers) = self.response_mut().and_then(|r| r.get_init_headers_mut()) else {
+            return false;
+        };
+        let etag = headers
+            .fast_get(jsc::HTTPHeaderName::ETag)
+            .map(|v| v.to_utf8().into_owned());
+        let last_modified_ms = headers
+            .fast_get(jsc::HTTPHeaderName::LastModified)
+            .and_then(|v| crate::jsc_hooks::parse_http_date(v.to_utf8().slice()));
+        RangeRequest::if_range_matches(if_range, etag.as_deref(), last_modified_ms)
+    }
+
     pub(crate) fn do_sendfile(&self, blob: Blob) {
         if self.is_aborted_or_ended() {
             return;
@@ -1911,6 +1938,7 @@ where
             && !user_handles_range
             && is_whole_file
             && self.range != RangeRequest::Raw::None
+            && self.if_range_matches_response()
         {
             match self.range.resolve(stat_size) {
                 RangeRequest::Result::None => {}

@@ -58,9 +58,9 @@ describe("yield in the parameters of an arrow function", () => {
     expect(syntaxErrorOf(`(function* () { (a = function () { (${expression}); }) => a; })`)).toBe("no SyntaxError");
   });
 
-  test("arrow functions that the parser has to parse again for the generator keep what they capture", () => {
+  test("valid arrow functions keep what they capture", () => {
     // "{ x = 1 }" is not an expression, so the nested arrow functions are first parsed in the scope that is not a
-    // generator, and parsed again when the parser gets to them in the generator.
+    // generator. The parser takes them from its cache when it gets to them in the generator.
     const generator = (0, eval)(`(function* (p) {
       let local = 10;
       const sent = yield;
@@ -71,7 +71,21 @@ describe("yield in the parameters of an arrow function", () => {
     expect(arrow({})()()).toEqual([1, 10, 100, 1000, "field", 2]);
     expect(arrow({ x: 2 })()()).toEqual([2, 10, 100, 1000, "field", 2]);
 
+    // The default value captures N of the generator, and the body declares an N of its own.
+    const shadowed = (0, eval)(`(function* () {
+      let N = 40;
+      return ({ x = 1 }, a = (b = N + x) => { var N = 7; return b; }) => a;
+    })`);
+    expect(shadowed().next().value({})()).toBe(41);
+
+    // Where `yield` is an identifier, an arrow function with it in its parameters works as before.
     const yieldAsName = (0, eval)(`(function* () { return () => (a = (yield) => yield * 2) => a; })`);
     expect(yieldAsName().next().value()()(21)).toBe(42);
+    const yieldAsVariable = (0, eval)(`(function () {
+      var yield = 1;
+      let N = 40;
+      return ({ x = 1 }, a = (b = N + yield) => { var N = 7; return b; }) => a;
+    })`);
+    expect(yieldAsVariable()({})()).toBe(41);
   });
 });

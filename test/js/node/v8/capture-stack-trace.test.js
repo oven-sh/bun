@@ -298,49 +298,98 @@ test("capture stack trace edge cases", () => {
   expect(Error.captureStackTrace({}, true)).toBe(undefined);
 });
 
-test("Error.captureStackTrace heads the stack of any target with its name and message", () => {
-  class Named {
+// As V8: the first line is Error.prototype.toString() of the target, whatever kind of object it is,
+// read when the stack is first read and not when it is captured.
+test("Error.captureStackTrace: the first line of a target's stack is its name and message when the stack is read", () => {
+  function AxiosLikeError(message) {
+    Error.call(this);
+    Error.captureStackTrace(this, this.constructor);
+    this.message = message;
+    this.name = "AxiosLikeError";
+  }
+  AxiosLikeError.prototype = Object.create(Error.prototype, { constructor: { value: AxiosLikeError } });
+
+  // Its message getter reads what the constructor only sets after capturing.
+  function LateState(parts) {
+    Error.captureStackTrace(this, LateState);
+    this.parts = parts;
+  }
+  LateState.prototype = Object.create(Error.prototype, {
+    name: { value: "LateState" },
+    message: {
+      get() {
+        return this.parts.join(" ");
+      },
+    },
+  });
+
+  class ProtoNamed {
     message = "from the instance";
   }
-  Named.prototype.name = "ProtoName";
-  const targets = {
-    "Error": {},
-    "Custom: boom": { name: "Custom", message: "boom" },
-    "Error: boom": { message: "boom" },
-    "Custom": { name: "Custom" },
-    "boom": { name: "", message: "boom" },
-    "named": function named() {},
-    "ProtoName: from the instance": new Named(),
-    "FromGetter: m": {
-      get name() {
-        return "FromGetter";
-      },
-      message: "m",
-    },
-    "42: 7": { name: 42, message: 7 },
-    "TypeError: boom": new TypeError("boom"),
-  };
-  const headers = {};
-  for (const [expected, target] of Object.entries(targets)) {
-    Error.captureStackTrace(target);
-    headers[expected] = target.stack.split("\n")[0];
-    expect(target.stack.split("\n")[1]).toStartWith("    at ");
-  }
-  expect(headers).toEqual(Object.fromEntries(Object.keys(targets).map(header => [header, header])));
+  ProtoNamed.prototype.name = "ProtoName";
 
-  // A name that cannot be read reaches the caller, as it does for an Error.
-  const stackOf = target => {
+  const captured = target => {
     Error.captureStackTrace(target);
-    return target.stack;
+    return target;
   };
-  expect(() =>
-    stackOf({
-      get name() {
-        throw new RangeError("from name");
-      },
-    }),
-  ).toThrow("from name");
-  expect(() => stackOf({ name: Symbol("n") })).toThrow(TypeError);
+  const assignedAfter = captured({});
+  assignedAfter.name = "Late";
+  assignedAfter.message = "assigned after";
+
+  const rows = [
+    [captured({}), "Error"],
+    [captured({ name: "Custom", message: "boom" }), "Custom: boom"],
+    [captured({ message: "boom" }), "Error: boom"],
+    [captured({ name: "Custom" }), "Custom"],
+    [captured({ name: "", message: "boom" }), "boom"],
+    [captured({ message: null }), "Error: null"],
+    [captured({ name: 42, message: 7 }), "42: 7"],
+    [captured(function named() {}), "named"],
+    [captured(new ProtoNamed()), "ProtoName: from the instance"],
+    // prettier-ignore
+    [captured({ get name() { return "FromGetter"; }, get message() { return "too"; } }), "FromGetter: too"],
+    // prettier-ignore
+    [captured({ get name() { Bun.gc(true); return "Collects"; } }), "Collects"],
+    [assignedAfter, "Late: assigned after"],
+    [new AxiosLikeError("Request failed"), "AxiosLikeError: Request failed"],
+    [new LateState(["a", "b"]), "LateState: a b"],
+    [captured(new TypeError("boom")), "TypeError: boom"],
+  ];
+  const headers = rows.map(([target]) => {
+    const lines = target.stack.split("\n");
+    expect(lines[1]).toStartWith("    at ");
+    return lines[0];
+  });
+  expect(headers).toEqual(rows.map(([, header]) => header));
+
+  // A name that cannot be read throws from the read of the stack, not from the capture.
+  // prettier-ignore
+  const throwing = captured({ get name() { throw new RangeError("from name"); } });
+  expect(() => throwing.stack).toThrow("from name");
+  const symbol = captured({ name: Symbol("n") });
+  expect(() => symbol.stack).toThrow(TypeError);
+
+  // The stack is read once: later changes do not show, and it can be assigned.
+  const once = captured({ name: "First" });
+  expect(once.stack.split("\n")[0]).toBe("First");
+  once.name = "Second";
+  expect(once.stack.split("\n")[0]).toBe("First");
+  const assigned = captured({ name: "Unread" });
+  assigned.stack = "replaced";
+  expect(assigned.stack).toBe("replaced");
+});
+
+test("console.trace() from a Console instance starts with Trace and its message", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `new console.Console(process.stdout, process.stdout).trace("hello %s", "world");`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.split("\n")[0]).toBe("Trace: hello world");
+  expect(exitCode).toBe(0);
 });
 
 test("Error.captureStackTrace installs .stack as non-enumerable", () => {

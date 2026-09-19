@@ -486,19 +486,14 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     WTF::String message;
 
     if (errorInstance) {
-        if (!lexicalGlobalObject) {
-            lexicalGlobalObject = errorInstance->globalObject();
-        }
+        // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
         if (auto* instance = dynamicDowncast<ErrorInstance>(errorInstance)) {
+            if (!lexicalGlobalObject) {
+                lexicalGlobalObject = errorInstance->globalObject();
+            }
             name = instance->sanitizedNameString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, {});
             message = instance->sanitizedMessageString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            // Error.captureStackTrace() on any other object: Error.prototype.toString() of it, as V8 heads it.
-            name = stackTraceHeaderName(vm, lexicalGlobalObject, errorInstance);
-            RETURN_IF_EXCEPTION(scope, {});
-            message = stackTraceHeaderMessage(vm, lexicalGlobalObject, errorInstance);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -607,6 +602,40 @@ static String computeErrorInfoToString(JSC::VM& vm, Vector<StackFrame>& stackTra
     return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, nullptr);
 }
 
+// The Error.prepareStackTrace that formats the stack of an object of `lexicalGlobalObject`
+// (https://v8.dev/docs/stack-trace-api#customizing-stack-traces), unless this is already inside one.
+// `globalObject` is that global if it is Bun's and null for a node:vm context; it is set to Bun's either way.
+static JSObject* installedPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject*& globalObject, JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!globalObject) {
+        // node:vm will use a different JSGlobalObject
+        globalObject = defaultGlobalObject();
+        if (globalObject->isInsideErrorPrepareStackTraceCallback)
+            return nullptr;
+        auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
+        auto prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (prepareStackTrace && prepareStackTrace.isCallable())
+            return prepareStackTrace.getObject();
+        return nullptr;
+    }
+    if (globalObject->isInsideErrorPrepareStackTraceCallback)
+        return nullptr;
+    JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get();
+    if (prepareStackTrace && prepareStackTrace.isCallable())
+        return prepareStackTrace.getObject();
+    return nullptr;
+}
+
+static JSValue computeErrorInfoInsidePrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
+{
+    globalObject->isInsideErrorPrepareStackTraceCallback = true;
+    JSValue result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorObject, prepareStackTrace);
+    globalObject->isInsideErrorPrepareStackTraceCallback = false;
+    return result;
+}
+
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance, void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);
@@ -617,35 +646,10 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-    if (!globalObject) {
-        // node:vm will use a different JSGlobalObject
-        globalObject = defaultGlobalObject();
-        if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
-            auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
-            auto prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
-            RETURN_IF_EXCEPTION(scope, {});
-            if (prepareStackTrace) {
-                if (prepareStackTrace.isCell() && prepareStackTrace.isObject() && prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
-                }
-            }
-        }
-    } else if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
-        if (JSValue prepareStackTrace = globalObject->m_errorConstructorPrepareStackTraceValue.get()) {
-            if (prepareStackTrace) {
-                if (prepareStackTrace.isCallable()) {
-                    globalObject->isInsideErrorPrepareStackTraceCallback = true;
-                    auto result = computeErrorInfoWithPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace.getObject());
-                    globalObject->isInsideErrorPrepareStackTraceCallback = false;
-                    RELEASE_AND_RETURN(scope, result);
-                }
-            }
-        }
-    }
+    JSObject* prepareStackTrace = installedPrepareStackTrace(vm, globalObject, lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (prepareStackTrace)
+        RELEASE_AND_RETURN(scope, computeErrorInfoInsidePrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance, prepareStackTrace));
 
     String result = computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance);
     RETURN_IF_EXCEPTION(scope, {});
@@ -822,9 +826,27 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* errorObject = dynamicDowncast<ErrorInstance>(JSValue::decode(thisValue));
 
-    // This shouldn't be possible.
     if (!errorObject) {
-        return JSValue::encode(jsUndefined());
+        // A target of Error.captureStackTrace() that is not an Error. Its frames were formatted then;
+        // its name and message are read now, when the stack is first read, as V8 does.
+        JSObject* target = JSValue::decode(thisValue).getObject();
+        JSValue frames = target ? target->getDirect(vm, builtinNames(vm).capturedStackFramesPrivateName()) : JSValue();
+        if (!frames)
+            return JSValue::encode(jsUndefined());
+        WTF::String name = stackTraceHeaderName(vm, globalObject, target);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::String message = stackTraceHeaderMessage(vm, globalObject, target);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::String header = stackTraceHeaderOnly(name, message);
+        // The name, the message and the frames come from JS: past `String::MaxLength` makeString() calls `CRASH()`.
+        WTF::String stack = tryMakeString(header, asString(frames)->value(globalObject).data);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue result = jsString(vm, stack.isNull() ? header : stack);
+        DeletePropertySlot slot;
+        JSObject::deleteProperty(target, globalObject, builtinNames(vm).capturedStackFramesPrivateName(), slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        target->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        return JSValue::encode(result);
     }
 
     OrdinalNumber line;
@@ -860,8 +882,12 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
 JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue decodedValue = JSValue::decode(thisValue);
     if (auto* object = decodedValue.getObject()) {
+        DeletePropertySlot slot;
+        JSObject::deleteProperty(object, globalObject, builtinNames(vm).capturedStackFramesPrivateName(), slot);
+        RETURN_IF_EXCEPTION(scope, false);
         object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
     }
 
@@ -922,9 +948,30 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         OrdinalNumber line;
         OrdinalNumber column;
         String sourceURL;
-        JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, nullptr);
+        JSC::JSGlobalObject* targetGlobalObject = errorObject->globalObject();
+        Zig::GlobalObject* formattingGlobalObject = dynamicDowncast<Zig::GlobalObject>(targetGlobalObject);
+        JSObject* prepareStackTrace = installedPrepareStackTrace(vm, formattingGlobalObject, targetGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        if (prepareStackTrace) {
+            // The callback is given the call sites, which only exist now.
+            JSValue result = computeErrorInfoInsidePrepareStackTrace(vm, formattingGlobalObject, targetGlobalObject, stackTrace, line, column, sourceURL, errorObject, prepareStackTrace);
+            RETURN_IF_EXCEPTION(scope, {});
+            errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        } else {
+            // The frames are formatted now, before anything of the target's can run and while they are
+            // still on the stack. The name and message are read when `stack` is, as V8 does: a
+            // constructor may set them after this call, and reading them can throw.
+            WTF::String frames = formatStackTrace(vm, formattingGlobalObject, targetGlobalObject, emptyString(), emptyString(), line, column, sourceURL, stackTrace, errorObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            errorObject->putDirect(vm, builtinNames(vm).capturedStackFramesPrivateName(), jsString(vm, frames), JSC::PropertyAttribute::DontEnum | 0);
+            {
+                VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
+                DeletePropertySlot slot;
+                JSObject::deleteProperty(errorObject, globalObject, vm.propertyNames->stack, slot);
+            }
+            RETURN_IF_EXCEPTION(scope, {});
+            errorObject->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
+        }
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

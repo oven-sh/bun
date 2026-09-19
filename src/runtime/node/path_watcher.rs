@@ -2072,6 +2072,21 @@ mod windows_impl {
         }
     }
 
+    /// Whether a component of `name` has the shape of an 8.3 name: at most
+    /// eight characters, then at most one dot with at most three after it.
+    /// Only such a component can be a short alias of a longer name.
+    fn may_hold_short_name(name: &[u16]) -> bool {
+        name.split(|&unit| unit == u16::from(b'\\') || unit == u16::from(b'/'))
+            .any(|component| {
+                let mut parts = component.split(|&unit| unit == u16::from(b'.'));
+                let base = parts.next().unwrap_or(&[]);
+                let extension = parts.next();
+                parts.next().is_none()
+                    && (1..=8).contains(&base.len())
+                    && extension.is_none_or(|extension| extension.len() <= 3)
+            })
+    }
+
     impl DirRequest {
         /// # Safety
         /// `this` is live with no request outstanding; the caller holds
@@ -2249,9 +2264,14 @@ mod windows_impl {
                                 .is_some_and(|short| eql_ignore_case(name, short)))
                         .then_some(&file_name.long[..]),
                         // A record can carry an 8.3 alias. For a name that may
-                        // still exist, report its long form like libuv.
+                        // still exist, report its long form like libuv. Asking
+                        // costs a directory lookup per component, and while
+                        // this thread is busy the changes pile up in the 4 KiB
+                        // the system keeps for the directory, so it only asks
+                        // about a name that can be an alias.
                         None if action != w::FILE_ACTION_REMOVED
-                            && action != w::FILE_ACTION_RENAMED_OLD_NAME =>
+                            && action != w::FILE_ACTION_RENAMED_OLD_NAME
+                            && may_hold_short_name(name) =>
                         {
                             Some(self.long_name(name, long_buf, full_buf).unwrap_or(name))
                         }

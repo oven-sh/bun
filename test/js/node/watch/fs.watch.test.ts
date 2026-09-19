@@ -1,4 +1,5 @@
 import { pathToFileURL } from "bun";
+import { dlopen, ptr } from "bun:ffi";
 import {
   bunEnv,
   bunExe,
@@ -2027,4 +2028,38 @@ test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target d
   );
 
   expect(runs).toEqual(runs.map(() => ({ stdout: "OK", stderr: "", exitCode: 0 })));
+});
+
+// A change made through a file's 8.3 alias is recorded under the alias; the event reports the long
+// name. A change made through the long name is reported as it is.
+test.skipIf(!isWindows)("fs.watch reports the long name for a change made through an 8.3 alias", async () => {
+  using dir = tempDir("fs-watch-short-name", { "a rather long file name.txt": "x", "short.txt": "x" });
+  const root = String(dir);
+  const longName = "a rather long file name.txt";
+
+  const { GetShortPathNameW } = dlopen("kernel32.dll", {
+    GetShortPathNameW: { args: ["ptr", "ptr", "u32"], returns: "u32" },
+  }).symbols;
+  const wide = Buffer.from(path.join(root, longName) + "\0", "utf16le");
+  const out = Buffer.alloc(2 * 1024);
+  const length = GetShortPathNameW(ptr(wide), ptr(out), out.length / 2);
+  expect(length).toBeGreaterThan(0);
+  const alias = path.basename(out.toString("utf16le", 0, length * 2));
+  // A volume can have 8.3 name creation switched off; then there is no alias to go through.
+  const names = alias === longName ? ["short.txt"] : [alias, "short.txt"];
+
+  const seen: string[] = [];
+  const done = Promise.withResolvers<void>();
+  const watcher = fs.watch(root, (_event, filename) => {
+    if (filename && !seen.includes(String(filename))) seen.push(String(filename));
+    if (seen.length === names.length) done.resolve();
+  });
+  watcher.on("error", done.reject);
+  try {
+    for (const name of names) fs.appendFileSync(path.join(root, name), "y");
+    await done.promise;
+  } finally {
+    watcher.close();
+  }
+  expect(seen.sort()).toEqual((alias === longName ? ["short.txt"] : [longName, "short.txt"]).sort());
 });

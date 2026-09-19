@@ -882,6 +882,35 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
     await installOk(dir, "--linker", linker, "--frozen-lockfile");
   });
 
+  // app-a's edit makes the install read app-b's package.json again, through the workspace:* edge, after a rule was
+  // already looked up for another row. app-b's rows are new ones then, and its rule still has to find their owner.
+  test.each([
+    ["another workspace changes", {}],
+    ["the root starts to depend on the overridden name", { "no-deps": "2.0.0" }],
+  ])("a workspace parent keeps its rule when %s", async (_, rootDependencies) => {
+    const root = (dependencies: Record<string, string>) => ({
+      workspaces: ["packages/*"],
+      overrides: { "app-b": { "no-deps": "1.0.0" } },
+      dependencies,
+    });
+    const appA = (dependencies: Record<string, string>) =>
+      JSON.stringify({ name: "app-a", dependencies: { "app-b": "workspace:*", ...dependencies } });
+    const dir = await project(root({}), linker, {
+      "packages/app-a/package.json": appA({}),
+      "packages/app-b/package.json": JSON.stringify({ name: "app-b", dependencies: { "no-deps": "2.0.0" } }),
+    });
+    await installOk(dir, "--linker", linker);
+    expect(await versionSeenBy(dir, "packages/app-b", "no-deps")).toBe("1.0.0");
+
+    await Promise.all([
+      write(join(dir, "package.json"), JSON.stringify({ name: "nested-overrides", ...root(rootDependencies) })),
+      write(join(dir, "packages", "app-a", "package.json"), appA({ "a-dep": "1.0.1" })),
+    ]);
+    await installOk(dir, "--linker", linker);
+    expect(await versionSeenBy(dir, "packages/app-b", "no-deps")).toBe("1.0.0");
+    await installOk(dir, "--linker", linker, "--frozen-lockfile");
+  });
+
   test("a ranged parent rule matches a workspace package by its version", async () => {
     const dir = await project(
       {

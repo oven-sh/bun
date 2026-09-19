@@ -214,9 +214,10 @@ pub trait Sink {
     fn highest_started_stream_id(&self) -> u32 {
         0
     }
-    /// Highest stream id the embedder has initiated itself (nghttp2's last_sent_stream_id). The
-    /// peer's streams never raise it, so an id of the local parity above it is idle even when a
-    /// peer-initiated id is higher.
+    /// Highest stream id of the local parity (odd on a client) the embedder has registered: the
+    /// counterpart of nghttp2's last_sent_stream_id. Unlike `highest_started_stream_id`, ids of
+    /// the peer's parity and `setNextStreamID()` never raise it, so a local-parity id above it is
+    /// idle. The engine cannot tell on its own: it never sees the embedder's outbound HEADERS.
     fn highest_local_stream_id(&self) -> u32 {
         0
     }
@@ -2049,8 +2050,17 @@ mod tests {
         pushes: RefCell<Vec<(u32, u32)>>,
         altsvc: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         origins: RefCell<Vec<Vec<u8>>>,
+        /// What an embedder that sends its own request HEADERS reports about them.
+        highest_local_stream_id: Cell<u32>,
+        local_half_closed: Cell<bool>,
     }
     impl Sink for CaptureSink {
+        fn highest_local_stream_id(&self) -> u32 {
+            self.highest_local_stream_id.get()
+        }
+        fn is_local_half_closed(&self, _id: u32) -> bool {
+            self.local_half_closed.get()
+        }
         fn write(&self, bytes: &[u8]) -> WriteResult {
             self.out.borrow_mut().extend_from_slice(bytes);
             WriteResult::Sent
@@ -2360,44 +2370,94 @@ mod tests {
         client
     }
 
-    /// PUSH_PROMISE on `parent` reserving stream 2, with an empty header block.
-    fn push_promise(parent: u32) -> Vec<u8> {
+    /// PUSH_PROMISE on `parent` reserving `promised`, carrying a complete GET request block.
+    fn push_promise(parent: u32, promised: u32) -> Vec<u8> {
+        let mut payload = promised.to_be_bytes().to_vec();
+        payload.extend_from_slice(&encode_block(&[
+            (b":method", b"GET"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ]));
         frame(
             FrameType::PushPromise,
             wire::flags::END_HEADERS,
             parent,
-            &[0, 0, 0, 2],
+            &payload,
         )
     }
 
+    /// Response HEADERS on stream 1 that end the server's half of it.
+    fn final_response() -> Vec<u8> {
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        let block = encode_block(&[(b":status", b"200")]);
+        frame(FrameType::Headers, flags, 1, &block)
+    }
+
+    fn assert_push_rejected(sink: &CaptureSink, fed: Feed, lib_error: i32) {
+        assert!(fed.fatal);
+        assert_eq!(sink.local_error.get(), Some(lib_error));
+        assert!(sink.pushes.borrow().is_empty());
+    }
+
     #[test]
-    fn push_promise_on_idle_or_server_stream_is_goaway() {
-        // Stream 1 is the only one the client opened: 3 is idle, 2 belongs to the server.
-        for parent in [3, 2] {
-            let sink = CaptureSink::default();
-            let mut client = client_with_request(&sink, true);
-            let fed = client.receive(&sink, &push_promise(parent));
-            assert!(fed.fatal);
-            assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
-            assert!(sink.pushes.borrow().is_empty());
-        }
+    fn push_promise_on_idle_parent_is_goaway() {
+        // Stream 1 is the only one the client opened.
+        let sink = CaptureSink::default();
+        let mut client = client_with_request(&sink, true);
+        let fed = client.receive(&sink, &push_promise(3, 2));
+        assert_push_rejected(&sink, fed, wire::lib_error::PROTO);
+    }
+
+    #[test]
+    fn push_promise_on_server_initiated_parent_is_goaway() {
+        // 2 is below the embedder's mark, so only its parity can reject it.
+        let sink = CaptureSink::default();
+        sink.highest_local_stream_id.set(3);
+        let mut client = Connection::new(false, Settings::default());
+        let fed = client.receive(&sink, &push_promise(2, 4));
+        assert_push_rejected(&sink, fed, wire::lib_error::PROTO);
+    }
+
+    #[test]
+    fn push_promise_on_parent_the_embedder_opened_is_accepted() {
+        // The embedder sent the request HEADERS itself: the engine has no entry for stream 1.
+        let sink = CaptureSink::default();
+        sink.highest_local_stream_id.set(1);
+        let mut client = Connection::new(false, Settings::default());
+        let fed = client.receive(&sink, &push_promise(1, 2));
+        assert!(!fed.fatal);
+        assert_eq!(*sink.pushes.borrow(), vec![(1, 2)]);
     }
 
     #[test]
     fn push_promise_on_half_closed_remote_parent_is_stream_closed() {
         let sink = CaptureSink::default();
         let mut client = client_with_request(&sink, false);
-        let response = encode_block(&[(b":status", b"200")]);
-        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
-        client.receive(&sink, &frame(FrameType::Headers, flags, 1, &response));
+        client.receive(&sink, &final_response());
         assert_eq!(
             client.streams.get(&1).map(|s| s.state),
             Some(State::HalfClosedRemote)
         );
-        let fed = client.receive(&sink, &push_promise(1));
-        assert!(fed.fatal);
-        assert_eq!(sink.local_error.get(), Some(wire::lib_error::STREAM_CLOSED));
-        assert!(sink.pushes.borrow().is_empty());
+        let fed = client.receive(&sink, &push_promise(1, 2));
+        assert_push_rejected(&sink, fed, wire::lib_error::STREAM_CLOSED);
+    }
+
+    #[test]
+    fn push_promise_on_parent_the_embedder_closed_is_accepted() {
+        // The engine's entry reads HalfClosedRemote, but the embedder already ended its half.
+        let sink = CaptureSink::default();
+        sink.highest_local_stream_id.set(1);
+        sink.local_half_closed.set(true);
+        let mut client = Connection::new(false, Settings::default());
+        client.receive(&sink, &final_response());
+        assert_eq!(
+            client.streams.get(&1).map(|s| s.state),
+            Some(State::HalfClosedRemote)
+        );
+        let fed = client.receive(&sink, &push_promise(1, 2));
+        assert!(!fed.fatal);
+        assert_eq!(*sink.pushes.borrow(), vec![(1, 2)]);
     }
 
     #[test]

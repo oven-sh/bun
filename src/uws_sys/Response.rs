@@ -194,9 +194,7 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_send_when_complete(Self::ssl_flag(), self.as_raw())
     }
 
-    /// node:http socket.destroy() while uws is parsing this socket: uws closes it once the
-    /// current message's body from that read is delivered. Returns false when uws is not
-    /// parsing this socket (or it is a tunnel), so the caller closes it now.
+    /// Defers the close to the end of the read uws is parsing. False: not parsing, the caller closes now.
     pub fn close_after_message_if_parsing(&mut self) -> bool {
         c::uws_res_close_after_message_if_parsing(Self::ssl_flag(), self.as_raw())
     }
@@ -1165,8 +1163,7 @@ impl State {
         self.bits() & State::HTTP_NODE_RECEIVED_FIN.bits() != 0
     }
 
-    /// node:http destroyed the socket from JavaScript while uws was parsing a
-    /// read on it. uws closes it once the current message's body is delivered.
+    /// uws closes this socket once the read it is parsing is delivered (see HttpResponseData.h).
     #[inline]
     pub fn is_node_close_after_message(self) -> bool {
         self.bits() & State::HTTP_NODE_CLOSE_AFTER_MESSAGE.bits() != 0

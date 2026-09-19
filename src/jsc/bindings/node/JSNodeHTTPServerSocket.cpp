@@ -99,11 +99,7 @@ void JSNodeHTTPServerSocket::close()
                 flushPartialResponseBeforeClose<false>(socket);
             }
         }
-        // destroy() from the 'request' listener or a body callback: the HTTP
-        // parser is on the stack with this read. Node's parser runs to the end
-        // of its buffer before the handle closes, so the body bytes that came
-        // with the head still reach the request. onData closes the socket once
-        // the current message's body is delivered.
+        // uws is parsing this socket: it delivers the rest of the read, then closes (HTTP_NODE_CLOSE_AFTER_MESSAGE).
         if (!upgraded && !us_socket_is_closed(socket)) {
             bool deferred = is_ssl
                 ? reinterpret_cast<uWS::HttpResponse<true>*>(socket)->closeAfterMessageIfParsing()

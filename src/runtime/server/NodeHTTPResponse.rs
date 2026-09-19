@@ -768,11 +768,7 @@ impl NodeHTTPResponse {
         JSValue::from(self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED))
     }
 
-    /// socket.destroy() from JS while uws was parsing this socket: uws closes
-    /// it once the current read's body is delivered. Until then writes are
-    /// dropped as after the close (Node's _writeRaw checks socket.destroyed).
-    /// SOCKET_CLOSED itself stays unset, so body delivery still finds its
-    /// wrapper and the pending-request ref is released by the close.
+    /// The socket was destroyed from JS and uws closes it after the current read (HTTP_NODE_CLOSE_AFTER_MESSAGE).
     fn is_close_after_message_pending(&self) -> bool {
         let flags = self.flags.get();
         !flags.contains(Flags::SOCKET_CLOSED)
@@ -1556,10 +1552,7 @@ impl NodeHTTPResponse {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // res.destroy() while uws is parsing this socket: the body bytes of
-        // that read are still owed to the request, as in Node, whose parser
-        // runs on after the handle is destroyed. uws closes the socket once
-        // they are delivered, and that close runs the abort path (on_abort).
+        // uws is parsing this socket: it delivers the rest of the read, then closes (on_abort runs then).
         if let Some(raw_response) = self.raw_response.get()
             && raw_response.close_after_message_if_parsing()
         {

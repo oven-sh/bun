@@ -226,6 +226,8 @@ test("WebSocket upgrade should unref body_read_ref from response", async () => {
 
     const results = {
       "in a later task, body not sent": await upgradeRequestThatDeclaresABody(true, false),
+      // The body is complete before the upgrade: there is nothing left for the upgrade to release.
+      "in a later task, body sent": await upgradeRequestThatDeclaresABody(true, true),
       "in the 'upgrade' event, body sent": await upgradeRequestThatDeclaresABody(false, true),
       "in the 'upgrade' event, body not sent": await upgradeRequestThatDeclaresABody(false, false),
     };
@@ -252,6 +254,7 @@ test("WebSocket upgrade should unref body_read_ref from response", async () => {
   }).toEqual({
     results: {
       "in a later task, body not sent": upgraded,
+      "in a later task, body sent": upgraded,
       "in the 'upgrade' event, body sent": upgraded,
       "in the 'upgrade' event, body not sent": upgraded,
     },

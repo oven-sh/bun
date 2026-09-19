@@ -4910,6 +4910,44 @@ describe("Upgrade pipelined behind a pending response", () => {
     expect((await endDone)?.code).toBe("ERR_STREAM_DESTROYED");
   });
 
+  test("should send the listener's socket.end() after every response queued ahead of it", async () => {
+    // Two requests ahead: the first ends later, the second at once. The listener declines with
+    // socket.end(), like the builtin ws does for a bad handshake.
+    const DECLINED = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+    let first: http.ServerResponse | undefined;
+    const { promise: handedOff, resolve: onHandoff, reject: onFailure } = Promise.withResolvers<void>();
+    await using server = http.createServer((req, res) => {
+      if (req.headers.upgrade !== undefined) return void onFailure(new Error("dispatched as a request"));
+      if (req.url === "/first") {
+        first = res;
+        res.write("first");
+      } else {
+        res.end("second");
+      }
+    });
+    server.on("clientError", onFailure);
+    server.on("upgrade", (req, socket) => {
+      socket.end(DECLINED);
+      onHandoff();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      const received: Buffer[] = [];
+      client.on("data", chunk => received.push(chunk));
+      client.on("error", onFailure);
+      client.write(get("/first") + get("/second") + upgradeRequest("/third"));
+      await handedOff;
+      first!.end("-done");
+      await once(client, "end");
+      expect(withoutResponseHeads(Buffer.concat(received).toString("latin1"))).toBe(
+        `5\r\nfirst\r\n5\r\n-done\r\n0\r\n\r\nsecond${DECLINED}`,
+      );
+    } finally {
+      client.destroy();
+    }
+  });
+
   test("should go to 'request' when shouldUpgradeCallback declines", async () => {
     const events: string[] = [];
     let first: http.ServerResponse | undefined;

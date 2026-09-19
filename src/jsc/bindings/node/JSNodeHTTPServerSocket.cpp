@@ -296,6 +296,24 @@ bool JSNodeHTTPServerSocket::tunnelOwesHttpOutput()
     return tunnelOwesHttpOutputImpl<false>(socket);
 }
 
+void JSNodeHTTPServerSocket::flushAndShutdown(JSC::JSGlobalObject* globalObject)
+{
+    // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
+    // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
+    // re-add), without which macOS 26 does not deliver the peer's close.
+    bool cycle = this->ended && this->socket && !this->upgraded;
+    if (cycle) {
+        us_socket_pause(this->socket);
+    }
+    us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, false, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+    // Undo the pause above after the shutdown so the unread body drains
+    // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
+    // SHUT_WR) is not deleted by a W -> R|W -> R step.
+    if (cycle && this->socket) {
+        us_socket_resume(this->socket);
+    }
+}
+
 bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
 {
     if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
@@ -757,7 +775,7 @@ void JSNodeHTTPServerSocket::onDrain()
     if (bufferedSize > 0 || (this->ended && this->socket && !us_socket_is_shut_down(this->socket))) {
         auto* globalObject = defaultGlobalObject(this->globalObject());
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-        us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, false, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        this->flushAndShutdown(globalObject);
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);

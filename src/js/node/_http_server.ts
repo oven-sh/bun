@@ -1763,9 +1763,7 @@ function getNodeHTTPServerSocket() {
       const pending = this[kPendingHandoff];
       if (pending !== undefined) {
         this[kPendingHandoff] = undefined;
-        const reason = err ?? $ERR_STREAM_DESTROYED("write");
-        pending.write?.callback(reason);
-        pending.final?.(reason);
+        process.nextTick(failParkedHandoff, pending, err ?? $ERR_STREAM_DESTROYED("write"));
       }
       const handle = this[kHandle];
       if (!handle) {
@@ -1797,7 +1795,11 @@ function getNodeHTTPServerSocket() {
         callback();
         return;
       }
-      handle.end();
+      // A tunnel's FIN waits for the bytes ahead of it; 'finish' waits with it (native drain).
+      if (handle.end() === false && handle.ondrain) {
+        this.#pendingCallback = callback;
+        return;
+      }
       callback();
     }
 
@@ -2454,6 +2456,8 @@ function emitResponseFinish() {
 // is eventually closed.
 function onResponseFinishHandleSocket(server, socket, res) {
   if (res[kMustCloseConnection]) {
+    // A hand-off waiting behind this response: its bytes go out before the FIN.
+    if (socket?.[kPendingHandoff] !== undefined) activatePipelinedHandoff(socket);
     socket?.end();
     return;
   }
@@ -2618,8 +2622,18 @@ function activatePipelinedHandoff(socket) {
   if (write !== undefined) socket._write(write.chunk, write.encoding, write.callback);
   const final = pending.final;
   if (final !== undefined) socket._final(final);
-  const ready = pending.ready;
+  // On a fresh turn: a ws adoption replaces the native socket, which no native callback
+  // on the stack (the response ahead's drain) may outlive.
+  if (pending.ready.length !== 0) setImmediate(runHandoffReady, pending.ready);
+}
+
+function runHandoffReady(ready) {
   for (let i = 0; i < ready.length; i++) ready[i]();
+}
+
+function failParkedHandoff(pending, reason) {
+  pending.write?.callback(reason);
+  pending.final?.(reason);
 }
 
 // When the connection dies with pipelined responses still queued behind the
@@ -2659,12 +2673,8 @@ function advanceResponsePipeline(server, socket) {
   // the pipeline is mutually exclusive with closing the socket - the queued
   // responses are aborted by the socket close path instead of being replayed
   // onto a half-closed connection.
-  if (!socket || socket.destroyed) {
-    return;
-  }
-  if (socket.writableEnded) {
-    // The end is parked behind the responses ahead; let a hand-off's writes go out before the FIN.
-    activatePipelinedHandoff(socket);
+  // (A socket.end() from a 'connect'/'upgrade' listener is parked, not ended yet.)
+  if (!socket || socket.destroyed || (socket.writableEnded && socket[kPendingHandoff] === undefined)) {
     return;
   }
   const queue = socket[kPipelinedResponses];

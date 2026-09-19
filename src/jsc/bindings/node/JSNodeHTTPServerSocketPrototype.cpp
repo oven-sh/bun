@@ -218,44 +218,32 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
     return us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, hold, &thisObject->streamBuffer, globalObject, JSValue::encode(callFrame->argument(0)), JSValue::encode(callFrame->argument(1)));
 }
 
+// Returns false when the FIN waits for bytes ahead of it (JSNodeHTTPServerSocket::onDrain sends it).
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
-        return JSValue::encode(JSC::jsUndefined());
+        return JSValue::encode(JSC::jsBoolean(true));
     }
     if (thisObject->isClosed()) {
-        return JSValue::encode(JSC::jsUndefined());
+        return JSValue::encode(JSC::jsBoolean(true));
     }
 
     thisObject->ended = true;
     // A tunnel's FIN follows the HTTP output ahead of it (JSNodeHTTPServerSocket::onDrain).
     if (thisObject->tunnelOwesHttpOutput()) {
-        return JSValue::encode(JSC::jsUndefined());
+        return JSValue::encode(JSC::jsBoolean(false));
     }
     // The response's buffered body must reach the kernel before the FIN; uWS
     // performs the shutdown after its send buffer drains.
     if (thisObject->shutdownAfterResponseDrains()) {
-        return JSValue::encode(JSC::jsUndefined());
+        return JSValue::encode(JSC::jsBoolean(false));
     }
-    auto bufferedSize = thisObject->streamBuffer.bufferedSize();
-    if (bufferedSize == 0) {
-        // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
-        // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
-        // re-add), without which macOS 26 does not deliver the peer's close.
-        if (thisObject->socket && !thisObject->upgraded) {
-            us_socket_pause(thisObject->socket);
-        }
-        auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, false, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
-        // Undo the pause above after the shutdown so the unread body drains
-        // and kqueue's one-shot EVFILT_WRITE (which delivers EV_EOF on
-        // SHUT_WR) is not deleted by a W -> R|W -> R step.
-        if (thisObject->socket && !thisObject->upgraded) {
-            us_socket_resume(thisObject->socket);
-        }
-        return result;
+    if (thisObject->streamBuffer.bufferedSize() == 0) {
+        thisObject->flushAndShutdown(globalObject);
+        return JSValue::encode(JSC::jsBoolean(true));
     }
-    return JSValue::encode(JSC::jsUndefined());
+    return JSValue::encode(JSC::jsBoolean(false));
 }
 
 // Implementation of custom getters

@@ -110,6 +110,8 @@ public:
 
     /* A tunnel whose responses ahead still have unsent bytes: its writes wait (HttpContext::onWritable). */
     bool tunnelOwesHttpOutput();
+    /* Flush the stream buffer and, once it is empty and ended, shut the write side down. */
+    void flushAndShutdown(JSC::JSGlobalObject* globalObject);
 
     /* Switch the connection into CONNECT-style tunnel mode after an accepted
      * Upgrade: subsequent bytes bypass the HTTP parser and stream to the

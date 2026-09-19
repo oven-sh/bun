@@ -4818,6 +4818,98 @@ describe("Upgrade pipelined behind a pending response", () => {
     }
   });
 
+  test("should write the 101 of a listener that keeps the tunnel open, after the response ahead", async () => {
+    // The listener writes the 101 and waits. Nothing ends or uncorks the socket for it.
+    let first: http.ServerResponse | undefined;
+    const { promise: handedOff, resolve: onHandoff, reject: onFailure } = Promise.withResolvers<void>();
+    await using server = http.createServer((req, res) => {
+      if (req.headers.upgrade !== undefined) return void onFailure(new Error("dispatched as a request"));
+      first = res;
+      res.write("first");
+    });
+    server.on("clientError", onFailure);
+    server.on("upgrade", (req, socket) => {
+      socket.write(SWITCHING);
+      socket.on("data", chunk => socket.write(`echo:${chunk}`));
+      onHandoff();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      let received = "";
+      const { promise: got101, resolve: on101 } = Promise.withResolvers<void>();
+      const { promise: gotEcho, resolve: onEcho } = Promise.withResolvers<void>();
+      client.setEncoding("latin1");
+      client.on("data", chunk => {
+        received += chunk;
+        if (received.endsWith(SWITCHING)) on101();
+        if (received.endsWith("echo:ping")) onEcho();
+      });
+      client.on("error", onFailure);
+      client.write(get("/first") + upgradeRequest("/second"));
+      await handedOff;
+      first!.end("-done");
+      // The client waits for the 101, which waits for the response ahead.
+      await got101;
+      expect(withoutResponseHeads(received)).toBe(`5\r\nfirst\r\n5\r\n-done\r\n0\r\n\r\n${SWITCHING}`);
+      client.write("ping");
+      await gotEcho;
+    } finally {
+      client.destroy();
+    }
+  });
+
+  test("should write the 101 after a response ahead that is larger than the socket buffers", async () => {
+    // The response ahead has finished for JS, but most of its body is still unsent when the
+    // pipeline reaches the hand-off. The tunnel's bytes and its FIN follow that body.
+    const total = 4 * 1024 * 1024;
+    await using server = http.createServer((req, res) => {
+      res.writeHead(200, { "Content-Length": total });
+      res.end(Buffer.alloc(total, "a"));
+    });
+    server.on("upgrade", (req, socket) => socket.end(`${SWITCHING}bye`));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      const received: Buffer[] = [];
+      client.on("data", chunk => received.push(chunk));
+      // The client reads only once the server has everything queued.
+      client.pause();
+      client.write(get("/first") + upgradeRequest("/second"));
+      await once(server, "upgrade");
+      client.resume();
+      await once(client, "end");
+      const text = Buffer.concat(received).toString("latin1");
+      const bodyStart = text.indexOf("\r\n\r\n") + 4;
+      expect(text.slice(bodyStart + total)).toBe(`${SWITCHING}bye`);
+      expect(text.slice(bodyStart, bodyStart + total)).not.toContain("HTTP/1.1 101");
+    } finally {
+      client.destroy();
+    }
+  });
+
+  test("should fail the parked writes of the listener when the client disconnects early", async () => {
+    const { promise: handedOff, resolve: onHandoff, reject: onFailure } = Promise.withResolvers<void>();
+    const { promise: writeDone, resolve: onWriteDone } = Promise.withResolvers<Error | null | undefined>();
+    const { promise: endDone, resolve: onEndDone } = Promise.withResolvers<Error | null | undefined>();
+    await using server = http.createServer((req, res) => {
+      if (req.headers.upgrade !== undefined) return void onFailure(new Error("dispatched as a request"));
+      res.write("first");
+    });
+    server.on("upgrade", (req, socket) => {
+      socket.write(SWITCHING, onWriteDone);
+      socket.end("bye", onEndDone);
+      onHandoff();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.write(get("/first") + upgradeRequest("/second"));
+    await handedOff;
+    client.destroy();
+    expect((await writeDone)?.code).toBe("ERR_STREAM_DESTROYED");
+    expect((await endDone)?.code).toBe("ERR_STREAM_DESTROYED");
+  });
+
   test("should go to 'request' when shouldUpgradeCallback declines", async () => {
     const events: string[] = [];
     let first: http.ServerResponse | undefined;

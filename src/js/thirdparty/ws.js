@@ -1565,7 +1565,9 @@ class WebSocketServer extends EventEmitter {
     this.emit("headers", headers, request);
 
     const upgrade = () => {
-      if (socket.destroyed) return;
+      // The checks above, again: the responses ahead may have taken a while.
+      if (!socket.readable || !socket.writable) return socket.destroy();
+      if (this._state > RUNNING) return abortHandshake(socket, 503, undefined, undefined, request);
       if (
         server.upgrade(req, {
           data: ws[kBunInternals],

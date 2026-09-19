@@ -108,6 +108,12 @@ public:
      * truncate the response. Returns true after handing the close to uWS. */
     bool shutdownAfterResponseDrains();
 
+    /* A CONNECT/Upgrade tunnel whose connection still owes HTTP output: the
+     * send buffer of the responses ahead is not empty, or one of them is in
+     * the middle of a zero-copy write. The tunnel's bytes wait behind them
+     * (HttpContext::onWritable flushes the stream buffer once they are out). */
+    bool tunnelOwesHttpOutput();
+
     /* Switch the connection into CONNECT-style tunnel mode after an accepted
      * Upgrade: subsequent bytes bypass the HTTP parser and stream to the
      * ondata callback as opaque data. With afterBody, the switch is deferred

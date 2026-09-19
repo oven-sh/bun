@@ -214,6 +214,12 @@ pub trait Sink {
     fn highest_started_stream_id(&self) -> u32 {
         0
     }
+    /// Transition shim: returns true if the embedder already sent END_STREAM (or closed the
+    /// stream) on `stream_id`. The engine never sees that frame go out, so its HalfClosedRemote
+    /// entry for such a stream is really a closed stream.
+    fn is_local_half_closed(&self, _stream_id: u32) -> bool {
+        false
+    }
     /// Whether the embedder's reader for `stream_id` is currently consuming data. While it is
     /// paused, the stream's receive window is not replenished (mirrors node, where
     /// nghttp2_session_consume_stream is only called while the JS readable is flowing) so the
@@ -1665,6 +1671,15 @@ impl Connection {
             );
             return true;
         }
+        // §5.1.1 / §8.4: a server pushes on a client-initiated (odd) stream only.
+        if hdr.stream_id.is_multiple_of(2) {
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"PUSH_PROMISE: invalid stream_id",
+            );
+            return true;
+        }
         let mut off = 0usize;
         let mut end = payload.len();
         if wire::flags::has(hdr.flags, wire::flags::PADDED) {
@@ -1710,6 +1725,35 @@ impl Connection {
                 sink,
                 ErrorCode::ProtocolError,
                 b"PUSH_PROMISE invalid promised stream id",
+            );
+            return true;
+        }
+        // §6.6: the parent must be "open" or "half-closed (local)". nghttp2
+        // (nghttp2_session_on_push_promise_received) answers an idle parent with a connection
+        // PROTOCOL_ERROR and a parent whose remote half already ended with a connection error
+        // of type STREAM_CLOSED. A parent that is closed or closing on this side is left to the
+        // embedder, which refuses the promised stream with RST_STREAM(CANCEL) like nghttp2.
+        let parent_state = self.streams.get(&hdr.stream_id).map(|s| s.state);
+        let parent_started = matches!(parent_state, Some(s) if s != State::Idle)
+            || sink.is_local_stream(hdr.stream_id)
+            || hdr.stream_id <= self.last_stream_id
+            || hdr.stream_id <= sink.highest_started_stream_id();
+        if !parent_started {
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"PUSH_PROMISE: stream in idle",
+            );
+            return true;
+        }
+        if parent_state == Some(State::HalfClosedRemote)
+            && !sink.is_local_half_closed(hdr.stream_id)
+        {
+            self.local_connection_error(
+                sink,
+                ErrorCode::StreamClosed,
+                wire::lib_error::STREAM_CLOSED,
+                b"PUSH_PROMISE: stream closed",
             );
             return true;
         }
@@ -2274,10 +2318,14 @@ mod tests {
             Some(State::ReservedLocal)
         );
 
-        // Client receives it: on_push_promise(parent=1, promised=2) then the request headers.
+        // Client opened stream 1, then receives the push: on_push_promise(parent=1, promised=2)
+        // followed by the request headers.
         let csink = CaptureSink::default();
         let mut client = Connection::new(false, Settings::default());
         client.preface_received = wire::CONNECTION_PREFACE.len();
+        client.begin_header_block();
+        client.send_header_block(&csink, 1, false);
+        csink.out.borrow_mut().clear();
         let fed = client.receive(&csink, &bytes);
         assert!(!fed.fatal);
         assert_eq!(fed.consumed, bytes.len());
@@ -2310,6 +2358,92 @@ mod tests {
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
         assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+    }
+
+    /// A client engine with stream 1 open (HEADERS sent, `end_stream` decides the local half).
+    fn client_with_stream_1(sink: &CaptureSink, end_stream: bool) -> Connection {
+        let mut c = Connection::new(false, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        c.begin_header_block();
+        c.send_header_block(sink, 1, end_stream);
+        sink.out.borrow_mut().clear();
+        c
+    }
+
+    #[test]
+    fn client_rejects_push_promise_on_even_parent() {
+        let sink = CaptureSink::default();
+        let mut c = client_with_stream_1(&sink, false);
+        let f = frame(
+            FrameType::PushPromise,
+            wire::flags::END_HEADERS,
+            4,
+            &[0, 0, 0, 2],
+        );
+        let fed = c.receive(&sink, &f);
+        assert!(fed.fatal);
+        assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+        assert!(sink.pushes.borrow().is_empty());
+    }
+
+    #[test]
+    fn client_rejects_push_promise_on_idle_parent() {
+        let sink = CaptureSink::default();
+        let mut c = client_with_stream_1(&sink, false);
+        let f = frame(
+            FrameType::PushPromise,
+            wire::flags::END_HEADERS,
+            99,
+            &[0, 0, 0, 2],
+        );
+        let fed = c.receive(&sink, &f);
+        assert!(fed.fatal);
+        assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+        assert!(sink.pushes.borrow().is_empty());
+    }
+
+    #[test]
+    fn client_rejects_push_promise_on_half_closed_remote_parent() {
+        let sink = CaptureSink::default();
+        let mut c = client_with_stream_1(&sink, false);
+        // Response HEADERS with END_STREAM: [:status 200]. The request is still open locally.
+        let mut bytes = frame(
+            FrameType::Headers,
+            wire::flags::END_HEADERS | wire::flags::END_STREAM,
+            1,
+            &[0x88],
+        );
+        bytes.extend_from_slice(&frame(
+            FrameType::PushPromise,
+            wire::flags::END_HEADERS,
+            1,
+            &[0, 0, 0, 2],
+        ));
+        let fed = c.receive(&sink, &bytes);
+        assert!(fed.fatal);
+        assert_eq!(sink.local_error.get(), Some(wire::lib_error::STREAM_CLOSED));
+        assert!(sink.pushes.borrow().is_empty());
+    }
+
+    #[test]
+    fn client_accepts_push_promise_on_half_closed_local_parent() {
+        let sink = CaptureSink::default();
+        let mut c = client_with_stream_1(&sink, true);
+        let mut bytes = frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &[0x88]);
+        bytes.extend_from_slice(&frame(
+            FrameType::PushPromise,
+            wire::flags::END_HEADERS,
+            1,
+            &[0, 0, 0, 2],
+        ));
+        let fed = c.receive(&sink, &bytes);
+        assert!(!fed.fatal);
+        assert_eq!(sink.local_error.get(), None);
+        assert_eq!(*sink.pushes.borrow(), vec![(1, 2)]);
+        assert_eq!(
+            c.streams.get(&2).map(|s| s.state),
+            Some(State::ReservedRemote)
+        );
     }
 
     #[test]

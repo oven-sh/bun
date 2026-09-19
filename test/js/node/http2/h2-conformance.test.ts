@@ -798,6 +798,59 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       raw.close();
     }
   });
+
+  // RFC 9113 §6.6: a PUSH_PROMISE on a stream that is neither "open" nor "half-closed (local)" is
+  // a connection error. nghttp2_session_on_push_promise_received reports an even or idle parent
+  // as PROTOCOL_ERROR and a half-closed (remote) parent as STREAM_CLOSED:
+  // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4572-L4632
+  test.each([
+    ["even", 4, false, ErrorCode.PROTOCOL_ERROR, "Protocol error"],
+    ["idle", 99, false, ErrorCode.PROTOCOL_ERROR, "Protocol error"],
+    ["half-closed (remote)", 1, true, ErrorCode.STREAM_CLOSED, "Stream was already closed or invalid"],
+  ])(
+    "a PUSH_PROMISE whose parent stream is %s is a connection error",
+    async (_, parent, endResponse, goawayCode, message) => {
+      const raw = await RawH2Server.listen();
+      const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+      const sessionError = Promise.withResolvers<Error & { code?: string }>();
+      client.on("error", sessionError.resolve);
+      let pushedStreams = 0;
+      client.on("stream", pushed => {
+        pushedStreams++;
+        pushed.on("error", () => {});
+      });
+      try {
+        // A POST keeps the request stream open on our side, so END_STREAM from the server leaves
+        // it half-closed (remote) rather than closed.
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        req.on("error", () => {});
+        await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+        const promised = Buffer.alloc(4);
+        promised.writeUInt32BE(2, 0);
+        // [:method GET, :scheme http, :path /, :authority localhost]
+        const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
+        raw.socket!.write(
+          Buffer.concat([
+            encodeFrame(FrameType.SETTINGS, 0, 0),
+            encodeFrame(FrameType.SETTINGS, 0x1 /* ACK */, 0),
+            // Response HEADERS on stream 1: [:status 200]
+            encodeFrame(FrameType.HEADERS, endResponse ? 0x5 : 0x4, 1, Buffer.from([0x88])),
+            encodeFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, parent, Buffer.concat([promised, block])),
+            encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 2, Buffer.from([0x88])),
+            encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 2, Buffer.from("pushed")),
+          ]),
+        );
+        const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+        expect(goawayErrorCode(goaway)).toBe(goawayCode);
+        const err = await sessionError.promise;
+        expect([err.code, err.message]).toEqual(["ERR_HTTP2_ERROR", message]);
+        expect(pushedStreams).toBe(0);
+      } finally {
+        client.destroy();
+        raw.close();
+      }
+    },
+  );
 });
 
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {

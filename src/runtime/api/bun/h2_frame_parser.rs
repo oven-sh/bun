@@ -3954,6 +3954,20 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         self.last_stream_id.get()
     }
 
+    fn is_local_half_closed(&self, stream_id: u32) -> bool {
+        match self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            Some(stream) => unsafe {
+                matches!(
+                    (*stream).state,
+                    StreamState::HALF_CLOSED_LOCAL | StreamState::CLOSED
+                )
+            },
+            // A stream the legacy map no longer holds finished its lifecycle: not half-open.
+            None => true,
+        }
+    }
+
     fn is_stream_reading(&self, stream_id: u32) -> bool {
         match self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists

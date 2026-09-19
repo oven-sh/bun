@@ -1377,12 +1377,20 @@ impl Connection {
                 discard = true;
             }
             Some(st) => {
-                if !stream::can_receive_data(st.state) {
-                    self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
+                let refused = if !stream::can_receive_data(st.state) {
+                    Some(ErrorCode::StreamClosed)
+                } else if !self.is_server && !st.recv_final_headers {
+                    // DATA ahead of the final response HEADERS: see handle_data.
+                    Some(ErrorCode::ProtocolError)
+                } else {
+                    None
+                };
+                if let Some(code) = refused {
+                    self.send_rst_stream(sink, hdr.stream_id, code);
                     if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
                         st2.state = State::Closed;
                     }
-                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                    sink.on_stream_reset(hdr.stream_id, code.as_u32());
                     discard = true;
                 } else {
                     st.recv_window.on_data(hdr.length as i64);
@@ -1515,6 +1523,12 @@ impl Connection {
             Some(s) => {
                 if !stream::can_receive_data(s.state) {
                     DataDecision::Rst(ErrorCode::StreamClosed)
+                } else if !self.is_server && !s.recv_final_headers {
+                    // RFC 9113 §8.1: a response starts with HEADERS, and a 1xx block is not the
+                    // response. DATA ahead of the final block is malformed (§8.1.1): a stream
+                    // error of type PROTOCOL_ERROR, as in the fetch() client (h2_client/dispatch.rs).
+                    // nghttp2 ends the whole session instead when no HEADERS arrived at all.
+                    DataDecision::Rst(ErrorCode::ProtocolError)
                 } else {
                     s.recv_window.on_data(consumed);
                     if s.recv_window.is_overflowed_with(recv_limit) {

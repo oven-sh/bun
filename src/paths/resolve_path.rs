@@ -1402,8 +1402,7 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
     join_abs_string_buf::<P>(cwd, &mut spill[..], parts)
 }
 
-/// Node's `path.resolve(cwd, path)`. Unlike [`join_abs_string_spill`] it drops
-/// a trailing separator, except on a filesystem root.
+/// Node's `path.resolve(cwd, path)`: [`join_abs_string_spill`] minus a trailing separator.
 pub fn resolve_spill<'a, P: PlatformT>(
     cwd: &'a [u8],
     spill: &'a mut Vec<u8>,

@@ -119,6 +119,14 @@ pub struct DirInfo {
     // ergonomics. If a write is ever added, retype to `Option<NonNull<_>>`.
     pub enclosing_package_json: Option<&'static PackageJSON>,
 
+    /// The nearest package.json in this directory or above it, with or without
+    /// a "name". The bundler takes the module type of a `.js`-like file in this
+    /// directory from its "type" (`finalize_result`), as esbuild does. The
+    /// lookup does not stop at a "node_modules" directory, so a package with no
+    /// package.json of its own gets the one above it. `enclosing_package_json`
+    /// skips a nameless package.json.
+    pub package_json_for_module_type: Option<&'static PackageJSON>,
+
     // `NonNull` (not `&'static`) so `enqueue_dependency_to_resolve` can write
     // `package_manager_package_id` back through it without a const→mut
     // provenance cast. Read via `.package_json_for_dependencies()`.
@@ -148,6 +156,7 @@ impl Default for DirInfo {
             package_json_for_browser_field: None,
             enclosing_tsconfig_json: None,
             enclosing_package_json: None,
+            package_json_for_module_type: None,
             package_json_for_dependencies: None,
             abs_path: b"",
             entries: Index::default(),
@@ -231,13 +240,10 @@ impl DirInfo {
     /// `unsafe` here. The `.data` map must only be probed/iterated while the
     /// lock is held; use [`get_entry`](Self::get_entry) for one-shot lookups.
     pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance()
+        fs::FileSystem::instance()
             .fs
-            .entries_at_locked(self.entries, generation)?;
-        match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(&**entries),
-            fs::EntriesOption::Err(_) => None,
-        }
+            .entries_at_locked(self.entries, generation)?
+            .as_entries()
     }
 
     /// Generation-checked lookup of one basename in this directory's cached
@@ -257,13 +263,9 @@ impl DirInfo {
         // `MutexGuard` stores the mutex by raw pointer, so holding it does not
         // keep `rfs` borrowed.
         let _lock = rfs.entries_mutex.lock_guard();
-        match rfs.entries_at_locked(self.entries, generation)? {
-            fs::EntriesOption::Entries(entries) => {
-                let entries: &'static fs::DirEntry = entries;
-                entries.get(query)
-            }
-            fs::EntriesOption::Err(_) => None,
-        }
+        rfs.entries_at_locked(self.entries, generation)?
+            .as_entries()?
+            .get(query)
     }
 
     /// As-cached listing access with no generation check and no locking.
@@ -271,14 +273,11 @@ impl DirInfo {
     /// `.data` map must only be probed/iterated while `entries_mutex` is held
     /// (a concurrent stale-generation re-read rewrites it in place).
     pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        let entries_ptr = fs::FileSystem::instance()
+        fs::FileSystem::instance()
             .fs
             .entries
-            .at_index(self.entries)?;
-        match entries_ptr {
-            fs::EntriesOption::Entries(entries) => Some(&**entries),
-            fs::EntriesOption::Err(_) => None,
-        }
+            .at_index(self.entries)?
+            .as_entries()
     }
 
     #[inline]

@@ -15,7 +15,7 @@
 //!
 //! **Adding a variant** (do all four):
 //!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
-//!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..) }`;
+//!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..); unsafe fn context(..) }`;
 //!   3. a `run_task` arm and a `release_task_unrun` arm here;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
@@ -206,7 +206,7 @@ pub(crate) fn run_task(
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
             // its `Completion`; the erased entry runs `then` and frees it.
-            unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) }?;
+            unsafe { bun_jsc::job::complete_erased(task.ptr, global) }?;
         }
         task_tag::SendQueueDeferred => {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
@@ -253,23 +253,12 @@ pub(crate) fn run_task(
             };
             holder.run()?;
         }
-        task_tag::FileResponseStreamEof => {
-            let stream = cast_ptr!(crate::server::FileResponseStream);
-            // SAFETY: tag identifies pointee; `on_read_chunk` took a ref for
-            // this task at enqueue time which this guard adopts.
-            let _pin =
-                unsafe { bun_ptr::ScopedRef::<crate::server::FileResponseStream>::adopt(stream) };
-            // SAFETY: `stream` is live for this call (pinned above).
-            unsafe { (*stream).on_reader_done() };
-        }
         task_tag::DuplexUpgradeContext => {
-            // SAFETY: tag identifies pointee; `run_event` may free the context,
-            // so it takes the raw pointer (no `&mut` at this boundary).
-            unsafe {
-                crate::socket::DuplexUpgradeContext::run_event(cast_ptr!(
-                    crate::socket::DuplexUpgradeContext
-                ))
-            };
+            // SAFETY: tag identifies pointee; the queue owns the live context
+            // until `run_event` (which may free it).
+            crate::socket::DuplexUpgradeContext::run_event(unsafe {
+                bun_ptr::ThisPtr::new(cast_ptr!(crate::socket::DuplexUpgradeContext))
+            });
         }
         #[cfg(windows)]
         task_tag::WindowsNamedPipeContext => {
@@ -600,7 +589,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 62,
+    task_tag::COUNT == 61,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -622,6 +611,26 @@ pub(crate) fn tick_queue_with_count(
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
+        // A task continues what the script of some context started: it runs inside that context
+        // (what it opens next, and the script it calls, are that context's), and once that context
+        // has stopped it is released unrun. Not live either: the context of a file
+        // `bun test --isolate` has since retired (the swap was that file's exit), and any context
+        // once the VM was asked to stop (a parent's terminate() while the worker still ticks).
+        let _context = match task.context() {
+            bun_event_loop::ContextId::NONE => None,
+            context => {
+                let vm = global.bun_vm();
+                let entered = vm.enter_context(context);
+                if !(vm.script_allowed() && vm.is_context_live(context)) {
+                    __bun_release_task_unrun(task);
+                    if global.has_exception() {
+                        report_error_or_terminate(global, bun_jsc::JsError::Thrown)?;
+                    }
+                    continue;
+                }
+                Some(entered)
+            }
+        };
         match run_task(task, el, vm, global) {
             Ok(RunTaskResult::Continue) => {}
             Ok(RunTaskResult::EarlyReturn) => {
@@ -1139,7 +1148,8 @@ pub(crate) unsafe fn __bun_fire_timer(
         }
         EventLoopTimerTag::CronJob => {
             let c: *mut CronJob = owner!(CronJob, event_loop_timer);
-            CronJob::on_timer_fire(c, VirtualMachine::get());
+            // SAFETY: a scheduled job's JS wrapper keeps it alive; `t` was just popped.
+            CronJob::on_timer_fire(unsafe { bun_ptr::ThisPtr::new(c) }, VirtualMachine::get());
             Ok(())
         }
         EventLoopTimerTag::QuicEndpoint => {
@@ -1250,7 +1260,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FetchTaskletPromiseSettle => {
             release!(crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle)
         }
-        task_tag::FileResponseStreamEof => release!(crate::server::FileResponseStream),
         task_tag::FSWatchTask => release!(FSWatchTask),
         task_tag::HotReloadTask => release!(hot_reloader::HotReloadTask),
         task_tag::WatchReloadTask => release!(hot_reloader::WatchReloadTask),

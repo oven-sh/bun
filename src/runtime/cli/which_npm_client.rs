@@ -16,9 +16,3 @@ impl Tag {
         }
     }
 }
-
-impl From<Tag> for &'static str {
-    fn from(t: Tag) -> &'static str {
-        t.as_str()
-    }
-}

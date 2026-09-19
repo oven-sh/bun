@@ -2,13 +2,16 @@
 // The client portions (Agent, request, get) are a port of Node.js's lib/https.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js
 const http = require("node:http");
-const tls = require("node:tls");
-const { isIP } = require("node:net");
-const net = require("node:net");
+const { isIP } = require("internal/net/isIP");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
-const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const {
+  kProxyConfig,
+  checkShouldUseProxy,
+  kWaitForProxyTunnel,
+  kPerRequestCheckServerIdentity,
+} = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
 const ArrayPrototypeShift = Array.prototype.shift;
@@ -186,11 +189,11 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
         $debug("Propagate free event from tunneled socket to tunnel socket");
         socket.emit("free");
       }
-      tunneledSocket = tls.connect(requestOptions, onTLSHandshakeSuccess);
+      tunneledSocket = require("node:tls").connect(requestOptions, onTLSHandshakeSuccess);
       tunneledSocket.on("free", onTunneledSocketFree);
       tunneledSocket.on("error", onTLSHandshakeError);
       const agentKey = requestOptions._agentKey;
-      if (agentKey) {
+      if (agentKey && !requestOptions[kPerRequestCheckServerIdentity]) {
         // The tunneled socket carries the TLS session with the target; cache
         // it (and evict on close) under the target's agent key.
         tunneledSocket.on("session", onSocketSession.bind(agent, agentKey));
@@ -259,7 +262,8 @@ function createConnection(...args) {
   $debug("https createConnection", options);
 
   const agentKey = options._agentKey;
-  if (agentKey) {
+  const reuseSession = agentKey && !options[kPerRequestCheckServerIdentity];
+  if (reuseSession) {
     const session = this._getSession(agentKey);
     if (session) {
       $debug("reuse session for %j", agentKey);
@@ -274,7 +278,7 @@ function createConnection(...args) {
   const tunnelConfig = getTunnelConfigForProxiedHttps(this, options);
 
   if (tunnelConfig === null) {
-    socket = tls.connect(options);
+    socket = require("node:tls").connect(options);
   } else {
     const connectOptions = {
       ...this[kProxyConfig].proxyConnectionOptions,
@@ -314,9 +318,9 @@ function createConnection(...args) {
       establishTunnel(agent, socket, options, tunnelConfig, cleanupAndPropagate);
     }
     if (this[kProxyConfig].protocol === "http:") {
-      socket = net.connect(connectOptions, onProxyConnection);
+      socket = require("node:net").connect(connectOptions, onProxyConnection);
     } else {
-      socket = tls.connect(connectOptions, onProxyConnection);
+      socket = require("node:tls").connect(connectOptions, onProxyConnection);
     }
 
     socket.on("error", onError);
@@ -326,7 +330,7 @@ function createConnection(...args) {
     socket[kWaitForProxyTunnel] = true;
   }
 
-  if (agentKey && tunnelConfig === null) {
+  if (reuseSession && tunnelConfig === null) {
     // Cache new session for reuse. On the proxy-tunnel path `socket` is the
     // connection to the proxy, not the target - establishTunnel attaches
     // these listeners to the tunneled target socket instead, so the proxy's
@@ -457,6 +461,9 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   name += ":";
   if (privateKeyEngine) name += privateKeyEngine;
 
+  const perRequestCheckServerIdentity = options[kPerRequestCheckServerIdentity];
+  if (perRequestCheckServerIdentity) name += `:${perRequestCheckServerIdentity}`;
+
   return name;
 };
 
@@ -519,7 +526,7 @@ function createServer(options, requestListener) {
   const server = http.createServer(options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
-    tls.convertALPNProtocols(optionsALPNProtocols, server);
+    require("node:tls").convertALPNProtocols(optionsALPNProtocols, server);
   }
   server.ALPNCallback = options.ALPNCallback;
   return server;

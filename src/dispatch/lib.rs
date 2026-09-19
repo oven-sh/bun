@@ -145,6 +145,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
     let variants = &variants;
     let methods = &methods;
     let kind = format_ident!("{}Kind", name);
+    let owner_trait = format_ident!("{}Owner", name);
     let impl_macro = format_ident!("link_impl_{}", name);
 
     // ── per-method type aliases ──
@@ -267,10 +268,7 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             })
             .collect();
 
-        quote! {
-            ( #v for $T:ty => | $th:ident | {
-                #( #mn ( #( #an_mv:ident ),* ) => #e_mv:expr , )*
-            } ) => {
+        let body = quote! {
                 const _: () = {
                     #(
                         #[unsafe(no_mangle)]
@@ -290,6 +288,24 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
                         }
                     )*
                 };
+        };
+        quote! {
+            // `for extern T`: `T` is foreign to the impl crate, so the
+            // `Owner` impl (orphan rule) is skipped; such owners construct the
+            // handle with `new(kind, ptr)`.
+            ( #v for extern $T:ty => | $th:ident | {
+                #( #mn ( #( #an_mv:ident ),* ) => #e_mv:expr , )*
+            } ) => {
+                #body
+            };
+            ( #v for $T:ty => | $th:ident | {
+                #( #mn ( #( #an_mv:ident ),* ) => #e_mv:expr , )*
+            } ) => {
+                // SAFETY: this macro invocation is what links the variant to `$T`.
+                unsafe impl $crate::#owner_trait for $T {
+                    const KIND: $crate::#kind = $crate::#kind::#v;
+                }
+                #body
             };
         }
     });
@@ -305,7 +321,26 @@ pub fn link_interface(input: TokenStream) -> TokenStream {
             pub owner: *mut (),
         }
 
+        /// Implemented by `link_impl_*!` for the type each variant dispatches
+        /// to, so generic code can name the variant for `T` as `T::KIND`.
+        ///
+        /// # Safety
+        /// `KIND`'s `link_impl_*!` must name `Self` (the dispatch casts the
+        /// owner pointer back to that type). Only the macro implements this.
+        #vis unsafe trait #owner_trait {
+            const KIND: #kind;
+        }
+
         impl #name {
+            /// [`new`](Self::new) with the variant taken from `T`'s
+            /// `link_impl_*!` registration.
+            ///
+            /// SAFETY: `owner` must be live for every dispatch through the
+            /// returned handle.
+            #[inline]
+            pub unsafe fn of<T: #owner_trait>(owner: *mut T) -> Self {
+                Self { kind: T::KIND, owner: owner as *mut () }
+            }
             /// SAFETY: `owner` must be a live `*mut T` where `T` is the
             /// concrete type the `kind` variant's `link_impl_*!` was written
             /// for, and must remain live for every dispatch through the

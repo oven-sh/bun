@@ -246,21 +246,3 @@ fn write_string32(data: &[u8], w: &mut Writer) {
     _ = w.write_int_le::<u32>(u32::try_from(data.len()).expect("int cast"));
     w.extend_from_slice(data);
 }
-
-// fn writeJsValue(value: JSValue, global: *jsc.JSGlobalObject, w: *Writer) !void {
-//     if (value.isAggregateError(global)) {
-//         //
-//     }
-//     if (value.jsType() == .DOMWrapper) {
-//         if (value.as(bun.api.BuildMessage)) |build_error| {
-//             _ = build_error; // autofix
-//             //
-//         } else if (value.as(bun.api.ResolveMessage)) |resolve_error| {
-//             _ = resolve_error; // autofix
-//             @panic("TODO");
-//         }
-//     }
-//     _ = w; // autofix
-//
-//     @panic("TODO");
-// }

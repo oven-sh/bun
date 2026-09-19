@@ -1,16 +1,17 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
-use core::ptr;
 
 use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
+use crate::response::Response;
 use crate::socket_context::BunSocketContextOptions;
 use crate::web_socket::c::uws_ws;
 use crate::{
-    ListenSocket as UwsListenSocket, Opcode, Request, SendStatus, WebSocketBehavior, us_socket_t,
-    uws_res,
+    AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus,
+    WebSocketBehavior, thunk, us_socket_t, uws_res,
 };
+use bun_ptr::ThisPtr;
 
 // This file provides Rust bindings for the uWebSockets App class.
 // It wraps the C API exposed in libuwsockets.cpp which provides a C interface
@@ -52,9 +53,6 @@ pub struct App<const SSL: bool> {
     _p: core::cell::UnsafeCell<[u8; 0]>,
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
-
-/// Legacy name alias.
-pub type NewApp<const SSL: bool> = App<SSL>;
 
 /// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
 /// verb. Bodies are byte-identical modulo the C symbol — see `uws_app_get` &co
@@ -226,6 +224,51 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
+    /// [`method`](Self::method) with an intrusively-refcounted `U` as the
+    /// route userdata. The registrant keeps a ref on `this` for as long as the
+    /// route is registered, so the trampoline can hand the handler a `ThisPtr`.
+    pub fn method_this<U: 'static, H>(
+        &mut self,
+        method_: Method,
+        pattern: &[u8],
+        _handler: H,
+        this: ThisPtr<U>,
+    ) where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        self.method(
+            method_,
+            pattern,
+            Some(Self::route_this_thunk::<U, H>),
+            this.as_ptr().cast(),
+        );
+    }
+
+    /// [`any`](Self::any) counterpart of [`method_this`](Self::method_this).
+    pub fn any_this<U: 'static, H>(&mut self, pattern: &[u8], _handler: H, this: ThisPtr<U>)
+    where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        self.any(
+            pattern,
+            Some(Self::route_this_thunk::<U, H>),
+            this.as_ptr().cast(),
+        );
+    }
+
+    extern "C" fn route_this_thunk<U: 'static, H>(
+        resp: *mut uws_res,
+        req: *mut Request,
+        user_data: *mut c_void,
+    ) where
+        H: Fn(ThisPtr<U>, AnyRequest, AnyResponse) + Copy + 'static,
+    {
+        let resp = Response::<SSL>::res_to_any(resp);
+        // SAFETY: `user_data` is the `ThisPtr` registered with this thunk; the registrant holds a ref on it while the route is registered.
+        let this = unsafe { ThisPtr::new(user_data.cast::<U>()) };
+        thunk::zst::<H>()(this, AnyRequest::H1(req), resp)
+    }
+
     pub fn domain(&mut self, pattern: &ZStr) {
         // SAFETY: pattern is NUL-terminated; self is a valid app.
         unsafe {
@@ -235,26 +278,6 @@ impl<const SSL: bool> App<SSL> {
                 pattern.as_ptr().cast(),
             )
         }
-    }
-
-    pub fn run(&mut self) {
-        c::uws_app_run(Self::SSL_FLAG, self.as_raw())
-    }
-
-    pub fn listen(
-        &mut self,
-        port: i32,
-        handler: extern "C" fn(*mut UwsListenSocket, *mut c_void),
-        user_data: *mut c_void,
-    ) {
-        // Callers supply the C-ABI shim directly (see the RouteHandler note above).
-        c::uws_app_listen(
-            Self::SSL_FLAG,
-            self.as_raw(),
-            port,
-            Some(handler),
-            user_data,
-        )
     }
 
     pub fn on_client_error(
@@ -581,17 +604,7 @@ pub mod c {
             handler: uws_method_handler,
             user_data: *mut c_void,
         );
-        pub(crate) safe fn uws_app_run(ssl: i32, app: &mut uws_app_t);
         pub(crate) fn uws_app_domain(ssl: i32, app: *mut uws_app_t, domain: *const c_char);
-        // safe: handle-only + value `port`; `handler`/`user_data` are stored
-        // opaquely — no preconditions on this call.
-        pub(crate) safe fn uws_app_listen(
-            ssl: i32,
-            app: &mut uws_app_t,
-            port: i32,
-            handler: uws_listen_handler,
-            user_data: *mut c_void,
-        );
         pub(crate) fn uws_app_listen_with_config(
             ssl: i32,
             app: *mut uws_app_t,
@@ -650,16 +663,5 @@ pub mod c {
         pub port: c_int,
         pub host: *const c_char,
         pub options: c_int,
-    }
-
-    impl uws_app_listen_config_t {
-        // Provide a required-port constructor instead of `Default` to avoid inventing port=0.
-        pub const fn new(port: c_int) -> Self {
-            Self {
-                port,
-                host: ptr::null(),
-                options: 0,
-            }
-        }
     }
 }

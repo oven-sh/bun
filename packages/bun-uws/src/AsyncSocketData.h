@@ -65,6 +65,13 @@ struct BackPressure {
         }
     }
 
+    /* erase() that keeps the allocation when fully drained, for buffers that
+     * refill every event (HTTP/2 connection output). */
+    void consume(size_t n) {
+        head += n;
+        if (head >= tail) head = tail = 0;
+    }
+
     void clear() {
         head = tail = 0;
         release();
@@ -158,6 +165,11 @@ struct AsyncSocketData {
      * across every open/close path (TLS sockets that RST before the handshake,
      * rejectUnauthorized failures, etc. never fire +1). */
     bool filteredOpen = false;
+    /* Whether it has fired the filter with +2 ("accepted": at TCP accept for
+     * both transports, i.e. before a TLS handshake); -2 balances it on the
+     * same paths that balance +1. A filter that must account for every socket
+     * that can still reach a handler counts these. */
+    bool filteredAccept = false;
 };
 
 }

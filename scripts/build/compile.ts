@@ -15,7 +15,6 @@ import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
 import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
-import { streamPath } from "./stream.ts";
 
 // ---------------------------------------------------------------------------
 // Rule registration — call once per Ninja instance
@@ -92,8 +91,8 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     pool: "compile",
   });
 
-  // ─── NASM assemble (Windows-x64 only) ───
-  // BoringSSL's win-x64 assembly is NASM syntax; clang can't assemble it.
+  // ─── NASM assemble (x64 only) ───
+  // BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD are NASM syntax; clang can't assemble it.
   // -MD writes a Make-style depfile; nasm 2.14+ supports it.
   if (cfg.nasm !== undefined) {
     n.rule("nasm", {
@@ -150,11 +149,9 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   });
 
   // ─── Link executable ───
-  // Uses response file because object lists get long (>32k args breaks on windows).
-  // console pool: link is inherently serial (one exe), takes 30s+ on large
-  // binaries, and lld prints useful progress (undefined symbol errors,
-  // --verbose timing). Streaming beats sitting at [N/N] wondering if it hung.
-  // stream.ts --console: passthrough + ninja Windows buffering fix — see stream.ts.
+  // Uses response file because object lists get long (>32k args breaks on
+  // windows). Not in the console pool: that pool has depth 1; lld's only
+  // output is diagnostics, which ninja shows when the edge finishes.
   //
   // Windows: -fuse-ld=lld forces lld-link (VS dev shell puts link.exe
   // first in PATH, clang-cl would default to it). /link separator —
@@ -175,15 +172,13 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
-  const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   n.rule("link", {
     command: cfg.windows
-      ? `${wrap} ${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
-      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
+      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
+      : `${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
-    pool: "console",
   });
 
   // ─── Static library archive ───
@@ -258,8 +253,9 @@ export function cc(n: Ninja, cfg: Config, src: string, opts: Omit<CompileOpts, "
 }
 
 /**
- * Assemble a NASM-syntax `.asm` file. Returns absolute path to the .obj
- * output. Windows-x64 only — gas-syntax `.S` goes through cc().
+ * Assemble a NASM-syntax `.asm` file (BoringSSL win-x64, libjpeg-turbo x86_64
+ * SIMD). Returns absolute path to the object output. gas-syntax `.S` goes
+ * through cc().
  */
 export function nasm(
   n: Ninja,
@@ -450,8 +446,10 @@ export interface LinkOpts {
    * Editing these should trigger relink (cmake's LINK_DEPENDS equivalent).
    */
   implicitInputs?: string[];
-  /** Output linker map to this path (for debugging symbol bloat). */
-  linkerMapOutput?: string | undefined;
+  /** Map files the link's flags make it write alongside the executable (flags.ts linkerMapOutputs). */
+  linkerMapOutputs?: string[];
+  /** Checks to run on the executable whenever it is linked (ninja validations): stamp paths of edges emitted elsewhere. */
+  validations?: string[];
 }
 
 /**
@@ -461,11 +459,8 @@ export interface LinkOpts {
 export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts: LinkOpts): string {
   const absOut = resolve(cfg.buildDir, out + cfg.exeSuffix);
 
-  // Linker map is an implicit output (ninja tracks it but not in $out)
-  const implicitOutputs: string[] = [];
-  if (opts.linkerMapOutput !== undefined) {
-    implicitOutputs.push(resolve(cfg.buildDir, opts.linkerMapOutput));
-  }
+  // Linker maps are implicit outputs (ninja tracks them but they're not in $out)
+  const implicitOutputs = (opts.linkerMapOutputs ?? []).map(map => resolve(cfg.buildDir, map));
 
   const node: BuildNode = {
     outputs: [absOut],
@@ -479,21 +474,29 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
   if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) {
     node.implicitInputs = opts.implicitInputs;
   }
+  // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)
+  // and does not create the directory; link-only and rust-and-link compile
+  // no objects, so nothing else would have made it.
+  if (cfg.windows) node.orderOnlyInputs = [objectDirStamp(cfg)];
+  if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);
 
   return absOut;
 }
 
 /**
- * Create a static library. Returns absolute path to output.
+ * Create a static library. Returns absolute path to output. `validations`:
+ * checks on the objects going in (forbidUndefined stamps) — run whenever the
+ * archive is made, without holding it up.
  */
-export function ar(n: Ninja, cfg: Config, out: string, objects: string[]): string {
+export function ar(n: Ninja, cfg: Config, out: string, objects: string[], validations: string[] = []): string {
   const absOut = resolve(cfg.buildDir, out);
 
   n.build({
     outputs: [absOut],
     rule: "ar",
     inputs: objects,
+    ...(validations.length > 0 ? { validations } : {}),
   });
 
   return absOut;
@@ -510,10 +513,11 @@ export function ar(n: Ninja, cfg: Config, out: string, objects: string[]): strin
  * `obj/src/jsc/bindings/foo.cpp.o`. Generated sources (codegen .cpp
  * files under buildDir) go under `obj/codegen/` to keep a single tree.
  *
- * Ninja does NOT auto-create parent directories of outputs. Directories
- * are created at configure time — each `cxx()`/`cc()` call tracks its
- * object's parent dir, and `createObjectDirs()` is called once at the end
- * of configure to mkdir the whole tree. Same approach as CMake, which
+ * Ninja creates the parent directory of every declared output before it
+ * runs an edge; configure additionally pre-creates the whole object tree
+ * (`mkdirAll()` at the end of configure) so the directories exist for
+ * tools that look before any edge ran (clangd reading
+ * compile_commands.json, for one). Same approach as CMake, which
  * pre-creates `CMakeFiles/<target>.dir/` during its generate step.
  */
 function objectPath(cfg: Config, src: string): string {

@@ -22,6 +22,9 @@ const messageTypes = {
 // Set once via initThreadInfo() when worker_threads.ts loads.
 let currentThreadId = 0;
 let isMainThread = true;
+// The intrinsic constructor from worker_threads' native binding, not
+// globalThis.MessageChannel, which user code can replace (#40268).
+let MessageChannel: typeof globalThis.MessageChannel;
 
 // Only populated on the main thread (the hub); always empty elsewhere.
 // SafeMap: its prototype is a frozen null-proto snapshot taken at bootstrap, so the
@@ -42,9 +45,10 @@ const WORKER_MESSAGING_RESULT_DELIVERED = 0;
 const WORKER_MESSAGING_RESULT_NO_LISTENERS = 1;
 const WORKER_MESSAGING_RESULT_LISTENER_ERROR = 2;
 
-function initThreadInfo(threadId: number, mainThread: boolean) {
+function initThreadInfo(threadId: number, mainThread: boolean, MessageChannelCtor: typeof globalThis.MessageChannel) {
   currentThreadId = threadId;
   isMainThread = mainThread;
+  MessageChannel = MessageChannelCtor;
 }
 
 // This event handler is always executed on the main thread only.
@@ -159,7 +163,7 @@ function receiveMessageFromWorker(source, value, memory) {
 // Bun half of Node's createMainThreadPort: create the channel linking a (future)
 // thread to the main thread. Called before `new Worker`.
 function createMessagingChannel() {
-  const { port1, port2 } = new globalThis.MessageChannel();
+  const { port1, port2 } = new MessageChannel();
   // port1 (portToMain) stays with the hub; port2 (portToWorker) is transferred to
   // the new thread where it becomes that thread's mainThreadPort.
   return { portToMain: port1, portToWorker: port2 };

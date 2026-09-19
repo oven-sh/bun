@@ -2946,8 +2946,7 @@ function tryClose(fd) {
   } catch {}
 }
 
-// node doSendFD: the fstat callback of respondWithFD() with a statCheck. The caller owns the
-// descriptor, so nothing here closes it.
+// node doSendFD: respondWithFD() with a statCheck, after fstat. The descriptor stays the caller's.
 function doSendFD(this: ServerHttp2Stream, options, fd, headers, err, stat) {
   if (err) {
     this.destroy(err);
@@ -2963,8 +2962,7 @@ function doSendFD(this: ServerHttp2Stream, options, fd, headers, err, stat) {
     offset: options.offset !== undefined ? options.offset : 0,
     length: options.length !== undefined ? options.length : -1,
   };
-  // statCheck cancels the response when it returns false. It can also send another response or
-  // close the stream itself, and HEADERS after that would be a connection error for the peer.
+  // statCheck can cancel the response (false), send another one, or close the stream.
   if (
     options.statCheck.$call(this, stat, headers, statOptions) === false ||
     this.headersSent ||
@@ -2977,8 +2975,7 @@ function doSendFD(this: ServerHttp2Stream, options, fd, headers, err, stat) {
   processRespondWithFD.$call(this, options, fd, headers, statOptions.offset, statOptions.length, false);
 }
 
-// node doSendFileFD: the fstat callback of respondWithFile(). The stream opened the descriptor, so
-// every terminal path closes it exactly once.
+// node doSendFileFD: respondWithFile() after fstat. Every exit closes the descriptor it opened.
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   if (err) {
@@ -3035,8 +3032,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // verify stat values, override or set headers, or even cancel the
   // response operation. If statCheck explicitly returns false, the
   // response is canceled. The user code may also send a separate type
-  // of response so check again for the HEADERS_SENT flag, or close the
-  // stream (see doSendFD).
+  // of response so check again for the HEADERS_SENT flag
   if (
     (typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false) ||
     this.headersSent ||
@@ -3060,8 +3056,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     }
     headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
-  // node: only a regular file is read at `offset`. Anything else (a FIFO, say) cannot seek and is
-  // read from its current position.
+  // Like node, anything but a regular file (a FIFO, say) is read from its current position.
   processRespondWithFD.$call(
     this,
     options,
@@ -3073,11 +3068,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   );
 }
 
-// node processRespondWithFD + startFilePipe. respondWithFD() without a statCheck calls this before
-// it returns, so `headersSent` is true for its caller; doSendFD and doSendFileFD call it after
-// fstat. `offset` and `length` are node's FileHandle arguments: read as integers (NaN is 0), a
-// negative offset reads from the descriptor's current position, a negative length reads to EOF.
-// `ownsFd`: the stream opened the descriptor (respondWithFile) and has to close it.
+// node processRespondWithFD + startFilePipe. offset < 0: the current position. length < 0: to EOF.
 function processRespondWithFD(
   this: ServerHttp2Stream,
   options,
@@ -3110,8 +3101,7 @@ function processRespondWithFD(
   length = Math.trunc(length) || 0;
   if (length === 0) {
     if (ownsFd) tryClose(fd);
-    // A tick later: respondWithFD() can get here before it returns, and a 'wantTrailers' listener
-    // that its caller adds next has to be there when _final looks for one.
+    // Next tick: _final has to see a 'wantTrailers' listener added right after respondWithFD().
     process.nextTick(() => {
       if (!this.destroyed && !this.closed) finishNativeStream(() => {});
     });
@@ -3123,16 +3113,14 @@ function processRespondWithFD(
   try {
     fileStream = fs.createReadStream(null, {
       fd: fd,
-      // An fd opened by respondWithFile is closed by its read stream once the transfer ends or
-      // fails; an fd handed to respondWithFD stays the caller's to close (node semantics).
+      // The read stream closes respondWithFile's fd. respondWithFD's stays the caller's (node).
       autoClose: ownsFd,
       start: offset < 0 ? undefined : offset,
       end: length < 0 ? undefined : Math.max(offset, 0) + length - 1,
       emitClose: false,
     });
   } catch {
-    // The headers are out, so a descriptor or a range that fs.createReadStream rejects (-1, an
-    // offset past 2**53) ends the stream the way a failed read does, as in node.
+    // The headers are out: an fd or range that createReadStream rejects ends like a failed read.
     if (ownsFd) tryClose(fd);
     onFileStreamError.$call(this);
     return;

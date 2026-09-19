@@ -3434,6 +3434,51 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
   });
 });
 
+it("req.upgrade is true inside shouldUpgradeCallback like Node.js", async () => {
+  // The parser flags the request as an upgrade before the server consults the
+  // callback, so the callback sees true whether it accepts or declines.
+  const seen: [string, string | undefined, unknown][] = [];
+  const server = createServer(
+    {
+      shouldUpgradeCallback: req => {
+        seen.push(["shouldUpgradeCallback", req.url, req.upgrade]);
+        return req.url === "/accept";
+      },
+    },
+    (req, res) => {
+      seen.push(["request", req.url, req.upgrade]);
+      res.writeHead(200, { Connection: "close" });
+      res.end("ok");
+    },
+  );
+  server.on("upgrade", (req, socket) => {
+    seen.push(["upgrade", req.url, req.upgrade]);
+    socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    for (const target of ["/accept", "/decline"]) {
+      const socket = connect(port, "127.0.0.1");
+      socket.resume();
+      socket.write(`GET ${target} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: upgrade\r\n\r\n`);
+      // The server closes the connection once it has answered.
+      await once(socket, "close");
+    }
+
+    expect(seen).toEqual([
+      ["shouldUpgradeCallback", "/accept", true],
+      ["upgrade", "/accept", true],
+      ["shouldUpgradeCallback", "/decline", true],
+      ["request", "/decline", false],
+    ]);
+  } finally {
+    server.close();
+  }
+});
+
 it("req.upgrade reflects the upgrade dispatch decision like Node.js", async () => {
   // true inside the 'upgrade' listener; false for an Upgrade-carrying request
   // that falls through to 'request' (no Connection: upgrade token here).

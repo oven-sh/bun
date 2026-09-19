@@ -66,21 +66,42 @@ describe("error messages", () => {
   });
 });
 
+const registry = new VerdaccioRegistry();
+
+beforeAll(async () => {
+  await registry.start();
+});
+
+afterAll(() => {
+  registry.stop();
+});
+
+// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`, so every project gets a
+// cache of its own. Concurrent tests that install the same tarball spec replace each other's `@T@<hash>` folder on
+// Windows, and the global store is `<cache>/links/`.
+async function runBun(cwd: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+async function install(cwd: string) {
+  const { stderr, exitCode } = await runBun(cwd, "install");
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+}
+
 // `bun patch` identifies packages by `name@label`, where a tarball package's label is
 // the spec it was installed from. These labels used to be formatted into 1024 byte
 // stack buffers (512 bytes in the installer itself), so a long enough spec crashed
 // every command that formatted it.
 describe("packages whose label is longer than 1024 bytes", () => {
-  const registry = new VerdaccioRegistry();
-
-  beforeAll(async () => {
-    await registry.start();
-  });
-
-  afterAll(() => {
-    registry.stop();
-  });
-
   // `x/../` normalizes away, so the tarball still lives at a short path that is valid
   // on every platform while the recorded spec stays long.
   const longSpec = (tarball: string) => `./${Buffer.alloc(1050, "x/../").toString()}${tarball}`;
@@ -94,26 +115,6 @@ describe("packages whose label is longer than 1024 bytes", () => {
       },
     });
     return packageDir;
-  }
-
-  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`. Two of these concurrent
-  // tests install the same tarball spec; sharing one cache, they replace each other's `@T@<hash>` folder on Windows.
-  async function runBun(cwd: string, ...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  async function install(cwd: string) {
-    const { stderr, exitCode } = await runBun(cwd, "install");
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
   }
 
   test.concurrent("bun patch <name>@<label>", async () => {
@@ -1059,39 +1060,9 @@ module.exports = function isOdd() {
 });
 
 // `bun patch` replaces the package folder with a copy from the cache. Above that folder it may
-// replace one symlink only: the isolated linker's `node_modules/.bun/<storepath>` link into the
-// global store. It used to replace the first symlink it found on the way up, whatever that was.
+// replace one link only: the isolated linker's `node_modules/.bun/<storepath>` link into the
+// global store, which all projects share.
 describe.concurrent("bun patch and the symlinks above the package folder", () => {
-  const registry = new VerdaccioRegistry();
-
-  beforeAll(async () => {
-    await registry.start();
-  });
-
-  afterAll(() => {
-    registry.stop();
-  });
-
-  // The global store is `<cache>/links/`. CI exports BUN_INSTALL_CACHE_DIR, which overrides the
-  // harness bunfig's per-test `cache`, so every project here gets a cache of its own.
-  async function runBun(cwd: string, ...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd,
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  async function install(cwd: string) {
-    const { stderr, exitCode } = await runBun(cwd, "install");
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
-  }
-
   const isLink = (...path: string[]) => lstatSync(join(...path)).isSymbolicLink();
 
   describe.each([
@@ -1149,44 +1120,72 @@ describe.concurrent("bun patch and the symlinks above the package folder", () =>
       expect(stdout).toBe("edited copy\n");
       expect(exitCode).toBe(0);
     });
+  });
 
-    test("keeps the link of a dependency above a nested dependency", async () => {
-      // The root takes no-deps@2.0.0, so the no-deps@1.1.0 of two-range-deps is at
-      // node_modules/two-range-deps/node_modules/no-deps. With the isolated linker,
-      // node_modules/two-range-deps is a link into node_modules/.bun.
-      const { packageDir } = await registry.createTestDir({
-        bunfigOpts,
-        files: {
-          "package.json": JSON.stringify({
-            name: "root",
-            dependencies: { "no-deps": "2.0.0", "two-range-deps": "1.0.0" },
-          }),
-        },
-      });
-
-      await install(packageDir);
-      const wasLink = isLink(packageDir, "node_modules", "two-range-deps");
-      expect(wasLink).toBe(bunfigOpts.linker === "isolated");
-
-      for (const run of [1, 2]) {
-        const { stderr, exitCode } = await runBun(packageDir, "patch", "no-deps@1.1.0");
-        expect(stderr).not.toContain("error:");
-        expect(exitCode).toBe(0);
-        expect({ run, dependencyIsLink: isLink(packageDir, "node_modules", "two-range-deps") }).toEqual({
-          run,
-          dependencyIsLink: wasLink,
-        });
-      }
-
-      const { stdout, stderr, exitCode } = await runBun(
-        packageDir,
-        "-e",
-        `console.log(require("two-range-deps/package.json").version)`,
-      );
-      expect(stderr).toBe("");
-      expect(stdout).toBe("1.0.0\n");
-      expect(exitCode).toBe(0);
+  // The root takes no-deps@2.0.0, so the no-deps@1.1.0 of two-range-deps is at
+  // node_modules/two-range-deps/node_modules/no-deps. With the isolated linker,
+  // node_modules/two-range-deps is a link into node_modules/.bun/two-range-deps@1.0.0.
+  async function installNestedUnderDependency(globalStore: boolean) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          dependencies: { "no-deps": "2.0.0", "two-range-deps": "1.0.0" },
+        }),
+      },
     });
+    await install(packageDir);
+    expect(isLink(packageDir, "node_modules", "two-range-deps")).toBe(true);
+    return packageDir;
+  }
+
+  async function expectTwoRangeDepsLoads(packageDir: string) {
+    const { stdout, stderr, exitCode } = await runBun(
+      packageDir,
+      "-e",
+      `console.log(require("two-range-deps/package.json").version)`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1.0.0\n");
+    expect(exitCode).toBe(0);
+  }
+
+  test("isolated linker: keeps the link of a dependency above a nested dependency", async () => {
+    const packageDir = await installNestedUnderDependency(false);
+
+    // The second run finds the copy of the first run below the link.
+    for (const run of [1, 2]) {
+      const { stderr, exitCode } = await runBun(packageDir, "patch", "no-deps@1.1.0");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect({ run, dependencyIsLink: isLink(packageDir, "node_modules", "two-range-deps") }).toEqual({
+        run,
+        dependencyIsLink: true,
+      });
+    }
+
+    await expectTwoRangeDepsLoads(packageDir);
+  });
+
+  // Here node_modules/two-range-deps resolves into the shared entry, and the path has no
+  // node_modules/.bun/<storepath> part that `bun patch` can replace.
+  test("isolated linker with the global store: refuses a package folder that resolves into a shared entry", async () => {
+    const packageDir = await installNestedUnderDependency(true);
+    const entry = join(packageDir, "node_modules", ".bun", "two-range-deps@1.0.0");
+    expect(isLink(entry)).toBe(true);
+    const shared = join(readlinkSync(entry), "node_modules", "two-range-deps");
+    const before = readdirSync(shared).sort();
+
+    const { stderr, exitCode } = await runBun(packageDir, "patch", "no-deps@1.1.0");
+    expect(stderr).toContain(
+      `error: "node_modules/two-range-deps/node_modules/no-deps" resolves into the global store`,
+    );
+    expect(exitCode).toBe(1);
+
+    expect(isLink(packageDir, "node_modules", "two-range-deps")).toBe(true);
+    expect(readdirSync(shared).sort()).toEqual(before);
+    await expectTwoRangeDepsLoads(packageDir);
   });
 
   test("keeps a symlinked node_modules folder", async () => {
@@ -1201,6 +1200,8 @@ describe.concurrent("bun patch and the symlinks above the package folder", () =>
 
     await install(packageDir);
     expect(isLink(packageDir, "node_modules")).toBe(true);
+    // The copy replaces the folder, so a file that the package does not have is gone afterwards.
+    await Bun.write(join(packageDir, "real-node-modules", "no-deps", "not-in-the-package.txt"), "");
 
     const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", "no-deps");
     expect(stderr).not.toContain("error:");
@@ -1208,10 +1209,7 @@ describe.concurrent("bun patch and the symlinks above the package folder", () =>
     expect(exitCode).toBe(0);
 
     expect(isLink(packageDir, "node_modules")).toBe(true);
-    expect(await Bun.file(join(packageDir, "real-node-modules", "no-deps", "package.json")).json()).toEqual({
-      name: "no-deps",
-      version: "1.0.0",
-    });
+    expect(readdirSync(join(packageDir, "real-node-modules", "no-deps")).sort()).toEqual(["index.js", "package.json"]);
   });
 
   // A path through node_modules/.bun/<storepath> reaches into the shared entry. In the entry of

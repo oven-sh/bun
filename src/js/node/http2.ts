@@ -3208,18 +3208,18 @@ class ServerHttp2Stream extends Http2Stream {
         throw $ERR_HTTP2_PUSH_DISABLED();
       }
     }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    // RFC 9113 §8.4: a pushed (even-id) stream cannot itself initiate a push.
+    // RFC 9113 §8.4: a pushed (even-id) stream cannot itself initiate a push. node reads
+    // pushAllowed first. Here a pushed stream is `closed` as soon as its last DATA frame settles
+    // (see _final), a point where node still throws ERR_HTTP2_NESTED_PUSH, so this check leads.
     if ((this.id & 1) === 0) {
-      const err = new Error("A push stream cannot initiate another push stream.");
-      err.code = "ERR_HTTP2_NESTED_PUSH";
-      throw err;
+      throw $ERR_HTTP2_NESTED_PUSH();
     }
     if (!this.pushAllowed) {
       throw $ERR_HTTP2_PUSH_DISABLED();
     }
+    // node validates callback after the checks above, so a disabled or a nested push wins.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2902-L2918
+    validateFunction(callback, "callback");
     const session = this[bunHTTP2Session];
     const parser = session?.[bunHTTP2Native];
     if (!parser) {

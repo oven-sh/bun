@@ -362,5 +362,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_COMMAND", Error],
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
   ["ERR_FFI_CC_DISABLED", Error],
+  ["ERR_HTTP2_NESTED_PUSH", Error],
 ];
 export default errors;

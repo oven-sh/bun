@@ -1493,6 +1493,7 @@ function getNodeHTTPServerSocket() {
     _paused = false;
     #pendingCallback = null;
     #pendingAbortMessage;
+    #closeHandled = false;
     constructor(server: Server, handle, encrypted) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
       // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
@@ -1608,6 +1609,9 @@ function getNodeHTTPServerSocket() {
       handle.close();
     }
     #onClose() {
+      // Once: a queued response's abort can destroy the socket, and run this, before the native close calls it.
+      if (this.#closeHandled) return;
+      this.#closeHandled = true;
       // freeParser equivalent: runs before 'close' listeners so they observe the
       // released parser (free() invoked, kOnTimeout nulled).
       releaseServerParserShim(this);

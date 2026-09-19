@@ -805,9 +805,12 @@ private:
                  * moves nothing (EPIPE) means the peer is gone and this would
                  * otherwise spin the writable dispatch until idle timeout.
                  * Except on libuv, where a stale SEND completion can move
-                 * nothing on a healthy socket; there the kernel is asked. */
+                 * nothing on a healthy socket; there the kernel is asked.
+                 * The same holds while node:http paused reads behind these
+                 * bytes: the loop parks a paused socket on the peer's hangup
+                 * until it resumes, and that pause only lifts once they drain. */
                 if (flushed == 0
-                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
+                    && (httpResponseData->state & (HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN | HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED))
                     && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
                     return asyncSocket->close();
                 }

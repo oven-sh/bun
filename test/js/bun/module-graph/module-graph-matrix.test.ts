@@ -421,9 +421,6 @@ describe("ModuleGraph matrix: hot code across instances", () => {
       export const identity = { C, obj };`,
   });
   const N = 20_000; // enough for baseline+DFG on release builds; correctness does not depend on tiering
-  // The 60 s timeouts here and in section 5b are for debug builds. The code the instances share cannot
-  // cache a read through a namespace object (that cache is per object), so each `ns.x` in a loop is a
-  // call into C++: about 12 µs on a debug build, up to 16 s for one test.
   for (const order of ["hotFirstThenOthers", "allCreatedThenHot", "interleaved", "othersFirstThenHot"] as const) {
     for (const count of [2, 3, 4]) {
       test(`${order} × ${count} instances`, async () => {
@@ -510,7 +507,7 @@ describe("ModuleGraph matrix: hot code across instances", () => {
           crossIdentity: { classesDistinct: count, instanceofAcross: false, objDistinct: count },
         });
         for (const g of graphs) g.dispose();
-      }, 60_000);
+      });
     }
   }
   // Once a second instance exists, the optimized code the instances share is instance-generic: creating
@@ -559,7 +556,7 @@ describe("ModuleGraph matrix: hot code across instances", () => {
         firstTwo: [`${whos[0]}:0|K:${whos[0]}`, `${whos[1]}:0|K:${whos[1]}`],
       });
       for (const g of graphs) g.dispose();
-    }, 60_000);
+    });
   }
 
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -908,7 +905,7 @@ describe("ModuleGraph matrix: dependency edits and code deletion between instanc
           again: sequence.map(v => expectedFor(v)),
         });
         for (const g of graphs) g.dispose();
-      }, 60_000);
+      });
     }
   }
 

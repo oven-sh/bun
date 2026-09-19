@@ -1,6 +1,6 @@
 // Give http2.connect() an options.settings value it cannot use, over each kind of socket, and
-// report what the caller observes. node-http2.test.js runs this in-process under Bun and as a
-// script under Node.js: both must report the same outcomes.
+// report what the caller observes. node-http2-connect-settings.test.ts runs the groups in-process
+// under Bun and runs this file as a script under Node.js: both must report the same outcomes.
 const http2 = require("node:http2");
 const net = require("node:net");
 const { once } = require("node:events");
@@ -61,67 +61,84 @@ function observeClosedIdle(url, options, destroyedRequest) {
   return new Promise(resolve => client.on("close", () => resolve({ errors })));
 }
 
-async function observeConnectSettings(tlsOptions) {
-  const plain = http2.createServer();
-  const secure = http2.createSecureServer(tlsOptions);
-  try {
-    await Promise.all([serve(plain), serve(secure)]);
-    const port = plain.address().port;
-    const plainUrl = `http://127.0.0.1:${port}`;
-    const secureUrl = `https://127.0.0.1:${secure.address().port}`;
-    const invalid = { initialWindowSize: -1 };
-    const connectPlain = () => net.connect(port, "127.0.0.1");
-
-    // This connect() uses a socket that this function owns. If it throws, the socket is
-    // destroyed and the other cases do not run. A connect() that throws after it made its own
-    // socket leaves that socket connecting, and this process has no way to get rid of it.
-    const connecting = connectPlain();
-    const outcomes = {
-      "connecting socket": observe(plainUrl, { settings: invalid, createConnection: () => connecting }),
-    };
-    if (outcomes["connecting socket"].thrown) {
-      connecting.destroy();
-      return outcomes;
-    }
-
-    // A stream that is not connecting counts as connected: connect() sets the session up inline.
-    const connected = new Duplex({
-      read() {},
-      write(chunk, encoding, callback) {
-        callback();
-      },
-    });
-    outcomes["connected socket"] = observe(plainUrl, { settings: invalid, createConnection: () => connected });
-    connected.destroy();
-
-    // Every connect() below starts before the first of them settles.
-    Object.assign(outcomes, {
-      "http null": observe(plainUrl, { settings: null }),
-      "http array": observe(plainUrl, { settings: [] }),
-      "http invalid": observe(plainUrl, { settings: invalid }),
-      "http invalid, closed with a request pending": observe(plainUrl, { settings: invalid }, true),
-      "http invalid, closed with nothing pending": observeClosedIdle(plainUrl, { settings: invalid }, false),
-      "http invalid, closed after its request was destroyed": observeClosedIdle(plainUrl, { settings: invalid }, true),
-      "http number": observe(plainUrl, { settings: 1 }),
-      "http string": observe(plainUrl, { settings: "x" }),
-      "http boolean": observe(plainUrl, { settings: true }),
-      "http function": observe(plainUrl, { settings() {} }),
-      "https null": observe(secureUrl, { settings: null }),
-      "https array": observe(secureUrl, { settings: [] }),
-      "https number": observe(secureUrl, { settings: 1 }),
-      "https invalid": observe(secureUrl, { settings: invalid }),
-      "https null with createConnection": observe(secureUrl, { settings: null, createConnection: connectPlain }),
-    });
-    for (const name in outcomes) outcomes[name] = await outcomes[name];
-    return outcomes;
-  } finally {
-    plain.close();
-    secure.close();
-  }
+async function settled(outcomes) {
+  for (const name in outcomes) outcomes[name] = await outcomes[name];
+  return outcomes;
 }
 
-module.exports = { observeConnectSettings };
+// Starts the two servers and returns the groups of cases. Every connect() in a group starts
+// before the first of them settles.
+async function start(tlsOptions) {
+  const plain = http2.createServer();
+  const secure = http2.createSecureServer(tlsOptions);
+  await Promise.all([serve(plain), serve(secure)]);
+  const port = plain.address().port;
+  const plainUrl = `http://127.0.0.1:${port}`;
+  const secureUrl = `https://127.0.0.1:${secure.address().port}`;
+  const invalid = { initialWindowSize: -1 };
+  const connectPlain = () => net.connect(port, "127.0.0.1");
+
+  // This connect() uses a socket that this function owns. If it throws, the socket is destroyed
+  // and no group makes another connect(): a connect() that throws after it made its own socket
+  // leaves that socket connecting, and this process has no way to get rid of it.
+  const connecting = connectPlain();
+  const first = observe(plainUrl, { settings: invalid, createConnection: () => connecting });
+  if (first.thrown) connecting.destroy();
+  const group = cases => (first.thrown ? { "connecting socket": first } : settled(cases()));
+
+  return {
+    close() {
+      plain.close();
+      secure.close();
+    },
+    createConnection: () =>
+      group(() => {
+        // A stream that is not connecting counts as connected: connect() sets the session up inline.
+        const connected = new Duplex({
+          read() {},
+          write(chunk, encoding, callback) {
+            callback();
+          },
+        });
+        const outcomes = {
+          "connecting socket": first,
+          "connected socket": observe(plainUrl, { settings: invalid, createConnection: () => connected }),
+          "https null": observe(secureUrl, { settings: null, createConnection: connectPlain }),
+        };
+        connected.destroy();
+        return outcomes;
+      }),
+    http: () =>
+      group(() => ({
+        "null": observe(plainUrl, { settings: null }),
+        "array": observe(plainUrl, { settings: [] }),
+        "invalid": observe(plainUrl, { settings: invalid }),
+        "invalid, closed with a request pending": observe(plainUrl, { settings: invalid }, true),
+        "invalid, closed with nothing pending": observeClosedIdle(plainUrl, { settings: invalid }, false),
+        "invalid, closed after its request was destroyed": observeClosedIdle(plainUrl, { settings: invalid }, true),
+        "number": observe(plainUrl, { settings: 1 }),
+        "string": observe(plainUrl, { settings: "x" }),
+        "boolean": observe(plainUrl, { settings: true }),
+        "function": observe(plainUrl, { settings() {} }),
+      })),
+    https: () =>
+      group(() => ({
+        "null": observe(secureUrl, { settings: null }),
+        "array": observe(secureUrl, { settings: [] }),
+        "number": observe(secureUrl, { settings: 1 }),
+        "invalid": observe(secureUrl, { settings: invalid }),
+      })),
+  };
+}
+
+module.exports = { start };
 
 if (require.main === module) {
-  observeConnectSettings(JSON.parse(process.argv[2])).then(outcomes => console.log(JSON.stringify(outcomes)));
+  (async () => {
+    const fixture = await start(JSON.parse(process.argv[2]));
+    const outcomes = {};
+    for (const name of ["createConnection", "http", "https"]) outcomes[name] = await fixture[name]();
+    fixture.close();
+    console.log(JSON.stringify(outcomes));
+  })();
 }

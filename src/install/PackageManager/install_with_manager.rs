@@ -650,7 +650,11 @@ pub fn install_with_manager(
         || !named.latest_rows.is_empty();
     let mut unsatisfied: Vec<UnsatisfiedRow> = Vec::new();
     // With nothing left to resolve every row is final, and the scan decides here. If not, it runs after those rows.
-    if resolving || !unsatisfied_rows(&manager.lockfile, &[]).0.is_empty() {
+    if resolving
+        || !unsatisfied_rows(&manager.lockfile, kept_by_clean(manager), &[])
+            .0
+            .is_empty()
+    {
         resolve_pending_tasks(manager, &root, log_level, &mut named, &mut unsatisfied)?;
     }
 
@@ -1579,11 +1583,12 @@ struct RowScan<'a> {
     pkg_name_hashes: &'a [PackageNameHash],
     pkg_resolutions: &'a [Resolution],
     has_overrides: bool,
+    kept: reachable::Options,
     reached: core::cell::OnceCell<DynamicBitSet>,
 }
 
 impl<'a> RowScan<'a> {
-    fn new(lockfile: &'a Lockfile) -> Self {
+    fn new(lockfile: &'a Lockfile, kept: reachable::Options) -> Self {
         Self {
             lockfile,
             buf: lockfile.buffers.string_bytes.as_slice(),
@@ -1593,6 +1598,7 @@ impl<'a> RowScan<'a> {
             pkg_name_hashes: lockfile.packages.items_name_hash(),
             pkg_resolutions: lockfile.packages.items_resolution(),
             has_overrides: !lockfile.overrides.is_empty(),
+            kept,
             reached: core::cell::OnceCell::new(),
         }
     }
@@ -1629,9 +1635,9 @@ impl<'a> RowScan<'a> {
     #[inline(never)]
     fn found_a_copy_its_peer_rejects(&self, dep_id: DependencyID, peer_id: DependencyID) -> bool {
         // `clean` drops a copy that nothing reaches, and the binding would then have no reason left.
-        let reached = self.reached.get_or_init(|| {
-            reachable::packages(self.lockfile, self.resolutions, reachable::Options::all(0))
-        });
+        let reached = self
+            .reached
+            .get_or_init(|| reachable::packages(self.lockfile, self.resolutions, self.kept));
         (0..self.lockfile.loaded_package_count as usize).any(|id| {
             reached.is_set(id)
                 && self.pkg_resolutions[id].tag == ResolutionTag::Npm
@@ -1697,14 +1703,24 @@ type NpmAliases<'a> = Vec<(PackageNameHash, &'a DependencyVersion)>;
 /// The rows to resolve again, `resolved` left out, with the `npm:` aliases that their resolution can follow.
 fn unsatisfied_rows<'a>(
     lockfile: &'a Lockfile,
+    kept: reachable::Options,
     resolved: &[UnsatisfiedRow],
 ) -> (Vec<UnsatisfiedRow>, NpmAliases<'a>) {
-    let mut rows = RowScan::new(lockfile).rows();
+    let mut rows = RowScan::new(lockfile, kept).rows();
     rows.retain(|row| !resolved.iter().any(|done| done.dep_id == row.dep_id));
     if rows.is_empty() {
         return (rows, Vec::new());
     }
-    reached_and_unexplained(lockfile, rows)
+    reached_and_unexplained(lockfile, kept, rows)
+}
+
+/// The edges that `clean` follows: not those of optional peers, unless the install is frozen or changed no row.
+fn kept_by_clean(manager: &PackageManager) -> reachable::Options {
+    reachable::Options {
+        optional_peer: manager.options.enable.frozen_lockfile()
+            || !manager.summary.changes_resolutions(),
+        ..reachable::Options::all(0)
+    }
 }
 
 /// Drops the rows that follow an `npm:` alias of their name, then the rows of packages that nothing reaches.
@@ -1712,6 +1728,7 @@ fn unsatisfied_rows<'a>(
 #[inline(never)]
 fn reached_and_unexplained<'a>(
     lockfile: &'a Lockfile,
+    kept: reachable::Options,
     mut rows: Vec<UnsatisfiedRow>,
 ) -> (Vec<UnsatisfiedRow>, NpmAliases<'a>) {
     let dependencies = lockfile.buffers.dependencies.as_slice();
@@ -1721,7 +1738,7 @@ fn reached_and_unexplained<'a>(
         bound[row.dep_id as usize] = invalid_package_id;
     }
     loop {
-        let reached = reachable::packages(lockfile, &bound, reachable::Options::all(0));
+        let reached = reachable::packages(lockfile, &bound, kept);
         let aliases = npm_aliases(lockfile, &reached);
         let in_question = rows.len();
         rows.retain(|row| {
@@ -1808,7 +1825,7 @@ fn enqueue_unsatisfied_rows(
     resolved: &mut Vec<UnsatisfiedRow>,
 ) -> bool {
     let (rows, aliases) = {
-        let (rows, aliases) = unsatisfied_rows(&manager.lockfile, resolved);
+        let (rows, aliases) = unsatisfied_rows(&manager.lockfile, kept_by_clean(manager), resolved);
         let aliases: Vec<(PackageNameHash, DependencyVersion)> = aliases
             .into_iter()
             .map(|(name_hash, aliased)| (name_hash, aliased.clone()))

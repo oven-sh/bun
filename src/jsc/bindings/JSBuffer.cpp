@@ -2300,7 +2300,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
     if (argsCount == 0)
         return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end, encoding);
 
-    // User code can observe Node's order, so keep it: start, end, the empty-range return, then the encoding. No zero-length shortcut.
     // Deliberate difference: one coercion per argument. Node's JS coerces start up to three times and end twice.
     JSValue startValue = arg2.toPrimitive(lexicalGlobalObject, JSC::PreferNumber);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2335,6 +2334,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
     if (end <= start)
         return JSC::JSValue::encode(JSC::jsEmptyString(vm));
 
+    // Node resolves the encoding last, so an empty range never reaches it. User code can observe the order.
     if (!arg1.isUndefined()) {
         encoding = parseEncoding(scope, lexicalGlobalObject, arg1, false);
         RETURN_IF_EXCEPTION(scope, {});

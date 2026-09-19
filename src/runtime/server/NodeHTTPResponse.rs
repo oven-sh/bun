@@ -2597,8 +2597,9 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
 
     let vm = bun_vm_mut(global_object);
     let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
-    // GET in node.js can have a body
-    if method.has_request_body() || method == HttpMethod::GET {
+    // GET in node.js can have a body. A CONNECT never has one: every byte after
+    // its head is tunnel data, whatever Content-Length or Transfer-Encoding says.
+    if method != HttpMethod::CONNECT && (method.has_request_body() || method == HttpMethod::GET) {
         let req_len: usize = 'brk: {
             if let Some(content_length) = request_ref.header(b"content-length") {
                 scoped_log!(

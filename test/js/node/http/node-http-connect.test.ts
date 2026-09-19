@@ -446,6 +446,56 @@ describe("HTTP server CONNECT", () => {
     expect(requestUrls).toEqual([]);
   });
 
+  // Node v26.3.0: the request of a 'connect' event has no body, whatever framing the
+  // CONNECT declares. It ends with no data and the socket gets each tunnel byte once.
+  describe.each(["Content-Length: 5", "Transfer-Encoding: chunked"])("CONNECT request with %s", framing => {
+    test.each([
+      ["a flowing", false],
+      ["a paused", true],
+    ])("should deliver the tunnel bytes to %s connect socket and none to the request", async (_, paused) => {
+      await using proxyServer = http.createServer();
+      const payload = "hello tunnel";
+
+      const { promise, resolve, reject } = Promise.withResolvers<{ request: string; tunneled: string }>();
+      proxyServer.on("connect", async (req, socket, head) => {
+        try {
+          socket.on("error", reject);
+          if (paused) socket.pause();
+          socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+          // Paused: every tunnel byte arrives before anything reads the request or the socket.
+          while (paused && socket.readableLength < payload.length) {
+            await new Promise(tick => setImmediate(tick));
+          }
+
+          const requestChunks: Buffer[] = [];
+          const tunnelChunks: Buffer[] = [head];
+          req.on("data", chunk => requestChunks.push(chunk));
+          socket.on("data", chunk => tunnelChunks.push(chunk));
+          socket.on("end", () => socket.end());
+          if (paused) socket.resume();
+          await Promise.all([once(req, "end"), once(socket, "end")]);
+          resolve({
+            request: Buffer.concat(requestChunks).toString(),
+            tunneled: Buffer.concat(tunnelChunks).toString(),
+          });
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+        client.write(`CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\n${framing}\r\n\r\n`);
+      });
+      client.on("error", reject);
+      client.once("data", () => client.end(payload));
+
+      expect(await promise).toEqual({ request: "", tunneled: payload });
+    });
+  });
+
   // Node v26.3.0: HPE_INVALID_CONTENT_LENGTH — Transfer-Encoding + Content-Length is
   // rejected with a 400 before the 'connect' event is dispatched.
   test("should reject a CONNECT request carrying both Transfer-Encoding and Content-Length with a 400", async () => {

@@ -20,7 +20,7 @@ extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSV
 extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
-extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
+extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" int us_socket_is_ssl_handshake_finished(struct us_socket_t* s);
 extern "C" int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t* s);
 
@@ -274,6 +274,42 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
     return true;
 }
 
+template<bool SSL>
+static bool tunnelOwesHttpOutputImpl(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
+    bool tunnel = httpResponseData->isConnectRequest || (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY);
+    if (!tunnel) {
+        return false;
+    }
+    return reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0 || httpResponseData->onWritable != nullptr;
+}
+
+bool JSNodeHTTPServerSocket::tunnelOwesHttpOutput()
+{
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
+        return false;
+    }
+    if (is_ssl) {
+        return tunnelOwesHttpOutputImpl<true>(socket);
+    }
+    return tunnelOwesHttpOutputImpl<false>(socket);
+}
+
+void JSNodeHTTPServerSocket::flushAndShutdown(JSC::JSGlobalObject* globalObject)
+{
+    // Pause, shut down, resume: cycles kqueue's EVFILT_READ, or macOS 26 does not deliver the peer's close.
+    bool cycle = this->ended && this->socket && !this->upgraded;
+    if (cycle) {
+        us_socket_pause(this->socket);
+    }
+    us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, false, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+    // Resume after the shutdown: a W -> R|W -> R step would delete kqueue's one-shot EVFILT_WRITE.
+    if (cycle && this->socket) {
+        us_socket_resume(this->socket);
+    }
+}
+
 bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
 {
     if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
@@ -426,11 +462,12 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
-/* A pipelined CONNECT stays queued so that the connection never counts as idle. No request follows it, so it holds no reads. */
+/* A pipelined CONNECT/Upgrade stays queued so that the connection never counts as idle. No request follows it, so it holds no reads. */
 template<bool SSL>
 static bool queuedResponsesHoldReads(uWS::NodeHttpResponseData<SSL>* httpResponseData)
 {
-    return httpResponseData->nodeHttpQueuedPipelinedCount > 0 && !httpResponseData->isConnectRequest;
+    bool tunnel = httpResponseData->isConnectRequest || (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY);
+    return httpResponseData->nodeHttpQueuedPipelinedCount > 0 && !tunnel;
 }
 
 /* node:http flood prevention, resume half. Parked pipelined requests (HttpParser::nodeHttpPausedSpill)
@@ -731,10 +768,11 @@ void JSNodeHTTPServerSocket::onDrain()
     }
 
     auto bufferedSize = this->streamBuffer.bufferedSize();
-    if (bufferedSize > 0) {
+    /* Also a socket.end() that waited for the HTTP output ahead of it: nothing left to write, FIN now. */
+    if (bufferedSize > 0 || (this->ended && this->socket && !us_socket_is_shut_down(this->socket))) {
         auto* globalObject = defaultGlobalObject(this->globalObject());
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-        us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        this->flushAndShutdown(globalObject);
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);

@@ -239,6 +239,22 @@ describe("Bun.Terminal platform behaviour", () => {
     }
   });
 
+  // Server 2019's inbox conhost (build 17763) predates microsoft/terminal#4856
+  // and drops mouse-tracking DECSET sequences written by the child, so the
+  // outer terminal never starts reporting mouse events to it (#43450).
+  test.todoIf(isWindows)("SAME: mouse-tracking enable sequences reach the data callback", async () => {
+    const { output } = await runInTerminal(
+      `process.stdin.setRawMode(true);
+       process.stdin.resume();
+       process.stdout.write('\\x1b[?1000h\\x1b[?1006h');
+       process.stdout.write('READY');
+       setInterval(() => {}, 1000);`,
+      { done: o => o.includes("READY") },
+    );
+    expect(output).toContain("\x1b[?1000h");
+    expect(output).toContain("\x1b[?1006h");
+  });
+
   test("SAME: UTF-8 multibyte characters reach the data callback", async () => {
     // ConPTY may alter spacing around wide-cell characters when re-rendering,
     // so assert the codepoints individually rather than the exact run.

@@ -448,6 +448,7 @@ When passing an existing `Terminal` object:
 - **Input `\r` is not translated to `\n` on Windows.** POSIX `ICRNL` maps carriage return to newline on input; ConPTY passes `\r` through unchanged.
 - **`process.on('SIGWINCH')` in the child does not fire under ConPTY** unless the child is reading stdin in raw mode. `process.stdout.columns`/`rows` do update after `resize()`. The missing signal is a libuv limitation that affects any libuv-based child (Node.js included).
 - On Windows before 11 24H2 (build 26100), `terminal.close()` may not terminate a still-running child promptly. The delay comes from [`ClosePseudoConsole`](https://learn.microsoft.com/en-us/windows/console/closepseudoconsole), which blocks on those versions until conhost has flushed its output through the pipe. Kill the attached process first if you need to tear down with a running child.
+- **Mouse tracking does not work on Windows 10 or Windows Server 2019.** The inbox ConPTY in those versions (conhost build 17763 through 19045) predates [microsoft/terminal#4856](https://github.com/microsoft/terminal/pull/4856) and drops the mouse-tracking enable sequences (`\x1b[?1000h`, `\x1b[?1002h`, `\x1b[?1006h`) that the child writes. They never reach the `data` callback, so the outer terminal never reports mouse events and the child never sees them. Windows 11 and Server 2022 relay the sequences, but only after the child has enabled VT input mode (for example with `process.stdin.setRawMode(true)`) before it writes them.
 
 ---
 

@@ -5,6 +5,7 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
+use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -224,7 +225,7 @@ impl YesTask {
                 EventLoopHandle::Js { owner } => {
                     owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
-                EventLoopHandle::Mini(mut mini) => {
+                EventLoopHandle::Mini(mini) => {
                     (*mini.loop_).tick();
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
@@ -233,7 +234,7 @@ impl YesTask {
                             }
                             EventLoopTask::Js(_) => unreachable!(),
                         });
-                    mini.get_mut().enqueue_task_concurrent(at);
+                    MiniEventLoop::enqueue_task_concurrent(mini.as_const_ptr(), at);
                 }
             }
         }

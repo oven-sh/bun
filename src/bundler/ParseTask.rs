@@ -535,6 +535,7 @@ export var __callDispose = (stack, error, hasError) => {
 // ══════════════════════════════════════════════════════════════════════════
 pub mod parse_worker {
     use super::*;
+    use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
     fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
         // The runtime module is the shared `runtime.js` body plus a per-target
@@ -2914,7 +2915,11 @@ pub mod parse_worker {
                 // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
                 // ownership transfers to the mini event loop which frees it after `on_complete_mini`.
                 unsafe {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
+                    MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<
+                        Result,
+                        BundleV2<'static>,
+                    >(
+                        &raw const **mini,
                         result,
                         on_complete_mini,
                         offset_of!(Result, task),

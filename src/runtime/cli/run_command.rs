@@ -784,6 +784,28 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .copied()
     }
 
+    /// The loader that decides whether `bun <entry>` can run the file at
+    /// `path`: a `--loader` flag or bunfig `[loader]` entry for its extension,
+    /// then the default for the extension, then TSX.
+    fn entry_point_loader(ctx: &ContextData, path: &[u8]) -> Loader {
+        let ext = paths::fs::PathName::init(path).ext;
+        if let Some(map) = ctx.args.loaders.as_ref() {
+            if let Some(i) = map.extensions.iter().rposition(|e| **e == *ext) {
+                return <Loader as bun_options_types::LoaderExt>::from_api(map.loaders[i]);
+            }
+        }
+        bun_bundler::options::DEFAULT_LOADERS
+            .get(ext)
+            .copied()
+            .unwrap_or(Loader::Tsx)
+    }
+
+    /// `Html` starts the dev server and `Md` renders the file. Every other
+    /// loader outside `can_be_run_by_bun` only produces a value to import.
+    fn can_run_entry_point(loader: Loader) -> bool {
+        loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md
+    }
+
     /// Shared ctx→transpiler/resolver option projection used by [`boot`] and
     /// [`boot_standalone`].
     fn wire_transpiler_from_ctx(b: &mut Transpiler<'_>, ctx: &mut ContextData) {
@@ -2338,7 +2360,7 @@ impl RunCommand {
         }
 
         // ── try fast run (file exists & not a dir → boot VM) ────────────────
-        if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name) {
+        if try_fast_run && Self::maybe_open_with_bun_js(ctx, target_name, log_errors) {
             return Ok(true);
         }
 
@@ -2548,15 +2570,8 @@ impl RunCommand {
         match resolution {
             Ok(mut resolved) => {
                 let path = resolved.path().expect("resolved primary path");
-                let ext = path.name().ext;
-                let loader: Loader = this_transpiler
-                    .options
-                    .loaders
-                    .get(ext)
-                    .copied()
-                    .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
-                    .unwrap_or(Loader::Tsx);
-                if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
+                let loader = Self::entry_point_loader(ctx, path.text);
+                if Self::can_run_entry_point(loader) {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
@@ -2664,15 +2679,40 @@ impl RunCommand {
         }
 
         // ── failure ─────────────────────────────────────────────────────────
+        Ok(Self::nothing_ran(
+            ctx,
+            log_errors,
+            target_name,
+            resolved_to_unrunnable_file
+                .as_ref()
+                .map(|(path, loader)| (&**path, *loader)),
+        ))
+    }
+
+    /// The failure tail of [`RunCommand::exec_with_cfg`]. `unrunnable` is an
+    /// existing file that `target_name` names, with the loader that Bun cannot
+    /// execute. Returns whether the caller treats the target as handled.
+    #[cold]
+    #[inline(never)]
+    #[cfg_attr(
+        any(target_os = "linux", target_os = "android"),
+        unsafe(link_section = ".text.unlikely")
+    )]
+    fn nothing_ran(
+        ctx: &ContextData,
+        log_errors: bool,
+        target_name: &[u8],
+        unrunnable: Option<(&[u8], Loader)>,
+    ) -> bool {
         if ctx.runtime_options.if_present {
-            return Ok(true);
+            return true;
         }
 
         if log_errors {
-            if let Some((path, loader)) = resolved_to_unrunnable_file {
+            if let Some((path, loader)) = unrunnable {
                 bun_core::pretty_error!(
                     "<r><red>error<r><d>:<r> <b>Cannot run \"{}\"<r>\n",
-                    bstr::BStr::new(&path),
+                    bstr::BStr::new(path),
                 );
                 bun_core::pretty_error!(
                     "<r><d>note<r><d>:<r> Bun cannot run {} files directly\n",
@@ -2707,17 +2747,18 @@ impl RunCommand {
             Global::exit(1);
         }
 
-        Ok(false)
+        false
     }
 
     /// Fast-path file probe: if `target` resolves to an existing regular file,
     /// duplicate its absolute path and boot the VM. Returns `false` if the
     /// path does not exist / is a directory, so the caller can fall through to
-    /// script lookup.
+    /// script lookup. An existing file whose loader Bun cannot run is reported
+    /// here, through [`RunCommand::nothing_ran`].
     ///
     /// `Arguments::parse` does not populate `entry_points` yet, so we
     /// take the target slice explicitly.
-    fn maybe_open_with_bun_js(ctx: &mut ContextData, target: &[u8]) -> bool {
+    fn maybe_open_with_bun_js(ctx: &mut ContextData, target: &[u8], log_errors: bool) -> bool {
         if target.is_empty() {
             return false;
         }
@@ -2822,6 +2863,16 @@ impl RunCommand {
             resolved.to_vec().into_boxed_slice()
         };
         let _ = bun_sys::close(fd);
+
+        let loader = Self::entry_point_loader(ctx, &absolute_script_path);
+        if !Self::can_run_entry_point(loader) {
+            return Self::nothing_ran(
+                ctx,
+                log_errors,
+                target,
+                Some((&absolute_script_path, loader)),
+            );
+        }
 
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }

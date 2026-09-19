@@ -98,6 +98,14 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
+    // Chrome: the view gets a browser context of its own (cookies, storage,
+    // proxy) instead of the shared default one. The attach chain sends
+    // Target.createBrowserContext first and stores the id here; close()
+    // and Target.detachedFromTarget dispose it.
+    bool m_ownBrowserContext = false;
+    WTF::String m_browserContextId;
+    WTF::String m_proxyServer;
+    WTF::String m_proxyBypass; // comma-separated, CDP's proxyBypassList shape
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

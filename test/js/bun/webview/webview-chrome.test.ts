@@ -555,6 +555,82 @@ it("chrome: two views have independent sessions", async () => {
   }
 });
 
+// Every view shares the one Chrome's default context unless it asks for a
+// context of its own with dataStore: "ephemeral". Then its cookies are its
+// own, and gone once it closes (#43416).
+it('chrome: dataStore: "ephemeral" gives each view its own cookie jar', async () => {
+  const cookiesSeen: (string | null)[] = [];
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      // Chrome may ask for /favicon.ico on its own; only the page counts.
+      if (new URL(req.url).pathname !== "/") return new Response(null, { status: 404 });
+      cookiesSeen.push(req.headers.get("cookie"));
+      return new Response("ok", { headers: { "set-cookie": "jar=" + cookiesSeen.length } });
+    },
+  });
+  const url = `http://127.0.0.1:${server.port}/`;
+  await using shared = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  await using a = new Bun.WebView({ backend: chrome, width: 100, height: 100, dataStore: "ephemeral" });
+  await using b = new Bun.WebView({ backend: chrome, width: 100, height: 100, dataStore: "ephemeral" });
+  await shared.navigate(url);
+  await a.navigate(url);
+  await b.navigate(url);
+  expect([
+    await shared.evaluate("document.cookie"),
+    await a.evaluate("document.cookie"),
+    await b.evaluate("document.cookie"),
+  ]).toEqual(["jar=1", "jar=2", "jar=3"]);
+  expect(cookiesSeen).toEqual([null, null, null]);
+  // Reloading sends each view its own cookie back.
+  await a.navigate(url);
+  expect(cookiesSeen[3]).toBe("jar=2");
+  // The context goes with the view. A later shared view still has the default jar.
+  a.close();
+  await using later = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  await later.navigate(url);
+  expect(cookiesSeen[4]).toBe("jar=1");
+});
+
+// The proxy rides on the view's own browser context, so it is per view: the
+// proxied view's requests reach the proxy as absolute-URI requests, the
+// other view's do not.
+it("chrome: proxy routes one view's requests through the proxy", async () => {
+  const proxied: string[] = [];
+  using proxy = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname !== "/page") return new Response(null, { status: 404 });
+      proxied.push(req.url);
+      return new Response("<body>via proxy</body>", { headers: { "content-type": "text/html" } });
+    },
+  });
+  const direct: string[] = [];
+  using origin = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (new URL(req.url).pathname !== "/page") return new Response(null, { status: 404 });
+      direct.push(req.url);
+      return new Response("<body>direct</body>", { headers: { "content-type": "text/html" } });
+    },
+  });
+  const target = `http://127.0.0.1:${origin.port}/page`;
+  await using a = new Bun.WebView({
+    backend: chrome,
+    width: 100,
+    height: 100,
+    // Chrome never proxies loopback unless told so.
+    proxy: { server: `http://127.0.0.1:${proxy.port}`, bypass: ["<-loopback>"] },
+  });
+  await using b = new Bun.WebView({ backend: chrome, width: 100, height: 100 });
+  await a.navigate(target);
+  await b.navigate(target);
+  expect(await a.evaluate("document.body.textContent")).toBe("via proxy");
+  expect(await b.evaluate("document.body.textContent")).toBe("direct");
+  expect(proxied).toEqual([target]);
+  expect(direct).toEqual([target]);
+});
+
 test("WebView.closeAll is a static function", () => {
   expect(typeof Bun.WebView.closeAll).toBe("function");
   // No-op when no subprocesses are alive — verifies the idempotent fast path.

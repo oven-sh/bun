@@ -9713,9 +9713,27 @@ declare module "bun" {
        *
        * **Chrome backend**: `directory` is per-Chrome-process
        * (`--user-data-dir`), not per-view. The first view's directory
-       * applies to all views spawned in the same Bun process.
+       * applies to all views spawned in the same Bun process. An explicit
+       * `"ephemeral"` gives the view a browser context of its own (a
+       * CDP `Target.createBrowserContext`): its cookies and storage are
+       * shared with no other view and are discarded when it closes. When
+       * `dataStore` is omitted, the view shares the default context of
+       * the one Chrome process with every other view that omits it.
        */
       dataStore?: "ephemeral" | { directory: string };
+      /**
+       * Proxy for this view's requests. Chrome backend only.
+       *
+       * A string is the proxy server (`"http://host:port"`,
+       * `"socks5://host:port"`, or a Chrome proxy rule list). The object
+       * form adds `bypass`: hosts that skip the proxy, in Chrome's
+       * bypass-rule syntax (`"*.internal"`, `"<-loopback>"`).
+       *
+       * The proxy rides on a browser context of the view's own, so each
+       * view can have a different proxy. It cannot be combined with
+       * `dataStore: { directory }`.
+       */
+      proxy?: string | { server: string; bypass?: string[] };
     }
   }
 

@@ -36,7 +36,18 @@ const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slic
 
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
+
+// Every Target.createBrowserContext, Target.createTarget and
+// Target.disposeBrowserContext seen so far, in order, for __fake_targets().
+const targetLog: { method: string; params: any }[] = [];
+
 Object.assign(globalThis, {
+  // What the runtime asked of the Target domain: which contexts it created
+  // (and with what params), which context each tab went into, which contexts
+  // it disposed.
+  __fake_targets() {
+    return targetLog;
+  },
   __fake_exit(code: number): never {
     process.exit(code);
   },
@@ -65,6 +76,7 @@ function send(message: unknown) {
 }
 
 let targets = 0;
+let contexts = 0;
 let loads = 0;
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
@@ -78,7 +90,14 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   }
 
   switch (method) {
+    case "Target.createBrowserContext":
+      targetLog.push({ method, params });
+      return reply({ browserContextId: "C" + ++contexts });
+    case "Target.disposeBrowserContext":
+      targetLog.push({ method, params });
+      return reply({});
     case "Target.createTarget":
+      targetLog.push({ method, params });
       return reply({ targetId: "T" + ++targets });
     case "Target.attachToTarget":
       return reply({ sessionId: "S" + params.targetId.slice(1) });

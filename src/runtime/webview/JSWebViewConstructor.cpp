@@ -122,6 +122,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     bool stderrInherit = false;
     bool consoleIsGlobal = false;
     JSObject* consoleCallback = nullptr;
+    // Chrome: an explicit dataStore: "ephemeral" (or a proxy) gives the view
+    // a browser context of its own. Omitted, the view shares the default
+    // context of the one Chrome per process.
+    bool explicitEphemeral = false;
+    WTF::String proxyServer;
+    WTF::StringBuilder proxyBypass; // comma-joined, CDP's proxyBypassList shape
 
     JSValue options = callFrame->argument(0);
     if (options.isObject()) {
@@ -323,6 +329,63 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
                 return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
                     "dataStore must be \"ephemeral\" or { directory: string }"_s);
             }
+            explicitEphemeral = true;
+        }
+
+        // proxy: "scheme://host:port" | { server, bypass? }. Chrome-only,
+        // per view: it rides on the view's own browser context.
+        JSValue proxy = opts->get(globalObject, Identifier::fromString(vm, "proxy"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!proxy.isUndefined()) {
+            if (proxy.isString()) {
+                proxyServer = proxy.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+            } else if (proxy.isObject()) {
+                JSObject* proxyObj = proxy.getObject();
+                JSValue server = proxyObj->get(globalObject, Identifier::fromString(vm, "server"_s));
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!server.isString()) {
+                    return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                        "proxy.server must be a string"_s);
+                }
+                proxyServer = server.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue bypass = proxyObj->get(globalObject, Identifier::fromString(vm, "bypass"_s));
+                RETURN_IF_EXCEPTION(scope, {});
+                if (auto* arr = dynamicDowncast<JSArray>(bypass)) {
+                    unsigned len = arr->length();
+                    for (unsigned i = 0; i < len; ++i) {
+                        JSValue item = arr->get(globalObject, i);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (!item.isString()) {
+                            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                                "proxy.bypass entries must be strings"_s);
+                        }
+                        WTF::String entry = item.toWTFString(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (!proxyBypass.isEmpty()) proxyBypass.append(',');
+                        proxyBypass.append(entry);
+                    }
+                } else if (!bypass.isUndefined()) {
+                    return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                        "proxy.bypass must be an array of strings"_s);
+                }
+            } else {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+                    "proxy must be a string or { server: string, bypass?: string[] }"_s);
+            }
+            if (proxyServer.isEmpty()) {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "proxy.server must not be empty"_s);
+            }
+            if (backend != WebViewBackend::Chrome) {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "proxy requires backend: \"chrome\""_s);
+            }
+            if (!persistDir.isEmpty()) {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "proxy cannot be combined with dataStore.directory (a proxied view uses in-memory storage)"_s);
+            }
         }
     }
 
@@ -359,6 +422,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
         }
         view->m_consoleIsGlobal = consoleIsGlobal;
         if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
+        view->m_ownBrowserContext = explicitEphemeral || !proxyServer.isEmpty();
+        view->m_proxyServer = WTF::move(proxyServer);
+        view->m_proxyBypass = proxyBypass.toString();
         // No user code ever holds this promise; handled, so a rejection
         // (close mid-load, crash) cannot surface as unhandledRejection.
         if (!initialUrl.isEmpty()) {

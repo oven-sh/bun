@@ -2300,15 +2300,11 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
     if (argsCount == 0)
         return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end, encoding);
 
-    // Node's order, which user code can observe: start, then end, then the encoding. An empty
-    // range returns "" before the later steps run, so `buf.toString("bogus", 1, 1)` does not
-    // throw. A zero-length buffer has no early return: Node has none, so start and end can still
-    // be coerced and throw.
+    // User code can observe Node's order, so keep it: start, end, the empty-range return, then the encoding. No zero-length shortcut.
+    // Deliberate difference: one coercion per argument. Node's JS coerces start up to three times and end twice.
     JSValue startValue = arg2.toPrimitive(lexicalGlobalObject, JSC::PreferNumber);
     RETURN_IF_EXCEPTION(scope, {});
-    // Node compares start (`<= 0`, `>= length`) and end (`> length`) before MathTrunc, and a
-    // comparison accepts a BigInt: a BigInt start <= 0 is 0, one >= length returns "", and a BigInt
-    // end > length is length. Any other BigInt throws below, as MathTrunc does.
+    // Node's comparisons accept a BigInt and only its MathTrunc throws, so a BigInt that a comparison settles does not throw.
     if (startValue.isBigInt()) [[unlikely]] {
         if (JSBigInt::compare(startValue, static_cast<int64_t>(0)) != JSBigInt::ComparisonResult::GreaterThan)
             startValue = jsNumber(0);

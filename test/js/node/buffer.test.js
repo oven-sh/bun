@@ -4901,8 +4901,8 @@ describe("Buffer.copyBytesFrom", () => {
 // https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L904-L934
 describe("Buffer.prototype.toString(encoding, start, end) argument handling", () => {
   const unknownEncoding = expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING", name: "TypeError" });
-  // Logs its name on every coercion. Node coerces some arguments more than once, so the
-  // tests compare the order of first coercion.
+  // Logs its name on every coercion. Deliberate difference: Bun coerces each argument once.
+  // Node's JS coerces start up to three times and end twice (each comparison, then MathTrunc).
   const logged = (log, name, value) => ({
     [Symbol.toPrimitive]() {
       log.push(name);
@@ -4965,7 +4965,7 @@ describe("Buffer.prototype.toString(encoding, start, end) argument handling", ()
     const log = [];
     const buf = Buffer.from("abc");
     expect(buf.toString(logged(log, "encoding", "latin1"), logged(log, "start", 1), logged(log, "end", 2))).toBe("b");
-    expect([...new Set(log)]).toEqual(["start", "end", "encoding"]);
+    expect(log).toEqual(["start", "end", "encoding"]);
 
     // The first argument that fails to coerce decides the error.
     expect(() => buf.toString(throws("encoding"), throws("start"), throws("end"))).toThrow("coerced start");
@@ -4980,12 +4980,12 @@ describe("Buffer.prototype.toString(encoding, start, end) argument handling", ()
 
     const log = [];
     expect(buf.toString(logged(log, "encoding", "utf8"), logged(log, "start", 1), logged(log, "end", 1))).toBe("");
-    expect([...new Set(log)]).toEqual(["start", "end"]);
+    expect(log).toEqual(["start", "end"]);
 
     // start >= length returns before end is read.
     log.length = 0;
     expect(buf.toString(logged(log, "encoding", "utf8"), logged(log, "start", 3), logged(log, "end", 1))).toBe("");
-    expect([...new Set(log)]).toEqual(["start"]);
+    expect(log).toEqual(["start"]);
     expect(buf.toString("utf8", 3, throws("end"))).toBe("");
     expect(() => buf.toString("utf8", 2, throws("end"))).toThrow("coerced end");
   });
@@ -5011,7 +5011,7 @@ describe("Buffer.prototype.toString(encoding, start, end) argument handling", ()
     });
     const buf = Buffer.from("abc");
     expect(buf.toString("utf8", hinted(1), hinted(2))).toBe("b");
-    expect([...new Set(hints)]).toEqual(["number"]);
+    expect(hints).toEqual(["number", "number"]);
     // A Date is a number only under the number hint.
     expect(buf.toString("utf8", new Date(1), new Date(2))).toBe("b");
   });

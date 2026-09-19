@@ -5,7 +5,8 @@
 "use strict";
 
 // Throws when it is coerced. The code names the argument, so a line shows which
-// argument was coerced first.
+// argument was coerced first. The objects here use Symbol.toPrimitive because an
+// encoding object with valueOf() or toString() is a known difference (#43426).
 const throwing = name => ({
   label: `throwing("${name}")`,
   [Symbol.toPrimitive]() {
@@ -109,4 +110,4 @@ for (const [bufferName, makeBuffer] of buffers) {
   }
 }
 
-process.stdout.write(lines.join("\n") + "\n");
+console.log(lines.join("\n"));

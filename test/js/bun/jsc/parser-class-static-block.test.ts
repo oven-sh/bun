@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-// oven-sh/bun#43477, fixed in oven-sh/WebKit#<n>. Bun's transpiler rejects these forms itself, so the text goes to
+// oven-sh/bun#43477, fixed in oven-sh/WebKit#704. Bun's transpiler rejects these forms itself, so the text goes to
 // JavaScriptCore through `eval` and `new Function`, which do not transpile.
 //
 // ClassStaticBlockBody: it is a Syntax Error if ContainsArguments of the statement list is true. ContainsArguments
@@ -70,26 +70,37 @@ describe("await as a parameter name of an arrow function in a class static block
   test.each([
     "(class { static { ({ await }) => 1; } })",
     "(class { static { ({ await = 1 }) => 1; } })",
-    "(class { static { ({ a: await }) => 1; } })",
-    "(class { static { ({ ...await }) => 1; } })",
+    "(class { static { ({ a: { await } }) => 1; } })",
     "(class { static { ([{ await }]) => 1; } })",
-    "(class { static { ([...await]) => 1; } })",
     "(class { static { (...await) => 1; } })",
     "(class { static { (a, ...await) => 1; } })",
-    "(class { static { async ({ await }) => 1; } })",
-    "(class { static { async (...await) => 1; } })",
   ])("%s", source => {
     expect(parse(source)).toThrow(new SyntaxError("Cannot use 'await' as a parameter name in a static block."));
     expect(parse(`async function f() { ${source} }`)).toThrow(SyntaxError);
     expect(() => new Function(source)).toThrow(SyntaxError);
   });
 
+  // An async arrow function reserves `await` itself.
+  test("(class { static { async ({ await }) => 1; } })", () => {
+    expect(parse("(class { static { async ({ await }) => 1; } })")).toThrow(
+      new SyntaxError("Cannot use 'await' as a parameter name in an async function."),
+    );
+  });
+
+  // The expression pass of the parser sees `await` in the static block itself and rejects it first. `(await) => 1`,
+  // `([await]) => 1` and `(a = await) => 1` were rejected before as well.
   test.each([
     "(class { static { (await) => 1; } })",
     "(class { static { ([await]) => 1; } })",
     "(class { static { (a = await) => 1; } })",
-  ])("%s (rejected before as well)", source => {
-    expect(parse(source)).toThrow(SyntaxError);
+    "(class { static { ({ a: await }) => 1; } })",
+    "(class { static { ({ ...await }) => 1; } })",
+    "(class { static { ([...await]) => 1; } })",
+    "(class { static { async (...await) => 1; } })",
+  ])("%s", source => {
+    expect(parse(source)).toThrow(
+      new SyntaxError("The 'await' keyword is disallowed in the IdentifierReference position within static block."),
+    );
   });
 });
 

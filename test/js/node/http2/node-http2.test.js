@@ -4908,6 +4908,7 @@ it("http2 client ping() during the TLS handshake is cancelled, like node", async
     expect(socket.connecting).toBe(false);
     expect(socket.secureConnecting).toBe(true);
     expect(client.connecting).toBe(true);
+    expect(client.connected).toBe(false);
 
     const handshakePing = Promise.withResolvers();
     const handshakeReturn = client.ping(err => handshakePing.resolve(err?.code));
@@ -4916,6 +4917,7 @@ it("http2 client ping() during the TLS handshake is cancelled, like node", async
 
     await connected;
     expect(client.connecting).toBe(false);
+    expect(client.connected).toBe(true);
     const connectedPing = Promise.withResolvers();
     const connectedReturn = client.ping((err, duration) => connectedPing.resolve(err ? err.code : typeof duration));
     expect(connectedReturn).toBe(true);

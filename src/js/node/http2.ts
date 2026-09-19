@@ -5517,7 +5517,7 @@ class ClientHttp2Session extends Http2Session {
     return socket.connecting || socket.secureConnecting || false;
   }
   get connected() {
-    return this[bunHTTP2Socket]?.connecting === false;
+    return this[bunHTTP2Socket] != null && !this.connecting;
   }
   get destroyed() {
     return this[bunHTTP2Socket] === null;

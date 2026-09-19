@@ -6969,9 +6969,8 @@ impl H2FrameParser {
 
             if let Some(parent_js) = options.get(global_object, "parent")? {
                 if parent_js.is_number() || parent_js.is_int32() {
-                    has_priority = true;
                     parent = parent_js.to_int32();
-                    if parent <= 0 || parent as u32 > MAX_STREAM_ID {
+                    if parent < 0 {
                         stream.state = StreamState::CLOSED;
                         stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
                         this.dispatch_with_extra(
@@ -6981,6 +6980,9 @@ impl H2FrameParser {
                         );
                         return Ok(JSValue::js_number(stream.id as f64));
                     }
+                    // Every stream starts as a dependant of stream 0 (RFC 7540 5.3.5), so 0 alone
+                    // needs no PRIORITY field.
+                    has_priority |= parent != 0;
                 } else {
                     return Err(global_object.throw_invalid_argument_type_value(
                         b"options.parent",

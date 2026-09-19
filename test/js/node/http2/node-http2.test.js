@@ -5205,6 +5205,171 @@ it("http2 client.request() on a destroyed or closed session uses the right error
   }
 });
 
+describe.concurrent("http2 client.request() options.parent", () => {
+  // Resolves with what one GET observed. A stream or session failure rejects it.
+  function get(client, path, options) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const req = client.request({ ":path": path }, options);
+    let status;
+    let body = "";
+    req.setEncoding("utf8");
+    req.on("response", headers => (status = headers[":status"]));
+    req.on("data", chunk => (body += chunk));
+    req.on("error", reject);
+    req.on("close", () => resolve({ status, body }));
+    return promise;
+  }
+
+  async function echoPathServer() {
+    const server = http2.createServer();
+    server.on("stream", (stream, headers) => {
+      stream.respond({ ":status": 200 });
+      stream.end(headers[":path"]);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    return server;
+  }
+
+  it("accepts 0, the connection root, like node", async () => {
+    // node v26.3.0 validates `parent` with a minimum of 0 and fills in 0 when it is unset.
+    const server = await echoPathServer();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const sessionErrors = [];
+      client.on("error", err => sessionErrors.push(err));
+      const results = [];
+      for (const [path, options] of [
+        ["/zero", { parent: 0 }],
+        ["/negative-zero", { parent: -0 }],
+        ["/zero-exclusive", { parent: 0, exclusive: true }],
+        // The session's HPACK state must still match the server's after the requests above.
+        ["/plain", undefined],
+      ]) {
+        results.push(await get(client, path, options));
+      }
+      expect(results).toEqual([
+        { status: 200, body: "/zero" },
+        { status: 200, body: "/negative-zero" },
+        { status: 200, body: "/zero-exclusive" },
+        { status: 200, body: "/plain" },
+      ]);
+      expect(sessionErrors).toEqual([]);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  it("throws ERR_OUT_OF_RANGE synchronously for a negative or NaN value, like node", async () => {
+    const server = await echoPathServer();
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const sessionErrors = [];
+      client.on("error", err => sessionErrors.push(err));
+
+      const outOfRange = [-1, -0.5, -Infinity, NaN];
+      const requestEach = () =>
+        outOfRange.map(parent => {
+          try {
+            const req = client.request({ ":path": "/rejected", "x-parent": String(parent) }, { parent });
+            req.on("error", () => {});
+            return { parent, returned: true };
+          } catch (error) {
+            return { parent, name: error.name, code: error.code, message: error.message };
+          }
+        });
+      // A request made before 'connect' is queued, one made after it is submitted at once.
+      const beforeConnect = requestEach();
+      await new Promise(resolve => client.on("connect", resolve));
+      const afterConnect = requestEach();
+
+      const expected = outOfRange.map(parent => ({
+        parent,
+        name: "RangeError",
+        code: "ERR_OUT_OF_RANGE",
+        message: `The value of "options.parent" is out of range. It must be >= 0. Received ${parent}`,
+      }));
+      expect({ beforeConnect, afterConnect }).toEqual({ beforeConnect: expected, afterConnect: expected });
+
+      // The rejected calls reached neither the wire nor the HPACK encoder: the next header block
+      // on the same session still decodes on the server.
+      expect(await get(client, "/plain")).toEqual({ status: 200, body: "/plain" });
+      expect(sessionErrors).toEqual([]);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  it("sends a PRIORITY field only for a dependency the peer does not already assume", async () => {
+    // Raw-socket h2 server: records the priority field of every HEADERS frame and answers 200.
+    const priorityFields = [];
+    const server = net.createServer(socket => {
+      let buf = Buffer.alloc(0);
+      let sawPreface = false;
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        if (!sawPreface) {
+          if (buf.length < http2utils.kClientMagic.length) return;
+          buf = buf.subarray(http2utils.kClientMagic.length);
+          sawPreface = true;
+          socket.write(new http2utils.SettingsFrame(false).data);
+        }
+        while (buf.length >= 9) {
+          const length = buf.readUIntBE(0, 3);
+          if (buf.length < 9 + length) break;
+          const type = buf[3];
+          const flags = buf[4];
+          const streamId = buf.readUInt32BE(5) & 0x7fffffff;
+          const payload = buf.subarray(9, 9 + length);
+          buf = buf.subarray(9 + length);
+          if (type === 4 && (flags & 1) === 0) {
+            socket.write(new http2utils.SettingsFrame(true).data);
+          } else if (type === 1) {
+            const dependency = flags & 0x20 ? payload.readUInt32BE(0) : null;
+            priorityFields.push(
+              dependency === null ? null : { exclusive: dependency >>> 31 === 1, parent: dependency & 0x7fffffff },
+            );
+            // :status: 200 (static table index 8), END_HEADERS | END_STREAM.
+            socket.write(new http2utils.HeadersFrame(streamId, Buffer.from([0x88]), 0, true, true).data);
+          }
+        }
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const sessionErrors = [];
+      client.on("error", err => sessionErrors.push(err));
+      const statuses = [];
+      for (const options of [
+        undefined,
+        { parent: 0 },
+        { parent: 0, exclusive: false },
+        { parent: 0, exclusive: true },
+        { parent: 1 },
+        { parent: 2 ** 31 - 1, exclusive: true },
+      ]) {
+        statuses.push((await get(client, "/", options)).status);
+      }
+      expect(statuses).toEqual([200, 200, 200, 200, 200, 200]);
+      expect(priorityFields).toEqual([
+        null,
+        null,
+        null,
+        { exclusive: true, parent: 0 },
+        { exclusive: false, parent: 1 },
+        { exclusive: true, parent: 2 ** 31 - 1 },
+      ]);
+      expect(sessionErrors).toEqual([]);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+});
+
 function requestOverHttp1(port, headers) {
   const { promise, resolve, reject } = Promise.withResolvers();
   const request = https.request(

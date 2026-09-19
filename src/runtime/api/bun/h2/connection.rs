@@ -214,16 +214,11 @@ pub trait Sink {
     fn highest_started_stream_id(&self) -> u32 {
         0
     }
-    /// Highest stream id of the local parity (odd on a client) the embedder has registered: the
-    /// counterpart of nghttp2's last_sent_stream_id. Unlike `highest_started_stream_id`, ids of
-    /// the peer's parity and `setNextStreamID()` never raise it, so a local-parity id above it is
-    /// idle. The engine cannot tell on its own: it never sees the embedder's outbound HEADERS.
+    /// Highest stream id the embedder opened with its own HEADERS (nghttp2's last_sent_stream_id).
     fn highest_local_stream_id(&self) -> u32 {
         0
     }
-    /// Transition shim (see `is_local_stream`): whether the embedder already closed its half of
-    /// `stream_id` (END_STREAM or RST_STREAM sent by the legacy encoder). This engine only sees
-    /// the inbound half, so its `HalfClosedRemote` is half-closed (remote) only while this is false.
+    /// Whether the embedder already sent END_STREAM or RST_STREAM on `stream_id`.
     fn is_local_half_closed(&self, _stream_id: u32) -> bool {
         false
     }
@@ -1726,9 +1721,7 @@ impl Connection {
             );
             return true;
         }
-        // §6.6: the parent must be a stream this client opened that is "open" or "half-closed
-        // (local)". nghttp2 (nghttp2_session_on_push_promise_received) fails the session for a
-        // parent id the server owns (even) and for one the client never used (idle).
+        // §6.6: the parent is a stream this client opened. An even or idle id fails the session.
         let parent = hdr.stream_id;
         let parent_state = self.streams.get(&parent).map(|s| s.state);
         let parent_idle = parent_state.is_none() && parent > sink.highest_local_stream_id();
@@ -1740,9 +1733,7 @@ impl Connection {
             );
             return true;
         }
-        // A half-closed (remote) parent gets the same connection error of type STREAM_CLOSED as
-        // HEADERS on such a stream (see handle_headers). Once the local half is closed too the
-        // parent is closed, which nghttp2 does not treat as a connection error.
+        // nghttp2 fails the session for a half-closed (remote) parent, not for a closed one.
         if parent_state == Some(State::HalfClosedRemote) && !sink.is_local_half_closed(parent) {
             self.local_connection_error(
                 sink,
@@ -2322,8 +2313,7 @@ mod tests {
             Some(State::ReservedLocal)
         );
 
-        // Client receives it on the request stream it opened: on_push_promise(parent=1,
-        // promised=2) then the request headers.
+        // Client receives it: on_push_promise(parent=1, promised=2) then the request headers.
         let csink = CaptureSink::default();
         let mut client = client_with_request(&csink, true);
         let fed = client.receive(&csink, &bytes);

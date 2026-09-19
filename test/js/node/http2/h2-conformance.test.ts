@@ -993,6 +993,16 @@ describe("PUSH_PROMISE parent stream (RFC 9113 §6.6)", () => {
       pushedIds: [],
     },
     {
+      // HEADERS on a stream id the client never used do not make a lower id look used. node
+      // already fails the session at those HEADERS, with the same error.
+      parent: "an idle stream numbered below HEADERS the server sent on another idle stream",
+      method: "GET" as const,
+      accepted: [],
+      rejected: Buffer.concat([encodeFrame(FrameType.HEADERS, 0x4, 101, Buffer.from([0x88])), pushPromise(99, 2)]),
+      error: protocolError,
+      pushedIds: [],
+    },
+    {
       parent: "a stream the server opened",
       method: "GET" as const,
       accepted: [pushPromise(1, 2)],

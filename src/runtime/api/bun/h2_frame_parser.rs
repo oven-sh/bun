@@ -1128,8 +1128,7 @@ pub struct H2FrameParser {
     /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
     /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
     last_peer_stream_id: Cell<u32>,
-    /// Highest registered stream id of the LOCAL parity (odd ids for a client, even for a
-    /// server). A local-parity id above it is idle (`Sink::highest_local_stream_id`).
+    /// Highest stream id this side opened with its own HEADERS (nghttp2's last_sent_stream_id).
     last_local_stream_id: Cell<u32>,
     is_server: Cell<bool>,
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
@@ -3380,11 +3379,6 @@ impl H2FrameParser {
             && stream_identifier > self.last_peer_stream_id.get()
         {
             self.last_peer_stream_id.set(stream_identifier);
-        }
-        if stream_identifier % 2 != peer_parity
-            && stream_identifier > self.last_local_stream_id.get()
-        {
-            self.last_local_stream_id.set(stream_identifier);
         }
 
         // new stream open
@@ -7153,6 +7147,12 @@ impl H2FrameParser {
             0
         };
         let headers_frame_max_payload = available_payload - padding_overhead;
+
+        // These HEADERS open the stream when its id is ours (a request, a pushed response).
+        let is_local_id = stream_id % 2 == u32::from(!this.is_server.get());
+        if is_local_id && stream_id > this.last_local_stream_id.get() {
+            this.last_local_stream_id.set(stream_id);
+        }
 
         let mut writer = this.to_writer();
 

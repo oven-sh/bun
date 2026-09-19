@@ -117,6 +117,13 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
   async function install(): Promise<void> {
     const command = process.execPath;
 
+    // Checked before anything is written, so a Mac that cannot be given a
+    // token is left as it was.
+    const token = getEnv("BUILDKITE_AGENT_TOKEN", false);
+    if (isMacOS && cfgPath !== undefined && !token && !existsSync(cfgPath)) {
+      throw new Error("BUILDKITE_AGENT_TOKEN not set and no existing buildkite-agent.cfg to reuse");
+    }
+
     // The service runs a copy of this script and the utils.ts it imports from
     // the agent's home, so it does not depend on the checkout that ran
     // `install` sticking around. When `install` is run from the home itself
@@ -129,6 +136,10 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
         copyFileSync(join(srcDir, f), join(homePath, f));
       }
     }
+    // In the repo, scripts/package.json says these are ES modules. The copy
+    // says so itself rather than take its module type from whatever
+    // package.json sits above the home (on macOS, the user's home directory).
+    writeFile(join(homePath, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
     const installedScript = join(homePath, "agent.ts");
     const args = [installedScript, "start"];
 
@@ -176,11 +187,6 @@ async function doBuildkiteAgent(action: AgentAction, cliOptions: AgentCliOptions
     // cfgPath is set exactly when isMacOS is; the second check is for the type checker.
     if (isMacOS && cfgPath !== undefined) {
       const queue = cliOptions.queue || getEnv("BUILDKITE_AGENT_QUEUE", false) || "test-darwin";
-      const token = getEnv("BUILDKITE_AGENT_TOKEN", false);
-      if (!token && !existsSync(cfgPath)) {
-        throw new Error("BUILDKITE_AGENT_TOKEN not set and no existing buildkite-agent.cfg to reuse");
-      }
-
       // `install` runs via sudo, so process.env.USER is "root". The launchd
       // service must run as the real login user (whose ~/Library the cfg and
       // build dirs live under), and the files we write here must be owned by

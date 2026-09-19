@@ -1128,6 +1128,9 @@ pub struct H2FrameParser {
     /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
     /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
     last_peer_stream_id: Cell<u32>,
+    /// Highest LOCALLY-initiated stream id registered (odd ids for a client, even for a
+    /// server). A local-parity id above it is idle (`Sink::highest_local_stream_id`).
+    last_local_stream_id: Cell<u32>,
     is_server: Cell<bool>,
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
     left_exception: Cell<bool>,
@@ -3378,6 +3381,11 @@ impl H2FrameParser {
         {
             self.last_peer_stream_id.set(stream_identifier);
         }
+        if stream_identifier % 2 != peer_parity
+            && stream_identifier > self.last_local_stream_id.get()
+        {
+            self.last_local_stream_id.set(stream_identifier);
+        }
 
         // new stream open
         let local_window_size = if self.outstanding_settings.get() > 0 {
@@ -3952,6 +3960,23 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // handle_received_stream_id raises this for every stream registered on this side
         // (including locally-initiated ones) and eviction never lowers it.
         self.last_stream_id.get()
+    }
+
+    fn highest_local_stream_id(&self) -> u32 {
+        self.last_local_stream_id.get()
+    }
+
+    fn is_local_half_closed(&self, stream_id: u32) -> bool {
+        match self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            Some(stream) => unsafe {
+                matches!(
+                    (*stream).state,
+                    StreamState::HALF_CLOSED_LOCAL | StreamState::CLOSED
+                )
+            },
+            None => false,
+        }
     }
 
     fn is_stream_reading(&self, stream_id: u32) -> bool {
@@ -7465,6 +7490,7 @@ impl H2FrameParser {
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
             last_peer_stream_id: Cell::new(0),
+            last_local_stream_id: Cell::new(0),
             is_server: Cell::new(false),
             left_exception: Cell::new(false),
             write_buffer: JsCell::new(Vec::<u8>::default()),

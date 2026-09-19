@@ -929,6 +929,161 @@ describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {
   });
 });
 
+describe("PUSH_PROMISE parent stream (RFC 9113 §6.6)", () => {
+  /** PUSH_PROMISE on `parentId` reserving `promisedId`, with a complete GET request block. */
+  function pushPromise(parentId: number, promisedId: number): Buffer {
+    const promised = Buffer.alloc(4);
+    promised.writeUInt32BE(promisedId, 0);
+    const payload = Buffer.concat([promised, requestHeaderBlock("GET")]);
+    return encodeFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, parentId, payload);
+  }
+
+  /** Response HEADERS (:status 200) on stream 1. */
+  function response(endStream: boolean): Buffer {
+    return encodeFrame(FrameType.HEADERS, endStream ? 0x5 : 0x4, 1, Buffer.from([0x88]));
+  }
+
+  /** A raw server and an `http2.connect()` client whose request (stream 1) is on the wire, with
+   *  the SETTINGS exchange done. A GET ends the client's half of stream 1; a POST leaves it open. */
+  async function clientWithRequest(method: "GET" | "POST") {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const errors: Error[] = [];
+    client.on("error", err => errors.push(err));
+    const sessionClosed = new Promise<void>(resolve => client.once("close", resolve));
+    const pushedIds: number[] = [];
+    client.on("stream", (pushed: http2.ClientHttp2Stream) => {
+      pushedIds.push(pushed.id!);
+      pushed.on("error", () => {});
+    });
+    const req = client.request({ ":path": "/", ":method": method });
+    req.on("error", () => {});
+    await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+    raw.sendFrame(FrameType.SETTINGS, 0, 0);
+    raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+    let pings = 0;
+    return {
+      errors,
+      pushedIds,
+      sessionClosed,
+      client,
+      /** Writes `frames` and a PING in one segment. Resolves once the client has answered them:
+       *  with a GOAWAY if it failed the session, with the PING ACK if it is still alive. */
+      async send(...frames: Buffer[]): Promise<"GOAWAY" | "PING ACK"> {
+        const opaque = Buffer.alloc(8);
+        opaque.writeUInt32BE(++pings, 4);
+        raw.socket!.write(Buffer.concat([...frames, encodeFrame(FrameType.PING, 0, 0, opaque)]));
+        const answer = await raw.waitFor(
+          f =>
+            f.type === FrameType.GOAWAY ||
+            (f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(opaque)),
+        );
+        return answer.type === FrameType.GOAWAY ? "GOAWAY" : "PING ACK";
+      },
+      close() {
+        client.destroy();
+        raw.close();
+      },
+    };
+  }
+
+  // The parent of a PUSH_PROMISE must be a stream the client opened, in the "open" or "half-closed
+  // (local)" state. node (nghttp2) fails the session with NGHTTP2_ERR_PROTO for a parent the
+  // client never opened or the server owns, and with NGHTTP2_ERR_STREAM_CLOSED for a half-closed
+  // (remote) parent. The GOAWAY's error code is not pinned: node's `session.destroy(err)` writes
+  // INTERNAL_ERROR ahead of nghttp2's own code.
+  test.each([
+    {
+      parent: "an idle stream",
+      method: "GET" as const,
+      accepted: [],
+      rejected: pushPromise(99, 2),
+      error: { code: "ERR_HTTP2_ERROR", errno: -505, message: "Protocol error" },
+      pushedIds: [],
+    },
+    {
+      parent: "an idle stream numbered below an earlier promised stream",
+      method: "GET" as const,
+      accepted: [pushPromise(1, 4)],
+      rejected: pushPromise(3, 6),
+      error: { code: "ERR_HTTP2_ERROR", errno: -505, message: "Protocol error" },
+      pushedIds: [4],
+    },
+    {
+      parent: "a stream the server opened",
+      method: "GET" as const,
+      accepted: [pushPromise(1, 2)],
+      rejected: pushPromise(2, 4),
+      error: { code: "ERR_HTTP2_ERROR", errno: -505, message: "Protocol error" },
+      pushedIds: [2],
+    },
+    {
+      parent: "a half-closed (remote) stream",
+      method: "POST" as const,
+      accepted: [response(true)],
+      rejected: pushPromise(1, 2),
+      error: { code: "ERR_HTTP2_ERROR", errno: -510, message: "Stream was already closed or invalid" },
+      pushedIds: [],
+    },
+  ])("a PUSH_PROMISE on $parent fails the session", async ({ method, accepted, rejected, error, pushedIds }) => {
+    const peer = await clientWithRequest(method);
+    try {
+      expect(await peer.send(...accepted)).toBe("PING ACK");
+      expect(await peer.send(rejected)).toBe("GOAWAY");
+      await peer.sessionClosed;
+      expect(
+        peer.errors.map(err => ({
+          code: (err as NodeJS.ErrnoException).code,
+          errno: (err as NodeJS.ErrnoException).errno,
+          message: err.message,
+        })),
+      ).toEqual([error]);
+      expect(peer.pushedIds).toEqual(pushedIds);
+      expect(peer.client.destroyed).toBe(true);
+    } finally {
+      peer.close();
+    }
+  });
+
+  test.each([
+    { parent: "an open stream", method: "POST" as const, before: [] },
+    { parent: "an open stream whose response has started", method: "POST" as const, before: [response(false)] },
+    { parent: "a half-closed (local) stream", method: "GET" as const, before: [] },
+    {
+      parent: "a half-closed (local) stream whose response has started",
+      method: "GET" as const,
+      before: [response(false)],
+    },
+  ])("a PUSH_PROMISE on $parent is delivered", async ({ method, before }) => {
+    const peer = await clientWithRequest(method);
+    try {
+      expect(await peer.send(...before, pushPromise(1, 2))).toBe("PING ACK");
+      expect(peer.pushedIds).toEqual([2]);
+      expect(peer.errors).toEqual([]);
+    } finally {
+      peer.close();
+    }
+  });
+
+  // The response ended a stream whose request had already ended, so the parent is closed, not
+  // half-closed (remote). node refuses the promised stream with RST_STREAM(CANCEL) and keeps
+  // the session; only the session outcome is asserted here.
+  test.each([
+    { when: "in the segment that closes it", segments: [[response(true), pushPromise(1, 2)]] },
+    { when: "after the client released it", segments: [[response(true)], [pushPromise(1, 2)]] },
+  ])("a PUSH_PROMISE on a cleanly closed parent, $when, does not fail the session", async ({ segments }) => {
+    const peer = await clientWithRequest("GET");
+    try {
+      for (const frames of segments) {
+        expect(await peer.send(...frames)).toBe("PING ACK");
+      }
+      expect(peer.errors).toEqual([]);
+    } finally {
+      peer.close();
+    }
+  });
+});
+
 function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc(0)): Buffer {
   return Buffer.concat([
     Buffer.from([method === "POST" ? 0x83 : 0x82, 0x86, 0x84, 0x01]),

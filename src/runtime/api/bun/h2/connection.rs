@@ -214,6 +214,18 @@ pub trait Sink {
     fn highest_started_stream_id(&self) -> u32 {
         0
     }
+    /// Highest stream id the embedder has initiated itself (nghttp2's last_sent_stream_id). The
+    /// peer's streams never raise it, so an id of the local parity above it is idle even when a
+    /// peer-initiated id is higher.
+    fn highest_local_stream_id(&self) -> u32 {
+        0
+    }
+    /// Transition shim (see `is_local_stream`): whether the embedder already closed its half of
+    /// `stream_id` (END_STREAM or RST_STREAM sent by the legacy encoder). This engine only sees
+    /// the inbound half, so its `HalfClosedRemote` is half-closed (remote) only while this is false.
+    fn is_local_half_closed(&self, _stream_id: u32) -> bool {
+        false
+    }
     /// Whether the embedder's reader for `stream_id` is currently consuming data. While it is
     /// paused, the stream's receive window is not replenished (mirrors node, where
     /// nghttp2_session_consume_stream is only called while the JS readable is flowing) so the
@@ -1713,6 +1725,32 @@ impl Connection {
             );
             return true;
         }
+        // §6.6: the parent must be a stream this client opened that is "open" or "half-closed
+        // (local)". nghttp2 (nghttp2_session_on_push_promise_received) fails the session for a
+        // parent id the server owns (even) and for one the client never used (idle).
+        let parent = hdr.stream_id;
+        let parent_state = self.streams.get(&parent).map(|s| s.state);
+        let parent_idle = parent_state.is_none() && parent > sink.highest_local_stream_id();
+        if parent & 1 == 0 || parent_idle {
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"PUSH_PROMISE on an idle or server-initiated stream",
+            );
+            return true;
+        }
+        // A half-closed (remote) parent gets the same connection error of type STREAM_CLOSED as
+        // HEADERS on such a stream (see handle_headers). Once the local half is closed too the
+        // parent is closed, which nghttp2 does not treat as a connection error.
+        if parent_state == Some(State::HalfClosedRemote) && !sink.is_local_half_closed(parent) {
+            self.local_connection_error(
+                sink,
+                ErrorCode::StreamClosed,
+                wire::lib_error::STREAM_CLOSED,
+                b"PUSH_PROMISE: stream closed",
+            );
+            return true;
+        }
 
         // Reserve the promised (even) stream.
         let send_init = self.remote_settings.initial_window_size;
@@ -2274,10 +2312,10 @@ mod tests {
             Some(State::ReservedLocal)
         );
 
-        // Client receives it: on_push_promise(parent=1, promised=2) then the request headers.
+        // Client receives it on the request stream it opened: on_push_promise(parent=1,
+        // promised=2) then the request headers.
         let csink = CaptureSink::default();
-        let mut client = Connection::new(false, Settings::default());
-        client.preface_received = wire::CONNECTION_PREFACE.len();
+        let mut client = client_with_request(&csink, true);
         let fed = client.receive(&csink, &bytes);
         assert!(!fed.fatal);
         assert_eq!(fed.consumed, bytes.len());
@@ -2310,6 +2348,56 @@ mod tests {
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
         assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+    }
+
+    /// A client engine whose request on stream 1 is on the wire, ended or still open.
+    fn client_with_request(sink: &CaptureSink, end_stream: bool) -> Connection {
+        let mut client = Connection::new(false, Settings::default());
+        client.begin_header_block();
+        assert!(client.encode_header(b":method", b"POST", false));
+        client.send_header_block(sink, 1, end_stream);
+        sink.out.borrow_mut().clear();
+        client
+    }
+
+    /// PUSH_PROMISE on `parent` reserving stream 2, with an empty header block.
+    fn push_promise(parent: u32) -> Vec<u8> {
+        frame(
+            FrameType::PushPromise,
+            wire::flags::END_HEADERS,
+            parent,
+            &[0, 0, 0, 2],
+        )
+    }
+
+    #[test]
+    fn push_promise_on_idle_or_server_stream_is_goaway() {
+        // Stream 1 is the only one the client opened: 3 is idle, 2 belongs to the server.
+        for parent in [3, 2] {
+            let sink = CaptureSink::default();
+            let mut client = client_with_request(&sink, true);
+            let fed = client.receive(&sink, &push_promise(parent));
+            assert!(fed.fatal);
+            assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+            assert!(sink.pushes.borrow().is_empty());
+        }
+    }
+
+    #[test]
+    fn push_promise_on_half_closed_remote_parent_is_stream_closed() {
+        let sink = CaptureSink::default();
+        let mut client = client_with_request(&sink, false);
+        let response = encode_block(&[(b":status", b"200")]);
+        let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
+        client.receive(&sink, &frame(FrameType::Headers, flags, 1, &response));
+        assert_eq!(
+            client.streams.get(&1).map(|s| s.state),
+            Some(State::HalfClosedRemote)
+        );
+        let fed = client.receive(&sink, &push_promise(1));
+        assert!(fed.fatal);
+        assert_eq!(sink.local_error.get(), Some(wire::lib_error::STREAM_CLOSED));
+        assert!(sink.pushes.borrow().is_empty());
     }
 
     #[test]

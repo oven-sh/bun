@@ -865,12 +865,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           server.emit("connection", socket);
         }
 
-        // The request the socket 'timeout' handler consults: the last one
-        // dispatched, pipelined or not, until its response detaches. Node reads
-        // parser.incoming for this, but that slot has to outlive the response
-        // (until the request's 'end'), and a request that stream.pipeline()
-        // destroyed never ends: it would keep getting 'timeout' and hold the
-        // idle keep-alive socket open.
+        // Target of the socket 'timeout' handler until this request's response detaches.
         socket[kRequest] = http_req;
         // Node.js (llhttp) only flags a request as an upgrade when it carries
         // both an Upgrade header and a Connection header with the "upgrade"
@@ -3479,9 +3474,8 @@ ServerResponse.prototype.detachSocket = function (socket) {
     socket.removeListener("close", onServerResponseClose);
     socket._httpMessage = null;
     // Drop the request reference so a kept-alive idle connection does not
-    // pin the last request in memory, and so a request whose response has
-    // finished no longer gets the socket's 'timeout'. A pipelined request
-    // that arrived later already holds the slot and keeps it.
+    // pin the last request in memory (Node.js frees the parser's incoming
+    // reference when the response finishes).
     if (socket[kRequest] === this.req) {
       socket[kRequest] = undefined;
     }

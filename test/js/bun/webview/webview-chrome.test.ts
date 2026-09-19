@@ -1084,10 +1084,13 @@ it("chrome: userAgent option sets the User-Agent header and navigator.userAgent"
   expect(await view.evaluate("navigator.userAgent")).toBe(ua);
 });
 
-test("userAgent must be a string", () => {
+test("userAgent must be a string without CR, LF or NUL", () => {
   // Option parsing runs before any backend spawns, so no browser is needed.
   expect(() => new Bun.WebView({ backend: chrome, width: 100, height: 100, userAgent: 42 as any })).toThrow(
     /userAgent must be a string/,
+  );
+  expect(() => new Bun.WebView({ backend: chrome, width: 100, height: 100, userAgent: "bot/1.0\n" })).toThrow(
+    /userAgent must not contain/,
   );
 });
 

@@ -700,20 +700,30 @@ static WTF::Vector<uint8_t, 512> packNav(const WTF::String& url, const WTF::Stri
 void WebViewHost::onNavigationStarted()
 {
     m_status = 0;
+    m_responseSeen = false;
 }
 
 void WebViewHost::onNavigationResponse(uint16_t status)
 {
     m_status = status;
+    m_responseSeen = true;
 }
 
 void WebViewHost::onNavigationFinished()
 {
+    WTF::String currentUrl = url();
+    if (uintptr_t item = m_webview.currentBackForwardItem()) {
+        if (!m_responseSeen) {
+            auto it = m_statusByItem.find(item);
+            m_status = it != m_statusByItem.end() && it->value.url == currentUrl ? it->value.status : 0;
+        }
+        m_statusByItem.set(item, ItemStatus { currentUrl, m_status });
+    }
     // NavEvent is unsolicited — fires for back()/forward()/reload() too,
     // which Ack immediately and don't set m_navPending. The parent updates
     // url/title/status and runs onNavigated from NavEvent; NavDone only
     // resolves the navigate() promise.
-    auto payload = packNav(url(), title(), m_status);
+    auto payload = packNav(currentUrl, title(), m_status);
     hostWriter()->sendReply(m_viewId, Reply::NavEvent, payload.span().data(), static_cast<uint32_t>(payload.size()));
     if (!std::exchange(m_navPending, false)) return;
     hostWriter()->sendReply(m_viewId, Reply::NavDone, payload.span().data(), static_cast<uint32_t>(payload.size()));

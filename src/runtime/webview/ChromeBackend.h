@@ -313,15 +313,18 @@ for (;;) {
 }
 }))js"_s;
 
-// Evaluated after Page.loadEventFired (returnByValue). `t` is the title,
-// `s` the main-frame HTTP status from PerformanceNavigationTiming. Chrome
-// has no navigation status event without Network.enable, and this rides
-// the title fetch the navigate promise already waits for. The scheme check
-// matches WKWebView, where only an NSHTTPURLResponse has a status: Chrome
-// synthesizes responseStatus 200 for a data: document.
+// Evaluated after Page.loadEventFired (returnByValue): the title, and the
+// main-frame HTTP status from PerformanceNavigationTiming (no Network
+// domain needed). Only http(s) documents have a status, as on WKWebView;
+// Chrome synthesizes responseStatus 200 for a data: document. A page that
+// replaces `performance` must not cost the title.
 constexpr ASCIILiteral kPageTitleAndStatusJS = R"js((() => {
-  const e = performance.getEntriesByType("navigation")[0];
-  return { t: document.title, s: e && /^https?:/.test(e.name) ? e.responseStatus || 0 : 0 };
+  let s = 0;
+  try {
+    const e = performance.getEntriesByType("navigation")[0];
+    if (e && /^https?:/.test(e.name)) s = e.responseStatus || 0;
+  } catch {}
+  return { t: document.title, s };
 })())js"_s;
 
 // --- Transport singleton ---------------------------------------------------

@@ -6,6 +6,7 @@
 
 #include "ObjCRuntime.h"
 #include "ipc_protocol.h"
+#include <wtf/HashMap.h>
 #include <wtf/RefCounted.h>
 #include <wtf/Ref.h>
 #include <wtf/text/WTFString.h>
@@ -57,8 +58,7 @@ public:
 
     // Delegate IMP / block callbacks — fire inside CFRunLoop.
     void onNavigationStarted();
-    // decidePolicyForNavigationResponse: for the main frame. status is the
-    // HTTP status code, or 0 when the response is not an HTTP response.
+    // status is the main frame's HTTP status code, 0 for a non-HTTP response.
     void onNavigationResponse(uint16_t status);
     void onNavigationFinished();
     void onNavigationFailed(const WTF::String& err);
@@ -81,10 +81,18 @@ private:
     // (INVALID_STATE on overlap), and the block correlation in ObjCRuntime
     // (single m_evalTarget) requires it.
     bool m_navPending = false;
-    // Main-frame HTTP status of the navigation in flight. Cleared at
-    // didStartProvisionalNavigation so a data:/about:blank load (no
-    // response policy callback) reports 0, not the previous page's code.
+    // Main-frame HTTP status of the navigation in flight, and whether a
+    // response policy callback delivered it. A back-forward cache restore
+    // has no response: its status comes from m_statusByItem, keyed by the
+    // WKBackForwardListItem the page was first loaded into. The url guards
+    // against a freed item's address being reused by a new one.
     uint16_t m_status = 0;
+    bool m_responseSeen = false;
+    struct ItemStatus {
+        WTF::String url;
+        uint16_t status;
+    };
+    WTF::HashMap<uintptr_t, ItemStatus> m_statusByItem;
     bool m_evalPending = false;
     bool m_screenshotPending = false;
     // Stashed by screenshotIPC; read by onScreenshotComplete to pick the

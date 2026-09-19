@@ -9801,7 +9801,7 @@ declare module "bun" {
      * Read {@link WebView.title} and {@link WebView.status} after
      * `navigate()` resolves.
      */
-    onNavigated: ((url: string, title: string, status: number | null) => void) | null;
+    onNavigated: ((url: string, title: string | undefined, status: number | null | undefined) => void) | null;
     /**
      * Fired when a navigation fails. The callback runs before the
      * corresponding `navigate()` promise rejects.

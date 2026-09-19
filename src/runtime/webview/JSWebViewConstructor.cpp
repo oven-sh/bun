@@ -331,6 +331,10 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
         if (ua.isString()) {
             userAgent = ua.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            if (userAgent.contains('\r') || userAgent.contains('\n') || userAgent.contains('\0')) {
+                return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_VALUE,
+                    "userAgent must not contain CR, LF or NUL characters"_s);
+            }
         } else if (!ua.isUndefined()) {
             return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
                 "userAgent must be a string"_s);

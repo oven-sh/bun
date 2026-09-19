@@ -30,13 +30,11 @@ Class NSURL::cls;
 SEL NSURL::s_URLWithString;
 SEL NSURL::s_fileURLWithPath_isDirectory;
 SEL NSURL::s_absoluteString;
-SEL NSURL::s_isFileURL;
 
 Class NSURLRequest::cls;
 SEL NSURLRequest::s_requestWithURL;
 
 Class NSURLResponse::cls_NSHTTPURLResponse;
-SEL NSURLResponse::s_URL;
 SEL NSURLResponse::s_statusCode;
 
 SEL NSError::s_localizedDescription;
@@ -183,6 +181,8 @@ SEL WKWebView::s_setNavigationDelegate;
 SEL WKWebView::s_setUIDelegate;
 SEL WKWebView::s_loadRequest;
 SEL WKWebView::s_setCustomUserAgent;
+SEL WKWebView::s_backForwardList;
+SEL WKWebView::s_currentItem;
 SEL WKWebView::s_stopLoading;
 SEL WKWebView::s_reload;
 SEL WKWebView::s_canGoBack;
@@ -213,22 +213,21 @@ static void delegateDidStartProvisionalNavigation(id self, SEL, id /*webView*/, 
 }
 
 // webView:decidePolicyForNavigationResponse:decisionHandler:
-// Records the main frame's HTTP status, then answers the way WebKit's
-// NavigationState does when no delegate method exists (file: URLs and
-// showable MIME types load, anything else is cancelled). The handler is
-// void(^)(WKNavigationResponsePolicy): 0 = Cancel, 1 = Allow.
+// Records the main frame's HTTP status. The policy is WebKit's own default
+// for a missing delegate method: allow what it can show, cancel the rest.
+// The handler is void(^)(WKNavigationResponsePolicy): 0 = Cancel, 1 = Allow.
 static void delegateDecidePolicyForNavigationResponse(id self, SEL, id /*webView*/, id navigationResponse, void* handler)
 {
     ObjCRuntime::ARPool pool;
     objc::WKNavigationResponse navResponse(navigationResponse);
-    objc::NSURLResponse response = navResponse.response();
     if (navResponse.isForMainFrame()) {
         if (auto* host = objc::NavigationDelegate(self).host()) {
+            objc::NSURLResponse response = navResponse.response();
             long code = response.isHTTP() ? response.statusCode() : 0;
             host->onNavigationResponse(code > 0 && code <= 0xFFFF ? static_cast<uint16_t>(code) : 0);
         }
     }
-    long policy = (response.url().isFileURL() || navResponse.canShowMIMEType()) ? 1 : 0;
+    long policy = navResponse.canShowMIMEType() ? 1 : 0;
     struct {
         void* isa;
         int32_t flags;
@@ -425,13 +424,11 @@ bool ObjCRuntime::load()
     NSURL::s_URLWithString = sel("URLWithString:");
     NSURL::s_fileURLWithPath_isDirectory = sel("fileURLWithPath:isDirectory:");
     NSURL::s_absoluteString = sel("absoluteString");
-    NSURL::s_isFileURL = sel("isFileURL");
 
     CLS(NSURLRequest::cls, "NSURLRequest");
     NSURLRequest::s_requestWithURL = sel("requestWithURL:");
 
     CLS(NSURLResponse::cls_NSHTTPURLResponse, "NSHTTPURLResponse");
-    NSURLResponse::s_URL = sel("URL");
     NSURLResponse::s_statusCode = sel("statusCode");
 
     NSError::s_localizedDescription = sel("localizedDescription");
@@ -537,6 +534,8 @@ bool ObjCRuntime::load()
     WKWebView::s_setUIDelegate = sel("setUIDelegate:");
     WKWebView::s_loadRequest = sel("loadRequest:");
     WKWebView::s_setCustomUserAgent = sel("setCustomUserAgent:");
+    WKWebView::s_backForwardList = sel("backForwardList");
+    WKWebView::s_currentItem = sel("currentItem");
     WKWebView::s_stopLoading = sel("stopLoading");
     WKWebView::s_reload = sel("reload");
     WKWebView::s_canGoBack = sel("canGoBack");

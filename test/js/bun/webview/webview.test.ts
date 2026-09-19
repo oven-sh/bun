@@ -345,14 +345,22 @@ it("status reports the main frame's HTTP status, null for non-HTTP pages", async
   expect(view.status).toBe(200);
   await view.navigate(`${base}/missing`);
   expect(view.status).toBe(404);
+  // The title can still be empty at didFinishNavigation (see the url/title
+  // getters test); the status is what this test is about.
   expect(seen).toEqual([
-    [`${base}/ok`, "/ok", 200],
-    [`${base}/missing`, "/missing", 404],
+    [`${base}/ok`, expect.any(String), 200],
+    [`${base}/missing`, expect.any(String), 404],
   ]);
 
-  // reload() is not an IPC navigate; the status still comes from the
-  // same delegate callback.
+  // reload() resolves on the host's Ack, before the page finishes loading;
+  // the status still comes from the same delegate callback.
+  const reloaded = Promise.withResolvers<number | null>();
+  view.onNavigated = (url, title, status) => {
+    seen.push([url, title, status]);
+    reloaded.resolve(status);
+  };
   await view.reload();
+  expect(await reloaded.promise).toBe(404);
   expect(view.status).toBe(404);
 
   // A data: load has no HTTP response, and the previous page's code must
@@ -379,9 +387,12 @@ it("userAgent option sets the User-Agent header and navigator.userAgent", async 
   expect(await view.evaluate("navigator.userAgent")).toBe(ua);
 });
 
-it("userAgent must be a string", () => {
+it("userAgent must be a string without CR, LF or NUL", () => {
   expect(() => new Bun.WebView({ width: 100, height: 100, userAgent: 42 as any })).toThrow(
     /userAgent must be a string/,
+  );
+  expect(() => new Bun.WebView({ width: 100, height: 100, userAgent: "bot/1.0\n" })).toThrow(
+    /userAgent must not contain/,
   );
 });
 

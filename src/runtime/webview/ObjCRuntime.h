@@ -107,9 +107,6 @@ struct NSURL : Ref {
         return msgCls<id>(cls, s_fileURLWithPath_isDirectory, path.m_id, (signed char)isDir);
     }
     WTF::String absoluteString() const { return NSString(msg<id>(s_absoluteString)).toWTF(); }
-
-    static SEL s_isFileURL;
-    bool isFileURL() const { return m_id && msg<signed char>(s_isFileURL) != 0; }
 };
 
 struct NSURLRequest : Ref {
@@ -120,16 +117,13 @@ struct NSURLRequest : Ref {
     static NSURLRequest fromURL(NSURL u) { return msgCls<id>(cls, s_requestWithURL, u.m_id); }
 };
 
-// NSURLResponse / NSHTTPURLResponse. statusCode exists only on the HTTP
-// subclass — check isKindOf(NSHTTPURLResponse::cls) first; a data: or
-// file: load delivers a plain NSURLResponse.
+// NSURLResponse. statusCode exists only on the NSHTTPURLResponse subclass;
+// a data: or file: load delivers a plain NSURLResponse.
 struct NSURLResponse : Ref {
     using Ref::Ref;
     static Class cls_NSHTTPURLResponse;
-    static SEL s_URL;
     static SEL s_statusCode;
 
-    NSURL url() const { return msg<id>(s_URL); }
     bool isHTTP() const { return isKindOf(cls_NSHTTPURLResponse); }
     long statusCode() const { return msg<long>(s_statusCode); }
 };
@@ -631,11 +625,18 @@ struct WKWebView : Ref {
     void setUIDelegate(id d) { msg<void>(s_setUIDelegate, d); }
     void loadRequest(NSURLRequest r) { msg<void>(s_loadRequest, r.m_id); }
 
-    // customUserAgent — replaces the default Safari-like string for every
-    // request this view makes, and for navigator.userAgent. Public API,
-    // macOS 10.11+.
     static SEL s_setCustomUserAgent;
     void setCustomUserAgent(NSString ua) { msg<void>(s_setCustomUserAgent, ua.m_id); }
+
+    // The WKBackForwardListItem of the current page, as an opaque key.
+    // Stable for the item's lifetime; 0 when there is no current item.
+    static SEL s_backForwardList;
+    static SEL s_currentItem;
+    uintptr_t currentBackForwardItem() const
+    {
+        Ref list(msg<id>(s_backForwardList));
+        return list ? reinterpret_cast<uintptr_t>(list.msg<id>(s_currentItem)) : 0;
+    }
 
     // callAsyncJavaScript:arguments:inFrame:inContentWorld:completionHandler:
     // (public API, macOS 11.0+). The body is wrapped in an async function;

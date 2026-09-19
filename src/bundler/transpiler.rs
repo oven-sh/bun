@@ -592,6 +592,7 @@ impl<'a> Transpiler<'a> {
 
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
+        let mut is_development = env_loader.get_node_env() == Some(b"development");
 
         // `load_defines` injects a default `process.env.NODE_ENV`; sample the
         // explicit sources first so that default isn't mistaken for user intent
@@ -622,15 +623,16 @@ impl<'a> Transpiler<'a> {
         // inside the `&mut self` scope without `unsafe`.
         self.options.load_defines(self.arena, Some(env_loader))?;
 
-        let mut is_development = false;
         if had_explicit_node_env {
             if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
                 if !node_env.is_empty() {
                     if let Some(s) = node_env[0].data.value.e_string() {
                         if s.eql_comptime(b"production") {
                             is_production = true;
+                            is_development = false;
                         } else if s.eql_comptime(b"development") {
                             is_development = true;
+                            is_production = false;
                         }
                     }
                 }

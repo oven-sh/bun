@@ -945,15 +945,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // meaning that changes to the folder will also change the package in the cache.
     //
     // So we will overwrite the folder by directly copying the package in cache into it
-    //
-    // With the isolated linker's global virtual store, `module_folder` is
-    // reached *through* a `node_modules/.bun/<storepath>` symlink that points
-    // into `<cache>/links/`. `deleteTree(module_folder)` would follow that
-    // symlink and wipe the shared global entry (and its dep symlinks)
-    // underneath every other project, then FileCopier would write the user's
-    // edits into the shared cache. Detach first: replace that symlink with a
-    // real directory and recreate the path below it so the copy lands in a
-    // project-local tree.
+
+    // `delete_tree` and the copy must not go through a global store link into the shared entry.
     detach_module_folder_from_shared_store(manager, module_folder);
 
     if let Err(e) =
@@ -1131,10 +1124,7 @@ fn is_inside_global_store(manager: &mut PackageManager, folder: &[u8]) -> sys::M
 
 /// `module_folder` is the package folder. When it is a link, this function removes it.
 fn detach_module_folder_from_shared_store(manager: &mut PackageManager, module_folder: &[u8]) {
-    // `module_folder` reaches here normalised to forward slashes on every
-    // platform (see `pathToPosixBuf` in `preparePatch`). Re-normalise to the
-    // platform separator so the component scan and the lstat/getFileAttributes
-    // calls below see a native path.
+    // `prepare_patch` passes forward slashes on Windows too, and the code below needs native ones.
     #[cfg(windows)]
     let mut native_buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
@@ -1192,13 +1182,9 @@ fn detach_module_folder_from_shared_store(manager: &mut PackageManager, module_f
         None => return,
     };
 
-    // Windows directory symlinks/junctions are removed with rmdir,
-    // file symlinks with unlink; on POSIX unlink covers both. If
-    // removal fails the symlink is still live, and the caller's
-    // `deleteTree` + `FileCopier` would follow it into the shared
-    // global-store entry — so fail loudly here rather than silently
-    // corrupting the cache.
+    // If the link stays, `delete_tree` and the copy follow it into the shared entry, so this is fatal.
     let remove_err: Option<sys::Error> = {
+        // `rmdir` removes a junction or a directory symlink, `unlink` a file symlink.
         #[cfg(windows)]
         'remove: {
             if sys::rmdir(link.slice_z()).is_err() {
@@ -1233,8 +1219,7 @@ fn detach_module_folder_from_shared_store(manager: &mut PackageManager, module_f
         );
         Global::crash();
     }
-    // Re-create the now-missing path segments below the removed
-    // symlink so `module_folder`'s parent exists for the copy.
+    // The path below the removed link is gone, and the copy needs the parent of `module_folder`.
     if !parent.is_empty() {
         let _ = Fd::cwd().make_path(parent);
     }

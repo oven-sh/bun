@@ -822,13 +822,14 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     ]);
   }
   /**
-   * Sends one request (stream 1) to a raw server. `serve` writes the server's frames once the
-   * request HEADERS arrived. The PING ACK that ends the exchange follows every frame the client
-   * sent in reply to them.
+   * Sends one request (stream 1) to a raw server: a GET, or a POST that ends with `requestBody`.
+   * `serve` writes the server's frames once the request HEADERS arrived. The PING ACK that ends
+   * the exchange follows every frame the client sent in reply to them.
    */
   async function pushExchange(
     onResponse: (req: http2.ClientHttp2Stream) => void,
     serve: (raw: RawH2Server) => void | Promise<void>,
+    requestBody?: Buffer,
   ) {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
@@ -838,9 +839,10 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     });
     client.on("stream", onStream);
     try {
-      const req = client.request({ ":path": "/" });
+      const req = client.request({ ":path": "/", ":method": requestBody ? "POST" : "GET" });
       req.on("error", () => {});
       req.once("response", () => onResponse(req));
+      if (requestBody) req.end(requestBody);
       await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
       await serve(raw);
       raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
@@ -890,6 +892,20 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       pushedStreams: 1,
       resetsOnStream2: [],
     });
+  });
+
+  // The body exceeds the 65535-byte initial window and the raw server never opens it, so the
+  // writable cannot finish. close() then holds its NO_ERROR RST_STREAM back until 'finish', like
+  // node. nghttp2 does not see the stream as closing yet, and node v26.3.0 surfaces the push.
+  test("a PUSH_PROMISE is surfaced while close() waits for the request body to finish", async () => {
+    const result = await pushExchange(
+      req => req.close(),
+      raw => {
+        raw.socket!.write(Buffer.concat([serverSettings, responseHeaders(0x4 /* END_HEADERS */), pushOnStream1()]));
+      },
+      Buffer.alloc(200_000, "a"),
+    );
+    expect(result).toEqual({ pushedStreams: 1, resetsOnStream2: [] });
   });
 
   // node refuses these two as well (the `!stream` arm of the same nghttp2 check). The client still

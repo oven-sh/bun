@@ -2028,6 +2028,10 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // close() or destroy() scheduled the RST_STREAM that rstNextTick sends from setImmediate.
+  // nghttp2 calls a stream in this window CLOSING. Not set while close() holds a NO_ERROR
+  // reset back until 'finish': node has not submitted that RST_STREAM either.
+  RstScheduled = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2198,6 +2202,10 @@ function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
+function scheduleRstStream(stream: Http2Stream, session: Http2Session, id: number, rstCode: number) {
+  stream[bunHTTP2StreamStatus] |= StreamState.RstScheduled;
+  setImmediate(rstNextTick.bind(session, id, rstCode));
+}
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
 // drives the native receive window. While paused, the stream's window is not replenished; on
 // resume the deferred WINDOW_UPDATE is sent. A pending stream (no id yet) has nothing on the
@@ -2215,7 +2223,7 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
-  setImmediate(rstNextTick.bind(session, this.id, code));
+  scheduleRstStream(this, session, this.id, code);
 }
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
@@ -2543,7 +2551,7 @@ class Http2Stream extends Duplex {
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
       } else if (this.writableFinished || code) {
-        setImmediate(rstNextTick.bind(session, this.#id, code));
+        scheduleRstStream(this, session, this.#id, code);
       } else {
         this.once("finish", rstNextTick.bind(session, this.#id, code));
       }
@@ -2636,7 +2644,7 @@ class Http2Stream extends Duplex {
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
-      setImmediate(rstNextTick.bind(session, this.#id, rstCode));
+      scheduleRstStream(this, session, this.#id, rstCode);
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error
@@ -4979,12 +4987,11 @@ class ClientHttp2Session extends Http2Session {
     ) {
       if (!self) return;
       if (
-        (typeof parent === "object" && (parent[bunHTTP2StreamStatus] & StreamState.Closed) !== 0) ||
+        (typeof parent === "object" && (parent[bunHTTP2StreamStatus] & StreamState.RstScheduled) !== 0) ||
         self.#reservedStreamsCount >= self.#maxReservedRemoteStreams
       ) {
         // nghttp2 cancels a promise instead of surfacing it when the stream it arrived on is
-        // closing, or when too many pushed streams are reserved. close() and destroy() set Closed
-        // at once and send their RST_STREAM later: that window is nghttp2's CLOSING state.
+        // CLOSING (its RST_STREAM is queued), or when too many pushed streams are reserved.
         // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4613-L4627
         // A parent the parser already released (`parent` is not an object, nghttp2's `!stream`)
         // is still accepted: our server writes PUSH_PROMISE after the parent's END_STREAM when

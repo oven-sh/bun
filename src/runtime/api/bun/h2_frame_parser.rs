@@ -4103,8 +4103,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         };
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
             // A PUSH_PROMISE header block: surface the promised request to JS as a pushed stream.
-            // The JS handler refuses it when the parent's JS stream is already closed: close() and
-            // destroy() reach this parser later, from setImmediate.
+            // The JS handler refuses it when the parent's JS stream has an RST_STREAM scheduled:
+            // close() and destroy() reach this parser later, from setImmediate.
             self.rewrite_pending_push.set(0);
             let parent_ctx = self.rewrite_stream_ctx(self.rewrite_pending_push_parent.get());
             self.dispatch_with_3_extra(

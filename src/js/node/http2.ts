@@ -3744,8 +3744,7 @@ function scheduleDestroyIfNotDestroyed(target) {
     setImmediate(destroyIfNotDestroyedNT, target);
   }
 }
-// node's onFrameError: a frame that could not be sent also ends its session, gracefully and one
-// setImmediate later. The native side has already closed the stream by then.
+// node's onFrameError closes the session one setImmediate after the frame error.
 function closeSessionAfterFrameError(session) {
   session.close();
 }

@@ -5063,9 +5063,7 @@ impl H2FrameParser {
             // deferred JS close path (rstNextTick after _destroy) once a cleanly-completed
             // stream's entry has been evicted. Node sends no RST for cleanly-closed streams;
             // writing one makes the peer answer with RST(STREAM_CLOSED) per request.
-            //
-            // Every other id had an entry here. If it is gone, the stream is closed and the
-            // deferred JS close path must not reset it a second time.
+            // Any other id had an entry, so a missing one means the stream is already closed.
             let is_pushed_to_client = !this.is_server.get() && stream_id % 2 == 0;
             if error_code != ErrorCode::NO_ERROR.0 && is_pushed_to_client {
                 let mut frame = [0u8; 13];
@@ -6511,10 +6509,7 @@ impl H2FrameParser {
         if stream_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
         }
-        // JS hears of a native close (a reset) one tick later. Until then a server can still call
-        // respond() or additionalHeaders() on the stream. Checked before the header walk so that
-        // the block never reaches the HPACK encoder, whose table the peer mirrors from the blocks
-        // it receives. A client only gets here with the id of a new stream.
+        // Like no_trailers(). Up here so that the unsent block never reaches the HPACK encoder.
         if this.is_server.get() {
             if let Some(existing) = this.streams.get().get(&stream_id).copied() {
                 // SAFETY: `existing` is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -7121,12 +7116,10 @@ impl H2FrameParser {
             );
 
             if this.is_server.get() {
-                // The peer opened this stream (or was promised it) and waits for a response:
-                // node resets it with the frame error's code.
+                // The peer waits on this stream: reset it on the wire, as node's stream.close(code).
                 this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
             } else {
-                // The request never reached the wire, so there is nothing to reset. nghttp2
-                // closes it locally with REFUSED_STREAM so the application can retry.
+                // The request never reached the wire. nghttp2 closes it locally with REFUSED_STREAM.
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = ErrorCode::REFUSED_STREAM.0;
                 stream.free_resources::<false>(this);

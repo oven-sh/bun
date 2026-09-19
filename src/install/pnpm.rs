@@ -741,9 +741,22 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 continue;
             }
 
-            let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-            let _ = pkg_json_path.append(importer_path); // OOM/capacity error is non-actionable here
-            let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
+            let importer_does_not_exist = |log: &mut bun_ast::Log| {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "pnpm-lock.yaml lists importer '{}' but '{}/package.json' does not exist",
+                        bstr::BStr::new(importer_path),
+                        bstr::BStr::new(importer_path)
+                    ),
+                );
+                invalid_pnpm_lockfile()
+            };
+
+            let Some(pkg_json_path) = lockfile::workspace_package_json_path(importer_path) else {
+                return Err(importer_does_not_exist(log));
+            };
 
             let importer_pkg_json = match manager.workspace_package_json_cache.get_with_path(
                 log,
@@ -751,18 +764,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 Default::default(),
             ) {
                 crate::GetJsonResult::Entry(j) => j,
-                crate::GetJsonResult::ReadErr(_) => {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "pnpm-lock.yaml lists importer '{}' but '{}/package.json' does not exist",
-                            bstr::BStr::new(importer_path),
-                            bstr::BStr::new(importer_path)
-                        ),
-                    );
-                    return Err(invalid_pnpm_lockfile());
-                }
+                crate::GetJsonResult::ReadErr(_) => return Err(importer_does_not_exist(log)),
                 crate::GetJsonResult::ParseErr(_) => return Err(invalid_pnpm_lockfile()),
             };
 
@@ -875,14 +877,16 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     ..Default::default()
                 };
 
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = path_buf.append(path); // OOM/capacity error is non-actionable here
-                let abs_path: Box<[u8]> = Box::from(path_buf.slice());
-                let _ = path_buf.append(b"package.json"); // OOM/capacity error is non-actionable here
+                let mut abs_path = bun_paths::AutoAbsPath::init_top_level_dir();
+                let _ = abs_path.join(&[path]); // fits: the importer loop above built this path plus "/package.json"
+
+                let Some(package_json_path) = lockfile::workspace_package_json_path(path) else {
+                    return Err(invalid_pnpm_lockfile());
+                };
 
                 let workspace_pkg_json = match manager
                     .workspace_package_json_cache
-                    .get_with_path(log, path_buf.slice(), Default::default())
+                    .get_with_path(log, package_json_path.slice(), Default::default())
                     .unwrap()
                 {
                     Ok(j) => j,
@@ -937,7 +941,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-                let entry = pkg_map.get_or_put(&abs_path)?;
+                let entry = pkg_map.get_or_put(abs_path.slice())?;
                 if entry.found_existing {
                     return Err(invalid_pnpm_lockfile());
                 }
@@ -1003,16 +1007,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             if dep.version.tag == dependency::VersionTag::Workspace {
                                 let mut link_path_buf =
                                     bun_paths::AutoAbsPath::init_top_level_dir();
-                                let _ = link_path_buf.append(workspace_path); // OOM/capacity error is non-actionable here
-                                let _ = link_path_buf.join(&[link_path]); // path-buffer overflow unreachable for bounded inputs
+                                let _ = link_path_buf.join(&[workspace_path, link_path]); // path-buffer overflow unreachable for bounded inputs
 
                                 for existing_workspace_path in lockfile.workspace_paths.values() {
+                                    let existing =
+                                        existing_workspace_path.slice(string_bytes!(lockfile));
                                     let mut workspace_path_buf =
                                         bun_paths::AutoAbsPath::init_top_level_dir();
-                                    // OOM/capacity error is non-actionable here
-                                    let _ = workspace_path_buf.append(
-                                        existing_workspace_path.slice(string_bytes!(lockfile)),
-                                    );
+                                    let _ = workspace_path_buf.join(&[existing]); // path-buffer overflow unreachable for bounded inputs
 
                                     if strings::eql_long(
                                         workspace_path_buf.slice(),
@@ -2241,13 +2243,13 @@ fn parse_append_importer_dependencies(
                     continue;
                 }
 
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = path_buf.append(path); // OOM/capacity error is non-actionable here
-                let _ = path_buf.append(b"package.json"); // OOM/capacity error is non-actionable here
+                let Some(package_json_path) = lockfile::workspace_package_json_path(path) else {
+                    return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
+                };
 
                 let workspace_pkg_json = match manager
                     .workspace_package_json_cache
-                    .get_with_path(log, path_buf.slice(), Default::default())
+                    .get_with_path(log, package_json_path.slice(), Default::default())
                     .unwrap()
                 {
                     Ok(j) => j,

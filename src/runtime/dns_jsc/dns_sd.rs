@@ -379,18 +379,21 @@ impl SharedConnection {
                 (&raw mut *this).cast(),
             ),
         );
-        // SAFETY: `FilePoll::init` returned a live pool slot; exclusive here.
-        let poll = unsafe { &mut *poll_ptr };
         // SAFETY: the event loop outlives every lookup made on it.
         let loop_ = unsafe { ctx.platform_event_loop() };
-        let rc = poll.register_with_fd(
-            loop_,
-            Async::PollKind::Readable,
-            Async::posix_event_loop::OneShotFlag::None,
-            fd,
-        );
+        // SAFETY: `FilePoll::init` returned a live pool slot that nothing else
+        // refers to yet; the `&mut` the autoref forms ends with the statement.
+        let rc = unsafe {
+            (*poll_ptr).register_with_fd(
+                loop_,
+                Async::PollKind::Readable,
+                Async::posix_event_loop::OneShotFlag::None,
+                fd,
+            )
+        };
         if rc.is_err() {
-            poll.deinit();
+            // SAFETY: as above; nothing uses the slot after this.
+            unsafe { FilePoll::deinit(poll_ptr) };
             // SAFETY: FFI; `main_ref` is the live connection ref.
             unsafe { DNSServiceRefDeallocate(main_ref) };
             return None;
@@ -619,8 +622,9 @@ impl SharedConnection {
                     .remove(conn.early_out_timer.as_ptr())
             };
         }
-        // SAFETY: `file_poll` is the live hive slot; `deinit` returns it.
-        unsafe { (*conn.file_poll.as_ptr()).deinit() };
+        // SAFETY: `file_poll` is the live hive slot this connection owns, and
+        // `conn` (its only holder) is dropped below; `deinit` returns it.
+        unsafe { FilePoll::deinit(conn.file_poll.as_ptr()) };
         // SAFETY: FFI; releases the primary ref (and any remaining subordinates).
         unsafe { DNSServiceRefDeallocate(conn.main_ref) };
         drop(conn);

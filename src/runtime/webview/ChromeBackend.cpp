@@ -815,7 +815,9 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         if (errStr.isEmpty()) errStr = "CDP error"_s;
         switch (entry.method) {
         case Method::TargetCreateBrowserContext:
-            errStr = makeString("Chrome refused a browser context for this view (incognito may be disabled by policy; pass dataStore: { directory } to share Chrome's default context): "_s, errStr);
+            errStr = makeString("Chrome refused a browser context for this view (incognito may be disabled by policy"_s,
+                view->m_proxyServer.isEmpty() ? "; pass dataStore: { directory } to share Chrome's default context): "_s : "): "_s,
+                errStr);
             break;
         case Method::TargetCreateTarget:
             // The context has no tab; a retry creates a fresh one.

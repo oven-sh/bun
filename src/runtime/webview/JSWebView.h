@@ -98,6 +98,11 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
+    // Chrome: a browser context of the view's own (cookies, storage, proxy).
+    bool m_ownBrowserContext = false;
+    WTF::String m_browserContextId;
+    WTF::String m_proxyServer;
+    WTF::String m_proxyBypass; // comma-separated, CDP's proxyBypassList shape
     // clickSelector stash — the actionability eval chains into a
     // dispatchMouseEvent that needs these. WebViewHost has the same fields
     // on its side (m_selButton etc.) for the same chain.

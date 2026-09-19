@@ -9708,14 +9708,38 @@ declare module "bun" {
        * Storage backing for cookies, localStorage, IndexedDB, etc.
        *
        * - `"ephemeral"` (default): in-memory only, nothing written to disk.
+       *   The view's cookies and storage are shared with no other view and
+       *   are discarded when it closes.
        * - `{ directory }`: persistent storage rooted at the given path.
        *   Multiple views with the same directory share state.
        *
        * **Chrome backend**: `directory` is per-Chrome-process
        * (`--user-data-dir`), not per-view. The first view's directory
-       * applies to all views spawned in the same Bun process.
+       * applies to all views with a `directory` in the same Bun process,
+       * and they all share that Chrome's default context. An ephemeral
+       * view gets a browser context of its own (a CDP
+       * `Target.createBrowserContext`) inside that one Chrome. When Bun
+       * connects to a Chrome that is already running, an ephemeral view
+       * is an incognito window and `{ directory }` (value unused) selects
+       * that browser's own profile.
        */
       dataStore?: "ephemeral" | { directory: string };
+      /**
+       * Proxy for this view's requests. Chrome backend only.
+       *
+       * A string is the proxy server (`"http://host:port"`,
+       * `"socks5://host:port"`, or a Chrome proxy rule list). The object
+       * form adds `bypass`: hosts that skip the proxy, in Chrome's
+       * bypass-rule syntax (`"*.internal"`, `"10.0.0.0/8"`). Chrome skips
+       * the proxy for loopback addresses on its own. The rule
+       * `"<-loopback>"` removes that implicit bypass and sends loopback
+       * traffic through the proxy too.
+       *
+       * The proxy rides on a browser context of the view's own, so each
+       * view can have a different proxy. It cannot be combined with
+       * `dataStore: { directory }`.
+       */
+      proxy?: string | { server: string; bypass?: string[] };
     }
   }
 

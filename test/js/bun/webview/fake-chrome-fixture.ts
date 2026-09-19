@@ -29,14 +29,28 @@ const noTitleReply = process.argv.includes("--no-title-reply");
 // navigating.
 const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?.slice("--navigate-error=".length);
 
-// `--cdp-error-on=<method>`: that method's reply is a CDP protocol error
-// ({"error":{"code":-32000,...}}), the way real Chrome rejects e.g.
-// Page.navigate for a URL it cannot parse.
-const cdpErrorOn = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
+// `--cdp-error-on=<method>[:<times>]`: that method's reply is a CDP protocol
+// error ({"error":{"code":-32000,...}}), the way real Chrome rejects e.g.
+// Page.navigate for a URL it cannot parse. With `:<times>`, only the first
+// that many calls fail and later ones are answered normally.
+const cdpErrorSpec = process.argv.find(a => a.startsWith("--cdp-error-on="))?.slice("--cdp-error-on=".length);
+const [cdpErrorOn, cdpErrorTimesText] = cdpErrorSpec?.split(":") ?? [];
+let cdpErrorsLeft = cdpErrorTimesText ? Number(cdpErrorTimesText) : Infinity;
 
 const NO_REPLY = Symbol("no reply");
 let commandsClosed = false;
+
+// Every Target.createBrowserContext, Target.createTarget and
+// Target.disposeBrowserContext seen so far, in order, for __fake_targets().
+const targetLog: { method: string; params: any }[] = [];
+
 Object.assign(globalThis, {
+  // What the runtime asked of the Target domain: which contexts it created
+  // (and with what params), which context each tab went into, which contexts
+  // it disposed.
+  __fake_targets() {
+    return targetLog;
+  },
   __fake_exit(code: number): never {
     process.exit(code);
   },
@@ -65,6 +79,7 @@ function send(message: unknown) {
 }
 
 let targets = 0;
+let contexts = 0;
 let loads = 0;
 
 async function handle(command: { id: number; method: string; params?: any; sessionId?: string }) {
@@ -72,12 +87,24 @@ async function handle(command: { id: number; method: string; params?: any; sessi
   const reply = (result: unknown) => send(sessionId ? { id, result, sessionId } : { id, result });
   const event = (name: string, eventParams: unknown) => send({ method: name, params: eventParams, sessionId });
 
-  if (method === cdpErrorOn) {
+  if (
+    method === "Target.createBrowserContext" ||
+    method === "Target.createTarget" ||
+    method === "Target.disposeBrowserContext"
+  ) {
+    targetLog.push({ method, params });
+  }
+
+  if (method === cdpErrorOn && cdpErrorsLeft-- > 0) {
     const error = { code: -32000, message: "Cannot navigate to invalid URL" };
     return send(sessionId ? { id, error, sessionId } : { id, error });
   }
 
   switch (method) {
+    case "Target.createBrowserContext":
+      return reply({ browserContextId: "C" + ++contexts });
+    case "Target.disposeBrowserContext":
+      return reply({});
     case "Target.createTarget":
       return reply({ targetId: "T" + ++targets });
     case "Target.attachToTarget":

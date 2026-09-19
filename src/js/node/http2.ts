@@ -2951,8 +2951,7 @@ function tryClose(fd) {
   } catch {}
 }
 
-// node's respondWithFD() sends the headers before it reads the descriptor, so an unreadable one
-// fails after the headers with NGHTTP2_INTERNAL_ERROR. Bun stats first and replays that here.
+// node's respondWithFD() sends headers before it reads the fd and fails on the read; replay that.
 function failFdResponseAsStreamError(this: Http2Stream, headers, options) {
   if (this.destroyed || this.closed) return;
   if (!this.headersSent) {

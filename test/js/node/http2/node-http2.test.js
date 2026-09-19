@@ -6167,13 +6167,27 @@ it("a refused client request is freed safely: close(), a body, destroy() and a l
       Bun.gc(true);
       destroyed.destroy();
     });
-    const refused = await Promise.all([closedResult, abortedResult, postedResult, destroyedResult]);
+    // close(code) must not put RST_STREAM on the wire for an id the peer never saw.
+    const cancelled = client.request({ ":path": "/cancelled", "x-big": big });
+    const cancelledResult = settle(cancelled);
+    cancelled.close(http2.constants.NGHTTP2_CANCEL);
+    const late = client.request({ ":path": "/late", "x-big": big });
+    const lateResult = settle(late);
+    late.on("frameError", () => late.close(http2.constants.NGHTTP2_INTERNAL_ERROR));
+    const refused = await Promise.all([
+      closedResult,
+      abortedResult,
+      postedResult,
+      destroyedResult,
+      cancelledResult,
+      lateResult,
+    ]);
 
     // A response is inbound traffic, which evicts the freed entries.
     const first = client.request({ ":path": "/first" });
     const firstResult = await settle(first);
     controller.abort();
-    for (const req of [closed, aborted, posted, destroyed]) {
+    for (const req of [closed, aborted, posted, destroyed, cancelled, late]) {
       req.close();
       req.destroy();
     }
@@ -6190,6 +6204,8 @@ it("a refused client request is freed safely: close(), a body, destroy() and a l
         { status: undefined, error: refusedError, rstCode },
         { status: undefined, error: refusedError, rstCode },
         { status: undefined, error: undefined, rstCode },
+        { status: undefined, error: refusedError, rstCode },
+        { status: undefined, error: refusedError, rstCode },
       ],
       firstResult: { status: 200, error: undefined, rstCode: 0 },
       secondResult: { status: 200, error: undefined, rstCode: 0 },

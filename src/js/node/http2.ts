@@ -2215,6 +2215,7 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
+  if (this[kNeverAnnounced]) return;
   setImmediate(rstNextTick.bind(session, this.id, code));
 }
 function uncorkNT(stream: Http2Stream) {
@@ -2542,6 +2543,8 @@ class Http2Stream extends Duplex {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
+      } else if (this[kNeverAnnounced]) {
+        // The peer never saw this id: nothing to reset.
       } else if (this.writableFinished || code) {
         setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {

@@ -124,6 +124,10 @@ enum BlockDisposition {
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
+    /// The block would open a stream above the last-stream-id of a GOAWAY this side sent
+    /// (RFC 9113 §6.8): nothing is sent and no stream opens, like nghttp2's
+    /// NGHTTP2_ERR_IGN_HEADER_BLOCK.
+    Ignored,
 }
 
 pub struct Feed {
@@ -169,6 +173,12 @@ pub trait Sink {
     /// is allocated; the header block is still decoded for HPACK-table sync (§4.3).
     fn can_open_stream(&self) -> bool {
         true
+    }
+    /// The lowest last-stream-id of the GOAWAY frames the embedder has sent, `None` before the
+    /// first one. The embedder writes those frames itself, possibly from inside a dispatch of
+    /// this engine, so the engine asks when it needs the value.
+    fn sent_goaway_last_stream_id(&self) -> Option<u32> {
+        None
     }
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
     fn on_remote_custom_setting(&self, _id: u16, _value: u32) {}
@@ -878,6 +888,18 @@ impl Connection {
 
     // ---- Stream-level inbound ------------------------------------------
 
+    /// RFC 9113 §6.8: the sender of a GOAWAY can discard frames on peer-initiated streams above
+    /// its last-stream-id. nghttp2 does (session_allow_incoming_new_stream), so a request that
+    /// crosses a graceful close on the wire never reaches node. Server only: a client's peer
+    /// streams arrive by PUSH_PROMISE.
+    fn is_past_sent_goaway(&self, sink: &impl Sink, stream_id: u32) -> bool {
+        self.is_server
+            && !stream_id.is_multiple_of(2)
+            && sink
+                .sent_goaway_last_stream_id()
+                .is_some_and(|last| stream_id > last)
+    }
+
     /// RFC 9113 §6.2 HEADERS: strip padding/priority, then begin (or complete) the header block.
     fn handle_headers(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         let mut off = 0usize;
@@ -930,13 +952,16 @@ impl Connection {
             );
             return true;
         }
-        let refused = is_new && self.is_server && !sink.can_open_stream();
-        let mut disposition = if refused {
+        let ignored = is_new && self.is_past_sent_goaway(sink, hdr.stream_id);
+        let refused = is_new && !ignored && self.is_server && !sink.can_open_stream();
+        let mut disposition = if ignored {
+            BlockDisposition::Ignored
+        } else if refused {
             BlockDisposition::Refused
         } else {
             BlockDisposition::Deliver
         };
-        if !refused {
+        if disposition == BlockDisposition::Deliver {
             let cur_state = self
                 .streams
                 .entry(hdr.stream_id)
@@ -984,13 +1009,13 @@ impl Connection {
             }
         }
         if is_new {
-            // Must advance even for refused streams: §5.1 treats anything at or below the
-            // high-water mark as having existed, so frames a client pipelined behind the
-            // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
+            // Must advance even for refused and ignored streams: §5.1 treats anything at or
+            // below the high-water mark as having existed, so frames a client pipelined behind
+            // the HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-            if !refused {
+            if disposition == BlockDisposition::Deliver {
                 sink.on_stream_open(hdr.stream_id);
             }
         }
@@ -1226,6 +1251,7 @@ impl Connection {
             return true;
         }
         match disposition {
+            BlockDisposition::Ignored => return false,
             BlockDisposition::Refused => {
                 // node (node_http2.cc, Http2Session::OnBeginHeadersCallback): a stream refused for
                 // the session memory budget is answered with RST_STREAM(ENHANCE_YOUR_CALM), which
@@ -1372,8 +1398,10 @@ impl Connection {
         let mut discard = false;
         match self.streams.get_mut(&hdr.stream_id) {
             None => {
-                self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
-                sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                if !self.is_past_sent_goaway(sink, hdr.stream_id) {
+                    self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
+                    sink.on_stream_reset(hdr.stream_id, ErrorCode::StreamClosed.as_u32());
+                }
                 discard = true;
             }
             Some(st) => {
@@ -1496,6 +1524,7 @@ impl Connection {
             Rst(ErrorCode),
             FlowControlViolation,
             Deliver(u32),
+            Ignore,
         }
         // Transition shim: DATA for a stream the embedder opened locally (legacy outbound) — open it
         // here so it isn't mistaken for a closed/idle stream.
@@ -1510,8 +1539,14 @@ impl Connection {
             .acked_local_initial_window
             .max(self.local_settings.initial_window_size) as i64;
         let decision = match self.streams.get_mut(&hdr.stream_id) {
-            // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
-            None => DataDecision::Rst(ErrorCode::StreamClosed),
+            None => {
+                if self.is_past_sent_goaway(sink, hdr.stream_id) {
+                    DataDecision::Ignore
+                } else {
+                    // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
+                    DataDecision::Rst(ErrorCode::StreamClosed)
+                }
+            }
             Some(s) => {
                 if !stream::can_receive_data(s.state) {
                     DataDecision::Rst(ErrorCode::StreamClosed)
@@ -1527,6 +1562,8 @@ impl Connection {
             }
         };
         let stream_inc = match decision {
+            // §6.8: the frame counted toward the connection window above, nothing else happens.
+            DataDecision::Ignore => return false,
             DataDecision::Rst(code) => {
                 self.send_rst_stream(sink, hdr.stream_id, code);
                 if let Some(s) = self.streams.get_mut(&hdr.stream_id) {

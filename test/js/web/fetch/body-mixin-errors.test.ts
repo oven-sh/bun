@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
@@ -141,7 +141,7 @@ describe("body-mixin-errors", () => {
   it.concurrent.each([
     ["HTMLRewriter.transform()", (res: Response) => new HTMLRewriter().transform(res)],
     ["WebAssembly.compileStreaming()", (res: Response) => WebAssembly.compileStreaming(res)],
-    ["Bun.spawn() stdin", (res: Response) => Bun.spawn({ cmd: [bunExe(), "--version"], stdin: res })],
+    ["Bun.spawn() stdin", (res: Response) => Bun.spawn({ cmd: [bunExe(), "--version"], env: bunEnv, stdin: res })],
     ["Bun.write()", (res: Response, dir: string) => Bun.write(join(dir, "out"), res)],
   ] as const)("fetch: %s of a body that failed before it was read uses the body up", async (_, read) => {
     using dir = tempDir("body-mixin-errors", {});

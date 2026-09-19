@@ -930,7 +930,7 @@ const openInput = () => {
 // that owns the body, and the body holds it weakly: an ordinary cycle.
 describe("a failed rewrite whose error reaches its output Response does not pin it", () => {
   const N = 100;
-  type Failure = Error & { response?: Response; clone?: Response; request?: Request; requestClone?: Request };
+  type Failure = Error & { response?: Response; clone?: Response; requests?: Request[] };
 
   // Each fails a rewrite with an error that references the output Response, and reads nothing.
   const failures: Record<string, () => Promise<void>> = {
@@ -985,7 +985,7 @@ describe("a failed rewrite whose error reaches its output Response does not pin 
       failure.response = response;
       failure.clone = response.clone();
     },
-    // So does a Request made from the failed Response, and so does its clone.
+    // So does a Request made from the failed Response, and so does each copy of that Request.
     "an error that reaches the Requests that copied the failed body": async () => {
       const input = openInput();
       const failure: Failure = new Error("handler failed");
@@ -998,8 +998,8 @@ describe("a failed rewrite whose error reaches its output Response does not pin 
         .transform(new Response(input.stream));
       input.send("<p>x</p>");
       await input.cancelled;
-      failure.request = new Request("http://localhost/", response);
-      failure.requestClone = failure.request.clone();
+      const request = new Request("http://localhost/", response);
+      failure.requests = [request, request.clone(), new Request(request), new Request(request, {})];
     },
   };
 
@@ -1014,7 +1014,7 @@ describe("a failed rewrite whose error reaches its output Response does not pin 
     const before = bodyOwners();
     for (let i = 0; i < N; i++) await once();
 
-    // Unfixed: every output Response stays, and every copy: N or 2 * N.
+    // Unfixed: every output Response stays, and every copy: N, 2 * N or 4 * N.
     expect(bodyOwners() - before).toBeLessThan(N / 4);
   });
 });

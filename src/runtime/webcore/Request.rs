@@ -1110,6 +1110,10 @@ impl Request {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
                         }
+                        // `clone_into` wrote an empty `js_ref` over the one seeded above.
+                        req.js_ref.set(JsRef::init_weak(this_value));
+                        req.check_body_stream_ref(cx.global());
+                        req.check_body_error_ref(cx.global());
                         success = true;
                         cleanup(&mut req, body_seed_ptr, success);
                         return Ok(req);

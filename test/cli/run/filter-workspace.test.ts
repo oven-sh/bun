@@ -1313,9 +1313,10 @@ describe("auto-discovered bunfig.toml [run] section", () => {
 });
 
 // The GitHub Actions runner only parses a workflow command at column 0. The
-// annotation commands must reach it bare. Group markers stay prefixed because
-// concurrent packages interleave and bare markers would be unpaired.
-describe("GitHub Actions annotations", () => {
+// stateless commands must reach it bare. Group markers stay prefixed because
+// concurrent packages interleave and bare markers would be unpaired. Text
+// between ::stop-commands::<token> and ::<token>:: stays prefixed too.
+describe.concurrent("GitHub Actions annotations", () => {
   const lines = [
     "::group::a.test.ts:",
     "plain line",
@@ -1323,6 +1324,12 @@ describe("GitHub Actions annotations", () => {
     "::warning ::careful",
     "::notice::note",
     "::debug::dbg",
+    "::add-mask::s3cret",
+    "  ::error::indented",
+    "::stop-commands::tok",
+    "::error::suppressed",
+    "::tok::",
+    "::error::resumed",
     "::endgroup::",
   ];
   const printer = `for (const l of ${JSON.stringify(lines)}) console.log(l); process.stdout.write("::error ::tail");`;
@@ -1338,23 +1345,24 @@ describe("GitHub Actions annotations", () => {
     });
   }
 
-  function run(dir: string, args: string[], env: Record<string, string | undefined> = {}) {
-    const { exitCode, stdout, stderr } = spawnSync({
+  async function run(dir: string, args: string[], env: Record<string, string | undefined> = {}) {
+    await using proc = Bun.spawn({
       cwd: dir,
       cmd: [bunExe(), ...args],
-      env: { ...bunEnv, GITHUB_ACTIONS: "true", ...env },
+      env: { ...bunEnv, GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: undefined, ...env },
       stdout: "pipe",
       stderr: "pipe",
     });
-    return { exitCode, stdout: stdout.toString(), stderr: stderr.toString() };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { exitCode, stdout, stderr };
   }
 
   test.each([
     ["bun run --filter", ["run", "--filter", "dep0", "script"]],
     ["bun run --workspaces", ["run", "--workspaces", "script"]],
-  ])("%s writes annotation commands at column 0", (_, args) => {
+  ])("%s writes annotation commands at column 0", async (_, args) => {
     using dir = workspace("filter-gha-annotations");
-    const r = run(String(dir), args);
+    const r = await run(String(dir), args);
     expect(r.stdout.split("\n")).toEqual([
       "dep0 script: ::group::a.test.ts:",
       "dep0 script: plain line",
@@ -1362,6 +1370,12 @@ describe("GitHub Actions annotations", () => {
       "::warning ::careful",
       "::notice::note",
       "::debug::dbg",
+      "::add-mask::s3cret",
+      "  ::error::indented",
+      "dep0 script: ::stop-commands::tok",
+      "dep0 script: ::error::suppressed",
+      "dep0 script: ::tok::",
+      "::error::resumed",
       "dep0 script: ::endgroup::",
       "::error ::tail",
       "dep0 script: Exited with code 0",
@@ -1370,24 +1384,25 @@ describe("GitHub Actions annotations", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  test("FORCE_COLOR does not select the redraw renderer under GitHub Actions", () => {
+  test("FORCE_COLOR does not select the redraw renderer under GitHub Actions", async () => {
     using dir = workspace("filter-gha-force-color");
-    const r = run(String(dir), ["run", "--filter", "dep0", "script"], { FORCE_COLOR: "1", NO_COLOR: "0" });
+    const r = await run(String(dir), ["run", "--filter", "dep0", "script"], { FORCE_COLOR: "1", NO_COLOR: "0" });
     expect(r.stdout).toMatch(/^::error file=a\.test\.ts,line=2,col=30,title=boom::Expected 2$/m);
     expect(r.stdout).toMatch(/^dep0 script: ::group::a\.test\.ts:$/m);
     expect(r.stdout).not.toContain("\x1b[");
     expect(r.exitCode).toBe(0);
   });
 
-  test("annotation lines stay prefixed outside GitHub Actions", () => {
+  test("annotation lines stay prefixed outside GitHub Actions", async () => {
     using dir = workspace("filter-gha-off");
-    const r = run(String(dir), ["run", "--filter", "dep0", "script"], { GITHUB_ACTIONS: "false" });
+    const r = await run(String(dir), ["run", "--filter", "dep0", "script"], { GITHUB_ACTIONS: "false" });
     expect(r.stdout).toMatch(/^dep0 script: ::error file=a\.test\.ts,/m);
+    expect(r.stdout).toMatch(/^dep0 script: ::error ::tail$/m);
     expect(r.stdout).not.toMatch(/^::error/m);
     expect(r.exitCode).toBe(0);
   });
 
-  test("a failing bun test in a workspace package produces a bare ::error annotation", () => {
+  test("a failing bun test in a workspace package produces a bare ::error annotation", async () => {
     using dir = tempDir("filter-gha-bun-test", {
       packages: {
         dep0: {
@@ -1397,7 +1412,7 @@ describe("GitHub Actions annotations", () => {
       },
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
-    const r = run(String(dir), ["run", "--filter", "dep0", "test"]);
+    const r = await run(String(dir), ["run", "--filter", "dep0", "test"]);
     const out = r.stdout + r.stderr;
     expect(out).toMatch(/^::error file=a\.test\.ts,line=2,col=30,/m);
     expect(out).toMatch(/^dep0 test: ::group::a\.test\.ts:$/m);

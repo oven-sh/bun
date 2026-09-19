@@ -114,6 +114,7 @@ pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: *const State<'a>,
     color_idx: usize,
+    github_relay: Output::GithubCommandRelay,
 
     stdout_reader: PipeReader<'a>,
     stderr_reader: PipeReader<'a>,
@@ -392,7 +393,7 @@ impl<'a> State<'a> {
     ) -> Result<(), Error> {
         // The GitHub Actions runner only parses an annotation command at
         // column 0, so it gets neither the label nor the color escape.
-        if !(Output::is_github_action() && Output::is_github_annotation_line(line)) {
+        if !(Output::is_github_action() && handle.github_relay.is_bare_line(line)) {
             self.write_prefix(handle, writer)?;
         }
         writer.write_all(line)?;
@@ -1162,6 +1163,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             state: &raw const state,
             config,
             color_idx,
+            github_relay: Output::GithubCommandRelay::default(),
             stdout_reader: PipeReader::new(false),
             stderr_reader: PipeReader::new(true),
             process: None,

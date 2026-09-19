@@ -1608,8 +1608,9 @@ describe.concurrent("unusual output", () => {
 // ─── GITHUB ACTIONS ANNOTATIONS ─────────────────────────────────────────────
 
 // The GitHub Actions runner only parses a workflow command at column 0. The
-// annotation commands must reach it bare. Group markers stay prefixed because
-// parallel scripts interleave and bare markers would be unpaired.
+// stateless commands must reach it bare. Group markers stay prefixed because
+// parallel scripts interleave and bare markers would be unpaired. Text
+// between ::stop-commands::<token> and ::<token>:: stays prefixed too.
 describe.concurrent("GitHub Actions annotations", () => {
   const lines = [
     "::group::a.test.ts:",
@@ -1618,6 +1619,12 @@ describe.concurrent("GitHub Actions annotations", () => {
     "::warning ::careful",
     "::notice::note",
     "::debug::dbg",
+    "::add-mask::s3cret",
+    "  ::error::indented",
+    "::stop-commands::tok",
+    "::error::suppressed",
+    "::tok::",
+    "::error::resumed",
     "::endgroup::",
   ];
   const printer = `for (const l of ${JSON.stringify(lines)}) console.log(l); process.stderr.write("::error ::tail");`;
@@ -1633,6 +1640,12 @@ describe.concurrent("GitHub Actions annotations", () => {
       "::warning ::careful",
       "::notice::note",
       "::debug::dbg",
+      "::add-mask::s3cret",
+      "  ::error::indented",
+      "gha | ::stop-commands::tok",
+      "gha | ::error::suppressed",
+      "gha | ::tok::",
+      "::error::resumed",
       "gha | ::endgroup::",
       "",
     ]);

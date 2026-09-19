@@ -64,6 +64,7 @@ pub(crate) struct ProcessHandle<'a> {
     /// cannot finish it twice.
     finished: bool,
     buffer: Vec<u8>,
+    github_relay: Output::GithubCommandRelay,
 
     process: Option<ProcessInfo>,
     options: SpawnOptions,
@@ -348,18 +349,18 @@ impl<'a> State<'a> {
     /// only parses it at column 0.
     fn write_prefixed_line(
         draw_buf: &mut Vec<u8>,
-        config: &ScriptConfig,
+        handle: &ProcessHandle<'a>,
         line: &[u8],
     ) -> crate::Result<()> {
-        if Output::is_github_action() && Output::is_github_annotation_line(line) {
+        if Output::is_github_action() && handle.github_relay.is_bare_line(line) {
             draw_buf.extend_from_slice(line);
             return Ok(());
         }
         write!(
             draw_buf,
             "{} {}: {}",
-            bstr::BStr::new(&config.package_name),
-            bstr::BStr::new(&config.script_name),
+            bstr::BStr::new(&handle.config.package_name),
+            bstr::BStr::new(&handle.config.script_name),
             bstr::BStr::new(line),
         )?;
         Ok(())
@@ -377,7 +378,7 @@ impl<'a> State<'a> {
                     let i = i as usize;
                     handle.buffer.extend_from_slice(&content[0..i + 1]);
                     content = &content[i + 1..];
-                    Self::write_prefixed_line(&mut self.draw_buf, handle.config, &handle.buffer)?;
+                    Self::write_prefixed_line(&mut self.draw_buf, handle, &handle.buffer)?;
                     handle.buffer.clear();
                 } else {
                     handle.buffer.extend_from_slice(content);
@@ -387,7 +388,7 @@ impl<'a> State<'a> {
             while let Some(i) = strings::index_of_char(content, b'\n') {
                 let i = i as usize;
                 let line = &content[0..i + 1];
-                Self::write_prefixed_line(&mut self.draw_buf, handle.config, line)?;
+                Self::write_prefixed_line(&mut self.draw_buf, handle, line)?;
                 content = &content[i + 1..];
             }
             if !content.is_empty() {
@@ -432,17 +433,8 @@ impl<'a> State<'a> {
             self.draw_buf.clear();
             // flush any remaining buffer
             if !handle.buffer.is_empty() {
-                if Output::is_github_action() && Output::is_github_annotation_line(&handle.buffer) {
-                    self.draw_buf.extend_from_slice(&handle.buffer);
-                    self.draw_buf.push(b'\n');
-                } else {
-                    writeln!(
-                        &mut self.draw_buf,
-                        "{}: {}",
-                        bstr::BStr::new(&handle.config.package_name),
-                        bstr::BStr::new(&handle.buffer),
-                    )?;
-                }
+                Self::write_prefixed_line(&mut self.draw_buf, handle, &handle.buffer)?;
+                self.draw_buf.push(b'\n');
                 handle.buffer.clear();
             }
             // print exit status
@@ -1012,6 +1004,7 @@ pub(crate) fn run_scripts_with_filter(
             stdout: BufferedReader::init::<ProcessHandle>(),
             stderr: BufferedReader::init::<ProcessHandle>(),
             buffer: Vec::new(),
+            github_relay: Output::GithubCommandRelay::default(),
             remaining_fds: 0,
             finished: false,
             process: None,

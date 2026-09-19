@@ -23,6 +23,10 @@ const calls = {
     st.respondWithFD(closedFd(), { ":status": 200 }, { statCheck() {} });
     st.destroy();
   },
+  "respondWithFD(closed fd), no statCheck, then destroy()": st => {
+    st.respondWithFD(closedFd(), { ":status": 200 });
+    st.destroy();
+  },
 };
 
 const server = http2.createServer();

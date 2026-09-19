@@ -1649,63 +1649,85 @@ it("an optional peer is rebound when another version of its package takes the sl
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
 });
 
+/** `name -> version -> extra package.json fields` for `serveRegistry`. */
+type Manifests = Record<string, Record<string, Record<string, unknown>>>;
+
+// A registry serving exactly `manifests`, each version as a tarball holding just its package.json.
+async function serveRegistry(manifests: Manifests) {
+  const tarballs = new Map<string, Uint8Array>();
+  for (const [name, versions] of Object.entries(manifests)) {
+    for (const [version, extra] of Object.entries(versions)) {
+      const archive = new Bun.Archive(
+        { "package/package.json": JSON.stringify({ name, version, ...extra }) },
+        { compress: "gzip" },
+      );
+      tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
+    }
+  }
+  const requests: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const { origin, pathname } = new URL(request.url);
+      requests.push(pathname);
+      const tarball = tarballs.get(pathname);
+      if (tarball) return new Response(tarball);
+      const name = pathname.slice(1);
+      const entry = manifests[name];
+      if (!entry) return new Response("not found", { status: 404 });
+      const versions: Record<string, unknown> = {};
+      for (const [version, extra] of Object.entries(entry)) {
+        versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
+      }
+      return Response.json(
+        { name, versions, "dist-tags": { latest: Object.keys(entry).at(-1) } },
+        // Like registry.npmjs.org. Within this window bun resolves from the
+        // manifest cache without going back to the registry.
+        { headers: { "cache-control": "public, max-age=300" } },
+      );
+    },
+  });
+  return {
+    url: server.url.href,
+    origin: server.url.origin,
+    requests,
+    [Symbol.dispose]() {
+      server.stop(true);
+    },
+  };
+}
+
+async function installWithOwnCache(cwd: string, ...args: string[]) {
+  await using proc = spawn({
+    cmd: [bunExe(), "install", ...args],
+    cwd,
+    // Request assertions need a cache of their own per project: the environment's
+    // cache dir takes precedence over bunfig, and a package extracted there by one
+    // of the concurrent tests is not downloaded again.
+    env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+    // Only matters if an install never returns.
+    timeout: 30_000,
+  });
+  const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
+  return { out, err };
+}
+
 // https://github.com/oven-sh/bun/issues/26046
 // A required peer that nothing in the tree provides and that no published
 // version satisfies stays unresolved. The bun.lock written afterwards has to
 // load back, and resolving it again with every manifest already in the cache
 // has to finish (it used to retry the cached manifest forever).
 describe.each(["hoisted", "isolated"] as const)("peer no published version satisfies (%s linker)", linker => {
-  const manifests: Record<string, Record<string, Record<string, unknown>>> = {
+  const manifests: Manifests = {
     "has-unmet-peer": { "1.0.0": { peerDependencies: { "peer-target": "^1.0.1" } } },
     "peer-target": { "2.0.1": {} },
   };
 
   const unmetPeerWarning =
     'warn: No version matching "^1.0.1" found for peer dependency "peer-target" (but package exists)';
-
-  async function serveRegistry() {
-    const tarballs = new Map<string, Uint8Array>();
-    for (const [name, versions] of Object.entries(manifests)) {
-      for (const [version, extra] of Object.entries(versions)) {
-        const archive = new Bun.Archive(
-          { "package/package.json": JSON.stringify({ name, version, ...extra }) },
-          { compress: "gzip" },
-        );
-        tarballs.set(`/${name}-${version}.tgz`, await archive.bytes());
-      }
-    }
-    const requests: string[] = [];
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const { origin, pathname } = new URL(request.url);
-        requests.push(pathname);
-        const tarball = tarballs.get(pathname);
-        if (tarball) return new Response(tarball);
-        const name = pathname.slice(1);
-        const entry = manifests[name];
-        if (!entry) return new Response("not found", { status: 404 });
-        const versions: Record<string, unknown> = {};
-        for (const [version, extra] of Object.entries(entry)) {
-          versions[version] = { name, version, dist: { tarball: `${origin}/${name}-${version}.tgz` }, ...extra };
-        }
-        return Response.json(
-          { name, versions, "dist-tags": { latest: Object.keys(entry).at(-1) } },
-          // Like registry.npmjs.org. Within this window bun resolves from the
-          // manifest cache without going back to the registry.
-          { headers: { "cache-control": "public, max-age=300" } },
-        );
-      },
-    });
-    return {
-      url: server.url.href,
-      origin: server.url.origin,
-      requests,
-      [Symbol.dispose]() {
-        server.stop(true);
-      },
-    };
-  }
 
   function createProject(registryUrl: string, files: Record<string, string>) {
     return tempDir("unmet-peer-", {
@@ -1714,32 +1736,14 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     });
   }
 
-  async function install(cwd: string, ...args: string[]) {
-    await using proc = spawn({
-      cmd: [bunExe(), "install", ...args],
-      cwd,
-      // The request assertions below need a cache of their own per project: the
-      // environment's cache dir takes precedence over bunfig, and a package
-      // extracted there by one of the concurrent tests is not downloaded again.
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
-      stdout: "pipe",
-      stderr: "pipe",
-      // Only matters if an install never returns.
-      timeout: 30_000,
-    });
-    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
-    return { out, err };
-  }
-
   it.concurrent("declared by a registry package", async () => {
-    using registry = await serveRegistry();
+    using registry = await serveRegistry(manifests);
     using dir = createProject(registry.url, {
       "package.json": JSON.stringify({ name: "app", dependencies: { "has-unmet-peer": "1.0.0" } }),
     });
     const lockfilePath = join(String(dir), "bun.lock");
 
-    let { err } = await install(String(dir));
+    let { err } = await installWithOwnCache(String(dir));
     expect(err).toContain(unmetPeerWarning);
     expect(err).toContain("Saved lockfile");
     expect(registry.requests.toSorted()).toEqual(["/has-unmet-peer", "/has-unmet-peer-1.0.0.tgz", "/peer-target"]);
@@ -1764,7 +1768,7 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     `);
     expect(await exists(join(String(dir), "node_modules", "peer-target"))).toBeFalse();
 
-    ({ err } = await install(String(dir), "--frozen-lockfile"));
+    ({ err } = await installWithOwnCache(String(dir), "--frozen-lockfile"));
     expect(err).not.toContain("Ignoring lockfile");
     expect(await file(lockfilePath).text()).toBe(lockfile);
 
@@ -1773,14 +1777,14 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     await rm(lockfilePath);
     await rm(join(String(dir), "node_modules"), { recursive: true });
     registry.requests.length = 0;
-    ({ err } = await install(String(dir)));
+    ({ err } = await installWithOwnCache(String(dir)));
     expect(err).toContain(unmetPeerWarning);
     expect(registry.requests).toEqual([]);
     expect(await file(lockfilePath).text()).toBe(lockfile);
   });
 
   it.concurrent("declared by the root package and a workspace", async () => {
-    using registry = await serveRegistry();
+    using registry = await serveRegistry(manifests);
     using dir = createProject(registry.url, {
       "package.json": JSON.stringify({
         name: "app",
@@ -1791,7 +1795,7 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     });
     const lockfilePath = join(String(dir), "bun.lock");
 
-    let { err } = await install(String(dir));
+    let { err } = await installWithOwnCache(String(dir));
     expect(err).toContain(unmetPeerWarning);
     expect(err).toContain("Saved lockfile");
     expect(registry.requests).toEqual(["/peer-target"]);
@@ -1821,8 +1825,192 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
       "
     `);
 
-    ({ err } = await install(String(dir), "--frozen-lockfile"));
+    ({ err } = await installWithOwnCache(String(dir), "--frozen-lockfile"));
     expect(err).not.toContain("Ignoring lockfile");
     expect(await file(lockfilePath).text()).toBe(lockfile);
+  });
+});
+
+// A package is printed at more than one path when another version of it holds the slot above
+// one of its dependents (here the root holds one version, a parent holds the other, and the
+// dependents under that parent get the root's version printed again next to them). Its edges
+// are in the file once, so loading binds them once per printed path, and the paths can find
+// different copies of a peer; the path printed last used to win, so what an edge loaded as
+// depended on how its dependents' parents happened to sort.
+describe("loading bun.lock binds the edges of a package printed at several paths", () => {
+  /** `path -> "name@version"` for every row of the packages object. */
+  const printedPackages = (lockfile: string) =>
+    Object.fromEntries(Array.from(lockfile.matchAll(/^ {4}"([^"]+)": \["([^"]+)"/gm), m => [m[1], m[2]]));
+
+  const manifests: Manifests = {
+    // star-peer@1.0.0's peer edge is the one being loaded; 2.0.0 exists so mid's copy of 1.0.0 nests.
+    "star-peer": { "1.0.0": { peerDependencies: { "peer-target": "*" } }, "2.0.0": {} },
+    "peer-target": { "1.0.0": {}, "1.1.0": {} },
+    // mid@1.0.0 is the second dependent of star-peer@1.0.0 and holds the other peer-target next to
+    // it; mid@2.0.0 at the root is what keeps mid@1.0.0 nested under parent.
+    "mid": { "1.0.0": { dependencies: { "star-peer": "1.0.0", "peer-target": "1.1.0" } }, "2.0.0": {} },
+    "parent": { "1.0.0": { dependencies: { "star-peer": "2.0.0", "mid": "1.0.0" } } },
+  };
+
+  it.concurrent("a `*` peer is read back from the copy its root-level printing placed at the root", async () => {
+    using registryServer = await serveRegistry(manifests);
+    const packageJson = (dependencies: Record<string, string>) => JSON.stringify({ name: "app", dependencies });
+    using dir = tempDir("bun-lock-several-paths-", {
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registryServer.url } }),
+      "package.json": packageJson({ "star-peer": "1.0.0", "peer-target": "1.0.0", "mid": "2.0.0" }),
+    });
+    const cwd = String(dir);
+    const lockfilePath = join(cwd, "bun.lock");
+
+    await installWithOwnCache(cwd);
+    expect(printedPackages(await file(lockfilePath).text())).toEqual({
+      "mid": "mid@2.0.0",
+      "peer-target": "peer-target@1.0.0",
+      "star-peer": "star-peer@1.0.0",
+    });
+
+    // peer-target leaves package.json as parent enters it. star-peer's peer edge is still bound
+    // to peer-target@1.0.0, which keeps it in the file: the edge's own copy is placed at the root
+    // and mid's 1.1.0 is printed next to mid, which is where star-peer's second printing finds
+    // the name first.
+    await write(join(cwd, "package.json"), packageJson({ "star-peer": "1.0.0", "mid": "2.0.0", "parent": "1.0.0" }));
+    await installWithOwnCache(cwd);
+    expect(printedPackages(await file(lockfilePath).text())).toEqual({
+      "mid": "mid@2.0.0",
+      "parent": "parent@1.0.0",
+      "peer-target": "peer-target@1.0.0",
+      "star-peer": "star-peer@1.0.0",
+      "parent/mid": "mid@1.0.0",
+      "parent/star-peer": "star-peer@2.0.0",
+      "parent/mid/peer-target": "peer-target@1.1.0",
+      "parent/mid/star-peer": "star-peer@1.0.0",
+    });
+
+    // Loading used to bind the edge from parent/mid/star-peer, the printing that comes last, to
+    // the 1.1.0 next to it. Nothing held peer-target@1.0.0 any more, so the tree built from the
+    // file differed from the file: --frozen-lockfile rejected it and an install rewrote it.
+    await rm(join(cwd, "node_modules"), { recursive: true });
+    await installWithOwnCache(cwd, "--frozen-lockfile");
+    expect(await file(join(cwd, "node_modules", "peer-target", "package.json")).json()).toMatchObject({
+      version: "1.0.0",
+    });
+    expect(
+      await file(
+        join(cwd, "node_modules", "parent", "node_modules", "mid", "node_modules", "peer-target", "package.json"),
+      ).json(),
+    ).toMatchObject({ version: "1.1.0" });
+  });
+
+  // The shapes below are written by hand so nothing needs to be fetched: every row has an empty
+  // registry URL and integrity, which --lockfile-only and --frozen-lockfile --dry-run never read.
+  const pkg = (nameAndVersion: string, info: object = {}) => [nameAndVersion, "", info, ""];
+  const printedDepth = (path: string) => path.split("/").filter(segment => !segment.startsWith("@")).length;
+
+  async function writeProject(root: Record<string, unknown>, packages: Record<string, unknown[]>) {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
+    // Rows in the order bun prints them (depth, then path), since loading reads them in file order.
+    const rows = Object.entries(packages).sort(([a], [b]) => printedDepth(a) - printedDepth(b) || a.localeCompare(b));
+    await Promise.all([
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "foo", ...root })),
+      write(
+        join(packageDir, "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 0,
+          workspaces: { "": { name: "foo", ...root } },
+          packages: Object.fromEntries(rows),
+        }),
+      ),
+    ]);
+    return { packageDir, run: makeInstallRunner(packageDir) };
+  }
+
+  // dup@1.0.0 is printed under a-parent and under z-parent (the root holds dup@2.0.0). Its
+  // optional peer wants no-deps@1.0.0 exactly; the root's no-deps is one-dep's 1.0.1, which the
+  // edge cannot be deduped onto (out of range, not a root dependency), so the copy the edge is
+  // bound to gets printed next to dup. The file records one such copy, under `holder`; the
+  // printing under the other parent walks up to the root's 1.0.1. An entry in a package's own
+  // path is only ever there for that package's own edge, so the edge has to load as 1.0.0
+  // whichever parent sorts last, and the tree then holds 1.0.0 next to both printings. With the
+  // record under a-parent, binding from the last printing read the root's 1.0.1 instead and the
+  // re-save dropped the record. (uses-old keeps no-deps@1.0.0 in the file: a version held only
+  // by optional peer edges is dropped on save.)
+  it.concurrent.each(["a-parent", "z-parent"])(
+    "an optional peer's copy printed next to its %s printing is read from there",
+    async holder => {
+      const dup = pkg("dup@1.0.0", { peerDependencies: { "no-deps": "1.0.0" }, optionalPeers: ["no-deps"] });
+      const packages: Record<string, unknown[]> = {
+        "a-parent": pkg("a-parent@1.0.0", { dependencies: { "dup": "1.0.0" } }),
+        "dup": pkg("dup@2.0.0"),
+        "no-deps": pkg("no-deps@1.0.1"),
+        "one-dep": pkg("one-dep@1.0.0", { dependencies: { "no-deps": "1.0.1" } }),
+        "uses-old": pkg("uses-old@1.0.0", { dependencies: { "no-deps": "1.0.0" } }),
+        "z-parent": pkg("z-parent@1.0.0", { dependencies: { "dup": "1.0.0" } }),
+        "a-parent/dup": dup,
+        "uses-old/no-deps": pkg("no-deps@1.0.0"),
+        "z-parent/dup": dup,
+        [`${holder}/dup/no-deps`]: pkg("no-deps@1.0.0"),
+      };
+      const { packageDir, run } = await writeProject(
+        {
+          dependencies: {
+            "a-parent": "1.0.0",
+            "dup": "2.0.0",
+            "one-dep": "1.0.0",
+            "uses-old": "1.0.0",
+            "z-parent": "1.0.0",
+          },
+        },
+        packages,
+      );
+
+      await run(["install", "--lockfile-only"]);
+      const saved = await file(join(packageDir, "bun.lock")).text();
+      expect(printedPackages(saved)).toEqual({
+        "a-parent": "a-parent@1.0.0",
+        "dup": "dup@2.0.0",
+        "no-deps": "no-deps@1.0.1",
+        "one-dep": "one-dep@1.0.0",
+        "uses-old": "uses-old@1.0.0",
+        "z-parent": "z-parent@1.0.0",
+        "a-parent/dup": "dup@1.0.0",
+        "uses-old/no-deps": "no-deps@1.0.0",
+        "z-parent/dup": "dup@1.0.0",
+        "a-parent/dup/no-deps": "no-deps@1.0.0",
+        "z-parent/dup/no-deps": "no-deps@1.0.0",
+      });
+
+      await run(["install", "--frozen-lockfile", "--dry-run"]);
+      await run(["install", "--lockfile-only"]);
+      expect(await file(join(packageDir, "bun.lock")).text()).toBe(saved);
+    },
+  );
+
+  // Same two printings of dup@1.0.0, but nothing is printed for its optional peer: the printing
+  // under a-q walks up to the root's no-deps@1.0.0 (b-old's, out of range), the one under z-p
+  // finds z-p's own 1.1.0, which the range accepts. This is the file a fresh install writes, and
+  // it has to keep loading from the printing that comes last (z-p's). The hoister rebinds an
+  // optional peer to whatever copy a printing dedupes onto, so loading it as the root's copy,
+  // the way the `*` peer in the first test is, builds a tree in which a-q's printing dedupes
+  // onto the root copy and z-p's then rebinds the edge to 1.1.0; the tree the save rebuilds
+  // from that binding nests 1.1.0 under a-q/dup, and --frozen-lockfile reports the difference
+  // as a changed lockfile.
+  it.concurrent("an optional peer printed nowhere keeps loading from the last printing", async () => {
+    const dup = pkg("dup@1.0.0", { peerDependencies: { "no-deps": "^1.1.0" }, optionalPeers: ["no-deps"] });
+    const { run } = await writeProject(
+      { dependencies: { "a-q": "1.0.0", "b-old": "1.0.0", "dup": "2.0.0", "z-p": "1.0.0" } },
+      {
+        "a-q": pkg("a-q@1.0.0", { dependencies: { "dup": "1.0.0" } }),
+        "b-old": pkg("b-old@1.0.0", { dependencies: { "no-deps": "1.0.0" } }),
+        "dup": pkg("dup@2.0.0"),
+        "no-deps": pkg("no-deps@1.0.0"),
+        "z-p": pkg("z-p@1.0.0", { dependencies: { "dup": "1.0.0", "no-deps": "1.1.0" } }),
+        "a-q/dup": dup,
+        "z-p/dup": dup,
+        "z-p/no-deps": pkg("no-deps@1.1.0"),
+      },
+    );
+
+    await run(["install", "--frozen-lockfile", "--dry-run"]);
   });
 });

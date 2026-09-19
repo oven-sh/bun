@@ -1498,8 +1498,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             let nhr_flags = nhr.flags.get();
             if !nhr_flags.contains(NhrFlags::UPGRADED) {
                 if let Some(raw) = nhr.raw_response.get() {
+                    // A tunnel is never answered. Behind a pipelined one, the state is that of
+                    // the response ahead, and that response can end inside this dispatch.
                     if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
-                        && raw.state().is_response_pending()
+                        && (raw.state().is_response_pending()
+                            || nhr_flags.contains(NhrFlags::TUNNELED))
                     {
                         nhr.set_on_aborted_handler();
                     }

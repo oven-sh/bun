@@ -21,6 +21,14 @@ function lazyHttp() {
   return (http ??= require("node:http"));
 }
 
+// What node:http shares about a socket that it handed to 'upgrade'. Loaded on first use too.
+let httpInternals;
+function lazyHttpInternals() {
+  return (httpInternals ??= require("internal/http"));
+}
+// Set on a socket while completeUpgrade() waits for the responses ahead of a pipelined Upgrade.
+const kUpgradeDeferred = Symbol("kUpgradeDeferred");
+
 // npm ws's sendAfterClose: a ping/pong/send on a CLOSING/CLOSED socket delivers
 // a "not open" Error to the callback on the next tick and never throws.
 function sendAfterClose(state, cb) {
@@ -948,8 +956,9 @@ function abortHandshake(socket, code, message, headers) {
   };
 
   // handleUpgrade() was called from a 'request' listener: answer through its ServerResponse.
+  // A socket that 'upgrade' handed over has none: behind a pipelined Upgrade, _httpMessage is the response ahead.
   const response = socket._httpMessage;
-  if (response) {
+  if (response && socket[lazyHttpInternals().kHandoffResponse] === undefined) {
     response.writeHead(code, headers);
     response.write(message);
     response.end();
@@ -957,7 +966,7 @@ function abortHandshake(socket, code, message, headers) {
   }
 
   // Another WebSocketServer on the same http.Server has already taken this connection.
-  if (socket[kBunInternals]?.upgraded) return;
+  if (socket[kBunInternals]?.upgraded || socket[kUpgradeDeferred]) return;
 
   socket.once("finish", socket.destroy);
 
@@ -1538,13 +1547,24 @@ class WebSocketServer extends EventEmitter {
 
     const req = socket[kBunInternals];
 
-    if (req?.upgraded) {
+    if (req?.upgraded || socket[kUpgradeDeferred]) {
       throw new Error(
         "server.handleUpgrade() was called more than once with the same socket, possibly due to a misconfiguration",
       );
     }
 
     if (this._state > RUNNING) return abortHandshake(socket, 503);
+
+    // server.upgrade() adopts the connection. Behind a pipelined Upgrade the responses ahead still
+    // write through it, so the upgrade waits for them. Its 101 then follows them, in request order.
+    const retry = () => {
+      socket[kUpgradeDeferred] = false;
+      this.completeUpgrade(extensions, key, protocols, request, socket, head, cb);
+    };
+    if (lazyHttpInternals().http1ServerPipeline.deferUntilHandoffOwnsConnection?.(socket, retry)) {
+      socket[kUpgradeDeferred] = true;
+      return;
+    }
 
     const server = socket.server[kBunInternals];
 

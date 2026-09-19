@@ -4668,3 +4668,209 @@ it("connectionListener pauses reads when queued pipelined responses back up", as
   clientSide.destroy();
   serverSide.destroy();
 });
+
+describe("Upgrade pipelined behind a pending response", () => {
+  const getRequest = (path: string) => `GET ${path} HTTP/1.1\r\nHost: example.com\r\n\r\n`;
+  const upgradeRequest = (contentLength?: number) =>
+    `${contentLength === undefined ? "GET" : "POST"} /up HTTP/1.1\r\nHost: example.com\r\nUpgrade: raw\r\nConnection: Upgrade\r\n` +
+    (contentLength === undefined ? "" : `Content-Length: ${contentLength}\r\n`) +
+    "\r\n";
+  const SWITCHING = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: raw\r\nConnection: Upgrade\r\n\r\n";
+  // Replaces the header block of each response with its status line. The bodies and the raw tunnel bytes stay.
+  const statusLinesOnly = (received: string) =>
+    received.replace(/(HTTP\/1\.1 \d{3} [^\r\n]+)\r\n(?:[^\r\n]+\r\n)*\r\n/g, "[$1]");
+
+  // The client writes `written` in one write, and `writtenLater` once it has the first bytes of a
+  // response. `respond` answers the requests ahead of the Upgrade and leaves the first response
+  // open. The 'upgrade' listener reads the body of its request and then ends that response. The
+  // tunnel answers once, when the client ends its side.
+  async function pipelinedUpgrade(options: {
+    written: string;
+    writtenLater?: string;
+    events?: string[];
+    respond: (req: IncomingMessage, res: ServerResponse) => void;
+    configure?: (server: Server, endFirst: () => void) => void;
+  }) {
+    const events: string[] = [];
+    let first: ServerResponse | undefined;
+    const { promise: firstFinished, resolve: onFirstFinished, reject: onFailure } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      events.push(`request ${req.method} ${req.url}`);
+      if (req.url === "/up") {
+        // An Upgrade gets here only when it was not dispatched as 'upgrade'. Both responses end,
+        // so the events below are compared and nothing waits.
+        res.end("not upgraded");
+        first!.end();
+        return;
+      }
+      first ??= res.on("finish", onFirstFinished);
+      options.respond(req, res);
+    });
+    server.on("clientError", onFailure);
+    server.on("upgrade", (req, socket, head) => {
+      let body = "";
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => {
+        events.push(`upgrade ${req.method} ${req.url} upgrade=${req.upgrade} body=${body}`);
+        first!.end();
+      });
+      // Node passes what follows a body as `head`, Bun as 'data'. The sum is the same.
+      let tunneled = head.toString();
+      socket.on("data", chunk => (tunneled += chunk));
+      socket.on("end", () => socket.end(`${SWITCHING}tunneled:${tunneled}`));
+    });
+    options.configure?.(server, () => first!.end());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      const received: Buffer[] = [];
+      client.on("data", (chunk: Buffer) => {
+        if (received.push(chunk) === 1 && options.writtenLater) client.write(options.writtenLater);
+      });
+      client.on("error", onFailure);
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+      client.on("close", () => {
+        onFailure(new Error(`closed before the first response finished: ${events}`));
+        onClosed();
+      });
+      client.write(options.written);
+      await firstFinished;
+      if (options.events) expect(events).toEqual(options.events);
+      // The tunnel is not an idle HTTP connection, also when the response ahead of it is complete.
+      server.closeIdleConnections();
+      client.end("later");
+      await closed;
+      return Buffer.concat(received).toString("latin1");
+    } finally {
+      client.destroy();
+    }
+  }
+
+  it("should emit 'upgrade' and tunnel the bytes that follow", async () => {
+    const received = await pipelinedUpgrade({
+      written: getRequest("/first") + upgradeRequest() + "head,",
+      events: ["request GET /first", "upgrade GET /up upgrade=true body="],
+      respond: (req, res) => void res.write("first"),
+    });
+    expect(statusLinesOnly(received)).toBe(
+      "[HTTP/1.1 200 OK]5\r\nfirst\r\n0\r\n\r\n[HTTP/1.1 101 Switching Protocols]tunneled:head,later",
+    );
+  });
+
+  it("should keep the order of the responses that are queued ahead of it", async () => {
+    const received = await pipelinedUpgrade({
+      written: getRequest("/first") + getRequest("/second") + upgradeRequest(),
+      events: ["request GET /first", "request GET /second", "upgrade GET /up upgrade=true body="],
+      respond: (req, res) => void (req.url === "/first" ? res.write("first") : res.end("second")),
+    });
+    expect(statusLinesOnly(received)).toBe(
+      "[HTTP/1.1 200 OK]5\r\nfirst\r\n0\r\n\r\n[HTTP/1.1 200 OK]second[HTTP/1.1 101 Switching Protocols]tunneled:later",
+    );
+  });
+
+  it("should deliver the body of the Upgrade through its request", async () => {
+    const received = await pipelinedUpgrade({
+      written: getRequest("/first") + upgradeRequest(4) + "bodytail,",
+      events: ["request GET /first", "upgrade POST /up upgrade=true body=body"],
+      respond: (req, res) => void res.write("first"),
+    });
+    expect(statusLinesOnly(received)).toBe(
+      "[HTTP/1.1 200 OK]5\r\nfirst\r\n0\r\n\r\n[HTTP/1.1 101 Switching Protocols]tunneled:tail,later",
+    );
+  });
+
+  it("should read the rest of the Upgrade body after the pending response has drained", async () => {
+    // The response is larger than the socket buffers, so a part of it is still unsent when the
+    // server parses the Upgrade. That pauses the reads of the connection until it has drained.
+    // Without a read after that, the second half of the body never arrives and the test times out.
+    const chunk = Buffer.alloc(15 * 1024, "a");
+    const count = 1024;
+    const received = await pipelinedUpgrade({
+      written: getRequest("/first") + upgradeRequest(8) + "body",
+      writtenLater: "BODY",
+      events: ["request GET /first", "upgrade POST /up upgrade=true body=bodyBODY"],
+      respond: (req, res) => {
+        res.writeHead(200, { "Content-Length": chunk.length * count });
+        for (let i = 0; i < count; i++) res.write(chunk);
+      },
+    });
+    const bodyStart = received.indexOf("\r\n\r\n") + 4;
+    const tunnelStart = received.indexOf(SWITCHING, bodyStart);
+    expect({ bodyLength: tunnelStart - bodyStart, tunnel: received.slice(tunnelStart) }).toEqual({
+      bodyLength: chunk.length * count,
+      tunnel: `${SWITCHING}tunneled:later`,
+    });
+  });
+
+  it("should not give the body of a paused request ahead of it to the Upgrade request", async () => {
+    // Reading the tunnel socket resumes the request of the Upgrade, not the request in flight.
+    const body = "0123456789";
+    const received = await pipelinedUpgrade({
+      written:
+        `POST /first HTTP/1.1\r\nHost: example.com\r\nContent-Length: ${body.length}\r\n\r\n${body}` +
+        upgradeRequest(4) +
+        "body",
+      events: ["request POST /first", "upgrade POST /up upgrade=true body=body"],
+      respond: (req, res) => {
+        req.pause();
+        res.write("first");
+      },
+    });
+    expect(statusLinesOnly(received)).toBe(
+      "[HTTP/1.1 200 OK]5\r\nfirst\r\n0\r\n\r\n[HTTP/1.1 101 Switching Protocols]tunneled:later",
+    );
+  });
+
+  it("should keep the response ahead intact when the Upgrade is past maxRequestsPerSocket", async () => {
+    // Node does not count an Upgrade and emits 'upgrade'. Bun counts it and queues a 503. Both
+    // send the whole response ahead first.
+    const received = await pipelinedUpgrade({
+      written: getRequest("/first") + upgradeRequest(),
+      respond: (req, res) => void res.write("first"),
+      configure: (server, endFirst) => {
+        server.maxRequestsPerSocket = 1;
+        server.on("dropRequest", endFirst);
+      },
+    });
+    expect(statusLinesOnly(received)).toStartWith("[HTTP/1.1 200 OK]5\r\nfirst\r\n0\r\n\r\n");
+  });
+
+  it("should destroy the socket when shouldUpgradeCallback accepts and there is no 'upgrade' listener", async () => {
+    const events: string[] = [];
+    let first: ServerResponse | undefined;
+    const { promise: firstClosed, resolve: onFirstClosed } = Promise.withResolvers<boolean>();
+    await using server = createServer({ shouldUpgradeCallback: () => true }, (req, res) => {
+      events.push(`request ${req.method} ${req.url}`);
+      if (req.url === "/up") {
+        res.end("not upgraded");
+        first!.end();
+        return;
+      }
+      first = res.on("close", () => onFirstClosed(res.writableFinished));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      let received = "";
+      const { promise: clientClosed, resolve: onClientClosed } = Promise.withResolvers<void>();
+      client.on("error", () => {});
+      client.on("close", () => onClientClosed());
+      // Node sends nothing. A client that gets an answer has seen enough.
+      client.on("data", chunk => {
+        received += chunk;
+        client.destroy();
+      });
+      client.write(getRequest("/first") + upgradeRequest());
+      await clientClosed;
+      expect({ events, received, firstFinished: await firstClosed }).toEqual({
+        events: ["request GET /first"],
+        received: "",
+        firstFinished: false,
+      });
+    } finally {
+      client.destroy();
+    }
+  });
+});

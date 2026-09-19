@@ -883,20 +883,17 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // token; the server then consults shouldUpgradeCallback (default: an
         // 'upgrade' listener is installed) and otherwise dispatches the
         // request normally.
-        // Not when pipelined: the builtin ws answers through the socket's current response, the one in flight.
+        // Pipelined or not, like Node.js.
         let is_upgrade = false;
-        if (
-          !isPipelined &&
-          (dispatchBits & DISPATCH_HAS_UPGRADE) !== 0 &&
-          (dispatchBits & DISPATCH_CONN_UPGRADE) !== 0
-        ) {
+        if ((dispatchBits & DISPATCH_HAS_UPGRADE) !== 0 && (dispatchBits & DISPATCH_CONN_UPGRADE) !== 0) {
           is_upgrade = !!server.shouldUpgradeCallback(http_req);
         }
         // Like Node.js's parserOnIncoming: req.upgrade is true inside the
         // 'upgrade' listener and false for a declined upgrade that falls
         // through to 'request'.
         http_req.upgrade = is_upgrade;
-        if (isPipelined) {
+        // An upgrade has no response to queue, except the 503 of one past maxRequestsPerSocket.
+        if (isPipelined && (!is_upgrade || reachedRequestsLimit)) {
           // A previous response on this connection has not finished yet: like
           // Node.js, this response is queued (res.socket === null) and its
           // writes are buffered until the in-flight response finishes and the
@@ -1000,6 +997,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket.destroy();
             return;
           }
+          // Native would tie a returned promise to the socket's current response, the one in flight.
+          if (isPipelined) return;
           // Like CONNECT: the connection is detached from the HTTP request
           // machinery; hold the native callback open until the raw socket
           // closes.
@@ -1373,6 +1372,8 @@ const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
 // Set when the dispatcher already detached a synchronously-finished response,
 // so the 'finish' listener does not detach/advance the pipeline a second time.
 const kDispatcherDetached = Symbol("kDispatcherDetached");
+// On the socket: what the builtin ws runs once no response is ahead of a pipelined Upgrade any more.
+const kHandoffWaiter = Symbol("kHandoffWaiter");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
 const badRequestResponse = Buffer.from(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n`, "latin1");
@@ -1780,22 +1781,21 @@ function getNodeHTTPServerSocket() {
 
     #resumeSocket() {
       const handle = this[kHandle];
-      const response = handle?.response;
       const upgradeIncoming = this[kUpgradeIncoming];
       if (upgradeIncoming) {
         // Upgrade with a body: reading the raw socket resumes the request so its
         // body keeps draining (Node's UpgradeStream._read). Request-body bytes
         // belong to the request stream, never to the raw upgrade stream, and the
         // socket does not end when the request body does.
-        if (response) {
-          const resumed = response.resume();
-          if (resumed && resumed !== true) {
-            upgradeIncoming.push(resumed);
-          }
+        // Not handle.response: behind a pipelined Upgrade that is the response in flight.
+        const resumed = handle ? this[kHandoffResponse].resume() : undefined;
+        if (resumed && resumed !== true) {
+          upgradeIncoming.push(resumed);
         }
         upgradeIncoming.resume();
         return;
       }
+      const response = handle?.response;
       if (response) {
         const resumed = response.resume();
         if (resumed && resumed !== true) {
@@ -1977,8 +1977,10 @@ function getNodeHTTPServerSocket() {
       return super.resume();
     }
 
+    // For the builtin ws. After an 'upgrade' handoff it is the response of that request: behind a
+    // pipelined Upgrade, handle.response is the response in flight.
     get [kInternalSocketData]() {
-      return this[kHandle]?.response;
+      return this[kHandoffResponse] ?? this[kHandle]?.response;
     }
   } as unknown as typeof import("node:net").Socket;
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
@@ -2576,6 +2578,14 @@ function advanceResponsePipeline(server, socket) {
   }
   const queue = socket[kPipelinedResponses];
   if (!queue || queue.length === 0) {
+    const waiter = socket[kHandoffWaiter];
+    if (waiter !== undefined) {
+      socket[kHandoffWaiter] = undefined;
+      // A task of its own. This can be a tick inside the dispatch of another connection, and uWS
+      // takes an upgrade made while it parses for the upgrade of the connection it parses. Also,
+      // a throw from the waiter must not cut the 'finish' of the response that just completed.
+      setImmediate(waiter);
+    }
     return;
   }
   const res = queue.shift();
@@ -2672,6 +2682,24 @@ function advanceResponsePipeline(server, socket) {
       process.nextTick(emitPipelinedDrainNT, res);
     }
   }
+}
+
+// For the builtin ws. Its native upgrade adopts the connection, and behind a pipelined Upgrade the
+// responses ahead still write through it. Returns true when it keeps `callback` until they are complete.
+function deferUntilHandoffOwnsConnection(socket, callback) {
+  const handle = socket[kHandle];
+  const response = socket[kHandoffResponse];
+  const current = handle?.response;
+  if (!handle || response === undefined || current === response) {
+    return false;
+  }
+  // Also the native state: res.detachSocket() clears _httpMessage for a response that still writes.
+  if (socket._httpMessage != null || socket[kPipelinedResponses]?.length || (current != null && !current.finished)) {
+    socket[kHandoffWaiter] = callback;
+    return true;
+  }
+  handle.startPipelinedResponse(response, false, false);
+  return false;
 }
 
 function markResponseEndedNT(res) {
@@ -3902,6 +3930,7 @@ http1ServerPipeline.abortQueuedPipelinedResponses = abortQueuedPipelinedResponse
 http1ServerPipeline.maybePauseFallbackReads = maybePauseFallbackReads;
 http1ServerPipeline.resumeFallbackReadsOnDrain = resumeFallbackReadsOnDrain;
 http1ServerPipeline.kMustCloseConnection = kMustCloseConnection;
+http1ServerPipeline.deferUntilHandoffOwnsConnection = deferUntilHandoffOwnsConnection;
 
 export default {
   Server,

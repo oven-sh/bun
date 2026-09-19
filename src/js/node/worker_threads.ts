@@ -132,25 +132,26 @@ function injectFakeEmitter(Class) {
     return event.detail;
   }
 
-  function wrapped(run, listener) {
+  // node-style listeners run with `this` = the object on()/once() was called on.
+  function wrapped(target, run, listener) {
     return function (event) {
-      return listener(run(event));
+      return listener.$call(target, run(event));
     };
   }
 
-  function functionForEventType(event, listener) {
+  function functionForEventType(target, event, listener) {
     switch (event) {
       case "error":
       case "messageerror": {
-        return wrapped(errorEventHandler, listener);
+        return wrapped(target, errorEventHandler, listener);
       }
 
       case "message": {
-        return wrapped(messageEventHandler, listener);
+        return wrapped(target, messageEventHandler, listener);
       }
 
       default: {
-        return wrapped(customEventHandler, listener);
+        return wrapped(target, customEventHandler, listener);
       }
     }
   }
@@ -177,7 +178,7 @@ function injectFakeEmitter(Class) {
   }
 
   function on(event, listener) {
-    register(this, event, listener, functionForEventType(event, listener), undefined);
+    register(this, event, listener, functionForEventType(this, event, listener), undefined);
     return this;
   }
 
@@ -194,8 +195,8 @@ function injectFakeEmitter(Class) {
   }
 
   function once(event, listener) {
-    const wrapper = functionForEventType(event, listener);
     const target = this;
+    const wrapper = functionForEventType(target, event, listener);
     // EventTarget drops a {once:true} listener natively, without telling the
     // registry — so purge it here or listenerCount()/eventNames() keep counting
     // a listener that already fired.

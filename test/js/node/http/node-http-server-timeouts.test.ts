@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
+import { pipeline, Writable } from "node:stream";
 
 // Each test opens a raw TCP socket against a server whose timeout knob is a
 // few hundred ms and waits for the server to close the connection. A small
@@ -341,6 +342,55 @@ describe("node:http server timeout enforcement", () => {
       client.on("connect", () => client.write(pipelinedStalledPost));
       await timedOut;
       expect(events).toEqual(["req POST /b complete=false", "res GET /a", "server destroyed=false"]);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("a request that stream.pipeline() destroyed does not keep the idle keep-alive socket open", async () => {
+    // The destination fails mid-upload, so pipeline() destroys req and leaves
+    // the connection open for the 500. The client then finishes the upload and
+    // idles. That request never completes in JS, and its response has finished,
+    // so its 'timeout' listener must not veto the keep-alive timeout.
+    const events: string[] = [];
+    const { promise: settled, resolve: onSettled } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      req.setTimeout(30_000, () => {
+        events.push(`req 'timeout' destroyed=${req.destroyed}`);
+        onSettled();
+      });
+      const failing = new Writable({
+        write(chunk, encoding, callback) {
+          callback(new Error("disk full"));
+        },
+      });
+      pipeline(req, failing, () => {
+        res.statusCode = 500;
+        res.end("failed");
+      });
+    });
+    server.keepAliveTimeout = 200;
+    server.keepAliveTimeoutBuffer = 0;
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    try {
+      const body = Buffer.alloc(100, "a").toString();
+      client.on("error", () => {});
+      client.on("connect", () => {
+        client.write("POST /upload HTTP/1.1\r\nHost: a\r\nContent-Length: 100\r\n\r\n" + body.slice(0, 10));
+      });
+      client.once("data", chunk => {
+        events.push(chunk.toString("latin1").split("\r\n")[0]);
+        client.write(body.slice(10));
+      });
+      client.on("close", () => {
+        events.push("closed by the server");
+        onSettled();
+      });
+      await settled;
+      expect(events).toEqual(["HTTP/1.1 500 Internal Server Error", "closed by the server"]);
     } finally {
       client.destroy();
       server.closeAllConnections();

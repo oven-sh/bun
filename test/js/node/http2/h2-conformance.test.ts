@@ -822,14 +822,14 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     ]);
   }
   /**
-   * Sends one request (stream 1) to a raw server: a GET, or a POST that ends with `requestBody`.
+   * Sends one request (stream 1, a GET unless `startRequest` makes another) to a raw server.
    * `serve` writes the server's frames once the request HEADERS arrived. The PING ACK that ends
    * the exchange follows every frame the client sent in reply to them.
    */
   async function pushExchange(
     onResponse: (req: http2.ClientHttp2Stream) => void,
     serve: (raw: RawH2Server) => void | Promise<void>,
-    requestBody?: Buffer,
+    startRequest = (client: http2.ClientHttp2Session) => client.request({ ":path": "/" }),
   ) {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
@@ -839,10 +839,9 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     });
     client.on("stream", onStream);
     try {
-      const req = client.request({ ":path": "/", ":method": requestBody ? "POST" : "GET" });
+      const req = startRequest(client);
       req.on("error", () => {});
       req.once("response", () => onResponse(req));
-      if (requestBody) req.end(requestBody);
       await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
       await serve(raw);
       raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
@@ -894,23 +893,41 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     });
   });
 
+  // The parent stays open for the server: no END_STREAM on stream 1.
+  const pushOnOpenParent = (raw: RawH2Server) => {
+    raw.socket!.write(Buffer.concat([serverSettings, responseHeaders(0x4 /* END_HEADERS */), pushOnStream1()]));
+  };
+
+  // node's closeStream sends the RST_STREAM at once when user code had not ended the writable.
+  // It waits for 'finish' only for NO_ERROR on a writable that is ending and not finished:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2033-L2040
+  test("a PUSH_PROMISE is refused once close() ran on a request that user code had not ended", async () => {
+    const result = await pushExchange(
+      req => req.close(),
+      pushOnOpenParent,
+      client => client.request({ ":path": "/", ":method": "POST" }),
+    );
+    expect(result).toEqual({ pushedStreams: 0, resetsOnStream2: [ErrorCode.CANCEL] });
+  });
+
   // The body exceeds the 65535-byte initial window and the raw server never opens it, so the
-  // writable cannot finish. close() then holds its NO_ERROR RST_STREAM back until 'finish', like
-  // node. nghttp2 does not see the stream as closing yet, and node v26.3.0 surfaces the push.
+  // writable cannot finish and close() waits for 'finish'. node v26.3.0 surfaces the push.
   test("a PUSH_PROMISE is surfaced while close() waits for the request body to finish", async () => {
     const result = await pushExchange(
       req => req.close(),
-      raw => {
-        raw.socket!.write(Buffer.concat([serverSettings, responseHeaders(0x4 /* END_HEADERS */), pushOnStream1()]));
+      pushOnOpenParent,
+      client => {
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        req.end(Buffer.alloc(200_000, "a"));
+        return req;
       },
-      Buffer.alloc(200_000, "a"),
     );
     expect(result).toEqual({ pushedStreams: 1, resetsOnStream2: [] });
   });
 
   // node refuses these two as well (the `!stream` arm of the same nghttp2 check). The client still
-  // surfaces the pushed stream, because our own server writes PUSH_PROMISE after the parent's
-  // END_STREAM when end() runs before pushStream() (test-http2-respond-file-push.js does that).
+  // surfaces the pushed stream until the server's frame order is fixed (#43479):
+  // test-http2-respond-file-push.js gets its PUSH_PROMISE after the parent's END_STREAM.
   test.todo("a PUSH_PROMISE that arrives after the client reset its request stream is refused", async () => {
     const result = await pushExchange(
       req => req.close(http2.constants.NGHTTP2_CANCEL),

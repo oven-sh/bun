@@ -2028,9 +2028,7 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
-  // close() or destroy() scheduled the RST_STREAM that rstNextTick sends from setImmediate.
-  // nghttp2 calls a stream in this window CLOSING. Not set while close() holds a NO_ERROR
-  // reset back until 'finish': node has not submitted that RST_STREAM either.
+  // scheduleRstStream queued this stream's RST_STREAM: nghttp2's CLOSING state.
   RstScheduled = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
@@ -2550,7 +2548,8 @@ class Http2Stream extends Duplex {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
-      } else if (this.writableFinished || code) {
+      } else if (!ending || this.writableFinished || code) {
+        // Same condition as node's closeStream, with `ending` read before the end() above.
         scheduleRstStream(this, session, this.#id, code);
       } else {
         this.once("finish", rstNextTick.bind(session, this.#id, code));
@@ -4990,12 +4989,9 @@ class ClientHttp2Session extends Http2Session {
         (typeof parent === "object" && (parent[bunHTTP2StreamStatus] & StreamState.RstScheduled) !== 0) ||
         self.#reservedStreamsCount >= self.#maxReservedRemoteStreams
       ) {
-        // nghttp2 cancels a promise instead of surfacing it when the stream it arrived on is
-        // CLOSING (its RST_STREAM is queued), or when too many pushed streams are reserved.
+        // nghttp2 cancels a promise whose parent is CLOSING or that exceeds the reserved limit:
         // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4613-L4627
-        // A parent the parser already released (`parent` is not an object, nghttp2's `!stream`)
-        // is still accepted: our server writes PUSH_PROMISE after the parent's END_STREAM when
-        // end() runs before pushStream().
+        // A parent the parser already released is not an object and is still accepted: #43479.
         self.#parser?.rstStream(pushId, constants.NGHTTP2_CANCEL);
         return;
       }

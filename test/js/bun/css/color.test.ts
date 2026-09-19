@@ -559,6 +559,10 @@ describe("input forms", () => {
     ["rgb()", "rgb(255, 0, 0)"],
     ["rgba()", "rgba(255, 0, 0, 1)"],
     ["hsl() with percentages", "hsl(0, 100%, 50%)"],
+    ["color(srgb)", "color(srgb 1 0 0)"],
+    ["color(srgb-linear)", "color(srgb-linear 1 0 0)"],
+    ["color() in relative color syntax", "color(from red xyz x y z)"],
+    ["color-mix() in a color() space", "color-mix(in srgb-linear, red, red)"],
     ["a number", 0xff0000],
     ["an object", { r: 255, g: 0, b: 0 }],
     ["an array", [255, 0, 0]],
@@ -601,6 +605,117 @@ describe("input forms", () => {
   test("in-range object alpha is unchanged", () => {
     expect(color({ r: 10, g: 20, b: 30, a: 1 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
     expect(color({ r: 10, g: 20, b: 30, a: 0.5 }, "[rgba]")).toEqual([10, 20, 30, 127]);
+  });
+});
+
+// The color() function (CSS Color 4 predefined color spaces) has channel values
+// like any rgb()/lab() color, but every output format other than "css" used to
+// echo it back as a string, so "{rgba}" returned "color(srgb 1 0 0)" instead of an object.
+describe("color() inputs convert to every output format", () => {
+  const conversionFormats = [
+    "hex",
+    "HEX",
+    "rgb",
+    "rgba",
+    "number",
+    "{rgb}",
+    "{rgba}",
+    "[rgb]",
+    "[rgba]",
+    "ansi-16",
+    "ansi-256",
+    "ansi-16m",
+    "hsl",
+    "lab",
+  ] as const;
+
+  test.each(conversionFormats)("color(srgb 1 0 0) formats as %s exactly like #ff0000", format => {
+    expect(color("color(srgb 1 0 0)", format)).toEqual(color("#ff0000", format));
+  });
+
+  test("non-string formats return their documented types", () => {
+    expect(color("color(srgb 1 0 0)", "{rgba}")).toEqual({ r: 255, g: 0, b: 0, a: 1 });
+    expect(color("color(srgb 1 0 0)", "[rgba]")).toEqual([255, 0, 0, 255]);
+    expect(color("color(srgb 1 0 0)", "number")).toBe(0xff0000);
+    expect(color("color(srgb 1 0 0)", "ansi-16m")).toBe("\x1b[38;2;255;0;0m");
+  });
+
+  test("channels are 0..1 fractions of the space, not 0..255", () => {
+    expect(color("color(srgb 0.2 0.4 0.6)", "hex")).toBe("#336699");
+    // #336699 in linear light: ((c + 0.055) / 1.055) ** 2.4 for each channel.
+    expect(color("color(srgb-linear 0.0331048 0.132868 0.318547)", "hex")).toBe("#336699");
+    // Greys are the same in every D65 space that shares the sRGB transfer curve.
+    expect(color("color(display-p3 0.2 0.2 0.2)", "hex")).toBe("#333333");
+  });
+
+  // Relative color syntax converts #336699 into the named space and hands the
+  // result back as a color() value, so converting it again must be the identity.
+  // The a98-rgb and srgb-linear relative forms are parser bugs, fixed in #38487.
+  test.each([
+    "color(from #336699 srgb r g b)",
+    "color(from #336699 display-p3 r g b)",
+    "color(from #336699 prophoto-rgb r g b)",
+    "color(from #336699 rec2020 r g b)",
+    "color(from #336699 xyz x y z)",
+    "color(from #336699 xyz-d50 x y z)",
+    "color(from #336699 xyz-d65 x y z)",
+    "color-mix(in srgb-linear, #336699, #336699)",
+    "color-mix(in xyz, #336699, #336699)",
+  ])("%s round-trips to #336699", input => {
+    expect(color(input, "css")).toStartWith("color(");
+    expect(color(input, "hex")).toBe("#336699");
+    expect(color(input, "{rgb}")).toEqual({ r: 51, g: 102, b: 153 });
+  });
+
+  // The trip through the other space perturbs the last float digit, so the hsl and
+  // lab strings are compared numerically instead of byte for byte.
+  test.each(["color(from #336699 display-p3 r g b)", "color(from #336699 xyz-d50 x y z)"])(
+    "%s formats as the hsl and lab of #336699",
+    input => {
+      for (const format of ["hsl", "lab"] as const) {
+        const actual = color(input, format) as string;
+        expect(actual).toStartWith(`${format}(`);
+        const components = actual.match(/-?[\d.]+/g)!.map(Number);
+        const expected = (color("#336699", format) as string).match(/-?[\d.]+/g)!.map(Number);
+        expect(components).toHaveLength(expected.length);
+        for (let i = 0; i < expected.length; i++) {
+          expect(components[i]).toBeCloseTo(expected[i], 2);
+        }
+      }
+    },
+  );
+
+  test("alpha and `none` are handled like the rgb() forms", () => {
+    expect(color("color(srgb 1 0 0 / 0.5)", "[rgba]")).toEqual([255, 0, 0, 128]);
+    expect(color("color(srgb 1 0 0 / 0.5)", "{rgba}")).toEqual(color("rgba(255, 0, 0, 0.5)", "{rgba}"));
+    expect(color("color(display-p3 0.2 0.2 0.2 / 0.5)", "[rgba]")).toEqual([51, 51, 51, 128]);
+    expect(color("color(srgb none 0 1)", "hex")).toBe(color("rgb(none 0 255)", "hex"));
+    expect(color("color(srgb none 0 1)", "hex")).toBe("#0000ff");
+  });
+
+  // These primaries lie outside the sRGB gamut. Like lab()/oklch() inputs they are
+  // gamut mapped, and the results are the `#rrggbb` fallbacks `bun build` emits
+  // for the same declarations, because both go through the same conversion.
+  test.each([
+    ["color(display-p3 1 0 0)", "#ff0f0e"],
+    ["color(display-p3 0 1 0)", "#00f942"],
+    ["color(rec2020 1 0 0)", "#ff5758"],
+    ["color(prophoto-rgb 1 0 0)", "#ff5d6a"],
+  ])("%s is gamut mapped to %s", (input, expected) => {
+    expect(color(input, "hex")).toBe(expected);
+  });
+
+  test("out-of-range channels are mapped into 0..255 rather than echoed", () => {
+    expect(color("color(srgb 2 -1 0.5)", "hex")).toMatch(/^#[0-9a-f]{6}$/);
+    expect(color("color(display-p3 1 1 1)", "hex")).toBe("#ffffff");
+    expect(color("color(rec2020 1 1 1)", "hex")).toBe("#ffffff");
+    expect(color("color(prophoto-rgb 1 1 1)", "hex")).toBe("#ffffff");
+  });
+
+  // "css" keeps the authored color space; only the converting formats changed.
+  test("the css format still serializes the color() value as written", () => {
+    expect(color("color(srgb 1 0 0)", "css")).toBe("color(srgb 1 0 0)");
+    expect(color("color(display-p3 1 0 0)", "css")).toBe("color(display-p3 1 0 0)");
   });
 });
 

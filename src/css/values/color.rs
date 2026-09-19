@@ -86,18 +86,6 @@ impl RGBA {
         }
     }
 
-    /// Routes RGBA → SRGB → HSL.
-    #[inline]
-    pub fn into_hsl(self) -> HSL {
-        HSL::from_rgba(self)
-    }
-
-    /// Routes RGBA → SRGB → LAB.
-    #[inline]
-    pub fn into_lab(self) -> LAB {
-        LAB::from_rgba(self)
-    }
-
     /// Convert any `CssColor` into `RGBA` by routing through `SRGB`.
     #[inline]
     pub(crate) fn try_from_css_color(color: &CssColor) -> Option<RGBA> {
@@ -1486,39 +1474,6 @@ pub(crate) fn parse_number_or_percentage(
     parser: &ComponentParser,
 ) -> CssResult<f32> {
     Ok(parser.parse_number_or_percentage(input)?.unit_value())
-}
-
-impl LABColor {
-    pub fn into_hsl(&self) -> HSL {
-        HSL::from_lab_color(self)
-    }
-
-    pub fn into_lab(&self) -> LAB {
-        LAB::from_lab_color(self)
-    }
-
-    /// Project a LAB-space color into sRGB. Routes through the
-    /// `From<{LAB,LCH,OKLAB,OKLCH}>` lattice (LAB/LCH → XYZd50 → XYZd65 →
-    /// SRGBLinear → SRGB; OKLAB/OKLCH → XYZd65 → SRGBLinear → SRGB).
-    pub fn into_srgb(&self) -> SRGB {
-        SRGB::from_lab_color(self)
-    }
-}
-
-impl FloatColor {
-    pub fn into_hsl(&self) -> HSL {
-        HSL::from_float_color(self)
-    }
-
-    pub fn into_lab(&self) -> LAB {
-        LAB::from_float_color(self)
-    }
-
-    /// Project any float-color variant into sRGB.
-    #[inline]
-    pub fn into_srgb(&self) -> SRGB {
-        SRGB::from_float_color(self)
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -246,6 +246,25 @@ fn relative_workspace_path<'b>(
     &buf[..len]
 }
 
+/// Returns the glob of a negated `workspaces` entry in the shape the matched
+/// paths have: no `./` prefix and no trailing slash. `None` for an entry that
+/// is not negated (`!!foo` is not).
+fn negated_workspace_glob(user_pattern: &[u8]) -> Option<&[u8]> {
+    let mut remain = user_pattern;
+    let mut negated = false;
+    while let Some(rest) = remain.strip_prefix(b"!") {
+        negated = !negated;
+        remain = rest;
+    }
+    if !negated {
+        return None;
+    }
+    while let Some(rest) = remain.strip_prefix(b"./") {
+        remain = rest;
+    }
+    Some(strings::without_trailing_slash(remain))
+}
+
 impl WorkspaceMap {
     pub(crate) fn process_names_array(
         &mut self,
@@ -507,9 +526,12 @@ impl WorkspaceMap {
 
                         // check if it's negated by any remaining patterns
                         for next_pattern in &workspace_globs[i + 1..] {
-                            let result =
-                                glob::r#match(next_pattern, matched_path_without_package_json);
-                            if result.is_negated() && !result.matches() {
+                            let Some(negated_glob) = negated_workspace_glob(next_pattern) else {
+                                continue;
+                            };
+                            if glob::r#match(negated_glob, matched_path_without_package_json)
+                                .matches()
+                            {
                                 bun_output::scoped_log!(
                                     Lockfile,
                                     "skipping negated path: {}, {}\n",

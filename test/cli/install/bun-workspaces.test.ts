@@ -195,7 +195,15 @@ test("dependency on workspace without version in package.json", async () => {
   }
 });
 
-test.concurrent("allowing negative workspace patterns", async () => {
+// pkg2 depends on a package that does not exist, so the install fails if the
+// negated entry does not exclude it. npm accepts each of these spellings.
+test.concurrent.each([
+  ["packages/*", "!packages/pkg2"],
+  ["./packages/*", "!./packages/pkg2"],
+  ["packages/*", "!./packages/pkg2"],
+  ["packages/*", "!packages/pkg2/"],
+  ["packages/*", "!././packages/pkg2//"],
+])("allowing negative workspace patterns: %s, %s", async (...workspaces) => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -203,7 +211,7 @@ test.concurrent("allowing negative workspace patterns", async () => {
       join(packageDir, "package.json"),
       JSON.stringify({
         name: "root",
-        workspaces: ["packages/*", "!packages/pkg2"],
+        workspaces,
       }),
     ),
     write(
@@ -233,6 +241,9 @@ test.concurrent("allowing negative workspace patterns", async () => {
     name: "no-deps",
     version: "1.0.0",
   });
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"packages/pkg1": {');
+  expect(lockfile).not.toContain('"packages/pkg2": {');
 });
 
 test("dependency on same name as workspace and dist-tag", async () => {

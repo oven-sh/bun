@@ -21,7 +21,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import { join } from "node:path";
 import {
   canTraceOrderFile,
@@ -46,6 +47,8 @@ import {
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
+import { resolveNinja } from "./build/ninja-release.ts";
+import { processAlive, processStartTime } from "./build/proc.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 
@@ -104,7 +107,70 @@ async function main(): Promise<void> {
   // found"). Scrub them for Windows cross builds — they are host-targeted by
   // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
   // every other target keep the environment as provisioned.
-  const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
+  // One build at a time per build directory: configure and ninja both rewrite .ninja_log, and two ninjas would
+  // delete and rewrite each other's crate outputs (cargo's target-dir lock used to serialize the Rust half). A
+  // second `bun bd` waits for the first. Held from before configure until ninja returns — not while the built
+  // binary runs (`bun bd test …`), nor by ninja's own regen replay, which runs under the outer build's lock.
+  //
+  // The lock is a file holding "<pid> <start time of that process>" (node has no portable advisory file lock).
+  // A holder whose pid is gone, or alive with a different start time (the pid was reused), is stale. A stale lock
+  // is taken away by renaming it to a name of our own, which exactly one contender can do.
+  let releaseBuildDir: (() => void) | undefined;
+  const lockBuildDir = (buildDir: string): void => {
+    if (releaseBuildDir !== undefined) return;
+    mkdirSync(buildDir, { recursive: true });
+    const lock = join(buildDir, "build.lock");
+    const mine = `${process.pid} ${processStartTime(process.pid)}`;
+    const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    const read = (): string => {
+      try {
+        return readFileSync(lock, "utf8");
+      } catch {
+        return "";
+      }
+    };
+    let announced = false;
+    for (;;) {
+      try {
+        writeFileSync(lock, mine, { flag: "wx" });
+        break;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      }
+      const held = read();
+      const [pid, startTime] = held.split(" ");
+      if (held !== "" && processAlive(Number(pid)) && processStartTime(Number(pid)) === startTime) {
+        if (!announced) process.stderr.write(`waiting for another build in ${buildDir} to finish (pid ${pid})…\n`);
+        announced = true;
+        sleep(500);
+        continue;
+      }
+      // Stale (or mid-write by a contender that just created it: empty for an instant — look again first).
+      if (held === "") {
+        sleep(20);
+        if (read() === "") rmSync(lock, { force: true });
+        continue;
+      }
+      const taken = `${lock}.${process.pid}.stale`;
+      try {
+        renameSync(lock, taken);
+        if (readFileSync(taken, "utf8") !== held)
+          renameSync(taken, lock); // someone re-took it in between: give it back
+        else rmSync(taken, { force: true });
+      } catch {
+        // another contender renamed it first
+      }
+    }
+    releaseBuildDir = () => {
+      if (read() === mine) rmSync(lock, { force: true });
+    };
+    process.on("exit", () => releaseBuildDir?.());
+  };
+  const unlockBuildDir = (): void => {
+    releaseBuildDir?.();
+    releaseBuildDir = undefined;
+  };
+  const ninjaEnv = (cfg: { windows: boolean; buildDir: string; host: { os: string } }, env: Record<string, string>) => {
     const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
     if (cfg.windows && cfg.host.os !== "windows") {
       for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
@@ -114,11 +180,19 @@ async function main(): Promise<void> {
     return merged;
   };
 
+  if (args.configFile !== undefined && args.configureOnly) {
+    // ninja's generator rule replaying a previous configure (`regen`, configure.ts): just rewrite build.ninja.
+    // ninja's own [N/M] line already says "reconfigure"; the CI prelude and the local summary would be noise
+    // in the middle of a build log.
+    await configure(input, true);
+    return;
+  }
+
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
     const result = (await startGroup("Configure", () =>
-      configure(input, args.configFile !== undefined),
+      configure(input, args.configFile !== undefined, lockBuildDir),
     )) as ConfigureResult;
     if (args.configureOnly) return;
 
@@ -141,8 +215,9 @@ async function main(): Promise<void> {
       });
     let inherited = false;
 
+    const ninja = await startGroup("Resolve ninja", () => resolveNinja(result.cfg));
     const runNinja = (targets: string[] = args.ninjaTargets) =>
-      spawnWithAnnotations("ninja", ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
+      spawnWithAnnotations(ninja as string, ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
         label: "ninja",
         env: ninjaEnv(result.cfg, result.env),
       });
@@ -202,7 +277,7 @@ async function main(): Promise<void> {
     }
   } else {
     // Local: configure, then spawn ninja.
-    const result = await configure(input, args.configFile !== undefined);
+    const result = await configure(input, args.configFile !== undefined, lockBuildDir);
 
     // Quiet one-liner when configure was a no-op — the full banner only
     // prints when build.ninja changed. Timing matters: a regression here
@@ -258,16 +333,23 @@ async function main(): Promise<void> {
     if (!quiet && interactive) {
       stdio[STREAM_FD] = 2;
     }
-    const ninja = spawnSync("ninja", ninjaArgv(result.cfg), {
+    const ninja = spawnSync(await resolveNinja(result.cfg), ninjaArgv(result.cfg), {
       stdio,
       env: ninjaEnv(result.cfg, result.env),
       // cargo's compile output (now part of the ninja graph via emitRust) can
       // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
       maxBuffer: 1024 * 1024 * 1024,
     });
+    unlockBuildDir(); // the binary we may exec next (`bun bd test …`) must not keep other builds waiting
     if (ninja.error) {
       process.stderr.write(`Failed to exec ninja: ${ninja.error.message}\nIs ninja in your PATH?\n`);
       process.exit(127);
+    }
+    if (ninja.signal) {
+      // Interrupted (Ctrl-C reaches ninja and us alike; a signal sent to ninja alone lands here): re-raise so the
+      // parent shell sees the signal.
+      process.kill(process.pid, ninja.signal);
+      process.exit(128 + (osConstants.signals[ninja.signal] ?? 0));
     }
     if (ninja.status !== 0) {
       if (quiet) {

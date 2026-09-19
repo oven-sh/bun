@@ -26,9 +26,11 @@ import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
+import { ninjaIfFetched } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
+import { planPath } from "./rust/plan.ts";
 import { quote } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
@@ -151,8 +153,17 @@ function configureInputs(cwd: string): string[] {
     .filter(f => !excluded.has(f))
     .map(f => resolve(buildDir, f));
   const deps = globSync("deps/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
+  // rust/: units.ts/emit.ts/plan.ts shape the per-crate edges and manifests at configure time (run.ts is build-time
+  // only, but one glob keeps the rule simple).
+  const rust = globSync("rust/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
-  return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
+  return [
+    ...scripts,
+    ...deps,
+    ...rust,
+    resolve(cwd, "scripts", "glob-sources.ts"),
+    resolve(cwd, "package.json"),
+  ].sort();
 }
 
 /**
@@ -211,8 +222,16 @@ function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
     outputs: [resolve(cfg.buildDir, "build.ninja")],
     rule: "regen",
     inputs: [configFile],
-    implicitInputs: configureInputs(cfg.cwd),
+    // rust/plan.json: the per-crate Rust edges are generated from it (rust.ts), so a changed plan — new
+    // lockfile, manifest, toolchain — must reconfigure. It is a build output; when it is dirty ninja builds
+    // it first, reruns this edge, and restarts with the new manifest.
+    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? [planPath(cfg.buildDir)] : [])],
   });
+}
+
+/** Whether this graph compiles bun's Rust crates (and therefore has the `rust/plan.json` edge emitRust registers). */
+function buildsRust(cfg: Config): boolean {
+  return cfg.mode !== "cpp-only" && cfg.mode !== "link-only";
 }
 
 /**
@@ -257,7 +276,12 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * (build.ts --config-file), as opposed to build.ts configuring before it
  * spawns ninja.
  */
-export async function configure(input: ConfigureInput, fromNinja = false): Promise<ConfigureResult> {
+export async function configure(
+  input: ConfigureInput,
+  fromNinja = false,
+  /** Called with the build directory once it is known, before anything in it is touched (the driver's lock). */
+  beforeWriting: (buildDir: string) => void = () => {},
+): Promise<ConfigureResult> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
@@ -275,6 +299,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   const cfg = resolveConfig(partial, toolchain);
 
   validateBunConfig(cfg);
+  beforeWriting(cfg.buildDir);
 
   // Darwin cross-compile: the SDK must exist before ninja runs (every compile
   // edge passes -isysroot) and before checkWorkarounds() (the darwin-cross
@@ -366,7 +391,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
     const now = new Date();
     utimesSync(ninjaPath, now, now);
     if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
-      spawnSync("ninja", ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
+      spawnSync(ninjaIfFetched(cfg), ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
     }
   }
   mark("restat");

@@ -5113,8 +5113,7 @@ impl H2FrameParser {
         ))
     }
 
-    /// DATA payload bytes the connection and stream send windows allow right now, capped at
-    /// one frame.
+    /// DATA bytes the send windows allow right now, capped at one frame.
     fn sendable_data_size(&self, stream: &Stream) -> usize {
         MAX_PAYLOAD_SIZE_WITHOUT_FRAME
             .min(
@@ -5144,9 +5143,7 @@ impl H2FrameParser {
             suppress_half_closed_local_dispatch,
             defer_write_callback,
         } = options;
-        // `stream` stays borrowed across transport writes that re-enter JS, and the frames
-        // handled there write its window and state through the map's pointer. Launder it like
-        // `queue_frame` does, so that a read after such a write is not folded into one before it.
+        // JS under a transport write below updates this `Stream` through the map's pointer.
         let stream: &mut Stream = core::hint::black_box(stream);
         bun_output::scoped_log!(
             H2FrameParser,
@@ -5192,11 +5189,7 @@ impl H2FrameParser {
                 // max frame size will always be at least 16384 (but we need to respect the flow control)
                 let mut max_size = self.sendable_data_size(stream);
                 if max_size == 0 {
-                    // Wire order: the batched frames go out before the remainder is queued. A
-                    // synchronous JS transport (duplexPair) can deliver the peer's answer before
-                    // that write returns. A WINDOW_UPDATE handled there finds nothing queued to
-                    // flush, so the window is read again here: a remainder queued on the stale
-                    // value is never sent. A RST_STREAM handled there closes the stream.
+                    // A synchronous JS transport handles the peer's answer inside this write.
                     self.flush_batch_buffer();
                     if !stream.can_send_data() {
                         self.dispatch_write_callback(callback);
@@ -5220,8 +5213,7 @@ impl H2FrameParser {
                     || self.outbound_queue_size.get() > 0
                     || is_flow_control_limited
                 {
-                    // Frames are batched only while none of these conditions holds, and a
-                    // window that ran out was flushed above, so the queue cannot overtake a batch.
+                    // Wire order: nothing may still be batched when frames start to queue.
                     debug_assert!(BATCH_BUFFER.with_borrow(|batch| batch.is_empty()));
                     enqueued = true;
                     // write the full frame in memory and queue the frame

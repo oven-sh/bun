@@ -409,6 +409,12 @@ static PUBLISH_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--tolerate-republish                   Don't exit with code 1 when republishing over an existing version number"
         ),
+        clap::param!(
+            "-F, --filter <STR>...                  Publish each matching workspace package"
+        ),
+        clap::param!(
+            "-r, --recursive                        Publish every workspace package whose version is not on the registry"
+        ),
     ]
 ];
 
@@ -1069,6 +1075,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
   <d>Publish without failing when republishing over an existing version.<r>
   <b><green>bun publish<r> <cyan>--tolerate-republish<r>
 
+  <d>Publish every workspace package that is not on the registry yet, dependencies first.<r>
+  <b><green>bun publish<r> <cyan>--recursive<r>
+
+  <d>Publish only the matching workspace packages.<r>
+  <b><green>bun publish<r> <cyan>--filter '@scope/*'<r>
+
 Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
 ";
 
@@ -1415,6 +1427,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.dry_run = true;
             cli.recursive = args.flag(b"--recursive");
             // cli.json_output = args.flag(b"--json");
+        }
+
+        if subcommand == Subcommand::Publish {
+            cli.recursive = args.flag(b"--recursive");
         }
 
         if subcommand == Subcommand::Dedupe && args.flag(b"--check") {

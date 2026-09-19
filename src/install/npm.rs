@@ -222,6 +222,18 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     pkg_id: Option<(&[u8], &[u8])>,
     response_body: &mut MutableString,
 ) -> Result<core::convert::Infallible, AllocError> {
+    print_response_error::<OTP_RESPONSE>(req, res, pkg_id, response_body)?;
+    Global::crash();
+}
+
+/// The error report of `response_error` without the exit, for a caller that has more work to do.
+pub fn print_response_error<const OTP_RESPONSE: bool>(
+    req: &AsyncHTTP,
+    res: &bun_http::HTTPResponseMetadata,
+    // `<name>@<version>`
+    pkg_id: Option<(&[u8], &[u8])>,
+    response_body: &mut MutableString,
+) -> Result<(), AllocError> {
     let message: Option<Vec<u8>> = 'message: {
         let mut log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
@@ -261,21 +273,20 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             bstr::BStr::new(package_version),
         );
     } else if let Some(msg) = &message {
-        if OTP_RESPONSE {
-            if res.status_code() == 401
-                && strings::contains(
-                    msg,
-                    b"You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.",
-                )
-            {
-                bun_core::pretty_errorln!("\n - Received invalid OTP");
-                Global::crash();
-            }
+        if OTP_RESPONSE
+            && res.status_code() == 401
+            && strings::contains(
+                msg,
+                b"You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.",
+            )
+        {
+            bun_core::pretty_errorln!("\n - Received invalid OTP");
+            return Ok(());
         }
         bun_core::pretty_errorln!("\n - {}", bstr::BStr::new(msg));
     }
 
-    Global::crash();
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

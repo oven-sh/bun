@@ -1716,6 +1716,46 @@ describe("inbound stream lifecycle", () => {
       server.close();
     }
   });
+
+  // node's onSessionHeaders checks session.closed only for a stream that does not exist yet
+  // (lib/internal/http2/core.js). A stream delivered before close() keeps receiving its header
+  // blocks, so a trailer block that lands after the GOAWAY still emits 'trailers'.
+  test("a trailer block that arrives after session.close() emits 'trailers' on a delivered stream", async () => {
+    const events: string[] = [];
+    const done = Promise.withResolvers<void>();
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      stream.on("trailers", (headers: any) => events.push("trailers " + headers["x-trailer"]));
+      stream.on("end", () => {
+        events.push("end");
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      stream.on("close", () => {
+        events.push("close");
+        done.resolve();
+      });
+      stream.resume();
+      stream.session.close();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("POST"));
+      await c.waitForGoaway();
+      // Trailers on stream 1: `x-trailer: 1` as a literal without indexing, END_STREAM | END_HEADERS.
+      const trailers = Buffer.concat([Buffer.from([0x00]), hpackLiteral("x-trailer"), hpackLiteral("1")]);
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, trailers);
+      await done.promise;
+      expect(events).toEqual(["trailers 1", "end", "close"]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
 });
 
 // A DATA frame that cannot be written right away (the peer's flow-control window is used up, the

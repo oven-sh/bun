@@ -4108,7 +4108,11 @@ class ServerHttp2Session extends Http2Session {
       headersTuple: [string[], Record<string, any>, string[] | undefined],
       flags: number,
     ) {
-      if (!self || typeof stream !== "object" || self.closed || stream.closed) return;
+      if (!self || typeof stream !== "object" || stream.closed) return;
+      // After close() only a new request is dropped. A stream delivered before close() still
+      // gets its trailer block, like node's onSessionHeaders:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
+      if (self.closed && (stream[bunHTTP2StreamStatus] & StreamState.Delivered) === 0) return;
       const requestPerf = stream[kPerfState];
       if (requestPerf !== undefined && requestPerf.firstHeader === 0) {
         requestPerf.firstHeader = performance.now() - requestPerf.start;

@@ -240,6 +240,12 @@ static void delegateDecidePolicyForNavigationResponse(id self, SEL, id /*webView
     block->invoke(handler, policy);
 }
 
+static void delegateDidCommitNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
+{
+    ObjCRuntime::ARPool pool;
+    if (auto* host = objc::NavigationDelegate(self).host()) host->onNavigationCommitted();
+}
+
 static void delegateDidFinishNavigation(id self, SEL, id /*webView*/, id /*navigation*/)
 {
     ObjCRuntime::ARPool pool;
@@ -591,6 +597,8 @@ bool ObjCRuntime::load()
         reinterpret_cast<IMP>(delegateDidStartProvisionalNavigation), "v@:@@");
     addMethod(NavigationDelegate::cls, sel("webView:decidePolicyForNavigationResponse:decisionHandler:"),
         reinterpret_cast<IMP>(delegateDecidePolicyForNavigationResponse), "v@:@@@?");
+    addMethod(NavigationDelegate::cls, sel("webView:didCommitNavigation:"),
+        reinterpret_cast<IMP>(delegateDidCommitNavigation), "v@:@@");
     addMethod(NavigationDelegate::cls, sel("webView:didFinishNavigation:"),
         reinterpret_cast<IMP>(delegateDidFinishNavigation), "v@:@@");
     addMethod(NavigationDelegate::cls, sel("_webView:navigation:didSameDocumentNavigation:"),

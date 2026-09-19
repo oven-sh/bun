@@ -59,6 +59,7 @@ public:
     void onNavigationStarted();
     // status is the main frame's HTTP status code, 0 for a non-HTTP response.
     void onNavigationResponse(uint16_t status);
+    void onNavigationCommitted();
     void onNavigationFinished();
     void onSameDocumentNavigation();
     void onNavigationFailed(const WTF::String& err);
@@ -82,9 +83,10 @@ private:
     // (single m_evalTarget) requires it.
     bool m_navPending = false;
     // Main-frame HTTP status of the navigation in flight, and whether a
-    // response policy callback delivered it. A back-forward cache restore
-    // has no response: its status is read back from the history item
-    // (objc::WKBackForwardListItem::status). A load that ends on the
+    // response policy callback delivered it. Resolved at commit: a
+    // back-forward cache restore has no response, so its status is read
+    // back from the history item it lands on
+    // (objc::WKBackForwardListItem::status). A load that commits into the
     // committed document's own item (location.replace, reload) is not a
     // restore.
     uint16_t m_status = 0;

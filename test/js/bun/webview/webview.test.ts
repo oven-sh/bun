@@ -369,6 +369,39 @@ it("status reports the main frame's HTTP status, null for non-HTTP pages", async
   expect(seen[seen.length - 1][1]).toBe(null);
 });
 
+it("status follows goBack/goForward, including a page restored from the cache", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: req =>
+      new Response(`<!doctype html><title>${new URL(req.url).pathname}</title>`, {
+        status: req.url.endsWith("/missing") ? 404 : 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+
+  // goBack()/goForward() resolve on the host's Ack; the navigation itself
+  // reports through onNavigated.
+  let navigated = Promise.withResolvers<number | null>();
+  view.onNavigated = () => navigated.resolve(view.status);
+
+  await view.navigate(`${base}/ok`);
+  // A same-document navigation adds a history item for the same document.
+  await view.evaluate("history.pushState(null, '', '/ok#pushed')");
+  await view.navigate(`${base}/missing`);
+  expect(view.status).toBe(404);
+
+  navigated = Promise.withResolvers();
+  await view.goBack();
+  expect(await navigated.promise).toBe(200);
+  expect(view.url).toBe(`${base}/ok#pushed`);
+
+  navigated = Promise.withResolvers();
+  await view.goForward();
+  expect(await navigated.promise).toBe(404);
+});
+
 it("userAgent option sets the User-Agent header and navigator.userAgent", async () => {
   const agents: string[] = [];
   using server = Bun.serve({

@@ -709,6 +709,17 @@ void WebViewHost::onNavigationResponse(uint16_t status)
     m_responseSeen = true;
 }
 
+// Before the new document runs any script: a pageshow handler may already
+// pushState.
+void WebViewHost::onNavigationCommitted()
+{
+    objc::WKBackForwardListItem item(m_webview.currentBackForwardItem());
+    if (!m_responseSeen && item.m_id != m_documentItem) m_status = item.status();
+    item.setStatus(m_status);
+    m_documentItem = item.m_id;
+    m_documentStatus = m_status;
+}
+
 void WebViewHost::onSameDocumentNavigation()
 {
     objc::WKBackForwardListItem item(m_webview.currentBackForwardItem());
@@ -718,11 +729,6 @@ void WebViewHost::onSameDocumentNavigation()
 
 void WebViewHost::onNavigationFinished()
 {
-    objc::WKBackForwardListItem item(m_webview.currentBackForwardItem());
-    if (!m_responseSeen && item.m_id != m_documentItem) m_status = item.status();
-    item.setStatus(m_status);
-    m_documentItem = item.m_id;
-    m_documentStatus = m_status;
     // NavEvent is unsolicited — fires for back()/forward()/reload() too,
     // which Ack immediately and don't set m_navPending. The parent updates
     // url/title/status and runs onNavigated from NavEvent; NavDone only

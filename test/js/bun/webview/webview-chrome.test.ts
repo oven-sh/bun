@@ -1067,6 +1067,31 @@ it("chrome: status reports the main frame's HTTP status, null for non-HTTP pages
   expect(view.title).toBe("data");
 });
 
+it("chrome: status follows goBack/goForward", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: req =>
+      new Response(`<!doctype html><title>${new URL(req.url).pathname}</title>`, {
+        status: req.url.endsWith("/missing") ? 404 : 200,
+        headers: { "content-type": "text/html" },
+      }),
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+
+  await view.navigate(`${base}/ok`);
+  await view.evaluate("history.pushState(null, '', '/ok#pushed')");
+  await view.navigate(`${base}/missing`);
+  expect(view.status).toBe(404);
+
+  await view.goBack();
+  expect(view.status).toBe(200);
+  expect(await view.evaluate("location.hash")).toBe("#pushed");
+
+  await view.goForward();
+  expect(view.status).toBe(404);
+});
+
 it("chrome: userAgent option sets the User-Agent header and navigator.userAgent", async () => {
   const agents: string[] = [];
   using server = Bun.serve({

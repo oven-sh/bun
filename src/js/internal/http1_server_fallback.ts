@@ -198,9 +198,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     socketDrained() {
       if (onwritable) settleWaiting(onwritable);
     },
-    // The socket closed before it drained: `fail` runs, and the waiting callback never does.
-    socketClosed(fail) {
-      if (onwritable) settleWaiting(fail);
+    // The socket finished or closed, so no 'drain' comes: `fn` runs, and the waiting callback never does.
+    socketEnded(fn) {
+      if (onwritable) settleWaiting(fn);
     },
     cork(callback) {
       return callback();
@@ -542,11 +542,16 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.on("error", onHttp1SocketErrorListener);
   socket.once("end", onHttp1SocketEnd);
   socket.on("drain", onHttp1SocketDrain);
+  socket.once("finish", () => {
+    const inflight = socket._httpMessage;
+    // An ended socket emits no 'drain', and all that the response wrote is out: the write callbacks that wait succeed.
+    inflight?.[kHttp1ResponseHandle]?.socketEnded(() => inflight._callPendingCallbacks());
+  });
   socket.once("close", () => {
     connections.delete(socket);
     const inflight = socket._httpMessage;
-    // The write callbacks that wait for a 'drain' fail now, before the response's 'close', as in Node.
-    inflight?.[kHttp1ResponseHandle]?.socketClosed(() =>
+    // The write callbacks that still wait fail, before the response's 'close', as in Node.
+    inflight?.[kHttp1ResponseHandle]?.socketEnded(() =>
       failPendingWriteCallbacks(inflight, socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write")),
     );
     // Like the native socket's close path (Node's socketOnClose ->

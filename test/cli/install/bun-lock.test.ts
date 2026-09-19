@@ -1908,6 +1908,8 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
     );
 
   type Shape = {
+    // package.json files of an install that ran before `packageJsons` replaced them.
+    earlier?: Record<string, object>;
     packageJsons: Record<string, object>;
     breakLockfile: (lockfile: string) => string;
     // [directory, request, the package a consistent lockfile gives it]
@@ -2146,6 +2148,29 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
         [".", "shared", "shared@1.0.0"],
       ],
     },
+    // The peer was there first and got shared@1.5.0. The dependencies that came later hoist 2.0.0, which the peer
+    // rejects, so 1.5.0 moves to a folder under lib, and loading binds lib's dependencies row to that folder too.
+    "a dependency next to a peer of the same name that has its own folder": {
+      earlier: {
+        "package.json": { name: "root", workspaces: ["packages/*"] },
+        "packages/lib/package.json": { name: "lib", version: "1.0.0", peerDependencies: { shared: "^1.0.0" } },
+      },
+      packageJsons: {
+        "package.json": { name: "root", workspaces: ["packages/*"] },
+        "packages/app/package.json": { name: "app", version: "1.0.0", dependencies: { shared: "2.0.0" } },
+        "packages/lib/package.json": {
+          name: "lib",
+          version: "1.0.0",
+          dependencies: { shared: "2.0.0" },
+          peerDependencies: { shared: "^1.0.0" },
+        },
+      },
+      breakLockfile: lockfile => lockfile,
+      seen: [
+        ["packages/lib", "shared", "shared@1.5.0"],
+        ["packages/app", "shared", "shared@2.0.0"],
+      ],
+    },
     // Two rows, one folder: the devDependencies row gets it.
     "the second row of a name that a workspace lists in two groups": {
       packageJsons: {
@@ -2164,14 +2189,19 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
 
   // With no manifest in the cache, resolving any dependency again would ask the registry for it.
   it.each(Object.keys(accepted))("%s stays where bun.lock puts it", async shape => {
-    const { packageJsons, breakLockfile, seen } = accepted[shape];
+    const { earlier, packageJsons, breakLockfile, seen } = accepted[shape];
     using registry = await serveRegistry(manifests);
-    using dir = createProject(registry.url, "hoisted", packageJsons);
+    using dir = createProject(registry.url, "hoisted", earlier ?? packageJsons);
     const cwd = String(dir);
     const lockfilePath = join(cwd, "bun.lock");
 
     expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    if (earlier) {
+      for (const [path, json] of Object.entries(packageJsons)) await write(join(cwd, path), JSON.stringify(json));
+      expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    }
     const lockfile = breakLockfile(await file(lockfilePath).text());
+    expect(lockfile).toContain(`"${seen[0][2]}"`);
     await write(lockfilePath, lockfile);
 
     for (const args of [["--frozen-lockfile"], []]) {

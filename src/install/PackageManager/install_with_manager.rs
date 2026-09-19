@@ -1622,6 +1622,17 @@ impl<'a> RowScan<'a> {
         Some(same_package && requested.version.satisfies(locked, self.buf, self.buf))
     }
 
+    /// Whether bun.lock lists an npm package other than `target` that is what the row asks for.
+    #[cold]
+    #[inline(never)]
+    fn accepts_another_copy(&self, dep_id: DependencyID, target: usize) -> bool {
+        (0..self.lockfile.loaded_package_count as usize).any(|id| {
+            id != target
+                && self.pkg_resolutions[id].tag == ResolutionTag::Npm
+                && self.accepts(dep_id, id) == Some(true)
+        })
+    }
+
     /// The rows of loaded packages that no rule of the row itself or of a row next to it explains.
     fn rows(&self) -> Vec<UnsatisfiedRow> {
         let dep_slices = self.lockfile.packages.items_dependencies();
@@ -1649,14 +1660,15 @@ impl<'a> RowScan<'a> {
                 if self.accepts(dep_id, target) != Some(false) {
                     continue;
                 }
-                // Rows of one owner and name load from one folder. The row that placed it vouches. A peer places none.
+                // Rows of one owner and name load from one folder. The row that placed it vouches for the others.
                 let shares_a_folder = (slice.begin()..slice.end()).any(|sibling_id| {
                     let sibling = &self.dependencies[sibling_id as usize];
                     sibling_id != dep_id
                         && sibling.name_hash == dep.name_hash
-                        && !sibling.behavior.is_peer()
                         && self.resolutions[sibling_id as usize] as usize == target
                         && self.accepts(sibling_id, target) == Some(true)
+                        // A peer places a folder only when it rejects the copy that this row found higher up.
+                        && (!sibling.behavior.is_peer() || self.accepts_another_copy(dep_id, target))
                 });
                 if shares_a_folder {
                     continue;

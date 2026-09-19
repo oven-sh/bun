@@ -3040,8 +3040,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
   try {
-    // respond() prepares the headers again. Its 200 default is for the caller's headers only: a
-    // :status that statCheck replaced with a value that coerces to 0 is an error.
+    // The 200 default in respond() is for the caller's headers, not for a :status that statCheck wrote.
     const status = headers[HTTP2_HEADER_STATUS];
     if (status !== undefined && (status | 0) === 0) throw $ERR_HTTP2_STATUS_INVALID(0);
     this.respond(headers, options);
@@ -3173,8 +3172,6 @@ function callStreamClose(stream: ServerHttp2Stream) {
   if (!stream.destroyed && !stream.closed) stream.close();
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2670-L2683
-// A final response is 2xx-5xx; a 1xx block goes through additionalHeaders(). The range check
-// runs first, so it wins over a never-index list that is not an array.
 function validatePreparedResponseHeaders(headers, statusCode: number) {
   if (statusCode < 200 || statusCode > 599) throw $ERR_HTTP2_STATUS_INVALID(statusCode);
   const neverIndex = headers[sensitiveHeaders];
@@ -3183,9 +3180,6 @@ function validatePreparedResponseHeaders(headers, statusCode: number) {
   }
 }
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2625-L2633
-// `headers` is the caller's own copy. A :status that coerces to 0 (absent, 0, "", null, NaN,
-// "abc") becomes 200. respondWithFile()/respondWithFD() run this before statCheck, so statCheck
-// sees the integer :status and the date.
 function prepareResponseHeadersObject(headers, options): number {
   const statusCode = (headers[HTTP2_HEADER_STATUS] = headers[HTTP2_HEADER_STATUS] | 0 || HTTP_STATUS_OK);
   if (options?.sendDate == null || options.sendDate) {
@@ -3342,8 +3336,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
-    // node validates `options` before the headers, so an invalid option wins over an invalid
-    // :status: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3131-L3177
+    // node's check order: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3131-L3177
     options = { ...options };
     if (options.offset !== undefined && typeof options.offset !== "number") {
       throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
@@ -3388,8 +3381,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
-    // node's order is options, fd, headers, so the first invalid one of those wins:
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3062-L3110
+    // node's check order: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3062-L3110
     options = { ...options };
     if (options.offset !== undefined && typeof options.offset !== "number") {
       throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
@@ -3560,8 +3552,7 @@ class ServerHttp2Stream extends Http2Stream {
       if (!statusFound) {
         // Only default :status when it is genuinely absent - a present-but-invalid value (0, a
         // non-numeric string) must fall through to the range validation instead of being doubled.
-        // node doubles it and then throws ERR_HTTP2_HEADER_SINGLE_VALUE for the two :status
-        // fields. Both runtimes throw from respond(); only the code differs.
+        // node doubles it and throws ERR_HTTP2_HEADER_SINGLE_VALUE, so only the error code differs.
         statusCode = 200;
         headers.unshift(HTTP2_HEADER_STATUS, statusCode);
       }
@@ -3589,8 +3580,7 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
-    // Like node's prepareResponseHeaders(), before the header list is walked: an invalid :status
-    // wins over an invalid never-index list, and both win over an invalid header field.
+    // Like node, this runs before the header list is walked: an invalid :status or never-index list wins.
     if (rawHeadersList === null) statusCode = prepareResponseHeadersObject(headers, options);
     else validatePreparedResponseHeaders(headers, statusCode);
 

@@ -3606,6 +3606,51 @@ it("HEAD response with explicit chunked TE carries no terminating chunk", async 
   }
 });
 
+describe("a HEAD or TRACE request that declares a body", () => {
+  // llhttp frames a request body by Content-Length / Transfer-Encoding for every
+  // method. Node v26.3.0 gives the same result for all four cases.
+  it.each([
+    ["HEAD", "Content-Length: 5", "hello"],
+    ["TRACE", "Content-Length: 5", "hello"],
+    ["HEAD", "Transfer-Encoding: chunked", "5\r\nhello\r\n0\r\n\r\n"],
+    ["TRACE", "Transfer-Encoding: chunked", "5\r\nhello\r\n0\r\n\r\n"],
+  ])("%s with %s delivers the body to req", async (method, framing, payload) => {
+    const dispatched = Promise.withResolvers<IncomingMessage>();
+    const ended = Promise.withResolvers<string>();
+    const server = createServer((req, res) => {
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => {
+        res.end();
+        ended.resolve(body);
+      });
+      dispatched.resolve(req);
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket.on("error", ended.reject);
+    try {
+      socket.write(`${method} / HTTP/1.1\r\nHost: x\r\n${framing}\r\n\r\n`);
+      const req = await dispatched.promise;
+      // Only the head is on the wire, so the message is not complete yet.
+      const completeBeforeBody = req.complete;
+      socket.write(payload);
+      const body = await ended.promise;
+      expect({ method: req.method, completeBeforeBody, body, completeAtEnd: req.complete }).toEqual({
+        method,
+        completeBeforeBody: false,
+        body: "hello",
+        completeAtEnd: true,
+      });
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/34158
 it("server.close(cb) completes after a raw upgrade once both sockets are destroyed", async () => {
   // Node v26.3.0 contract (verified): after the 'upgrade' handoff, destroying

@@ -211,7 +211,7 @@ impl Method {
     /// twice per request).
     ///
     /// `#[inline]`: this lookup should be fully
-    /// inlined into `NodeHTTPResponse.createForJS` (no separate symbol in the
+    /// inlined into the per-request dispatchers (no separate symbol in the
     /// release binary). Without the hint LLVM keeps this as a ~600-byte
     /// out-of-line call because the full compare tree looks heavy, even though
     /// every per-request caller only ever exercises the len=3 `b"GET"` arm —

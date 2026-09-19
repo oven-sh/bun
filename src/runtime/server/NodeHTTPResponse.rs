@@ -7,7 +7,6 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::scoped_log;
-use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
@@ -2596,23 +2595,21 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     let request_ref = bun_opaque::opaque_deref(request.cast_const());
 
     let vm = bun_vm_mut(global_object);
-    let method = HttpMethod::which(request_ref.method()).unwrap_or(HttpMethod::OPTIONS);
-    // GET in node.js can have a body
-    if method.has_request_body() || method == HttpMethod::GET {
-        let req_len: usize = 'brk: {
-            if let Some(content_length) = request_ref.header(b"content-length") {
-                scoped_log!(
-                    NodeHTTPResponse,
-                    "content-length: {}",
-                    BStr::new(content_length)
-                );
-                break 'brk bun_http_types::parse_content_length(content_length);
-            }
-            break 'brk 0;
-        };
+    // No method check: like llhttp, the parser frames a request body by
+    // Content-Length / Transfer-Encoding for every method, HEAD and TRACE included.
+    let req_len: usize = 'brk: {
+        if let Some(content_length) = request_ref.header(b"content-length") {
+            scoped_log!(
+                NodeHTTPResponse,
+                "content-length: {}",
+                BStr::new(content_length)
+            );
+            break 'brk bun_http_types::parse_content_length(content_length);
+        }
+        break 'brk 0;
+    };
 
-        *has_body = req_len > 0 || request_ref.has_transfer_encoding();
-    }
+    *has_body = req_len > 0 || request_ref.has_transfer_encoding();
 
     let raw_response = if is_ssl != 0 {
         uws::AnyResponse::SSL(response_ptr.cast())

@@ -2068,6 +2068,27 @@ function onEndStreamSettled(stream: Http2Stream) {
   }
 }
 
+// Writable never calls _final on an errored stream (a write() after end()): send its END_STREAM here.
+function onStreamWriteDone(this: Http2Stream, callback: (err?: Error | null) => void, err?: Error | null) {
+  callback(err);
+  const state = this._writableState;
+  // A chunk still queued behind this one carries END_STREAM itself (isFinalWrite).
+  if (err || !state.ending || !state.errored || state.destroyed || state.finalCalled || state.length !== 0) return;
+  if ((this[bunHTTP2StreamStatus] & (StreamState.EndStreamSent | StreamState.NativeClosed)) !== 0) return;
+  // Pending trailers carry END_STREAM themselves. A pending reset must not follow a clean end.
+  if (this[bunHTTP2WaitForTrailers] || this.rstCode) return;
+  const native = this[bunHTTP2Session]?.[bunHTTP2Native];
+  if (!native) return;
+  this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
+  try {
+    const settled = native.writeStream(this.id, "", "ascii", true);
+    native.flush();
+    if (settled === 5) onEndStreamSettled(this);
+  } catch {
+    // A peer reset made the native side drop the stream before JS handled it: nothing is left to end.
+  }
+}
+
 function markWritableDone(stream: Http2Stream) {
   const _final = stream[bunHTTP2StreamFinal];
   if (typeof _final === "function") {
@@ -2871,6 +2892,7 @@ class Http2Stream extends Duplex {
         const chunk = Buffer.concat(chunks || []);
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, batchLength);
+        if (!endStream) callback = onStreamWriteDone.bind(this, callback);
         const status = native.writeStream(this.#id, chunk, undefined, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
@@ -2912,6 +2934,7 @@ class Http2Stream extends Duplex {
         }
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, chunk.length);
+        if (!endStream) callback = onStreamWriteDone.bind(this, callback);
         const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
@@ -4890,7 +4913,8 @@ function destroyClosedStream(stream: Http2Stream) {
   if (stream.errored) {
     // Neither event below fires on an errored Duplex. node's onStreamClose destroys at once too:
     // an emitted 'error' makes `stream.readable` false.
-    stream.destroy();
+    // While 'error' is still queued, streamOnErrored destroys after it, so its listeners get a live stream.
+    if (stream._writableState.errorEmitted) stream.destroy();
   } else if (stream.readable && !stream.rstCode) {
     // Clean close while data is still buffered on the readable side (e.g. the response ended
     // before the request body was consumed): node defers the destroy until the consumer drains

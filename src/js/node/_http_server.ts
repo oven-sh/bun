@@ -129,7 +129,7 @@ function setCloseCallback(self, callback) {
 
 function assignSocketInternal(self, socket) {
   if (socket._httpMessage) {
-    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+    throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = self;
   setCloseCallback(socket, onServerResponseClose);
@@ -349,18 +349,23 @@ function Server(options, callback): void {
 
     if (this[isTlsSymbol]) {
       const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
-      // Translate minVersion/maxVersion/secureProtocol into the integer
-      // protocol range the native layer applies (secureProtocol wins, like
-      // Node's SecureContext::Init); 0 keeps the native defaults.
-      validateSecureProtocol(options.secureProtocol);
+      // Translate secureProtocol, or else minVersion/maxVersion, into the
+      // integer protocol range the native layer applies; 0 keeps the native
+      // defaults. Node rejects secureProtocol together with minVersion or
+      // maxVersion, so validation comes first. A falsy value counts as
+      // absent, like in tls.Server.setSecureContext().
+      const secureProtocol = options.secureProtocol || undefined;
+      const minVersionOption = options.minVersion || undefined;
+      const maxVersionOption = options.maxVersion || undefined;
+      validateSecureProtocol(secureProtocol, minVersionOption, maxVersionOption);
       let minVersion, maxVersion;
-      const range = secureProtocolToVersionRange(options.secureProtocol);
+      const range = secureProtocolToVersionRange(secureProtocol);
       if (range) {
         minVersion = range[0];
         maxVersion = range[1];
       } else {
-        minVersion = tlsStringToProtocolVersion(options.minVersion);
-        maxVersion = tlsStringToProtocolVersion(options.maxVersion);
+        minVersion = tlsStringToProtocolVersion(minVersionOption);
+        maxVersion = tlsStringToProtocolVersion(maxVersionOption);
       }
       this[tlsSymbol] = normalizeServerTls({
         serverName,
@@ -3613,7 +3618,7 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
 
 ServerResponse.prototype.assignSocket = function (socket) {
   if (socket._httpMessage) {
-    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+    throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = this;
   socket.once("close", onServerResponseClose);

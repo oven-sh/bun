@@ -1317,7 +1317,7 @@ function fileURLToPathBuffer(path: unknown, options?: { windows?: boolean }): Bu
   }
   const url = path as URL;
   if (url.protocol !== "file:") {
-    throw $ERR_INVALID_URL_SCHEME("The URL must be of scheme file");
+    throw $ERR_INVALID_URL_SCHEME("file");
   }
   if (windows ?? process.platform === "win32") {
     let pathname = url.pathname.replaceAll("/", "\\");

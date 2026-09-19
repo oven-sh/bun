@@ -1,3 +1,4 @@
+// Not `crate::collections::IndexMap`: its arena keeps every buffer that a growing table outgrows.
 use bun_collections::array_hash_map::ArrayHashMap;
 
 use crate::collections::{FxHashMap, FxHashSet as HashSet, IdMap};

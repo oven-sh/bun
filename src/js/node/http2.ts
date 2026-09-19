@@ -3226,6 +3226,9 @@ class ServerHttp2Stream extends Http2Stream {
     if (!this.pushAllowed) {
       throw $ERR_HTTP2_PUSH_DISABLED();
     }
+    assertIsObject(options, "options");
+    // Like node, read a copy so only own enumerable keys count.
+    options = { ...options };
     const session = this[bunHTTP2Session];
     const parser = session?.[bunHTTP2Native];
     if (!parser) {
@@ -3309,7 +3312,7 @@ class ServerHttp2Stream extends Http2Stream {
       if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
         pushedStream[kHeadRequest] = true;
         pushedStream.end();
-      } else if (options?.endStream) {
+      } else if (options.endStream) {
         pushedStream.end();
       }
     }

@@ -5164,7 +5164,7 @@ describe("http2 response options", () => {
     }
   });
 
-  it("a response throws ERR_INVALID_ARG_TYPE for options that are not an object", async () => {
+  it("respond(), respondWithFile(), respondWithFD() and pushStream() throw for options that are not an object", async () => {
     const notObjects = {
       "null": null,
       "5": 5,
@@ -5186,6 +5186,7 @@ describe("http2 response options", () => {
           ["respond", () => stream.respond({ ":status": 200 }, options)],
           ["respondWithFile", () => stream.respondWithFile(import.meta.path, { ":status": 200 }, options)],
           ["respondWithFD", () => stream.respondWithFD(0, { ":status": 200 }, options)],
+          ["pushStream", () => stream.pushStream({ ":path": "/pushed" }, options, () => {})],
         ]) {
           try {
             call();
@@ -5202,12 +5203,50 @@ describe("http2 response options", () => {
 
     const expected = {};
     for (const name of Object.keys(notObjects)) {
-      for (const method of ["respond", "respondWithFile", "respondWithFD"]) {
+      for (const method of ["respond", "respondWithFile", "respondWithFD", "pushStream"]) {
         expected[`${method}(headers, ${name})`] =
           `TypeError ERR_INVALID_ARG_TYPE: The "options" argument must be of type object. ${received[name]}`;
       }
     }
     expect({ thrown, responses }).toEqual({ thrown: expected, responses: ["200 ok", "200 ok"] });
+  });
+
+  it("pushStream() does not count an inherited endStream", async () => {
+    const { promise: pushed, resolve } = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.on("error", err => resolve(`server stream error ${err.code}`));
+      stream.pushStream({ ":path": "/pushed" }, Object.create({ endStream: true }), (err, push) => {
+        if (err) return resolve(`push error ${err.code}`);
+        push.on("error", err => resolve(`pushed stream error ${err.code}`));
+        // pushStream() ends the pushed writable when it reads a truthy endStream.
+        if (push.writableEnded) return resolve("the pushed writable was already ended");
+        push.respond({ ":status": 200 });
+        push.end("pushed body");
+      });
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      client.on("error", err => resolve(`client session error ${err.code}`));
+      client.on("stream", push => {
+        const chunks = [];
+        push.setEncoding("utf8");
+        push.on("error", err => resolve(`client push error ${err.code}`));
+        push.on("data", chunk => chunks.push(chunk));
+        push.on("end", () => resolve(chunks.join("")));
+      });
+      const req = client.request({ ":path": "/" });
+      req.on("error", err => resolve(`client stream error ${err.code}`));
+      req.resume();
+      req.end();
+      expect(await pushed).toBe("pushed body");
+    } finally {
+      client.destroy();
+      server.close();
+    }
   });
 
   it("a response HEADERS frame never carries a priority field", async () => {

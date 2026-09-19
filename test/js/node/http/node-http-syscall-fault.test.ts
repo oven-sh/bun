@@ -232,7 +232,8 @@ describe.skipIf(skip)("node:http pipelining under short sends", () => {
     const chunks: Buffer[] = [];
     socket.on("data", chunk => chunks.push(chunk));
     socket.on("error", () => {});
-    socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n".repeat(COUNT)));
+    const request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    socket.on("connect", () => socket.write(Buffer.alloc(request.length * COUNT, request)));
     await once(socket, "close");
 
     const bytes = Buffer.concat(chunks);

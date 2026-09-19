@@ -4583,8 +4583,7 @@ pub(super) fn finalize_bundle(
             w_int!(i32, i32::try_from(i).expect("int cast"));
 
             // If no edges were changed, then it is impossible to
-            // change the list of CSS files. Failed chunk entries keep their
-            // css slot in the trace, so the list stays complete while broken.
+            // change the list of CSS files.
             if had_adjusted_edges {
                 ctx.gts.clear();
                 dev.client_graph.current_css_files.clear();

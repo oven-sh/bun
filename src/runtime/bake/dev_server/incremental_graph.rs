@@ -1229,51 +1229,35 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
             }
             Side::Client => {
-                let (failed, css_root_id, is_css_child) = {
+                // Before the css check: a failed css root keeps its `CssRoot` content.
+                if goal == TraceImportGoal::FindErrors
+                    && self.bundled_files.values()[file_index.get() as usize].failed
+                {
+                    let owner =
+                        serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
+                    let fail = self
+                        .dev_bundling_failures()
+                        .get(&owner)
+                        .cloned()
+                        .expect("Failed to get bundling failure");
+                    self.dev_incremental_result().failures_added.push(fail);
+                    return Ok(());
+                }
+
+                {
                     let f = &self.bundled_files.values()[file_index.get() as usize];
-                    (
-                        f.failed,
-                        match f.content {
-                            Content::CssRoot(id) => Some(id),
-                            _ => None,
-                        },
-                        matches!(f.content, Content::CssChild),
-                    )
-                };
-                if failed {
-                    if goal == TraceImportGoal::FindErrors {
-                        let owner =
-                            serialized_failure::OwnerPacked::new(Side::Client, file_index.get());
-                        let fail = self
-                            .dev_bundling_failures()
-                            .get(&owner)
-                            .cloned()
-                            .expect("Failed to get bundling failure");
-                        self.dev_incremental_result().failures_added.push(fail);
-                        return Ok(());
-                    }
-                    // A failed css chunk entry contributes its slot (the id
-                    // is the path hash, so the stylesheet keeps its place)
-                    // and stops: its imports may be css children only a root
-                    // may reach. A failed js file's css imports are roots, so
-                    // it keeps tracing below.
-                    if let Some(id) = css_root_id {
-                        if goal == TraceImportGoal::FindCss {
-                            self.current_css_files.push(id);
+                    match &f.content {
+                        Content::CssChild => {
+                            debug_assert!(false, "only CSS roots should be found by tracing");
                         }
-                        return Ok(());
-                    }
-                    if is_css_child {
-                        return Ok(());
-                    }
-                } else {
-                    debug_assert!(!is_css_child, "only CSS roots should be found by tracing");
-                    if let Some(id) = css_root_id {
-                        if goal == TraceImportGoal::FindCss {
-                            self.current_css_files.push(id);
+                        Content::CssRoot(id) => {
+                            if goal == TraceImportGoal::FindCss {
+                                self.current_css_files.push(*id);
+                            }
+                            // CSS can't import JS; trace is done.
+                            return Ok(());
                         }
-                        // CSS can't import JS; trace is done.
-                        return Ok(());
+                        _ => {}
                     }
                 }
 
@@ -1698,11 +1682,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     &*self.bundled_files.keys()[dep.get() as usize],
                                 );
                                 entry_points.append_css(k.slice())?;
-                            } else if self.bundled_files.values()[dep.get() as usize].failed {
-                                // A chunk entry whose last build failed has
-                                // `Unknown` content; re-enqueue it like a
-                                // direct edit of that file would.
-                                self.append_client_entry_point(entry_points, dep.get() as usize)?;
                             }
                             it = entry.next_dependency;
                         }
@@ -1733,36 +1712,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     Content::Js(_) | Content::Unknown => {
                         if !self.bundled_files.values()[index].is_hmr_root {
                             self.append_client_entry_point(entry_points, index)?;
-                        }
-                        // A failed file may have failed dependents whose
-                        // failure is downstream of it (a css root importing a
-                        // failed css entry); re-enqueue them too.
-                        if self.bundled_files.values()[index].failed {
-                            let mut it = self.edge_lists[index].first_dep;
-                            while let Some(edge_index) = it {
-                                let entry = self.edges[edge_index.get() as usize];
-                                let dep = entry.dependency;
-                                it = entry.next_dependency;
-                                let (dep_is_css_root, dep_failed) = {
-                                    let f = &self.bundled_files.values()[dep.get() as usize];
-                                    (matches!(f.content, Content::CssRoot(_)), f.failed)
-                                };
-                                if !dep_is_css_root && !dep_failed {
-                                    continue;
-                                }
-                                self.stale_files.set(dep.get() as usize);
-                                if dep_is_css_root {
-                                    let k = bun_ptr::RawSlice::new(
-                                        &*self.bundled_files.keys()[dep.get() as usize],
-                                    );
-                                    entry_points.append_css(k.slice())?;
-                                } else {
-                                    self.append_client_entry_point(
-                                        entry_points,
-                                        dep.get() as usize,
-                                    )?;
-                                }
-                            }
                         }
                     }
                 },

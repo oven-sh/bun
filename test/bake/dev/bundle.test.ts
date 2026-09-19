@@ -992,6 +992,9 @@ devTest("server module that fails to print becomes a per-file error", {
 });
 // Nested `:fullscreen` rules fan out into one copy of the body per vendor
 // prefix at every nesting level, tripping the CSS printer's expansion guard.
+// That needs the dev server to print a stylesheet with other targets than it
+// was minified for (`bun build` prints this file). If the two ever agree, these
+// tests need another stylesheet that fails to print.
 // The failed chunk used to be registered as an empty stylesheet with no error.
 devTest("stylesheet that fails to print becomes a per-file error instead of an empty stylesheet", {
   files: {
@@ -1294,6 +1297,8 @@ devTest("css resolution error with an edge adjustment keeps the dev server alive
       await dev.write("main.css", `@import "./missing.css";\nbody { margin: 0; }\n`, { dedent: false });
       await dev.write("index.ts", `import.meta.hot.accept();\nimport "./b.css";\n`, { dedent: false });
     }
+    // The failed stylesheet keeps its place in the css list of the route.
+    await c.style(".fine").color.expect.toBe("red");
     await c.style(".b").color.expect.toBe("green");
     await dev.write("main.css", `@import "./child.css";\nbody { margin: 0; }\n`, { dedent: false });
     await c.style(".fine").color.expect.toBe("red");

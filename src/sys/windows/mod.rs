@@ -792,9 +792,102 @@ fn lowbox_dos_name_fallback(
     Ok(&mut out_buffer[..total])
 }
 
+/// Object manager names compare case-insensitively; `DefineDosDeviceW` keeps the caller's spelling.
+fn eql_device_name(a: &[u16], b: &[u16]) -> bool {
+    let lower = |c: u16| match c {
+        0x41..=0x5A => c | 0x20,
+        _ => c,
+    };
+    a.len() == b.len() && a.iter().zip(b).all(|(&x, &y)| lower(x) == lower(y))
+}
+
+/// The drive letter whose DOS device link targets exactly `device` (`\Device\ImDisk0`).
+fn drive_letter_of_device(device: &[u16]) -> Option<u16> {
+    let drives = kernel32::GetLogicalDrives();
+    let mut targets = [0u16; 1024];
+    (0..26u8)
+        .filter(|&bit| drives & (1u32 << bit) != 0)
+        .map(|bit| u16::from(b'A' + bit))
+        .find(|&letter| {
+            let name = [letter, u16::from(b':'), 0];
+            // SAFETY: `name` is NUL-terminated; `targets` is valid for `targets.len()` writes.
+            let n = unsafe {
+                kernel32::QueryDosDeviceW(name.as_ptr(), targets.as_mut_ptr(), targets.len() as u32)
+            };
+            if n == 0 {
+                return false;
+            }
+            // SAFETY: on success the API wrote a NUL-terminated multi-string, the current target first.
+            let current = unsafe { bun_core::ffi::wstr_units(targets.as_ptr()) };
+            eql_device_name(current, device)
+        })
+}
+
+/// `X:\…` for `hFile`, with the drive letter read from the DOS device namespace and not from the mount manager.
+fn drive_letter_dos_name_fallback(
+    hFile: HANDLE,
+    out_buffer: &mut [u16],
+) -> Result<&mut [u16], GetFinalPathNameByHandleError> {
+    const LETTER_LEN: usize = 2;
+    if out_buffer.len() <= LETTER_LEN {
+        return Err(GetFinalPathNameByHandleError::NameTooLong);
+    }
+    let mut nt_buf = bun_paths::w_path_buffer_pool::get();
+    let Some(nt_len) = final_name_raw(
+        hFile,
+        win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NT,
+        &mut nt_buf.0[..],
+    ) else {
+        return Err(GetFinalPathNameByHandleError::FileNotFound);
+    };
+    let (_, rel_buf) = out_buffer.split_at_mut(LETTER_LEN);
+    // SAFETY: `rel_buf` is valid for `rel_buf.len()` writes.
+    let rel_len = unsafe {
+        externs::GetFinalPathNameByHandleW(
+            hFile,
+            rel_buf.as_mut_ptr(),
+            rel_buf.len() as u32,
+            win32::FILE_NAME_NORMALIZED | win32::VOLUME_NAME_NONE,
+        )
+    } as usize;
+    if rel_len == 0 {
+        return Err(GetFinalPathNameByHandleError::FileNotFound);
+    }
+    // The API NUL-terminates at `rel_buf[rel_len]`; raw-shape callers read it.
+    if rel_len >= rel_buf.len() {
+        return Err(GetFinalPathNameByHandleError::NameTooLong);
+    }
+    let Some(letter) = nt_buf.0[..nt_len]
+        .strip_suffix(&rel_buf[..rel_len])
+        .filter(|device| !device.is_empty() && rel_buf[0] == u16::from(b'\\'))
+        .and_then(drive_letter_of_device)
+    else {
+        bun_sys::syslog!(
+            "GetFinalPathNameByHandleW({:p}) = no drive letter for {}",
+            hFile,
+            bun_core::fmt::utf16(&nt_buf.0[..nt_len])
+        );
+        return Err(GetFinalPathNameByHandleError::FileNotFound);
+    };
+    out_buffer[0] = letter;
+    out_buffer[1] = u16::from(b':');
+    let total = LETTER_LEN + rel_len;
+    bun_sys::syslog!(
+        "GetFinalPathNameByHandleW({:p}) = {} (drive letter fallback)",
+        hFile,
+        bun_core::fmt::utf16(&out_buffer[..total])
+    );
+    Ok(&mut out_buffer[..total])
+}
+
+/// [`drive_letter_dos_name_fallback`] on `fd` for `bun:internal-for-testing`: no CI volume fails the API itself.
+pub fn drive_letter_path_for_testing(fd: Fd, out_buffer: &mut [u16]) -> Option<&mut [u16]> {
+    drive_letter_dos_name_fallback(fd.native(), out_buffer).ok()
+}
+
 /// This module's spelling of `GetFinalPathNameByHandleW`: raw-ABI drop-in
 /// (returns the length, or 0 with the thread's last error set) plus, inside an
-/// AppContainer, the same lowbox fallback as [`GetFinalPathNameByHandle`]. The
+/// AppContainer or on an unmanaged volume, the fallbacks of [`GetFinalPathNameByHandle`]. The
 /// fallback output keeps the `\\?\` prefix the raw API produces for
 /// `VOLUME_NAME_DOS`; the unwrapped extern stays reachable as
 /// `externs::GetFinalPathNameByHandleW` for the fallback machinery only.
@@ -811,35 +904,29 @@ pub unsafe fn GetFinalPathNameByHandleW(
     let n = unsafe { externs::GetFinalPathNameByHandleW(hFile, buf, len, flags) };
     let volume_kind =
         flags & (win32::VOLUME_NAME_GUID | win32::VOLUME_NAME_NT | win32::VOLUME_NAME_NONE);
-    if n != 0
-        || volume_kind != win32::VOLUME_NAME_DOS
-        || GetLastError() != u32::from(Win32Error::ACCESS_DENIED.0)
-    {
+    if n != 0 || volume_kind != win32::VOLUME_NAME_DOS {
         return n;
     }
-    if !is_app_container() {
-        // The token probe can clobber last-error; callers of this raw shape
-        // read it after a 0 return.
-        kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
-        return 0;
-    }
-    // SAFETY: caller contract.
-    let out = unsafe { core::slice::from_raw_parts_mut(buf, len as usize) };
+    let err = GetLastError();
+    let lowbox = err == u32::from(Win32Error::ACCESS_DENIED.0) && is_app_container();
     const PFX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
-    if out.len() <= PFX.len() {
-        kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
-        return 0;
-    }
-    let rest_len = match lowbox_dos_name_fallback(hFile, &mut out[PFX.len()..]) {
-        Ok(rest) => rest.len(),
-        Err(_) => {
-            // The fallback's queries clobbered the thread error.
-            kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
-            return 0;
+    if (len as usize) > PFX.len() {
+        // SAFETY: caller contract; `len > 0` rules out a null size probe.
+        let out = unsafe { core::slice::from_raw_parts_mut(buf, len as usize) };
+        let (prefix, rest) = out.split_at_mut(PFX.len());
+        let rest = if lowbox {
+            lowbox_dos_name_fallback(hFile, rest)
+        } else {
+            drive_letter_dos_name_fallback(hFile, rest)
+        };
+        if let Ok(rest) = rest {
+            prefix.copy_from_slice(&PFX);
+            return (PFX.len() + rest.len()) as u32;
         }
-    };
-    out[..PFX.len()].copy_from_slice(&PFX);
-    (PFX.len() + rest_len) as u32
+    }
+    // The probes above clobber last-error; callers of this raw shape read it after a 0 return.
+    kernel32::SetLastError(err);
+    0
 }
 
 pub(crate) fn GetFinalPathNameByHandle(
@@ -873,6 +960,10 @@ pub(crate) fn GetFinalPathNameByHandle(
             && is_app_container()
         {
             return lowbox_dos_name_fallback(hFile, out_buffer);
+        }
+        // The lookup also fails for a drive letter the mount manager does not know (ImDisk, `DefineDosDeviceW`).
+        if fmt.volume_name == win32::VolumeName::Dos {
+            return drive_letter_dos_name_fallback(hFile, out_buffer);
         }
         return Err(GetFinalPathNameByHandleError::FileNotFound);
     }
@@ -2062,7 +2153,10 @@ bun_core::declare_scope!(windowsUserUniqueId, visible);
 
 #[cfg(test)]
 mod tests {
-    use super::{E, Win32Error, Win32ErrorExt as _, system_volume_device};
+    use super::{
+        E, Win32Error, Win32ErrorExt as _, drive_letter_of_device, eql_device_name,
+        system_volume_device,
+    };
     use crate::{Error, Tag};
 
     /// A Win32 code with no entry in `SystemErrno::init_win32_error`.
@@ -2098,5 +2192,30 @@ mod tests {
         assert!((*letter as u8).is_ascii_uppercase());
         let prefix: Vec<u16> = "\\Device\\".encode_utf16().collect();
         assert!(device.starts_with(&prefix));
+    }
+
+    /// The DOS device namespace and the mount manager agree on the letter of the system volume.
+    #[test]
+    fn drive_letter_of_device_matches_whole_device_names() {
+        let w = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+        assert!(eql_device_name(
+            &w("\\Device\\ImDisk0"),
+            &w("\\device\\IMDISK0")
+        ));
+        assert!(!eql_device_name(
+            &w("\\Device\\ImDisk0\\code"),
+            &w("\\Device\\ImDisk0")
+        ));
+        assert!(!eql_device_name(
+            &w("\\Device\\ImDisk0"),
+            &w("\\Device\\ImDisk01")
+        ));
+
+        let (device, letter) = system_volume_device().expect("system volume");
+        assert_eq!(drive_letter_of_device(device), Some(*letter));
+        let upper = w(&String::from_utf16(device).unwrap().to_ascii_uppercase());
+        assert_eq!(drive_letter_of_device(&upper), Some(*letter));
+        let longer: Vec<u16> = device.iter().copied().chain(w("x")).collect();
+        assert_eq!(drive_letter_of_device(&longer), None);
     }
 }

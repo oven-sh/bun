@@ -960,8 +960,9 @@ pub mod kernel32 {
     }
     // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
     pub use super::{
-        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemDirectoryW, GetSystemInfo,
-        SYSTEM_INFO, SetCurrentDirectoryW, SetFilePointerEx,
+        CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetLogicalDrives,
+        GetSystemDirectoryW, GetSystemInfo, QueryDosDeviceW, SYSTEM_INFO, SetCurrentDirectoryW,
+        SetFilePointerEx,
     };
     pub use super::{
         GetConsoleCP, GetConsoleMode, GetConsoleOutputCP, SetConsoleCP, SetConsoleMode,
@@ -1337,6 +1338,11 @@ unsafe extern "system" {
     pub fn GetCurrentDirectoryW(nBufferLength: DWORD, lpBuffer: LPWSTR) -> DWORD;
 
     pub fn GetSystemDirectoryW(lpBuffer: LPWSTR, uSize: DWORD) -> DWORD;
+
+    /// No preconditions; returns the bitmask of drive letters (bit 0 = `A:`).
+    pub safe fn GetLogicalDrives() -> DWORD;
+
+    pub fn QueryDosDeviceW(lpDeviceName: LPCWSTR, lpTargetPath: LPWSTR, ucchMax: DWORD) -> DWORD;
 
     pub fn GetFileAttributesW(lpFileName: LPCWSTR) -> DWORD;
 

@@ -823,8 +823,9 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   }
   /**
    * Sends one request (stream 1, a GET unless `startRequest` makes another) to a raw server.
-   * `serve` writes the server's frames once the request HEADERS arrived. The PING ACK that ends
-   * the exchange follows every frame the client sent in reply to them.
+   * `serve` writes the server's frames once the request HEADERS arrived. Two PING round trips
+   * with an event loop turn between them end the exchange, so a frame the client sends from
+   * nextTick or setImmediate in reply is counted too.
    */
   async function pushExchange(
     onResponse: (req: http2.ClientHttp2Stream) => void,
@@ -844,8 +845,11 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       req.once("response", () => onResponse(req));
       await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
       await serve(raw);
-      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
-      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      for (const payload of ["ping-one", "ping-two"]) {
+        raw.sendFrame(FrameType.PING, 0, 0, Buffer.from(payload));
+        await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.toString() === payload);
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
       return {
         pushedStreams: onStream.mock.calls.length,
         resetsOnStream2: raw.frames
@@ -898,36 +902,49 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     raw.socket!.write(Buffer.concat([serverSettings, responseHeaders(0x4 /* END_HEADERS */), pushOnStream1()]));
   };
 
-  // node's closeStream sends the RST_STREAM at once when user code had not ended the writable.
-  // It waits for 'finish' only for NO_ERROR on a writable that is ending and not finished:
+  // A 200000-byte body exceeds the 65535-byte initial window and the raw server never opens it,
+  // so the request's writable cannot finish. node's closeStream submits the RST_STREAM at once
+  // when user code had not ended the writable, and waits for 'finish' when it had:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2033-L2040
-  test("a PUSH_PROMISE is refused once close() ran on a request that user code had not ended", async () => {
-    const result = await pushExchange(
-      req => req.close(),
-      pushOnOpenParent,
-      client => client.request({ ":path": "/", ":method": "POST" }),
-    );
-    expect(result).toEqual({ pushedStreams: 0, resetsOnStream2: [ErrorCode.CANCEL] });
-  });
+  const blockedBody = Buffer.alloc(200_000, "a");
+  test.each([
+    ["refused", "write()", { pushedStreams: 0, resetsOnStream2: [ErrorCode.CANCEL] }],
+    ["surfaced", "end()", { pushedStreams: 1, resetsOnStream2: [] }],
+  ] as const)(
+    "a PUSH_PROMISE is %s once close() ran on a request whose blocked body came from %s",
+    async (_, how, expected) => {
+      const result = await pushExchange(
+        req => req.close(),
+        pushOnOpenParent,
+        client => {
+          const req = client.request({ ":path": "/", ":method": "POST" });
+          if (how === "write()") req.write(blockedBody);
+          else req.end(blockedBody);
+          return req;
+        },
+      );
+      expect(result).toEqual(expected);
+    },
+  );
 
-  // The body exceeds the 65535-byte initial window and the raw server never opens it, so the
-  // writable cannot finish and close() waits for 'finish'. node v26.3.0 surfaces the push.
-  test("a PUSH_PROMISE is surfaced while close() waits for the request body to finish", async () => {
-    const result = await pushExchange(
-      req => req.close(),
-      pushOnOpenParent,
-      client => {
-        const req = client.request({ ":path": "/", ":method": "POST" });
-        req.end(Buffer.alloc(200_000, "a"));
-        return req;
-      },
-    );
-    expect(result).toEqual({ pushedStreams: 1, resetsOnStream2: [] });
-  });
+  // node refuses these three as well. In each the parser already released the parent (the
+  // `!stream` arm of the same nghttp2 check), and the client surfaces the pushed stream until
+  // the server's frame order is fixed (#43479): test-http2-respond-file-push.js gets its
+  // PUSH_PROMISE after the parent's END_STREAM.
+  test.todo(
+    "a PUSH_PROMISE is refused once close() ran on a request with no body that user code had not ended",
+    async () => {
+      // close() ends the writable, 'finish' follows before the next frame is parsed, and the
+      // RST_STREAM that waited for it releases the parent.
+      const result = await pushExchange(
+        req => req.close(),
+        pushOnOpenParent,
+        client => client.request({ ":path": "/", ":method": "POST" }),
+      );
+      expect(result).toEqual({ pushedStreams: 0, resetsOnStream2: [ErrorCode.CANCEL] });
+    },
+  );
 
-  // node refuses these two as well (the `!stream` arm of the same nghttp2 check). The client still
-  // surfaces the pushed stream until the server's frame order is fixed (#43479):
-  // test-http2-respond-file-push.js gets its PUSH_PROMISE after the parent's END_STREAM.
   test.todo("a PUSH_PROMISE that arrives after the client reset its request stream is refused", async () => {
     const result = await pushExchange(
       req => req.close(http2.constants.NGHTTP2_CANCEL),

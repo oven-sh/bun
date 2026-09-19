@@ -2028,8 +2028,8 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
-  // scheduleRstStream queued this stream's RST_STREAM: nghttp2's CLOSING state.
-  RstScheduled = 1 << 9, // 1000000000 = 512
+  // node has submitted this stream's RST_STREAM by now: nghttp2's CLOSING state.
+  Closing = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2201,7 +2201,7 @@ function rstNextTick(id: number, rstCode: number) {
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
 function scheduleRstStream(stream: Http2Stream, session: Http2Session, id: number, rstCode: number) {
-  stream[bunHTTP2StreamStatus] |= StreamState.RstScheduled;
+  stream[bunHTTP2StreamStatus] |= StreamState.Closing;
   setImmediate(rstNextTick.bind(session, id, rstCode));
 }
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
@@ -2548,10 +2548,11 @@ class Http2Stream extends Duplex {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
-      } else if (!ending || this.writableFinished || code) {
-        // Same condition as node's closeStream, with `ending` read before the end() above.
+      } else if (this.writableFinished || code) {
         scheduleRstStream(this, session, this.#id, code);
       } else {
+        // node's closeStream submits at once when user code had not ended the writable.
+        if (!ending) this[bunHTTP2StreamStatus] |= StreamState.Closing;
         this.once("finish", rstNextTick.bind(session, this.#id, code));
       }
       // node destroys the stream once both halves have finished; without this a stream closed
@@ -4986,11 +4987,10 @@ class ClientHttp2Session extends Http2Session {
     ) {
       if (!self) return;
       if (
-        (typeof parent === "object" && (parent[bunHTTP2StreamStatus] & StreamState.RstScheduled) !== 0) ||
+        (typeof parent === "object" && (parent[bunHTTP2StreamStatus] & StreamState.Closing) !== 0) ||
         self.#reservedStreamsCount >= self.#maxReservedRemoteStreams
       ) {
-        // nghttp2 cancels a promise whose parent is CLOSING or that exceeds the reserved limit:
-        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4613-L4627
+        // nghttp2: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L4613-L4627
         self.#parser?.rstStream(pushId, constants.NGHTTP2_CANCEL);
         return;
       }

@@ -271,25 +271,26 @@ describe("HTTP server CONNECT", () => {
       }
 
       // The server reads until its Readable buffer is full, then stops. Poll
-      // until the client's queue stops shrinking; a server that keeps reading
-      // drains it to zero.
+      // until socket.readableLength stops growing. A server without read
+      // backpressure keeps going until it holds every byte. (The client's
+      // writableLength is not a usable signal: on Windows libuv queues the
+      // whole backlog outside the stream.)
       let previous = -1;
-      let stableSince = 0;
+      let stableSince = Date.now();
       const deadline = Date.now() + 10_000;
       while (Date.now() < deadline) {
-        const queued = client.writableLength;
-        if (queued === 0) break;
-        if (queued !== previous) {
-          previous = queued;
+        const buffered = socket.readableLength;
+        if (buffered >= totalBytes) break;
+        if (buffered !== previous) {
+          previous = buffered;
           stableSince = Date.now();
-        } else if (Date.now() - stableSince >= 500) {
+        } else if (buffered > 0 && Date.now() - stableSince >= 500) {
           break;
         }
         await Bun.sleep(10);
       }
 
       expect(socket.readableLength).toBeLessThan(16 * 1024 * 1024);
-      expect(client.writableLength).toBeGreaterThan(16 * 1024 * 1024);
 
       // Resuming restarts reads and delivers every byte.
       let received = 0;

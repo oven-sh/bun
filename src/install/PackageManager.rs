@@ -23,6 +23,7 @@ use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
+use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
@@ -1092,7 +1093,7 @@ fn configure_env_for_scripts_run(
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
-            value: Box::<[u8]>::from(strings::without_trailing_slash(
+            value: Box::<[u8]>::from(without_trailing_slash_windows_path(
                 FileSystem::instance().top_level_dir(),
             )),
         };
@@ -1472,6 +1473,14 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
+/// Appends `package.json\0` to a directory. A filesystem root already ends in the separator.
+fn push_package_json(path: &mut Vec<u8>) {
+    if !path.last().is_some_and(|&c| bun_paths::is_sep_native(c)) {
+        path.push(SEP);
+    }
+    path.extend_from_slice(b"package.json\0");
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1506,7 +1515,8 @@ pub fn init(
     // and seeds `top_level_dir` from `getcwd`.
     bun_resolver::fs::FileSystem::init(None)?;
     let fs = FileSystem::instance();
-    let top_level_dir_no_trailing_slash = strings::without_trailing_slash(fs.top_level_dir());
+    // `C:\` keeps its separator: `C:` is the current directory of drive C, not its root.
+    let top_level_dir_no_trailing_slash = without_trailing_slash_windows_path(fs.top_level_dir());
     // SAFETY: CWD_BUF is a process-global path buffer only touched on the main thread.
     // repr(transparent) makes the `*mut PathBuffer → *mut u8` cast sound.
     unsafe {
@@ -1533,19 +1543,12 @@ pub fn init(
         let _ = cwd_ptr;
     }
 
-    // Per-cfg const literal, no runtime alloc.
-    #[cfg(windows)]
-    const SEP_PACKAGE_JSON: &[u8] = b"\\package.json";
-    #[cfg(not(windows))]
-    const SEP_PACKAGE_JSON: &[u8] = b"/package.json";
-
     let mut original_package_json_path_buf: Vec<u8> =
-        Vec::with_capacity(top_level_dir_no_trailing_slash.len() + SEP_PACKAGE_JSON.len() + 1);
+        Vec::with_capacity(top_level_dir_no_trailing_slash.len() + "/package.json".len() + 1);
     original_package_json_path_buf.extend_from_slice(top_level_dir_no_trailing_slash);
-    original_package_json_path_buf.extend_from_slice(SEP_PACKAGE_JSON);
-    original_package_json_path_buf.push(0);
+    push_package_json(&mut original_package_json_path_buf);
 
-    let path_len = top_level_dir_no_trailing_slash.len() + SEP_PACKAGE_JSON.len();
+    let path_len = original_package_json_path_buf.len() - 1;
     // SAFETY: NUL written at `path_len` above. Not `from_buf`: this borrow is
     // intentionally detached — `original_package_json_path_buf` is mutated and
     // re-sliced below (the directory-walk rewrites the tail in place), and
@@ -1554,7 +1557,7 @@ pub fn init(
     let mut original_package_json_path =
         unsafe { ZStr::from_raw(original_package_json_path_buf.as_ptr(), path_len) };
     let original_cwd =
-        strings::without_suffix_comptime(original_package_json_path.as_bytes(), SEP_PACKAGE_JSON);
+        &original_package_json_path.as_bytes()[..top_level_dir_no_trailing_slash.len()];
     let original_cwd_clone = Box::<[u8]>::from(original_cwd);
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
@@ -1584,14 +1587,10 @@ pub fn init(
 
             loop {
                 let mut package_json_path_buf = bun_paths::path_buffer_pool::get();
-                package_json_path_buf[..this_cwd.len()].copy_from_slice(this_cwd);
-                package_json_path_buf[this_cwd.len()..this_cwd.len() + b"/package.json".len()]
-                    .copy_from_slice(b"/package.json");
-                package_json_path_buf[this_cwd.len() + b"/package.json".len()] = 0;
-                // SAFETY: NUL written above
-                let package_json_path = ZStr::from_buf(
-                    &package_json_path_buf[..],
-                    this_cwd.len() + b"/package.json".len(),
+                let package_json_path = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+                    this_cwd,
+                    &mut package_json_path_buf[..],
+                    &[b"package.json"],
                 );
 
                 match bun_sys::File::openat(
@@ -1607,7 +1606,7 @@ pub fn init(
                     Ok(f) => break 'child f,
                     Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                         if let Some(parent) = bun_core::dirname(this_cwd) {
-                            this_cwd = strings::without_trailing_slash(parent);
+                            this_cwd = without_trailing_slash_windows_path(parent);
                             continue;
                         } else {
                             break;
@@ -1666,11 +1665,9 @@ pub fn init(
             true,
         ));
         original_package_json_path_buf.truncate(this_cwd.len());
-        original_package_json_path_buf.push(SEP);
-        original_package_json_path_buf.extend_from_slice(b"package.json");
-        original_package_json_path_buf.push(0);
+        push_package_json(&mut original_package_json_path_buf);
 
-        let new_path_len = this_cwd.len() + "/package.json".len();
+        let new_path_len = original_package_json_path_buf.len() - 1;
         // SAFETY: NUL written above
         original_package_json_path =
             ZStr::from_buf(&original_package_json_path_buf[..], new_path_len);
@@ -1680,20 +1677,17 @@ pub fn init(
         if subcommand.should_chdir_to_root() {
             if !created_package_json && !no_project {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
-                    let parent_without_trailing_slash = strings::without_trailing_slash(parent);
                     let mut parent_path_buf = bun_paths::path_buffer_pool::get();
-                    parent_path_buf[..parent_without_trailing_slash.len()]
-                        .copy_from_slice(parent_without_trailing_slash);
-                    parent_path_buf[parent_without_trailing_slash.len()
-                        ..parent_without_trailing_slash.len() + b"/package.json".len()]
-                        .copy_from_slice(b"/package.json");
-                    parent_path_buf[parent_without_trailing_slash.len() + b"/package.json".len()] =
-                        0;
+                    let parent_package_json_path =
+                        resolve_path::join_abs_string_buf_z::<platform::Auto>(
+                            parent,
+                            &mut parent_path_buf[..],
+                            &[b"package.json"],
+                        );
 
                     let json_file = match bun_sys::File::openat(
                         bun_sys::Fd::cwd(),
-                        &parent_path_buf
-                            [..parent_without_trailing_slash.len() + b"/package.json".len()],
+                        parent_package_json_path.as_bytes(),
                         bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
                         0,
                     ) {
@@ -2456,16 +2450,9 @@ fn init_with_runtime_once(
 
     // var progress = Progress{};
     // var node = progress.start(name: []const u8, estimated_total_items: usize)
-    let top_level_dir_no_trailing_slash =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
     let mut original_package_json_path =
-        vec![0u8; top_level_dir_no_trailing_slash.len() + "/package.json".len() + 1];
-    original_package_json_path[..top_level_dir_no_trailing_slash.len()]
-        .copy_from_slice(top_level_dir_no_trailing_slash);
-    original_package_json_path[top_level_dir_no_trailing_slash.len()
-        ..top_level_dir_no_trailing_slash.len() + b"/package.json".len()]
-        .copy_from_slice(b"/package.json");
-    // last byte already 0 (sentinel)
+        without_trailing_slash_windows_path(FileSystem::instance().top_level_dir()).to_vec();
+    push_package_json(&mut original_package_json_path);
 
     // SAFETY: manager_ptr points to uninitialized memory; fully initialize
     // field-by-field via `addr_of_mut!((*p).field).write(..)`. See the PERF

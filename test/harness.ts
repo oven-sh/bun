@@ -509,6 +509,22 @@ export function tempDir(
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
+/**
+ * Windows only. Makes `dir` the root of a new drive with `subst`, and removes the drive on dispose.
+ * A test cannot write to the root of a real drive.
+ */
+export function substDrive(dir: string): Disposable & { root: string } {
+  for (const letter of "ZYXWVUTSRQPONMLKJIHGFED") {
+    if (Bun.spawnSync({ cmd: ["subst", `${letter}:`, dir], env: bunEnv }).exitCode === 0) {
+      return {
+        root: `${letter}:\\`,
+        [Symbol.dispose]: () => void Bun.spawnSync({ cmd: ["subst", `${letter}:`, "/d"], env: bunEnv }),
+      };
+    }
+  }
+  throw new Error("no free drive letter for subst");
+}
+
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);

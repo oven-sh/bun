@@ -6293,15 +6293,13 @@ describe.concurrent("end() after end()", () => {
     "close",
   ];
 
-  // Ends `stream` again with `chunk`. `closed` resolves with what the stream reported, in order.
-  function endAgain(stream, closed, chunk) {
+  // Calls stream.end(...args, callback) on a stream that has ended. `closed` resolves with what
+  // the stream reported, in order.
+  function endAgain(stream, closed, ...args) {
     const events = [];
     stream.on("error", err => events.push(`error:${err.code}`));
     stream.on("close", () => closed.resolve(events.concat("close")));
-    // Only matters when the late end() does not error the stream: a client stream then closes
-    // once its response was read, so the test fails on the events and does not time out.
-    stream.resume();
-    stream.end(chunk, err => events.push(`callback:${err?.code}`));
+    stream.end(...args, err => events.push(`callback:${err?.code}`));
     events.push("end() returned");
   }
 
@@ -6367,32 +6365,94 @@ describe.concurrent("end() after end()", () => {
     expect(result).toEqual([lateEndEvents, { status: 200, body: "first" }]);
   });
 
-  it("server stream, end(chunk) after 'close' reports to the callback only", async () => {
-    // The stream is destroyed by then, so the error must not become an 'error' event.
+  it("server stream, end(chunk) from a 'finish' listener", async () => {
+    const result = await serve((stream, closed) => {
+      stream.respond({ ":status": 200 });
+      stream.on("finish", () => endAgain(stream, closed, "second"));
+      stream.end("first");
+    });
+    expect(result).toEqual([lateEndEvents, { status: 200, body: "first" }]);
+  });
+
+  it("server stream, end(chunk) after respondWithFD()", async () => {
+    // A file response ends the writable side itself. The file still has to arrive in full.
+    const fd = fs.openSync(import.meta.path, "r");
+    try {
+      const result = await serve((stream, closed) => {
+        stream.respondWithFD(fd, { ":status": 200 });
+        endAgain(stream, closed, "late");
+      });
+      expect(result).toEqual([lateEndEvents, { status: 200, body: fs.readFileSync(import.meta.path, "utf8") }]);
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  it.each([
+    ["end(callback)", []],
+    ["end(null, callback)", [null]],
+  ])("server stream, %s after end(chunk) calls back on a later tick", async (_name, args) => {
+    const result = await serve((stream, closed) => {
+      stream.respond({ ":status": 200 });
+      stream.end("first");
+      endAgain(stream, closed, ...args);
+    });
+    expect(result).toEqual([["end() returned", "callback:undefined", "close"], { status: 200, body: "first" }]);
+  });
+
+  // The stream is destroyed by then, so the error must not become an 'error' event.
+  it.each([
+    [
+      "'close'",
+      "first",
+      (stream, late) => {
+        stream.on("close", late);
+        stream.respond({ ":status": 200 });
+        stream.end("first");
+      },
+    ],
+    [
+      "destroy()",
+      "",
+      (stream, late) => {
+        stream.respond({ ":status": 200 });
+        stream.destroy();
+        late();
+      },
+    ],
+  ])("server stream, end(chunk) after %s reports to the callback only", async (_name, body, respond) => {
     const result = await serve((stream, closed) => {
       const events = [];
       stream.on("error", err => events.push(`error:${err.code}`));
-      stream.on("close", () => {
+      respond(stream, () => {
         stream.end("late", err => closed.resolve(events.concat(`callback:${err?.code}`)));
         events.push("end() returned");
       });
-      stream.respond({ ":status": 200 });
-      stream.end("first");
     });
-    expect(result).toEqual([["end() returned", "callback:ERR_STREAM_WRITE_AFTER_END"], { status: 200, body: "first" }]);
+    expect(result).toEqual([["end() returned", "callback:ERR_STREAM_WRITE_AFTER_END"], { status: 200, body }]);
   });
 
-  it("server stream, respond() ending the stream inside end(chunk) keeps 'finish'", async () => {
-    // Without a respond() call, _write sends the response headers. For a HEAD request that ends
-    // the stream from inside the end(chunk) that is still dispatching its chunk. (Node ends the
-    // writable side of a HEAD stream when it creates it, so there this end(chunk) fails.)
+  // Without a respond() call, the first write sends the response headers. For a HEAD request
+  // that response ends the stream, from inside the write. (Node ends the writable side of a HEAD
+  // stream when it creates it, so there both shapes fail with ERR_STREAM_WRITE_AFTER_END.)
+  it.each([
+    ["end(chunk)", (stream, callback) => stream.end("body", callback)],
+    [
+      "write(chunk); uncork(); end()",
+      (stream, callback) => {
+        stream.write("body");
+        stream.uncork();
+        stream.end(callback);
+      },
+    ],
+  ])("server stream, implicit response to a HEAD request inside a corked %s", async (_name, finish) => {
     const result = await serve((stream, closed) => {
       const events = [];
       stream.on("error", err => events.push(`error:${err.code}`));
       stream.on("finish", () => events.push("finish"));
       stream.on("close", () => closed.resolve(events.concat("close")));
       stream.cork();
-      stream.end("body", err => events.push(`callback:${err?.code}`));
+      finish(stream, err => events.push(`callback:${err?.code}`));
     }, "HEAD");
     expect(result).toEqual([["callback:undefined", "finish", "close"], { status: 200, body: "" }]);
   });
@@ -6419,7 +6479,10 @@ describe.concurrent("end() after end()", () => {
       client = http2.connect(`http://127.0.0.1:${port}`);
       const clientClosed = Promise.withResolvers();
       client.on("error", clientClosed.reject);
-      drive(client.request(headers), clientClosed);
+      const req = client.request(headers);
+      // A request that the late end() does not error closes only once its response was read.
+      req.resume();
+      drive(req, clientClosed);
       return await Promise.all([clientClosed.promise, received.promise]);
     } finally {
       client?.close();
@@ -6451,6 +6514,36 @@ describe.concurrent("end() after end()", () => {
       });
     });
     expect(result).toEqual([lateEndEvents, "first"]);
+  });
+
+  it("client stream, the errored request frees its maxConcurrentStreams slot", async () => {
+    const server = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
+    let client;
+    try {
+      server.on("stream", stream => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://127.0.0.1:${port}`);
+      const failed = Promise.withResolvers();
+      client.on("error", failed.reject);
+      await Promise.race([failed.promise, new Promise(resolve => client.once("remoteSettings", resolve))]);
+      // Started together: the second and the third request wait for the slot of the one before.
+      const requests = [1, 2, 3].map(() => {
+        const closed = Promise.withResolvers();
+        const req = client.request({ ":path": "/" });
+        req.resume();
+        endAgain(req, closed, "body");
+        return closed.promise;
+      });
+      const events = await Promise.race([failed.promise, Promise.all(requests)]);
+      expect(events).toEqual([lateEndEvents, lateEndEvents, lateEndEvents]);
+    } finally {
+      client?.close();
+      server.close();
+    }
   });
 
   // Resolves `closed` with the response body once `req` has closed.

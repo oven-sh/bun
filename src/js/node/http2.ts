@@ -2113,8 +2113,6 @@ function publishStreamCloseChannel(stream: Http2Stream) {
 // Set across end(chunk)'s synchronous super.end() only: bridges the window where the final
 // chunk dispatches before Writable marks the stream ending.
 const kEndingWithChunk = Symbol("http2EndingWithChunk");
-// Set while end() is on the stack: an end() nested in it leaves the ending to the outer call.
-const kInsideEnd = Symbol("http2InsideEnd");
 const kPerfStats = Symbol("http2PerfStats");
 const kPerfState = Symbol("http2PerfState");
 
@@ -2322,7 +2320,6 @@ class Http2Stream extends Duplex {
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
   [kEndingWithChunk]: boolean = false;
-  [kInsideEnd]: boolean = false;
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,
@@ -2828,23 +2825,14 @@ class Http2Stream extends Duplex {
       }
     }
 
-    const nested = this[kInsideEnd] === true;
-    if (nested && chunk == null && callback === undefined) {
-      // respond() ends a body-less response from inside the _write that the outer end()
-      // dispatched. A Writable#end here would set kEnding mid-write and the outer call would skip
-      // its finishMaybe: a write that native completed synchronously would never emit 'finish'.
-      return this;
-    }
     // Don't create an empty buffer for end() without data - let the Duplex stream
     // handle it naturally (just calls _final without _write for empty data).
     // Creating an empty buffer here causes an extra empty DATA frame to be sent.
     const hasChunk = chunk !== undefined && chunk !== null && chunk.length > 0;
     if (hasChunk) this[kEndingWithChunk] = true;
-    this[kInsideEnd] = true;
     try {
       return super.end(chunk, encoding, callback);
     } finally {
-      this[kInsideEnd] = nested;
       // Only the synchronous window is bridged: a chunk buffered behind an in-flight
       // write dispatches later, when `ending` is already set.
       if (hasChunk) this[kEndingWithChunk] = false;
@@ -3210,6 +3198,11 @@ function serverStreamOnFinish(this: ServerHttp2Stream) {
 function callStreamClose(stream: ServerHttp2Stream) {
   if (!stream.destroyed && !stream.closed) stream.close();
 }
+// respond() ended the writable side from inside a write dispatch (a HEAD response has no body).
+// Writable finishes the stream only if that write completes on a later turn, like any other.
+function dropBodyOfHeadResponse(callback: () => void) {
+  process.nextTick(callback);
+}
 class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
   constructor(streamId, session, headers) {
@@ -3230,12 +3223,14 @@ class ServerHttp2Stream extends Http2Stream {
     // synchronously but the stream-level flags only flip on nextTick - respond() would throw.
     if (!this.headersSent && !this.destroyed && !this.closed && this.session !== undefined) {
       this.respond();
+      if (this.headRequest) return dropBodyOfHeadResponse(callback);
     }
     super._write(chunk, encoding, callback);
   }
   _writev(data, callback) {
     if (!this.headersSent && !this.destroyed && !this.closed && this.session !== undefined) {
       this.respond();
+      if (this.headRequest) return dropBodyOfHeadResponse(callback);
     }
     super._writev(data, callback);
   }

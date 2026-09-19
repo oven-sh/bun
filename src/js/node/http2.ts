@@ -3315,6 +3315,7 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
+    assertIsObject(options, "options");
 
     if ($isArray(headers)) {
       // node rejects the raw-array form here (only respond() accepts it) - same
@@ -3333,7 +3334,8 @@ class ServerHttp2Stream extends Http2Stream {
       headers[HTTP2_HEADER_STATUS] = 200;
     }
     const statusCode = headers[HTTP2_HEADER_STATUS];
-    options = { ...options };
+    // node's file responders never read endStream: the file is the payload.
+    options = { ...options, endStream: false };
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -3375,6 +3377,7 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
+    assertIsObject(options, "options");
 
     if ($isArray(headers)) {
       // node rejects the raw-array form here (only respond() accepts it) - same
@@ -3403,7 +3406,8 @@ class ServerHttp2Stream extends Http2Stream {
     ) {
       throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
     }
-    options = { ...options };
+    // node's file responders never read endStream: the file is the payload.
+    options = { ...options, endStream: false };
     if (options.offset !== undefined && typeof options.offset !== "number") {
       throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
     }
@@ -3508,6 +3512,15 @@ class ServerHttp2Stream extends Http2Stream {
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
+    assertIsObject(options, "options");
+    // node's respond() (lib/internal/http2/core.js) copies its options, so only own enumerable
+    // keys count, then reads endStream, waitForTrailers and sendDate from the copy, each by
+    // truthiness. It ignores every other option. paddingStrategy is a bun extension.
+    options = { ...options };
+    const sendDate = options.sendDate;
+    const paddingStrategy = options.paddingStrategy;
+    let endStream = !!options.endStream;
+    let waitForTrailers = !!options.waitForTrailers;
 
     // Raw (flat [name, value, ...] array) headers form: the pairs are encoded
     // on the wire in their given order; a default :status is prepended and a
@@ -3541,8 +3554,7 @@ class ServerHttp2Stream extends Http2Stream {
         statusCode = 200;
         headers.unshift(HTTP2_HEADER_STATUS, statusCode);
       }
-      const sendDateOption = options?.sendDate;
-      if (!isDateSet && (sendDateOption == null || sendDateOption)) {
+      if (!isDateSet && (sendDate == null || sendDate)) {
         headers.push(HTTP2_HEADER_DATE, utcDate());
       }
       rawHeadersList = headers;
@@ -3598,7 +3610,6 @@ class ServerHttp2Stream extends Http2Stream {
     if (statusCode < 100 || statusCode > 599) {
       throw $ERR_HTTP2_STATUS_INVALID(statusCode);
     }
-    let endStream = !!options?.endStream;
     if (
       endStream ||
       statusCode === HTTP_STATUS_NO_CONTENT ||
@@ -3611,14 +3622,12 @@ class ServerHttp2Stream extends Http2Stream {
       // If waitForTrailers is ALSO true the native layer dispatches
       // onWantTrailers immediately after, whose JS handler calls
       // noTrailers → sendData("", true) and emits a spurious DATA frame on
-      // the already-half-closed stream (RFC 9113 §5.1 violation). Strip
-      // waitForTrailers here so the native never fires that path; the JS
-      // guard further down (`options?.waitForTrailers && !endStream`) only
-      // covers the `_final` side and runs AFTER the native call.
-      options = { ...options, endStream: true, waitForTrailers: false };
+      // the already-half-closed stream (RFC 9113 §5.1 violation). Drop
+      // waitForTrailers here so the native never fires that path, and so
+      // `_final` never drives the wantTrailers path on a half-closed stream.
       endStream = true;
+      waitForTrailers = false;
     }
-    const sendDate = options?.sendDate;
     if (rawHeadersList === null && (sendDate == null || sendDate)) {
       const current_date = headers["date"];
       if (current_date == null) {
@@ -3627,21 +3636,16 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-    if (typeof options === "undefined") {
-      session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames);
-    } else {
-      session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames, options);
-      // Only track waitForTrailers when the HEADERS frame above did NOT end
-      // the stream. Status codes 204/205/304 and HEAD requests force
-      // endStream=true earlier in this method, which means the native
-      // request() already wrote END_STREAM on the HEADERS frame — driving
-      // the wantTrailers path from `_final` on such a stream would call
-      // `noTrailers`/`emit("wantTrailers")` on an already-half-closed
-      // stream and corrupt state. Use optional chaining: `options` may be
-      // `null` here (typeof null === "object" enters this else branch).
-      if (options?.waitForTrailers && !endStream) {
-        this[bunHTTP2WaitForTrailers] = true;
-      }
+    // The native HEADERS writer is shared with ClientHttp2Session.request(). It reads the
+    // request-only options (parent, weight, exclusive, silent, signal) from the object it is
+    // given, and resets the stream or throws on a value it rejects.
+    session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames, {
+      endStream,
+      waitForTrailers,
+      paddingStrategy,
+    });
+    if (waitForTrailers) {
+      this[bunHTTP2WaitForTrailers] = true;
     }
     this.headersSent = true;
     if (onServerStreamFinishChannel.hasSubscribers) {

@@ -40,6 +40,19 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+// node:_http_server sets this on an accepted Upgrade request whose body still
+// arrives. Until finishUpgradeHandoff(req) runs, the server keeps the socket's
+// 'timeout' listener and parser, like Node. It runs when the message completes.
+// It also runs when the 'upgrade' listener pauses the request or the socket, or
+// ends the socket: reads stop, so Bun can no longer see the body complete.
+const kFinishUpgradeHandoff = Symbol("finishUpgradeHandoff");
+function finishUpgradeHandoff(req) {
+  const finish = req[kFinishUpgradeHandoff];
+  if (finish !== undefined) {
+    req[kFinishUpgradeHandoff] = undefined;
+    finish();
+  }
+}
 
 // node:_http_server registers its pipelined-response machinery here at module
 // initialization, letting internal/http1_server_fallback drive the same
@@ -149,6 +162,7 @@ function emitEOFIncomingMessageOuter(self) {
   // schedules 'end' via nextTick (endReadableNT); a second nextTick scheduled
   // here runs after that.
   self.push(null);
+  if (self.upgrade) finishUpgradeHandoff(self);
   const socket = self.socket;
   if (socket != null) {
     const parser = socket.parser;
@@ -513,6 +527,7 @@ export {
   emitErrorNextTickIfErrorListenerNT,
   eofInProgress,
   fakeSocketSymbol,
+  finishUpgradeHandoff,
   getMaxHTTPHeaderSize,
   hasServerResponseFinished,
   headerStateSymbol,
@@ -520,6 +535,7 @@ export {
   isTlsSymbol,
   kAbortController,
   kCloseCallback,
+  kFinishUpgradeHandoff,
   kHandle,
   kInternalSocketData,
   kNeedDrain,

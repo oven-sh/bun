@@ -423,3 +423,214 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 });
+
+// Node emits 'upgrade' as soon as it has the head of an Upgrade request. A
+// declared body keeps arriving through `req`, and until it is complete the
+// socket inactivity timeout is still the server's business.
+describe("socket timeout and an Upgrade request with a body", () => {
+  // 10 of the 100 declared body bytes.
+  const partialRequest =
+    "POST / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: test\r\nContent-Length: 100\r\n\r\n0123456789";
+
+  // shouldUpgradeCallback gets the request before the 'upgrade' listener does.
+  // A 'readable' listener there reports isPaused() and stops no reads.
+  const readsInReadableMode = (req: http.IncomingMessage) => {
+    req.on("readable", () => {
+      while (req.read() !== null);
+    });
+    return true;
+  };
+  test.each([
+    ["emits 'timeout' on the request", "request", { request: true, server: false, destroyed: false }, undefined],
+    ["emits 'timeout' on the server", "server", { request: false, server: true, destroyed: false }, undefined],
+    ["destroys the socket when nothing listens", "none", { request: false, server: false, destroyed: true }, undefined],
+    [
+      "destroys the socket when shouldUpgradeCallback started to read the request",
+      "none",
+      { request: false, server: false, destroyed: true },
+      readsInReadableMode,
+    ],
+  ] as const)("while the body arrives, %s", async (_name, listener, expected, shouldUpgradeCallback) => {
+    const server = http.createServer({ shouldUpgradeCallback });
+    server.timeout = 200;
+    const seen = { request: false, server: false };
+    if (listener === "server") server.on("timeout", () => (seen.server = true));
+    const { promise: timedOut, resolve: onTimeout } = Promise.withResolvers<object>();
+    server.on("upgrade", (req, stream) => {
+      stream.on("error", () => {});
+      if (listener === "request") req.on("timeout", () => (seen.request = true));
+      // The server's own 'timeout' listener is older than this one, so it has
+      // already run when this one does.
+      req.socket.on("timeout", () => onTimeout({ ...seen, destroyed: req.socket.destroyed }));
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    try {
+      const closed = once(client, "close");
+      client.write(partialRequest);
+      expect(await timedOut).toEqual(expected);
+      if (expected.destroyed) await closed;
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("once the body is complete, the timeout belongs to the 'upgrade' listener", async () => {
+    const server = http.createServer();
+    const { promise: upgraded, resolve: onUpgrade } = Promise.withResolvers<http.IncomingMessage>();
+    server.on("upgrade", (req, stream) => {
+      stream.on("error", () => {});
+      onUpgrade(req);
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    try {
+      client.write(partialRequest);
+      const req = await upgraded;
+      const held = () => ({
+        timeoutListeners: req.socket.listenerCount("timeout"),
+        parser: req.socket.parser !== null,
+      });
+      const whileBodyArrives = held();
+      // Nothing reads the body. Node completes the message all the same.
+      client.write(Buffer.alloc(90, "x"));
+      while (!req.complete) await new Promise(resolve => setImmediate(resolve));
+      const afterBody = held();
+
+      let requestTimeout = false;
+      req.on("timeout", () => (requestTimeout = true));
+      const timedOut = once(req.socket, "timeout");
+      req.socket.setTimeout(200);
+      await timedOut;
+      expect({ whileBodyArrives, afterBody, requestTimeout, destroyed: req.socket.destroyed }).toEqual({
+        whileBodyArrives: { timeoutListeners: 1, parser: true },
+        afterBody: { timeoutListeners: 0, parser: false },
+        requestTimeout: false,
+        destroyed: false,
+      });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  // Bun sees the end of the body only while it reads the connection and the
+  // request. In every flow below the body is complete on the wire, so Node has
+  // released the socket, and the timeout must not cost the listener its tunnel.
+  const restOfBody = Buffer.alloc(90, "x").toString();
+  const chunkedHead =
+    "POST / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: test\r\nTransfer-Encoding: chunked\r\n\r\n";
+  // One chunk above the request buffer of the server below, then the last chunk.
+  const chunkedBody = "7d0\r\n" + Buffer.alloc(2000, "x").toString() + "\r\n0\r\n\r\n";
+  const failingDestination = () =>
+    new Writable({ write: (_chunk, _encoding, callback) => callback(new Error("full")) });
+  type Flow = {
+    // What the client writes before 'upgrade' and after it.
+    writes?: [string, string?];
+    server?: http.ServerOptions;
+    listener(req: http.IncomingMessage, stream: net.Socket): void | Promise<unknown>;
+    clientReceives?: string;
+  };
+  test.each<[string, Flow]>([
+    [
+      "pauses the request, body in the same write",
+      { writes: [partialRequest + restOfBody], listener: req => void req.pause() },
+    ],
+    ["pauses the request, rest of the body later", { listener: req => void req.pause() }],
+    ["pauses the socket", { listener: (_req, stream) => void stream.pause() }],
+    [
+      "gets a request that shouldUpgradeCallback paused",
+      { server: { shouldUpgradeCallback: req => (req.pause(), true) }, listener: () => {} },
+    ],
+    [
+      "leaves a for await loop over the request",
+      {
+        listener: async req => {
+          for await (const _chunk of req) break;
+        },
+      },
+    ],
+    [
+      "pipes the request into a stream that fails",
+      { listener: req => new Promise(resolve => pipeline(req, failingDestination(), resolve)) },
+    ],
+    [
+      "dumps the request while it reads it",
+      {
+        listener: async req => {
+          await once(req, "data");
+          await new Promise(resolve => setImmediate(resolve));
+          (req as http.IncomingMessage & { _dump(): void })._dump();
+        },
+      },
+    ],
+    [
+      "reads nothing and one read fills the request buffer and ends the body",
+      { writes: [chunkedHead, chunkedBody], server: { highWaterMark: 1024 }, listener: () => {} },
+    ],
+    // Bun reads nothing more once its side is shut down. The client keeps its side open.
+    ["ends its side of the socket", { listener: (_req, stream) => void stream.end("bye"), clientReceives: "bye" }],
+  ])("the tunnel survives the timeout when the listener %s", async (_name, flow) => {
+    const [beforeUpgrade, afterUpgrade] = flow.writes ?? [partialRequest, restOfBody];
+    const server = http.createServer(flow.server ?? {});
+    server.timeout = 200;
+    const { promise: upgraded, resolve: onUpgrade } = Promise.withResolvers<net.Socket>();
+    const { promise: timedOut, resolve: onTimeout } = Promise.withResolvers<boolean>();
+    server.on("upgrade", async (req, stream) => {
+      stream.on("error", () => {});
+      req.on("error", () => {});
+      // Runs after the server's own 'timeout' listener, when that one is still there.
+      const socket = req.socket;
+      socket.on("timeout", () => onTimeout(socket.destroyed));
+      await flow.listener(req, stream);
+      onUpgrade(stream);
+    });
+    const port = await listen(server);
+    const client = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("error", () => {});
+    let received = "";
+    client.on("data", chunk => (received += chunk));
+    try {
+      client.write(beforeUpgrade);
+      const stream = await upgraded;
+      if (afterUpgrade) client.write(afterUpgrade);
+      expect(await timedOut).toBe(false);
+      const expected = flow.clientReceives ?? "still open";
+      if (stream.writable) stream.write(expected);
+      while (received.length < expected.length) await once(client, "data");
+      expect(received).toBe(expected);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test.each([
+    ["upgrade", "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n"],
+    ["connect", "CONNECT a:443 HTTP/1.1\r\nHost: a:443\r\n\r\n"],
+  ])("without a body, the '%s' listener gets a socket that the server has released", async (event, request) => {
+    const server = http.createServer();
+    const { promise: handedOff, resolve: onHandoff } = Promise.withResolvers<object>();
+    server.on(event, (_req, socket: net.Socket & { parser: unknown }) => {
+      socket.on("error", () => {});
+      onHandoff({ timeoutListeners: socket.listenerCount("timeout"), parser: socket.parser });
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    try {
+      client.write(request);
+      expect(await handedOff).toEqual({ timeoutListeners: 0, parser: null });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+});

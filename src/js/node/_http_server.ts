@@ -40,6 +40,8 @@ const {
   kPendingCallbacks,
   kRequest,
   kCloseCallback,
+  kFinishUpgradeHandoff,
+  finishUpgradeHandoff,
   NodeHTTPResponseFlags,
   callCloseCallback,
   emitCloseNT,
@@ -220,6 +222,16 @@ function releaseServerParserShim(socket, req?) {
 
 function onNodeHTTPServerSocketTimeout() {
   const req = this[kRequest];
+  if (req?.upgrade) {
+    // JS will not see the end of this Upgrade request's body: the rest of a
+    // read is parked behind a full request buffer, the request was dumped or
+    // destroyed, or ws made the connection a WebSocket. The body can be
+    // complete on the wire, and then Node has already released the socket.
+    const handle = req[kHandle];
+    if (!handle || handle.upgraded || (handle.hasBody & NodeHTTPBodyReadState.done) !== 0) {
+      return finishUpgradeHandoff(req);
+    }
+  }
   // Like Node.js's socketOnTimeout: the request only sees 'timeout' while its
   // message is still being received. A body-less request was fully received
   // when it was dispatched, even if its (empty) stream was never consumed.
@@ -756,7 +768,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             // regardless of shouldUpgradeCallback.
             http_req.upgrade = true;
             // Node frees the parser before handing the raw socket to 'connect'.
-            releaseServerParserShim(socket, http_req);
+            releaseSocketForHandoff(socket, http_req);
             server.emit("connect", http_req, socket, head);
             // Attach the internal close listener after the user's "connect"
             // handler ran: Node.js hands the socket over with no listeners and
@@ -964,8 +976,16 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           socketHandle.upgradeToTunnel(hasBody);
           socket[kEnableStreaming](true);
           detachSocketListenersForHandoff(socket);
-          // Node frees the parser before emitting 'upgrade' (socket.parser === null there).
-          releaseServerParserShim(socket, http_req);
+          // Node keeps the parser and socketOnTimeout on the socket until the body
+          // completes, so a body that stalls still times out. Not after a pause()
+          // in shouldUpgradeCallback, which already stopped reads of the connection.
+          // (isPaused() is also true for a 'readable' listener, which stops none.)
+          if (hasBody && !http_req._readableState.paused && !socket._readableState.paused) {
+            http_req[kFinishUpgradeHandoff] = releaseSocketForHandoff.bind(undefined, socket, http_req);
+          } else {
+            // Node frees the parser before emitting 'upgrade' (socket.parser === null there).
+            releaseSocketForHandoff(socket, http_req);
+          }
           if (hasBody) {
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
@@ -1321,11 +1341,18 @@ function clearUpgradeIncoming(socket) {
 // Node.js hands the connection over to 'connect'/'upgrade' listeners with the
 // connection-listener set removed (onParserExecuteCommon removes its data/end/
 // close/drain/error/timeout listeners) and only net.Socket's own 'end' listener
-// left in place.
+// left in place. The 'timeout' listener goes in releaseSocketForHandoff().
 function detachSocketListenersForHandoff(socket) {
   socket.removeListener("error", socketOnError);
-  socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
   socket.on("end", onReadableStreamEnd);
+}
+// Node.js removes socketOnTimeout and frees the parser only once the request
+// message is complete. While the body of an Upgrade request still arrives, the
+// socket inactivity timeout emits 'timeout' on the request and the server, or
+// destroys the socket.
+function releaseSocketForHandoff(socket, req) {
+  socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
+  releaseServerParserShim(socket, req);
 }
 function resolveHandoffPromise(promise) {
   $resolvePromise(promise, undefined);
@@ -1743,6 +1770,9 @@ function getNodeHTTPServerSocket() {
         callback();
         return;
       }
+      // uWS drops what arrives after the shutdown, the rest of an Upgrade body too.
+      const upgradeIncoming = this[kUpgradeIncoming];
+      if (upgradeIncoming) finishUpgradeHandoff(upgradeIncoming);
       handle.end();
       callback();
     }
@@ -1953,6 +1983,8 @@ function getNodeHTTPServerSocket() {
       if (response) {
         response.pause();
       }
+      const upgradeIncoming = this[kUpgradeIncoming];
+      if (upgradeIncoming) finishUpgradeHandoff(upgradeIncoming);
 
       return super.pause();
     }

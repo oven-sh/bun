@@ -18,6 +18,7 @@ const {
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
+  finishUpgradeHandoff,
   onDataIncomingMessage,
   kAbortController,
 } = require("internal/http");
@@ -54,6 +55,7 @@ function onIncomingMessagePauseNodeHTTPResponse(this: IncomingMessage) {
   const handle = this[kHandle];
   if (handle && !this.destroyed) {
     handle.pause();
+    if (this.upgrade) finishUpgradeHandoff(this);
   }
 }
 

@@ -116,7 +116,7 @@ export async function spawn(command: string[], options: SpawnOptions = {}): Prom
     });
 
     subprocess.on("error", error => reject(error));
-    subprocess.on("exit", (code, signal) => {
+    subprocess.on("close", (code, signal) => {
       exitCode = code;
       signalCode = signal;
       resolve();

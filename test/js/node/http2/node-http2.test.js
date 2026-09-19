@@ -6355,6 +6355,18 @@ describe.concurrent("end() after end()", () => {
     expect(result).toEqual([lateEndEvents, { status: headers[":status"], body: "" }]);
   });
 
+  it("server stream, end(chunk) after end() with a write in flight", async () => {
+    // The END_STREAM of the first end() waits for the write, and the late end(chunk) errors the
+    // stream before that write completes. The response still has to end.
+    const result = await serve((stream, closed) => {
+      stream.respond({ ":status": 200 });
+      stream.write("first");
+      stream.end();
+      endAgain(stream, closed, "second");
+    });
+    expect(result).toEqual([lateEndEvents, { status: 200, body: "first" }]);
+  });
+
   it("server stream, end(chunk) after 'close' reports to the callback only", async () => {
     // The stream is destroyed by then, so the error must not become an 'error' event.
     const result = await serve((stream, closed) => {
@@ -6424,6 +6436,19 @@ describe.concurrent("end() after end()", () => {
     const result = await request({ ":path": "/", ":method": "POST" }, (req, closed) => {
       req.end("first");
       endAgain(req, closed, "second");
+    });
+    expect(result).toEqual([lateEndEvents, "first"]);
+  });
+
+  it("client stream, end(chunk) after end() with a write in flight", async () => {
+    const result = await request({ ":path": "/", ":method": "POST" }, (req, closed) => {
+      // Written at 'ready' so that the chunk is dispatched before end(). A pending stream holds
+      // its writes until 'ready', after end(), and the last one carries END_STREAM itself.
+      req.on("ready", () => {
+        req.write("first");
+        req.end();
+        endAgain(req, closed, "second");
+      });
     });
     expect(result).toEqual([lateEndEvents, "first"]);
   });

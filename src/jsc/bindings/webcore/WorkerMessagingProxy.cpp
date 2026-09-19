@@ -318,8 +318,7 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
             remaining -= batch.size();
 
         while (!batch.isEmpty()) {
-            // The receiving VM is being stopped: nothing more is delivered (the
-            // rest is dropped with the proxy).
+            // The receiving VM is being stopped: nothing more is delivered, and what is left is dropped unread.
             if (context.isJSExecutionForbidden())
                 return false;
             auto message = batch.takeFirst();
@@ -540,6 +539,19 @@ void WorkerMessagingProxy::releaseWorkerThread()
     deref();
 }
 
+void WorkerMessagingProxy::dropUndeliveredWorkerMessages()
+{
+    // Ports a worker that never started did not take. Closing its parentPort end also closes the ports queued on it.
+    auto droppedDataPorts = std::exchange(m_options.dataMessagePorts, {});
+    Deque<MessageWithMessagePorts> droppedMessages;
+    {
+        Locker locker { m_toWorker.lock };
+        droppedMessages = std::exchange(m_toWorker.queue, {});
+        m_toWorker.drainScheduled = false;
+    }
+    // Destroyed here, outside the lock: ~TransferredMessagePort closes its pipe side and notifies the peer.
+}
+
 void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, bool stoppedByParent)
 {
     ASSERT(m_scriptExecutionContext && m_scriptExecutionContext->isContextThread());
@@ -558,6 +570,7 @@ void WorkerMessagingProxy::workerGlobalScopeDestroyedInternal(int32_t exitCode, 
         m_state.store(State::Closing);
         m_pendingTasks.clear();
     }
+    dropUndeliveredWorkerMessages();
     rejectAllCrossVMRequests();
 
     // Everything the worker posted before it exited is delivered before 'close' (Node: before
@@ -592,6 +605,8 @@ void WorkerMessagingProxy::parentContextWillDestroy()
         m_pendingCrossVMRequests.clear();
     }
     releaseWorkerThread();
+    // After the join: a live worker thread can still be taking its ports (createNodeWorkerThreadsBinding).
+    dropUndeliveredWorkerMessages();
     m_scriptExecutionContext = nullptr;
 }
 

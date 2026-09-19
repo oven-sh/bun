@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { once } from "node:events";
+import { join } from "node:path";
 import { receiveMessageOnPort } from "node:worker_threads";
 
 // Exercises the MessagePortPipe layer that backs MessagePort/MessageChannel:
@@ -477,5 +479,41 @@ describe("Worker postMessage inbox", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
+  });
+
+  // A message the worker never took from its inbox is dropped when the worker is gone. A port in
+  // that message is closed with it, so the port's peer hears 'close'.
+  describe("a MessagePort in a message the worker never reads is closed", () => {
+    // Stays referenced, as a Worker in a pool does: a collected Worker drops its inbox too.
+    let worker: Worker;
+
+    test("the entry point does not resolve", async () => {
+      using dir = tempDir("web-worker-missing-entry-port", {});
+      const { port1, port2 } = new MessageChannel();
+      worker = new Worker(join(String(dir), "missing.js"));
+      const events: string[] = [];
+      worker.addEventListener("error", () => events.push("error"));
+      worker.addEventListener("close", e => events.push(`close:${e.code}`));
+      const portClosed = once(port1, "close").then(() => events.push("port-close"));
+      worker.postMessage({ port: port2 }, [port2]);
+
+      await portClosed;
+      expect(events).toEqual(["error", "close:1", "port-close"]);
+    });
+
+    // The entry never returns, so the worker never reads its inbox, whether terminate() lands
+    // before the thread starts or while the entry runs.
+    test("terminate() stops a worker whose entry is still running", async () => {
+      const { port1, port2 } = new MessageChannel();
+      worker = new Worker("data:text/javascript,for(;;){}");
+      const events: string[] = [];
+      worker.addEventListener("close", () => events.push("close"));
+      const portClosed = once(port1, "close").then(() => events.push("port-close"));
+      worker.postMessage({ port: port2 }, [port2]);
+      worker.terminate();
+
+      await portClosed;
+      expect(events).toEqual(["close", "port-close"]);
+    });
   });
 });

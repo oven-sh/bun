@@ -3161,6 +3161,70 @@ test("react-compiler keeps one copy of each dependency of a phi", async () => {
   expect(ladder.peakMB - empty.peakMB).toBeLessThan(100);
 });
 
+// EnterSSA finds the definition of a value from its use. At every join on the
+// way it made a phi, an identifier and four `defs` entries. EliminateRedundantPhi
+// drops the phi of a join that the value only passes, but the identifier stays,
+// and later passes size their tables by the number of identifiers. So n values
+// that are live across n joins cost n * n of each: an element with 1000
+// conditional children took 5 seconds and 494 MB, and one with 4000 took 7 GB.
+test("react-compiler memory does not grow with the values times the joins they are live across", async () => {
+  // A debug build is 20 times slower.
+  const small = isDebug || isASAN;
+  const values = Array.from({ length: small ? 600 : 4000 }, (_, i) => `{${i}}`).join("");
+  const joins = Array.from({ length: small ? 50 : 100 }, (_, i) => `{p.c${i} ? 1 : 2}`).join("");
+  using dir = tempDir("react-compiler-live-across-joins", {
+    // The children are evaluated in order and the element is made after the
+    // last one. Only in across.jsx is each value live across every join.
+    "before.jsx": `export default function App(p) { return <div>${joins}${values}</div>; }`,
+    "across.jsx": `export default function App(p) { return <div>${values}${joins}</div>; }`,
+    // On Linux the peak that a parent reads for a child starts at the size of
+    // the parent, and the test runner of a debug build is larger than either
+    // build. VmHWM starts again at exec.
+    "peak.js": `
+      import { readFileSync } from "node:fs";
+      const result = await Bun.build({
+        entrypoints: [process.argv[2]],
+        target: "browser",
+        external: ["*"],
+        reactCompiler: true,
+      });
+      const output = await result.outputs[0].text();
+      const peakKB =
+        process.platform === "linux"
+          ? Number(/^VmHWM:\\s*(\\d+) kB$/m.exec(readFileSync("/proc/self/status", "utf8"))[1])
+          : process.resourceUsage().maxRSS;
+      console.log(JSON.stringify({ memoized: /\\b_c\\(\\d+\\)/.test(output), peakMB: peakKB / 1024 }));
+    `,
+  });
+
+  const peakMB = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "peak.js", entry],
+      env: {
+        ...bunEnv,
+        // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { memoized, peakMB } = JSON.parse(stdout);
+    expect(memoized).toBe(true);
+    expect(exitCode).toBe(0);
+    return peakMB as number;
+  };
+
+  const [before, across] = await Promise.all([peakMB("before.jsx"), peakMB("across.jsx")]);
+  // Without the fix across.jsx takes 40 MB more than before.jsx in a debug
+  // build and 320 MB more in a release build. With it they take the same.
+  expect(across - before).toBeLessThan(small ? 20 : 100);
+});
+
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)
 // records the locals a component's closures capture while walking the
 // component body, and reports a nested function that assigns to one of them,

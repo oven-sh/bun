@@ -2,9 +2,9 @@
  * CI integration: collapsible log groups, environment dump, Buildkite
  * annotations on build failure.
  *
- * Thin layer over `scripts/buildkite.ts` — the same helpers the CMake build
- * uses. We import rather than reimplement so CI logs look identical and
- * annotation regex stays in one place.
+ * Thin layer over `scripts/buildkite.ts`, which the test runner and the
+ * pipeline generator use too, so CI logs and annotations look the same
+ * whichever of them wrote them.
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
@@ -376,9 +376,6 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
 
   // ─── features.json ───
   // Run the built bun with features.ts to dump its feature flags.
-  // Env vars match cmake's (BuildBun.cmake ~1462).
-  // No setarch wrapper — cmake doesn't use one for features.ts either
-  // (only for the --revision smoke test).
   // Binaries that can't run on this host: every field is a build-time
   // constant, so generate the same payload host-side instead (the feature
   // list is parsed out of src/analytics/lib.rs; see features-json.ts).

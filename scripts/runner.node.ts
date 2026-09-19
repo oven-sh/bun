@@ -479,7 +479,6 @@ function getTestExpectations(): TestExpectation[] {
     let remaining = cleanLine;
     let modifierMatch = remaining.match(/^\[(.*?)\]/);
     if (modifierMatch) {
-      // The group of the pattern is not optional.
       modifiers = modifierMatch[1]!.trim().split(/\s+/);
       remaining = remaining.substring(modifierMatch[0].length).trim();
     }
@@ -487,7 +486,6 @@ function getTestExpectations(): TestExpectation[] {
     let expectationValues = ["Skip"];
     const expectationMatch = remaining.match(/\[(.*?)\]$/);
     if (expectationMatch) {
-      // The group of the pattern is not optional.
       expectationValues = expectationMatch[1]!.trim().split(/\s+/);
       remaining = remaining.substring(0, remaining.length - expectationMatch[0].length).trim();
     }
@@ -536,7 +534,6 @@ const flakyTests = (() => {
   return new Set(
     readFileSync(path, "utf-8")
       .split("\n")
-      // split() returns at least one element.
       .map(line => line.split("#")[0]!.trim())
       .filter(line => line.length > 0),
   );
@@ -1625,8 +1622,7 @@ interface SpawnResult {
   ok: boolean;
   error: string | undefined;
   spawnError: NodeJS.ErrnoException | undefined;
-  /** On Windows, the name of the NTSTATUS code when the exit code is one. */
-  exitCode: number | string | null | undefined;
+  exitCode: number | null | undefined;
   signalCode: NodeJS.Signals | null | undefined;
   timestamp: number;
   duration: number;
@@ -1823,7 +1819,6 @@ async function spawnWithTimeout(options: SpawnOptions): Promise<SpawnResult> {
         buffer,
       );
     if (leak) {
-      // None of the groups of the pattern is optional.
       const [, kind, bytes, objects, stack] = leak;
       error = `${kind!.toLowerCase()} leak of ${bytes}b${objects === "1" ? "" : ` in ${objects} objects`}`;
       const frames = stack!
@@ -1860,7 +1855,6 @@ async function spawnWithTimeout(options: SpawnOptions): Promise<SpawnResult> {
     (error = /(SIGABRT)/.exec(buffer))
   ) {
     const [, message] = error || [];
-    // split() returns at least one element.
     error = message ? message.split("\n")[0]!.toLowerCase() : "crash";
     error = error.indexOf("\\n") !== -1 ? error.substring(0, error.indexOf("\\n")) : error;
     error = `pid ${subprocess?.pid} ${error}`;
@@ -1898,7 +1892,6 @@ async function spawnWithTimeout(options: SpawnOptions): Promise<SpawnResult> {
       for (let k = failAt - 1; k >= Math.max(0, failAt - 40); k--) {
         const m = /^\s*error: (.+)$/.exec(lines[k]!);
         if (m) {
-          // The group of the pattern is not optional.
           reason = m[1]!.trim();
           break;
         }
@@ -1962,9 +1955,6 @@ interface RemappedTrace {
   remap?: string;
 }
 
-/**
- * @param execPath Path to bun binary
- */
 async function spawnBun(
   execPath: string,
   { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }: SpawnBunOptions,
@@ -3078,7 +3068,6 @@ function parseDuration(duration: string | number | undefined): number | undefine
   if (!match) {
     return undefined;
   }
-  // Neither group of the pattern is optional.
   const [, value, unit] = match;
   return parseFloat(value!) * (unit === "ms" ? 1 : 1000);
 }
@@ -3166,11 +3155,7 @@ interface JUnitTestSuite {
   stdout: string;
 }
 
-/**
- * Generate a JUnit XML report from test results
- * @param outfile - The path to write the JUnit XML report to
- * @param results - The test results to include in the report
- */
+/** Generate a JUnit XML report from test results. */
 function generateJUnitReport(outfile: string, results: TestResult[]): void {
   !isQuiet && console.log(`Generating JUnit XML report: ${outfile}`);
 
@@ -3358,11 +3343,7 @@ async function drainJunitUploadQueue(): Promise<void> {
   isUploadingToBuildkite = false;
 }
 
-/**
- * Upload JUnit XML report to BuildKite Test Analytics
- * @param junitFile - Path to the JUnit XML file to upload
- * @returns Whether the upload was successful
- */
+/** Upload a JUnit XML report to Buildkite Test Analytics; resolves to whether it was accepted. */
 async function uploadJUnitToBuildkite(junitFile: string): Promise<boolean> {
   const fileName = basename(junitFile);
   !isQuiet && console.log(`Uploading JUnit file "${fileName}" to BuildKite Test Analytics...`);
@@ -3436,13 +3417,7 @@ async function uploadJUnitToBuildkite(junitFile: string): Promise<boolean> {
   }
 }
 
-/**
- * Escape XML special characters
- * @param str - String to escape
- * @returns Escaped string
- */
 function escapeXml(str: string): string {
-  if (typeof str !== "string") return "";
   return str
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

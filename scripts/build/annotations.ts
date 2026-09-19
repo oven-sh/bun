@@ -184,7 +184,6 @@ export function parseAnnotations(content: string): AnnotationResult {
       const [, level, attributes, content] = githubAnnotation;
       const { file, line, col, title } = Object.fromEntries(
         attributes?.split(",")?.map((entry): [string, string | undefined] => {
-          // split() returns at least one element.
           const [key, value] = entry.split("=");
           return [key!, value];
         }) || [],
@@ -200,7 +199,6 @@ export function parseAnnotations(content: string): AnnotationResult {
         filename: file,
         line,
         column: col,
-        // Group 3 of the pattern is not optional.
         content: unescapeGitHubAction(title) + unescapeGitHubAction(content!),
       });
       annotations.push(annotation);

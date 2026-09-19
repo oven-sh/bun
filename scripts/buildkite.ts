@@ -527,7 +527,6 @@ export function parseJunitFileSuites(xml: string): Map<string, JunitFileSuite> {
   const keyOf = (file: string) => unescapeXml(file).replaceAll("\\", "/");
   const files = new Map<string, JunitFileSuite>();
   for (const match of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
-    // The group of the pattern is not optional.
     const attributes = match[1]!;
     const file = attribute(attributes, "file");
     if (!file || attribute(attributes, "name") !== file) continue;
@@ -538,7 +537,6 @@ export function parseJunitFileSuites(xml: string): Map<string, JunitFileSuite> {
     });
   }
   for (const match of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
-    // Neither group of the pattern is optional.
     const caseAttributes = match[1]!;
     const failureAttributes = match[2]!;
     const file = attribute(caseAttributes, "file");

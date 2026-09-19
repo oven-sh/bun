@@ -1641,22 +1641,14 @@ fn unsatisfied_rows(lockfile: &Lockfile) -> Vec<UnsatisfiedRow> {
                 continue;
             }
 
-            // A plain row can resolve through an `npm:` alias of its name, held by a row or a catalog entry.
-            if dep.version.tag == DependencyVersionTag::Npm && !dep.version.npm().is_alias {
-                let aliases = aliases.get_or_insert_with(|| npm_aliases(lockfile));
-                let first = aliases.partition_point(|&(name_hash, _)| name_hash < dep.name_hash);
-                let follows_an_alias = aliases[first..]
-                    .iter()
-                    .take_while(|&&(name_hash, _)| name_hash == dep.name_hash)
-                    .any(|&(_, aliased)| {
-                        let alias = aliased.npm();
-                        alias.name.slice(buf) == pkg_names[target].slice(buf)
-                            && alias.version.satisfies(locked, buf, buf)
-                            && follows_npm_alias(&dep.version.npm().version, aliased, buf)
-                    });
-                if follows_an_alias {
-                    continue;
-                }
+            let aliases = aliases.get_or_insert_with(|| {
+                npm_aliases(
+                    lockfile,
+                    &reachable::packages(lockfile, resolutions, reachable::Options::all(0)),
+                )
+            });
+            if follows_an_alias(lockfile, aliases, dep, target as PackageID) {
+                continue;
             }
 
             rows.push(UnsatisfiedRow {
@@ -1669,16 +1661,21 @@ fn unsatisfied_rows(lockfile: &Lockfile) -> Vec<UnsatisfiedRow> {
     rows
 }
 
-/// Every `npm:` alias a package or a catalog holds, sorted by the name it is listed under.
+/// Every `npm:` alias the resolver can know: held by a reached package, a catalog or a flat override, sorted by name.
 #[cold]
 #[inline(never)]
-fn npm_aliases(lockfile: &Lockfile) -> Vec<(PackageNameHash, &DependencyVersion)> {
+fn npm_aliases<'a>(
+    lockfile: &'a Lockfile,
+    reachable_packages: &DynamicBitSet,
+) -> Vec<(PackageNameHash, &'a DependencyVersion)> {
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let rows = lockfile
         .packages
         .items_dependencies()
         .iter()
-        .flat_map(|slice| slice.get(dependencies));
+        .enumerate()
+        .filter(|&(owner, _)| reachable_packages.is_set(owner))
+        .flat_map(|(_, slice)| slice.get(dependencies));
     let catalogs = &lockfile.catalogs;
     let catalog_entries = catalogs.default.values().iter().chain(
         catalogs
@@ -1689,6 +1686,7 @@ fn npm_aliases(lockfile: &Lockfile) -> Vec<(PackageNameHash, &DependencyVersion)
     );
     let mut aliases: Vec<(PackageNameHash, &DependencyVersion)> = rows
         .chain(catalog_entries)
+        .chain(lockfile.overrides.map.values())
         .filter(|dep| dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
         .map(|dep| (dep.name_hash, &dep.version))
         .collect();
@@ -1696,33 +1694,70 @@ fn npm_aliases(lockfile: &Lockfile) -> Vec<(PackageNameHash, &DependencyVersion)
     aliases
 }
 
-/// Resolves again the rows that are still bound as scanned and whose owner still holds them and is reached.
+/// Whether `dep` is a plain row that one of `aliases` redirects to `target`, the npm package it is bound to.
+#[cold]
+#[inline(never)]
+fn follows_an_alias(
+    lockfile: &Lockfile,
+    aliases: &[(PackageNameHash, &DependencyVersion)],
+    dep: &Dependency,
+    target: PackageID,
+) -> bool {
+    if dep.version.tag != DependencyVersionTag::Npm || dep.version.npm().is_alias {
+        return false;
+    }
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let target_name = lockfile.packages.items_name()[target as usize].slice(buf);
+    let locked = lockfile.packages.items_resolution()[target as usize]
+        .npm()
+        .version;
+    let first = aliases.partition_point(|&(name_hash, _)| name_hash < dep.name_hash);
+    aliases[first..]
+        .iter()
+        .take_while(|&&(name_hash, _)| name_hash == dep.name_hash)
+        .any(|&(_, aliased)| {
+            let alias = aliased.npm();
+            alias.name.slice(buf) == target_name
+                && alias.version.satisfies(locked, buf, buf)
+                && follows_npm_alias(&dep.version.npm().version, aliased, buf)
+        })
+}
+
+/// Resolves again the rows that are still bound as scanned, now that it is known which packages are reached.
 #[cold]
 #[inline(never)]
 fn enqueue_unsatisfied_rows(manager: &mut PackageManager, rows: &mut Vec<UnsatisfiedRow>) {
     let _ = manager.get_cache_directory();
     let _ = manager.get_temporary_directory();
-    {
+    let aliases: Vec<(PackageNameHash, DependencyVersion)> = {
         let lockfile = &*manager.lockfile;
+        let dependencies = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let dep_slices = lockfile.packages.items_dependencies();
         // `clean` drops what nothing reaches, a package that package.json stopped listing included.
         let reachable_packages =
             reachable::packages(lockfile, resolutions, reachable::Options::all(0));
+        let aliases = npm_aliases(lockfile, &reachable_packages);
         rows.retain(|row| {
             resolutions[row.dep_id as usize] == row.target
                 && dep_slices[row.owner as usize].contains(row.dep_id)
                 && reachable_packages.is_set(row.owner as usize)
+                && !follows_an_alias(
+                    lockfile,
+                    &aliases,
+                    &dependencies[row.dep_id as usize],
+                    row.target,
+                )
         });
-    }
+        aliases
+            .into_iter()
+            .map(|(name_hash, aliased)| (name_hash, aliased.clone()))
+            .collect()
+    };
     if rows.is_empty() {
         return;
     }
     // The map still holds aliases that package.json dropped, and versions parsed into another lockfile's strings.
-    let aliases: Vec<(PackageNameHash, DependencyVersion)> = npm_aliases(&manager.lockfile)
-        .into_iter()
-        .map(|(name_hash, aliased)| (name_hash, aliased.clone()))
-        .collect();
     manager.known_npm_aliases.clear();
     for (name_hash, aliased) in aliases {
         manager.known_npm_aliases.insert(name_hash, aliased);

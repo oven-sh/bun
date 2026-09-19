@@ -1841,6 +1841,7 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
     "aauser": { "1.0.0": { dependencies: { shared: "^1.0.0" } } },
     "aauser-long": { "1.0.0": { dependencies: { "shared-long-name": "^1.0.0" } } },
     "has-optional": { "1.0.0": { optionalDependencies: { shared: "^3.0.0" } } },
+    "holds-alias": { "1.0.0": { dependencies: { shared: "npm:shared@>=1.0.0" } } },
     "has-peer": { "1.0.0": { peerDependencies: { shared: "^1.0.0" } } },
     "needs-1-5": { "1.0.0": { dependencies: { shared: "^1.5.0" } } },
     "pinner": { "1.0.0": { dependencies: { shared: "1.5.0" } } },
@@ -2078,6 +2079,18 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
       breakLockfile: lockfile => lockfile,
       seen: [["node_modules/aauser", "shared", "shared@2.0.0"]],
     },
+    // The resolver follows the alias of the flat rule before it looks at the nested rule, and the scan has to agree.
+    "a dependency that follows the npm: alias of a flat override past a nested rule": {
+      packageJsons: {
+        "package.json": {
+          name: "app",
+          dependencies: { aauser: "1.0.0" },
+          overrides: { shared: "npm:plain@^1.0.0", aauser: { shared: "1.5.0" } },
+        },
+      },
+      breakLockfile: lockfile => lockfile,
+      seen: [["node_modules/aauser", "shared", "plain@1.0.0"]],
+    },
     // The plain ^1.0.0 of aauser follows the root's alias of the same name, to the range of the alias.
     "a dependency that follows an npm: alias of its name": {
       packageJsons: {
@@ -2165,6 +2178,34 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
     await dropNodeModules(cwd);
     expect(await install(cwd, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
     expect(await file(join(cwd, "bun.lock")).text()).toBe(lockfile);
+    expect(await seenFrom(join(cwd, "node_modules", "aauser"), "shared")).toBe("shared@1.5.0");
+  });
+
+  // Whether aauser met the alias of holds-alias depends on the order of the first install, so the lockfile is put in
+  // the state where it did. holds-alias is still in bun.lock when the install that drops it starts.
+  it("removing the package that holds an npm: alias resolves the dependency that followed it again", async () => {
+    using registry = await serveRegistry(manifests);
+    using dir = createProject(registry.url, "hoisted", {
+      "package.json": { name: "app", dependencies: { aauser: "1.0.0", "holds-alias": "1.0.0" } },
+    });
+    const cwd = String(dir);
+    const lockfilePath = join(cwd, "bun.lock");
+    expect(await install(cwd)).toMatchObject({ exitCode: 0 });
+    const followed = withoutEntry("aauser/shared")(await file(lockfilePath).text());
+    expect(followed).not.toContain("shared@1.5.0");
+    await write(lockfilePath, followed);
+    await dropNodeModules(cwd);
+    expect(await install(cwd, "--frozen-lockfile")).toMatchObject({ exitCode: 0 });
+
+    await write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: { aauser: "1.0.0" } }));
+    await dropNodeModules(cwd);
+    expect(await install(cwd)).toMatchObject({ err: expect.stringContaining("Saved lockfile"), exitCode: 0 });
+    const lockfile = await file(lockfilePath).text();
+    expect(lockfile).not.toContain("shared@2.0.0");
+
+    await dropNodeModules(cwd);
+    expect(await install(cwd, "--frozen-lockfile")).toMatchObject({ err: "", exitCode: 0 });
+    expect(await file(lockfilePath).text()).toBe(lockfile);
     expect(await seenFrom(join(cwd, "node_modules", "aauser"), "shared")).toBe("shared@1.5.0");
   });
 

@@ -1921,7 +1921,10 @@ async function probeHostedRunner() {
     agents: { queue: "build-image" },
     image: "docker.io/library/node:26",
     checkout: {
-      sparse: { paths: [".buildkite/", "scripts/", "package.json", "bun.lock", "packages/", "LATEST"] },
+      // Directories only: git >= 2.4x rejects file names in cone mode, and cone
+      // mode always checks out the files at the repository root anyway
+      // (package.json, bun.lock, LATEST).
+      sparse: { paths: [".buildkite/", "scripts/", "packages/"] },
     },
     env: { PROBE_GENERATE_ONLY: "1" },
     timeout_in_minutes: 10,

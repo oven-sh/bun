@@ -3020,20 +3020,30 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
-    putDirectAccessor(
-        this,
-        builtinNames.selfPublicName(),
-        JSC::GetterSetter::create(
-            vm,
+    // The Web Worker global scope surface. A node:worker_threads worker has none
+    // of it (node's parentPort is the only channel), and its presence makes
+    // libraries such as workerpool take their browser-worker branch. These live
+    // here and not on the lookup table because that table is static per class
+    // and this set is per VM.
+    if (!clientData->isNodeWorkerVM()) {
+        putDirectAccessor(
             this,
-            JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
-            JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
-        PropertyAttribute::Accessor | 0);
+            builtinNames.selfPublicName(),
+            JSC::GetterSetter::create(
+                vm,
+                this,
+                JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
+                JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
+            PropertyAttribute::Accessor | 0);
 
-    // TODO: this should be usable on the lookup table. it crashed las time i tried it
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
+        putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
+        putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
+
+        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "addEventListener"_s), 2, jsFunctionAddEventListener, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "removeEventListener"_s), 2, jsFunctionRemoveEventListener, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "dispatchEvent"_s), 1, jsFunctionDispatchEvent, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "postMessage"_s), 1, jsFunctionPostMessage, ImplementationVisibility::Public, NoIntrinsic, 0);
+    }
 
     // ----- Extensions to Built-in objects -----
 

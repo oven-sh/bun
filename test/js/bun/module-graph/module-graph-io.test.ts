@@ -947,7 +947,7 @@ describe.concurrent("ModuleGraph: an error in what a graph opened is the graph's
           "crypto.pbkdf2 callback": boom => crypto.pbkdf2("a", "b", 1, 8, "sha1", boom),
           "readline 'line'": boom => { readline.createInterface({ input: Readable.from(["a\\n"]) }).on("line", boom); },
           "Bun.spawn onExit": boom => { Bun.spawn({ cmd: [process.execPath, "-e", "1"], onExit: boom }); },
-          "a Worker's 'message'": boom => { new Worker("postMessage(1)", { eval: true }).on("message", boom); },
+          "a Worker's 'message'": boom => { new Worker("require('node:worker_threads').parentPort.postMessage(1)", { eval: true }).on("message", boom); },
           "a MessagePort's 'message'": boom => { const { port1, port2 } = new MessageChannel(); port1.on("message", boom); port2.postMessage(1); },
           "a BroadcastChannel's onmessage": boom => { const a = new BroadcastChannel("module-graph-errors"); const b = new BroadcastChannel("module-graph-errors"); a.onmessage = boom; b.postMessage(1); },
           "a ReadableStream's pull()": boom => { new ReadableStream({ pull: boom }).getReader().read(); },

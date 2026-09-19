@@ -339,14 +339,16 @@ let knownGlobals = [
 ];
 
 if (typeof Bun === "object") {
+  // Property reads: a worker_threads worker has none of the Web Worker globals
+  // (addEventListener, postMessage, onmessage, ...), so a bare identifier would throw there.
   knownGlobals.push(
-    addEventListener,
+    globalThis.addEventListener,
     alert,
     confirm,
-    dispatchEvent,
-    postMessage,
+    globalThis.dispatchEvent,
+    globalThis.postMessage,
     prompt,
-    removeEventListener,
+    globalThis.removeEventListener,
     Bun,
     reportError,
     BuildError,
@@ -356,8 +358,8 @@ if (typeof Bun === "object") {
     ResolveMessage,
     ErrorEvent,
     Worker,
-    onmessage,
-    onerror,
+    globalThis.onmessage,
+    globalThis.onerror,
   );
 }
 

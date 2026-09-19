@@ -162,10 +162,15 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     // Founding an env tree swaps the parent's process.env, so it is deferred until
     // every option has validated (below).
     bool shareEnv = false;
+    // node:worker_threads passes its Worker instance as a third argument. Only an
+    // object it branded selects the node kind, so a user's 3-argument
+    // `new globalThis.Worker(...)` still creates a Web Worker.
     JSValue nodeWorkerObject {};
-    if (callFrame->argumentCount() == 3) {
-        nodeWorkerObject = callFrame->argument(2);
-        options.kind = WorkerOptions::Kind::Node;
+    if (auto* candidate = callFrame->argument(2).getObject()) {
+        if (!!candidate->getDirect(vm, builtinNames(vm).isNodeWorkerThreadsWorkerPrivateName())) {
+            nodeWorkerObject = candidate;
+            options.kind = WorkerOptions::Kind::Node;
+        }
     }
     JSValue workerData = jsUndefined();
     Vector<JSC::Strong<JSC::JSObject>> transferList;

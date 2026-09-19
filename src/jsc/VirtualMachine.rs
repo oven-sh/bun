@@ -150,8 +150,7 @@ pub struct VirtualMachine {
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
     main: bun_ptr::RawSlice<u8>,
-    /// `process.argv[1]` when it is not `main`: the `node` shim keeps the path
-    /// the user gave, like Node.
+    /// `process.argv[1]` when the `node` shim resolved `main` from it. Node keeps the given path too.
     main_for_argv: Option<&'static [u8]>,
     pub main_is_html_entrypoint: bool,
     pub main_resolved_path: bun_core::String,
@@ -3312,8 +3311,7 @@ impl VirtualMachine {
         self.main = bun_ptr::RawSlice::new(path);
     }
 
-    /// The entry path for `process.argv[1]`: `main()`, unless
-    /// `set_main_for_argv` gave another path.
+    /// `process.argv[1]`: the path from `set_main_for_argv`, else `main()`.
     #[inline]
     pub fn main_for_argv(&self) -> &[u8] {
         self.main_for_argv.unwrap_or_else(|| self.main())

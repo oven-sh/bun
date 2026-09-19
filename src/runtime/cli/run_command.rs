@@ -99,10 +99,7 @@ pub(crate) struct ConfigureEnvOptions {
 pub(crate) enum EntryPath {
     /// The file to run.
     Resolved,
-    /// A path as `node` takes it: a directory, or a file without its
-    /// extension, also runs. `Run::start` resolves it to the file to run and
-    /// keeps the given path as `process.argv[1]`, like Node's `resolveMainPath`:
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/run_main.js#L29-L45
+    /// A path as `node` takes it. `Run::start` resolves it and it stays `process.argv[1]` (Node: `resolveMainPath`).
     Unresolved,
 }
 
@@ -1129,8 +1126,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         .start()
     }
 
-    /// Resolve `entry` to the file to run, like `bun <entry>` does. On `None`
-    /// the module loader reports the failure when it imports `entry`.
+    /// The module key of `entry`, for `vm.main()`. On `None` the module loader reports the failure.
     fn resolve_entry_path(vm: &mut VirtualMachine, entry: &'static [u8]) -> Option<&'static [u8]> {
         let top_level_dir = vm.top_level_dir();
         // Like the module loader, keep the resolver's messages out of `vm.log`.
@@ -1467,9 +1463,7 @@ impl Run<'_> {
             }
         }
 
-        // `vm.main()` must be the key the module loader gives the entry module.
-        // Resolve only now: the resolver has its final options and, under
-        // `--watch` and `--hot`, its watcher, as it has for every import.
+        // Resolve last: `NODE_PRESERVE_SYMLINKS` and the `--watch`/`--hot` watcher must be on the resolver.
         if entry_kind == EntryPath::Unresolved
             && vm.module_loader.eval_source.is_none()
             && let Some(resolved) = RunCommand::resolve_entry_path(vm, entry)

@@ -116,7 +116,7 @@ FOO=`hello`
 
 ### Expansion
 
-Bun automatically _expands_ environment variables, so you can reference previously-defined variables.
+Bun automatically _expands_ environment variables in unquoted, double-quoted, and backtick-quoted values, so you can reference variables defined anywhere in the file, including in later assignments. Single-quoted values are not expanded.
 
 ```ini .env icon="settings"
 FOO=world
@@ -134,7 +134,8 @@ DB_USER=postgres
 DB_PASSWORD=secret
 DB_HOST=localhost
 DB_PORT=5432
-DB_URL=postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME
+DB_NAME=mydb
+DB_URL="postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME"
 ```
 
 To disable expansion, escape the `$` with a backslash.

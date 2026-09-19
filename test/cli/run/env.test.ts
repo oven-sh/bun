@@ -253,6 +253,36 @@ test.concurrent(".env value expansion", async () => {
   expect(stdout).toBe("foo|foo bar|foo foo bar moo");
 });
 
+test.concurrent(".env value expansion respects quote style", async () => {
+  using dir = tempDir("dotenv-expand-quotes", {
+    ".env": [
+      "VAR=world",
+      "UNQUOTED=hello$VAR",
+      'DOUBLE="hello$VAR"',
+      "SINGLE='hello$VAR'",
+      "PASSWORD=uiA$VAR@YGBU",
+      "BACKTICK=`hello$VAR`",
+      "SPACED=   `hello$VAR`",
+      "REASSIGNED=`hello$VAR`",
+      "REASSIGNED='hello$VAR'",
+    ].join("\n"),
+    "index.ts":
+      "console.log(JSON.stringify([process.env.UNQUOTED, process.env.DOUBLE, process.env.SINGLE, process.env.PASSWORD, process.env.BACKTICK, process.env.SPACED, process.env.REASSIGNED]));",
+  });
+  const { stdout, stderr, exitCode } = await bunRun(`${dir}/index.ts`);
+  expect(JSON.parse(stdout)).toEqual([
+    "helloworld",
+    "helloworld",
+    "hello$VAR",
+    "uiAworld@YGBU",
+    "helloworld",
+    "helloworld",
+    "hello$VAR",
+  ]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 test(".env ${VAR:-default} with nested references (issue #32411)", async () => {
   // https://github.com/oven-sh/bun/issues/32411
   // `${` pairs with its matching `}` by depth and the `:-` default is expanded

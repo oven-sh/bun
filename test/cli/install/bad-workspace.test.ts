@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -194,6 +194,14 @@ async function expectOnlyPkg1Found(dir: string) {
   expect(Object.values(install_test_helpers.parseLockfile(dir).workspace_paths)).toEqual(["pkgs/pkg1"]);
 }
 
+// A relative path of exactly `bytes` bytes made of one letter directory names, so that a
+// path which fits the buffer is looked up by the OS (ENOENT) instead of exceeding its
+// limit on the length of a single name.
+function pathOfLength(bytes: number) {
+  const tail = bytes % 2 === 0 ? "dd" : "d";
+  return Buffer.alloc(bytes - tail.length, "d/").toString() + tail;
+}
+
 describe.concurrent("workspaces entries longer than the path buffer", () => {
   test("path entry fails with ENAMETOOLONG", async () => {
     const entry = Buffer.alloc(LONG_ENTRY_BYTES, "a").toString();
@@ -204,14 +212,6 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
     expect(stderr).toContain(`error: ENAMETOOLONG reading package.json for workspace package "${entry}"`);
     expect(exitCode).toBe(1);
   });
-
-  // A relative path of exactly `bytes` bytes made of one letter directory names, so that a
-  // path which fits the buffer is looked up by the OS (ENOENT) instead of exceeding its
-  // limit on the length of a single name.
-  function pathOfLength(bytes: number) {
-    const tail = bytes % 2 === 0 ? "dd" : "d";
-    return Buffer.alloc(bytes - tail.length, "d/").toString() + tail;
-  }
 
   // The entry is read from `${dir}/${entry}/package.json`. One byte below the buffer size
   // that path still reaches the OS; from the buffer size on it is rejected before that.
@@ -311,4 +311,77 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
       expect(exitCode).toBe(1);
     },
   );
+});
+
+// A committed bun.lock names each workspace by its path. The install joins that path onto
+// the project directory to see whether the workspace is still there. A path that does not
+// fit the buffer names no file, so the workspace is missing like any other.
+describe.concurrent("bun.lock workspace paths longer than the path buffer", () => {
+  // The lockfile an install of `pkgs/pkg1` writes, plus the workspace `gone` at `path`.
+  function lockfileWithWorkspace(path: string) {
+    return JSON.stringify({
+      lockfileVersion: 2,
+      configVersion: 1,
+      workspaces: {
+        "": { name: "root" },
+        "pkgs/pkg1": { name: "pkg1" },
+        [path]: { name: "gone", version: "1.0.0" },
+      },
+      packages: {
+        pkg1: ["pkg1@workspace:pkgs/pkg1"],
+        gone: [`gone@workspace:${path}`],
+      },
+    });
+  }
+
+  test("the workspace is dropped from the lockfile", async () => {
+    const path = Buffer.alloc(LONG_ENTRY_BYTES, "a").toString();
+    using dir = tempDir("bad-workspace-lockfile-long-path", {
+      "package.json": rootPackageJson(["pkgs/*"]),
+      "bun.lock": lockfileWithWorkspace(path),
+      ...PKG1,
+    });
+
+    await expectOnlyPkg1Found(String(dir));
+  });
+
+  test("--frozen-lockfile skips the workspace and keeps the lockfile", async () => {
+    const path = Buffer.alloc(LONG_ENTRY_BYTES, "a").toString();
+    const lockfile = lockfileWithWorkspace(path);
+    using dir = tempDir("bad-workspace-lockfile-long-path-frozen", {
+      "package.json": rootPackageJson(["pkgs/*"]),
+      "bun.lock": lockfile,
+      ...PKG1,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain('note: skipped 1 workspace listed in bun.lock but not on disk: "gone"');
+    expect(exitCode).toBe(0);
+    expect(readFileSync(join(String(dir), "bun.lock"), "utf8")).toBe(lockfile);
+  });
+
+  // The path is looked up at `${dir}/${path}/package.json`. One byte below the buffer size
+  // that path reaches the OS, which does not find it; from the buffer size on the join
+  // rejects it. The workspace is missing either way.
+  test.skipIf(isWindows).each([
+    ["one byte below", -1],
+    ["exactly", 0],
+    ["one byte above", 1],
+  ])("a path %s the path buffer size leaves only the workspaces on disk", async (_, offset) => {
+    using dir = tempDir("bad-workspace-lockfile-path-buffer-edge", { ...PKG1 });
+    const prefixBytes = Buffer.byteLength(String(dir)) + "/".length;
+    const path = pathOfLength(POSIX_PATH_BUFFER_BYTES + offset - prefixBytes - "/package.json".length);
+    writeFileSync(join(String(dir), "package.json"), rootPackageJson(["pkgs/*"]));
+    writeFileSync(join(String(dir), "bun.lock"), lockfileWithWorkspace(path));
+
+    await expectOnlyPkg1Found(String(dir));
+  });
 });

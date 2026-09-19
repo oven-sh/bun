@@ -2186,9 +2186,7 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    /// Node's `onFrameError`: emit `frameError`, reset the stream with FRAME_SIZE_ERROR,
-    /// then end the session. The refused block is already in the HPACK encoder table,
-    /// so no later header block on this connection can be decoded by the peer.
+    /// Node's `onFrameError`: `frameError`, RST_STREAM FRAME_SIZE_ERROR, then GOAWAY.
     fn reject_oversized_header_block(&self, stream: &mut Stream) {
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();

@@ -169,7 +169,7 @@ describe("ws package through HTTP CONNECT proxy", () => {
     });
     // The proxy answered 407 to a CONNECT without credentials.
     expect({ events: await wsFailingSession(ws), requests: recorded.requests }).toEqual({
-      events: failed(url, "Proxy connection failed", 1006),
+      events: failed(url, "Proxy authentication required", 1006),
       requests: [connectRequest(wsPort)],
     });
     gc();

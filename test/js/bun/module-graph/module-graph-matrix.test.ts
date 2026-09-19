@@ -998,8 +998,8 @@ async function collect() {
 const underDeadFrame = (graph, args) => new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}')(graph, args);
 
 // Whether a root reaches the graph that globalThis.__matrixProbe.weak points at. A WeakRef that still
-// derefs only says the cell was marked, and a stale word on the native stack marks a cell too; the
-// debugging snapshot has every heap edge and every root, and nothing for stack words.
+// derefs says only that the cell was marked, not that anything holds it; the debugging snapshot has
+// every heap edge and every root, so it answers that.
 function rootReachesProbedGraph() {
   const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots } = generateHeapSnapshotForDebugging();
   const className = new Map();
@@ -1037,14 +1037,19 @@ function rootReachesProbedGraph() {
 const other = new Bun.ModuleGraph();
 const otherModule = await other.import(join(dir, "other.mjs"));
 
-// One origin graph per state, and one pair of errors from it per cell. Everything that refers to
-// the origin is made in here, and only "keep" carries it out. No throwaway closures:
+// Whether the collection materializes a given stack is not up to the test (it does when it finds one
+// of the trace's frames dead), so a cell that is read after the collection gets several pairs, each
+// under its own dead frame, and reports on the first one the collection materialized.
+const CANDIDATES = 4;
+
+// One origin graph per state, and CANDIDATES pairs of errors from it per cell. Everything that refers
+// to the origin is made in here, and only "keep" carries it out. No throwaway closures:
 // run(fn, ...args) passes the arguments.
 async function originIn(gc, cells) {
   const origin = new Bun.ModuleGraph();
   const originModule = await origin.import(join(dir, "origin.mjs"));
   const pairs = [];
-  for (let i = 0; i < cells; i++) pairs.push(trace === "origin+other" ? underDeadFrame(other, [otherModule.call, originModule.pair, "boom"]) : underDeadFrame(origin, [originModule.pair, "boom"]));
+  for (let i = 0; i < cells * CANDIDATES; i++) pairs.push(trace === "origin+other" ? underDeadFrame(other, [otherModule.call, originModule.pair, "boom"]) : underDeadFrame(origin, [originModule.pair, "boom"]));
   const keep = gc === "none" || gc === "alive" ? { origin, originModule } : gc === "disposed, module held" ? { originModule } : {};
   if (gc === "disposed, module held" || gc === "collected") origin.dispose();
   return { pairs, keep, weak: new WeakRef(origin) };
@@ -1058,31 +1063,39 @@ const graphFrames = stack =>
     .filter((line, index) => index === 0 || /[\\/](origin|other)\.mjs:/.test(line))
     .map(line => line.replace(/\(?[^()]*[\\/]((?:origin|other)\.mjs:\d+:\d+)\)?/, "$1"));
 
-// A cell up to the point where collections may pass over it. A cell with no collection is done here.
-function begin({ gc, firstRead, reader }, { keep, weak }, [error, twin]) {
-  const read = () => (reader === "origin" ? keep.origin.run(keep.originModule.read, error) : reader === "other" ? other.run(otherModule.read, error) : error.stack);
-  // How a first read finds the stack, seen on the twin: a prepareStackTrace installed for the
-  // read is consulted only if the stack is not a string yet.
-  const firstReadPath = () => {
-    let consulted = false;
-    const builtin = Error.prepareStackTrace;
-    Error.prepareStackTrace = () => ((consulted = true), "");
-    try {
-      void twin.stack;
-    } finally {
-      Error.prepareStackTrace = builtin;
-    }
-    return consulted ? "on access" : "early";
-  };
-  const state = { gc, firstRead, reader, read, firstReadPath, weak, path: undefined, before: undefined };
-  if (firstRead === "before" || gc === "none") state.path = firstReadPath();
-  if (firstRead === "before") state.before = read();
+// How a first read finds a stack, seen on the error's twin (same trace, same dead frame): a
+// prepareStackTrace installed for the read is consulted only if the stack is not a string yet.
+function firstReadPath([, twin]) {
+  let consulted = false;
+  const builtin = Error.prepareStackTrace;
+  Error.prepareStackTrace = () => ((consulted = true), "");
+  try {
+    void twin.stack;
+  } finally {
+    Error.prepareStackTrace = builtin;
+  }
+  return consulted ? "on access" : "early";
+}
+
+// A cell up to the point where the collection may pass over it. A cell with no collection is done here.
+function begin({ gc, firstRead, reader }, { keep, weak }, candidates) {
+  const read = ([error]) => (reader === "origin" ? keep.origin.run(keep.originModule.read, error) : reader === "other" ? other.run(otherModule.read, error) : error.stack);
+  const state = { gc, firstRead, reader, read, weak, candidates, pair: undefined, path: undefined, before: undefined };
+  if (firstRead === "before" || gc === "none") {
+    state.pair = candidates[0];
+    state.path = firstReadPath(state.pair);
+  }
+  if (firstRead === "before") state.before = read(state.pair);
   return state;
 }
 
-function finish({ gc, firstRead, reader, read, firstReadPath, weak, path, before }) {
-  path ??= firstReadPath();
-  const after = read();
+function finish({ gc, firstRead, reader, read, weak, candidates, pair, path, before }) {
+  for (const candidate of pair ? [] : candidates) {
+    pair = candidate;
+    path = firstReadPath(candidate);
+    if (path === "early") break;
+  }
+  const after = read(pair);
   // "alive": the WeakRef derefs. For an origin that was dropped, a WeakRef that still derefs is not
   // enough to call it kept (see rootReachesProbedGraph): "rooted" means something really holds it.
   let origin = weak.deref() === undefined ? "gone" : "alive";
@@ -1094,7 +1107,7 @@ function finish({ gc, firstRead, reader, read, firstReadPath, weak, path, before
   return { gc, firstRead, reader, path, stack: graphFrames(after), stable: before === undefined || before === after, origin };
 }
 
-// Every cell is set up first, and one set of collections passes over all of them.
+// Every cell is set up first, and one collection passes over all of them.
 const cells = [];
 const kept = [];
 for (const gc of ["none", "alive", "disposed, module held", "collected"]) {
@@ -1107,7 +1120,7 @@ for (const gc of ["none", "alive", "disposed, module held", "collected"]) {
   const origin = await originIn(gc, axes.length);
   kept.push(origin.keep);
   for (const [index, cell] of axes.entries()) {
-    const state = begin(cell, origin, origin.pairs[index]);
+    const state = begin(cell, origin, origin.pairs.slice(index * CANDIDATES, (index + 1) * CANDIDATES));
     cells.push(gc === "none" ? finish(state) : state);
   }
   origin.pairs.length = 0;

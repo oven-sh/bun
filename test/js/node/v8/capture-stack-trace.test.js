@@ -1520,14 +1520,43 @@ test("lazy error-info materialization does not store an empty stack value when t
 });
 
 // A collection that finds a frame of an unread trace dead turns the frames into a string before they are
-// lost (ErrorInstance::reconcileWeakReferencesAtGCEnd). Unless an Error.prepareStackTrace is installed,
-// which only a trace can be given to, `.stack` must read the same as when it is materialized on access.
+// lost (ErrorInstance::reconcileWeakReferencesAtGCEnd), and `.stack` must then read as it does when it
+// is materialized on access. Known exceptions: an installed Error.prepareStackTrace (it needs the
+// trace), a SyntaxError's "at <parse>" line, and the positions of node:vm frames in a transpiled file.
+//
+// Whether the collection materializes a given stack is not up to the test, so each shape makes several
+// errors, each under its own functions that are garbage once they return. A prepareStackTrace installed
+// for the read is consulted only if the stack is not a string yet, which tells the ones the collection
+// materialized from the rest; those are the ones compared, and there must be at least one.
+const materializedByACollection = `
+  const SAMPLES = 8;
+  // The finally blocks keep every return out of tail position.
+  const capture = make =>
+    new Function("make", '"use strict"; function thrower() { try { return make(); } finally {} } try { return thrower(); } finally {}')(make);
+  // One on-access error and SAMPLES more from one call site, so every trace reads the same to the column.
+  const captureAll = make => Array.from({ length: 1 + SAMPLES }, () => capture(make));
+  const collect = async () => {
+    await new Promise(resolve => setImmediate(resolve));
+    Bun.gc(true);
+  };
+  // read(error) for each sample the collection materialized.
+  const readMaterialized = (samples, read) => {
+    const results = [];
+    for (const sample of samples) {
+      let consulted = false;
+      const builtin = Error.prepareStackTrace;
+      Error.prepareStackTrace = () => ((consulted = true), "");
+      const result = read(sample);
+      Error.prepareStackTrace = builtin;
+      if (!consulted) results.push(result);
+    }
+    return results;
+  };
+`;
+
 test("a stack that a collection materializes reads the same as one materialized on access", async () => {
   const src = `
-    // Each error is made under functions that are garbage once they return, so the next collection
-    // finds a dead frame in its trace. The finally blocks keep every return out of tail position.
-    const capture = make =>
-      new Function("make", '"use strict"; function thrower() { try { return make(); } finally {} } try { return thrower(); } finally {}')(make);
+    ${materializedByACollection}
     const shapes = {
       // How the name and the message are joined.
       "TypeError with a message": () => new TypeError("boom"),
@@ -1538,7 +1567,7 @@ test("a stack that a collection materializes reads the same as one materialized 
       "message changed before the first read": () => new Error("boom"),
       // Frames whose text says more than a function name and a position.
       "created in a constructor": () => new (class Widget { constructor() { this.error = new Error("boom"); } })().error,
-      "created in an anonymous function in eval": () => (0, eval)("(function () { try { return new Error('boom'); } finally {} })")(),
+      "created by eval code": () => (0, eval)("new Error('boom')"),
       "created under a builtin": () => [0].map(() => { try { return new Error("boom"); } finally {} })[0],
       // How a frame's function is named.
       "created in a function whose name was redefined": () => {
@@ -1555,13 +1584,13 @@ test("a stack that a collection materializes reads the same as one materialized 
     // The frames, from the top, whose text the test spells out.
     const framesToShow = {
       "created in a constructor": 1,
-      "created in an anonymous function in eval": 1,
+      "created by eval code": 1,
       "created under a builtin": 2,
       "created in a function whose name was redefined": 1,
       "created in a nameless function with a displayName": 1,
     };
     const beforeTheFirstRead = { "message changed before the first read": error => void (error.message = "changed") };
-    const read = (shape, error) => {
+    const read = shape => error => {
       beforeTheFirstRead[shape]?.(error);
       try {
         return error.stack;
@@ -1569,26 +1598,17 @@ test("a stack that a collection materializes reads the same as one materialized 
         return "throws " + thrown.message;
       }
     };
-    // Three errors per shape from one call site, so their traces read the same to the column: one read
-    // on access, one read after the collection, and one to see which way that went (a prepareStackTrace
-    // is consulted only if the stack is not a string yet).
     const cases = Object.entries(shapes).map(([shape, make]) => {
-      const [onAccess, materialized, witness] = [0, 1, 2].map(() => capture(make));
-      return { shape, expected: read(shape, onAccess), materialized, witness };
+      const [onAccess, ...samples] = captureAll(make);
+      return { shape, expected: read(shape)(onAccess), samples };
     });
-    // Back to the event loop first, so nothing on the stack refers to the functions that made the errors.
-    await new Promise(resolve => setImmediate(resolve));
-    Bun.gc(true);
+    await collect();
     const rows = {};
-    for (const { shape, expected, materialized, witness } of cases) {
-      let consulted = false;
-      const builtin = Error.prepareStackTrace;
-      Error.prepareStackTrace = () => ((consulted = true), "");
-      read(shape, witness);
-      Error.prepareStackTrace = builtin;
-      const text = read(shape, materialized);
-      const frames = text.split("\\n").slice(1, 1 + (framesToShow[shape] ?? 0)).map(line => line.trim().replace(/ ?\\(.*$/, ""));
-      rows[shape] = { materializedByACollection: !consulted, header: text.split("\\n")[0], frames, sameText: text === expected };
+    for (const { shape, expected, samples } of cases) {
+      const texts = readMaterialized(samples, read(shape));
+      const lines = (texts[0] ?? "").split("\\n");
+      const frames = lines.slice(1, 1 + (framesToShow[shape] ?? 0)).map(line => line.trim().replace(/ ?\\(.*$/, ""));
+      rows[shape] = { materializedByACollection: texts.length > 0, header: lines[0], frames, sameText: texts.every(text => text === expected) };
     }
     console.log(JSON.stringify(rows));
   `;
@@ -1608,7 +1628,7 @@ test("a stack that a collection materializes reads the same as one materialized 
     "message is a Symbol": row("throws Cannot convert a symbol to a string"),
     "message changed before the first read": row("Error: changed"),
     "created in a constructor": row("Error: boom", ["at new Widget"]),
-    "created in an anonymous function in eval": row("Error: boom", ["at <anonymous>"]),
+    "created by eval code": row("Error: boom", ["at <anonymous>"]),
     "created under a builtin": row("Error: boom", ["at <anonymous>", "at map"]),
     "created in a function whose name was redefined": row("Error: boom", ["at renamed"]),
     "created in a nameless function with a displayName": row("Error: boom", ["at Shown"]),
@@ -1620,23 +1640,19 @@ test("a stack that a collection materializes reads the same as one materialized 
 // that, not report the property found with the exception still pending, however the stack is materialized.
 test("Object.getOwnPropertyDescriptor(error, 'stack') throws what materializing the stack threw", async () => {
   const src = `
-    const capture = make =>
-      new Function("make", '"use strict"; function thrower() { try { return make(); } finally {} } try { return thrower(); } finally {}')(make);
-    const make = () => Object.assign(new Error(), { message: Symbol("m") });
+    ${materializedByACollection}
     const describe = error => {
       try {
         Object.getOwnPropertyDescriptor(error, "stack");
-        return "did not throw";
+        return ["did not throw", typeof error.stack];
       } catch (thrown) {
-        return thrown.message;
+        return [thrown.message, typeof error.stack];
       }
     };
-    const onAccess = capture(make);
-    const afterACollection = capture(make);
-    const rows = { onAccess: [describe(onAccess), typeof onAccess.stack] };
-    await new Promise(resolve => setImmediate(resolve));
-    Bun.gc(true);
-    rows.afterACollection = [describe(afterACollection), typeof afterACollection.stack];
+    const [onAccess, ...samples] = captureAll(() => Object.assign(new Error(), { message: Symbol("m") }));
+    const rows = { onAccess: describe(onAccess) };
+    await collect();
+    rows.afterACollection = [...new Set(readMaterialized(samples, describe).map(result => JSON.stringify(result)))];
     console.log(JSON.stringify(rows));
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -1644,8 +1660,30 @@ test("Object.getOwnPropertyDescriptor(error, 'stack') throws what materializing 
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
     onAccess: ["Cannot convert a symbol to a string", "undefined"],
-    afterACollection: ["Cannot convert a symbol to a string", "undefined"],
+    afterACollection: [JSON.stringify(["Cannot convert a symbol to a string", "undefined"])],
   });
+  expect(exitCode).toBe(0);
+});
+
+// Error.captureStackTrace() replaces the trace. With no frames left after the constructor it names,
+// the stack is the header alone, also for an error whose old frames a collection had already formatted.
+test("Error.captureStackTrace replaces a stack that a collection materialized", async () => {
+  const src = `
+    ${materializedByACollection}
+    function notOnTheStack() {}
+    const errors = captureAll(() => new TypeError("boom"));
+    await collect();
+    const stacks = new Set();
+    for (const error of errors) {
+      Error.captureStackTrace(error, notOnTheStack);
+      stacks.add(error.stack);
+    }
+    console.log(JSON.stringify([...stacks]));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(["TypeError: boom"]);
   expect(exitCode).toBe(0);
 });
 

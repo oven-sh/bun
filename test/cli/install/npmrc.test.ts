@@ -626,6 +626,99 @@ registry=https://somehost.com/org1/npm/registry/
   });
 });
 
+describe.concurrent("registry URL with embedded credentials", () => {
+  // Credentials written into the registry URL are split off and the URL is
+  // stored without them. The stored URL is what requests are built from and
+  // what error messages print, so a registry at the root of its host has to
+  // come back as "http://host/", not "http://host//".
+  test.each([
+    ["http://alice:s3cret@registry.example.com/", "http://registry.example.com/"],
+    ["http://alice:s3cret@registry.example.com", "http://registry.example.com/"],
+    ["http://alice:s3cret@registry.example.com:8080", "http://registry.example.com:8080/"],
+    ["http://alice:s3cret@registry.example.com/npm/", "http://registry.example.com/npm/"],
+    ["http://alice:s3cret@registry.example.com/npm", "http://registry.example.com/npm/"],
+  ])("registry=%s is stored as %s", (registry, url) => {
+    expect(loadNpmrc(`registry=${registry}\n`)).toMatchObject({
+      default_registry_url: url,
+      default_registry_username: "alice",
+      default_registry_password: "s3cret",
+    });
+  });
+
+  test.each([
+    ["http://:tok@registry.example.com/", "http://registry.example.com/"],
+    ["http://:tok@registry.example.com:8080", "http://registry.example.com:8080/"],
+    ["http://:tok@registry.example.com:8080/a/b/", "http://registry.example.com:8080/a/b/"],
+  ])("registry=%s is stored as %s", (registry, url) => {
+    expect(loadNpmrc(`registry=${registry}\n`)).toMatchObject({
+      default_registry_url: url,
+      default_registry_token: "tok",
+    });
+  });
+
+  type Req = { path: string; auth: string | null };
+
+  function mockRegistry(reqs: Req[], respond: () => Response) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        reqs.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+        return respond();
+      },
+    });
+  }
+
+  async function run(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  // The documented bunfig form for a token: the token rides on the end of the
+  // URL's path. `bun pm whoami` prints the stored URL verbatim when the
+  // registry does not return a username.
+  test.each([
+    ["/", "/-/whoami"],
+    ["/npm/", "/npm/-/whoami"],
+  ])("_authToken= appended to a bunfig.toml registry URL with path %s", async (path, whoami) => {
+    const reqs: Req[] = [];
+    await using server = mockRegistry(reqs, () => Response.json({}));
+    const base = `http://127.0.0.1:${server.port}${path}`;
+    using dir = tempDir("bunfig-authtoken-suffix", {
+      "bunfig.toml": `[install.registry]\nurl = "${base}_authToken=tok"\n`,
+      "package.json": JSON.stringify({ name: "app" }),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), "pm", "whoami");
+
+    expect(stderr).toBe(`error: failed to authenticate with registry '${base}'\n`);
+    expect(reqs).toEqual([{ path: whoami, auth: "Bearer tok" }]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("username:password in the .npmrc registry URL", async () => {
+    const reqs: Req[] = [];
+    await using server = mockRegistry(reqs, () => new Response("unauthorized", { status: 401 }));
+    using dir = tempDir("npmrc-userinfo", {
+      ".npmrc": `registry=http://alice:s3cret@127.0.0.1:${server.port}/\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: { "needs-creds": "1.0.0" } }),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), "install");
+
+    expect(stderr.split(/\r?\n/)).toContain(`error: GET http://127.0.0.1:${server.port}/needs-creds - 401`);
+    expect(reqs).toEqual([{ path: "/needs-creds", auth: `Basic ${Buffer.from("alice:s3cret").toString("base64")}` }]);
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe("scoped registry routing", () => {
   // A request for a @scope package must be sent only to that scope's configured
   // registry with that scope's token. The registry map was keyed by a bare

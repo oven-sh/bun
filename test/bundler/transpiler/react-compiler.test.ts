@@ -3170,16 +3170,17 @@ test("react-compiler keeps one copy of each dependency of a phi", async () => {
 test("react-compiler memory does not grow with the values times the joins they are live across", async () => {
   // A debug build is 20 times slower.
   const small = isDebug || isASAN;
-  const values = Array.from({ length: small ? 600 : 4000 }, (_, i) => `{${i}}`).join("");
   const joins = Array.from({ length: small ? 50 : 100 }, (_, i) => `{p.c${i} ? 1 : 2}`).join("");
-  using dir = tempDir("react-compiler-live-across-joins", {
-    // The children are evaluated in order and the element is made after the
-    // last one. Only in across.jsx is each value live across every join.
-    "before.jsx": `export default function App(p) { return <div>${joins}${values}</div>; }`,
-    "across.jsx": `export default function App(p) { return <div>${values}${joins}</div>; }`,
-    // On Linux the peak that a parent reads for a child starts at the size of
-    // the parent, and the test runner of a debug build is larger than either
-    // build. VmHWM starts again at exec.
+  // The children of an element are evaluated in order and the element is made
+  // after the last one. So a literal that is ahead of the joins is live across
+  // each of them, and one that is after them is live across none.
+  const literals = Array.from({ length: small ? 600 : 4000 }, (_, i) => `{${i}}`).join("");
+  const files: Record<string, string> = {
+    "literals-before.jsx": `export default function App(p) { return <div>${joins}${literals}</div>; }`,
+    "literals-across.jsx": `export default function App(p) { return <div>${literals}${joins}</div>; }`,
+    // On Linux ru_maxrss survives exec. Neither the parent nor the child reads
+    // a peak below the size of the parent at spawn, and the test runner of a
+    // debug build is larger than either build. VmHWM starts again at exec.
     "peak.js": `
       import { readFileSync } from "node:fs";
       const result = await Bun.build({
@@ -3195,9 +3196,23 @@ test("react-compiler memory does not grow with the values times the joins they a
           : process.resourceUsage().maxRSS;
       console.log(JSON.stringify({ memoized: /\\b_c\\(\\d+\\)/.test(output), peakMB: peakKB / 1024 }));
     `,
-  });
+  };
+  if (!small) {
+    // A local that both arms of an `if` assign is a phi after the `if`, and a
+    // read of it after the joins finds that phi through them. A debug build
+    // has no time for this pair: a local costs it twice what a literal does.
+    const locals = Array.from({ length: 4000 }, (_, i) => `l${i}`);
+    const assign = `let ${locals.join(", ")};
+      if (p.x) { ${locals.map((local, i) => `${local} = ${i};`).join(" ")} }
+      else { ${locals.map((local, i) => `${local} = ${i + 1};`).join(" ")} }`;
+    const joined = `const joined = <i>${joins}</i>;`;
+    const read = `return <div>{joined}${locals.map(local => `{${local}}`).join("")}</div>;`;
+    files["locals-before.jsx"] = `export default function App(p) { ${joined} ${assign} ${read} }`;
+    files["locals-across.jsx"] = `export default function App(p) { ${assign} ${joined} ${read} }`;
+  }
+  using dir = tempDir("react-compiler-live-across-joins", files);
 
-  const peakMB = async (entry: string) => {
+  const measure = async (entry: string) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "peak.js", entry],
       env: {
@@ -3213,16 +3228,22 @@ test("react-compiler memory does not grow with the values times the joins they a
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { memoized, peakMB } = JSON.parse(stdout);
-    expect(memoized).toBe(true);
+    const result: { memoized: boolean; peakMB: number } = JSON.parse(stdout);
+    expect(result.memoized).toBe(true);
     expect(exitCode).toBe(0);
-    return peakMB as number;
+    return result.peakMB;
   };
 
-  const [before, across] = await Promise.all([peakMB("before.jsx"), peakMB("across.jsx")]);
-  // Without the fix across.jsx takes 40 MB more than before.jsx in a debug
-  // build and 320 MB more in a release build. With it they take the same.
-  expect(across - before).toBeLessThan(small ? 20 : 100);
+  const over = async (kind: string) => {
+    const [before, across] = await Promise.all([measure(`${kind}-before.jsx`), measure(`${kind}-across.jsx`)]);
+    return across - before;
+  };
+  const [literalsOver, localsOver] = await Promise.all([over("literals"), small ? 0 : over("locals")]);
+  // Without the fix the second file of a pair takes 40 MB more than the first
+  // in a debug build and 300 MB more in a release build. With it they take
+  // the same.
+  expect(literalsOver).toBeLessThan(small ? 20 : 100);
+  expect(localsOver).toBeLessThan(small ? 20 : 100);
 });
 
 // validate_locals_not_reassigned_after_render (src/react_compiler/validation)

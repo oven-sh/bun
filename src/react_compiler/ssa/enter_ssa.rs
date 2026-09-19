@@ -74,6 +74,8 @@ struct SSABuilder {
     /// is for one identifier, and nothing else adds that identifier to `defs`
     /// while the lookup runs, so what `passed` says stays true until it ends.
     lookup: u64,
+    /// Not in upstream. The identifier of the current lookup, once `reaching` ran for it.
+    looked_up: Option<IdentifierId>,
 }
 
 impl SSABuilder {
@@ -109,6 +111,7 @@ impl SSABuilder {
             passed_blocks: Vec::new(),
             asked: Vec::new(),
             lookup: 1,
+            looked_up: None,
         }
     }
 
@@ -298,8 +301,15 @@ impl SSABuilder {
     /// answers with its phi. A join of `Unknown` stays a phi too, because
     /// `unmark_unknown` tells the old identifier from a phi of it.
     ///
-    /// This does not recurse: a lookup can pass every block of the function.
+    /// These are the cases of `get_id_at`. A change to one needs the same change
+    /// in the other. This does not recurse: a lookup can pass every block of the
+    /// function.
     fn reaching(&mut self, old_id: IdentifierId, block_id: BlockId) -> Reaching {
+        debug_assert!(
+            self.looked_up.is_none_or(|id| id == old_id),
+            "the lookup before this one did not call end_lookup"
+        );
+        self.looked_up = Some(old_id);
         let mut asked = std::mem::take(&mut self.asked);
         let mut block_id = block_id;
         let reaching = loop {
@@ -374,6 +384,8 @@ impl SSABuilder {
     /// successor that this lookup did not come from, so only a block with such
     /// a successor gets the identifier.
     fn end_lookup(&mut self, old_id: IdentifierId) {
+        debug_assert!(self.looked_up.is_none_or(|id| id == old_id));
+        self.looked_up = None;
         for i in 0..self.passed_blocks.len() {
             let index = self.passed_blocks[i].0 as usize;
             let Passed {
@@ -657,6 +669,8 @@ fn enter_ssa_impl(
                     .preds
                     .clear();
                 builder.block_preds[inner_entry.0 as usize] = Vec::new();
+                // Not in upstream: `define_function` counted the entry block as a successor.
+                builder.successors[block_id.0 as usize] -= 1;
             }
         }
 

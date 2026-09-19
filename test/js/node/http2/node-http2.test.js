@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, isWindows, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -5029,12 +5029,13 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
 function collectHttp2Response(client, pathname) {
   return new Promise(resolve => {
     const req = client.request({ ":path": pathname });
-    const seen = { status: undefined, contentLength: undefined, body: "", error: undefined };
+    const seen = { status: undefined, contentLength: undefined, body: "", trailers: undefined, error: undefined };
     req.setEncoding("utf8");
     req.on("response", headers => {
       seen.status = headers[":status"];
       seen.contentLength = headers["content-length"];
     });
+    req.on("trailers", headers => (seen.trailers = Object.fromEntries(Object.entries(headers))));
     req.on("data", chunk => (seen.body += chunk));
     req.on("error", err => (seen.error = err.message));
     req.on("close", () => resolve(seen));
@@ -5076,8 +5077,13 @@ it("http2 respondWithFD() without a statCheck initiates the response before it r
       headersSent: true,
       respondAgain: ["ERR_HTTP2_HEADERS_SENT", "ERR_HTTP2_HEADERS_SENT", "ERR_HTTP2_HEADERS_SENT"],
     });
-    // Nothing stats the descriptor on this path, so like node there is no content-length either.
-    expect(await response).toEqual({ status: 200, contentLength: undefined, body: "0123456789", error: undefined });
+    expect(await response).toEqual({
+      status: 200,
+      contentLength: undefined,
+      body: "0123456789",
+      trailers: undefined,
+      error: undefined,
+    });
   } finally {
     client.destroy();
     server.close();
@@ -5088,10 +5094,13 @@ it("http2 respondWithFD() without a statCheck initiates the response before it r
 it("http2 respondWithFD() reads offset and length like node, from one descriptor for every response", async () => {
   using dir = tempDir("http2-respond-with-fd-range", { "file.txt": "0123456789" });
   const fd = fs.openSync(path.join(String(dir), "file.txt"), "r");
-  // [options, body]: every body is what node v26.3.0 sends for the same call. Nothing but the two
-  // negative offsets moves the descriptor's position: they read from it, so the second finds EOF.
-  const cases = [
-    [undefined, "0123456789"],
+  // Only a negative offset reads from the descriptor's own position. Move it off 0 so that a read
+  // from it cannot pass for a read at offset 0.
+  fs.readSync(fd, Buffer.alloc(4), 0, 4, null);
+  // [options, body]: the body node v26.3.0 sends for respondWithFD(fd, {}, options), with and
+  // without a statCheck.
+  const ranges = [
+    [{}, "0123456789"],
     [{ offset: 0 }, "0123456789"],
     [{ offset: 3 }, "3456789"],
     [{ offset: 3, length: 4 }, "3456"],
@@ -5100,14 +5109,23 @@ it("http2 respondWithFD() reads offset and length like node, from one descriptor
     [{ length: -5 }, "0123456789"],
     [{ length: 2.5 }, "01"],
     [{ length: NaN }, ""],
-    [{ length: Infinity }, "0123456789"],
     [{ offset: 1.5 }, "123456789"],
     [{ offset: NaN }, "0123456789"],
     [{ offset: 100 }, ""],
-    [{ statCheck() {} }, "0123456789"],
-    [{ statCheck() {}, offset: 0 }, "0123456789"],
-    [{ offset: -1 }, "0123456789"],
-    [{ offset: -5 }, ""],
+  ];
+  const statCheckOptions = [];
+  const recordStatOptions = (stat, headers, statOptions) => void statCheckOptions.push({ ...statOptions });
+  const cases = [
+    ...ranges.flatMap(([options, body]) => [
+      [options, body],
+      [{ ...options, statCheck: recordStatOptions }, body],
+    ]),
+    // statCheck gets { offset, length }, and what it leaves there is what gets read.
+    [{ statCheck: (stat, headers, statOptions) => void Object.assign(statOptions, { offset: 5, length: 2 }) }, "56"],
+    // The descriptor is still at 4. These three read from there and leave it at EOF.
+    [{ offset: -1, length: 3 }, "456"],
+    [{ offset: -1, statCheck() {} }, "789"],
+    [{ offset: -7 }, ""],
   ];
   const server = http2.createServer();
   server.on("stream", (stream, headers) => {
@@ -5119,12 +5137,18 @@ it("http2 respondWithFD() reads offset and length like node, from one descriptor
   client.on("error", () => {});
 
   try {
-    const bodies = [];
     for (let i = 0; i < cases.length; i++) {
-      const { status, body, error } = await collectHttp2Response(client, `/${i}`);
-      bodies.push(error ?? (status === 200 ? body : status));
+      // Nothing but a statCheck sets content-length for respondWithFD(), and none here does.
+      expect({ i, ...(await collectHttp2Response(client, `/${i}`)) }).toEqual({
+        i,
+        status: 200,
+        contentLength: undefined,
+        body: cases[i][1],
+        trailers: undefined,
+        error: undefined,
+      });
     }
-    expect(bodies).toEqual(cases.map(([, body]) => body));
+    expect(statCheckOptions).toEqual(ranges.map(([{ offset = 0, length = -1 }]) => ({ offset, length })));
   } finally {
     client.destroy();
     server.close();
@@ -5132,44 +5156,198 @@ it("http2 respondWithFD() reads offset and length like node, from one descriptor
   }
 });
 
-it("http2 respondWithFD() reports a bad descriptor like node, with and without a statCheck", async () => {
-  // Far past any open-file limit, so nothing in this process can own it.
-  const badFd = 2 ** 30;
-  const statCheck = mock(() => {});
-  const serverErrors = {};
+it("http2 respondWithFD() reports a descriptor it cannot read like node, with and without a statCheck", async () => {
+  using dir = tempDir("http2-respond-with-fd-bad", {});
+  const reset = "Stream closed with error code NGHTTP2_INTERNAL_ERROR";
+  // Without a statCheck the headers are out before the first read fails. With one, only fstat can
+  // fail first, and then the stream is destroyed with that error.
+  const afterHeaders = { status: 200, serverError: "ERR_HTTP2_STREAM_ERROR" };
+  const cases = [
+    // The largest value that passes for a descriptor: no process has that many.
+    { fd: 2 ** 31 - 1, statCheck: false, ...afterHeaders, statCheckCalls: 0 },
+    { fd: 2 ** 31 - 1, statCheck: true, status: undefined, serverError: "EBADF", statCheckCalls: 0 },
+    // What a closed FileHandle hands over.
+    { fd: -1, statCheck: false, ...afterHeaders, statCheckCalls: 0 },
+  ];
+  // Reading a directory fails too (EISDIR). Windows has no descriptor for one.
+  const dirFd = isWindows ? undefined : fs.openSync(String(dir), "r");
+  if (dirFd !== undefined) {
+    cases.push(
+      { fd: dirFd, statCheck: false, ...afterHeaders, statCheckCalls: 0 },
+      { fd: dirFd, statCheck: true, ...afterHeaders, statCheckCalls: 1 },
+    );
+  }
+  const seen = [];
   const server = http2.createServer();
   server.on("stream", (stream, headers) => {
-    const pathname = headers[":path"];
-    stream.on("error", err => (serverErrors[pathname] = err.code));
-    stream.respondWithFD(badFd, {}, pathname === "/stat-check" ? { statCheck } : undefined);
+    const i = +headers[":path"].slice(1);
+    seen[i] = { serverError: undefined, statCheckCalls: 0 };
+    stream.on("error", err => (seen[i].serverError = err.code));
+    stream.respondWithFD(cases[i].fd, {}, cases[i].statCheck ? { statCheck: () => void seen[i].statCheckCalls++ } : {});
   });
   await new Promise(resolve => server.listen(0, resolve));
   const client = http2.connect(`http://localhost:${server.address().port}`);
   client.on("error", () => {});
 
   try {
-    const reset = "Stream closed with error code NGHTTP2_INTERNAL_ERROR";
-    // No statCheck: the headers are already out when the first read fails.
+    for (let i = 0; i < cases.length; i++) {
+      const { status, serverError, statCheckCalls } = cases[i];
+      expect({ i, ...(await collectHttp2Response(client, `/${i}`)), ...seen[i] }).toEqual({
+        i,
+        status,
+        contentLength: undefined,
+        body: "",
+        trailers: undefined,
+        error: reset,
+        serverError,
+        statCheckCalls,
+      });
+    }
+  } finally {
+    client.destroy();
+    server.close();
+    if (dirFd !== undefined) fs.closeSync(dirFd);
+  }
+});
+
+it("http2 respondWithFD() of zero bytes waits for a 'wantTrailers' listener added after the call", async () => {
+  using dir = tempDir("http2-respond-with-fd-trailers", { "file.txt": "0123456789" });
+  const fd = fs.openSync(path.join(String(dir), "file.txt"), "r");
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    stream.respondWithFD(fd, {}, { length: 0, waitForTrailers: true });
+    stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "sent" }));
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
     expect(await collectHttp2Response(client, "/")).toEqual({
       status: 200,
       contentLength: undefined,
       body: "",
-      error: reset,
+      trailers: { "x-trailer": "sent" },
+      error: undefined,
     });
-    // A statCheck needs fstat first, and node destroys the stream with the fstat error.
-    expect(await collectHttp2Response(client, "/stat-check")).toEqual({
+  } finally {
+    client.destroy();
+    server.close();
+    fs.closeSync(fd);
+  }
+});
+
+it("http2 respondWithFD() throws on a closed stream", async () => {
+  using dir = tempDir("http2-respond-with-fd-closed", { "file.txt": "0123456789" });
+  const fd = fs.openSync(path.join(String(dir), "file.txt"), "r");
+  const { promise: observed, resolve: onObserved } = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    stream.close();
+    const seen = [];
+    for (const options of [undefined, { statCheck() {} }]) {
+      try {
+        stream.respondWithFD(fd, {}, options);
+        seen.push("no throw");
+      } catch (e) {
+        seen.push(e.code);
+      }
+    }
+    onObserved({ respondWithFD: seen, headersSent: stream.headersSent });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    const response = collectHttp2Response(client, "/");
+    expect(await observed).toEqual({
+      respondWithFD: ["ERR_HTTP2_INVALID_STREAM", "ERR_HTTP2_INVALID_STREAM"],
+      headersSent: false,
+    });
+    expect((await response).status).toBeUndefined();
+  } finally {
+    client.destroy();
+    server.close();
+    fs.closeSync(fd);
+  }
+});
+
+it("http2 respondWithFile() of a directory resets the stream without sending headers", async () => {
+  using dir = tempDir("http2-respond-with-file-dir", {});
+  const { promise: serverError, resolve: onServerError } = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", err => onServerError(err.code));
+    stream.respondWithFile(String(dir));
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    // node v26.3.0 destroys the stream with the error and sends nothing first.
+    expect(await collectHttp2Response(client, "/")).toEqual({
       status: undefined,
       contentLength: undefined,
       body: "",
-      error: reset,
+      trailers: undefined,
+      error: "Stream closed with error code NGHTTP2_INTERNAL_ERROR",
     });
-    expect(statCheck).not.toHaveBeenCalled();
-    expect(serverErrors).toEqual({ "/": "ERR_HTTP2_STREAM_ERROR", "/stat-check": "EBADF" });
+    expect(await serverError).toBe("ERR_HTTP2_SEND_FILE");
   } finally {
     client.destroy();
     server.close();
   }
 });
+
+// /proc/self/fd is what tells which file a descriptor is open on.
+it.skipIf(!isLinux)(
+  "http2 respondWithFile() closes the file it opened when respondWithFD() responds first",
+  async () => {
+    using dir = tempDir("http2-respond-with-file-owner", { "file.txt": "0123456789" });
+    const file = fs.realpathSync(path.join(String(dir), "file.txt"));
+    const fd = fs.openSync(file, "r");
+    const descriptorsOpenOnFile = () =>
+      fs.readdirSync("/proc/self/fd").filter(name => {
+        try {
+          return fs.readlinkSync(`/proc/self/fd/${name}`) === file;
+        } catch {
+          return false;
+        }
+      }).length;
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      // respondWithFile() is still opening the file when respondWithFD() sends the response.
+      stream.respondWithFile(file);
+      stream.respondWithFD(fd);
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`http://localhost:${server.address().port}`);
+    client.on("error", () => {});
+
+    try {
+      for (let i = 0; i < 5; i++) {
+        expect((await collectHttp2Response(client, "/")).status).toBe(200);
+      }
+      // respondWithFile() finds the response taken once its open and fstat come back, after the
+      // stream is over, and closes its descriptor then. Only `fd` may stay open on the file.
+      const deadline = Date.now() + 3000;
+      while (descriptorsOpenOnFile() !== 1 && Date.now() < deadline) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      expect(descriptorsOpenOnFile()).toBe(1);
+    } finally {
+      client.destroy();
+      server.close();
+      fs.closeSync(fd);
+    }
+  },
+);
+
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

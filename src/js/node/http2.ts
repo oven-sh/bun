@@ -33,8 +33,6 @@ const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
-const { $data } = require("node:fs/promises");
-const FileHandle = $data.FileHandle;
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
 const kStrictSingleValueFields = Symbol("strictSingleValueFields");
@@ -368,9 +366,6 @@ const kSetStreamId = Symbol("setStreamId");
 const kRequest = Symbol("request");
 const kHeadRequest = Symbol("headRequest");
 const kSessionDestroyError = Symbol("sessionDestroyError");
-// Set on a ServerHttp2Stream by respondWithFile(): the stream opened the descriptor itself and is
-// responsible for closing it exactly once. respondWithFD() descriptors belong to the caller.
-const kOwnsFd = Symbol("ownsFd");
 const kRequestHeaders = Symbol("requestHeaders");
 // True only for the synchronous extent of Http2Stream#sendTrailers()'s native call. node submits
 // trailers on a later turn (finishSendTrailers via setImmediate), so a stream never observes its
@@ -2951,14 +2946,37 @@ function tryClose(fd) {
   } catch {}
 }
 
-// The fstat callback shared by respondWithFile (the stream owns the descriptor it opened: every
-// terminal path closes it exactly once) and respondWithFD with a statCheck (the caller owns the
-// descriptor: nothing here may close it, matching node's doSendFD).
+// node doSendFD: the fstat callback of respondWithFD() with a statCheck. The caller owns the
+// descriptor, so nothing here closes it.
+function doSendFD(this: ServerHttp2Stream, options, fd, headers, err, stat) {
+  if (err) {
+    this.destroy(err);
+    return;
+  }
+
+  if (this.destroyed || this.closed) {
+    this.destroy($ERR_HTTP2_INVALID_STREAM());
+    return;
+  }
+
+  const statOptions = {
+    offset: options.offset !== undefined ? options.offset : 0,
+    length: options.length !== undefined ? options.length : -1,
+  };
+  // statCheck cancels the response when it returns false, and it can send another one itself.
+  if (options.statCheck.$call(this, stat, headers, statOptions) === false || this.headersSent) {
+    return;
+  }
+
+  processRespondWithFD.$call(this, options, fd, headers, statOptions.offset, statOptions.length, false);
+}
+
+// node doSendFileFD: the fstat callback of respondWithFile(). The stream opened the descriptor, so
+// every terminal path closes it exactly once.
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
-  const ownsFd = this[kOwnsFd] === true;
   if (err) {
-    if (ownsFd && err.code !== "EBADF") {
+    if (err.code !== "EBADF") {
       tryClose(fd);
     }
 
@@ -2977,12 +2995,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
       isDirectory
     ) {
       const err = isDirectory ? $ERR_HTTP2_SEND_FILE() : $ERR_HTTP2_SEND_FILE_NOSEEK();
-      if (ownsFd) tryClose(fd);
+      tryClose(fd);
       if (onError) onError(err);
-      else {
-        this.respond(headers, options);
-        this.destroy(err);
-      }
+      else this.destroy(err);
       return;
     }
 
@@ -2991,7 +3006,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   }
 
   if (this.destroyed || this.closed) {
-    if (ownsFd) tryClose(fd);
+    tryClose(fd);
     this.destroy($ERR_HTTP2_INVALID_STREAM());
     return;
   }
@@ -3019,7 +3034,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     (typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false) ||
     this.headersSent
   ) {
-    if (this[kOwnsFd] === true) tryClose(fd);
+    tryClose(fd);
     return;
   }
 
@@ -3045,16 +3060,25 @@ function doSendFileFD(options, fd, headers, err, stat) {
     headers,
     stat.isFile() ? statOptions.offset : -1,
     statOptions.length ?? -1,
+    true,
   );
 }
 
 // node processRespondWithFD + startFilePipe. respondWithFD() without a statCheck calls this before
-// it returns, so `headersSent` is true for its caller; the fstat paths get here from doSendFileFD.
-// `offset` and `length` are node's FileHandle arguments: read as integers (NaN is 0), a negative
-// offset reads from the descriptor's current position, a negative length reads to EOF.
-function processRespondWithFD(this: ServerHttp2Stream, options, fd, headers, offset: number, length: number) {
+// it returns, so `headersSent` is true for its caller; doSendFD and doSendFileFD call it after
+// fstat. `offset` and `length` are node's FileHandle arguments: read as integers (NaN is 0), a
+// negative offset reads from the descriptor's current position, a negative length reads to EOF.
+// `ownsFd`: the stream opened the descriptor (respondWithFile) and has to close it.
+function processRespondWithFD(
+  this: ServerHttp2Stream,
+  options,
+  fd,
+  headers,
+  offset: number,
+  length: number,
+  ownsFd: boolean,
+) {
   const onError = options.onError;
-  const ownsFd = this[kOwnsFd] === true;
   try {
     this.respond(headers, options);
   } catch (err) {
@@ -3077,23 +3101,33 @@ function processRespondWithFD(this: ServerHttp2Stream, options, fd, headers, off
   length = Math.trunc(length) || 0;
   if (length === 0) {
     if (ownsFd) tryClose(fd);
-    finishNativeStream(() => {});
+    // A tick later: respondWithFD() can get here before it returns, and a 'wantTrailers' listener
+    // that its caller adds next has to be there when _final looks for one.
+    process.nextTick(() => {
+      if (!this.destroyed && !this.closed) finishNativeStream(() => {});
+    });
     return;
   }
-  // The headers are out, so fs.createReadStream must not throw: keep both ends in its integer range.
-  const start = offset < 0 ? undefined : Math.min(offset, Number.MAX_SAFE_INTEGER);
-  const end = length < 0 ? undefined : Math.min((start || 0) + length - 1, Number.MAX_SAFE_INTEGER);
 
   const stream = this;
-  const fileStream = fs.createReadStream(null, {
-    fd: fd,
-    // An fd opened by respondWithFile is closed by its read stream once the transfer ends or
-    // fails; an fd handed to respondWithFD stays the caller's to close (node semantics).
-    autoClose: ownsFd,
-    start,
-    end,
-    emitClose: false,
-  });
+  let fileStream;
+  try {
+    fileStream = fs.createReadStream(null, {
+      fd: fd,
+      // An fd opened by respondWithFile is closed by its read stream once the transfer ends or
+      // fails; an fd handed to respondWithFD stays the caller's to close (node semantics).
+      autoClose: ownsFd,
+      start: offset < 0 ? undefined : offset,
+      end: length < 0 ? undefined : Math.max(offset, 0) + length - 1,
+      emitClose: false,
+    });
+  } catch {
+    // The headers are out, so a descriptor or a range that fs.createReadStream rejects (-1, an
+    // offset past 2**53) ends the stream the way a failed read does, as in node.
+    if (ownsFd) tryClose(fd);
+    onFileStreamError.$call(this);
+    return;
+  }
   const sink = new Stream.Writable({
     write(chunk, _encoding, cb) {
       const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
@@ -3377,7 +3411,6 @@ class ServerHttp2Stream extends Http2Stream {
     if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
-    this[kOwnsFd] = true;
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
   }
   respondWithFD(fd, headers, options) {
@@ -3394,7 +3427,7 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3436,19 +3469,12 @@ class ServerHttp2Stream extends Http2Stream {
     if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
-    // The caller owns this fd; clear any stale flag left by a prior respondWithFile()
-    // on the same stream so doSendFileFD will not close it (node semantics).
-    this[kOwnsFd] = false;
-    if (options.statCheck === undefined) {
-      // Like node, nothing stats the descriptor when there is no statCheck to show it to.
-      processRespondWithFD.$call(this, options, fd, headers, options.offset ?? 0, options.length ?? -1);
+    if (options.statCheck !== undefined) {
+      fs.fstat(fd, doSendFD.bind(this, options, fd, headers));
       return;
     }
-    if (fd instanceof FileHandle) {
-      fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
-    } else {
-      fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
-    }
+    // Like node, nothing stats the descriptor when there is no statCheck to show it to.
+    processRespondWithFD.$call(this, options, fd, headers, options.offset ?? 0, options.length ?? -1, false);
   }
   additionalHeaders(headers) {
     if (this.destroyed || this.closed || this.session === undefined) {

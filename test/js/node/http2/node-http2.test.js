@@ -2396,6 +2396,478 @@ describe.concurrent("http2 session.destroy(error, code) sends the GOAWAY code no
   });
 });
 
+// A stream is closed on the wire once both sides sent END_STREAM. While its received data is
+// unread, its destroy() waits for 'end' (like node), and the native session has already dropped
+// it. node keeps such a stream in session[kState].streams, so closeSession() still destroys it:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1234-L1239
+// Unless a test says otherwise, the expected events are what node v26.3.0 emits.
+describe.concurrent("http2 session teardown with a stream that closed with its data unread", () => {
+  const { NGHTTP2_CANCEL, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
+
+  // The events of `stream`, then the 'close' of its session.
+  function record(stream, session, errorListener = true) {
+    const events = [];
+    const sessionClosed = Promise.withResolvers();
+    const streamClosed = Promise.withResolvers();
+    if (errorListener) stream.on("error", err => events.push(`error:${err.code ?? err.message}`));
+    stream.on("aborted", () => events.push("aborted"));
+    stream.on("end", () => events.push("end"));
+    stream.on("close", () => {
+      events.push(`close:${stream.rstCode}`);
+      streamClosed.resolve(events);
+    });
+    session.on("close", () => {
+      events.push("session close");
+      sessionClosed.resolve(events);
+    });
+    return { sessionClosed: sessionClosed.promise, streamClosed: streamClosed.promise };
+  }
+
+  function ping(session) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    session.ping(err => (err ? reject(err) : resolve()));
+    return promise;
+  }
+
+  function connect(server) {
+    const { port } = server.address();
+    const clientSocket = net.connect(port, "127.0.0.1");
+    const client = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => clientSocket });
+    client.on("error", () => {});
+    return { client, clientSocket };
+  }
+
+  // Calls `fn` once the client has the whole 5-byte response of its request, unread. `pause`
+  // gives the request a reader that is not reading. `open` adds a second request that the server
+  // never answers.
+  async function withUnreadResponse(fn, { pause = true, errorListener = true, open = false } = {}) {
+    const server = http2.createServer();
+    const accepted = Promise.withResolvers();
+    let serverSocket;
+    server.on("connection", socket => (serverSocket = socket));
+    server.on("session", session => {
+      session.on("error", () => {});
+      accepted.resolve(session);
+    });
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers[":path"] === "/open") return;
+      stream.respond({ ":status": 200 });
+      stream.end("hello");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { client, clientSocket } = connect(server);
+    client.on("close", () => accepted.reject(new Error("the session closed before the server accepted it")));
+    try {
+      const req = client.request({ ":path": "/" });
+      const recorded = record(req, client, errorListener);
+      const responded = Promise.withResolvers();
+      req.on("response", () => {
+        if (pause) req.pause();
+        responded.resolve();
+      });
+      req.on("close", () => responded.reject(new Error("the request closed before 'response'")));
+      req.end();
+      if (open) client.request({ ":path": "/open", ":method": "POST" }).on("error", () => {});
+      const [serverSession] = await Promise.all([accepted.promise, responded.promise]);
+      // The server wrote the whole response before it read this PING, so the ack arrives after it.
+      await ping(client);
+      expect({ closed: req.closed, destroyed: req.destroyed, unread: req.readableLength }).toEqual({
+        closed: true,
+        destroyed: false,
+        unread: 5,
+      });
+      return await fn({ client, clientSocket, req, serverSession, serverSocket, ...recorded });
+    } finally {
+      client.destroy();
+      clientSocket.destroy();
+      serverSocket?.destroy();
+      server.close();
+    }
+  }
+
+  // Calls `fn` once the server stream has sent its whole response and holds the whole 12-byte
+  // request body, unread. The stream is paused: the session resumes a server stream nobody reads.
+  async function withUnreadRequest(fn) {
+    const server = http2.createServer();
+    const opened = Promise.withResolvers();
+    server.on("session", session => session.on("error", () => {}));
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.pause();
+      stream.respond({ ":status": 200 });
+      stream.end("hello");
+      opened.resolve(stream);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { client, clientSocket } = connect(server);
+    try {
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      const reqClosed = Promise.withResolvers();
+      req.on("error", reqClosed.reject);
+      req.on("close", reqClosed.resolve);
+      req.resume();
+      req.end("request-body");
+      const [stream] = await Promise.all([opened.promise, reqClosed.promise]);
+      const recorded = record(stream, stream.session);
+      // The server read everything the client sent before this PING, so its stream is closed by now.
+      await ping(client);
+      expect({ closed: stream.closed, destroyed: stream.destroyed, unread: stream.readableLength }).toEqual({
+        closed: true,
+        destroyed: false,
+        unread: 12,
+      });
+      return await fn({ client, clientSocket, stream, session: stream.session, ...recorded });
+    } finally {
+      client.destroy();
+      clientSocket.destroy();
+      server.close();
+    }
+  }
+
+  // Reads `stream` to its end and resolves with everything it emitted.
+  async function readToEnd(stream, streamClosed) {
+    let body = "";
+    stream.on("data", chunk => (body += chunk));
+    stream.resume();
+    return { events: await streamClosed, body };
+  }
+
+  for (const pause of [true, false]) {
+    it(`client session.destroy() destroys it (${pause ? "paused" : "never read"})`, async () => {
+      const events = await withUnreadResponse(
+        ({ client, sessionClosed }) => {
+          client.destroy();
+          return sessionClosed;
+        },
+        { pause },
+      );
+      expect(events).toEqual(["close:0", "session close"]);
+    });
+  }
+
+  for (const [shape, error, expected] of [
+    ["an Error", new Error("boom"), "error:boom"],
+    ["a code", NGHTTP2_CANCEL, "error:ERR_HTTP2_SESSION_ERROR"],
+  ]) {
+    it(`client session.destroy() with ${shape} destroys it with the session error`, async () => {
+      const events = await withUnreadResponse(({ client, sessionClosed }) => {
+        client.destroy(error);
+        return sessionClosed;
+      });
+      expect(events).toEqual([expected, "close:0", "session close"]);
+    });
+  }
+
+  // Not node: there the unhandled 'error' ends the process. Bun passes a session error only to the
+  // streams that listen for it (see destroyStreamForSessionDestroy in http2.ts).
+  it("client session.destroy(error) emits no 'error' on a stream without an 'error' listener", async () => {
+    const events = await withUnreadResponse(
+      ({ client, sessionClosed }) => {
+        client.destroy(new Error("boom"));
+        return sessionClosed;
+      },
+      { errorListener: false },
+    );
+    expect(events).toEqual(["close:0", "session close"]);
+  });
+
+  it("client session.destroy(error) after close() destroys it with the error", async () => {
+    const events = await withUnreadResponse(({ client, sessionClosed }) => {
+      client.close();
+      client.destroy(new Error("boom"));
+      return sessionClosed;
+    });
+    expect(events).toEqual(["error:boom", "close:0", "session close"]);
+  });
+
+  it("a GOAWAY with an error code destroys it with ERR_HTTP2_SESSION_ERROR (client)", async () => {
+    const events = await withUnreadResponse(({ serverSession, sessionClosed }) => {
+      serverSession.goaway(NGHTTP2_ENHANCE_YOUR_CALM);
+      return sessionClosed;
+    });
+    expect(events).toEqual(["error:ERR_HTTP2_SESSION_ERROR", "close:0", "session close"]);
+  });
+
+  // end(), not destroy(): a FIN on every platform, and no GOAWAY before it.
+  it("a socket that the peer ends destroys a stream that nobody reads (client)", async () => {
+    const events = await withUnreadResponse(
+      ({ serverSocket, sessionClosed }) => {
+        serverSocket.end();
+        return sessionClosed;
+      },
+      { pause: false },
+    );
+    expect(events).toEqual(["close:0", "session close"]);
+  });
+
+  it("a socket error destroys it with the error (client)", async () => {
+    const events = await withUnreadResponse(({ clientSocket, sessionClosed }) => {
+      clientSocket.destroy(new Error("boom"));
+      return sessionClosed;
+    });
+    expect(events).toEqual(["error:boom", "close:0", "session close"]);
+  });
+
+  // The session is closed, but a second request is still open when the socket ends, so this is not
+  // a graceful close. Handling the socket close then closes that request too (its response is
+  // complete), and the session must not take the result for "closed with nothing on the wire".
+  it("a socket that the peer ends destroys a stream that nobody reads when the close()d session had an open stream", async () => {
+    // A raw peer: it answers each request with a complete response and never resets the stream.
+    let peer;
+    const server = net.createServer(socket => {
+      peer = socket;
+      let buffered = Buffer.alloc(0);
+      let preface = true;
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        buffered = Buffer.concat([buffered, chunk]);
+        if (preface) {
+          if (buffered.length < http2utils.kClientMagic.length) return;
+          buffered = buffered.subarray(http2utils.kClientMagic.length);
+          preface = false;
+          socket.write(new http2utils.SettingsFrame().data);
+        }
+        while (buffered.length >= 9 && buffered.length >= 9 + buffered.readUIntBE(0, 3)) {
+          const length = buffered.readUIntBE(0, 3);
+          const [type, flags] = [buffered[3], buffered[4]];
+          const id = buffered.readUInt32BE(5);
+          const payload = buffered.subarray(9, 9 + length);
+          buffered = buffered.subarray(9 + length);
+          if (type === 4 && !(flags & 1)) socket.write(new http2utils.SettingsFrame(true).data);
+          if (type === 6 && !(flags & 1)) socket.write(Buffer.concat([new http2utils.Frame(8, 6, 1, 0).data, payload]));
+          if (type === 1) {
+            // ":status: 200", then the whole body.
+            socket.write(new http2utils.HeadersFrame(id, Buffer.from([0x88]), 0, true).data);
+            socket.write(new http2utils.DataFrame(id, Buffer.from("hello"), 0, true).data);
+          }
+        }
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { client } = connect(server);
+    try {
+      const unread = client.request({ ":path": "/unread" });
+      const { sessionClosed } = record(unread, client);
+      unread.end();
+      // Its request body stays open, so the complete response leaves it half closed.
+      const open = client.request({ ":path": "/open", ":method": "POST" });
+      const responseEnded = Promise.withResolvers();
+      open.on("error", responseEnded.reject);
+      open.on("end", responseEnded.resolve);
+      open.resume();
+      await responseEnded.promise;
+      await ping(client);
+      expect({ closed: unread.closed, destroyed: unread.destroyed, unread: unread.readableLength }).toEqual({
+        closed: true,
+        destroyed: false,
+        unread: 5,
+      });
+      expect({ closed: open.closed, destroyed: open.destroyed }).toEqual({ closed: false, destroyed: false });
+      client.close();
+      peer.end();
+      expect(await sessionClosed).toEqual(["close:0", "session close"]);
+    } finally {
+      client.destroy();
+      peer?.destroy();
+      server.close();
+    }
+  });
+
+  it("server session.destroy() destroys it", async () => {
+    const events = await withUnreadRequest(({ session, sessionClosed }) => {
+      session.destroy();
+      return sessionClosed;
+    });
+    expect(events).toEqual(["close:0", "session close"]);
+  });
+
+  it("server session.destroy(error) destroys it with the error", async () => {
+    const events = await withUnreadRequest(({ session, sessionClosed }) => {
+      session.destroy(new Error("boom"));
+      return sessionClosed;
+    });
+    expect(events).toEqual(["error:boom", "close:0", "session close"]);
+  });
+
+  it("a GOAWAY with an error code destroys it with ERR_HTTP2_SESSION_ERROR (server)", async () => {
+    const events = await withUnreadRequest(({ client, sessionClosed }) => {
+      client.goaway(NGHTTP2_ENHANCE_YOUR_CALM);
+      return sessionClosed;
+    });
+    expect(events).toEqual(["error:ERR_HTTP2_SESSION_ERROR", "close:0", "session close"]);
+  });
+
+  // sendTrailers() closes the stream on the wire, and the session learns of it one tick later.
+  // The order of the two 'close' events is not the point here.
+  it("server session.destroy() in the same tick as the sendTrailers() that closed it destroys it", async () => {
+    const server = http2.createServer();
+    const opened = Promise.withResolvers();
+    server.on("session", session => session.on("error", () => {}));
+    server.on("stream", stream => {
+      stream.pause();
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => {
+        stream.sendTrailers({ "x-trailer": "1" });
+        stream.session.destroy();
+      });
+      opened.resolve(stream);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { client, clientSocket } = connect(server);
+    try {
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      req.on("error", () => {});
+      req.resume();
+      req.end("request-body");
+      const stream = await opened.promise;
+      const { sessionClosed } = record(stream, stream.session);
+      // The server has the whole request by the ack, so the trailers close the stream.
+      await ping(client);
+      expect({ closed: stream.closed, unread: stream.readableLength }).toEqual({ closed: false, unread: 12 });
+      stream.end("hello");
+      const events = await sessionClosed;
+      // The stream's 'close' is queued by now. One turn lets it run.
+      await new Promise(resolve => setImmediate(resolve));
+      expect(events.toSorted()).toEqual(["close:0", "session close"]);
+    } finally {
+      client.destroy();
+      clientSocket.destroy();
+      server.close();
+    }
+  });
+
+  // node keeps a gracefully closed session open until the stream is read. Bun completes the
+  // session as soon as nothing is left on the wire, so the stream has to outlive it. These four
+  // tests pin that: node would not emit the session's 'close' before the read.
+  it("client session.close() leaves it readable", async () => {
+    const result = await withUnreadResponse(async ({ client, req, sessionClosed, streamClosed }) => {
+      client.close();
+      expect(await sessionClosed).toEqual(["session close"]);
+      return readToEnd(req, streamClosed);
+    });
+    expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "hello" });
+  });
+
+  it("the server's graceful close leaves the client stream readable", async () => {
+    const result = await withUnreadResponse(async ({ serverSession, req, sessionClosed, streamClosed }) => {
+      serverSession.close();
+      expect(await sessionClosed).toEqual(["session close"]);
+      return readToEnd(req, streamClosed);
+    });
+    expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "hello" });
+  });
+
+  it("the client's graceful close leaves the server stream readable", async () => {
+    const result = await withUnreadRequest(async ({ client, stream, sessionClosed, streamClosed }) => {
+      client.close();
+      expect(await sessionClosed).toEqual(["session close"]);
+      return readToEnd(stream, streamClosed);
+    });
+    expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "request-body" });
+  });
+
+  // close() waits up to 250ms for the ack of the SETTINGS frame, and the peer's socket has ended
+  // before the frame arrives, so the socket close is what completes the graceful close. Nobody
+  // reads the stream yet, and it still has to survive. Serial, so that a loaded event loop does
+  // not let the wait run out first.
+  it.serial("a socket close that completes a graceful close leaves it readable", async () => {
+    const result = await withUnreadResponse(
+      async ({ client, req, serverSocket, sessionClosed, streamClosed }) => {
+        client.settings({ enablePush: false });
+        client.close();
+        serverSocket.end();
+        expect(await sessionClosed).toEqual(["session close"]);
+        return readToEnd(req, streamClosed);
+      },
+      { pause: false },
+    );
+    expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "hello" });
+  });
+
+  // The socket goes away and there is no error to report. node destroys every stream here, and a
+  // pipe() under backpressure loses the data it has not written yet. Bun delivered that data before
+  // sessions tracked these streams, so a stream that has a reader still gets it.
+  it("a socket that the peer ends leaves a stream that has a reader readable (client)", async () => {
+    const result = await withUnreadResponse(async ({ req, serverSocket, sessionClosed, streamClosed }) => {
+      serverSocket.end();
+      expect(await sessionClosed).toEqual(["session close"]);
+      return readToEnd(req, streamClosed);
+    });
+    expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "hello" });
+  });
+
+  it("a socket that the peer ends leaves a stream that has a reader readable (server)", async () => {
+    const result = await withUnreadRequest(async ({ clientSocket, stream, sessionClosed, streamClosed }) => {
+      clientSocket.end();
+      expect(await sessionClosed).toEqual(["session close"]);
+      return readToEnd(stream, streamClosed);
+    });
+    expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "request-body" });
+  });
+
+  // A close()d session does not report a socket error, so its streams get none either.
+  it("a socket error after close() leaves a stream that has a reader readable", async () => {
+    const result = await withUnreadResponse(
+      async ({ client, clientSocket, req, sessionClosed, streamClosed }) => {
+        client.close();
+        clientSocket.destroy(new Error("boom"));
+        expect(await sessionClosed).toEqual(["session close"]);
+        return readToEnd(req, streamClosed);
+      },
+      { open: true },
+    );
+    expect(result).toEqual({ events: ["session close", "end", "close:0"], body: "hello" });
+  });
+
+  // Both sessions hold a closed stream until its destroy(). While the sessions live on, they
+  // must not keep the streams that were read to the end. Serial: the streams of concurrent tests
+  // slow the collection down.
+  it.serial("a live session does not retain the streams that ended", async () => {
+    const COUNT = 32;
+    const refs = [];
+    const allClosed = Promise.withResolvers();
+    let closed = 0;
+    const track = stream => {
+      refs.push(new WeakRef(stream));
+      stream.on("error", allClosed.reject);
+      stream.on("close", () => ++closed === 2 * COUNT && allClosed.resolve());
+    };
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      track(stream);
+      stream.respond({ ":status": 200 });
+      stream.end("hello");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { client, clientSocket } = connect(server);
+    try {
+      for (let i = 0; i < COUNT; i++) {
+        const req = client.request({ ":path": "/", ":method": "POST" });
+        track(req);
+        req.resume();
+        req.end("request-body");
+      }
+      await allClosed.promise;
+      // A collection can miss a few objects (see GC_STRAGGLERS in h2-conformance.test.ts), so
+      // collect until the count is down to that level. A session that retains them keeps all 64.
+      const live = () => refs.filter(ref => ref.deref() !== undefined).length;
+      let alive = live();
+      for (let pass = 0; pass < 50 && alive > 3; pass++) {
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(true);
+        alive = live();
+      }
+      expect(refs.length).toBe(2 * COUNT);
+      expect(alive).toBeLessThanOrEqual(3);
+    } finally {
+      client.destroy();
+      clientSocket.destroy();
+      server.close();
+    }
+  });
+});
+
 it(
   "http2 server with minimal maxSessionMemory handles multiple requests",
   async () => {

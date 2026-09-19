@@ -132,17 +132,9 @@ async function drainServerWrappers(target: number) {
   }
 }
 
-// Why the final check reads reference chains and not a count: JSC scans the machine stack
-// conservatively and honors interior pointers, so a stale word in a live native frame pins the last
-// cell that went through that slot. On aarch64 musl that frame is JSC's microtask drain, and the
-// word is a WebSocket handler of one case, whose scope holds that case's `server`. Every collection
-// the afterAll hook makes runs under that same frame, so the word stays, and one wrapper outlives
-// any number of collections while nothing in the heap points at it. A leak is different: a GC root
-// (a Strong handle, a protected value, pending activity, a global) reaches the wrapper. The
-// debugging heap snapshot records that chain. It records nothing for what the conservative scan
-// marks.
-//
-// Returns, for each live Server wrapper that a GC root reaches, the shortest chain from that root.
+// For each live Server wrapper that a GC root reaches: the shortest chain from that root. A wrapper
+// that no root reaches is not a leak: a collection does not promise to free what nothing refers to,
+// because its scan of the machine stack may still see it (#43443).
 function retainedServerWrappers(): string[] {
   const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } =
     generateHeapSnapshotForDebugging() as any;
@@ -157,10 +149,13 @@ function retainedServerWrappers(): string[] {
     if (list) list.push(edge);
     else incomingEdges.set(edges[edge + 1], [edge]);
   }
-  // roots: id, why it is a root, why an opaque root keeps it.
+  // roots: id, why it is a root, why an opaque root keeps it. An output constraint lists the
+  // listeners of every marked emitter (DOMGCOutput). Those follow from whatever marked the emitter.
   const rootReasons = new Map<number, string>();
-  for (let i = 0; i < roots.length; i += 3)
+  for (let i = 0; i < roots.length; i += 3) {
+    if (labels[roots[i + 1]] === "DOMGCOutput") continue;
     rootReasons.set(roots[i], labels[roots[i + 2]] || labels[roots[i + 1]] || "root");
+  }
 
   const chainFromRoot = (target: number) => {
     // Breadth-first towards the roots: `next` holds, per cell, the edge that leads on to `target`.

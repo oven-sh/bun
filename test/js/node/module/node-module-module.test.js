@@ -994,6 +994,65 @@ console.log("survived", require("./late.js"));`,
     expect(await proc.exited).toBe(0);
   });
 
+  test.each([
+    // [distinct children, rounds over all of them]
+    [1, 1000],
+    // More children than childrenIndexThreshold (64, JSCommonJSModule.cpp): the
+    // parent finds a repeat through its hash index, not through a scan.
+    [80, 3],
+  ])(
+    "require() of a cached module does not add a duplicate native child reference (children: %d, rounds: %d)",
+    async (count, rounds) => {
+      // Before module.children is read, the parent tracks its children in a
+      // native vector that the GC visits. A cached require() used to append to
+      // it every time, so GC cost grew with the number of require() calls.
+      // The heap snapshot lists one edge per vector entry, so count the edges
+      // between Module nodes before touching module.children.
+      const files = {
+        "parent.cjs": `
+          const count = ${count}, rounds = ${rounds};
+          for (let round = 0; round < rounds; round++) {
+            // Every second round runs backwards, so a repeat is not always the oldest entry.
+            for (let i = 0; i < count; i++) require("./child" + (round % 2 ? count - 1 - i : i) + ".cjs");
+          }
+          const snapshot = Bun.generateHeapSnapshot();
+          const moduleClass = snapshot.nodeClassNames.indexOf("Module");
+          const moduleIds = new Set();
+          for (let i = 0; i < snapshot.nodes.length; i += 4) {
+            if (snapshot.nodes[i + 2] === moduleClass) moduleIds.add(snapshot.nodes[i]);
+          }
+          let moduleEdges = 0;
+          for (let i = 0; i < snapshot.edges.length; i += 4) {
+            if (moduleIds.has(snapshot.edges[i]) && moduleIds.has(snapshot.edges[i + 1])) moduleEdges++;
+          }
+          const children = module.children.map(child => child.exports.value);
+          console.log(JSON.stringify({ moduleNodes: moduleIds.size, moduleEdges, children }));
+        `,
+      };
+      for (let i = 0; i < count; i++) files[`child${i}.cjs`] = `module.exports = { value: ${i} };`;
+      using dir = tempDir("cjs-cached-require-children", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const { moduleNodes, moduleEdges, children } = JSON.parse(stdout);
+      // The snapshot must have found the parent and every child.
+      expect(moduleNodes).toBeGreaterThanOrEqual(count + 1);
+      // Each child once, in the order of its first require().
+      expect(children).toEqual(Array.from({ length: count }, (_, i) => i));
+      // The parent points at each child once. The bound leaves room for a few
+      // other edges between Module nodes, but not for one edge per call.
+      expect(moduleEdges).toBeGreaterThanOrEqual(count);
+      expect(moduleEdges).toBeLessThan(count + 10);
+    },
+  );
+
   test("new Module().exports survives object spread", async () => {
     // exports was built with inline capacity 0, so spreading it hit JSC's
     // tryCreateObjectViaCloning hasInlineStorage() debug assert. Run in a

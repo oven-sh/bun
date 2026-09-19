@@ -228,11 +228,7 @@ impl<'a> Coordinator<'a> {
                 }
             }
         }
-        self.aborted = Some(u32::from(
-            bun_sys::SignalCode(signal as u8)
-                .to_exit_code()
-                .unwrap_or(130),
-        ));
+        self.aborted = Some(u32::from(bun_sys::SignalCode(signal as u8).to_exit_code()));
     }
 
     fn spawn_worker(&mut self) -> bool {

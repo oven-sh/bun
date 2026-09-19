@@ -238,15 +238,14 @@ pub fn sleep_forever_if_another_thread_is_crashing() {
 // ─── SignalCode — single source of truth ──────────────────────────────────
 // Rust has no enum reflection, so the 31
 // (name,number) pairs live in ONE X-macro below; every consumer — the closed
-// enum here, the open newtype in `bun_sys`, `SIGNAL_NAMES`, `from_raw`,
+// enum here (Linux-numbered; the OS boundary uses `platform_number`), `SIGNAL_NAMES`, `ALL`,
 // `from_name` — is generated from it. Never re-spell a signal pair elsewhere.
-#[macro_export]
 macro_rules! for_each_signal {
     ($cb:ident) => {
         $cb! {
             SIGHUP = 1, SIGINT = 2, SIGQUIT = 3, SIGILL = 4, SIGTRAP = 5, SIGABRT = 6,
             SIGBUS = 7, SIGFPE = 8, SIGKILL = 9, SIGUSR1 = 10, SIGSEGV = 11, SIGUSR2 = 12,
-            SIGPIPE = 13, SIGALRM = 14, SIGTERM = 15, SIG16 = 16, SIGCHLD = 17, SIGCONT = 18,
+            SIGPIPE = 13, SIGALRM = 14, SIGTERM = 15, SIGSTKFLT = 16, SIGCHLD = 17, SIGCONT = 18,
             SIGSTOP = 19, SIGTSTP = 20, SIGTTIN = 21, SIGTTOU = 22, SIGURG = 23, SIGXCPU = 24,
             SIGXFSZ = 25, SIGVTALRM = 26, SIGPROF = 27, SIGWINCH = 28, SIGIO = 29, SIGPWR = 30,
             SIGSYS = 31,
@@ -256,8 +255,7 @@ macro_rules! for_each_signal {
 
 macro_rules! __define_signal_code {
     ($($name:ident = $n:literal),* $(,)?) => {
-        /// Signal name table. Index = POSIX signal number; `[0]` is "" sentinel
-        /// (callers range-check `1..=31`). Generated from `for_each_signal!`.
+        /// Signal name per enum discriminant; `[0]` is a "" sentinel. Generated from `for_each_signal!`.
         pub const SIGNAL_NAMES: [&str; 32] = ["", $(stringify!($name),)*];
 
         /// Closed `#[repr(u8)]` enum over `1..=31` (the open newtype lives in
@@ -270,12 +268,8 @@ macro_rules! __define_signal_code {
         impl SignalCode {
             pub const DEFAULT: SignalCode = SignalCode::SIGTERM;
 
-            /// Raw signal number → variant for the closed `1..=31` range;
-            /// `None` for `0` or anything outside it.
-            #[inline]
-            pub const fn from_raw(n: u8) -> Option<SignalCode> {
-                match n { $($n => Some(Self::$name),)* _ => None }
-            }
+            /// Every variant, in discriminant order.
+            const ALL: &'static [SignalCode] = &[$(Self::$name,)*];
 
             /// Signal name — every variant is named (enum is exhaustive).
             #[inline]
@@ -293,9 +287,8 @@ macro_rules! __define_signal_code {
 for_each_signal!(__define_signal_code);
 
 impl SignalCode {
-    /// This table uses Linux numbering; returns the current platform's number
-    /// (they differ on macOS/BSD), or `None` when the platform lacks the signal.
-    pub fn platform_number(self) -> Option<i32> {
+    /// This signal's number on the current platform (what `kill(2)` takes); `None` if it has none.
+    pub const fn platform_number(self) -> Option<i32> {
         #[cfg(unix)]
         {
             use SignalCode as S;
@@ -315,7 +308,10 @@ impl SignalCode {
                 S::SIGPIPE => libc::SIGPIPE,
                 S::SIGALRM => libc::SIGALRM,
                 S::SIGTERM => libc::SIGTERM,
-                S::SIG16 => return None,
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                S::SIGSTKFLT => libc::SIGSTKFLT,
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                S::SIGSTKFLT => return None,
                 S::SIGCHLD => libc::SIGCHLD,
                 S::SIGCONT => libc::SIGCONT,
                 S::SIGSTOP => libc::SIGSTOP,
@@ -329,9 +325,9 @@ impl SignalCode {
                 S::SIGPROF => libc::SIGPROF,
                 S::SIGWINCH => libc::SIGWINCH,
                 S::SIGIO => libc::SIGIO,
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 S::SIGPWR => libc::SIGPWR,
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
                 S::SIGPWR => return None,
                 S::SIGSYS => libc::SIGSYS,
             })
@@ -356,6 +352,14 @@ impl SignalCode {
                 _ => None,
             }
         }
+    }
+
+    /// Inverse of `platform_number`; `None` for numbers with no entry (RT signals, macOS SIGEMT).
+    pub fn from_platform_number(n: i32) -> Option<SignalCode> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|sig| sig.platform_number() == Some(n))
     }
 }
 
@@ -749,7 +753,10 @@ pub fn exit(code: u32) -> ! {
 }
 
 pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
-    raise_ignoring_panic_handler_raw(sig as c_int)
+    match sig.platform_number() {
+        Some(number) => raise_ignoring_panic_handler_raw(number),
+        None => libc_abort(),
+    }
 }
 
 /// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state. Callers may

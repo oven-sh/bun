@@ -4908,7 +4908,7 @@ function destroyClosedStream(session: ClientHttp2Session | ServerHttp2Session, s
 // stream the session still holds, with the session error:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1234-L1239
 // `closedAndIdle`: the session closed gracefully and nothing was left on the wire. Bun completes
-// that session without waiting for unread streams; node keeps it open until they are read
+// that session without waiting for unread streams. node keeps it open until they are read
 // (kMaybeDestroy, #L1662-L1675). Without an error those streams are let go instead, also by an
 // explicit destroy(): they stay readable and destroy themselves on 'end'.
 function settleUnreadClosedStreams(session: Http2Session, error: Error | null | undefined, closedAndIdle: boolean) {

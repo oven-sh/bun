@@ -604,6 +604,35 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // @types/node declares each builtin under one specifier and re-exports it
+  // under the other: `"tls"` was the declaration and `"node:tls"` the re-export
+  // until @types/node 25 swapped them. An augmentation in overrides.d.ts that
+  // names only one of the two reaches only one layout, so the whole fixture is
+  // also checked against the last two majors of the older layout.
+  describe.each(["22", "24"])("with @types/node@%s", major => {
+    test.skipIf(isDebug)("checks without lib.dom.d.ts", async () => {
+      const checkDir = join(TEMP_DIR, `types-node-${major}-fixture`);
+      await cp(BASE_FIXTURE_DIR, checkDir, {
+        recursive: true,
+        filter: source => basename(source) !== "node_modules" && basename(source) !== "bun.lock",
+      });
+      await Bun.write(join(checkDir, "package.json"), JSON.stringify({ name: "fixture", private: true }));
+      await $`cd ${checkDir} && bun add @types/node@${major}`.quiet();
+      for (const pkg of ["bun-types", join("@types", "bun")]) {
+        await cp(join(BASE_FIXTURE_DIR, "node_modules", pkg), join(checkDir, "node_modules", pkg), {
+          recursive: true,
+        });
+      }
+
+      // Guard against resolution drift silently checking the wrong major.
+      const nodeTypesPkg = await Bun.file(join(checkDir, "node_modules", "@types", "node", "package.json")).json();
+      expect(nodeTypesPkg.version).toStartWith(`${major}.`);
+
+      const { diagnostics } = await diagnose(checkDir);
+      expect(diagnostics).toEqual([]);
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;
@@ -860,13 +889,13 @@ describe("@types/bun integration test", () => {
         "WebGLVertexArrayObjectOES",
       ]),
       diagnostics: [
-        // lib.dom's Blob has no textStream(); node:buffer's Blob declares it
-        // since @types/node 26.5.0 (added to Node.js in v24.19.0 / v26.5.0).
+        // lib.dom's Blob is not node:buffer's. Which difference TypeScript
+        // names depends on the @types/node the fixture resolved: `stream()`
+        // before 26.5.0, the missing `textStream()` since.
         {
-          code: 2741,
+          code: expect.any(Number),
           line: "24154.ts:11:3",
-          message:
-            "Property 'textStream' is missing in type 'Blob' but required in type 'import(\"node:buffer\").Blob'.",
+          message: expect.stringMatching(/'Blob'.*import\("(node:)?buffer"\)\.Blob'/s),
         },
         {
           code: 2769,

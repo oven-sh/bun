@@ -1289,6 +1289,70 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   });
 });
 
+describe("informational header blocks", () => {
+  // A block with no :status is malformed (RFC 9113 §8.3.2). node adds no :status to it and sends
+  // it as is: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3197-L3204
+  // "accept-encoding: gzip, deflate" is entry 16 of the HPACK static table (RFC 7541 appendix A).
+  // nghttp2 and lshpack both write it as the indexed byte 0x90. ":status: 200" is entry 8, 0x88.
+  const rows = [
+    ["an empty object", [{}], {}, ""],
+    ["no argument", [], {}, ""],
+    ["a field and no :status", [{ "accept-encoding": "gzip, deflate" }], { "accept-encoding": "gzip, deflate" }, "90"],
+    [
+      "an undefined :status",
+      [{ ":status": undefined, "accept-encoding": "gzip, deflate" }],
+      { "accept-encoding": "gzip, deflate" },
+      "90",
+    ],
+  ] as const;
+
+  /** The header block fragment of a HEADERS frame as hex, with the padding removed (RFC 9113 §6.2). */
+  function headerBlock(f: Frame): string {
+    const padded = (f.flags & 0x8) !== 0;
+    return f.payload.subarray(padded ? 1 : 0, f.payload.length - (padded ? f.payload[0] : 0)).toString("hex");
+  }
+
+  // An empty block reaches the padding code of the frame writer with a length of 0.
+  describe.each([
+    ["no", http2.constants.PADDING_STRATEGY_NONE],
+    ["aligned", http2.constants.PADDING_STRATEGY_ALIGNED],
+    ["max", http2.constants.PADDING_STRATEGY_MAX],
+  ])("with %s padding", (_, paddingStrategy) => {
+    test.each(rows)("additionalHeaders() with %s adds no :status", async (_, args, block, blockOnTheWire) => {
+      const sentInfoHeaders = Promise.withResolvers<unknown>();
+      const server = http2.createServer({ paddingStrategy });
+      server.on("stream", (stream: any) => {
+        stream.on("error", sentInfoHeaders.reject);
+        try {
+          stream.additionalHeaders(...args);
+          stream.respond({ ":status": 200 }, { endStream: true, sendDate: false });
+          sentInfoHeaders.resolve(stream.sentInfoHeaders);
+        } catch (err) {
+          sentInfoHeaders.reject(err);
+        }
+      });
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+        const recorded = await sentInfoHeaders.promise;
+        await c.waitFor(f => f.streamId === 1 && (f.flags & 0x1) !== 0);
+        const headersFrames = c.frames.filter(f => f.type === FrameType.HEADERS && f.streamId === 1);
+        expect({ sentInfoHeaders: recorded, headerBlocks: headersFrames.map(headerBlock) }).toEqual({
+          sentInfoHeaders: [block],
+          headerBlocks: [blockOnTheWire, "88"],
+        });
+      } finally {
+        c.destroy();
+        server.close();
+      }
+    });
+  });
+});
+
 // A stream nothing references any more can still survive a bounded number of collections: JSC scans
 // the machine stack conservatively and honors interior pointers, so a stale word left in a native
 // frame (seen on x64 as cell+0x84 in the microtask-drain frames; near-deterministic on aarch64) pins

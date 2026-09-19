@@ -1622,14 +1622,14 @@ impl<'a> RowScan<'a> {
         Some(same_package && requested.version.satisfies(locked, self.buf, self.buf))
     }
 
-    /// Whether bun.lock lists an npm package other than `target` that is what the row asks for.
+    /// Whether bun.lock lists an npm package that the row accepts and the peer next to it rejects.
     #[cold]
     #[inline(never)]
-    fn accepts_another_copy(&self, dep_id: DependencyID, target: usize) -> bool {
+    fn found_a_copy_its_peer_rejects(&self, dep_id: DependencyID, peer_id: DependencyID) -> bool {
         (0..self.lockfile.loaded_package_count as usize).any(|id| {
-            id != target
-                && self.pkg_resolutions[id].tag == ResolutionTag::Npm
+            self.pkg_resolutions[id].tag == ResolutionTag::Npm
                 && self.accepts(dep_id, id) == Some(true)
+                && self.accepts(peer_id, id) == Some(false)
         })
     }
 
@@ -1667,8 +1667,9 @@ impl<'a> RowScan<'a> {
                         && sibling.name_hash == dep.name_hash
                         && self.resolutions[sibling_id as usize] as usize == target
                         && self.accepts(sibling_id, target) == Some(true)
-                        // A peer places a folder only when it rejects the copy that this row found higher up.
-                        && (!sibling.behavior.is_peer() || self.accepts_another_copy(dep_id, target))
+                        // A peer gets a folder of its own only when it rejects the copy that this row found higher up.
+                        && (!sibling.behavior.is_peer()
+                            || self.found_a_copy_its_peer_rejects(dep_id, sibling_id))
                 });
                 if shares_a_folder {
                     continue;

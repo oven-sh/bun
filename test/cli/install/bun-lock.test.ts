@@ -1961,10 +1961,11 @@ describe.concurrent("a dependency that bun.lock binds to a package it does not a
       ],
     },
     // A library in a monorepo: a range to develop against and a wide peer range. The peer accepts the root's copy, and
-    // it must not vouch for the devDependencies row, which does not.
+    // it must not vouch for the devDependencies row, which does not. legacy keeps a copy that fits that row elsewhere.
     "a workspace's devDependency next to a peer of the same name": {
       packageJsons: {
         "package.json": { name: "app", workspaces: ["packages/*"], dependencies: { shared: "2.0.0" } },
+        "packages/legacy/package.json": { name: "legacy", version: "1.0.0", dependencies: { shared: "1.5.0" } },
         "packages/lib/package.json": {
           name: "lib",
           version: "1.0.0",

@@ -12,7 +12,7 @@ import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import { Writable } from "node:stream";
+import { Duplex, Writable } from "node:stream";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -54,23 +54,41 @@ function encodeFrame(type: number, flags: number, streamId: number, payload: Buf
   return Buffer.concat([header, payload]);
 }
 
+/**
+ * Two in-memory sockets. A write on one is a synchronous push on the other, so each write is
+ * exactly one read for the session on the far side, with no event-loop turn between two writes.
+ * Destroying one end destroys the other.
+ */
+function memoryPair(): [Duplex, Duplex] {
+  const end = (other: () => Duplex) =>
+    new Duplex({
+      read() {},
+      write: (chunk, _enc, cb) => (other().push(chunk), cb()),
+      destroy: (err, cb) => (other().destroy(), cb(err)),
+    });
+  const a: Duplex = end(() => b);
+  const b: Duplex = end(() => a);
+  return [a, b];
+}
+
 /** A minimal raw HTTP/2 client: send arbitrary frames, collect parsed inbound frames. */
 class RawH2 {
-  socket: net.Socket;
+  socket: Duplex;
   private buf: Buffer = Buffer.alloc(0);
   frames: Frame[] = [];
   closed = false;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  constructor(port: number) {
-    this.socket = net.connect(port, "127.0.0.1");
+  /** `socket` is a TCP socket, or one end of a memoryPair() whose other end the server was given. */
+  constructor(socket: Duplex) {
+    this.socket = socket;
     this.socket.on("data", d => this.onData(d));
     this.socket.on("close", () => (this.closed = true));
     this.socket.on("error", () => {});
   }
 
   static async connect(port: number): Promise<RawH2> {
-    const c = new RawH2(port);
+    const c = new RawH2(net.connect(port, "127.0.0.1"));
     await once(c.socket, "connect");
     return c;
   }
@@ -675,32 +693,41 @@ describe.concurrent("header block decoding errors (RFC 9113 §4.3)", () => {
 
 /** A minimal raw HTTP/2 server: accept one connection, collect parsed inbound frames. */
 class RawH2Server {
-  server: net.Server;
-  socket: net.Socket | null = null;
+  server: net.Server | null;
+  socket: Duplex | null = null;
   private buf: Buffer = Buffer.alloc(0);
   private sawPreface = false;
   frames: Frame[] = [];
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
-  private constructor(server: net.Server) {
+  private constructor(server: net.Server | null) {
     this.server = server;
   }
 
   static async listen(): Promise<RawH2Server> {
     const server = net.createServer();
     const s = new RawH2Server(server);
-    server.on("connection", socket => {
-      s.socket = socket;
-      socket.on("data", d => s.onData(d));
-      socket.on("error", () => {});
-    });
+    server.on("connection", socket => s.accept(socket));
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     return s;
   }
 
+  /** No listener: `socket` is one end of a memoryPair() whose other end is the client's socket. */
+  static over(socket: Duplex): RawH2Server {
+    const s = new RawH2Server(null);
+    s.accept(socket);
+    return s;
+  }
+
+  private accept(socket: Duplex) {
+    this.socket = socket;
+    socket.on("data", d => this.onData(d));
+    socket.on("error", () => {});
+  }
+
   get port(): number {
-    return (this.server.address() as net.AddressInfo).port;
+    return (this.server!.address() as net.AddressInfo).port;
   }
 
   private onData(d: Buffer) {
@@ -752,7 +779,7 @@ class RawH2Server {
 
   close() {
     this.socket?.destroy();
-    this.server.close();
+    this.server?.close();
   }
 }
 
@@ -1711,6 +1738,281 @@ describe("inbound stream lifecycle", () => {
       expect(resp.type).toBe(FrameType.HEADERS);
       expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
       expect(seen).toEqual([{ path: "/" }, { path: "/", sync: "1" }]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+});
+
+// Once the native layer has closed a stream (it reset the stream, the peer reset it, or both
+// END_STREAM flags went by), nothing more belongs on the wire for that stream. The JS stream is
+// destroyed afterwards, and a reset it submits then is dropped by the native layer only while the
+// stream's table entry exists. A client's pushed stream never has an entry and any other stream
+// loses its entry on the next read, so that reset used to become a second RST_STREAM, or an answer
+// to the peer's RST_STREAM. Node v26.3.0 sends neither.
+describe("RST_STREAM on a stream the native layer already closed", () => {
+  const END_HEADERS = 0x4;
+  // `:status: 200`, then `connection: close`. A connection-specific field makes the block
+  // malformed (RFC 9113 §8.2.2): a stream error of type PROTOCOL_ERROR.
+  const MALFORMED_RESPONSE = Buffer.concat([
+    Buffer.from([0x88, 0x00]),
+    hpackLiteral("connection"),
+    hpackLiteral("close"),
+  ]);
+
+  function u32(value: number): Buffer {
+    const buf = Buffer.alloc(4);
+    buf.writeUInt32BE(value, 0);
+    return buf;
+  }
+
+  let pings = 0;
+  /** Once the ACK is in, so is every frame the peer wrote before it read this PING. */
+  async function pingRoundTrip(peer: RawH2 | RawH2Server) {
+    const payload = u32(++pings);
+    const opaque = Buffer.concat([payload, payload]);
+    peer.sendFrame(FrameType.PING, 0, 0, opaque);
+    await peer.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(opaque));
+  }
+
+  /**
+   * The codes of the RST_STREAM frames the peer wrote on `streamId`. Call it after the stream's
+   * 'close': a reset that close() or _destroy deferred with setImmediate was queued before that
+   * event, so it runs before the immediate awaited here.
+   */
+  async function resetsWritten(peer: RawH2 | RawH2Server, streamId: number): Promise<number[]> {
+    await new Promise(resolve => setImmediate(resolve));
+    await pingRoundTrip(peer);
+    return peer.frames
+      .filter(f => f.type === FrameType.RST_STREAM && f.streamId === streamId)
+      .map(f => f.payload.readUInt32BE(0));
+  }
+
+  /** Opens a request on stream 1 and completes the raw server's half of the handshake. */
+  async function openRequest(
+    raw: RawH2Server,
+    client: http2.ClientHttp2Session,
+    headers: http2.OutgoingHttpHeaders = { ":path": "/" },
+  ) {
+    client.on("error", () => {});
+    const req = client.request(headers);
+    req.on("error", () => {});
+    await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+    raw.sendFrame(FrameType.SETTINGS, 0, 0);
+    raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+    return req;
+  }
+
+  /** Resolves on 'close'. events.once() would reject on the stream's 'error' first. */
+  function closeOf(stream: http2.Http2Stream): Promise<void> {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    stream.on("close", () => resolve());
+    return promise;
+  }
+
+  /** PUSH_PROMISE on stream 1 that reserves stream 2. */
+  function sendPushPromise(raw: RawH2Server) {
+    raw.sendFrame(FrameType.PUSH_PROMISE, END_HEADERS, 1, Buffer.concat([u32(2), requestHeaderBlock("GET")]));
+  }
+
+  /** Resolves to the pushed stream's rstCode once that stream has closed. */
+  function pushedStreamClosed(client: http2.ClientHttp2Session): Promise<number> {
+    const { promise, resolve } = Promise.withResolvers<number>();
+    client.on("stream", pushed => {
+      pushed.on("error", () => {});
+      pushed.on("close", () => resolve(pushed.rstCode));
+    });
+    return promise;
+  }
+
+  /**
+   * Sends a POST on stream 1 from the raw client and resolves once the server has the stream.
+   * `closed` resolves to the server stream's rstCode.
+   */
+  async function openServerStream(server: http2.Http2Server, c: RawH2) {
+    const opened = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<number>();
+    server.on("stream", (stream: any) => {
+      stream.on("error", () => {});
+      stream.on("close", () => closed.resolve(stream.rstCode));
+      opened.resolve();
+    });
+    c.sendPreface();
+    c.sendEmptySettings();
+    c.sendFrame(FrameType.HEADERS, END_HEADERS, 1, requestHeaderBlock("POST"));
+    await opened.promise;
+    return { closed: closed.promise };
+  }
+
+  test.each([
+    [
+      "a malformed response block",
+      ErrorCode.PROTOCOL_ERROR,
+      (raw: RawH2Server) => raw.sendFrame(FrameType.HEADERS, END_HEADERS, 2, MALFORMED_RESPONSE),
+    ],
+    [
+      "DATA ahead of the response HEADERS",
+      ErrorCode.STREAM_CLOSED,
+      (raw: RawH2Server) => raw.sendFrame(FrameType.DATA, 0, 2, Buffer.from("x")),
+    ],
+  ])("a client resets a pushed stream once for %s", async (_, code, violate) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    try {
+      const closed = pushedStreamClosed(client);
+      await openRequest(raw, client);
+      sendPushPromise(raw);
+      violate(raw);
+      expect(await closed).toBe(code);
+      expect(await resetsWritten(raw, 2)).toEqual([code]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test.each([
+    ["INTERNAL_ERROR", ErrorCode.INTERNAL_ERROR],
+    ["CANCEL", ErrorCode.CANCEL],
+  ])("a client does not answer the peer's RST_STREAM(%s) on a pushed stream", async (_, code) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    try {
+      const closed = pushedStreamClosed(client);
+      await openRequest(raw, client);
+      sendPushPromise(raw);
+      raw.sendFrame(FrameType.HEADERS, END_HEADERS, 2, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.RST_STREAM, 0, 2, u32(code));
+      expect(await closed).toBe(code);
+      expect(await resetsWritten(raw, 2)).toEqual([]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a client resets a request stream once when another read follows the reset", async () => {
+    const [near, far] = memoryPair();
+    const raw = RawH2Server.over(near);
+    const client = http2.connect("http://localhost", { createConnection: () => far });
+    try {
+      const req = await openRequest(raw, client);
+      const closed = closeOf(req);
+      raw.sendFrame(FrameType.HEADERS, END_HEADERS, 1, MALFORMED_RESPONSE);
+      // A second read in the same turn: stream 1 loses its table entry before it is destroyed.
+      raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 0, u32(1));
+      await closed;
+      expect(await resetsWritten(raw, 1)).toEqual([ErrorCode.PROTOCOL_ERROR]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // close(code) and the _destroy that follows it each submit a reset. Native answers the first
+  // one with a streamError dispatch, so the second one is for a stream it already closed.
+  test("close(code) resets a request stream once when a read follows the RST_STREAM", async () => {
+    const [near, far] = memoryPair();
+    const raw = RawH2Server.over(near);
+    const client = http2.connect("http://localhost", { createConnection: () => far });
+    try {
+      // The request body stays open, so close() has a stream to reset.
+      const req = await openRequest(raw, client, { ":method": "POST", ":path": "/" });
+      const closed = closeOf(req);
+      req.close(http2.constants.NGHTTP2_CANCEL);
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      // This read takes stream 1's table entry away before the reset from _destroy runs.
+      raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 0, u32(1));
+      await closed;
+      expect(await resetsWritten(raw, 1)).toEqual([ErrorCode.CANCEL]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a close() from an 'aborted' listener does not answer the peer's RST_STREAM", async () => {
+    const [near, far] = memoryPair();
+    const raw = RawH2Server.over(near);
+    const client = http2.connect("http://localhost", { createConnection: () => far });
+    try {
+      // The request body stays open, so the peer's reset is an abort.
+      const req = await openRequest(raw, client, { ":method": "POST", ":path": "/" });
+      let closedFromListener = false;
+      req.on("aborted", () => {
+        req.close(http2.constants.NGHTTP2_CANCEL);
+        closedFromListener = true;
+      });
+      const closed = closeOf(req);
+      raw.sendFrame(FrameType.RST_STREAM, 0, 1, u32(ErrorCode.CANCEL));
+      // A second read in the same turn: stream 1 loses its table entry before close()'s reset runs.
+      raw.sendFrame(FrameType.WINDOW_UPDATE, 0, 0, u32(1));
+      await closed;
+      expect(closedFromListener).toBe(true);
+      expect(await resetsWritten(raw, 1)).toEqual([]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("destroy(err) on a request stream that closed cleanly sends no RST_STREAM", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    try {
+      const req = await openRequest(raw, client);
+      // Nothing reads the body, so the JS stream outlives the native one.
+      raw.sendFrame(FrameType.HEADERS, END_HEADERS, 1, Buffer.from([0x88]));
+      raw.sendFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("hello"));
+      await pingRoundTrip(raw);
+      // The second PING is a read of its own, after the one that carried END_STREAM.
+      await pingRoundTrip(raw);
+      expect({ closed: req.closed, destroyed: req.destroyed }).toEqual({ closed: true, destroyed: false });
+      const closed = closeOf(req);
+      req.destroy(new Error("late"));
+      await closed;
+      expect(await resetsWritten(raw, 1)).toEqual([]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a server does not answer the peer's RST_STREAM(CANCEL) when another read follows it", async () => {
+    const server = http2.createServer();
+    const [near, far] = memoryPair();
+    const c = new RawH2(near);
+    server.emit("connection", far);
+    try {
+      const { closed } = await openServerStream(server, c);
+      c.sendFrame(FrameType.RST_STREAM, 0, 1, u32(ErrorCode.CANCEL));
+      // A second read in the same turn: stream 1 loses its table entry before it is destroyed.
+      c.sendFrame(FrameType.WINDOW_UPDATE, 0, 0, u32(1));
+      expect(await closed).toBe(ErrorCode.CANCEL);
+      expect(await resetsWritten(c, 1)).toEqual([]);
+    } finally {
+      c.destroy();
+    }
+  });
+
+  // The reset a server stream submits with REFUSED_STREAM is counted as a stream this side
+  // rejected. At a budget of 1 that count ends the session with GOAWAY(ENHANCE_YOUR_CALM).
+  test("a peer's RST_STREAM(REFUSED_STREAM) does not count against maxSessionRejectedStreams", async () => {
+    const server = http2.createServer({ maxSessionRejectedStreams: 1 });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      const { closed } = await openServerStream(server, c);
+      c.sendFrame(FrameType.RST_STREAM, 0, 1, u32(ErrorCode.REFUSED_STREAM));
+      expect(await closed).toBe(ErrorCode.REFUSED_STREAM);
+      await new Promise(resolve => setImmediate(resolve));
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      const answer = await c.waitFor(
+        f => f.type === FrameType.GOAWAY || (f.type === FrameType.PING && (f.flags & 0x1) !== 0),
+      );
+      expect(answer.type).toBe(FrameType.PING);
     } finally {
       c.destroy();
       server.close();

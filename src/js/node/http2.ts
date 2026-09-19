@@ -5614,8 +5614,7 @@ class ClientHttp2Session extends Http2Session {
     this[kStrictSingleValueFields] = options.strictSingleValueFields !== false;
 
     const protocol = url.protocol || options?.protocol || "https:";
-    // node: request() defaults :scheme to session[kProtocol].slice(0, -1).
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L667
+    // Like node's session[kProtocol].slice(0, -1): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L667
     this.#defaultScheme = StringPrototypeSlice.$call(protocol, 0, -1);
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
 

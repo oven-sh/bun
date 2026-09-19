@@ -5063,7 +5063,11 @@ impl H2FrameParser {
             // deferred JS close path (rstNextTick after _destroy) once a cleanly-completed
             // stream's entry has been evicted. Node sends no RST for cleanly-closed streams;
             // writing one makes the peer answer with RST(STREAM_CLOSED) per request.
-            if error_code != ErrorCode::NO_ERROR.0 {
+            //
+            // Every other id had an entry here. If it is gone, the stream is closed and the
+            // deferred JS close path must not reset it a second time.
+            let is_pushed_to_client = !this.is_server.get() && stream_id % 2 == 0;
+            if error_code != ErrorCode::NO_ERROR.0 && is_pushed_to_client {
                 let mut frame = [0u8; 13];
                 frame[2] = 4; // length = 4
                 frame[3] = 3; // RST_STREAM
@@ -7122,12 +7126,10 @@ impl H2FrameParser {
                 this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
             } else {
                 // The request never reached the wire, so there is nothing to reset. nghttp2
-                // closes it locally with REFUSED_STREAM so the application can retry. The entry
-                // stays in the map: JS calls rst_stream() for it from _destroy, and for an id
-                // the map does not have, rst_stream() writes the frame. The peer has never seen
-                // this id, so that RST_STREAM would be a connection error.
+                // closes it locally with REFUSED_STREAM so the application can retry.
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = ErrorCode::REFUSED_STREAM.0;
+                stream.free_resources::<false>(this);
                 this.dispatch_with_extra(
                     JSH2FrameParser::Gc::onStreamError,
                     identifier,

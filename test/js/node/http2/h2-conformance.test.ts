@@ -2061,6 +2061,56 @@ describe("a header block over maxSendHeaderBlockLength (node's onFrameError)", (
     },
   );
 
+  // The stream's _destroy asks the native side for a reset of its own, one setImmediate later.
+  // When the failing call runs from a setImmediate callback, the server reads the peer's next
+  // frames in between, and that read releases the native stream entry.
+  test("server respond() from a setImmediate callback while the peer keeps sending: one RST_STREAM", async () => {
+    const server = http2.createServer({ maxSendHeaderBlockLength: LIMIT });
+    const responded = Promise.withResolvers<void>();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      setImmediate(() => {
+        stream.respond({ ":status": 200, "x-big": OVER_LIMIT });
+        stream.end("body");
+        responded.resolve();
+      });
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    let sending = true;
+    const keepSending = () => {
+      if (!sending) return;
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      setImmediate(keepSending);
+    };
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestFor("/over"));
+      keepSending();
+
+      await responded.promise;
+      const barrier = Buffer.alloc(8, 0xff);
+      c.sendFrame(FrameType.PING, 0, 0, barrier);
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload.equals(barrier));
+      const resets = () =>
+        c.frames.filter(f => f.streamId === 1).map(f => [FrameType.RST_STREAM === f.type, f.payload.readUInt32BE(0)]);
+      expect(resets()).toEqual([[true, ErrorCode.FRAME_SIZE_ERROR]]);
+
+      await c.waitForGoaway();
+      sending = false;
+      await c.waitClosed();
+      expect(resets()).toEqual([[true, ErrorCode.FRAME_SIZE_ERROR]]);
+    } finally {
+      sending = false;
+      c.destroy();
+      server.close();
+    }
+  });
+
   test("client request(): the stream fails locally with REFUSED_STREAM and the session closes gracefully", async () => {
     const server = http2.createServer();
     const paths: string[] = [];
@@ -2117,6 +2167,55 @@ describe("a header block over maxSendHeaderBlockLength (node's onFrameError)", (
     } finally {
       client.destroy();
       server.close();
+    }
+  });
+
+  // Same window as the server case above. A reset for this stream would name an id that the peer
+  // has never seen, which is a connection error for the peer.
+  test("client request() from a setImmediate callback while the peer keeps sending: nothing for the stream reaches the wire", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxSendHeaderBlockLength: LIMIT });
+    const sessionErrors: unknown[] = [];
+    client.on("error", err => sessionErrors.push((err as NodeJS.ErrnoException).code));
+    let sending = true;
+    const keepSending = () => {
+      if (!sending) return;
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      setImmediate(keepSending);
+    };
+    try {
+      await raw.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      const peerGone = new Promise<void>(resolve => raw.socket!.once("close", () => resolve()));
+      keepSending();
+
+      const overClosed = Promise.withResolvers<void>();
+      setImmediate(() => {
+        const over = client.request({ ":path": "/over", "x-big": OVER_LIMIT });
+        over.on("error", () => {});
+        over.on("close", () => overClosed.resolve());
+      });
+      await overClosed.promise;
+
+      // node closes the session one setImmediate after the frame error; a round trip is later.
+      const barrier = Buffer.alloc(8, 0xff);
+      raw.sendFrame(FrameType.PING, 0, 0, barrier);
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload.equals(barrier));
+      expect(client.closed).toBe(true);
+
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      sending = false;
+      await peerGone;
+      expect({
+        goaway: goawayErrorCode(goaway),
+        onStreams: raw.frames.filter(f => f.streamId !== 0).map(f => [f.type, f.streamId]),
+        sessionErrors,
+      }).toEqual({ goaway: ErrorCode.NO_ERROR, onStreams: [], sessionErrors: [] });
+    } finally {
+      sending = false;
+      client.destroy();
+      raw.close();
     }
   });
 });

@@ -848,7 +848,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         JSValue frames;
         for (JSObject* object = JSValue::decode(thisValue).getObject(); object; object = object->getPrototypeDirect().getObject()) {
             frames = object->getDirect(vm, builtinNames(vm).capturedStackFramesPrivateName());
-            if (frames) {
+            if (frames && frames.isString()) {
                 target = object;
                 break;
             }
@@ -859,14 +859,13 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         RETURN_IF_EXCEPTION(scope, {});
         WTF::String message = stackTraceHeaderMessage(vm, globalObject, target);
         RETURN_IF_EXCEPTION(scope, {});
-        WTF::String header = stackTraceHeaderOnly(name, message);
+        auto framesString = asString(frames)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
         // The name, the message and the frames come from JS: past `String::MaxLength` makeString() calls `CRASH()`.
-        WTF::String stack = tryMakeString(header, asString(frames)->value(globalObject).data);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue result = jsString(vm, stack.isNull() ? header : stack);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(target, globalObject, builtinNames(vm).capturedStackFramesPrivateName(), slot);
-        RETURN_IF_EXCEPTION(scope, {});
+        WTF::String stack = tryMakeString(name, name.isEmpty() || message.isEmpty() ? ""_s : ": "_s, message, framesString.data);
+        JSValue result = jsString(vm, stack.isNull() ? stackTraceHeaderOnly(name, message) : stack);
+        // Emptied rather than deleted: deleting is a structure transition, and this is every first read.
+        target->putDirect(vm, builtinNames(vm).capturedStackFramesPrivateName(), jsUndefined(), JSC::PropertyAttribute::DontEnum | 0);
         replaceLazyStack(vm, target, result);
         return JSValue::encode(result);
     }

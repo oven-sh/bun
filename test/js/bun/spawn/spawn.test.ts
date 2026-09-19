@@ -2158,3 +2158,43 @@ describe("stdin: a buffer the child never reads", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// `Bun.file(path)` names a file by Win32's rules: `NUL` is the device. Given as a child's stdio it
+// has to be the device too, not a file called NUL in the working directory.
+it.skipIf(!isWindows)("Bun.file('NUL') as a child's stdio is the NUL device", async () => {
+  using dir = tempDir("spawn-nul-device", {});
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const written = Bun.spawnSync({
+        cmd: [process.execPath, "-e", "console.log('to the device')"],
+        stdout: Bun.file("NUL"),
+        stderr: "inherit",
+      });
+      const reader = Bun.spawn({
+        cmd: [process.execPath, "-e", "process.stdin.on('data', () => console.log('data')).on('end', () => console.log('end'))"],
+        stdin: Bun.file("NUL"),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const read = (await reader.stdout.text()).trim();
+      console.log(JSON.stringify({
+        writerExit: written.exitCode,
+        readerExit: await reader.exited,
+        read,
+        entries: require("node:fs").readdirSync("."),
+      }));
+      `,
+    ],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ writerExit: 0, readerExit: 0, read: "end", entries: [] });
+  expect(exitCode).toBe(0);
+});

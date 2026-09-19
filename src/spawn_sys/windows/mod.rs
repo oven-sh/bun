@@ -236,7 +236,13 @@ fn make_slot(
                 1 | 2 => bun_sys::O::WRONLY,
                 _ => bun_sys::O::RDWR,
             };
-            let handle = bun_sys::open_a(path, access | bun_sys::O::CREAT, 0o664)?.native();
+            // `Bun.file(path)` names a file by Win32's rules wherever it is
+            // opened (`NUL` is the device, not a file of that name), so here too.
+            let mut name = Vec::with_capacity(path.len() + 1);
+            name.extend_from_slice(path);
+            name.push(0);
+            let name = bun_core::ZStr::from_buf(&name, path.len());
+            let handle = bun_sys::open(name, access | bun_sys::O::CREAT, 0o664)?.native();
             stdio.to_close.push(handle);
             Ok(Slot::Fd(ChildFd {
                 handle,

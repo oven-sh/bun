@@ -5036,6 +5036,11 @@ it("http2 ServerHttp2Stream validates :status like node (integer conversion, 1xx
     "/fd-204-string": stream => stream.respondWithFD(fd, { ":status": "204" }),
     "/file-102": stream => stream.respondWithFile(import.meta.path, { ":status": 102 }),
     "/fd-102": stream => stream.respondWithFD(fd, { ":status": 102 }),
+    "/respond-199": stream => stream.respond({ ":status": 199 }),
+    "/respond-599": stream => stream.respond({ ":status": 599 }),
+    "/respond-600": stream => stream.respond({ ":status": 600 }),
+    "/file-600": stream => stream.respondWithFile(import.meta.path, { ":status": 600 }),
+    "/fd-600": stream => stream.respondWithFD(fd, { ":status": 600 }),
   };
   const fd = fs.openSync(import.meta.path, "r");
   const serverResults = {};
@@ -5082,6 +5087,11 @@ it("http2 ServerHttp2Stream validates :status like node (integer conversion, 1xx
       "/fd-204-string": "ERR_HTTP2_PAYLOAD_FORBIDDEN",
       "/file-102": "ERR_HTTP2_STATUS_INVALID",
       "/fd-102": "ERR_HTTP2_STATUS_INVALID",
+      "/respond-199": "ERR_HTTP2_STATUS_INVALID",
+      "/respond-599": "no throw",
+      "/respond-600": "ERR_HTTP2_STATUS_INVALID",
+      "/file-600": "ERR_HTTP2_STATUS_INVALID",
+      "/fd-600": "ERR_HTTP2_STATUS_INVALID",
     });
     // A HEADERS block without :status is a protocol error for the client, as with node. Only the
     // stream error is asserted: node's client emits no 'response' for it, bun's client does.
@@ -5095,6 +5105,11 @@ it("http2 ServerHttp2Stream validates :status like node (integer conversion, 1xx
       "/fd-204-string": [["response", 200]],
       "/file-102": [["response", 200]],
       "/fd-102": [["response", 200]],
+      "/respond-199": [["response", 200]],
+      "/respond-599": [["response", 599]],
+      "/respond-600": [["response", 200]],
+      "/file-600": [["response", 200]],
+      "/fd-600": [["response", 200]],
     });
   } finally {
     fs.closeSync(fd);

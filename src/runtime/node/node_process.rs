@@ -292,8 +292,7 @@ mod _impl {
                 set
             });
 
-        // Mirrors `src/clap/streaming.rs`: in a short chain (`-be`) the first value-taking
-        // short takes the rest of the token, or the next token when it is the last byte.
+        // Same token rules as `src/clap/streaming.rs`.
         fn consumes_next_arg(arg: &[u8], seen_run: bool) -> bool {
             if arg.starts_with(b"--") {
                 return CONSUMES_NEXT_ARG.contains(arg);

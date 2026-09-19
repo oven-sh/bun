@@ -74,6 +74,26 @@ describe("res.strictContentLength", () => {
     expect(result).toEqual([undefined, MISMATCH, undefined]);
   });
 
+  test("a Content-Length set after removeHeader is checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 3);
+      res.removeHeader("Content-Length");
+      res.setHeader("Content-Length", 5);
+      return code(() => res.end("hello world"));
+    });
+    expect(result).toBe(MISMATCH);
+  });
+
+  test("a Content-Length from writeHead's flat array form is checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.writeHead(200, ["Content-Length", "5"]);
+      return [code(() => res.write("hello")), code(() => res.end("!"))];
+    });
+    expect(result).toEqual([undefined, MISMATCH]);
+  });
+
   test("a string header value is parsed like Node (+value)", async () => {
     const result = await inServer(res => {
       res.strictContentLength = true;

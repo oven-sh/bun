@@ -168,6 +168,9 @@ function onServerResponseClose() {
 // header: Node's write_() checks before _implicitHeader(), so a write() that first renders
 // the headers is counted but not checked. end() assigns _contentLength before the implicit
 // header and checks again after _storeHeader, so it is always checked against the header.
+// Node also tests !_removedContLen, which _storeHeader clears when it stores a Content-Length
+// header. The handle path never runs _storeHeader, so the stored header is the truth and a
+// removeHeader() before the current value (writeHead's flat array form does one) is not.
 function strictContentLength(response, headerState, fromEnd) {
   if (!response.strictContentLength) return;
   if (!fromEnd && headerState === NodeHTTPHeaderState.none) return;
@@ -175,7 +178,6 @@ function strictContentLength(response, headerState, fromEnd) {
   if (
     contentLength != null &&
     response._hasBody &&
-    !response._removedContLen &&
     !response.chunkedEncoding &&
     !response.hasHeader("transfer-encoding")
   ) {

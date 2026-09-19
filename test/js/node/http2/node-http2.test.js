@@ -5067,8 +5067,8 @@ for (const [name, runtime] of [
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: optionChecksExpected, stderr: "", exitCode: 0 });
     },
-    // A debug build needs about 3 s to start and load node:http2, more on a busy machine.
-    15_000,
+    // A debug build needs 3 to 5 s to start and load node:http2. Every other build keeps the default.
+    isDebug ? 15_000 : undefined,
   );
 }
 

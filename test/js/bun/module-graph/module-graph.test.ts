@@ -838,6 +838,36 @@ describe("Bun.ModuleGraph — shared CodeBlocks under JIT tier-up", () => {
     graphs.forEach(graph => graph.dispose());
     rmSync(dir, { recursive: true, force: true });
   });
+
+  test("namespace objects of different modules that export the same names share an inline cache entry, and each reads its own bindings", async () => {
+    // The same exported names, so the same export layout: in another declaration order (other variable
+    // offsets), and re-exported (the bindings are in another module's environment).
+    const dir = fixture({
+      "xy.mjs": `export let x = 1, y = 2; export function set(v) { x = v }`,
+      "yx.mjs": `export let y = 20, x = 10; export function set(v) { x = v }`,
+      "star.mjs": `export * from "./xy.mjs";`,
+    });
+    const [xy, yx, star] = [
+      await import(join(dir, "xy.mjs")),
+      await import(join(dir, "yx.mjs")),
+      await import(join(dir, "star.mjs")),
+    ];
+    const read = (m: { x: number; y: number }) => m.x * 100 + m.y;
+    const wrong: number[][] = [];
+    const check = (forXY: number, forYX: number) => {
+      for (let i = 0; i < 20000; i++) {
+        const got = [read(xy), read(yx), read(star)];
+        if (got[0] !== forXY || got[1] !== forYX || got[2] !== forXY) wrong.push(got);
+      }
+    };
+    check(102, 1020);
+    xy.set(5);
+    check(502, 1020);
+    yx.set(7);
+    check(502, 720);
+    expect(wrong).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe("Bun.ModuleGraph — API validation and error attribution edges", () => {

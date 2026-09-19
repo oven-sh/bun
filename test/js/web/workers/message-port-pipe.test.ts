@@ -6,6 +6,13 @@ import { receiveMessageOnPort } from "node:worker_threads";
 // cross-thread wakeup coalescing, per-pipe isolation (no global registry),
 // and thread-safety under concurrent channel churn.
 
+// A node:worker_threads Worker boots in ~40ms on a release build but takes
+// seconds on debug/ASAN builds (node:worker_threads, node:stream and
+// node:console are compiled before its code runs), so each subprocess below
+// that spawns one has a fixed floor near the 5s default regardless of how
+// little work it does. Release builds keep the default.
+const workerTimeout = isDebug || isASAN ? 60_000 : undefined;
+
 describe("MessagePort pipe", () => {
   test("microtasks run between message events (task-source semantics)", async () => {
     const { port1, port2 } = new MessageChannel();
@@ -275,94 +282,126 @@ describe("MessagePort pipe", () => {
   //
   // Sanitizer-gated: the race being exercised is a memory-safety bug that
   // only surfaces deterministically under ASAN/UBSan.
-  test.skipIf(!isDebug && !isASAN)("concurrent MessageChannel creation across workers is race-free", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const { Worker } = require("worker_threads");
-          const workerSrc = \`
-            const { parentPort, MessageChannel } = require("worker_threads");
-            for (let i = 0; i < 2000; i++) {
+  //
+  // Booting a worker takes far longer than the churn, and once a worker's entry
+  // script returns the worker runs a full GC before it can receive a message,
+  // so starting the workers with postMessage would stagger them by more than
+  // the few milliseconds the churn takes on a release build. Instead every
+  // worker reports in and blocks in Atomics.wait() inside its entry script,
+  // and the main thread releases all of them at once right before churning
+  // itself, so all five threads create and close channels in the same window.
+  test.concurrent.skipIf(!isDebug && !isASAN)(
+    "concurrent MessageChannel creation across workers is race-free",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker } = require("worker_threads");
+            const N = 1000;
+            const start = new Int32Array(new SharedArrayBuffer(4));
+            const workerSrc = \`
+              const { parentPort, workerData: { N, start } } = require("worker_threads");
+              parentPort.postMessage("ready");
+              Atomics.wait(start, 0, 0);
+              let i = 0;
+              for (; i < N; i++) {
+                const { port1, port2 } = new MessageChannel();
+                port1.postMessage(i);
+                port1.close();
+                port2.close();
+              }
+              parentPort.postMessage(i);
+            \`;
+            const workers = Array.from(
+              { length: 4 },
+              () => new Worker(workerSrc, { eval: true, workerData: { N, start } }),
+            );
+            const nextMessage = w =>
+              new Promise((resolve, reject) => {
+                w.once("message", resolve);
+                w.once("error", reject);
+              });
+            await Promise.all(workers.map(nextMessage)); // "ready" from every worker
+            const counts = Promise.all(workers.map(nextMessage));
+            Atomics.store(start, 0, 1);
+            Atomics.notify(start, 0);
+            // Churn on the main thread at the same time.
+            for (let i = 0; i < N; i++) {
               const { port1, port2 } = new MessageChannel();
               port1.postMessage(i);
               port1.close();
               port2.close();
             }
-            parentPort.postMessage("done");
-          \`;
-          const workers = [];
-          for (let i = 0; i < 4; i++) {
-            workers.push(new Promise((resolve, reject) => {
-              const w = new Worker(workerSrc, { eval: true });
-              w.on("message", resolve);
-              w.on("error", reject);
-            }));
-          }
-          // Churn on the main thread at the same time.
-          for (let i = 0; i < 2000; i++) {
-            const { port1, port2 } = new MessageChannel();
-            port1.postMessage(i);
-            port1.close();
-            port2.close();
-          }
-          await Promise.all(workers);
-          console.log("OK");
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
-  });
-
-  test.skipIf(!isDebug && !isASAN)("burst of postMessage across threads delivers every message in order", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const { Worker, MessageChannel } = require("worker_threads");
-          const { port1, port2 } = new MessageChannel();
-          const w = new Worker(
-            \`
-              const { parentPort } = require("worker_threads");
-              parentPort.once("message", ({ port }) => {
-                for (let i = 0; i < 1000; i++) port.postMessage(i);
-                port.postMessage("end");
-              });
-            \`,
-            { eval: true },
-          );
-          w.postMessage({ port: port2 }, [port2]);
-          let next = 0;
-          port1.on("message", v => {
-            if (v === "end") {
-              if (next !== 1000) { console.error("got", next); process.exit(1); }
-              console.log("OK");
-              port1.close();
-              w.terminate();
-              return;
+            // Each worker reports how many channels it churned through, so a
+            // worker that skipped its loop cannot pass the test by staying quiet.
+            const churned = await counts;
+            if (!churned.every(n => n === N)) {
+              console.error("expected every worker to churn", N, "channels, got", churned);
+              process.exit(1);
             }
-            if (v !== next) { console.error("out of order", v, next); process.exit(1); }
-            next++;
-          });
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
-  });
+            console.log("OK");
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("OK");
+      expect(exitCode).toBe(0);
+    },
+    workerTimeout,
+  );
+
+  test.concurrent.skipIf(!isDebug && !isASAN)(
+    "burst of postMessage across threads delivers every message in order",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker, MessageChannel } = require("worker_threads");
+            const { port1, port2 } = new MessageChannel();
+            const w = new Worker(
+              \`
+                const { parentPort } = require("worker_threads");
+                parentPort.once("message", ({ port }) => {
+                  for (let i = 0; i < 1000; i++) port.postMessage(i);
+                  port.postMessage("end");
+                });
+              \`,
+              { eval: true },
+            );
+            w.postMessage({ port: port2 }, [port2]);
+            let next = 0;
+            port1.on("message", v => {
+              if (v === "end") {
+                if (next !== 1000) { console.error("got", next); process.exit(1); }
+                console.log("OK");
+                port1.close();
+                w.terminate();
+                return;
+              }
+              if (v !== next) { console.error("out of order", v, next); process.exit(1); }
+              next++;
+            });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("OK");
+      expect(exitCode).toBe(0);
+    },
+    workerTimeout,
+  );
 });
 
 // worker.postMessage / parentPort.postMessage go through the same coalesced
@@ -370,112 +409,120 @@ describe("MessagePort pipe", () => {
 // matches Node: messages arrive in order with a microtask checkpoint between
 // each, for both directions.
 describe("Worker postMessage inbox", () => {
-  test.skipIf(!isDebug && !isASAN)("round-trip burst delivers in order with microtasks between each", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const { Worker, isMainThread, parentPort } = require("node:worker_threads");
-          const N = 200;
-          const order = [];
-          const w = new Worker(
-            \`
-              const { parentPort } = require("node:worker_threads");
-              const order = [];
-              let n = 0;
-              parentPort.on("message", d => {
-                order.push("m" + d);
-                queueMicrotask(() => order.push("u" + d));
-                parentPort.postMessage(d);
-                if (++n === ${"${N}"}) {
-                  queueMicrotask(() => parentPort.postMessage({ done: order }));
-                }
-              });
-            \`,
-            { eval: true },
-          );
-          let echoed = 0;
-          w.on("message", v => {
-            if (typeof v === "object" && v.done) {
-              // Worker-side ordering: m0,u0,m1,u1,...
-              for (let i = 0; i < N; i++) {
-                if (v.done[2*i] !== "m"+i || v.done[2*i+1] !== "u"+i) {
-                  console.error("worker order wrong at", i, v.done.slice(2*i, 2*i+4));
-                  process.exit(1);
-                }
-              }
-              if (echoed !== N) { console.error("echoed", echoed, "expected", N); process.exit(1); }
-              console.log("OK");
-              w.terminate();
-              return;
-            }
-            order.push("m" + v);
-            queueMicrotask(() => order.push("u" + v));
-            if (v !== echoed) { console.error("parent out of order", v, echoed); process.exit(1); }
-            echoed++;
-            if (echoed === N) {
-              queueMicrotask(() => {
+  test.concurrent.skipIf(!isDebug && !isASAN)(
+    "round-trip burst delivers in order with microtasks between each",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+            const N = 200;
+            const order = [];
+            const w = new Worker(
+              \`
+                const { parentPort } = require("node:worker_threads");
+                const order = [];
+                let n = 0;
+                parentPort.on("message", d => {
+                  order.push("m" + d);
+                  queueMicrotask(() => order.push("u" + d));
+                  parentPort.postMessage(d);
+                  if (++n === ${"${N}"}) {
+                    queueMicrotask(() => parentPort.postMessage({ done: order }));
+                  }
+                });
+              \`,
+              { eval: true },
+            );
+            let echoed = 0;
+            w.on("message", v => {
+              if (typeof v === "object" && v.done) {
+                // Worker-side ordering: m0,u0,m1,u1,...
                 for (let i = 0; i < N; i++) {
-                  if (order[2*i] !== "m"+i || order[2*i+1] !== "u"+i) {
-                    console.error("parent order wrong at", i, order.slice(2*i, 2*i+4));
+                  if (v.done[2*i] !== "m"+i || v.done[2*i+1] !== "u"+i) {
+                    console.error("worker order wrong at", i, v.done.slice(2*i, 2*i+4));
                     process.exit(1);
                   }
                 }
-              });
-            }
-          });
-          await new Promise(r => w.once("online", r));
-          for (let i = 0; i < N; i++) w.postMessage(i);
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
-  });
-
-  test("messages sent before worker online are delivered once it starts", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const { Worker } = require("node:worker_threads");
-        const w = new Worker(
-          \`
-            const { parentPort } = require("node:worker_threads");
-            const got = [];
-            parentPort.on("message", d => {
-              got.push(d);
-              if (got.length === 5) parentPort.postMessage(got);
+                if (echoed !== N) { console.error("echoed", echoed, "expected", N); process.exit(1); }
+                console.log("OK");
+                w.terminate();
+                return;
+              }
+              order.push("m" + v);
+              queueMicrotask(() => order.push("u" + v));
+              if (v !== echoed) { console.error("parent out of order", v, echoed); process.exit(1); }
+              echoed++;
+              if (echoed === N) {
+                queueMicrotask(() => {
+                  for (let i = 0; i < N; i++) {
+                    if (order[2*i] !== "m"+i || order[2*i+1] !== "u"+i) {
+                      console.error("parent order wrong at", i, order.slice(2*i, 2*i+4));
+                      process.exit(1);
+                    }
+                  }
+                });
+              }
             });
-          \`,
-          { eval: true },
-        );
-        // Post before the worker can possibly be online.
-        for (let i = 0; i < 5; i++) w.postMessage(i);
-        w.on("message", got => {
-          if (JSON.stringify(got) !== JSON.stringify([0,1,2,3,4])) {
-            console.error("wrong", got);
-            process.exit(1);
-          }
-          console.log("OK");
-          w.terminate();
-        });
-      `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
-  });
+            await new Promise(r => w.once("online", r));
+            for (let i = 0; i < N; i++) w.postMessage(i);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("OK");
+      expect(exitCode).toBe(0);
+    },
+    workerTimeout,
+  );
+
+  test.concurrent(
+    "messages sent before worker online are delivered once it starts",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker } = require("node:worker_threads");
+            const w = new Worker(
+              \`
+                const { parentPort } = require("node:worker_threads");
+                const got = [];
+                parentPort.on("message", d => {
+                  got.push(d);
+                  if (got.length === 5) parentPort.postMessage(got);
+                });
+              \`,
+              { eval: true },
+            );
+            // Post before the worker can possibly be online.
+            for (let i = 0; i < 5; i++) w.postMessage(i);
+            w.on("message", got => {
+              if (JSON.stringify(got) !== JSON.stringify([0,1,2,3,4])) {
+                console.error("wrong", got);
+                process.exit(1);
+              }
+              console.log("OK");
+              w.terminate();
+            });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("OK");
+      expect(exitCode).toBe(0);
+    },
+    workerTimeout,
+  );
 });

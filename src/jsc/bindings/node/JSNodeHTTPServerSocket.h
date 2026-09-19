@@ -115,8 +115,7 @@ public:
      * body deliver it through the request first, like Node 26). */
     void upgradeToTunnelMode(bool afterBody = false);
 
-    /* Tunnel read flow control (Node's handle.readStop/readStart). No-ops
-     * while the HTTP parser still owns the connection's read state. */
+    /* Tunnel read flow control, like Node's handle.readStop/readStart. */
     bool isTunnel() const;
     void readStop();
     void readStart();

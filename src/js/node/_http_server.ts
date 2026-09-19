@@ -162,26 +162,30 @@ function onServerResponseClose() {
   }
 }
 
-function strictContentLength(response) {
-  if (response.strictContentLength) {
-    let contentLength = response._contentLength ?? response.getHeader("content-length");
-    if (
-      contentLength &&
-      response._hasBody &&
-      !response._removedContLen &&
-      !response.chunkedEncoding &&
-      !response.hasHeader("transfer-encoding")
-    ) {
-      if (typeof contentLength === "number") {
-        return contentLength;
-      } else if (typeof contentLength === "string") {
-        contentLength = parseInt(contentLength, 10);
-        if (NumberIsNaN(contentLength)) {
-          return;
-        }
-        return contentLength;
+// Node's strictContentLength(msg) in lib/_http_outgoing.js reads msg._contentLength, which
+// _storeHeader copies from the Content-Length header with `+value`. Headers render lazily
+// here, so the header stands in. `headerState` is the state before this call's implicit
+// header: Node's write_() checks before _implicitHeader(), so a write() that first renders
+// the headers is counted but not checked. end() assigns _contentLength before the implicit
+// header and checks again after _storeHeader, so it is always checked against the header.
+function strictContentLength(response, headerState, fromEnd) {
+  if (!response.strictContentLength) return;
+  if (!fromEnd && headerState === NodeHTTPHeaderState.none) return;
+  let contentLength = response._contentLength ?? response.getHeader("content-length");
+  if (
+    contentLength != null &&
+    response._hasBody &&
+    !response._removedContLen &&
+    !response.chunkedEncoding &&
+    !response.hasHeader("transfer-encoding")
+  ) {
+    if (typeof contentLength !== "number") {
+      contentLength = +contentLength;
+      if (NumberIsNaN(contentLength)) {
+        return;
       }
     }
+    return contentLength;
   }
 }
 
@@ -3206,7 +3210,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
           renderedHeaders,
           chunk,
           encoding,
-          strictContentLength(this),
+          strictContentLength(this, headerState, true),
           renderedAutoHeaders,
           renderedKeepAliveSecs,
         );
@@ -3237,7 +3241,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // (no native call in between can change it), so reuse its bits instead of
     // paying two more native getter crossings.
     if (!(!chunk && flags & NodeHTTPResponseFlags.ended) && !(flags & NodeHTTPResponseFlags.socket_closed)) {
-      handle.end(chunk, encoding, undefined, strictContentLength(this));
+      handle.end(chunk, encoding, undefined, strictContentLength(this, headerState, true));
     }
   }
   this._header = " ";
@@ -3363,6 +3367,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     return true;
   }
 
+  const strict = strictContentLength(this, headerState, false);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
@@ -3383,10 +3388,10 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       // If handle.writeHead throws, we don't want headersSent to be set to true.
       // So we set it here.
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
+      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strict);
     });
   } else {
-    result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
+    result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strict);
   }
 
   if (result < 0) {
@@ -3547,6 +3552,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
 
+  const strict = strictContentLength(this, this[headerStateSymbol], false);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
       const renderedHeaders = renderNativeHeaders(this);
@@ -3564,10 +3570,10 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
         releaseRenderedHeaders(renderedHeaders);
       }
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      handle.write(data, encoding, callback, strictContentLength(this));
+      handle.write(data, encoding, callback, strict);
     });
   } else {
-    handle.write(data, encoding, callback, strictContentLength(this));
+    handle.write(data, encoding, callback, strict);
   }
 };
 

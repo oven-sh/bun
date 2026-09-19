@@ -2404,20 +2404,15 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
      * while it is pending nothing new may be written for this socket. */
     unsigned int spill_off_before = loop_ssl_data ? loop_ssl_data->ssl_spill_off : 0;
     if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
-      /* A writable event that moves zero spill bytes after the peer's
-       * readable side has already ended can mean the peer is gone (send()
-       * hit EPIPE/ECONNRESET, folded to 0 by us_socket_raw_write) and
-       * this spill will never drain. Returning here would spin the
-       * re-armed writable poll where the loop does not close the socket
-       * itself (kqueue: a paused socket whose write-filter EV_EOF carries
-       * no error). Mark the SSL fatal so us_internal_ssl_write returns 0 (the
-       * uWS layer's flushed==0-after-FIN guard, or hasFullyDrained() when
+      /* Zero spill progress on a writable event after the peer's read side
+       * ended: if the kernel confirms the peer is gone, this spill will never
+       * drain and returning would spin the re-armed writable poll. The stall
+       * alone proves nothing (ENOBUFS/EAGAIN on a peer that half-closed and
+       * still reads). Mark the SSL fatal so us_internal_ssl_write returns 0
+       * (the uWS layer's flushed==0-after-FIN guard, or hasFullyDrained() when
        * nothing is buffered, then closes the connection on this dispatch)
        * and dispatch directly, bypassing the is_shut_down gate below that
-       * ssl_fatal_error would otherwise trip. Zero progress does not prove
-       * death (ENOBUFS/EAGAIN on a peer that half-closed and still reads;
-       * on libuv a stale SEND completion), so confirm with the kernel
-       * before declaring the spill undrainable. */
+       * ssl_fatal_error would otherwise trip. */
       if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before &&
           us_socket_stalled_write_means_peer_gone(s)) {
         ssl_release_spill(s->group->loop, s);

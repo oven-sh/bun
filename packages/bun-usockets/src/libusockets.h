@@ -727,12 +727,9 @@ unsigned int us_get_remote_address_info(char *buf, us_socket_r s, const char **d
 unsigned int us_get_local_address_info(char *buf, us_socket_r s, const char **dest, int *port, int *is_ipv6);
 int us_socket_get_error(us_socket_r s);
 /* A writable event's write made zero progress: is the peer gone? The stall
- * alone does not say. us_socket_write folds every send() error to 0, so it is
- * EPIPE/ECONNRESET from a dead peer, or ENOBUFS/ENOMEM/EAGAIN on a healthy
- * socket, or (libuv) a writable completion for space the same loop iteration
- * already refilled. So this asks the kernel with a zero-byte send, which
- * fails with EPIPE/ECONNRESET only when the write side is down. libuv reads
- * SO_ERROR first. */
+ * alone does not say: us_socket_write folds every send() error to 0, so
+ * ENOBUFS/EAGAIN on a healthy socket looks the same, and on libuv so does a
+ * stale SEND completion. This asks the kernel. */
 int us_socket_stalled_write_means_peer_gone(us_socket_r s);
 
 void us_socket_ref(us_socket_r s);

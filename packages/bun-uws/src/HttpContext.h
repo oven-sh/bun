@@ -796,11 +796,9 @@ private:
             /* Check if there's still data waiting to be sent after flush attempt */
             if (asyncSocket->getBufferedAmount() > 0) {
                 /* onEnd deferred close for these bytes. A writable event that
-                 * moves nothing is EPIPE when the peer is gone, and this would
-                 * otherwise spin the writable dispatch (resetTimeout below keeps
-                 * the idle timeout away). It is also what ENOBUFS/EAGAIN look
-                 * like on a half-closed client that still reads, so the kernel
-                 * is asked which one it is. */
+                 * moves nothing is EPIPE when the peer is gone (this would then
+                 * spin the writable dispatch), or ENOBUFS/EAGAIN on a half-closed
+                 * client that still reads, so the kernel is asked which. */
                 if (flushed == 0
                     && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
                     && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
@@ -839,9 +837,8 @@ private:
             if constexpr (!IsNodeHttp) {
                 /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,
                  * nothing in AsyncSocketData::buffer). A retry that moves zero bytes
-                 * after the peer's FIN is EPIPE when the peer is gone; close instead
-                 * of spinning. It is also what ENOBUFS/EAGAIN look like on a healthy
-                 * socket, so the kernel is asked. */
+                 * after the peer's FIN is EPIPE when the peer is gone (close instead
+                 * of spinning), or ENOBUFS/EAGAIN on a healthy socket: ask the kernel. */
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
                     && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
                     && httpResponseData->offset == offsetBefore

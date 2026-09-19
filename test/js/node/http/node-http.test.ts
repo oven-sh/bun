@@ -4531,13 +4531,17 @@ describe("a pipelined request whose body continues after the previous response e
     const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
     client.setNoDelay(true);
     let out = "";
+    const { promise: closed, reject: rejectClosed } = Promise.withResolvers<never>();
+    closed.catch(() => {});
     client.on("data", d => (out += d));
+    client.on("error", rejectClosed);
+    client.on("close", () => rejectClosed(new Error("closed before expected output: " + out)));
     await once(client, "connect");
     try {
       for (const { write, waitFor } of steps) {
         client.write(write);
         while (!out.includes(waitFor)) {
-          await once(client, "data");
+          await Promise.race([once(client, "data"), closed]);
         }
       }
       return out.match(/\/\w+=\d+;/g);

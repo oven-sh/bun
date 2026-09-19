@@ -2226,10 +2226,9 @@ impl NodeHTTPResponse {
             if !this_value.is_empty() {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             }
-            let flags = self.flags.get();
-            if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
-                self.release_body_slot();
-            }
+            // The uws slot is not touched here: `mark_request_as_done` runs on a
+            // live connection only once this body is complete, so the slot is
+            // already null or belongs to a pipelined request behind this one.
             if self.body_read_state.get() != BodyReadState::Done {
                 self.body_read_state.set(BodyReadState::Done);
             }

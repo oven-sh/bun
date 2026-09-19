@@ -1928,3 +1928,195 @@ describe("stream release after a queued END_STREAM", () => {
     }
   });
 });
+
+// maxSendHeaderBlockLength caps the header blocks this side sends. nghttp2 fails an oversized
+// HEADERS submission with NGHTTP2_ERR_FRAME_SIZE_ERROR, and node's onFrameError emits
+// 'frameError', closes the stream with that code and closes the session gracefully. A server has to
+// put the reset on the wire: the peer opened the stream and waits on it. A client's request never
+// left, so nghttp2 closes it locally with REFUSED_STREAM.
+describe("a header block over maxSendHeaderBlockLength (node's onFrameError)", () => {
+  const LIMIT = 200;
+  const OVER_LIMIT = Buffer.alloc(1000, "b").toString();
+
+  function requestFor(path: string): Buffer {
+    // :method GET, :scheme http, :path <literal>, :authority localhost
+    return Buffer.concat([
+      Buffer.from([0x82, 0x86, 0x04]),
+      hpackLiteral(path),
+      Buffer.from([0x01]),
+      hpackLiteral("localhost"),
+    ]);
+  }
+
+  // What a handler runs on the stream whose block is over the limit: the call that fails, then
+  // the calls that normally follow it in the same tick. None of them may reach the wire. (node
+  // resets the stream one setImmediate later, so it still sends a respond() that follows a failed
+  // additionalHeaders() in the same tick, and resets the stream if respond() comes later.)
+  const answers: Record<string, (server: http2.Http2Server) => void> = {
+    "respond() then end()": server =>
+      server.on("stream", (stream, headers) => {
+        if (headers[":path"] !== "/over") return;
+        stream.respond({ ":status": 200, "x-big": OVER_LIMIT });
+        stream.end("body");
+      }),
+    "respond() with waitForTrailers, then end() and sendTrailers()": server =>
+      server.on("stream", (stream, headers) => {
+        if (headers[":path"] !== "/over") return;
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "t" }));
+        stream.respond({ ":status": 200, "x-big": OVER_LIMIT }, { waitForTrailers: true });
+        stream.end("body");
+      }),
+    "additionalHeaders() then respond() and end()": server =>
+      server.on("stream", (stream, headers) => {
+        if (headers[":path"] !== "/over") return;
+        stream.additionalHeaders({ ":status": 103, "x-big": OVER_LIMIT });
+        stream.respond({ ":status": 200 });
+        stream.end("body");
+      }),
+    "Http2ServerResponse setHeader() then end()": server =>
+      server.on("request", (req, res) => {
+        if (req.url !== "/over") return;
+        res.setHeader("x-big", OVER_LIMIT);
+        res.end("body");
+      }),
+  };
+
+  test.each(Object.keys(answers))(
+    "server %s: the stream is reset with FRAME_SIZE_ERROR and the session closes gracefully",
+    async name => {
+      const server = http2.createServer({ maxSendHeaderBlockLength: LIMIT });
+      const events: unknown[][] = [];
+      const overClosed = Promise.withResolvers<void>();
+      let inFlight!: http2.ServerHttp2Stream;
+      server.on("stream", (stream, headers) => {
+        if (headers[":path"] === "/in-flight") {
+          inFlight = stream;
+          stream.respond({ ":status": 200 });
+          return;
+        }
+        stream.on("frameError", (type, code) => events.push(["frameError", type, code]));
+        stream.on("error", err => events.push(["error", (err as NodeJS.ErrnoException).code, err.message]));
+        stream.on("close", () => {
+          events.push(["close", stream.rstCode]);
+          overClosed.resolve();
+        });
+      });
+      answers[name](server);
+      server.listen(0);
+      await once(server, "listening");
+      const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+        c.sendSettingsAck();
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestFor("/in-flight"));
+        await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+
+        // Frames are answered in order, so once the PING is acknowledged everything the handler
+        // wrote for stream 3 has arrived. One write, so that the server reads both frames at once.
+        c.send(
+          Buffer.concat([
+            encodeFrame(FrameType.HEADERS, 0x5, 3, requestFor("/over")),
+            encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+          ]),
+        );
+        await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1);
+        const onStream3 = () =>
+          c.frames
+            .filter(f => f.streamId === 3)
+            .map(f => (f.type === FrameType.RST_STREAM ? ["RST_STREAM", f.payload.readUInt32BE(0)] : [f.type]));
+        expect(onStream3()).toEqual([["RST_STREAM", ErrorCode.FRAME_SIZE_ERROR]]);
+
+        const goaway = await c.waitForGoaway();
+        expect({ code: goawayErrorCode(goaway), lastStreamId: goaway.payload.readUInt32BE(0) & 0x7fffffff }).toEqual({
+          code: ErrorCode.NO_ERROR,
+          lastStreamId: 3,
+        });
+        await overClosed.promise;
+        expect(events).toEqual([
+          ["frameError", FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR],
+          ["error", "ERR_HTTP2_STREAM_ERROR", "Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR"],
+          ["close", ErrorCode.FRAME_SIZE_ERROR],
+        ]);
+
+        // Graceful: the stream that was already open still delivers its body, then the
+        // connection ends.
+        inFlight.end("still delivered");
+        await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) === 1);
+        await c.waitClosed();
+        expect({
+          inFlightBody: Buffer.concat(
+            c.frames.filter(f => f.type === FrameType.DATA && f.streamId === 1).map(f => f.payload),
+          ).toString(),
+          onStream3: onStream3(),
+        }).toEqual({
+          inFlightBody: "still delivered",
+          onStream3: [["RST_STREAM", ErrorCode.FRAME_SIZE_ERROR]],
+        });
+      } finally {
+        c.destroy();
+        server.close();
+      }
+    },
+  );
+
+  test("client request(): the stream fails locally with REFUSED_STREAM and the session closes gracefully", async () => {
+    const server = http2.createServer();
+    const paths: string[] = [];
+    const serverGoaway = Promise.withResolvers<number>();
+    let inFlight!: http2.ServerHttp2Stream;
+    server.on("session", session => session.on("goaway", code => serverGoaway.resolve(code)));
+    server.on("stream", (stream, headers) => {
+      paths.push(headers[":path"] as string);
+      inFlight = stream;
+      stream.respond({ ":status": 200 });
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`, {
+      maxSendHeaderBlockLength: LIMIT,
+    });
+    // events.once() would reject on the 'error' the refused stream is expected to emit.
+    const closed = (emitter: http2.ClientHttp2Session | http2.ClientHttp2Stream) =>
+      new Promise<void>(resolve => emitter.once("close", () => resolve()));
+    try {
+      const sessionClosed = closed(client);
+      const events: unknown[][] = [];
+      client.on("error", err => events.push(["session error", (err as NodeJS.ErrnoException).code]));
+      const first = client.request({ ":path": "/in-flight" });
+      let body = "";
+      first.setEncoding("utf8");
+      first.on("data", chunk => (body += chunk));
+      first.on("error", err => events.push(["in-flight error", (err as NodeJS.ErrnoException).code]));
+      const firstClosed = closed(first);
+      await once(first, "response");
+
+      const over = client.request({ ":path": "/over", "x-big": OVER_LIMIT });
+      over.on("frameError", (type, code) => events.push(["frameError", type, code]));
+      over.on("error", err => events.push(["error", (err as NodeJS.ErrnoException).code, err.message]));
+      await closed(over);
+
+      // node closes the session one setImmediate after the frame error; a round trip is later.
+      await new Promise<void>((resolve, reject) => client.ping(err => (err ? reject(err) : resolve())));
+      expect({ closed: client.closed, destroyed: client.destroyed }).toEqual({ closed: true, destroyed: false });
+      expect(await serverGoaway.promise).toBe(ErrorCode.NO_ERROR);
+
+      // Graceful: the request that was already open still gets its body, then the session ends.
+      inFlight.end("still delivered");
+      await firstClosed;
+      await sessionClosed;
+      expect({ events, body, paths }).toEqual({
+        events: [
+          ["frameError", FrameType.HEADERS, ErrorCode.FRAME_SIZE_ERROR],
+          ["error", "ERR_HTTP2_STREAM_ERROR", "Stream closed with error code NGHTTP2_REFUSED_STREAM"],
+        ],
+        body: "still delivered",
+        paths: ["/in-flight"],
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});

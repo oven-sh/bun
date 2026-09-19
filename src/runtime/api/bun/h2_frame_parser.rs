@@ -5386,6 +5386,10 @@ impl H2FrameParser {
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
+        // JS hears of a native close (a reset) one tick later. Until then it can still call in.
+        if stream.state == StreamState::CLOSED {
+            return Ok(JSValue::UNDEFINED);
+        }
 
         stream.wait_for_trailers = false;
         let _ = this.send_data(
@@ -5554,6 +5558,10 @@ impl H2FrameParser {
         // The header/sensitive-object getters and value coercions below can run user JS
         // while `stream` is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
+        // JS hears of a native close (a reset) one tick later. Until then it can still call in.
+        if stream.state == StreamState::CLOSED {
+            return Ok(JSValue::UNDEFINED);
+        }
 
         let Some(headers_obj) = headers_arg.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
@@ -6495,6 +6503,18 @@ impl H2FrameParser {
         if stream_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
         }
+        // JS hears of a native close (a reset) one tick later. Until then a server can still call
+        // respond() or additionalHeaders() on the stream. Checked before the header walk so that
+        // the block never reaches the HPACK encoder, whose table the peer mirrors from the blocks
+        // it receives. A client only gets here with the id of a new stream.
+        if this.is_server.get() {
+            if let Some(existing) = this.streams.get().get(&stream_id).copied() {
+                // SAFETY: `existing` is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
+                if unsafe { (*existing).state } == StreamState::CLOSED {
+                    return Ok(JSValue::js_number(stream_id as f64));
+                }
+            }
+        }
 
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
@@ -7083,21 +7103,33 @@ impl H2FrameParser {
         if this.max_send_header_block_length.get() != 0
             && encoded_size > this.max_send_header_block_length.get() as usize
         {
-            stream.state = StreamState::CLOSED;
-            stream.rst_code = ErrorCode::REFUSED_STREAM.0;
-
+            let identifier = stream.get_identifier();
+            identifier.ensure_still_alive();
             this.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onFrameError,
-                stream.get_identifier(),
+                identifier,
                 JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                 JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
             );
 
-            this.dispatch_with_extra(
-                JSH2FrameParser::Gc::onStreamError,
-                stream.get_identifier(),
-                JSValue::js_number(stream.rst_code as f64),
-            );
+            if this.is_server.get() {
+                // The peer opened this stream (or was promised it) and waits for a response:
+                // node resets it with the frame error's code.
+                this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
+            } else {
+                // The request never reached the wire, so there is nothing to reset. nghttp2
+                // closes it locally with REFUSED_STREAM so the application can retry. The entry
+                // stays in the map: JS calls rst_stream() for it from _destroy, and for an id
+                // the map does not have, rst_stream() writes the frame. The peer has never seen
+                // this id, so that RST_STREAM would be a connection error.
+                stream.state = StreamState::CLOSED;
+                stream.rst_code = ErrorCode::REFUSED_STREAM.0;
+                this.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onStreamError,
+                    identifier,
+                    JSValue::js_number(stream.rst_code as f64),
+                );
+            }
             return Ok(JSValue::js_number(stream_id as f64));
         }
 

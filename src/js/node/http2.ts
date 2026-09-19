@@ -3693,6 +3693,11 @@ function scheduleDestroyIfNotDestroyed(target) {
     setImmediate(destroyIfNotDestroyedNT, target);
   }
 }
+// node's onFrameError: a frame that could not be sent also ends its session, gracefully and one
+// setImmediate later. The native side has already closed the stream by then.
+function closeSessionAfterFrameError(session) {
+  session.close();
+}
 function rejectNoPayloadContentLengthNT(req) {
   req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
@@ -4018,6 +4023,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       // Emit the frameError event with the frame type and error code
       process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+      setImmediate(closeSessionAfterFrameError, self);
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
@@ -5017,6 +5023,7 @@ class ClientHttp2Session extends Http2Session {
         if (!self || typeof stream !== "object") return;
         // Emit the frameError event with the frame type and error code
         process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+        setImmediate(closeSessionAfterFrameError, self);
       },
     ),
     aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {

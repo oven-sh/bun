@@ -5,6 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http from "node:http";
@@ -604,64 +605,77 @@ describe("backpressure", () => {
       return promise;
     }
 
+    // The usual pump: write until write() returns false, go on at 'drain'.
+    // `callback(end)` makes the callback of the chunk that ends at body offset
+    // `end`. `afterWrite` runs right after each write().
+    type Progress = { written: number; finished: boolean };
+    async function pump(
+      res: http.ServerResponse,
+      progress: Progress,
+      callback: (end: number) => (err?: Error | null) => void,
+      afterWrite = () => {},
+    ) {
+      res.setHeader("Content-Length", TOTAL);
+      while (progress.written < TOTAL) {
+        const ok = res.write(CHUNK, callback((progress.written += CHUNK.length)));
+        afterWrite();
+        if (!ok) await once(res, "drain");
+      }
+      res.end();
+      progress.finished = true;
+    }
+
+    // The client reads nothing. The pump goes on until the socket stops
+    // taking bytes, or to the end of the body if nothing stops it. Resolves
+    // with true if the pump now waits for the socket.
+    async function untilStalled(connection: Connection, progress: Progress) {
+      let before: number;
+      do {
+        before = progress.written;
+        await connection.turn();
+      } while (!progress.finished && progress.written !== before);
+      return !progress.finished;
+    }
+
     describe.each(Object.keys(entryPoints))("%s", name => {
       it("write() reports the socket's backpressure, and 'drain' and the write() callbacks wait for the socket", async () => {
-        const seen = { written: 0, callbacks: 0, drainsOverBacklog: 0, callbacksBeforeFlush: 0 };
+        const progress = { written: 0, finished: false };
+        const seen = { callbacks: 0, drainsOverBacklog: 0, callbacksBeforeFlush: 0 };
         let maxBacklog = 0;
-        let finished = false;
         const arrived = Promise.withResolvers<http.ServerResponse>();
         const handled = Promise.withResolvers<void>();
-        // The usual pump: write until write() returns false, go on at 'drain'.
-        async function writeBody(req: http.IncomingMessage, res: http.ServerResponse) {
+        const connection = await entryPoints[name]((req, res) => {
           const socket = req.socket;
-          res.setHeader("Content-Length", TOTAL);
           res.on("drain", () => {
             if (socket.writableLength > 0) seen.drainsOverBacklog++;
           });
-          while (seen.written < TOTAL) {
-            const end = (seen.written += CHUNK.length);
-            const ok = res.write(CHUNK, () => {
+          pump(
+            res,
+            progress,
+            end => () => {
               seen.callbacks++;
               // The socket may hold what was written after this chunk, and nothing more.
-              if (socket.writableLength > seen.written - end) seen.callbacksBeforeFlush++;
-            });
-            maxBacklog = Math.max(maxBacklog, socket.writableLength);
-            if (!ok) await once(res, "drain");
-          }
-          res.end();
-          finished = true;
-        }
-        const connection = await entryPoints[name]((req, res) => {
+              if (socket.writableLength > progress.written - end) seen.callbacksBeforeFlush++;
+            },
+            () => (maxBacklog = Math.max(maxBacklog, socket.writableLength)),
+          ).then(handled.resolve, handled.reject);
           arrived.resolve(res);
-          writeBody(req, res).then(handled.resolve, handled.reject);
         });
         const client = await connection.connect();
         try {
           client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
           const res = await arrived.promise;
-          // The client reads nothing. The handler goes on until the socket
-          // stops taking bytes, or to the end of the body if nothing stops it.
-          let before: number;
-          do {
-            before = seen.written;
-            await connection.turn();
-          } while (!finished && seen.written !== before);
-          if (!finished) {
+          if (await untilStalled(connection, progress)) {
             // The handler waits for 'drain', and the last chunk's callback with it.
             expect({
               needDrain: res.writableNeedDrain,
-              waitingCallbacks: seen.written / CHUNK.length - seen.callbacks,
+              waitingCallbacks: progress.written / CHUNK.length - seen.callbacks,
             }).toEqual({ needDrain: true, waitingCallbacks: 1 });
           }
 
           expect(await readBody(client)).toBe(TOTAL);
           await handled.promise;
-          expect(seen).toEqual({
-            written: TOTAL,
-            callbacks: TOTAL / CHUNK.length,
-            drainsOverBacklog: 0,
-            callbacksBeforeFlush: 0,
-          });
+          expect(seen).toEqual({ callbacks: TOTAL / CHUNK.length, drainsOverBacklog: 0, callbacksBeforeFlush: 0 });
           // The handler waited at every false: the socket never held more than the head and one chunk.
           expect(maxBacklog).toBeLessThan(2 * CHUNK.length);
         } finally {
@@ -669,6 +683,79 @@ describe("backpressure", () => {
           connection.close();
         }
       });
+    });
+
+    // These two need a socket whose writes Node completes through an async
+    // resource of the write (a duplexPair() side completes them from the
+    // reader's side), and a kernel that stops taking bytes.
+    const netSocket = entryPoints["server.emit('connection', socket) with a net.Socket"];
+
+    it("a write() callback and a 'drain' listener that waited for the socket run in the async context of the write", async () => {
+      const storage = new AsyncLocalStorage<string>();
+      const progress = { written: 0, finished: false };
+      const stores = { callbacks: new Set<string | undefined>(), drains: new Set<string | undefined>() };
+      const arrived = Promise.withResolvers<void>();
+      const handled = Promise.withResolvers<void>();
+      // The server listens in a context of its own, so a callback that runs in
+      // the context of the socket's events shows up as "listen".
+      const connection = await storage.run("listen", netSocket, (req, res) =>
+        storage.run("request", () => {
+          res.on("drain", () => stores.drains.add(storage.getStore()));
+          pump(res, progress, () => () => stores.callbacks.add(storage.getStore())).then(
+            handled.resolve,
+            handled.reject,
+          );
+          arrived.resolve();
+        }),
+      );
+      const client = await connection.connect();
+      try {
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await arrived.promise;
+        await untilStalled(connection, progress);
+        expect(await readBody(client)).toBe(TOTAL);
+        await handled.promise;
+        expect({ callbacks: [...stores.callbacks], drains: [...stores.drains] }).toEqual({
+          callbacks: ["request"],
+          drains: ["request"],
+        });
+      } finally {
+        client.destroy();
+        connection.close();
+      }
+    });
+
+    it("the write() callbacks that wait for the socket fail when the connection dies, before 'close'", async () => {
+      const progress = { written: 0, finished: false };
+      const events: string[] = [];
+      const callback = () => (err?: Error | null) => events.push(err ? "write callback error" : "write callback");
+      const arrived = Promise.withResolvers<http.ServerResponse>();
+      const closed = Promise.withResolvers<void>();
+      const connection = await netSocket((req, res) => {
+        res.on("close", () => {
+          events.push("close");
+          closed.resolve();
+        });
+        // The pump never finishes: its last 'drain' does not come.
+        pump(res, progress, callback);
+        arrived.resolve(res);
+      });
+      const client = await connection.connect();
+      try {
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        const res = await arrived.promise;
+        if (await untilStalled(connection, progress)) {
+          // One write waits in the socket. Put a second one behind it.
+          events.length = 0;
+          res.write(CHUNK, callback());
+          client.destroy();
+          await closed.promise;
+          expect(events).toEqual(["write callback error", "write callback error", "close"]);
+        }
+      } finally {
+        client.destroy();
+        connection.close();
+      }
     });
 
     // The remaining cases use the duplexPair() side: it takes less than one
@@ -727,6 +814,35 @@ describe("backpressure", () => {
         client.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
         expect(await needDrain.promise).toBe(false);
         expect(await readBody(client, 2)).toBe(2 * TOTAL);
+      } finally {
+        client.destroy();
+      }
+    });
+
+    // Node discards a write() to a response without a body and answers true.
+    // Nothing reaches the socket, so its backlog is not this write's concern.
+    it("a write() to a HEAD response does not wait for a socket that still holds the previous body", async () => {
+      const firstEnded = Promise.withResolvers<void>();
+      const wrote = Promise.withResolvers<boolean>();
+      let called = false;
+      const connection = await pair((req, res) => {
+        if (req.method === "HEAD") {
+          wrote.resolve(res.write("discarded", () => (called = true)));
+          res.end();
+        } else {
+          res.end(Buffer.alloc(TOTAL, "a"));
+          firstEnded.resolve();
+        }
+      });
+      const client = await connection.connect();
+      try {
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await firstEnded.promise;
+        await connection.turn();
+        client.write("HEAD / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        const returned = await wrote.promise;
+        await connection.turn();
+        expect({ returned, called }).toEqual({ returned: true, called: true });
       } finally {
         client.destroy();
       }

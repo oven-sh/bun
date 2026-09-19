@@ -1,11 +1,30 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES } = require("internal/http");
+const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
+const AsyncContextFrame = require("internal/async_context_frame");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
+
+function rethrowUncaught(err) {
+  throw err;
+}
+
+// Node fails the write callbacks that a destroyed socket still holds before it emits 'close' (Writable's errorBuffer).
+function failPendingWriteCallbacks(res, err) {
+  const callbacks = res[kPendingCallbacks];
+  res[kPendingCallbacks] = [];
+  for (let i = 0; i < callbacks.length; i++) {
+    try {
+      callbacks[i](err);
+    } catch (e) {
+      // An uncaught exception, as in Node. It must not cut the socket's 'close' listeners short.
+      process.nextTick(rethrowUncaught, e);
+    }
+  }
+}
 
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
@@ -14,6 +33,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   let chunked = false;
   let noBody = false;
   let closeDelimited = false;
+  // The callback of a write() that reported backpressure, until the socket's 'drain', and the async context of
+  // that write. Native's onwritable slot keeps both the same way.
+  let onwritable = null;
+  let onwritableFrame;
 
   function writeHeadToSocket(contentLength) {
     if (headWritten) return;
@@ -146,6 +169,14 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     return length;
   }
 
+  // Runs `fn` once in the place of the waiting callback, in that callback's async context.
+  function settleWaiting(fn) {
+    const frame = onwritableFrame;
+    onwritable = null;
+    onwritableFrame = undefined;
+    AsyncContextFrame.run(frame, fn);
+  }
+
   const handle = {
     flags: 0,
     ended: false,
@@ -153,12 +184,25 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     aborted: false,
     shouldKeepAlive,
     onfinished: null,
-    // The callback of a write() that reported backpressure, until the socket's 'drain' (native's slot of the same name).
-    onwritable: null,
+    get onwritable() {
+      return onwritable;
+    },
+    set onwritable(callback) {
+      onwritable = callback;
+      onwritableFrame = callback ? AsyncContextFrame.current() : undefined;
+    },
     // ServerResponse#writableNeedDrain reads a non-zero value as "a 'drain' will come". The socket's bytes count only
     // while this response waits for one: a socket below its high water mark emits no 'drain'.
     get bufferedAmount() {
-      return this.onwritable ? socket.writableLength : 0;
+      return onwritable ? socket.writableLength : 0;
+    },
+    // Native on_drain: the socket drained, so the waiting callback runs.
+    socketDrained() {
+      if (onwritable) settleWaiting(onwritable);
+    },
+    // The socket closed before it drained: `fail` runs, and the waiting callback never does.
+    socketClosed(fail) {
+      if (onwritable) settleWaiting(fail);
     },
     cork(callback) {
       return callback();
@@ -204,8 +248,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       const buf = toBuffer(chunk, encoding);
       writeHeadToSocket(null);
       const length = writeBody(buf);
-      // Node's rule: write() reports backpressure when the socket's own write() returned false.
-      if (!socket.writableNeedDrain) return length;
+      // Node's rule: write() reports backpressure when the socket's own write() returned false. A chunk that
+      // ServerResponse discarded (HEAD, 204, 304) never reaches the socket.
+      if (buf === null || !socket.writableNeedDrain) return length;
       // Like native write_or_end: a negative result, and the callback waits for the drain. A write without a
       // callback (_send) keeps the one that already waits. An empty write has no length to negate.
       if (callback) this.onwritable = callback;
@@ -494,12 +539,7 @@ function connectionListenerHTTP1(server, socket, options) {
   // the response whose write() reported backpressure emits 'drain'.
   function onHttp1SocketDrain() {
     resumeFallbackReadsOnDrain(socket);
-    const handle = socket._httpMessage?.[kHttp1ResponseHandle];
-    const onwritable = handle?.onwritable;
-    if (onwritable) {
-      handle.onwritable = null;
-      onwritable();
-    }
+    socket._httpMessage?.[kHttp1ResponseHandle]?.socketDrained();
   }
   socket.on("data", onHttp1SocketData);
   socket.on("error", onHttp1SocketErrorListener);
@@ -507,12 +547,17 @@ function connectionListenerHTTP1(server, socket, options) {
   socket.on("drain", onHttp1SocketDrain);
   socket.once("close", () => {
     connections.delete(socket);
+    const inflight = socket._httpMessage;
+    // The write callbacks that wait for a 'drain' fail now, before the response's 'close', as in Node.
+    inflight?.[kHttp1ResponseHandle]?.socketClosed(() =>
+      failPendingWriteCallbacks(inflight, socket.errored ?? inflight.errored ?? $ERR_STREAM_DESTROYED("write")),
+    );
     // Like the native socket's close path (Node's socketOnClose ->
     // abortIncoming): abort the in-flight request, then the responses (and
     // requests) still queued behind it, so they all emit 'close'. The
     // in-flight response's own 'close' comes from onServerResponseClose,
     // installed by assignSocket.
-    const inflightReq = socket._httpMessage?.req;
+    const inflightReq = inflight?.req;
     if (inflightReq && !inflightReq.destroyed) {
       if (inflightReq.listenerCount("error") > 0) {
         inflightReq.destroy(new ConnResetException("aborted"));

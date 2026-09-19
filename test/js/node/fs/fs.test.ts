@@ -310,16 +310,35 @@ it("fs.writev returns object", async done => {
 });
 
 describe("FileHandle", () => {
-  it("FileHandle#read returns object", async () => {
+  // Node builds these results as `{ __proto__: null, bytesRead | bytesWritten, buffer | buffers }`
+  // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1350-L1426),
+  // so both the prototype and the key order are observable.
+  function expectNodeResultShape(result: object, expected: Record<string, unknown>) {
+    expect(Object.getPrototypeOf(result)).toBeNull();
+    expect(Object.keys(result)).toEqual(Object.keys(expected));
+    expect(result).toEqual(expected);
+  }
+
+  it("FileHandle#read returns a null-prototype { bytesRead, buffer }", async () => {
     await using fd = await fs.promises.open(__filename);
     const buf = Buffer.alloc(10);
-    expect(await fd.read(buf, 0, 10, 0)).toEqual({ bytesRead: 10, buffer: buf });
+    expectNodeResultShape(await fd.read(buf, 0, 10, 0), { bytesRead: 10, buffer: buf });
+    expectNodeResultShape(await fd.read(buf, { position: 0 }), { bytesRead: 10, buffer: buf });
+    expectNodeResultShape(await fd.read({ buffer: buf, length: 4, position: 0 }), { bytesRead: 4, buffer: buf });
+    expectNodeResultShape(await fd.read(buf, 0, 0, 0), { bytesRead: 0, buffer: buf });
+
+    // No arguments: node allocates a 16 KiB buffer and reads from the current position (0 here,
+    // the reads above were all positional). This file is far larger than that, so the read fills it.
+    const result = await fd.read();
+    expectNodeResultShape(result, { bytesRead: 16384, buffer: expect.any(Buffer) });
+    expect(result.buffer.byteLength).toBe(16384);
   });
 
-  it("FileHandle#readv returns object", async () => {
+  it("FileHandle#readv returns a null-prototype { bytesRead, buffers }", async () => {
     await using fd = await fs.promises.open(__filename);
     const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
-    expect(await fd.readv(buffers, 0)).toEqual({ bytesRead: 20, buffers });
+    expectNodeResultShape(await fd.readv(buffers, 0), { bytesRead: 20, buffers });
+    expectNodeResultShape(await fd.readv(buffers), { bytesRead: 20, buffers });
   });
 
   it("FileHandle#write throws EBADF when closed", async () => {
@@ -336,16 +355,28 @@ describe("FileHandle", () => {
     expect(async () => await handle.read(Buffer.alloc(10))).toThrow("Bad file descriptor");
   });
 
-  it("FileHandle#write returns object", async () => {
-    await using fd = await fs.promises.open(`${tmpdir()}/${Date.now()}.writeFile.txt`, "w");
+  it("FileHandle#write returns a null-prototype { bytesWritten, buffer }", async () => {
+    using dir = tempDir("fh-write-result", {});
+    await using fd = await fs.promises.open(join(String(dir), "out.txt"), "w");
     const buf = Buffer.from("test");
-    expect(await fd.write(buf, 0, 4, 0)).toEqual({ bytesWritten: 4, buffer: buf });
+    expectNodeResultShape(await fd.write(buf, 0, 4, 0), { bytesWritten: 4, buffer: buf });
+    expectNodeResultShape(await fd.write(buf), { bytesWritten: 4, buffer: buf });
+    expectNodeResultShape(await fd.write(buf, { offset: 1, length: 2 }), { bytesWritten: 2, buffer: buf });
+    // Like node, the `buffer` property holds whatever was passed in, a string included.
+    expectNodeResultShape(await fd.write("héllo"), { bytesWritten: 6, buffer: "héllo" });
+    expectNodeResultShape(await fd.write("héllo", null, "latin1"), { bytesWritten: 5, buffer: "héllo" });
+    const empty = Buffer.alloc(0);
+    expectNodeResultShape(await fd.write(empty), { bytesWritten: 0, buffer: empty });
   });
 
-  it("FileHandle#writev returns object", async () => {
-    await using fd = await fs.promises.open(`${tmpdir()}/${Date.now()}.writeFile.txt`, "w");
+  it("FileHandle#writev returns a null-prototype { bytesWritten, buffers }", async () => {
+    using dir = tempDir("fh-writev-result", {});
+    await using fd = await fs.promises.open(join(String(dir), "out.txt"), "w");
     const buffers = [Buffer.from("test"), Buffer.from("test")];
-    expect(await fd.writev(buffers, 0)).toEqual({ bytesWritten: 8, buffers });
+    expectNodeResultShape(await fd.writev(buffers, 0), { bytesWritten: 8, buffers });
+    expectNodeResultShape(await fd.writev(buffers), { bytesWritten: 8, buffers });
+    const none: Buffer[] = [];
+    expectNodeResultShape(await fd.writev(none), { bytesWritten: 0, buffers: none });
   });
 
   it("FileHandle#readFile returns buffer", async () => {
@@ -1690,6 +1721,33 @@ describe("mkdtemp encoding option", () => {
     const result = await promises.mkdtemp(prefix, { encoding: "buffer" });
     expect(Buffer.isBuffer(result)).toBe(true);
     expect(existsSync(result)).toBe(true);
+  });
+});
+
+describe("mkdtempDisposable result shape", () => {
+  // Node's promises variant builds its result with `__proto__: null`
+  // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1872-L1879) while the
+  // sync variant returns an ordinary object (https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L3058).
+  it("promises.mkdtempDisposable resolves to a null-prototype { path, remove }", async () => {
+    using base = tempDir("mkdtemp-disposable", {});
+    const result = await promises.mkdtempDisposable(join(String(base), "p-"));
+    expect(Object.getPrototypeOf(result)).toBeNull();
+    expect(Object.keys(result)).toEqual(["path", "remove"]);
+    expect(result[Symbol.asyncDispose]).toBeFunction();
+    expect(existsSync(result.path)).toBe(true);
+    await result.remove();
+    expect(existsSync(result.path)).toBe(false);
+  });
+
+  it("mkdtempDisposableSync returns an ordinary object", () => {
+    using base = tempDir("mkdtemp-disposable-sync", {});
+    const result = fs.mkdtempDisposableSync(join(String(base), "s-"));
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+    expect(Object.keys(result)).toEqual(["path", "remove"]);
+    expect(result[Symbol.dispose]).toBeFunction();
+    expect(existsSync(result.path)).toBe(true);
+    result.remove();
+    expect(existsSync(result.path)).toBe(false);
   });
 });
 

@@ -1394,13 +1394,15 @@ impl Value {
             // The Promise version goes before the ReadableStream version incase the Promise version is used too.
             // Avoid creating unnecessary duplicate JSValue.
             if let Some(readable) = strong_readable.get() {
+                // The stream gets a copy: made in place, a native error would stay in the body by a Strong that no wrapper takes over.
+                let mut stream_err = err_ref.dupe(global);
                 // BACKREF: see `Source::bytes()` — payload live for the
                 // lifetime of the ReadableStream JS wrapper.
                 if let Some(bytes) = readable.ptr.bytes() {
-                    bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)));
+                    bytes.on_data(streams::Result::Err(stream_err.to_stream_error(global)));
                 } else {
                     // e.g. a `clone()` tee branch; a cancel would end its reads with `{ done: true }`.
-                    readable.error(global, err_ref.to_js(global))?;
+                    readable.error(global, stream_err.to_js(global))?;
                 }
             }
 

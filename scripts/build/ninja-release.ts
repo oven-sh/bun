@@ -15,6 +15,7 @@
  * (the macOS SDK, the Windows sysroot). An edge cannot fetch it: it is what runs the edges.
  */
 
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, rm } from "node:fs/promises";
@@ -47,34 +48,54 @@ function presentNinja(cfg: Config): string | undefined {
 }
 
 /**
+ * Why `ninja` cannot be run here, or undefined if it can. A machine may refuse to run a program it does not know,
+ * or one in that directory, and may change its mind later, so this is asked of the file on every configure rather
+ * than once after fetching it.
+ */
+function whyNotRunnable(ninja: string): string | undefined {
+  const probe = spawnSync(ninja, ["--version"], { stdio: "ignore", windowsHide: true });
+  if (probe.error !== undefined) return describeError(probe.error);
+  if (probe.signal !== null) return `killed by ${probe.signal}`;
+  return probe.status === 0 ? undefined : `exited with ${probe.status}`;
+}
+
+/**
  * The ninja for anything that operates on a build directory without being the build itself (configure's
  * regen replay, helper scripts): the pinned one if it is on the machine, the PATH one otherwise — never a fetch.
  * It has to be the same ninja the driver runs: ninja versions disagree on the `.ninja_log` format, and one
  * that finds a log it considers too old or too new rewrites or deletes it, which makes the next build a full one.
  */
 export function ninjaIfPresent(cfg: Config): string {
-  return presentNinja(cfg) ?? "ninja";
+  const present = presentNinja(cfg);
+  return present !== undefined && whyNotRunnable(present) === undefined ? present : "ninja";
 }
 
 /**
  * The ninja to run: the pinned oven-sh/ninja, from the CI image or fetched on its first use elsewhere — or `ninja`
- * from PATH when there is no release for this host or it cannot be fetched (offline, a mirror-less CI
- * sandbox). The fallback builds the same graph, only without starting crates before their dependencies'
+ * from PATH when there is no release for this host, it cannot be fetched (offline, a mirror-less CI sandbox), or
+ * this machine will not run it. The fallback builds the same graph, only without starting crates before their dependencies'
  * rustc has exited.
  *
  * A fetch reports itself the way a prebuilt dependency's edge does (`[WebKit] fetching …`,
  * `[WebKit] extracted to …`), on stderr like those: stdout is the built program's under build-then-exec.
  */
 export async function ensureNinja(cfg: Config): Promise<string> {
-  const present = presentNinja(cfg);
-  if (present !== undefined) return present;
+  const say = (line: string) => process.stderr.write(`${nameColor("ninja", "[ninja]")} ${line}\n`);
+  const pinned = presentNinja(cfg) ?? (await fetchNinja(cfg, say));
+  if (pinned === undefined) return "ninja";
+  const why = whyNotRunnable(pinned);
+  if (why === undefined) return pinned;
+  say(`${pinned} cannot run on this machine (${why}); building with the ninja on PATH, without Rust pipelining`);
+  return "ninja";
+}
 
+/** Fetch the pinned release into the build cache. Undefined (after saying why) when that is not possible. */
+async function fetchNinja(cfg: Config, say: (line: string) => void): Promise<string | undefined> {
   const path = fetchedNinjaPath(cfg);
   const host = `${cfg.host.os}-${cfg.host.arch}`;
   const sha256 = (release.sha256 as Record<string, string>)[host];
-  if (sha256 === undefined) return "ninja"; // no release for this host (FreeBSD)
+  if (sha256 === undefined) return undefined; // no release for this host (FreeBSD)
 
-  const say = (line: string) => process.stderr.write(`${nameColor("ninja", "[ninja]")} ${line}\n`);
   const started = performance.now();
   const archive = `bun-ninja-${host}.zip`;
   const url = `https://github.com/oven-sh/ninja/releases/download/${release.tag}/${archive}`;
@@ -109,7 +130,7 @@ export async function ensureNinja(cfg: Config): Promise<string> {
     say(
       `could not fetch ${release.tag} (${describeError(e)}); building with the ninja on PATH, without Rust pipelining`,
     );
-    return "ninja";
+    return undefined;
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

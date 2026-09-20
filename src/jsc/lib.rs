@@ -1093,17 +1093,17 @@ impl FromJsEnum for bun_sys::SignalCode {
             );
         }
         let s = bun_core::String::from_js(v, global)?;
-        let hit = bun_sys::signal_code::from_name(s.to_utf8().slice());
+        let hit = bun_core::SignalCode::from_name(s.to_utf8().slice());
         match hit {
-            Some(code) => Ok(code),
+            Some(code) => Ok(bun_sys::SignalCode::of(code)),
             None => {
                 // Expected-names list
                 // (`'SIGHUP', 'SIGINT', … or 'SIGSYS'`), built from the
                 // canonical signal X-macro so names are never re-spelled.
-                let names = &bun_core::SIGNAL_NAMES[1..];
+                let names = bun_core::SignalCode::ALL;
                 let mut one_of = std::string::String::from("'");
                 for (i, entry) in names.iter().enumerate() {
-                    one_of.push_str(entry);
+                    one_of.push_str(entry.name());
                     one_of.push('\'');
                     if i < names.len() - 2 {
                         one_of.push_str(", '");

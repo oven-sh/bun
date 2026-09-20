@@ -865,9 +865,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           server.emit("connection", socket);
         }
 
-        if (!isPipelined) {
-          socket[kRequest] = http_req;
-        }
+        // Target of the socket 'timeout' handler until this request's response detaches.
+        socket[kRequest] = http_req;
         // Node.js (llhttp) only flags a request as an upgrade when it carries
         // both an Upgrade header and a Connection header with the "upgrade"
         // token; the server then consults shouldUpgradeCallback (default: an
@@ -2041,7 +2040,7 @@ function _writeHead(statusCode, reason, obj, response) {
         // header fields, regardless of the header fields present in the
         // message, and thus cannot contain a message body or 'trailers'.
         if (hasInvalidTrailer(response)) {
-          throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+          throw $ERR_HTTP_TRAILER_INVALID();
         }
         // Headers in obj should override previous headers but still
         // allow explicit duplicates. To do so, we first remove any
@@ -2071,7 +2070,7 @@ function _writeHead(statusCode, reason, obj, response) {
       // The message is not chunk-framed, so `Trailer` is the offending header; drop it
       // so a caller that swallows the throw cannot put it on the wire.
       response.removeHeader("trailer");
-      throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
+      throw $ERR_HTTP_TRAILER_INVALID();
     }
   }
 }
@@ -2613,7 +2612,6 @@ function advanceResponsePipeline(server, socket) {
     }
     res.assignSocket(socket);
   }
-  socket[kRequest] = res.req;
 
   // Replay the writes buffered while the response was queued.
   // The buffered bytes are handed to the native handle below, so they no

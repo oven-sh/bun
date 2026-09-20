@@ -1062,7 +1062,7 @@ export const linkerFlags: Flag[] = [
     // says where each input chunk was placed, which is what tells a function
     // apart from the labels the MSVC CRT leaves on data inside its code. They
     // ship in the profile zip beside the binary, for the trace-order step
-    // (.buildkite/ci.mjs) and for verifyOrderFileApplied() in scripts/build/ci.ts.
+    // (.buildkite/ci.ts) and for verifyOrderFileApplied() in scripts/build/ci.ts.
     flag: c => [`/lldmap:${slash(linkerMapPath(c))}`, `/map:${slash(symbolMapPath(c))}`],
     when: c => c.windows && writesLinkerMap(c),
     desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",
@@ -1523,7 +1523,7 @@ export const linkerFlags: Flag[] = [
  * This says where the order file is CONSUMED, not where it is produced. A
  * cross-compiled lane cannot trace its own binary (`canTraceOrderFile`), so it
  * inherits an earlier build's file instead and still links ordered; the
- * trace-order step in .buildkite/ci.mjs produces that file on the target's test
+ * trace-order step in .buildkite/ci.ts produces that file on the target's test
  * fleet. Both windows targets work this way: their tracer is a debugger
  * (scripts/orderfile/functrace-windows.c), so it needs no preload mechanism,
  * and it plants INT3 or BRK depending on which architecture it is built for.

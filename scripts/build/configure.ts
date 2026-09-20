@@ -9,6 +9,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, globSync, mkdirSync, utimesSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { isBuildkite } from "../buildkite.ts";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
 import { generateCargoConfig } from "./cargo-config.ts";
@@ -32,7 +33,15 @@ import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { planPath } from "./rust/plan.ts";
 import { quote } from "./shell.ts";
-import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import {
+  checkImageTools,
+  findBun,
+  findCargo,
+  findMsvcLinker,
+  findNpm,
+  findSystemTool,
+  resolveLlvmToolchain,
+} from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
@@ -90,7 +99,7 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   // A codegen script that a module can also import runs its command line
   // only when import.meta.main is true. Node 24.2 added import.meta.main.
   // Before that it is undefined, and the script would write nothing. CI
-  // installs Node 26 (scripts/bootstrap.sh), so the minimum is 25.
+  // installs Node 26 (scripts/build/ci-images/spec.ts), so the minimum is 25.
   if (process.versions.bun === undefined) {
     const major = Number(process.versions.node.split(".")[0]);
     if (major < 25) {
@@ -157,10 +166,14 @@ function configureInputs(cwd: string): string[] {
   // only, but one glob keeps the rule simple).
   const rust = globSync("rust/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
+  // Versions the build uses (LLVM, Node.js, the sysroots) are written here.
+  const pins = resolve(buildDir, "ci-images", "spec.ts");
+
   return [
     ...scripts,
     ...deps,
     ...rust,
+    pins,
     resolve(cwd, "scripts", "glob-sources.ts"),
     resolve(cwd, "package.json"),
   ].sort();
@@ -299,6 +312,11 @@ export async function configure(
   const cfg = resolveConfig(partial, toolchain);
 
   validateBunConfig(cfg);
+  // Not cfg.ci or cfg.buildkite: those are what a ci-* profile asks for, and a
+  // developer can build one (`bun run build:ci`) on a machine that is no image.
+  if (isBuildkite) {
+    checkImageTools(toolchain);
+  }
   beforeWriting(cfg.buildDir);
 
   // Darwin cross-compile: the SDK must exist before ninja runs (every compile

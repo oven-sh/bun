@@ -1329,6 +1329,9 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
+            // A tunnel's bytes reach JS via onSocketData; arming inStream here
+            // would copy them into a body buffer nothing drains.
+            || raw.is_connect_request()
         {
             return Ok(JSValue::FALSE);
         }

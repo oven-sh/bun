@@ -311,16 +311,17 @@ private:
         // ~180k - 190k req/sec is with varying routing
 
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+        HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
-        /* Do not accept any data while in shutdown state */
-        if (us_socket_is_shut_down((us_socket_t *) s)) {
+        /* Do not accept any data while in shutdown state. A node:http
+         * CONNECT/Upgrade tunnel is half-open (allowHalfOpen): the peer's bytes
+         * still reach the socket after our FIN. */
+        if (us_socket_is_shut_down((us_socket_t *) s) && !(IsNodeHttp && httpResponseData->isConnectRequest)) {
             /* Balance the us_socket_ref above — every other return path
              * reaches the unref via returnedData. */
             us_socket_unref(s);
             return s;
         }
-
-        HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
         /* HTTP/2: a cleartext connection that opens with the prior-knowledge
          * preface (RFC 9113 §3.3) moves to the Http2Context before the

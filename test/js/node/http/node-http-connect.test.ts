@@ -233,6 +233,85 @@ describe("HTTP server CONNECT", () => {
     connect: "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
     upgrade: "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: custom\r\n\r\n",
   };
+  type TunnelEvent = keyof typeof tunnelRequests;
+  type TunnelProtocol = "http" | "https";
+
+  async function openTunnel(event: TunnelEvent, protocol: TunnelProtocol) {
+    const onRequest = (req, res) => res.end("ok");
+    const server =
+      protocol === "https"
+        ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }, onRequest)
+        : http.createServer(onRequest);
+    const handedOff = Promise.withResolvers<net.Socket>();
+    server.on(event, (req, socket) => {
+      socket.pause();
+      handedOff.resolve(socket);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const client =
+      protocol === "https"
+        ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, allowHalfOpen: true })
+        : net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    const clientFailed = Promise.withResolvers<never>();
+    client.on("error", clientFailed.reject);
+    await once(client, protocol === "https" ? "secureConnect" : "connect");
+    client.write(tunnelRequests[event]);
+    const socket = await handedOff.promise;
+    const socketFailed = Promise.withResolvers<never>();
+    socket.on("error", socketFailed.reject);
+    socket.on("close", () => socketFailed.reject(new Error("tunnel socket closed")));
+
+    const failed = Promise.race([clientFailed.promise, socketFailed.promise]);
+    failed.catch(() => {});
+    return {
+      server,
+      client,
+      socket,
+      failed,
+      // Poll until socket.readableLength stops growing. A server without read
+      // backpressure keeps going until it holds every byte. (The client's
+      // writableLength is not a usable signal: on Windows libuv queues the
+      // whole backlog outside the stream.)
+      async waitForReadsToStop(totalBytes: number) {
+        let previous = -1;
+        let stableSince = Date.now();
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          const buffered = socket.readableLength;
+          if (buffered >= totalBytes) break;
+          if (buffered !== previous) {
+            previous = buffered;
+            stableSince = Date.now();
+          } else if (buffered > 0 && Date.now() - stableSince >= 500) {
+            break;
+          }
+          await Bun.sleep(10);
+        }
+      },
+      // Resolves with the byte count once `expected` bytes arrived, or with
+      // whatever arrived before the deadline so the assertion shows the count.
+      async readAll(expected: number) {
+        let received = 0;
+        socket.on("data", (data: Buffer) => {
+          received += data.length;
+        });
+        socket.resume();
+        const deadline = Date.now() + 4_000;
+        while (received < expected && Date.now() < deadline) {
+          await Promise.race([Bun.sleep(20), failed]);
+        }
+        return received;
+      },
+      [Symbol.asyncDispose]: async () => {
+        client.destroy();
+        socket.destroy();
+        await once(server.close(), "close");
+      },
+    };
+  }
+
   test.concurrent.each([
     ["connect", "http"],
     ["upgrade", "http"],
@@ -243,70 +322,59 @@ describe("HTTP server CONNECT", () => {
     async (event, protocol) => {
       const totalBytes = 64 * 1024 * 1024;
       const chunk = Buffer.alloc(1024 * 1024, "x");
-
-      const onRequest = (req, res) => res.end("ok");
-      await using server =
-        protocol === "https"
-          ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }, onRequest)
-          : http.createServer(onRequest);
-      const handedOff = Promise.withResolvers<net.Socket>();
-      server.on(event, (req, socket) => {
-        socket.pause();
-        handedOff.resolve(socket);
-      });
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const { port } = server.address() as AddressInfo;
-
-      const client =
-        protocol === "https"
-          ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
-          : net.connect({ port, host: "127.0.0.1" });
-      client.on("error", () => {});
-      await once(client, protocol === "https" ? "secureConnect" : "connect");
-      client.write(tunnelRequests[event]);
-      const socket = await handedOff.promise;
+      await using tunnel = await openTunnel(event, protocol);
+      const { client, socket } = tunnel;
+      // Stopping reads re-arms the socket's poll; that must not look like a
+      // write that drained.
+      let drains = 0;
+      socket.on("drain", () => drains++);
 
       for (let written = 0; written < totalBytes; written += chunk.length) {
         client.write(chunk);
       }
+      await tunnel.waitForReadsToStop(totalBytes);
 
-      // The server reads until its Readable buffer is full, then stops. Poll
-      // until socket.readableLength stops growing. A server without read
-      // backpressure keeps going until it holds every byte. (The client's
-      // writableLength is not a usable signal: on Windows libuv queues the
-      // whole backlog outside the stream.)
-      let previous = -1;
-      let stableSince = Date.now();
-      const deadline = Date.now() + 10_000;
-      while (Date.now() < deadline) {
-        const buffered = socket.readableLength;
-        if (buffered >= totalBytes) break;
-        if (buffered !== previous) {
-          previous = buffered;
-          stableSince = Date.now();
-        } else if (buffered > 0 && Date.now() - stableSince >= 500) {
-          break;
-        }
-        await Bun.sleep(10);
-      }
-
-      expect(socket.readableLength).toBeLessThan(16 * 1024 * 1024);
+      // The server reads until its Readable buffer is full, then stops. What
+      // is left over is bounded by the kernel's socket buffers.
+      expect(socket.readableLength).toBeLessThan(totalBytes / 2);
+      expect(drains).toBe(0);
 
       // Resuming restarts reads and delivers every byte.
-      let received = 0;
-      const drained = Promise.withResolvers<void>();
-      socket.on("data", (data: Buffer) => {
-        received += data.length;
-        if (received === totalBytes) drained.resolve();
-      });
-      socket.resume();
-      await drained.promise;
-      expect(received).toBe(totalBytes);
-
-      client.destroy();
-      socket.destroy();
+      expect(await tunnel.readAll(totalBytes)).toBe(totalBytes);
     },
   );
+
+  // allowHalfOpen: the server's FIN ends only its writable side. Bytes the
+  // client sent before it (still in the kernel while reads are stopped) and
+  // after it must still reach the socket, like Node.
+  test.concurrent.each([
+    ["connect", "http"],
+    ["upgrade", "https"],
+  ] as const)("a %s socket keeps reading the %s connection after socket.end()", async (event, protocol) => {
+    const beforeBytes = 8 * 1024 * 1024;
+    const chunk = Buffer.alloc(1024 * 1024, "x");
+    await using tunnel = await openTunnel(event, protocol);
+    const { client, socket } = tunnel;
+
+    for (let written = 0; written < beforeBytes; written += chunk.length) {
+      client.write(chunk);
+    }
+    await tunnel.waitForReadsToStop(beforeBytes);
+
+    socket.end("bye");
+    const clientEnded = Promise.withResolvers<void>();
+    let clientReceived = "";
+    client.on("data", (data: Buffer) => {
+      clientReceived += data;
+    });
+    client.on("end", clientEnded.resolve);
+    await clientEnded.promise;
+    expect(clientReceived).toBe("bye");
+
+    const after = Buffer.from("after the FIN");
+    client.write(after);
+    expect(await tunnel.readAll(beforeBytes + after.length)).toBe(beforeBytes + after.length);
+  });
 
   test("should deliver bytes following a CONNECT request with Content-Length: 0 to the connect socket, not as a new request", async () => {
     const requestUrls: string[] = [];

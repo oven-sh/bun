@@ -493,6 +493,10 @@ template<bool SSL>
 static void onNodeHttpReadsResumable(us_socket_t* socket)
 {
     auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    if (httpResponseData->isConnectRequest) {
+        /* A tunnel's reads belong to its JS stream (readStop/readStart). */
+        return;
+    }
     if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
         /* Flood prevention owns the pause: outgoing backpressure holds everything (incidental
          * resumes must not race fresh reads past the spill). Queued responses alone must NOT hold

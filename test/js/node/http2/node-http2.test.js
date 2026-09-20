@@ -6034,7 +6034,7 @@ describe.concurrent("write() after end()", () => {
   // A chunk written before end() goes out without END_STREAM, which then comes from _final. The
   // Writable never calls _final on an errored stream, and the stream still has to end.
   describe("last write in flight at end()", () => {
-    const big = Buffer.alloc(300 * 1024, "a");
+    const big = Buffer.alloc(128 * 1024, "a");
 
     it("server stream", async () => {
       const result = await serve((stream, late) => {

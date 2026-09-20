@@ -264,8 +264,9 @@ const N_INVALID: Case[] = [
 ];
 
 // Bun.JSONC.parse recurses once per nesting level and throws a RangeError at the native stack limit.
-// A target whose stack holds every level reaches the end of the input and throws a SyntaxError.
-const N_INVALID_NESTED_PAST_THE_STACK: Case[] = [
+// A target whose stack holds every level reaches the end of the input and throws a SyntaxError instead:
+// the windows aarch64 release build does that for the first input.
+const N_INVALID_DEEPLY_NESTED: Case[] = [
   ["n_structure_100000_opening_arrays.json", Buffer.alloc(100000, "[").toString()],
   ["n_structure_open_array_object.json", Buffer.alloc(250000, '[{"":').toString() + "\n"],
 ];
@@ -377,7 +378,7 @@ describe("JSONTestSuite", () => {
     const names = [
       ...Y_VALID,
       ...N_INVALID,
-      ...N_INVALID_NESTED_PAST_THE_STACK,
+      ...N_INVALID_DEEPLY_NESTED,
       ...N_VALID_JSONC,
       ...I_VALID,
       ...I_INVALID,
@@ -404,8 +405,8 @@ describe("JSONTestSuite", () => {
     });
   });
 
-  describe("n_ (invalid JSON nested past the native stack throws RangeError or SyntaxError)", () => {
-    test.each(N_INVALID_NESTED_PAST_THE_STACK)("%s", (_name, source) => {
+  describe("n_ (deeply nested invalid JSON throws RangeError at the stack limit, or SyntaxError)", () => {
+    test.each(N_INVALID_DEEPLY_NESTED)("%s", (_name, source) => {
       expect(() => JSON.parse(source)).toThrow(SyntaxError);
       let error: unknown;
       try {

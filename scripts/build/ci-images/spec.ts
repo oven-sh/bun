@@ -1198,6 +1198,8 @@ function prefetchInstallCache(): Tool {
           withEnvironment({ BUN_INSTALL_CACHE_DIR: cache }, run("bun", "install", "--ignore-scripts")),
         ]),
       ),
+      comment("The installs were for the cache. What they put in the bake's checkout would be in the image."),
+      remove(...installedPackages.map(path => text`${checkout}/${path}/node_modules`)),
       ownedBy(`${agentUser}:${agentUser}`, cache),
       setEnvironment("BUN_INSTALL_CACHE_DIR", cache),
     ],

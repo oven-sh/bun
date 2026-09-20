@@ -1166,7 +1166,7 @@ function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptio
 function getBinarySizeStep(
   releasePlatforms: Platform[],
   options: PipelineOptions,
-  { recordOnly = false }: { recordOnly?: boolean } = {},
+  { recordOnly = false, imageDependsOn }: { recordOnly?: boolean; imageDependsOn: string[] },
 ): CommandStep {
   const targets = releasePlatforms.map(p => ({ triplet: getTargetTriplet(p) }));
   const args = [`--targets '${JSON.stringify(targets)}'`, `--threshold-mb ${BINARY_SIZE_THRESHOLD_MB}`];
@@ -1177,8 +1177,11 @@ function getBinarySizeStep(
     key: "binary-size",
     label: `${getBuildkiteEmoji("package")} binary-size`,
     agents: getEc2Agent(buildHostPlatform, { instanceType: "c8g.large" }),
-    depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
-    allow_dependency_failure: true,
+    depends_on: [...imageDependsOn, ...releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`)],
+    // Sizes are still reported for the targets that built when one did not.
+    // Not when this build bakes the image this step's machine starts from: a
+    // failed bake would leave it waiting for a machine that cannot start.
+    allow_dependency_failure: imageDependsOn.length === 0,
     soft_fail: !!options.skipSizeCheck,
     retry: {
       manual: { permit_on_passed: true },
@@ -1953,7 +1956,12 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   // Binary-size tracking: main records the baseline, PRs enforce the threshold.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
   if (!buildId && strippedPlatforms.length) {
-    steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
+    steps.push(
+      getBinarySizeStep(strippedPlatforms, options, {
+        recordOnly: isMainBranch(),
+        imageDependsOn: getImageDependsOn(buildHostPlatform, baking),
+      }),
+    );
   }
 
   if (signWindows) {

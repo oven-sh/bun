@@ -14,6 +14,7 @@ import { agentUser } from "./tools/agent-user.ts";
 import { androidNdk } from "./tools/android-ndk.ts";
 import { brew, brewPackages } from "./tools/brew.ts";
 import { buildkiteAgent } from "./tools/buildkite-agent.ts";
+import { bunNinja } from "./tools/bun-ninja.ts";
 import { bun } from "./tools/bun.ts";
 import { ccache } from "./tools/ccache.ts";
 import { chrome } from "./tools/chrome.ts";
@@ -91,6 +92,18 @@ export const pins = {
   windowsSysroot: { xwin: "0.9.0", sdk: "10.0.26100", crt: "14.44.17.14" },
   macosSdk: { sdk: "26.5", commandLineTools: "26.5" },
   pythonFuse: { version: "1.0.9" },
+  // https://github.com/oven-sh/ninja/releases; the sums are the release's bun-ninja.json.
+  bunNinja: {
+    tag: "bun-ninja-5ecd8831",
+    sha256: {
+      "linux-x64": "1521dc92e7ebcdccbc259ff41e4c27a5a7982bcf183e37b1fc6ea5a603379f0c",
+      "linux-aarch64": "a2f69edc6caacec7869c5d1e99b2380ebc93c5cc722c8f9946fb79b16e090579",
+      "windows-x64": "ec046195268fd82abb314fa26cfe646ca42437d3da93a40cb4359b053f515d64",
+      "windows-aarch64": "56a632d5da98cb801ef2311db8e5856b4d080de0fa71d7d0d4b2ed8ed4d13339",
+      "darwin-x64": "228e16557a9eb088d4667836f2b2d2702c0eebe43fa0d8dc9956a50ef0610fc1",
+      "darwin-aarch64": "1126c3e84b2914285bc73b132b1d53f1c3118ceffdf328fc40fa2f4eb9d8b8d8",
+    },
+  },
   age: {
     version: "1.2.1",
     sha256: {
@@ -267,6 +280,7 @@ export function linuxTools(image: LinuxImage): readonly Tool[] {
     agentUser(image),
     nodejs(image, pins.nodejs),
     bun(image, pins.bun),
+    bunNinja(image, pins.bunNinja),
     curlH3(image, pins.curlH3),
     tailscale(),
     buildkiteAgent(image, pins.buildkiteAgent),
@@ -318,6 +332,7 @@ export function windowsTools(image: WindowsImage): readonly Tool[] {
     pwsh(image, pins.pwsh),
     openssh(image, pins.openssh),
     bun(image, pins.bun),
+    bunNinja(image, pins.bunNinja),
     curlH3(image, pins.curlH3),
     ccache(image, pins.ccache),
     rust(image, pins.rust),
@@ -347,6 +362,7 @@ export function macosTools(image: MacosImage): readonly Tool[] {
     brewPackages(["cmake", "ninja", "nasm", "pkg-config", "golang", "ccache"]),
     nodejs(image, pins.nodejs),
     bun(image, pins.bun),
+    bunNinja(image, pins.bunNinja),
     curlH3(image, pins.curlH3),
     llvm(image, pins.llvm),
     rust(image, pins.rust),

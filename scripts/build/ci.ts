@@ -2,9 +2,9 @@
  * CI integration: collapsible log groups, environment dump, Buildkite
  * annotations on build failure.
  *
- * Thin layer over `scripts/utils.mjs` — the same helpers the CMake build
- * uses. We import rather than reimplement so CI logs look identical and
- * annotation regex stays in one place.
+ * Thin layer over `scripts/buildkite.ts`, which the test runner and the
+ * pipeline generator use too, so CI logs and annotations look the same
+ * whichever of them wrote them.
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
@@ -21,39 +21,15 @@ import {
 } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getJson, isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
-// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
-import * as utils from "../utils.mjs";
+import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
 import { webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
-
-/** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
-export const isCI: boolean = utils.isCI;
-
-/** True if running under Buildkite specifically. */
-export const isBuildkite: boolean = utils.isBuildkite;
-
-/** True if running under GitHub Actions specifically. */
-export const isGithubAction: boolean = utils.isGithubAction;
-
-/**
- * Print machine/environment/repository info in collapsible groups.
- * Call at the top of a CI run so you can diagnose without SSH access.
- */
-export const printEnvironment: () => void = utils.printEnvironment;
-
-/**
- * Start a collapsible log group. Buildkite: `--- Title`. GitHub: `::group::`.
- * If `fn` is given, runs it and closes the group (handles async).
- */
-export const startGroup: (title: string, fn?: () => unknown) => unknown = utils.startGroup;
-
-/** Close the most recent group opened with `startGroup`. */
-export const endGroup: () => void = utils.endGroup;
 
 interface SpawnAnnotatedOptions {
   /** Working directory for the subprocess. */
@@ -168,12 +144,12 @@ export async function spawnWithAnnotations(
         .split("\n")
         .filter(line => !/^\[[\w-]+\]\s+CMake (Deprecation )?Warning/i.test(line.replace(/\x1b\[[0-9;]*m/g, "")))
         .join("\n");
-      const { annotations } = utils.parseAnnotations(annotatable);
+      const { annotations } = parseAnnotations(annotatable);
       for (const ann of annotations) {
-        utils.reportAnnotationToBuildKite({
+        reportAnnotationToBuildkite({
           priority: 10,
-          label: ann.title || ann.filename,
-          content: utils.formatAnnotationToHtml(ann),
+          label: ann.title,
+          content: formatAnnotationToHtml(ann),
         });
         annotated = true;
       }
@@ -184,14 +160,14 @@ export async function spawnWithAnnotations(
     // Nothing matched the compiler-error regexes → post a generic annotation
     // with the full buffered output so there's still a PR-visible signal.
     if (!annotated) {
-      const content = utils.formatAnnotationToHtml({
+      const content = formatAnnotationToHtml({
         filename: relative(process.cwd(), fileURLToPath(import.meta.url)),
         title: "build failed",
         content: buffer,
         source: "build",
         level: "error",
       });
-      utils.reportAnnotationToBuildKite({
+      reportAnnotationToBuildkite({
         priority: 10,
         label: "build failed",
         content,
@@ -205,7 +181,7 @@ export async function spawnWithAnnotations(
     console.error(`Command exited: code ${exitCode}`);
   }
 
-  utils.markBuildkiteStepReported();
+  markBuildkiteStepReported();
   process.exit(exitCode ?? 1);
 }
 
@@ -360,14 +336,14 @@ function upload(paths: string[], cwd: string): void {
 //
 // bunTriplet = bun-${os}-${arch}[-musl][-baseline]
 //
-// Test steps (runner.node.mjs) download '**' from build-bun and pick any
+// Test steps (runner.node.ts) download '**' from build-bun and pick any
 // bun*.zip; baseline-verification step downloads ${triplet}.zip specifically
 // and expects ${triplet}/bun inside.
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
  * Base triplet (bun-os-arch[-musl][-baseline]). Variant suffix (-profile,
- * -asan) is added by the caller. Matches ci.mjs getTargetTriplet() and
+ * -asan) is added by the caller. Matches ci.ts getTargetTriplet() and
  * cmake's bunTriplet — any drift breaks test-step downloads.
  */
 export function computeBunTriplet(cfg: Config): string {
@@ -399,10 +375,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   const bunTriplet = computeBunTriplet(cfg);
 
   // ─── features.json ───
-  // Run the built bun with features.mjs to dump its feature flags.
-  // Env vars match cmake's (BuildBun.cmake ~1462).
-  // No setarch wrapper — cmake doesn't use one for features.mjs either
-  // (only for the --revision smoke test).
+  // Run the built bun with features.ts to dump its feature flags.
   // Binaries that can't run on this host: every field is a build-time
   // constant, so generate the same payload host-side instead (the feature
   // list is parsed out of src/analytics/lib.rs; see features-json.ts).
@@ -411,7 +384,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     writeFileSync(resolve(buildDir, "features.json"), crossFeaturesJson(cfg));
   } else {
     console.log("Generating features.json...");
-    run([exe, resolve(cfg.cwd, "scripts", "features.mjs")], buildDir, {
+    run([exe, resolve(cfg.cwd, "scripts", "features.ts")], buildDir, {
       BUN_GARBAGE_COLLECTOR_LEVEL: "1",
       BUN_DEBUG_QUIET_LOGS: "1",
       BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
@@ -438,7 +411,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     files.push(`${exeName}.dSYM`);
   }
   // Linker map(s). On windows they are also what the trace-order step
-  // (.buildkite/ci.mjs) resolves traced addresses against, the PE itself
+  // (.buildkite/ci.ts) resolves traced addresses against, the PE itself
   // having no symbol table, so without them that step has nothing to work from.
   files.push(...linkerMapOutputs(cfg).map(map => basename(map)));
   // The symbol ordering file this binary was linked with, next to the linker
@@ -452,7 +425,7 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Also upload it standalone, so the next build inherits it with a small
   // download instead of pulling the whole profile zip. Only when this lane
   // traced the file itself — a cross-compiled lane's fresh trace comes from the
-  // sibling trace-order step (.buildkite/ci.mjs), and re-uploading the inherited
+  // sibling trace-order step (.buildkite/ci.ts), and re-uploading the inherited
   // copy would give inheritOrderFile() two same-named artifacts to race over.
   if (hasOrderFile && canTraceOrderFile(cfg)) {
     const artifact = orderFileArtifact(cfg);
@@ -736,7 +709,7 @@ export function canTraceOrderFile(cfg: Config): boolean {
 /**
  * An eligible lane that cannot trace (cross-compiled) and inherited nothing is
  * shipping unordered. A sibling `-trace-order` step on a native-arch host seeds
- * the chain (see getTraceOrderStep in .buildkite/ci.mjs), so this fires once on
+ * the chain (see getTraceOrderStep in .buildkite/ci.ts), so this fires once on
  * the first build and then the next build inherits that trace. If it persists,
  * the trace step is failing or missing for this target.
  */
@@ -748,11 +721,11 @@ export function reportOrderFileCannotTrace(cfg: Config): void {
     `appears on every build, that step is failing or missing.`;
   console.log(`~ symbol order: ${msg}`);
   if (!isBuildkite) return;
-  utils.reportAnnotationToBuildKite({
+  reportAnnotationToBuildkite({
     style: "warning",
     priority: 5,
     label: "symbol order file",
-    content: utils.formatAnnotationToHtml({
+    content: formatAnnotationToHtml({
       filename: "scripts/build/ci.ts",
       title: "symbol order file: cross-compiled lane cannot trace, shipping unordered",
       content: msg,
@@ -801,21 +774,28 @@ export function mustGenerateOrderFile(cfg: Config, ctx: OrderFileContext, inheri
   return orderFileEligible(cfg, ctx) && canTraceOrderFile(cfg) && !inherited;
 }
 
+/** The fields of a build's public JSON (`<pipeline>/builds/<n>.json`) that are read here. */
+interface BuildJson {
+  id?: string;
+  number?: number;
+  branch_name?: string;
+}
+
 /**
  * The unauthenticated Buildkite lookups candidateBuilds() makes. Passed in, like
  * OrderFileContext, so the walk runs offline in a test.
  */
 export interface BuildLookups {
-  /** A build's public JSON (`<pipeline>/builds/<n>.json`), or undefined when it cannot be read. */
-  build(url: string): Promise<{ id?: string; number?: number; branch_name?: string } | undefined>;
+  /** A build's public JSON, or undefined when it cannot be read. */
+  build(url: string): Promise<BuildJson | undefined>;
   /** Where `url` redirects to, without following it. */
   redirect(url: string): Promise<string | null>;
 }
 
 const buildkiteLookups: BuildLookups = {
   async build(url) {
-    const response: { error?: unknown; body?: any } = await utils.curl(url, { json: true, cache: true });
-    return response.error ? undefined : response.body;
+    const { error, body } = await getJson(url);
+    return error ? undefined : (body as BuildJson);
   },
   async redirect(url) {
     try {
@@ -860,7 +840,7 @@ export async function* candidateBuilds(
 
   // The branch was quiet for longer than the probe reaches: fall back to its
   // newest passed build. Buildkite dropped `prev_branch_build` from the public
-  // build JSON, so `utils.getLastSuccessfulBuild()` always returns undefined.
+  // build JSON, so `getLastSuccessfulBuild()` always returns undefined.
   // This redirect is what works unauthenticated. Its Location repeats the query
   // (`<pipeline>/builds/116199?branch=main&state=passed`), so `.json` goes on
   // the path: after the query, Buildkite answers with the HTML page.
@@ -890,7 +870,7 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
     tried++;
     // No --step: exactly one step per build publishes the target-unique name —
     // packageAndUpload() for a lane that traced its own binary, the sibling
-    // trace-order step (.buildkite/ci.mjs) for a cross-compiled one.
+    // trace-order step (.buildkite/ci.ts) for a cross-compiled one.
     const result = spawnSync("buildkite-agent", ["artifact", "download", artifact, ".", "--build", build.id], {
       cwd: cfg.buildDir,
       stdio: "ignore",
@@ -955,11 +935,11 @@ export function reportOrderFileBootstrap(cfg: Config): void {
     `this, inheriting is broken — check the "Inherit symbol order file" step.`;
   console.log(`~ symbol order: ${message}`);
   if (!isBuildkite) return;
-  utils.reportAnnotationToBuildKite({
+  reportAnnotationToBuildkite({
     style: "warning",
     priority: 5,
     label: "symbol order file",
-    content: utils.formatAnnotationToHtml({
+    content: formatAnnotationToHtml({
       filename: "scripts/build/ci.ts",
       title: "symbol order file: nothing to inherit, generating from scratch",
       content: message,
@@ -977,12 +957,12 @@ export function reportOrderFileFailure(error: Error): void {
   console.error(`- symbol order: FAILED to generate — ${error.message}`);
   console.error("- symbol order: linking unordered. The binary is correct; it just faults in more pages at startup.");
   if (!isBuildkite) return;
-  utils.reportAnnotationToBuildKite({
+  reportAnnotationToBuildkite({
     // Not an error: the build is fine. A red annotation would read as a failure.
     style: "warning",
     priority: 5,
     label: "symbol order file",
-    content: utils.formatAnnotationToHtml({
+    content: formatAnnotationToHtml({
       filename: "scripts/orderfile/generate.ts",
       title: "symbol order file not generated — shipped unordered",
       content: error.message,

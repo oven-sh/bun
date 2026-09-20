@@ -27,19 +27,16 @@ import {
   canTraceOrderFile,
   downloadArtifacts,
   inheritOrderFile,
-  isCI,
   mustGenerateOrderFile,
   orderFileContext,
   orderFileEligible,
   packageAndUpload,
-  printEnvironment,
   regenerateOrderFile,
   reportOrderFileBootstrap,
   reportOrderFileCannotTrace,
   reportOrderFileFailure,
   shouldGenerateOrderFile,
   spawnWithAnnotations,
-  startGroup,
   uploadArtifacts,
   verifyOrderFileApplied,
 } from "./build/ci.ts";
@@ -48,6 +45,7 @@ import { configure, type ConfigureInput, type ConfigureResult } from "./build/co
 import { BuildError } from "./build/error.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
+import { isCI, printEnvironment, startGroup } from "./buildkite.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Main
@@ -98,8 +96,8 @@ async function main(): Promise<void> {
   const ninjaArgv = (cfg: { buildDir: string }) => ["-C", cfg.buildDir, ...args.ninjaArgs, ...args.ninjaTargets];
   // GNU-style include-path vars (CPATH, C_INCLUDE_PATH, CPLUS_INCLUDE_PATH,
   // OBJC_INCLUDE_PATH) apply to every clang invocation regardless of
-  // --target. The CI build containers set them for the *host* gcc toolchain
-  // (.buildkite/Dockerfile), which hijacks <vector> & co. away from the MSVC
+  // --target. A build environment may set them for the *host* gcc toolchain
+  // (a machine set up for a gcc toolchain does), which hijacks <vector> & co. away from the MSVC
   // STL when cross-compiling for Windows ("'bits/c++config.h' file not
   // found"). Scrub them for Windows cross builds — they are host-targeted by
   // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and

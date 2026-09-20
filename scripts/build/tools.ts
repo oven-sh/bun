@@ -10,6 +10,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
+import { pins } from "./ci-images/spec.ts";
 import type { Arch, OS, Toolchain } from "./config.ts";
 import { BuildError } from "./error.ts";
 
@@ -135,6 +136,29 @@ export function findBun(os: OS): string {
     required: true,
     hint: "Codegen requires bun (for `bun install`, `bun build`, and scripts using Bun APIs). Install: curl -fsSL https://bun.sh/install | bash",
   })!.path;
+}
+
+/**
+ * On a CI machine the tools come from its image, and the image installs what
+ * ci-images/spec.ts pins. A tool that reports another version means the
+ * machine is not the image the spec describes. clang and lld are compared with
+ * the same spec where they are found (findLlvmTool).
+ */
+export function checkImageTools(toolchain: { bun: string; cmake: string }): void {
+  const tools: [name: string, expected: string, actual: { version: string } | { reason: string }][] = [
+    ["bun", pins.bun.version, getToolVersion(toolchain.bun, "--version")],
+    ["cmake", pins.cmake.version, getToolVersion(toolchain.cmake, "--version")],
+    // CI runs the build with the image's node.
+    ["node", pins.nodejs.version, { version: process.versions.node }],
+  ];
+  for (const [name, expected, actual] of tools) {
+    if (!("version" in actual) || actual.version !== expected) {
+      throw new BuildError(
+        `${name} is ${"version" in actual ? actual.version : actual.reason}, and scripts/build/ci-images/spec.ts pins ${expected}`,
+        { hint: "This machine was not started from the image the spec describes." },
+      );
+    }
+  }
 }
 
 /** Find npm for `--package-manager=npm`. npm ships with Node.js. */
@@ -277,12 +301,12 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * LLVM version constraint. Any version in the same major.minor range is
- * accepted (e.g. apt.llvm.org serves 23.1.2 snapshots while we target 23.1.1).
+ * LLVM version constraint: the release CI's images install. Any version in
+ * the same major.minor range is accepted (e.g. apt.llvm.org serves 23.1.2
+ * snapshots while we target 23.1.1).
  */
-export const LLVM_VERSION = "23.1.1";
-const LLVM_MAJOR = "23";
-const LLVM_MINOR = "1";
+export const LLVM_VERSION = pins.llvm.version;
+const [LLVM_MAJOR, LLVM_MINOR] = LLVM_VERSION.split(".");
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
 
 /**

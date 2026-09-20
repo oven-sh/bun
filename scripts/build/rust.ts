@@ -76,7 +76,7 @@ export function cargoProfile(cfg: Config): { name: string; subdir: string } {
 }
 
 /**
- * All target triples CI builds (`buildPlatforms` in .buildkite/ci.mjs, one
+ * All target triples CI builds (`buildPlatforms` in .buildkite/ci.ts, one
  * triple per os/arch/abi; test/internal/source-lints/build-rust.test.ts keeps
  * the two in sync). Drives `rust:check-all` and the generated
  * `.cargo/config.toml` (cargo-config.ts). `rust-toolchain.toml`'s `targets`
@@ -113,7 +113,7 @@ export function rustTargetIsTier3(triple: string): boolean {
  * needed because `cargo build --target` still resolves proc-macro crates for
  * the host through the same `-Zbuild-std` flag set. Requires the `rust-src`
  * component, which `rust-toolchain.toml` requests and CI images preinstall
- * (Dockerfile / bootstrap.sh `rustup component add rust-src`). Shared with
+ * (the `rust` tool of ci-images/spec.ts). Shared with
  * `rust:check-all`, which needs it for the Tier 3 triples.
  */
 export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abort";

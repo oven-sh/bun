@@ -184,7 +184,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                                                                                                      |
 | `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`                                                                                                    |
 | `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                                                                          |
-| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing                                                                                                 |
+| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing, `checkImageTools()`                                                                            |
 | `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                                                                      |
 | `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                                                                   |
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                                                                         |
@@ -212,12 +212,18 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                                                                 |
 | `verify-binary.ts`             | Build-time CLI: static scans of the linked executable (exports, dynamic deps, initializers, hardening, debug info) and the duplicate-definition scan of the link inputs |
 | `binary-expectations.ts`       | What each target's executable must look like for `verify-binary.ts`; serialized to `<exe>.verify.json` at configure                                                     |
+| `annotations.ts`               | Compiler output from a failed step, parsed into Buildkite annotations                                                                                                   |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                                                |
+| `ci-images/spec.ts`            | CI's machines in one file: images, version pins, locations, every tool, and the generator of the bake scripts; `bun run ci:images`                                      |
 | `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                                                                |
 | `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                                                                              |
 | `shims/*.c`                    | Platform workaround sources                                                                                                                                             |
+
+## CI machine images (`ci-images/`)
+
+What is on CI's build and test machines, and the generator of what bakes them. `ci-images/spec.ts` is also where the versions this build system uses are written (LLVM, Node.js, xwin and the Windows SDK, the macOS SDK, the Android API level, FreeBSD): `tools.ts`, `deps/nodejs-headers.ts`, `winsysroot.ts`, `macos-sdk.ts` and `config.ts` import them from `pins`, the sysroot and download-cache lookups import where things are from `locations`, and `spec.ts` is one of `build.ninja`'s inputs. `findLlvmTool()` accepts only the pinned LLVM release series on every machine, and on a Buildkite agent `checkImageTools()` compares `bun`, `cmake` and `node` with their pins exactly. How the images work and how to change them: `ci-images/CLAUDE.md`.
 
 ## Key types
 
@@ -250,7 +256,7 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 ## Node compatibility
 
-The build system runs under Node 25+ (configure checks the version). CI installs Node 26 and invokes it via `process.execPath` in `.buildkite/ci.mjs`.
+The build system runs under Node 25+ (configure checks the version). CI images have Node 26, and the build steps `.buildkite/ci.ts` generates run `node scripts/build.ts` (literal `node`: the steps run on a different machine from the generator).
 
 `cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (stream.ts, fetch-cli.ts, the regen rule, the `codegen` rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. The subprocesses inherit whichever runtime started the build.
 

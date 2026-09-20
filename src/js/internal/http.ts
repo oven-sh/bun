@@ -197,7 +197,14 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
     // Like Node's parserOnMessageComplete: any readStop above left the shared
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!keepPaused && !this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
+    // A reader in paused mode (for await, 'readable') emits no 'resume', so the connection also resumes at 'end'.
+    if (keepPaused) this.once("end", resumeConnectionAtRequestEnd);
   }
+}
+
+function resumeConnectionAtRequestEnd(this: any) {
+  const socket = this.socket;
+  if (socket && !socket._paused && socket.readable) socket.resume();
 }
 
 function validateMsecs(numberlike: any, field: string) {

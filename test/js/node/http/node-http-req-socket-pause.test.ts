@@ -496,6 +496,51 @@ describe("request whose whole body is in the segment that paused the connection"
     }
   });
 
+  // A reader in paused mode emits no 'resume' on the request. The connection
+  // must still come back once that reader has the whole body.
+  it("reads the connection again after a late `for await` reader has consumed the request", async () => {
+    const { promise: consumed, resolve: gotBody } = Promise.withResolvers<{ res: ServerResponse; length: number }>();
+    const { promise: second, resolve: gotSecond } = Promise.withResolvers<void>();
+    const paused: string[] = [];
+    let current = "";
+    const server = createServer({ highWaterMark: 1024 }, (req, res) => {
+      if (current === "") req.socket.on("pause", () => paused.push(current));
+      current = req.url!;
+      if (req.url === "/first") {
+        setImmediate(async () => {
+          let length = 0;
+          for await (const chunk of req) length += chunk.length;
+          gotBody({ res, length });
+        });
+      } else if (req.url === "/second") {
+        gotSecond();
+        res.end("bravo");
+      } else {
+        setImmediate(() => res.end("charlie"));
+      }
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(chunkedPost("/first"));
+      const { res, length } = await consumed;
+      expect(length).toBe(BODY_HEAD.length + BODY_TAIL.length);
+      // The first request is read but not answered: the next one must be dispatched now.
+      client.socket.write("GET /second HTTP/1.1\r\nHost: a\r\n\r\n");
+      await second;
+      res.end("alpha");
+      await client.receive("alpha");
+      await client.receive("bravo");
+      // The socket's own flow state is back too, so the next body can announce its pause.
+      client.socket.write(chunkedPost("/third"));
+      await client.receive("charlie");
+      expect(paused).toEqual(["/first", "/third"]);
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
   // Node reads the FIN as soon as the request is complete and aborts the request.
   bunOnlyIt("does not act on the peer's FIN before the request is read", async () => {
     const { promise: released, resolve: release } = Promise.withResolvers<void>();

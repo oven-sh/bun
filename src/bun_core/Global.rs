@@ -340,8 +340,7 @@ macro_rules! __define_signal_code {
 for_each_signal!(__define_signal_code);
 
 impl SignalCode {
-    /// A second name that `os.constants.signals` has for a number in the table. Input only:
-    /// a number is reported under its variant's name, as in node.
+    /// The second names in `os.constants.signals`: accepted by `from_name`, never reported.
     const ALIASES: &'static [(&'static str, SignalCode)] = &[
         #[cfg(unix)]
         ("SIGIOT", Self::SIGABRT),

@@ -283,12 +283,13 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
     const events: string[] = [];
     let readerWaitedBeforeUpgrade = false;
     let duringUpgrade: string[] = [];
-    const request = Promise.withResolvers<http.IncomingMessage>();
+    // Stays undefined when the server answers without the listener. The result then shows the answer.
+    let request: http.IncomingMessage | undefined;
     await using server = http.createServer();
     const wsServer = new WebSocketServer({ noServer: true });
     // With no 'upgrade' listener, the server gives the Upgrade request to the 'request' listener.
     server.on(listenFor, (req: http.IncomingMessage) => {
-      request.resolve(req);
+      request = req;
       let didRead = false;
       const read = req._read;
       req._read = function (size) {
@@ -372,7 +373,7 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
       readerWaitedBeforeUpgrade,
       duringUpgrade,
       events: [...events],
-      complete: (await request.promise).complete,
+      complete: request?.complete,
     };
     client.destroy();
     wsServer.close();

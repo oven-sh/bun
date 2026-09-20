@@ -718,6 +718,16 @@ interface AgentPaths {
   cfgPath?: string;
 }
 
+/**
+ * The agent's directories on a Linux image. The image's bootstrap
+ * (scripts/build/ci-images) creates them, owned by the agent's user.
+ */
+export const linuxAgentPaths = {
+  homePath: "/var/lib/buildkite-agent",
+  cachePath: "/var/cache/buildkite-agent",
+  logsPath: "/var/log/buildkite-agent",
+} as const;
+
 function getAgentPaths(): AgentPaths {
   if (isWindows) {
     const homePath = "C:\\buildkite-agent";
@@ -741,11 +751,9 @@ function getAgentPaths(): AgentPaths {
       cfgPath: join(library, "Preferences", "buildkite-agent.cfg"),
     };
   } else {
-    const logsPath = "/var/log/buildkite-agent";
+    const { logsPath } = linuxAgentPaths;
     return {
-      homePath: "/var/lib/buildkite-agent",
-      cachePath: "/var/cache/buildkite-agent",
-      logsPath,
+      ...linuxAgentPaths,
       agentLogPath: join(logsPath, "buildkite-agent.log"),
       pidPath: join(logsPath, "buildkite-agent.pid"),
     };

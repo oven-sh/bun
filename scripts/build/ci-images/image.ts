@@ -64,17 +64,14 @@ export type MacosImage = {
 
 export type Image = BakedImage | MacosImage;
 
-/** `linux-x64-13-debian`, `linux-aarch64-323-alpine-musl`, `windows-x64-2019`, `darwin-aarch64`: the part of an image's name before its hash. */
+/**
+ * `linux-x64-debian`, `linux-aarch64-alpine`, `windows-x64`, `darwin-aarch64`:
+ * the part of an image's name before its hash. CI has one image per operating
+ * system (or distro) and architecture, so the key does not say which release
+ * it is; the release is part of what the hash covers.
+ */
 export function imageKey(image: Image): string {
-  if (image.os === "windows") {
-    return `windows-${image.arch}-${image.release}`;
-  }
-  if (image.os === "darwin") {
-    return `darwin-${image.arch}`;
-  }
-  const release = image.release.replace(/\./g, "");
-  const abi = image.abi === "musl" ? "-musl" : "";
-  return `linux-${image.arch}-${release}-${image.distro}${abi}`;
+  return image.os === "linux" ? `linux-${image.arch}-${image.distro}` : `${image.os}-${image.arch}`;
 }
 
 /**

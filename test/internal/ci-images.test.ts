@@ -25,7 +25,9 @@ test("every image of the spec generates, with its tools in the spec's order", ()
     const described = JSON.parse(readFileSync(join(directory, "image.json"), "utf8"));
     expect(described.base).toEqual("base" in image ? image.base : undefined);
   }
+  // A key is also the image's directory, so two images cannot share one.
   expect(names.size).toBe(images.length + macosMachines.length);
+  expect(new Set([...names].map(name => name.slice(0, -17))).size).toBe(names.size);
 });
 
 test("an image's name is the hash of its bake directory", () => {

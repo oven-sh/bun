@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { cc, cxx, link, nasm } from "../../scripts/build/compile.ts";
 import type { Config } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
-import { toolIdentity, toolIdentityFile, writeToolIdentities } from "../../scripts/build/tools.ts";
+import { type IdentifiedTool, toolIdentity, toolIdentityFile, writeToolIdentities } from "../../scripts/build/tools.ts";
 
 /** A stand-in tool: answers `--version` the way the real one does. */
 const tool = (...lines: string[]) => `#!/bin/sh\n${lines.map(l => `echo '${l}'`).join("\n")}\n`;
@@ -108,14 +108,17 @@ test("an edge takes the identity of the tools it runs, and of no other", () => {
     .toString()
     .replace(/\$\n\s*/g, "")
     .split("\n");
+  // As build.ninja spells them: relative to the build directory, with the host's separator.
+  const identity = (tool: IdentifiedTool) => n.rel(toolIdentityFile(cfg, tool));
+  const identityFiles = (["cc", "cxx", "hostCc", "nasm", "ld"] as const).map(identity);
   const identitiesOf = (rule: string): string[] => {
     const edge = statements.find(line => line.startsWith("build ") && line.includes(`: ${rule} `));
     // build <outputs>: <rule> <inputs> | <implicit inputs> || <order-only inputs>
     const implicitInputs = edge?.slice(edge.indexOf(": ")).split(" || ")[0]!.split(" | ")[1] ?? "";
-    return implicitInputs.split(" ").filter(path => path.startsWith("toolchain-identity/"));
+    return implicitInputs.split(" ").filter(path => identityFiles.includes(path));
   };
-  expect(identitiesOf("cc")).toEqual(["toolchain-identity/cc.txt"]);
-  expect(identitiesOf("cxx")).toEqual(["toolchain-identity/cxx.txt"]);
-  expect(identitiesOf("nasm")).toEqual(["toolchain-identity/nasm.txt"]);
-  expect(identitiesOf("link")).toEqual(["toolchain-identity/cxx.txt", "toolchain-identity/ld.txt"]);
+  expect(identitiesOf("cc")).toEqual([identity("cc")]);
+  expect(identitiesOf("cxx")).toEqual([identity("cxx")]);
+  expect(identitiesOf("nasm")).toEqual([identity("nasm")]);
+  expect(identitiesOf("link")).toEqual([identity("cxx"), identity("ld")]);
 });

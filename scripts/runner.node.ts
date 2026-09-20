@@ -3444,8 +3444,9 @@ function escapeXml(str: string): string {
  * its reputation, which costs 2 to 3.5 seconds for a 77 MB `bun build --compile`
  * output. bundler_compile.test.ts launches about 85 of those, which puts the file
  * at 220 to 290 seconds against the 300 second per-file cap. Turning the policy
- * off takes effect at once and needs no reboot. scripts/bootstrap.ps1 does the
- * same at image bake time; this covers images baked before that change.
+ * off takes effect at once and needs no reboot. The image's bake does the same
+ * (scripts/build/ci-images/tools/windows/system.ps1); this covers a machine
+ * whose image was baked without it.
  *
  * Only on Buildkite: the policy cannot be turned on again without a reinstall,
  * so a developer's machine running with CI=true must not get this.

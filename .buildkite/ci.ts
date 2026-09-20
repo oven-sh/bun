@@ -410,26 +410,49 @@ function getPlatformLabel(platform: Omit<Platform, "arch"> & { arch: string }): 
   return label;
 }
 
-function getImageKey(platform: Platform): string {
-  const { os, arch, distro, release, features, abi, crossCompile } = platform;
-  // Cross-compiled targets (Android, FreeBSD, macOS-cross) build from a Linux
-  // host image — its bake installs the NDK / base.txz sysroot on it (the
-  // macOS SDK is fetched by the build itself). No separate image is baked.
+/**
+ * The image of scripts/build/ci-images/spec.ts that a platform's jobs run on.
+ * Cross-compiled targets (Android, FreeBSD, macOS-cross) build on a Linux
+ * image, whose bake installs their sysroots: no separate image is baked.
+ */
+function getImage(platform: Platform): Image {
+  const { os, arch, distro, release, abi, crossCompile } = platform;
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
-  const version = release.replace(/\./g, "");
-  let key = `${hostOs}-${arch}-${version}`;
-  if (distro) {
-    key += `-${distro}`;
+  const image = images.find(
+    image =>
+      image.os === hostOs &&
+      image.arch === arch &&
+      image.release === release &&
+      (image.os === "windows" || (image.distro === distro && image.abi === (abi === "musl" ? "musl" : "gnu"))),
+  );
+  if (!image) {
+    throw new Error(
+      `No image for ${hostOs} ${arch} ${distro ?? ""} ${release} in scripts/build/ci-images/spec.ts (images: ${images.map(imageKey).join(", ")})`,
+    );
   }
-  if (features?.length) {
-    key += `-with-${features.join("-")}`;
-  }
+  return image;
+}
 
-  if (abi && abi !== "android") {
-    key += `-${abi}`;
-  }
+function getImageKey(platform: Platform): string {
+  return imageKey(getImage(platform));
+}
 
-  return key;
+/**
+ * The step a platform's jobs wait for when this build bakes their image
+ * (`baking` is the keys of the images it bakes). darwin machines are not
+ * started from an image.
+ */
+function getImageDependsOn(platform: Platform, baking: ReadonlySet<string>): string[] {
+  if (platform.os === "darwin") {
+    return [];
+  }
+  const key = getImageKey(platform);
+  return baking.has(key) ? [`${key}-build-image`] : [];
+}
+
+/** Tells kinds of machine apart: the baseline and profile variants of a platform run on the same one. */
+function getMachineKey({ os, arch, distro, release, abi }: Platform): string {
+  return [os, arch, distro, release, abi].join("-");
 }
 
 function getImageLabel(platform: Platform): string {
@@ -442,24 +465,15 @@ function getImageLabel(platform: Platform): string {
  * directory is written under build/ci-images/, and its name is the hash of
  * that directory.
  */
-const generatedImages = new Map<string, { image: Image; generated: GeneratedImage }>();
+const generatedImages = new Map<Image, GeneratedImage>();
 function getGeneratedImage(platform: Platform): { image: Image; generated: GeneratedImage } {
-  if (!generatedImages.size) {
-    for (const image of images) {
-      generatedImages.set(imageKey(image), {
-        image,
-        generated: generateImage(image, join(process.cwd(), "build/ci-images")),
-      });
-    }
+  const image = getImage(platform);
+  let generated = generatedImages.get(image);
+  if (!generated) {
+    generated = generateImage(image, join(process.cwd(), "build/ci-images"));
+    generatedImages.set(image, generated);
   }
-  const key = getImageKey(platform);
-  const entry = generatedImages.get(key);
-  if (!entry) {
-    throw new Error(
-      `No image "${key}" in scripts/build/ci-images/spec.ts (images: ${[...generatedImages.keys()].join(", ")})`,
-    );
-  }
-  return entry;
+  return { image, generated };
 }
 
 function getImageName(platform: Platform): string {
@@ -1090,6 +1104,9 @@ function getImageSteps(platform: Platform, state: ImageState, options: PipelineO
  * of inline during each build. Re-uploads signed zips with the same names so
  * the release step picks them up transparently.
  */
+/** Signing runs on a real Windows x64 machine: smctl does not work on ARM64. */
+const windowsSignPlatform: Platform = { os: "windows", arch: "x64", release: "2019" };
+
 function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptions): CommandStep {
   // Each build-bun step produces two zips: <triplet>-profile.zip and <triplet>.zip
   const artifacts: string[] = [];
@@ -1101,14 +1118,13 @@ function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptio
     buildSteps.push(stepKey, stepKey);
   }
 
-  // Signing runs on a real Windows x64 machine (smctl; doesn't work on
-  // ARM64) — the build platforms themselves are cross-compiled on Linux, so
-  // the agent descriptor here is explicitly a native Windows box.
+  // The build platforms themselves are cross-compiled on Linux, so the agent
+  // here is explicitly a native Windows box.
   return {
     key: "windows-sign",
     label: `${getBuildkiteEmoji("windows")} sign`,
     depends_on: windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
-    agents: getEc2Agent({ os: "windows", arch: "x64", release: "2019" }, options, {
+    agents: getEc2Agent(windowsSignPlatform, options, {
       instanceType: getAzureVmSize("windows", "x64", "test"),
     }),
     retry: getRetry(),
@@ -1437,7 +1453,9 @@ function getOptionsStep(): BlockStep {
         // getPipelineOptions() resolves through testPlatformsMap, and the image
         // key isn't a platform key.
         options: testPlatforms
-          .filter((platform, index, array) => index === array.findIndex(p => getImageKey(p) === getImageKey(platform)))
+          .filter(
+            (platform, index, array) => index === array.findIndex(p => getMachineKey(p) === getMachineKey(platform)),
+          )
           .map(platform => {
             const { os, arch, abi, distro, release } = platform;
             let label = `${getEmoji(os)} ${arch}`;
@@ -1705,15 +1723,19 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   // images a build needs are exactly {buildHostPlatform} ∪ testPlatforms'
   // native images — buildPlatforms entries encode TARGET os/arch/abi, not a
   // host image. darwin has no cloud images (bare-metal test fleet only).
+  // Sign with [sign windows] in the commit message (for testing the sign step
+  // on a branch). DigiCert charges per signature, so canary builds are never signed.
+  const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
+  const signWindows = ((isMainBranch() && !options.canary) || !!options.signWindows) && windowsPlatforms.length > 0;
   const neededImages = new Map<string, Platform>(
-    [buildHostPlatform, ...testPlatforms]
+    [buildHostPlatform, ...testPlatforms, ...(signWindows ? [windowsSignPlatform] : [])]
       .filter(({ os }) => os !== "darwin")
       .map(platform => [getImageKey(platform), platform]),
   );
 
   // The ones that cannot be booted yet. Whether an image exists can only be
   // asked in CI, where the cloud credentials are.
-  const imagePlatforms = new Map<string, Platform>();
+  const baking = new Set<string>();
   const imageSteps: CommandStep[] = [];
   for (const [key, platform] of isBuildkite ? neededImages : []) {
     const { image, generated } = getGeneratedImage(platform);
@@ -1730,7 +1752,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       }
       await run(["buildkite-agent", "artifact", "upload", `build/ci-images/${key}/*`]);
     }
-    imagePlatforms.set(key, platform);
+    baking.add(key);
     imageSteps.push(...getImageSteps(platform, state, options));
   }
 
@@ -1801,8 +1823,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       ...relevantBuildPlatforms.flatMap(target => {
         // build-bun always runs on buildHostPlatform regardless of
         // target, so the only build-image dependency is the host's.
-        const imageKey = getImageKey(buildHostPlatform);
-        const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
+        const dependsOn = getImageDependsOn(buildHostPlatform, baking);
 
         const steps: Step[] = [
           getStepWithDependsOn(
@@ -1819,8 +1840,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           // verify-baseline runs on a per-target-arch native host (see
           // getVerifyBaselineHost), not buildHostPlatform.
           const verifyHost = getVerifyBaselineHost(target);
-          const verifyImageKey = getImageKey(verifyHost);
-          const verifyDeps = imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
+          const verifyDeps = getImageDependsOn(verifyHost, baking);
           steps.push(
             ...placeBinaryCheck(
               target,
@@ -1841,9 +1861,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
             t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
         );
         if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage() ?? ""))) {
-          // Darwin has no cloud image.
-          const traceImageKey = getImageKey(traceOn.on);
-          const traceDeps = imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
+          const traceDeps = getImageDependsOn(traceOn.on, baking);
           steps.push(
             ...placeBinaryCheck(
               target,
@@ -1894,8 +1912,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           testStepKeys.push(step.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
-          const imageKey = getImageKey(target);
-          const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
+          const dependsOn = getImageDependsOn(target, baking);
           return getStepWithDependsOn(
             {
               key: getPlatformKey(target),
@@ -1917,26 +1934,17 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     steps.push(getBinarySizeStep(strippedPlatforms, options, { recordOnly: isMainBranch() }));
   }
 
-  // Sign Windows builds on release (non-canary main) or when [sign windows]
-  // is in the commit message (for testing the sign step on a branch).
-  // DigiCert charges per signature, so canary builds are never signed.
-  const shouldSignWindows = (isMainBranch() && !options.canary) || options.signWindows;
-  if (shouldSignWindows) {
-    const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
-    if (windowsPlatforms.length > 0) {
-      // Signing runs on a native Windows x64 box; when this build bakes that
-      // image, signing waits for it.
-      steps.push(
-        getStepWithDependsOn(
-          getWindowsSignStep(windowsPlatforms, options),
-          imagePlatforms.has("windows-x64-2019") ? "windows-x64-2019-build-image" : undefined,
-        ),
-      );
-    }
+  if (signWindows) {
+    steps.push(
+      getStepWithDependsOn(
+        getWindowsSignStep(windowsPlatforms, options),
+        ...getImageDependsOn(windowsSignPlatform, baking),
+      ),
+    );
   }
 
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows, testStepKeys }));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: signWindows, testStepKeys }));
   }
 
   // Merge same-label groups into their first occurrence, keeping every

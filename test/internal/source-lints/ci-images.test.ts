@@ -11,6 +11,8 @@ import {
   imageKey,
   images,
   macosMachines,
+  pins,
+  recordedTool,
   tools,
 } from "../../../scripts/build/ci-images/spec.ts";
 
@@ -56,39 +58,39 @@ test("an image's name is the hash of its bake directory", () => {
 // shells. These are the exact lines, so that a change to how a step renders
 // (appending, prefixing, a list of lines in PowerShell) shows up here and not
 // an hour into a bake.
-function recordSection(bootstrap: string): string[] {
-  const lines = bootstrap.split("\n");
+function recordSection(image: (typeof images)[number], root: string): string[] {
+  const script = join(generateImage(image, root).directory, image.os === "windows" ? "bootstrap.ps1" : "bootstrap.sh");
+  const lines = readFileSync(script, "utf8").split("\n");
   const start = lines.indexOf("# ---- record-image");
   const end = lines.findIndex((line, index) => index > start && line.startsWith("# ---- "));
   return lines.slice(start, end < 0 ? undefined : end).filter(line => line !== "");
 }
 
-function recordedTools(image: (typeof images)[number]): string[] {
-  return tools(image).map(({ name, identity }) => {
-    const value =
-      identity.kind === "pinned" ? ` ${identity.value}` : identity.kind === "notRecorded" ? ` ${identity.reason}` : "";
-    return `tool ${name}: ${identity.kind}${value}`;
-  });
-}
+test("a tool's line of the record, for each kind of identity", () => {
+  const image = images.find(image => image.os === "linux" && image.role === "build")!;
+  const lines = tools(image).map(recordedTool);
+  expect(lines).toContain(`tool nodejs: pinned ${pins.nodejs.version}`);
+  expect(lines).toContain("tool llvm: packageDatabase");
+  expect(lines).toContain("tool glibc-sysroot: observed");
+  expect(lines).toContain("tool record-image: configuration");
+  expect(lines).toContain("tool prefetch: notRecorded decided by the commit being built, not by this file");
+});
 
-test("the record a Linux bake writes", () => {
+test("the record a Debian bake writes", () => {
   using dir = tempDir("ci-images", {});
   const image = images.find(image => image.os === "linux" && image.role === "build")!;
-  const bootstrap = readFileSync(join(generateImage(image, String(dir)).directory, "bootstrap.sh"), "utf8");
-  const observed = tools(image).filter(tool => tool.identity.kind === "observed");
-  expect(observed.map(tool => tool.name)).toEqual(["glibc-sysroot", "musl-sysroot"]);
-  expect(recordSection(bootstrap)).toEqual([
+  expect(recordSection(image, String(dir))).toEqual([
     "# ---- record-image",
     "scratch=$(mktemp -d -p /var/tmp)",
     `printf '%s\\n' "name: $IMAGE_NAME" > /etc/bun-image.txt`,
     "cat >> /etc/bun-image.txt <<'EOF'",
     `image: ${JSON.stringify(image)}`,
-    ...recordedTools(image),
+    ...tools(image).map(recordedTool),
     "EOF",
-    ...observed.flatMap(({ name }) => [
-      `[ -n "$(cat "$BAKE_DIR/observed/${name}")" ] || { echo 'bootstrap: nothing was observed for ${name}' >&2; exit 1; }`,
-      `cat "$BAKE_DIR/observed/${name}" | sed 's/^/observed ${name}: /' >> /etc/bun-image.txt`,
-    ]),
+    `[ -n "$(cat "$BAKE_DIR/observed/glibc-sysroot")" ] || { echo 'bootstrap: nothing was observed for glibc-sysroot' >&2; exit 1; }`,
+    `cat "$BAKE_DIR/observed/glibc-sysroot" | sed 's/^/observed glibc-sysroot: /' >> /etc/bun-image.txt`,
+    `[ -n "$(cat "$BAKE_DIR/observed/musl-sysroot")" ] || { echo 'bootstrap: nothing was observed for musl-sysroot' >&2; exit 1; }`,
+    `cat "$BAKE_DIR/observed/musl-sysroot" | sed 's/^/observed musl-sysroot: /' >> /etc/bun-image.txt`,
     // The query is a statement of its own: sh has no pipefail.
     `dpkg-query --show --showformat '\${binary:Package} \${Version}\\n' > "$scratch/packages"`,
     `[ -n "$(cat "$scratch/packages")" ] || { echo 'bootstrap: the package manager listed no packages' >&2; exit 1; }`,
@@ -97,23 +99,34 @@ test("the record a Linux bake writes", () => {
   ]);
 });
 
+test("the packages an Alpine bake records", () => {
+  using dir = tempDir("ci-images", {});
+  const image = images.find(image => image.os === "linux" && image.distro === "alpine")!;
+  expect(recordSection(image, String(dir)).filter(line => line.includes("$scratch/"))).toEqual([
+    `apk list --installed > "$scratch/apk-list"`,
+    `cut -d ' ' -f1 "$scratch/apk-list" > "$scratch/packages"`,
+    `[ -n "$(cat "$scratch/packages")" ] || { echo 'bootstrap: the package manager listed no packages' >&2; exit 1; }`,
+    `cat "$scratch/packages" | LC_ALL=C sort | sed 's/^/package /' >> /etc/bun-image.txt`,
+  ]);
+});
+
 test("the record a Windows bake writes", () => {
   using dir = tempDir("ci-images", {});
   const image = images.find(image => image.os === "windows" && image.arch === "aarch64")!;
-  const bootstrap = readFileSync(join(generateImage(image, String(dir)).directory, "bootstrap.ps1"), "utf8");
-  const literal = (line: string) => `'${line.replace(/'/g, "''")}'`;
-  const written = [`image: ${JSON.stringify(image)}`, ...recordedTools(image)];
-  expect(recordSection(bootstrap)).toEqual([
+  const written = [`image: ${JSON.stringify(image)}`, ...tools(image).map(recordedTool)];
+  expect(recordSection(image, String(dir))).toEqual([
     "# ---- record-image",
     "$scratch = Join-Path $env:TEMP ([System.IO.Path]::GetRandomFileName())",
     "New-Item -ItemType Directory -Force $scratch | Out-Null",
     `"name: $IMAGE_NAME" | Out-File -Encoding ascii 'C:\\bun-image.txt'`,
     `Add-Content -Path 'C:\\bun-image.txt' -Encoding ascii -Value @(`,
-    ...written.map((line, index) => `  ${literal(line)}${index < written.length - 1 ? "," : ""}`),
+    ...written.map((line, index) => `  '${line}'${index < written.length - 1 ? "," : ""}`),
     ")",
     `if (-not (Get-Content "$BAKE_DIR\\observed\\visual-studio")) { throw 'bootstrap: nothing was observed for visual-studio' }`,
     `Get-Content "$BAKE_DIR\\observed\\visual-studio" | ForEach-Object { "observed visual-studio: $_" } | Out-File -Append -Encoding ascii 'C:\\bun-image.txt'`,
-    `(scoop export | Out-String | ConvertFrom-Json).apps | ForEach-Object { "$($_.Name) $($_.Version)" } | Out-File -Encoding ascii "$scratch\\packages"`,
+    `scoop export | Out-String | ConvertFrom-Json | Select-Object -ExpandProperty apps | ForEach-Object { "$($_.Name) $($_.Version)" } | Out-File -Encoding ascii "$scratch\\packages"`,
+    // Scoop's exit code: a query that failed must not leave a record without its packages.
+    'if ($LASTEXITCODE -ne 0) { throw "bootstrap: scoop exited with code $LASTEXITCODE" }',
     `if (-not (Get-Content "$scratch\\packages")) { throw 'bootstrap: the package manager listed no packages' }`,
     `Get-Content "$scratch\\packages" | Sort-Object | ForEach-Object { "package $_" } | Out-File -Append -Encoding ascii 'C:\\bun-image.txt'`,
     "Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue",

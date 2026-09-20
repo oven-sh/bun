@@ -1,6 +1,7 @@
 // The CI environment the scripts run in: what Buildkite and GitHub say about
 // the build (branch, commit, pull request, fork), cluster secrets, build
-// meta-data, artifacts, annotations and log groups.
+// meta-data, artifacts, annotations and log groups; and toYaml(), which
+// writes the pipeline that .buildkite/ci.ts uploads.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -793,9 +794,9 @@ export function printEnvironment(): void {
 
 /**
  * A value as YAML reads it back. A string is always quoted, as JSON, which YAML
- * reads as the same string: bare, YAML reads many strings as something else.
- * An AWS account id is one ("099720109477" became the number 99720109477 and
- * the agent tag lost its zero), and so are "3.20", "yes" and "2026-09-20".
+ * reads as the same string. Bare, YAML reads many strings as something else:
+ * the AWS account id "099720109477" is the number 99720109477, "3.20" is 3.2,
+ * "yes" is true and "2026-09-20" is a date.
  */
 const yamlScalar = (value: unknown) => (typeof value === "string" ? JSON.stringify(value) : String(value));
 

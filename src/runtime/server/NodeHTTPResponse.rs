@@ -768,8 +768,7 @@ impl NodeHTTPResponse {
         JSValue::from(self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED))
     }
 
-    /// Closed, or destroyed from JS with the close deferred to the end of the read uws is
-    /// parsing (HTTP_NODE_CLOSE_AFTER_MESSAGE). Every write gates on this.
+    /// Closed, or closing once uws finishes the read it is parsing (HTTP_NODE_CLOSE_AFTER_MESSAGE).
     pub(crate) fn is_socket_closed_or_closing(&self) -> bool {
         let flags = self.flags.get();
         if flags.contains(Flags::SOCKET_CLOSED) {

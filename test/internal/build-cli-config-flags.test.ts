@@ -19,13 +19,14 @@ async function build(...args: string[]): Promise<{ stderr: string; exitCode: num
   return { stderr, exitCode };
 }
 
-test.concurrent("a number field takes a non-negative decimal integer", async () => {
-  for (const value of ["abc", "", "-1", "0x1c", "1e1", "2.5"]) {
+test.concurrent.each(["abc", "", "-1", "0x1c", "1e1", "2.5"])(
+  "a number field takes a non-negative decimal integer, not %j",
+  async value => {
     const { stderr, exitCode } = await build(`--android-api-level=${value}`);
-    expect(stderr).toContain(`--android-api-level takes a non-negative integer, got: ${JSON.stringify(value)}`);
+    expect(stderr).toBe(`error: --android-api-level takes a non-negative integer, got: ${JSON.stringify(value)}\n`);
     expect(exitCode).toBe(1);
-  }
-});
+  },
+);
 
 test.concurrent("an unknown field is an error that lists the fields", async () => {
   const { stderr, exitCode } = await build("--ltoo=on");

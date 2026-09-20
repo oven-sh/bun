@@ -5024,6 +5024,371 @@ it("http2 stream.respond accepts raw-headers arrays; respondWithFD/respondWithFi
     server.close();
   }
 });
+
+// node v26.3.0 sends every headers and options argument through assertIsObject(): undefined and
+// non-array objects pass, everything else throws ERR_INVALID_ARG_TYPE. The expected messages are
+// node v26.3.0's output for the same calls.
+describe.concurrent("http2 headers and options arguments are checked like node's assertIsObject", () => {
+  // [rejected value, how node words it in the message]
+  const nonObjects = [
+    [null, "null"],
+    [0, "type number (0)"],
+    [5, "type number (5)"],
+    ["", "type string ('')"],
+    [false, "type boolean (false)"],
+    [true, "type boolean (true)"],
+    [Symbol("s"), "type symbol (Symbol(s))"],
+    [function f() {}, "function f"],
+  ];
+  // Only the headers of request() and respond() may be an array (the raw [name, value, ...] form).
+  const nonObjectsAndArray = [...nonObjects, [[], "an instance of Array"]];
+  const ofTypeObject = "of type object";
+  // node's wording when assertIsObject() is told that both Object and Array are allowed.
+  const arrayOrObject = "an instance of Array or Object";
+
+  function errorOf(invoke) {
+    try {
+      invoke();
+      return "did not throw";
+    } catch (err) {
+      return { name: err.name, code: err.code, message: err.message };
+    }
+  }
+  function errorsOf(values, invoke) {
+    return values.map(([value]) => errorOf(() => invoke(value)));
+  }
+  function invalidArgType(argument, expected, received) {
+    return {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "${argument}" argument must be ${expected}. Received ${received}`,
+    };
+  }
+  function invalidArgTypes(values, argument, expected) {
+    return values.map(([, received]) => invalidArgType(argument, expected, received));
+  }
+  function responseOf(req) {
+    return new Promise((resolve, reject) => {
+      let headers;
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("response", received => (headers = received));
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => resolve({ headers, body }));
+      req.on("error", reject);
+      req.on("close", () => reject(new Error("the stream closed before its end")));
+    });
+  }
+
+  it("client.request() throws before it opens a stream", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`http://localhost:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      expect({
+        "request(headers)": errorsOf(nonObjects, value => client.request(value)),
+        "request({}, options)": errorsOf(nonObjectsAndArray, value => client.request({}, value)),
+        // Without the check this call ends the session with error code 9: the native HEADERS
+        // writer rejects the value after it HPACK-encoded the header block.
+        'request({ ":method": "POST" }, 5)': errorOf(() => client.request({ ":method": "POST" }, 5)).message,
+        // node checks the headers first: their type, then their content, and then the options.
+        "request(null, null)": errorOf(() => client.request(null, null)).message,
+        'request({ ":foo": "x" }, null)': errorOf(() => client.request({ ":foo": "x" }, null)).code,
+        'request({ "bad name": "x" }, 5)': errorOf(() => client.request({ "bad name": "x" }, 5)).code,
+        'request({ ":method": "CONNECT" }, { endStream: 1 })': errorOf(() =>
+          client.request({ ":method": "CONNECT" }, { endStream: 1 }),
+        ).code,
+        'request([":foo", "x"], "str")': errorOf(() => client.request([":foo", "x"], "str")).code,
+      }).toEqual({
+        "request(headers)": invalidArgTypes(nonObjects, "headers", arrayOrObject),
+        "request({}, options)": invalidArgTypes(nonObjectsAndArray, "options", ofTypeObject),
+        'request({ ":method": "POST" }, 5)': invalidArgType("options", ofTypeObject, "type number (5)").message,
+        "request(null, null)": invalidArgType("headers", arrayOrObject, "null").message,
+        'request({ ":foo": "x" }, null)': "ERR_HTTP2_INVALID_PSEUDOHEADER",
+        'request({ "bad name": "x" }, 5)': "ERR_INVALID_HTTP_TOKEN",
+        'request({ ":method": "CONNECT" }, { endStream: 1 })': "ERR_HTTP2_CONNECT_AUTHORITY",
+        'request([":foo", "x"], "str")': "ERR_HTTP2_INVALID_PSEUDOHEADER",
+      });
+
+      // No rejected call took a stream id or hurt the session: the first real request is stream 1.
+      const req = client.request({ ":path": "/" });
+      expect(await responseOf(req)).toMatchObject({ headers: { ":status": 200 }, body: "ok" });
+      expect(req.id).toBe(1);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("client.request() checks its arguments before it looks at the session state", async () => {
+    const server = http2.createServer();
+    let endResponse;
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      endResponse = () => stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`http://localhost:${server.address().port}`);
+    client.on("error", () => {});
+    function badArguments() {
+      return {
+        "request(null)": errorOf(() => client.request(null)).message,
+        "request({}, null)": errorOf(() => client.request({}, null)).message,
+        'request({ "bad name": "x" })': errorOf(() => client.request({ "bad name": "x" })).code,
+      };
+    }
+    const expected = {
+      "request(null)": invalidArgType("headers", arrayOrObject, "null").message,
+      "request({}, null)": invalidArgType("options", ofTypeObject, "null").message,
+      'request({ "bad name": "x" })': "ERR_INVALID_HTTP_TOKEN",
+    };
+    try {
+      // close() with a stream still open leaves the session closed and not destroyed.
+      const req = client.request({ ":path": "/" });
+      const response = responseOf(req);
+      await new Promise((resolve, reject) => {
+        req.on("response", resolve);
+        response.catch(reject);
+      });
+      client.close();
+      expect({ closed: client.closed, destroyed: client.destroyed, ...badArguments() }).toEqual({
+        closed: true,
+        destroyed: false,
+        ...expected,
+      });
+
+      endResponse();
+      expect(await response).toMatchObject({ headers: { ":status": 200 }, body: "ok" });
+      client.destroy();
+      expect({ destroyed: client.destroyed, ...badArguments() }).toEqual({ destroyed: true, ...expected });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("the ServerHttp2Stream methods throw and leave the stream untouched", async () => {
+    // A function in the options slot of pushStream() is the callback.
+    const notCallable = nonObjectsAndArray.filter(([value]) => typeof value !== "function");
+    const fd = fs.openSync(import.meta.path, "r");
+    const pushCallback = mock();
+    const errors = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("stream", (stream, headers) => {
+      if (headers[":path"] === "/sibling") {
+        stream.respond({ ":status": 200 });
+        stream.end("sibling");
+        return;
+      }
+      errors.resolve({
+        "respond(headers)": errorsOf(nonObjects, value => stream.respond(value)),
+        "respond({}, options)": errorsOf(nonObjectsAndArray, value => stream.respond({}, value)),
+        "respondWithFile(path, headers)": errorsOf(nonObjectsAndArray, value =>
+          stream.respondWithFile(import.meta.path, value),
+        ),
+        "respondWithFile(path, {}, options)": errorsOf(nonObjectsAndArray, value =>
+          stream.respondWithFile(import.meta.path, {}, value),
+        ),
+        "respondWithFD(fd, headers)": errorsOf(nonObjectsAndArray, value => stream.respondWithFD(fd, value)),
+        "respondWithFD(fd, {}, options)": errorsOf(nonObjectsAndArray, value => stream.respondWithFD(fd, {}, value)),
+        "additionalHeaders(headers)": errorsOf(nonObjectsAndArray, value => stream.additionalHeaders(value)),
+        "pushStream(headers, callback)": errorsOf(nonObjectsAndArray, value => stream.pushStream(value, pushCallback)),
+        "pushStream({}, options, callback)": errorsOf(notCallable, value => stream.pushStream({}, value, pushCallback)),
+        // node checks the options first in all of these.
+        "headers and options both null": [
+          errorOf(() => stream.respond(null, null)),
+          errorOf(() => stream.respondWithFile(import.meta.path, null, null)),
+          errorOf(() => stream.respondWithFD(fd, null, null)),
+          errorOf(() => stream.pushStream(null, null, pushCallback)),
+        ],
+        // node checks the fields of the options before the headers too.
+        "null headers and a bad options.offset": [
+          errorOf(() => stream.respondWithFile(import.meta.path, null, { offset: "x" })),
+          errorOf(() => stream.respondWithFD(fd, null, { offset: "x" })),
+        ],
+      });
+      // No rejected call reserved a stream id: this push is stream 2.
+      stream.pushStream({ ":path": "/pushed" }, (err, push) => {
+        if (err) return stream.destroy(err);
+        push.respond({ ":status": 200 });
+        push.end();
+      });
+      stream.respond({ ":status": 200, "x-after": "yes" });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`http://localhost:${server.address().port}`);
+    client.on("error", () => {});
+    const pushed = [];
+    const pushClosed = Promise.withResolvers();
+    client.on("stream", (push, headers) => {
+      pushed.push({ id: push.id, path: headers[":path"] });
+      push.on("close", pushClosed.resolve);
+      push.resume();
+    });
+    try {
+      const response = responseOf(client.request({ ":path": "/" }));
+      // A request that fails before the server sees it must not leave `errors` pending.
+      response.catch(errors.reject);
+      // Without the options check, respond({}, true) makes this stream and the session fail.
+      const sibling = responseOf(client.request({ ":path": "/sibling" }));
+      sibling.catch(errors.reject);
+      const badOffset = {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The property 'options.offset' is invalid. Received 'x'",
+      };
+      expect(await errors.promise).toEqual({
+        "respond(headers)": invalidArgTypes(nonObjects, "headers", arrayOrObject),
+        "respond({}, options)": invalidArgTypes(nonObjectsAndArray, "options", ofTypeObject),
+        "respondWithFile(path, headers)": invalidArgTypes(nonObjectsAndArray, "headers", arrayOrObject),
+        "respondWithFile(path, {}, options)": invalidArgTypes(nonObjectsAndArray, "options", ofTypeObject),
+        "respondWithFD(fd, headers)": invalidArgTypes(nonObjectsAndArray, "headers", arrayOrObject),
+        "respondWithFD(fd, {}, options)": invalidArgTypes(nonObjectsAndArray, "options", ofTypeObject),
+        "additionalHeaders(headers)": invalidArgTypes(nonObjectsAndArray, "headers", ofTypeObject),
+        "pushStream(headers, callback)": invalidArgTypes(nonObjectsAndArray, "headers", ofTypeObject),
+        "pushStream({}, options, callback)": invalidArgTypes(notCallable, "options", ofTypeObject),
+        "headers and options both null": Array(4).fill(invalidArgType("options", ofTypeObject, "null")),
+        "null headers and a bad options.offset": [badOffset, badOffset],
+      });
+      expect(await response).toMatchObject({ headers: { ":status": 200, "x-after": "yes" }, body: "ok" });
+      expect(await sibling).toMatchObject({ headers: { ":status": 200 }, body: "sibling" });
+      expect(pushCallback).not.toHaveBeenCalled();
+      expect(pushed).toEqual([{ id: 2, path: "/pushed" }]);
+      await pushClosed.promise;
+    } finally {
+      client.destroy();
+      server.close();
+      fs.closeSync(fd);
+    }
+  });
+
+  it("sendTrailers() throws and the real trailers still go out", async () => {
+    const errors = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => {
+        errors.resolve(errorsOf(nonObjectsAndArray, value => stream.sendTrailers(value)));
+        stream.sendTrailers({ "x-trailer": "sent" });
+      });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`http://localhost:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      const trailers = new Promise((resolve, reject) => {
+        req.on("trailers", resolve);
+        req.on("error", reject);
+        req.on("close", () => reject(new Error("the stream closed before the trailers")));
+      });
+      // A request that fails before 'wantTrailers' must not leave `errors` pending.
+      trailers.catch(errors.reject);
+      req.resume();
+      expect(await errors.promise).toEqual(invalidArgTypes(nonObjectsAndArray, "headers", ofTypeObject));
+      expect(await trailers).toMatchObject({ "x-trailer": "sent" });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("res.writeInformation() checks its headers like node, which lets null through", async () => {
+    const rejected = nonObjectsAndArray.filter(([value]) => value !== null);
+    const results = Promise.withResolvers();
+    const server = http2.createServer((req, res) => {
+      results.resolve({
+        rejected: errorsOf(rejected, value => res.writeInformation(103, value)),
+        accepted: [null, undefined, { "x-info": "yes" }].map(value => res.writeInformation(103, value)),
+      });
+      res.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`http://localhost:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      const informational = [];
+      req.on("headers", headers => informational.push({ status: headers[":status"], info: headers["x-info"] }));
+      const response = responseOf(req);
+      response.catch(results.reject);
+      expect(await results.promise).toEqual({
+        rejected: invalidArgTypes(rejected, "headers", ofTypeObject),
+        accepted: [true, true, true],
+      });
+      expect(await response).toMatchObject({ headers: { ":status": 200 }, body: "ok" });
+      // Only the accepted calls sent a 1xx block.
+      expect(informational).toEqual([
+        { status: 103, info: undefined },
+        { status: 103, info: undefined },
+        { status: 103, info: "yes" },
+      ]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("the other callers of assertIsObject() reject a function", () => {
+    // An unfixed build returns a session or a server here: do not leave it open.
+    function errorAfterCleanup(invoke) {
+      return errorOf(() => {
+        const made = invoke();
+        made.on("error", () => {});
+        made.destroy?.();
+      });
+    }
+    function f() {}
+    const settingsProperty = {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "options.settings" property must be of type object. Received function f',
+    };
+    expect({
+      "connect(f)": errorAfterCleanup(() => http2.connect(f)),
+      "createServer({ settings: f })": errorAfterCleanup(() => http2.createServer({ settings: f })),
+      "performServerHandshake(socket, f)": errorAfterCleanup(() => http2.performServerHandshake(new net.Socket(), f)),
+      "performServerHandshake(socket, { settings: f })": errorAfterCleanup(() =>
+        http2.performServerHandshake(new net.Socket(), { settings: f }),
+      ),
+    }).toEqual({
+      "connect(f)": invalidArgType("authority", "of type string or an instance of URL or Object", "function f"),
+      "createServer({ settings: f })": settingsProperty,
+      "performServerHandshake(socket, f)": invalidArgType("options", ofTypeObject, "function f"),
+      "performServerHandshake(socket, { settings: f })": settingsProperty,
+    });
+  });
+
+  it("undefined, a null-prototype object and a class instance still pass", async () => {
+    const accepted = [undefined, { __proto__: null }, new (class Foo {})()];
+    let streams = 0;
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      const value = accepted[streams++];
+      stream.respond(value, value);
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`http://localhost:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      const responses = await Promise.all(accepted.map(value => responseOf(client.request(value, value))));
+      expect(responses).toMatchObject(accepted.map(() => ({ headers: { ":status": 200 }, body: "ok" })));
+      expect(streams).toBe(accepted.length);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

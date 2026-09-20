@@ -42,7 +42,7 @@ import {
   verifyOrderFileApplied,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
-import { configOf, configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
+import { configOf, configure, type ConfigureInput } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
@@ -139,9 +139,7 @@ async function main(): Promise<void> {
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
-    const result = (await startGroup("Configure", () =>
-      configure(input, args.configFile !== undefined),
-    )) as ConfigureResult;
+    const result = await startGroup("Configure", () => configure(input, args.configFile !== undefined));
     if (args.configureOnly) return;
 
     // link-only: download cpp-only + rust-only artifacts before ninja.

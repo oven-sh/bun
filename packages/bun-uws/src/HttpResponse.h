@@ -475,10 +475,8 @@ public:
             webSocketContextData->openHandler(webSocket);
         }
 
-        /* An HTTP pause (node:http flood prevention, a paused request body) is this context's,
-         * and the socket has left it. A WebSocket never pauses, so there is nothing to keep.
-         * us_socket_adopt_tls resumes the same way. Last, because a resume that fails closes
-         * the socket, and the close handler expects the open handler to have run. */
+        /* The HTTP context can have paused reads (node:http flood prevention), and nothing on the WebSocket
+         * side resumes them. After the open handler, because a resume that fails closes the socket. */
         us_socket_resume(usSocket);
 
         return usSocket;

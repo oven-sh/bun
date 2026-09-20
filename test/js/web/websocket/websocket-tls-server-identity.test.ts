@@ -23,6 +23,8 @@ afterAll(() => {
 // and SAN DNS:localhost, IP:127.0.0.1, IP:::1.
 function startSniServer() {
   const sni: (string | null)[] = [];
+  let applicationData = "";
+  const connectionEnded = Promise.withResolvers<void>();
   const server = tls.createServer(
     {
       key: tlsCerts.key,
@@ -35,6 +37,7 @@ function startSniServer() {
     socket => {
       let buffered = "";
       socket.on("data", chunk => {
+        applicationData += chunk.toString("latin1");
         buffered += chunk.toString("latin1");
         const end = buffered.indexOf("\r\n\r\n");
         if (end === -1) return;
@@ -58,8 +61,10 @@ function startSniServer() {
         buffered = "";
       });
       socket.on("error", () => {});
+      socket.on("close", () => connectionEnded.resolve());
     },
   );
+  server.on("tlsClientError", () => connectionEnded.resolve());
   // A handshake with no server_name extension never reaches SNICallback.
   server.on("secureConnection", socket => {
     if (!socket.servername) sni.push(null);
@@ -69,6 +74,16 @@ function startSniServer() {
   return {
     port: promise,
     sni,
+    // What the client has sent over TLS so far.
+    get received() {
+      return applicationData;
+    },
+    // The same, once the server saw the connection end. A rejected peer must
+    // get none of the upgrade request: it carries Authorization and Cookie.
+    async receivedInTotal() {
+      await connectionEnded.promise;
+      return applicationData;
+    },
     [Symbol.dispose]() {
       server.close();
     },
@@ -107,6 +122,7 @@ describe.concurrent("WebSocket tls.serverName", () => {
     const ws = new WebSocket(url, { tls: { ca: tlsCerts.cert, serverName: "evil.test" } });
     expect(await openSession(ws)).toEqual(tlsFailed(url));
     expect(server.sni).toEqual(["evil.test"]);
+    expect(await server.receivedInTotal()).toBe("");
   });
 
   test("is used for the tunnel handshake through an HTTP proxy", async () => {
@@ -153,6 +169,9 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
         raw: true,
       },
     ]);
+    // Control for the rejection tests: the server does record the request.
+    // It read all of it before the 101, so no wait for the connection to end.
+    expect(server.received).toStartWith("GET / HTTP/1.1\r\n");
   });
 
   test("drains microtasks queued by the callback before the open event", async () => {
@@ -179,6 +198,7 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     const url = `wss://localhost:${await server.port}/`;
     let calls = 0;
     const ws = new WebSocket(url, {
+      headers: { Authorization: "Bearer secret" },
       tls: {
         ca: tlsCerts.cert,
         checkServerIdentity() {
@@ -189,6 +209,8 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     });
     expect(await openSession(ws)).toEqual(tlsFailed(url));
     expect(calls).toBe(1);
+    // Rejected before the upgrade: the peer never sees the request.
+    expect(await server.receivedInTotal()).toBe("");
   });
 
   test("rejects the connection when it throws", async () => {
@@ -203,6 +225,7 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
       },
     });
     expect(await openSession(ws)).toEqual(tlsFailed(url));
+    expect(await server.receivedInTotal()).toBe("");
   });
 
   test("may close the WebSocket from inside the callback", async () => {
@@ -261,6 +284,7 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     expect(await openSession(ws)).toEqual(tlsFailed(url));
     expect(calls).toEqual(["localhost"]);
     expect(proxy.requests).toHaveLength(1);
+    expect(await server.receivedInTotal()).toBe("");
   });
 
   test("is not called for the certificate of an HTTPS proxy", async () => {

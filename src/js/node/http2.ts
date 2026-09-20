@@ -3597,8 +3597,8 @@ class ServerHttp2Stream extends Http2Stream {
     if (statusCode === 101) {
       throw $ERR_HTTP2_STATUS_101();
     }
-    // RFC 9110: only 1xx-5xx status codes exist; node rejects anything outside 100-599.
-    if (statusCode < 100 || statusCode > 599) {
+    // Like node, a 1xx block only goes through additionalHeaders(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2670-L2678
+    if (statusCode < 200 || statusCode > 599) {
       throw $ERR_HTTP2_STATUS_INVALID(statusCode);
     }
     let endStream = !!options?.endStream;

@@ -1420,6 +1420,49 @@ describe("a response header field over the send limit (RFC 9113 §8.1)", () => {
     });
   });
 
+  // Verified against node v26.3.0: respond() throws for a 1xx status, so a refused block that
+  // keeps the stream open can only come from additionalHeaders().
+  test("respond() throws for a 1xx status and the stream still sends its response", async () => {
+    let thrown: unknown;
+    const wire = await wireFor(
+      (srv, track) => {
+        srv.on("stream", stream => {
+          track(stream);
+          try {
+            stream.respond({ ":status": 103, "x-big": big(200_000) });
+          } catch (err) {
+            thrown = (err as NodeJS.ErrnoException).code;
+          }
+          stream.end("body");
+        });
+      },
+      {},
+      sawEndOfBody,
+    );
+    expect({ thrown, ...wire, stream1: wire.stream1[0] }).toEqual({
+      thrown: "ERR_HTTP2_STATUS_INVALID",
+      stream1: `type ${FrameType.HEADERS}`,
+      goaway: null,
+      frameErrors: [],
+      streamErrors: [],
+      sessionErrors: [],
+      rstCode: ErrorCode.NO_ERROR,
+    });
+  });
+
+  // additionalHeaders() without ":status" sends a block that is not 1xx, so the refusal resets the stream.
+  test("respond() in the tick of a reset sends nothing on the stream", async () => {
+    const wire = await wireFor((srv, track) => {
+      srv.on("stream", stream => {
+        track(stream);
+        stream.additionalHeaders({ "x-big": big(200_000) });
+        stream.respond({ ":status": 200 });
+        stream.end("body");
+      });
+    });
+    expect(wire).toEqual(refused);
+  });
+
   // The refused block also carries "x-shared". The client can only decode that field on the second
   // stream if the refused block never reached the HPACK encoder.
   test("a stream in flight completes and its headers still decode", async () => {

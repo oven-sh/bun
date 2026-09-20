@@ -246,7 +246,7 @@ const WRITE_FLUSHED_WITHOUT_CALLBACK: u32 = 0x10;
 // RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
 // for the HPACK dynamic table entry structure
 const HPACK_ENTRY_OVERHEAD: usize = 32;
-// nghttp2's default `max_send_header_block_length`. The HPACK encoder cannot emit a larger field.
+// nghttp2's default send limit (https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_frame.h#L58). Equal to LSHPACK_MAX_HEADER_SIZE in c-bindings.cpp, the largest field the encoder emits.
 const NGHTTP2_MAX_HEADERSLEN: usize = 65536;
 // Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
 const MAX_CUSTOM_SETTINGS: usize = 10;
@@ -6899,6 +6899,10 @@ impl H2FrameParser {
         };
         // The `options` getters below can run user JS while `stream` is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
+        // JS can still respond in the tick that reset the stream. A reset stream sends nothing.
+        if stream.state == StreamState::CLOSED {
+            return Ok(JSValue::js_number(stream_id as f64));
+        }
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
             stream.set_context(stream_ctx_arg, global_object);
         }

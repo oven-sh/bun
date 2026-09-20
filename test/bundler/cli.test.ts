@@ -1115,23 +1115,25 @@ describe.concurrent("--css-target", () => {
     expect(await build("chrome130")).toContain("oklch(");
   });
 
-  test.each([
+  describe.each([
     ["a blank value", ""],
     ["an empty entry", "chrome100,,safari16.4"],
-  ])("--css-target rejects %s instead of disabling downleveling", async (_, value) => {
-    using dir = tempDir("build-css-target-blank", {
-      "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+  ])("given %s", (_, value) => {
+    test("--css-target rejects it instead of disabling downleveling", async () => {
+      using dir = tempDir("build-css-target-blank", {
+        "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "app.css", "--css-target", value],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('Invalid --css-target ""');
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "app.css", "--css-target", value],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain('Invalid --css-target ""');
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
   });
 });

@@ -15,6 +15,7 @@ import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
 import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
+import { toolIdentityFile } from "./tools.ts";
 
 // ---------------------------------------------------------------------------
 // Rule registration — call once per Ninja instance
@@ -282,6 +283,7 @@ export function nasm(
     outputs: [out],
     rule: "nasm",
     inputs: [resolve(cfg.cwd, src)],
+    implicitInputs: [toolIdentityFile(cfg, "nasm")],
     orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
     vars: { nasmflags: opts.flags.join(" ") },
   });
@@ -292,13 +294,17 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
   const absSrc = resolve(cfg.cwd, src);
   const out = objectPath(cfg, src);
 
-  // PCH is always an implicit dep — if it changes, recompile.
-  const implicitInputs = [...(opts.implicitInputs ?? []), ...(opts.pch !== undefined ? [opts.pch] : [])];
+  // The compiler's identity and the PCH are always implicit deps — if either changes, recompile.
+  const implicitInputs = [
+    toolIdentityFile(cfg, lang),
+    ...(opts.implicitInputs ?? []),
+    ...(opts.pch !== undefined ? [opts.pch] : []),
+  ];
   const node = {
     outputs: [out],
     inputs: [absSrc],
     orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
-    ...(implicitInputs.length > 0 ? { implicitInputs } : {}),
+    implicitInputs,
     ...(opts.pool !== undefined ? { pool: opts.pool } : {}),
   };
   const flags = opts.flags.join(" ");
@@ -417,7 +423,7 @@ export function pch(
     // absHeader + wrapper editing must rebuild PCH. Dep outputs too — see
     // the docstring above for why these can't be order-only (startup-stat
     // vs mid-build header regeneration). The depfile tracks the REST.
-    implicitInputs: [absHeader, wrapperHeader, ...(opts.implicitInputs ?? [])],
+    implicitInputs: [absHeader, wrapperHeader, toolIdentityFile(cfg, "cxx"), ...(opts.implicitInputs ?? [])],
     orderOnlyInputs: [pchDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
   };
   const vars = { cxxflags: opts.flags.join(" "), pch_header: n.rel(wrapperHeader) };
@@ -475,9 +481,12 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     },
   };
   if (implicitOutputs.length > 0) node.implicitOutputs = implicitOutputs;
-  if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) {
-    node.implicitInputs = opts.implicitInputs;
-  }
+  // clang++ drives the link; `ld` is "" on macOS, where it finds the linker itself.
+  node.implicitInputs = [
+    toolIdentityFile(cfg, "cxx"),
+    ...(cfg.ld !== "" ? [toolIdentityFile(cfg, "ld")] : []),
+    ...(opts.implicitInputs ?? []),
+  ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)
   // and does not create the directory; link-only and rust-and-link compile
   // no objects, so nothing else would have made it.

@@ -9,10 +9,11 @@
 import { execSync, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { pins } from "./ci-images/spec.ts";
-import type { Arch, OS, Toolchain } from "./config.ts";
+import type { Arch, Config, OS, Toolchain } from "./config.ts";
 import { BuildError } from "./error.ts";
+import { writeIfChanged } from "./fs.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Version range checking
@@ -193,6 +194,24 @@ function isExecutable(p: string): boolean {
  * otherwise → failure reason for the rejection log).
  */
 function getToolVersion(exe: string, versionArg: string): { version: string } | { reason: string } {
+  const result = askVersion(exe, versionArg);
+  if ("reason" in result) return result;
+  // Some tools print their version to stderr instead of stdout. Check both.
+  const version = parseVersion(result.stdout) ?? parseVersion(result.stderr);
+  if (version !== undefined) return { version };
+  // Parse failed — include what we saw (truncated) so the error is
+  // actionable instead of just "could not parse".
+  const output = (result.stdout + result.stderr).trim().slice(0, 200);
+  if (result.status !== 0) {
+    return { reason: `exited ${result.status}: ${output || "(no output)"}` };
+  }
+  return { reason: `no X.Y.Z in output: ${output || "(empty)"}` };
+}
+
+function askVersion(
+  exe: string,
+  versionArg: string,
+): { stdout: string; stderr: string; status: number | null } | { reason: string } {
   // stdio ignore on stdin: on Windows CI the parent's stdin can be a
   // handle that blocks the child's CRT init. --version never reads stdin.
   // 30s timeout: cold start of a large binary (clang is 100+ MB) through
@@ -205,16 +224,66 @@ function getToolVersion(exe: string, versionArg: string): { version: string } | 
   if (result.error) {
     return { reason: `spawn failed: ${result.error.message}` };
   }
-  // Some tools print their version to stderr instead of stdout. Check both.
-  const version = parseVersion(result.stdout ?? "") ?? parseVersion(result.stderr ?? "");
-  if (version !== undefined) return { version };
-  // Parse failed — include what we saw (truncated) so the error is
-  // actionable instead of just "could not parse".
-  const output = ((result.stdout ?? "") + (result.stderr ?? "")).trim().slice(0, 200);
-  if (result.status !== 0) {
-    return { reason: `exited ${result.status}: ${output || "(no output)"}` };
+  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status };
+}
+
+/** The tools whose output stays in the build directory from one build to the next. */
+export type IdentifiedTool = "cc" | "cxx" | "hostCc" | "nasm" | "ld";
+
+/**
+ * `<buildDir>/toolchain-identity/<tool>.txt`: which compiler, assembler or
+ * linker this build directory's artifacts come from, as the tool reports
+ * itself. An edge names the file of each tool it runs as an input, so
+ * replacing a tool rebuilds what that tool produced and nothing else. The Rust
+ * units get the same from the rustc version and commit in their hash.
+ *
+ * ninja cannot see a replaced tool on its own. A command line names the tool
+ * by path, and an upgrade behind a stable path (a package manager's `current`
+ * link, a Homebrew `opt/` symlink, /usr/bin) leaves the path, and so the
+ * command, unchanged. Naming the binary as an input does not help either: a
+ * freshly installed binary keeps its packaged mtime, which is usually older
+ * than the objects it should invalidate. The build directory then holds
+ * objects from two compilers, and with LTO their bitcode meets in one link —
+ * LLVM 21's next to LLVM 23's failed with `undefined symbol: hwy::Abort`.
+ *
+ * The archiver and the resource compiler have no file: llvm-lib and llvm-rc
+ * do not report a version, and what they write does not depend on one.
+ */
+export function toolIdentityFile(cfg: Config, tool: IdentifiedTool): string {
+  return resolve(cfg.buildDir, "toolchain-identity", `${tool}.txt`);
+}
+
+/** Called by configure, before ninja runs. An unchanged tool keeps its file's mtime and rebuilds nothing. */
+export function writeToolIdentities(cfg: Config): void {
+  const tools: IdentifiedTool[] = ["cc", "cxx", "hostCc", "nasm", "ld"];
+  for (const tool of tools) {
+    const path = cfg[tool];
+    // Absent on this platform: no nasm, and `ld` is "" on macOS, where clang finds the linker itself.
+    if (path === undefined || path === "") continue;
+    writeIfChanged(toolIdentityFile(cfg, tool), toolIdentity(path) + "\n");
   }
-  return { reason: `no X.Y.Z in output: ${output || "(empty)"}` };
+}
+
+/**
+ * What a tool says it is: the line of its `--version` output that carries the version. For an llvm.org build
+ * that is `clang version 23.1.1 (https://github.com/llvm/llvm-project <commit>)` — the release and the exact
+ * commit, the same on every machine. (The lines after it name the install directory.)
+ */
+export function toolIdentity(exe: string): string {
+  const result = askVersion(exe, "--version");
+  const line =
+    "reason" in result
+      ? undefined
+      : `${result.stdout}\n${result.stderr}`
+          .split("\n")
+          .map(l => l.trim())
+          .find(l => /\d+\.\d+/.test(l));
+  if (line === undefined) {
+    throw new BuildError(`Cannot tell which ${exe} this is`, {
+      hint: `\`${exe} --version\` ${"reason" in result ? result.reason : "printed no version"}`,
+    });
+  }
+  return line;
 }
 
 /**

@@ -436,10 +436,41 @@ export interface Provides {
 }
 
 /**
+ * Every vendored dependency (scripts/build/deps/<name>.ts). A dependency refers to another by name (`fetchDeps`),
+ * and its ninja targets are built from its name (`<name>`, `clone-<name>`, `configure-<name>`), so a misspelled
+ * one is a type error here rather than a missing target later.
+ */
+export type DepName =
+  | "WebKit"
+  | "boringssl"
+  | "brotli"
+  | "cares"
+  | "hdrhistogram"
+  | "highway"
+  | "libarchive"
+  | "libdeflate"
+  | "libjpeg-turbo"
+  | "libspng"
+  | "libuv"
+  | "libwebp"
+  | "lolhtml"
+  | "lshpack"
+  | "lsqpack"
+  | "lsquic"
+  | "mimalloc"
+  | "nodejs"
+  | "picohttpparser"
+  | "rust-argon2"
+  | "sqlite"
+  | "tinycc"
+  | "zlib"
+  | "zstd";
+
+/**
  * A vendored dependency definition. Lives in scripts/build/deps/<name>.ts.
  */
 export interface Dependency {
-  name: string;
+  name: DepName;
 
   /** Where source comes from. Evaluated per-config so local mode can be dynamic. */
   source: (cfg: Config) => Source;
@@ -469,7 +500,7 @@ export interface Dependency {
    * source stamp for header-only). Order-only on configure, implicit on
    * build. Does NOT link the other dep's libs (that's `provides.libs`).
    */
-  fetchDeps?: string[];
+  fetchDeps?: DepName[];
 
   /** How to build. */
   build: (cfg: Config) => BuildSpec;
@@ -772,7 +803,7 @@ export function resolveDep(
   n: Ninja,
   cfg: Config,
   dep: Dependency,
-  resolved: ReadonlyMap<string, ResolvedDep>,
+  resolved: ReadonlyMap<DepName, ResolvedDep>,
 ): ResolvedDep | null {
   if (dep.enabled && !dep.enabled(cfg)) {
     return null;

@@ -44,7 +44,7 @@ import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath, windowsShimPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
-import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
+import { computeDepLibs, type Dependency, type DepName, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
 
@@ -187,7 +187,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ─── Step 1: codegen + rust ───
   // Emitted before the deps: ninja breaks scheduling ties by emission order, and the Rust crate chain is the critical path (see the compile pool in compile.ts).
   const codegen = emitCodegen(n, cfg, sources);
-  const depsByName = new Map<string, ResolvedDep>();
+  const depsByName = new Map<DepName, ResolvedDep>();
 
   // The Rust crates produce a single staticlib that occupies the
   // same slot in the link as the C++ archive. Rust `include!`s codegen
@@ -1331,7 +1331,8 @@ export function validateBunConfig(cfg: Config): void {
 
   // --local-deps names must match a dep — a typo would otherwise silently
   // build the pinned tarball while the banner claims `local:<typo>`.
-  const depsByName = new Map(allDeps.map(d => [d.name, d]));
+  // Keyed by string: these names are the user's.
+  const depsByName = new Map<string, Dependency>(allDeps.map(d => [d.name, d]));
   for (const [name, path] of Object.entries(cfg.localDeps)) {
     const dep = depsByName.get(name);
     assert(dep !== undefined, `--local-deps: unknown dep '${name}'`, {

@@ -28,7 +28,7 @@
     "ci:errors": "bun scripts/find-build.ts --errors",
     "ci:logs": "bun scripts/find-build.ts --logs",
     "ci:watch": "bun scripts/find-build.ts --watch",
-    "ci:images": "node scripts/build/ci-images/generate.ts",
+    "ci:images": "node scripts/build/ci-images/spec.ts",
     "ci:slowest": "bun scripts/ci-slowest-tests.ts",
     "ci:parallel-allowlist": "node scripts/update-parallel-allowlist.mjs",
     "pr:comments": "bun scripts/pr-comments.ts",

@@ -113,7 +113,7 @@ export function rustTargetIsTier3(triple: string): boolean {
  * needed because `cargo build --target` still resolves proc-macro crates for
  * the host through the same `-Zbuild-std` flag set. Requires the `rust-src`
  * component, which `rust-toolchain.toml` requests and CI images preinstall
- * (ci-images/tools/rust.ts). Shared with
+ * (the `rust` tool of ci-images/spec.ts). Shared with
  * `rust:check-all`, which needs it for the Tier 3 triples.
  */
 export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abort";

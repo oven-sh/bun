@@ -1,1 +1,0 @@
-Install-Scoop-Package "$LLVM_SCOOP_PACKAGE@$LLVM_VERSION"

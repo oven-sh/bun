@@ -20,9 +20,7 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { getArch, requireCommand, run } from "./agent.ts";
-import type { WindowsImage } from "./build/ci-images/image.ts";
-import { packerVariables } from "./build/ci-images/packer.ts";
-import { pins } from "./build/ci-images/spec.ts";
+import { type WindowsImage, packerVariables, pins } from "./build/ci-images/spec.ts";
 import { getEnv, getSecret } from "./buildkite.ts";
 
 /**

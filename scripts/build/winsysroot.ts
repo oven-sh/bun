@@ -3,7 +3,7 @@
  *
  * Cross-compiling for Windows needs the MSVC CRT/STL + Windows SDK + ATL
  * headers and import libraries (see `Config.winsysroot`). Provisioned
- * sysroots come from the agent image (ci-images/tools/windows-sysroot.ts bakes
+ * sysroots come from the agent image (the `windowsSysroot` tool of ci-images/spec.ts bakes
  * an xwin splat at /opt/winsysroot) or from a
  * developer-created splat (docs/project/building-windows.mdx). When none is
  * present, CI builds fetch one into the per-build cache dir at configure

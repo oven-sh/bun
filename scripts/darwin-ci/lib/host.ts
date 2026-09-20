@@ -93,7 +93,7 @@ export async function generateBootstrap(ref: string): Promise<string> {
   await $`rm -rf ${checkout}`;
   await $`git clone -q --depth=1 --branch ${ref} ${config.bun.repo} ${checkout}`;
   const key = `darwin-${process.arch === "arm64" ? "aarch64" : "x64"}`;
-  await $`${process.execPath} scripts/build/ci-images/generate.ts ${key}`.cwd(checkout);
+  await $`${process.execPath} scripts/build/ci-images/spec.ts ${key}`.cwd(checkout);
   return join(checkout, "build", "ci-images", key, "bootstrap.sh");
 }
 

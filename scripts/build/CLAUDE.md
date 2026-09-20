@@ -216,16 +216,14 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                                                |
-| `ci-images/spec.ts`            | CI machine images: every image with its base image, every version pin, and the tools each image gets, in order                                                          |
-| `ci-images/tools/*.ts`         | One typed function per tool: the script it runs and the values that script is given                                                                                     |
-| `ci-images/generate.ts`        | `generateImage()` — writes `build/ci-images/<key>/` and names the image by that directory's hash; `bun run ci:images`                                                   |
+| `ci-images/spec.ts`            | CI's machines in one file: images, version pins, locations, every tool, and the generator of the bake scripts; `bun run ci:images`                                      |
 | `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                                                                |
 | `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                                                                              |
 | `shims/*.c`                    | Platform workaround sources                                                                                                                                             |
 
 ## CI machine images (`ci-images/`)
 
-What is on CI's build and test machines, and the generator of what bakes them. `ci-images/spec.ts` is also where the versions this build system uses are written (LLVM, Node.js, xwin and the Windows SDK, the macOS SDK, the Android API level, FreeBSD): `tools.ts`, `deps/nodejs-headers.ts`, `winsysroot.ts`, `macos-sdk.ts` and `config.ts` import them from `pins`, and `spec.ts` is one of `build.ninja`'s inputs. On a Buildkite agent the build compares `bun`, `cmake`, `node`, `clang` and `ld.lld` with those pins (`checkImageTools()`, `findLlvmTool()`). How the images work and how to change them: `ci-images/CLAUDE.md`.
+What is on CI's build and test machines, and the generator of what bakes them. `ci-images/spec.ts` is also where the versions this build system uses are written (LLVM, Node.js, xwin and the Windows SDK, the macOS SDK, the Android API level, FreeBSD): `tools.ts`, `deps/nodejs-headers.ts`, `winsysroot.ts`, `macos-sdk.ts` and `config.ts` import them from `pins`, the sysroot and download-cache lookups import where things are from `locations`, and `spec.ts` is one of `build.ninja`'s inputs. On a Buildkite agent the build compares `bun`, `cmake`, `node`, `clang` and `ld.lld` with those pins (`checkImageTools()`, `findLlvmTool()`). How the images work and how to change them: `ci-images/CLAUDE.md`.
 
 ## Key types
 

@@ -572,7 +572,7 @@ export function detectFreebsdSysroot(arch: Arch): string | undefined {
 /**
  * Locate the linux-gnu sysroot: ubuntu:20.04 (glibc 2.31) + gcc-13 libstdc++,
  * matching the WebKit prebuilt's build environment. Arch-specific. See
- * ci-images/tools/glibc-sysroot.ts.
+ * the `glibcSysroot` tool of ci-images/spec.ts.
  */
 export function detectLinuxGlibcSysroot(arch: Arch): string | undefined {
   const looksValid = (p: string) => existsSync(join(p, "usr", "include", "c++", "13"));
@@ -584,7 +584,7 @@ export function detectLinuxGlibcSysroot(arch: Arch): string | undefined {
 
 /**
  * Locate a linux-musl sysroot — alpine rootfs with musl + modern libstdc++;
- * see ci-images/tools/musl-sysroot.ts. Checks env var then
+ * see the `muslSysroot` tool of ci-images/spec.ts. Checks env var then
  * well-known install paths. Arch-specific. Returns undefined if none found.
  */
 export function detectLinuxMuslSysroot(arch: Arch): string | undefined {
@@ -664,7 +664,7 @@ function ndkHostTag(host: Host): string {
  * setup for NDK cross-builds (Chromium does the same).
  *
  * Idempotent. Warns with a sudo hint if the resource dir isn't writable
- * (CI's build image creates the symlinks as root: ci-images/tools/android-ndk.ts).
+ * (CI's build image creates the symlinks as root: the `androidNdk` tool of ci-images/spec.ts).
  */
 function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: string): void {
   const resourceDir = execSync(`"${cc}" -print-resource-dir`, { encoding: "utf8" }).trim();
@@ -1037,7 +1037,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         if (sysroot === undefined) {
           const p = locations.muslSysroot[arch];
           throw new BuildError(`--os=linux --arch=${arch} --abi=musl requires a musl sysroot when cross-compiling`, {
-            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see scripts/build/ci-images/tools/musl-sysroot.ts).`,
+            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see the muslSysroot tool of scripts/build/ci-images/spec.ts).`,
           });
         }
       }
@@ -1053,7 +1053,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         if (sysroot === undefined) {
           const p = locations.glibcSysroot[arch];
           throw new BuildError(`--os=linux --arch=${arch} --abi=gnu cross-compile requires a glibc sysroot`, {
-            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see scripts/build/ci-images/tools/glibc-sysroot.ts).`,
+            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see the glibcSysroot tool of scripts/build/ci-images/spec.ts).`,
           });
         }
       }

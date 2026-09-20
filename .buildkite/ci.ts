@@ -9,9 +9,14 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
 import { output, run } from "../scripts/agent.ts";
-import { type GeneratedImage, generateImage } from "../scripts/build/ci-images/generate.ts";
-import { type BakedImage, imageKey } from "../scripts/build/ci-images/image.ts";
-import { images, locations } from "../scripts/build/ci-images/spec.ts";
+import {
+  type BakedImage,
+  type GeneratedImage,
+  generateImage,
+  imageKey,
+  images,
+  locations,
+} from "../scripts/build/ci-images/spec.ts";
 import {
   getBuildMetadata,
   getCommit,
@@ -336,7 +341,7 @@ const buildPlatforms: Platform[] = [
   { os: "linux", arch: "aarch64", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", distro: "debian", release: "13" },
   // asan x64 cross-builds from the arm64 host too, with the amd64 compiler-rt
-  // that scripts/build/ci-images/tools/cross-compiler-rt.ts installs there.
+  // that the `crossCompilerRt` tool of scripts/build/ci-images/spec.ts installs there.
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
@@ -763,7 +768,7 @@ const PINNED_QEMU = {
  */
 function getEmulatorBinary(platform: Platform): string {
   const { os, arch } = platform;
-  // Intel SDE is baked into the Windows image (scripts/build/ci-images/tools/intel-sde.ts):
+  // Intel SDE is baked into the Windows image (the `intelSde` tool of scripts/build/ci-images/spec.ts):
   // downloadmirror.intel.com sits behind a bot challenge
   // that blocks non-browser clients, so it cannot be downloaded at job time.
   if (os === "windows") return `${locations.intelSde}\\sde.exe`;

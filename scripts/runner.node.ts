@@ -428,7 +428,7 @@ if (isBuildkite) {
 let coresDir: string | undefined;
 
 if (options["coredump-upload"]) {
-  // the image's bake sets this sysctl to /var/bun-cores-$distro-$release-$arch (ci-images/tools/core-dumps.ts)
+  // the image's bake sets this sysctl to /var/bun-cores-$distro-$release-$arch (the `coreDumps` tool of scripts/build/ci-images/spec.ts)
   const sysctl = await spawnWithTimeout({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
   coresDir = sysctl.stdout;
   if (sysctl.ok) {
@@ -3445,7 +3445,7 @@ function escapeXml(str: string): string {
  * output. bundler_compile.test.ts launches about 85 of those, which puts the file
  * at 220 to 290 seconds against the 300 second per-file cap. Turning the policy
  * off takes effect at once and needs no reboot. The image's bake does the same
- * (scripts/build/ci-images/tools/windows/system.ps1); this covers a machine
+ * (the `windowsSystem` tool of scripts/build/ci-images/spec.ts); this covers a machine
  * whose image was baked without it.
  *
  * Only on Buildkite: the policy cannot be turned on again without a reinstall,

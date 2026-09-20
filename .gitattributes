@@ -64,5 +64,5 @@ test/js/bun/css/files linguist-vendored
 src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments
 scripts/build/deps/*.snapshot text eol=lf
 
-# Every byte of these files is part of a CI image's name (scripts/build/ci-images/generate.ts).
+# Every byte of these files is part of a CI image's name (scripts/build/ci-images/spec.ts).
 scripts/build/ci-images/** text eol=lf

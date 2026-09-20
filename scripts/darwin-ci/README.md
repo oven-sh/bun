@@ -37,7 +37,7 @@ its hooks path. It asks for one reboot the first time and is re-run after it.
 script on the host and installs the `scripts/agent.ts` service.
 
 The script is `build/ci-images/darwin-<arch>/bootstrap.sh`, written by
-`scripts/build/ci-images/generate.ts` from a checkout of `--ref` on the host.
+`scripts/build/ci-images/spec.ts` from a checkout of `--ref` on the host.
 The versions it installs are the ones every other CI machine gets.
 
 `bake` is safe on a live host: it builds a staging image and swaps it in only

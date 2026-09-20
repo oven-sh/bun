@@ -5,9 +5,14 @@ import { expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { generateImage, hashDirectory } from "../../scripts/build/ci-images/generate.ts";
-import { imageKey } from "../../scripts/build/ci-images/image.ts";
-import { images, macosMachines, tools } from "../../scripts/build/ci-images/spec.ts";
+import {
+  generateImage,
+  hashDirectory,
+  imageKey,
+  images,
+  macosMachines,
+  tools,
+} from "../../scripts/build/ci-images/spec.ts";
 
 test("every image of the spec generates, with its tools in the spec's order", () => {
   using dir = tempDir("ci-images", {});
@@ -19,7 +24,7 @@ test("every image of the spec generates, with its tools in the spec's order", ()
     names.add(name);
 
     const bootstrap = readFileSync(join(directory, image.os === "windows" ? "bootstrap.ps1" : "bootstrap.sh"), "utf8");
-    const banners = [...bootstrap.matchAll(/^# ---- (\S+) \(/gm)].map(match => match[1]);
+    const banners = [...bootstrap.matchAll(/^# ---- (\S+)$/gm)].map(match => match[1]);
     expect(banners).toEqual(tools(image).map(tool => tool.name));
 
     const described = JSON.parse(readFileSync(join(directory, "image.json"), "utf8"));

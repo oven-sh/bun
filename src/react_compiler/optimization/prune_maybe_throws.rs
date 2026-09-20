@@ -11,7 +11,7 @@
 //! Analogous to TS `Optimization/PruneMaybeThrows.ts`.
 
 use crate::collections::IdMap;
-use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
+use crate::diagnostics::{CompilerDiagnostic, ErrorCategory, cold_invariant};
 use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, remove_dead_do_while_statements,
     remove_unnecessary_try_catch, remove_unreachable_for_updates,
@@ -40,16 +40,14 @@ pub(crate) fn prune_maybe_throws(
         for block in func.body.blocks.values() {
             if block.kind == BlockKind::Block && block.preds.len() == 1 {
                 if let Some(phi) = block.phis.iter().find(|phi| phi.operands.len() != 1) {
-                    return Err(cold_invariant(
-                        "Found a block with a single predecessor but where a phi has multiple operands",
-                        Some(format!(
-                            "Block bb{} has a phi with {} operands",
-                            block.id.0,
-                            phi.operands.len(),
-                        )),
+                    return Err(CompilerDiagnostic::new(
+                        ErrorCategory::Invariant,
+                        format!(
+                            "Found a block with a single predecessor but where a phi has multiple ({}) operands",
+                            phi.operands.len()
+                        ),
                         None,
-                    )
-                    .into());
+                    ));
                 }
             }
         }

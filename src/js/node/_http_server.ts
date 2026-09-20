@@ -865,9 +865,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           server.emit("connection", socket);
         }
 
-        if (!isPipelined) {
-          socket[kRequest] = http_req;
-        }
+        // Target of the socket 'timeout' handler until this request's response detaches.
+        socket[kRequest] = http_req;
         // Node.js (llhttp) only flags a request as an upgrade when it carries
         // both an Upgrade header and a Connection header with the "upgrade"
         // token; the server then consults shouldUpgradeCallback (default: an
@@ -2613,7 +2612,6 @@ function advanceResponsePipeline(server, socket) {
     }
     res.assignSocket(socket);
   }
-  socket[kRequest] = res.req;
 
   // Replay the writes buffered while the response was queued.
   // The buffered bytes are handed to the native handle below, so they no

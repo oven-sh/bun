@@ -109,22 +109,47 @@ describe("getVendorTestArgs", () => {
   });
 });
 
-test("each { tests } skip in test/vendor.json names at least one test and gives a reason", () => {
-  for (const { skipTests } of vendors as { skipTests?: VendorSkipTests }[]) {
-    if (typeof skipTests !== "object") continue;
-    for (const [glob, skip] of Object.entries(skipTests)) {
-      if (typeof skip !== "object") continue;
-      expect({ [glob]: skip }).toEqual({
-        [glob]: { tests: expect.arrayContaining([expect.any(String)]), reason: expect.any(String) },
-      });
-      // bun test matches the names joined by a space, so a name copied from the reporter
-      // ("Stream > stop stream") never matches and the skip does nothing.
-      expect({ [glob]: skip.tests.filter(name => name.includes(" > ")) }).toEqual({ [glob]: [] });
-      // The file still runs, and its arguments carry the skip.
-      const path = glob.replaceAll("*", "/");
-      expect({ [glob]: [isVendorTestSkipped(skipTests, path), getVendorTestArgs(skipTests, path)[0]] }).toEqual({
-        [glob]: [false, "--test-name-pattern"],
-      });
-    }
-  }
+describe("test/vendor.json", () => {
+  const entries = (vendors as { skipTests?: VendorSkipTests }[]).flatMap(({ skipTests }) =>
+    typeof skipTests === "object"
+      ? Object.entries(skipTests).flatMap(([glob, skip]) =>
+          skip && typeof skip === "object" ? [{ glob, skip, skipTests }] : [],
+        )
+      : [],
+  );
+
+  test("the { tests } skips give these arguments, and their files still run", () => {
+    expect(
+      entries.map(({ glob, skipTests }) => {
+        const path = glob.replaceAll("*", "/");
+        return { glob, skipsFile: isVendorTestSkipped(skipTests, path), args: getVendorTestArgs(skipTests, path) };
+      }),
+    ).toMatchInlineSnapshot(`
+      [
+        {
+          "args": [
+            "--test-name-pattern",
+            "^(?!.*(?:stop stream on canceled request))",
+            "--pass-with-no-tests",
+          ],
+          "glob": "response*stream.test.ts",
+          "skipsFile": false,
+        },
+      ]
+    `);
+  });
+
+  test("each { tests } skip gives a reason and names tests the way bun test matches them", () => {
+    // A blank name is in every test name, so it leaves the whole file out. bun test matches
+    // the names joined by a space, so a name copied from the reporter ("Stream > stop
+    // stream") matches nothing.
+    expect(
+      entries.map(({ glob, skip }) => ({
+        glob,
+        hasReason: typeof skip.reason === "string" && /\S/.test(skip.reason),
+        hasTests: skip.tests.length > 0,
+        badNames: skip.tests.filter(name => !/\S/.test(name) || name.includes(" > ")),
+      })),
+    ).toEqual(entries.map(({ glob }) => ({ glob, hasReason: true, hasTests: true, badNames: [] })));
+  });
 });

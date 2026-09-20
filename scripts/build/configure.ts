@@ -27,7 +27,7 @@ import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
-import { ninjaIfPresent } from "./ninja-release.ts";
+import { ensureNinja, ninjaIfPresent } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
@@ -133,6 +133,8 @@ export interface ConfigureResult {
   output: BunOutput;
   /** Build.ninja absolute path. */
   ninjaFile: string;
+  /** The ninja to run the build with (ninja-release.ts): a path, or `ninja` for the one on PATH. */
+  ninja: string;
   /** Env vars the caller should set before spawning ninja. */
   env: Record<string, string>;
   /** Wall-clock ms for the configure pass. */
@@ -327,6 +329,12 @@ export async function configure(
   await ensureMacosSdk(cfg);
   mark("ensureMacosSdk");
 
+  // The ninja itself, before anything here runs one (the restat below) so every
+  // ninja that touches this build directory is the same one. A regen replay is
+  // already inside the ninja that was chosen: it never fetches.
+  const ninja = fromNinja ? ninjaIfPresent(cfg) : await ensureNinja(cfg);
+  mark("ensureNinja");
+
   checkWorkarounds(cfg);
 
   // Windows cross-compile: make sure the MSVC CRT + Windows SDK splat is
@@ -409,7 +417,7 @@ export async function configure(
     const now = new Date();
     utimesSync(ninjaPath, now, now);
     if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
-      spawnSync(ninjaIfPresent(cfg), ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
+      spawnSync(ninja, ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
     }
   }
   mark("restat");
@@ -439,5 +447,5 @@ export async function configure(
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");
 
-  return { cfg, output, ninjaFile, env: ccacheEnv(cfg), elapsed, changed, exe };
+  return { cfg, output, ninjaFile, ninja, env: ccacheEnv(cfg), elapsed, changed, exe };
 }

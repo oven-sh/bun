@@ -44,7 +44,6 @@ import {
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
-import { resolveNinja } from "./build/ninja-release.ts";
 import { processAlive, processStartTime } from "./build/proc.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
@@ -213,9 +212,9 @@ async function main(): Promise<void> {
       });
     let inherited = false;
 
-    const ninja = await startGroup("Resolve ninja", () => resolveNinja(result.cfg));
+    const ninja = result.ninja;
     const runNinja = (targets: string[] = args.ninjaTargets) =>
-      spawnWithAnnotations(ninja as string, ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
+      spawnWithAnnotations(ninja, ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
         label: "ninja",
         env: ninjaEnv(result.cfg, result.env),
       });
@@ -307,7 +306,7 @@ async function main(): Promise<void> {
     if (args.configureOnly) {
       // Hint only for manual --configure-only, not generator replay.
       if (!args.configFile) {
-        process.stderr.write(`run: ninja -C ${result.cfg.buildDir}\n`);
+        process.stderr.write(`run: ${result.ninja} -C ${result.cfg.buildDir}\n`);
       }
       return;
     }
@@ -331,7 +330,7 @@ async function main(): Promise<void> {
     if (!quiet && interactive) {
       stdio[STREAM_FD] = 2;
     }
-    const ninja = spawnSync(await resolveNinja(result.cfg), ninjaArgv(result.cfg), {
+    const ninja = spawnSync(result.ninja, ninjaArgv(result.cfg), {
       stdio,
       env: ninjaEnv(result.cfg, result.env),
       // cargo's compile output (now part of the ninja graph via emitRust) can

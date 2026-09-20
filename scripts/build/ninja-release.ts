@@ -10,9 +10,9 @@
  * The fork publishes every commit as the release `bun-ninja-<sha8>`: one archive per build host and
  * `bun-ninja.json` with their checksums. The release and the checksums are pinned in
  * ci-images/spec.ts (`pins.bunNinja`), which also bakes that release into every CI image
- * (`locations.bunNinja`). On a machine without it the build driver (scripts/build.ts) fetches the
- * host's archive once into the shared build cache. It is fetched by the driver, not by an edge,
- * because it is what runs the edges — and not at configure, which never fetches.
+ * (`locations.bunNinja`). On a machine without it configure fetches the host's archive once into
+ * the shared build cache, where it fetches the other things that have to exist before ninja runs
+ * (the macOS SDK, the Windows sysroot). An edge cannot fetch it: it is what runs the edges.
  */
 
 import { createHash } from "node:crypto";
@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { locations, pins } from "./ci-images/spec.ts";
 import type { Config } from "./config.ts";
 import { downloadWithRetry, extractZip } from "./download.ts";
+import { formatElapsed, nameColor } from "./tty.ts";
 
 const release = pins.bunNinja;
 
@@ -46,7 +47,7 @@ function presentNinja(cfg: Config): string | undefined {
 
 /**
  * The ninja for anything that operates on a build directory without being the build itself (configure's
- * `-t restat`, helper scripts): the pinned one if it is on the machine, the PATH one otherwise — never a fetch.
+ * regen replay, helper scripts): the pinned one if it is on the machine, the PATH one otherwise — never a fetch.
  * It has to be the same ninja the driver runs: ninja versions disagree on the `.ninja_log` format, and one
  * that finds a log it considers too old or too new rewrites or deletes it, which makes the next build a full one.
  */
@@ -59,8 +60,11 @@ export function ninjaIfPresent(cfg: Config): string {
  * from PATH when there is no release for this host or it cannot be fetched (offline, a mirror-less CI
  * sandbox). The fallback builds the same graph, only without starting crates before their dependencies'
  * rustc has exited.
+ *
+ * A fetch reports itself the way a prebuilt dependency's edge does (`[WebKit] fetching …`,
+ * `[WebKit] extracted to …`), on stderr like those: stdout is the built program's under build-then-exec.
  */
-export async function resolveNinja(cfg: Config): Promise<string> {
+export async function ensureNinja(cfg: Config): Promise<string> {
   const present = presentNinja(cfg);
   if (present !== undefined) return present;
 
@@ -69,11 +73,14 @@ export async function resolveNinja(cfg: Config): Promise<string> {
   const sha256 = (release.sha256 as Record<string, string>)[host];
   if (sha256 === undefined) return "ninja"; // no release for this host (FreeBSD)
 
+  const say = (line: string) => process.stderr.write(`${nameColor("ninja", "[ninja]")} ${line}\n`);
+  const started = performance.now();
   const archive = `bun-ninja-${host}.zip`;
   const url = `https://github.com/oven-sh/ninja/releases/download/${release.tag}/${archive}`;
   // Process-unique scratch next to the destination: concurrent builds share the cache directory.
   const scratch = `${join(cfg.cacheDir, "ninja", release.tag)}.${process.pid}.tmp`;
   try {
+    say(`fetching ${url}`);
     await mkdir(scratch, { recursive: true });
     const zip = join(scratch, archive);
     // Two tries, not the dependency downloads' ten: failing here costs only the pipelining, and an offline
@@ -96,10 +103,11 @@ export async function resolveNinja(cfg: Config): Promise<string> {
       // another build published the same release first
       if (!existsSync(path)) throw e;
     }
+    say(`extracted to ${join(cfg.cacheDir, "ninja", release.tag)} (${formatElapsed(performance.now() - started)})`);
     return path;
   } catch (e) {
-    process.stderr.write(
-      `note: could not fetch ${release.tag} (${(e as Error).message}); building with the ninja on PATH, without Rust pipelining\n`,
+    say(
+      `could not fetch ${release.tag} (${(e as Error).message}); building with the ninja on PATH, without Rust pipelining`,
     );
     return "ninja";
   } finally {

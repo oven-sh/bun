@@ -365,6 +365,35 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     expect(calls).toEqual(["evil.test"]);
   });
 
+  // The verdict is read as tls.connect() reads it: any truthy value rejects. An async
+  // callback returns a Promise, which is never an Error, so it must not pass for approval.
+  test.each([
+    ["a Promise, from an async callback", async () => new Error("PIN-REJECT")],
+    ["a string", () => "pin mismatch"],
+    ["an object that is not an Error", () => ({ code: "PIN" })],
+    ["true", () => true],
+  ] as const)("rejects the connection when it returns %s", async (_label, checkServerIdentity) => {
+    using server = startSniServer();
+    const url = `wss://localhost:${await server.port}/`;
+    const ws = new WebSocket(url, {
+      headers: { Authorization: "Bearer secret" },
+      tls: { ca: tlsCerts.cert, checkServerIdentity: checkServerIdentity as never },
+    });
+    expect(await openSession(ws)).toEqual(tlsFailed(url));
+    expect(await server.receivedInTotal()).toBe("");
+  });
+
+  test.each([
+    ["undefined", () => undefined],
+    ["null", () => null],
+    ["false", () => false],
+  ] as const)("approves when it returns %s, as tls.connect() does", async (_label, checkServerIdentity) => {
+    using server = startSniServer();
+    const url = `wss://localhost:${await server.port}/`;
+    const ws = new WebSocket(url, { tls: { ca: tlsCerts.cert, checkServerIdentity: checkServerIdentity as never } });
+    expect(await openSession(ws)).toEqual(opened);
+  });
+
   test.each([
     ["a string", "pin"],
     ["an object", {}],

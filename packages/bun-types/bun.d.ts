@@ -4932,6 +4932,9 @@ declare module "bun" {
       /**
        * Custom function to check the server identity. When set, it replaces
        * the built-in hostname check, as in `fetch()` and `tls.connect()`.
+       * Any truthy return value rejects the server, as in `tls.connect()`.
+       * That includes the Promise an `async` function returns, so it must
+       * be synchronous.
        * Through an HTTPS proxy it runs for the target's certificate only.
        * With `rejectUnauthorized: false` it still runs when the certificate
        * chain verified, but its result is not enforced.

@@ -1872,7 +1872,7 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     result
 }
 
-/// `Ok(true)` only if the callback ran and did not return an Error.
+/// `Ok(true)` only if the callback ran and returned a falsy value.
 fn call_check_server_identity(
     global: &JSGlobalObject,
     callback: JSValue,
@@ -1894,8 +1894,9 @@ fn call_check_server_identity(
     if !vm.script_allowed() || global.vm().execution_forbidden() || vm.calls_nobody() {
         return Ok(false);
     }
-    // > On success, returns <undefined>. Any non-error value passes.
-    Ok(!verdict.is_any_error())
+    // Read as `tls.connect()` reads it (src/js/node/net.ts): any truthy value rejects. An async
+    // callback returns a Promise, never an Error, so "only an Error rejects" would let it pass.
+    Ok(!verdict.is_truthy())
 }
 
 // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.

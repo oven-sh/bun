@@ -14,12 +14,12 @@ import type { MetadataPackage, RustPlan, UnitGraphUnit } from "../../scripts/bui
 import { parseBuildScriptOutput, rustcInvocation, writeDepfile } from "../../scripts/build/rust/run.ts";
 import { parseToml } from "../../scripts/build/rust/toml.ts";
 import {
+  buildRustGraph,
   linkedRlibs,
+  unitManifest,
   type ManifestContext,
   type RustUnit,
   type RustcUnitManifest,
-  buildRustGraph,
-  unitManifest,
 } from "../../scripts/build/rust/units.ts";
 
 describe("parseToml", () => {

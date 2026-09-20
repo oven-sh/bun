@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import net from "node:net";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -917,5 +918,52 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
+  },
+});
+// The dev server answers the oversized POST with 413 before it can park the request. That must not start a bundle
+// for the route or change its state, or the next request for the route finds a bundle that never settles.
+devTest("request rejected with 413 before it is parked does not leave the route in the bundling state", {
+  files: {
+    "routes/about.ts": `
+      export default function (req, meta) {
+        return new Response('about');
+      }
+    `,
+    "routes/other.ts": `
+      export default function (req, meta) {
+        return new Response('other');
+      }
+    `,
+    "bun.app.ts": `
+      export default {
+        maxRequestBodySize: 1024,
+        app: { framework: ${JSON.stringify(minimalFramework)} },
+      };
+    `,
+  },
+  async test(dev) {
+    const statusLine = await new Promise<string>((resolve, reject) => {
+      let data = "";
+      const socket = net.connect(dev.port, "localhost", () => {
+        socket.write("POST /about HTTP/1.1\r\nHost: localhost\r\nContent-Length: 999999\r\n\r\n");
+      });
+      socket.on("data", chunk => {
+        data += chunk;
+        if (data.includes("\r\n")) {
+          resolve(data.split("\r\n")[0]);
+          socket.destroy();
+        }
+      });
+      socket.on("error", reject);
+      socket.on("close", () => reject(new Error("socket closed before a status line: " + JSON.stringify(data))));
+    });
+    expect(statusLine).toBe("HTTP/1.1 413 Request Entity Too Large");
+
+    // Without the fix, the 413 starts a bundle for /about that nothing waits for. A request for another route
+    // cannot be answered until that bundle ends, so after it the stray bundle is over and /about is stuck.
+    await dev.fetch("/other").equals("other");
+
+    await dev.fetch("/about").equals("about");
+    await dev.fetch("/about").equals("about");
   },
 });

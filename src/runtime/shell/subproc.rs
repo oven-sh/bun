@@ -446,8 +446,8 @@ impl ShellSubprocess {
     /// shutdown); a no-op after a normal close. Readers stop without firing
     /// `on_reader_done`, queued capture chunks are cancelled (the `IOWriter`
     /// queue holds a raw pointer into the freed `PipeReader`), a pending
-    /// buffer-stdin writer is closed. POSIX-only, same tradeoff as
-    /// [`Self::abort_after_failed_start`].
+    /// buffer-stdin writer is closed. POSIX-only: the Windows finalizer
+    /// leaks a mid-flight `Cmd` instead (see `Interpreter::finalize`).
     ///
     /// # Safety
     /// `this` must be the live `heap::alloc`'d subprocess with no outstanding

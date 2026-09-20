@@ -587,11 +587,11 @@ test.concurrent.skipIf(!isLinux || !cc)(
 // killed child's exit callback fired it resolved the stale CmdHandle:
 //   panic: expected Node::Cmd at Node#2, got Free
 // The reader now reports the failure through on_reader_error like POSIX does,
-// so the command finishes with the libuv error code as its exit code and the
-// child's exit is delivered to a live Cmd. A real uv_read_start failure cannot
+// so the command finishes with the errno as its exit code and the child's
+// exit is delivered to a live Cmd. A real uv_read_start failure cannot
 // be provoked from JS, so this uses the same debug-only fault injection as
 // test/js/bun/spawn/spawn-pipe-start-error.test.ts.
-const UV_EINVAL = 4071;
+const EINVAL = 22;
 
 test.concurrent.skipIf(!isWindows || !isDebug)(
   "shell survives a failed uv_read_start on the stdout and stderr pipes during spawn (windows)",
@@ -621,7 +621,7 @@ console.log(JSON.stringify({ exitCode: r.exitCode, stderr: r.stderr.toString() }
     }
     // One combined assertion so a crash surfaces stderr and the exit code in the diff.
     expect({ parsed, stderr, exitCode }).toEqual({
-      parsed: { exitCode: UV_EINVAL, stderr: "" },
+      parsed: { exitCode: EINVAL, stderr: "" },
       stderr: "",
       exitCode: 0,
     });

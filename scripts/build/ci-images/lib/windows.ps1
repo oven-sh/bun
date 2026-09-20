@@ -1,4 +1,6 @@
-# The helpers every tool script may use. A failed command ends the bake.
+# The helpers every tool script may use. A failed command ends the bake. The
+# script runs under Windows PowerShell 5.1: PowerShell 7 is one of the things
+# it installs.
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
@@ -7,8 +9,19 @@ function Fail([string]$Message) {
 }
 
 # Download <url> <file>
+# A fresh Windows image only has Windows PowerShell 5.1, where Invoke-WebRequest
+# cannot retry and is slow on large files.
 function Download([string]$Url, [string]$File) {
-  Invoke-WebRequest -Uri $Url -OutFile $File -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 5
+  $client = New-Object System.Net.WebClient
+  foreach ($attempt in 1..3) {
+    try {
+      $client.DownloadFile($Url, $File)
+      return
+    } catch {
+      if ($attempt -eq 3) { Fail "could not download $($Url): $_" }
+      Start-Sleep -Seconds 5
+    }
+  }
 }
 
 # Runs a native command and fails when it does; PowerShell does not by itself.

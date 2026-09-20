@@ -200,7 +200,7 @@ Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a)
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                                                                                                      |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                                                                                                                |
 | `rust.ts`                      | Rust step entry: target/rustflags/env (`cargoBuildInvocation()`), `emitRust()`, `rustLibPath()`, the Windows shim's plan, cross-compile matrix                          |
-| `rust/plan.ts`                 | `cargo --unit-graph` + `cargo metadata` + `rustc --print` → `rust/plan.json` (build-time CLI and the types configure reads)                                             |
+| `rust/plan.ts`                 | `cargo --unit-graph` + `cargo metadata` + `rustc --print` → `rust-target/plan.json` (build-time CLI and the types configure reads)                                      |
 | `rust/units.ts`                | Plan → per-unit rustc argv/env/outputs (cargo's command-line rules), unit manifests                                                                                     |
 | `rust/emit.ts`                 | `rust_plan`/`rust_rustc`/`rust_build_script` rules and edges                                                                                                            |
 | `rust/run.ts`                  | Build-time driver for one unit: rustc with build-script-derived flags and a depfile, or the build-script protocol                                                       |

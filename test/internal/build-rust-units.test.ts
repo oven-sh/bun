@@ -378,12 +378,12 @@ describe("buildRustGraph + unitManifest", () => {
 
   // The whole command line, in order: cargo's position for each group of flags is part of what is reproduced
   // (the target rustflags come after everything cargo generates).
-  const targetDir = join("/build/rust/shim", triple);
+  const targetDir = join("/build/rust-target/shim", triple);
   const searchPaths = [
     "-L",
     `dependency=${join(targetDir, "deps")}`,
     "-L",
-    `dependency=${join("/build/rust/shim", "host", "deps")}`,
+    `dependency=${join("/build/rust-target/shim", "host", "deps")}`,
   ];
   const diagnostics = ["--error-format=json", "--json=diagnostic-rendered-ansi,artifacts,future-incompat"];
   const checkCfg = ["--check-cfg", "cfg(docsrs,test)", "--check-cfg", "cfg(feature, values())"];
@@ -414,12 +414,12 @@ describe("buildRustGraph + unitManifest", () => {
   ];
 
   test("a bin root is named after its crate, runs the LTO, links the rlibs, and is copied under its target's name", () => {
-    const graph = buildRustGraph(planWith(["-Cpanic=immediate-abort"]), "/build/rust/shim");
+    const graph = buildRustGraph(planWith(["-Cpanic=immediate-abort"]), "/build/rust-target/shim");
     const [dep, bin] = graph.units;
     expect(graph.root).toBe(bin);
     expect(bin.kind).toBe("bin");
-    expect(bin.output).toBe(join("/build/rust/shim", triple, "my_bin.exe"));
-    expect(dep.output).toBe(join("/build/rust/shim", triple, "deps", `libdep_a-${dep.hash}.rlib`));
+    expect(bin.output).toBe(join("/build/rust-target/shim", triple, "my_bin.exe"));
+    expect(dep.output).toBe(join("/build/rust-target/shim", triple, "deps", `libdep_a-${dep.hash}.rlib`));
 
     const m = unitManifest(context(graph), bin) as RustcUnitManifest;
     expect(m.kind).toBe("bin");
@@ -432,14 +432,14 @@ describe("buildRustGraph + unitManifest", () => {
 
     const depManifest = unitManifest(context(graph), dep) as RustcUnitManifest;
     expect(depManifest.binDestination).toBeUndefined();
-    expect(depManifest.rmetaNinjaName).toBe(join("rust/shim", triple, "deps", `libdep_a-${dep.hash}.rmeta`));
+    expect(depManifest.rmetaNinjaName).toBe(join("rust-target/shim", triple, "deps", `libdep_a-${dep.hash}.rmeta`));
     expect(depManifest.linkArgSelectors).toEqual(["all"]);
     expect(depManifest.args).toEqual(DEP_ARGS(dep));
   });
 
   test("target rustflags change where an artifact is written but not how its symbols are mangled", () => {
-    const plain = buildRustGraph(planWith([]), "/build/rust/shim").units[0];
-    const flagged = buildRustGraph(planWith(["-Ctarget-cpu=native"]), "/build/rust/shim").units[0];
+    const plain = buildRustGraph(planWith([]), "/build/rust-target/shim").units[0];
+    const flagged = buildRustGraph(planWith(["-Ctarget-cpu=native"]), "/build/rust-target/shim").units[0];
     expect(flagged.hash).not.toBe(plain.hash);
     expect(flagged.symbolHash).toBe(plain.symbolHash);
   });

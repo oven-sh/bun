@@ -10,15 +10,15 @@
  * profile overrides) and `rust/emit.ts` turns each unit into one rustc edge, `rust/units.ts` holding
  * cargo's rules for the command line. ninja then schedules the rustc invocations together with the
  * C++ ones instead of handing all of Rust to one opaque `cargo build` job, and what every crate is
- * compiled with is in `build.ninja` and `rust/units/*.json` to read. Dependents start on a crate's
+ * compiled with is in `build.ninja` and `rust-target/units/*.json` to read. Dependents start on a crate's
  * `.rmeta`, as under cargo, when the build runs under oven-sh/ninja (`ninja-release.ts`), which
  * releases an output its running command announces; under a stock ninja they wait for rustc to exit.
  *
- * The plan is itself a build edge (`rust/plan.json`, rerun when `Cargo.lock`, a manifest or the
+ * The plan is itself a build edge (`rust-target/plan.json`, rerun when `Cargo.lock`, a manifest or the
  * toolchain changes) and `build.ninja` depends on it: the first configure of a fresh tree emits only
  * that edge, ninja runs it and reconfigures, and from then on the graph is per crate.
  *
- * A Windows target has a second graph of the same kind, `rust/shim/`: the `.bin/` launcher
+ * A Windows target has a second graph of the same kind, `rust-target/shim/`: the `.bin/` launcher
  * (`src/install/windows-shim`), planned with its own profile, flags and `-Zbuild-std`, whose root is a
  * `bin`. Its executable lands in the codegen directory, where `bun_install` embeds it from.
  *
@@ -185,31 +185,28 @@ export function windowsShimPath(cfg: Config): string {
 // Paths
 // ───────────────────────────────────────────────────────────────────────────
 
-/** cargo's `--target-dir`, `<buildDir>/rust-target`. Only planning runs cargo, and that writes nothing there. */
+/**
+ * `<buildDir>/rust-target`: everything Rust. Each planned graph has a directory of its own there — its plan, unit
+ * manifests and artifacts; bun_runtime's is that directory itself, the Windows shim's is `rust-target/shim`. It is
+ * also the `--target-dir` the planner gives cargo, which writes nothing there, and cargo's own layout
+ * (`<triple>/<profile>/…`) does not meet the units' (`<triple>/deps`, `host/`, `units/`).
+ */
 function rustTargetDir(cfg: Config): string {
   return resolve(cfg.buildDir, "rust-target");
 }
 
-/**
- * Each planned graph has a directory of its own under `<buildDir>/rust`: its plan, unit manifests and artifacts.
- * bun_runtime's is that directory itself; the Windows shim's is `rust/shim`.
- */
-function rustGraphDir(cfg: Config): string {
-  return resolve(cfg.buildDir, "rust");
-}
-
 function shimGraphDir(cfg: Config): string {
-  return resolve(cfg.buildDir, "rust", "shim");
+  return resolve(rustTargetDir(cfg), "shim");
 }
 
 /** The plans build.ninja is generated from: inputs of the regen edge (configure.ts). */
 export function rustPlanFiles(cfg: Config): string[] {
-  return [planPath(rustGraphDir(cfg)), ...(cfg.windows ? [planPath(shimGraphDir(cfg))] : [])];
+  return [planPath(rustTargetDir(cfg)), ...(cfg.windows ? [planPath(shimGraphDir(cfg))] : [])];
 }
 
-/** Absolute path to `libbun_runtime.a` (or `bun_runtime.lib` on Windows): the staticlib root's output, `<buildDir>/rust/<triple>/` (rust/units.ts). */
+/** Absolute path to `libbun_runtime.a` (or `bun_runtime.lib` on Windows): the staticlib root's output, `<buildDir>/rust-target/<triple>/` (rust/units.ts). */
 export function rustLibPath(cfg: Config): string {
-  return resolve(cfg.buildDir, "rust", rustTarget(cfg), `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`);
+  return resolve(rustTargetDir(cfg), rustTarget(cfg), `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -761,7 +758,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     };
     return { dir, file: emitRustPlan(n, cfg, dir, { input, inputs: planEdgeInputs }), plan: readPlan(dir, input) };
   };
-  const runtime = planned(rustGraphDir(cfg), { args, env, rustflags });
+  const runtime = planned(rustTargetDir(cfg), { args, env, rustflags });
   const shim = cfg.windows
     ? planned(shimGraphDir(cfg), shimCargoInvocation(cfg, { env, targetDir, triple }))
     : undefined;

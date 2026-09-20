@@ -8,8 +8,8 @@
  * custom_build}`), transcribed; comments name the cargo function where the
  * choice is not obvious. What is deliberately different from cargo:
  *
- * - Layout: `<buildDir>/rust/{host,<triple>}/{deps,build,incremental}` instead
- *   of cargo's `target/` tree; the two per-unit hashes (symbols, file names)
+ * - Layout: `<buildDir>/rust-target/{host,<triple>}/{deps,build,incremental}`, without
+ *   the profile level of cargo's `target/` tree; the two per-unit hashes (symbols, file names)
  *   follow cargo's split but are computed here rather than being cargo's values.
  * - Diagnostics: human-readable straight from rustc for units that are not
  *   pipelined; JSON (rendered by `run.ts`) only where the metadata artifact
@@ -97,7 +97,7 @@ export interface RustGraph {
   units: RustUnit[];
   /** What the graph was planned for: the `bun_runtime` staticlib, or the Windows shim's `bin`. */
   root: RustUnit;
-  /** The graph's own directory under the build directory (`rust/`, `rust/shim/`): plan, unit manifests, artifacts. */
+  /** The graph's own directory under the build directory (`rust-target/`, `rust-target/shim/`): plan, unit manifests, artifacts. */
   dir: string;
   hostDeps: string;
   targetDeps: string;

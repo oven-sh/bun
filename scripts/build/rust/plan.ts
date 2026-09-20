@@ -14,7 +14,7 @@
  * would probe (cfg values as seen by build scripts, artifact file naming).
  *
  * This file is both the type definitions configure reads (`readPlan`) and the
- * build-time CLI ninja runs to (re)generate `<buildDir>/rust/plan.json`
+ * build-time CLI ninja runs to (re)generate `<buildDir>/rust-target/plan.json`
  * whenever `Cargo.lock`, a manifest, the toolchain or the planning arguments
  * change. `build.ninja` itself depends on `plan.json`, so a changed plan
  * reconfigures and ninja restarts with the new unit edges (the same manifest
@@ -175,7 +175,7 @@ export interface RustPlan {
 
 export const PLAN_VERSION = 4;
 
-/** `dir`: the graph's directory under the build directory — `rust/` for bun_runtime, `rust/shim/` for the Windows shim. */
+/** `dir`: the graph's directory under the build directory — `rust-target/` for bun_runtime, `rust-target/shim/` for the Windows shim. */
 export function planPath(dir: string): string {
   return join(dir, "plan.json");
 }

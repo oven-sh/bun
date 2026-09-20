@@ -31,7 +31,7 @@ presets:
   release          build/release/
   debug-local      build/debug-local/
   release-local    build/release-local/
-  rust             rust/ and rust-target/ dirs across all profiles + <build cache>/cargo
+  rust             rust-target/ dirs across all profiles + <build cache>/cargo
   cpp              C++ obj/ + pch/ across all profiles
   cache            machine-shared build cache (${sharedCacheDir}: ccache, cargo,
                    tarballs, prebuilt webkit) — affects ALL checkouts
@@ -67,7 +67,7 @@ const presets: Record<string, () => string[]> = {
   "release-local": profile("release-local"),
 
   rust: () => [
-    ...buildProfiles().flatMap(p => [resolve(p, "rust"), resolve(p, "rust-target")]),
+    ...buildProfiles().map(p => resolve(p, "rust-target")),
     resolve(sharedCacheDir, "cargo"),
     // `cargo check`/`cargo clippy` run from the repo root with no
     // --target-dir, so they write to the workspace-default `target/`.

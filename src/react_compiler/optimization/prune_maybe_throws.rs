@@ -34,9 +34,7 @@ pub(crate) fn prune_maybe_throws(
         remove_dead_do_while_statements(&mut func.body);
         remove_unnecessary_try_catch(&mut func.body);
         mark_instruction_ids(&mut func.body, &mut func.instructions);
-        // Not in upstream. The fallthrough of a removed `try` can have one predecessor left
-        // while a phi still has an operand of the removed handler. For a block that it
-        // merges, the merge asserts on this where upstream raises the invariant.
+        // A phi can keep an operand of the removed catch handler, and the merge asserts on that.
         for block in func.body.blocks.values() {
             if block.kind == BlockKind::Block && block.preds.len() == 1 {
                 if let Some(phi) = block.phis.iter().find(|phi| phi.operands.len() != 1) {

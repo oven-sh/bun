@@ -220,8 +220,7 @@ pub fn remove_unnecessary_try_catch(hir: &mut HIR) {
                 // The handler was the only predecessor: remove the fallthrough block
                 hir.blocks.shift_remove(&fallthrough_id);
             } else {
-                // Not only `handler_id` as in upstream: a handler of more than one block
-                // reaches the fallthrough from its last block.
+                // Upstream removes only `handler_id`, but a longer handler ends in another block.
                 let removed: Vec<BlockId> = fallthrough
                     .preds
                     .iter()

@@ -354,7 +354,10 @@ export function windowsTools(image: WindowsImage): readonly Tool[] {
     windowsSystem(pins.windowsSystem),
     scoop(),
     scoopPackages([
-      ...["7zip", "git", "cmake", "ninja", "python", "make", "cygwin", "perl"],
+      // No perl: `perl` on these machines is the one inside Git (git\usr\bin is on
+      // PATH). Strawberry Perl would come first and, being a native Windows perl,
+      // writes text files with CRLF.
+      ...["7zip", "git", "cmake", "ninja", "python", "make", "cygwin"],
       // Neither has an arm64 build.
       ...(x64 ? ["nasm", "mingw"] : []),
     ]),

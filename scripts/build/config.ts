@@ -663,7 +663,7 @@ function ndkHostTag(host: Host): string {
  * setup for NDK cross-builds (Chromium does the same).
  *
  * Idempotent. Warns with a sudo hint if the resource dir isn't writable
- * (CI build images create the symlinks as root in bootstrap.sh/Dockerfile).
+ * (CI build images create the symlinks as root in bootstrap.sh).
  */
 function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: string): void {
   const resourceDir = execSync(`"${cc}" -print-resource-dir`, { encoding: "utf8" }).trim();

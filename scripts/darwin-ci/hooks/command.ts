@@ -24,7 +24,7 @@ const hostOnlyEnv = new Set([
   "BUILDKITE_SOCKETS_PATH",
 ]);
 
-if (!command.includes("runner.node.mjs")) {
+if (!command.includes("runner.node.")) {
   console.log("--- running on host (not a test step)");
   process.exit((await $`bash -c ${command}`.nothrow()).exitCode);
 }

@@ -85,12 +85,12 @@ export const locations = {
 } as const;
 
 /**
- * Raise this to bake every image again so that what the prefetch tools
- * download is current. What they download is decided by the commit being
+ * Raise this to bake every image again so that what the `prefetch` tool
+ * downloads is current. What it downloads is decided by the commit being
  * built, not by this file, so a dependency bump does not rename an image: the
  * images keep working and their caches slowly miss more (a build log says
  * `using prefetch cache` for a hit and `fetching` for a miss). The number is
- * written into each prefetch tool's section of the generated scripts, which is
+ * written into that tool's section of the generated scripts, which is
  * how it renames the images. It means nothing else.
  */
 const prefetchTriggerVersion = 1;
@@ -348,7 +348,7 @@ const cpuName = { x64: "x86_64", aarch64: "aarch64" } as const;
 const debianArch = { x64: "amd64", aarch64: "arm64" } as const;
 const nodeArch = { x64: "x64", aarch64: "arm64" } as const;
 
-/** What the prefetch tools download is decided by the commit being built: a dependency bump does not rename an image. */
+/** What the `prefetch` tool downloads is decided by the commit being built: a dependency bump does not rename an image. */
 const prefetched: Identity = { kind: "notRecorded", reason: "decided by the commit being built, not by this file" };
 const prefetchTrigger = `prefetchTriggerVersion ${prefetchTriggerVersion}: raise it in spec.ts to bake again and refresh what is prefetched.`;
 /** The three `bun install`s a test job runs. */
@@ -1161,56 +1161,50 @@ function noTmpfs(): Tool {
   return { name: "no-tmpfs", identity: configuration, steps: [service("tmp.mount", "masked")] };
 }
 
-// What the prefetch steps download is decided by the commit being built, not
-// by this file: a dependency bump does not rename an image.
-
-/** Dependency sources for scripts/build/download.ts, so a build downloads none. */
-function prefetchBuildDeps(): Tool {
-  const prefetch = locations.prefetch.linux;
+/**
+ * What a build and a test job would otherwise download each time: dependency
+ * sources for scripts/build/download.ts, the Docker images the tests use, and
+ * `bun install`'s cache for the installs a test job runs. What is fetched is
+ * decided by the commit being built, not by this file, so a dependency bump
+ * does not rename an image (see `prefetchTriggerVersion`). The commit is
+ * cloned for it and the clone is removed: nothing of it belongs in the image.
+ */
+function prefetch(image: BakedImage): Tool {
+  const windows = image.os === "windows";
+  const clone = windows ? "C:/bun-checkout" : "/var/tmp/bun-checkout";
+  const sources = locations.prefetch[image.os];
+  const cache = locations.installCache[image.os];
   return {
-    name: "prefetch-build-deps",
+    name: "prefetch",
     identity: prefetched,
     steps: [
       comment(prefetchTrigger),
-      directory(prefetch),
-      inDirectory(checkout, [run("bun", "scripts/prefetch-deps.ts", prefetch)]),
-      mode("a-w", prefetch, { recursive: true }),
-      setEnvironment("BUN_BUILD_PREFETCH_DIR", prefetch),
-    ],
-  };
-}
-
-/** The Docker images the tests use. */
-function prefetchTestImages(): Tool {
-  return {
-    name: "prefetch-test-images",
-    identity: prefetched,
-    steps: [
-      comment(prefetchTrigger),
-      service("docker", "started"),
-      inDirectory(checkout, [run("bun", "test/docker/prepare-ci.ts")]),
-    ],
-  };
-}
-
-/** `bun install`'s cache, for the three installs a test job runs. */
-function prefetchInstallCache(): Tool {
-  const cache = locations.installCache.linux;
-  return {
-    name: "prefetch-install-cache",
-    identity: prefetched,
-    steps: [
-      comment(prefetchTrigger),
+      run("git", "init", "--quiet", clone),
+      run("git", "-C", clone, "fetch", "--quiet", "--depth=1", "https://github.com/oven-sh/bun.git", commit),
+      run("git", "-C", clone, "checkout", "--quiet", "FETCH_HEAD"),
+      comment("Dependency sources, read-only, so a build downloads none."),
+      directory(sources),
+      inDirectory(clone, [run("bun", "scripts/prefetch-deps.ts", sources)]),
+      windows ? run("attrib", "+R", `${sources}/*`, "/S", "/D") : mode("a-w", sources, { recursive: true }),
+      setEnvironment("BUN_BUILD_PREFETCH_DIR", sources),
+      ...(windows
+        ? []
+        : [
+            comment("The Docker images the tests use."),
+            service("docker", "started"),
+            inDirectory(clone, [run("bun", "test/docker/prepare-ci.ts")]),
+          ]),
+      comment("bun install's cache."),
       directory(cache),
       ...installedPackages.map(path =>
-        inDirectory(text`${checkout}/${path}`, [
+        inDirectory(`${clone}/${path}`, [
           withEnvironment({ BUN_INSTALL_CACHE_DIR: cache }, run("bun", "install", "--ignore-scripts")),
         ]),
       ),
-      comment("The installs were for the cache. What they put in the bake's checkout would be in the image."),
-      remove(...installedPackages.map(path => text`${checkout}/${path}/node_modules`)),
-      ownedBy(`${agentUser}:${agentUser}`, cache),
+      ...(windows ? [] : [ownedBy(`${agentUser}:${agentUser}`, cache)]),
       setEnvironment("BUN_INSTALL_CACHE_DIR", cache),
+      // Remove-Item gives up on Git's read-only objects and on long paths.
+      windows ? run("cmd", "/c", "rmdir", "/s", "/q", clone) : remove(clone),
     ],
   };
 }
@@ -1337,7 +1331,7 @@ function pwsh(image: WindowsImage): Tool {
         msi,
       ),
       runInstaller("the PowerShell installer", "msiexec", text`/i "${msi}" /quiet /norestart ADD_PATH=1`),
-      cmdlet("Refresh-Path"),
+      refreshPath,
     ],
   };
 }
@@ -1484,36 +1478,6 @@ function intelSde(): Tool {
   };
 }
 
-/** The bake machine has no checkout: it is a VM Packer drives from outside. It clones the one commit being built. */
-function prefetchWindows(): Tool {
-  const repo = "C:/bun-prefetch-checkout";
-  const prefetch = locations.prefetch.windows;
-  const cache = locations.installCache.windows;
-  return {
-    name: "prefetch-windows",
-    identity: prefetched,
-    steps: [
-      comment(prefetchTrigger),
-      run("git", "init", "--quiet", repo),
-      run("git", "-C", repo, "fetch", "--quiet", "--depth=1", "https://github.com/oven-sh/bun.git", commit),
-      run("git", "-C", repo, "checkout", "--quiet", "FETCH_HEAD"),
-      directory(prefetch),
-      inDirectory(repo, [run("bun", "scripts/prefetch-deps.ts", prefetch)]),
-      run("attrib", "+R", `${prefetch}/*`, "/S", "/D"),
-      setEnvironment("BUN_BUILD_PREFETCH_DIR", prefetch),
-      directory(cache),
-      ...installedPackages.map(path =>
-        inDirectory(`${repo}/${path}`, [
-          withEnvironment({ BUN_INSTALL_CACHE_DIR: cache }, run("bun", "install", "--ignore-scripts")),
-        ]),
-      ),
-      setEnvironment("BUN_INSTALL_CACHE_DIR", cache),
-      comment("Remove-Item gives up on Git's read-only objects and on long paths."),
-      run("cmd", "/c", "rmdir", "/s", "/q", repo),
-    ],
-  };
-}
-
 /** Windows Server can remove Defender altogether; it takes effect at the restart that ends the bake. Windows 11 cannot, and keeps it disabled. */
 function uninstallDefender(): Tool {
   return {
@@ -1558,7 +1522,7 @@ export function tools(image: Image): readonly Tool[] {
       pdbAddr2line(image),
       ...(image.arch === "x64" ? [intelSde()] : []),
       buildkiteAgent(image),
-      prefetchWindows(),
+      prefetch(image),
       agentService(),
       recordImage(image),
       ...(image.release === "2019" ? [uninstallDefender()] : []),
@@ -1596,9 +1560,7 @@ export function tools(image: Image): readonly Tool[] {
     age(image),
     coreDumps(image),
     ...(apt ? [noTmpfs()] : []),
-    prefetchBuildDeps(),
-    prefetchTestImages(),
-    prefetchInstallCache(),
+    prefetch(image),
     agentService(),
     recordImage(image),
     cleanup(image),
@@ -1679,7 +1641,12 @@ export function imageKey(image: Image): string {
 
 // ---------------------------------------------------------------- rendering
 
-type Context = { image: Image; usesScratch: boolean };
+type Context = {
+  image: Image;
+  usesScratch: boolean;
+  /** PowerShell: the native program the statement being rendered runs. A program's failure is only its exit code there, so `render` checks it after the statement. */
+  native: string | undefined;
+};
 /** One or more lines of the generated script. */
 export type Step = (context: Context) => string[];
 /**
@@ -1722,7 +1689,18 @@ function sudo(c: Context, ...written: Value[]): string {
   return system ? "sudo " : "";
 }
 const indent = (lines: string[]) => lines.map(line => (line ? "  " + line : line));
-const render = (steps: readonly Step[], c: Context) => steps.flatMap(step => step(c));
+/** Statements, one after another. sh stops at a failed command by itself (`set -e`); PowerShell only does for cmdlets, so a statement that ran a native program is followed by a check of its exit code. */
+function render(steps: readonly Step[], c: Context): string[] {
+  return steps.flatMap(step => {
+    c.native = undefined;
+    const lines = step(c);
+    const program = c.native;
+    c.native = undefined;
+    return program === undefined
+      ? lines
+      : [...lines, `if ($LASTEXITCODE -ne 0) { throw "bootstrap: ${program} exited with code $LASTEXITCODE" }`];
+  });
+}
 function oneLine(step: Step, c: Context): string {
   const lines = step(c);
   if (lines.length !== 1) throw new Error(`Expected a single command, got:\n${lines.join("\n")}`);
@@ -1772,9 +1750,7 @@ function text(strings: TemplateStringsArray, ...values: Value[]): Value {
 }
 
 // What the generated script is told when it runs.
-/** Linux: the repository, at the commit being built. */
-const checkout: Value = variable("REPO_DIR");
-/** Windows: the commit being built; the bake machine has no checkout. */
+/** The commit being built. A tool that needs the repository clones it. */
 const commit: Value = variable("REPO_COMMIT");
 /** The name the image is baked under. It is the hash of the script, so the script is told it. */
 const imageName: Value = variable("IMAGE_NAME");
@@ -1855,7 +1831,13 @@ const comment =
 /** Any program. Its failure fails the bake: `set -e` in sh, the `Run` helper in PowerShell. */
 const run =
   (program: Value, ...args: Value[]): Step =>
-  c => [`${isPowerShell(c) ? "Run " : ""}${[program, ...args].map(a => renderValue(a, c)).join(" ")}`];
+  c => {
+    const rendered = [program, ...args].map(a => renderValue(a, c));
+    if (!isPowerShell(c)) return [rendered.join(" ")];
+    c.native = typeof program === "string" ? program : "the program";
+    // A quoted path is a string to PowerShell until `&` calls it.
+    return [(/^['"]/.test(rendered[0]!) ? "& " : "") + rendered.join(" ")];
+  };
 
 const set =
   (name: string, value: Value): Step =>
@@ -1881,9 +1863,11 @@ const discardOutput =
 /** The command's complaints are expected, and its failure does not matter. */
 const tolerate =
   (step: Step): Step =>
-  c => [
-    isPowerShell(c) ? `${oneLine(step, c)} -ErrorAction SilentlyContinue` : `${oneLine(step, c)} 2>/dev/null || true`,
-  ];
+  c => {
+    const line = oneLine(step, c);
+    c.native = undefined;
+    return [isPowerShell(c) ? `${line} -ErrorAction SilentlyContinue` : `${line} 2>/dev/null || true`];
+  };
 
 /** The steps, with this as the working directory. */
 const inDirectory =
@@ -1907,8 +1891,8 @@ const failUnlessNotEmpty =
   (value: Value, message: Value): Step =>
   c =>
     isPowerShell(c)
-      ? [`if (-not ${renderValue(value, c)}) { Fail ${renderValue(message, c)} }`]
-      : [`[ -n ${renderValue(value, c)} ] || fail ${renderValue(message, c)}`];
+      ? [`if (-not ${renderValue(value, c)}) { throw ${renderValue(text`bootstrap: ${message}`, c, true)} }`]
+      : [`[ -n ${renderValue(value, c)} ] || { echo ${renderValue(text`bootstrap: ${message}`, c)} >&2; exit 1; }`];
 
 const ifExists =
   (path: Value, steps: Step[]): Step =>
@@ -2049,26 +2033,68 @@ const editLines =
 // ------------------------------------------------ PATH and the environment
 
 /** For the rest of the script, and for every login shell or process of the machine. */
+/** PowerShell: what this process sees of PATH is read again from what the machine and the user have. */
+const refreshPath: Step = () => [
+  `$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")`,
+];
+
+/**
+ * A line every later shell of the machine reads, and the same for the rest of
+ * this script. Linux: CI runs every command in a login shell (`sh -elc`), and
+ * every login shell reads /etc/profile.d. macOS: zsh is the default shell and
+ * scripts/darwin-ci looks for the tools with `bash -lc`; a Mac is set up again
+ * when the pins move, so a line is only written once.
+ */
+const exported =
+  (line: string, now: string): Step =>
+  c =>
+    c.image.os === "linux"
+      ? [`echo ${renderValue(line, c)} >> /etc/profile.d/bun-ci.sh`, now]
+      : [
+          `for file in "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bash_profile"; do`,
+          `  touch "$file"`,
+          `  grep -qxF ${renderValue(line, c)} "$file" || echo ${renderValue(line, c)} >> "$file"`,
+          "done",
+          now,
+        ];
+
+/** For the rest of the script, and for every later process of the machine. */
 const addToPath =
-  (path: Value): Step =>
-  c => [`${isPowerShell(c) ? "Add-To-Path" : "add_to_path"} ${renderValue(path, c)}`];
+  (path: string): Step =>
+  c =>
+    isPowerShell(c)
+      ? [
+          `[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "Machine").TrimEnd(";") + ${renderValue(`;${path.replace(/\//g, "\\")}`, c, true)}, "Machine")`,
+          ...refreshPath(c),
+        ]
+      : exported(`export PATH="${path}:$PATH"`, `export PATH="${path}:$PATH"`)(c);
 
 const setEnvironment =
-  (name: string, value: Value): Step =>
-  c => [`${isPowerShell(c) ? "Set-Env" : "set_env"} ${name} ${renderValue(value, c)}`];
+  (name: string, value: string): Step =>
+  c =>
+    isPowerShell(c)
+      ? ["Machine", "Process"].map(
+          scope => `[Environment]::SetEnvironmentVariable('${name}', ${renderValue(value, c, true)}, "${scope}")`,
+        )
+      : exported(`export ${name}="${value}"`, `export ${name}=${renderValue(value, c)}`)(c);
 
 // ----------------------------------------------------------------- downloads
 
+/** curl, which every system has: Windows ships curl.exe, and has to be asked for it by that name, because Windows PowerShell 5.1 calls Invoke-WebRequest `curl`. */
 const download =
   (url: Value, file: Value): Step =>
-  c => [`${isPowerShell(c) ? "Download" : "download"} ${renderValue(url, c)} ${renderValue(file, c)}`];
+  c =>
+    run(
+      isPowerShell(c) ? "curl.exe" : "curl",
+      ...["--fail", "--silent", "--show-error", "--location", "--retry", 3, "--output", file, url],
+    )(c);
 
 /** Only where the publisher provides the sum. */
 const checksum =
   (file: Value, sha256: string): Step =>
   c => [
     isPowerShell(c)
-      ? `Assert-Sha256 ${renderValue(file, c)} ${sha256}`
+      ? `if ((Get-FileHash ${renderValue(file, c)} -Algorithm SHA256).Hash -ne '${sha256}') { throw ${renderValue(text`bootstrap: the sha256 of ${file} is not ${sha256}`, c, true)} }`
       : `echo ${renderValue(text`${sha256}  ${file}`, c)} | ${c.image.os === "darwin" ? "shasum -a 256" : "sha256sum"} -c - > /dev/null`,
   ];
 
@@ -2092,11 +2118,12 @@ const unpack =
         throw new Error("On Windows a .tar.xz is unpacked from the scratch directory");
       const tar = text`${into}/${last.scratch.replace(/^.*\//, "").replace(/\.xz$/, "")}`;
       const sevenZip = (file: Value) => discardOutput(run("7z", "x", file, text`-o${into}`, "-y"));
-      return [...sevenZip(archive)(c), ...sevenZip(tar)(c)];
+      return render([sevenZip(archive), sevenZip(tar)], c);
     }
     const strip = options.strip ? [`--strip-components=${options.strip}`] : [];
     const flag = options.kind === "tar.gz" ? "-xzf" : "-xJf";
-    return [[isPowerShell(c) ? "Run tar" : `${sudo(c, into)}tar`, flag, a, "-C", d, ...strip, ...only].join(" ")];
+    if (isPowerShell(c)) return run("tar", flag, archive, "-C", into, ...strip, ...(options.only ?? []))(c);
+    return [[`${sudo(c, into)}tar`, flag, a, "-C", d, ...strip, ...only].join(" ")];
   };
 
 // ---------------------------------------------------------------- composites
@@ -2177,10 +2204,34 @@ const brewInstall =
   (names: readonly string[], options: { formula?: boolean } = {}): Step =>
   () => [`brew install --quiet ${options.formula ? "--formula " : ""}${names.join(" ")}`];
 
-/** `name` or `name@version`. Fails the bake when Scoop did not install it (see `windowsPrelude`). */
+/**
+ * `name` or `name@version`. Scoop is PowerShell running in this session, and
+ * its manifests' cleanup steps write errors that are not failures (7zip on
+ * ARM64 cannot delete its own 7zr.exe; llvm on ARM64 has no Uninstall.exe to
+ * remove), so it runs with errors not ending the script, and whether the
+ * install worked is decided by the app's directory existing. Scoop also puts
+ * an app's directories (node, clang, python have no shim) on the PATH of the
+ * user who installs it; the agent's jobs run as another account, so they go on
+ * the machine's PATH.
+ */
 const scoopInstall =
   (name: string): Step =>
-  c => [`Install-Scoop-Package ${renderValue(name, c)}`];
+  c => {
+    const scoop = locations.scoop;
+    const machinePath = `[Environment]::GetEnvironmentVariable("Path", "Machine")`;
+    return [
+      `$ErrorActionPreference = "SilentlyContinue"`,
+      `scoop install ${renderValue(name, c)} *>&1 | ForEach-Object { "$_" } | Write-Host`,
+      `$ErrorActionPreference = "Stop"`,
+      `foreach ($directory in [Environment]::GetEnvironmentVariable("Path", "User").Split(";")) {`,
+      `  if ($directory -like '${scoop}\\*' -and ${machinePath}.Split(";") -notcontains $directory) {`,
+      `    [Environment]::SetEnvironmentVariable("Path", ${machinePath}.TrimEnd(";") + ";$directory", "Machine")`,
+      "  }",
+      "}",
+      ...refreshPath(c),
+      `if (-not (Test-Path '${scoop}\\apps\\${name.split("@")[0]}\\current')) { throw "bootstrap: scoop install ${name} failed" }`,
+    ];
+  };
 
 // ------------------------------------------- Linux: users and services
 // One description; the renderer uses the distro's own tools.
@@ -2218,7 +2269,7 @@ const service =
 // ------------------------------------------------------ Windows: intent
 
 type Named = Record<string, Value | readonly Value[] | boolean>;
-/** A cmdlet, or a function of `windowsPrelude`: positional arguments, then named ones. `true` is a switch. */
+/** A cmdlet: positional arguments, then named ones. `true` is a switch. */
 const cmdlet =
   (name: string, named: Named = {}, ...positional: Value[]): Step =>
   c => [
@@ -2295,7 +2346,7 @@ const runInstaller =
   (what: string, program: Value, argumentList: Value, okExitCodes: number[] = [0]): Step =>
   c => [
     `$process = Start-Process ${renderValue(program, c)} -ArgumentList ${renderValue(argumentList, c)} -Wait -PassThru -NoNewWindow`,
-    `if (${okExitCodes.map(code => `$process.ExitCode -ne ${code}`).join(" -and ")}) { Fail "${what} exited with code $($process.ExitCode)" }`,
+    `if (${okExitCodes.map(code => `$process.ExitCode -ne ${code}`).join(" -and ")}) { throw "bootstrap: ${what} exited with code $($process.ExitCode)" }`,
   ];
 
 // --------------------------------------------------------------------- tools
@@ -2306,191 +2357,39 @@ const runInstaller =
  * under /tmp, which is a tmpfs on the Debian base image while it is baked.
  */
 function renderTool(tool: Tool, image: Image): string {
-  const context: Context = { image, usesScratch: false };
+  const context: Context = { image, usesScratch: false, native: undefined };
   // Everything is rendered before the scratch directory is decided on: the observation may be what uses it.
-  const body = [
-    ...render(tool.steps, context),
-    ...(tool.identity.kind === "observed"
-      ? toFile(tool.identity.step, bakeFile(`observed/${tool.name}`))(context)
-      : []),
-  ];
+  const body = render(
+    [
+      ...tool.steps,
+      ...(tool.identity.kind === "observed" ? [toFile(tool.identity.step, bakeFile(`observed/${tool.name}`))] : []),
+    ],
+    context,
+  );
   const lines = [`# ---- ${tool.name}`];
   if (context.usesScratch) {
     lines.push(
-      { windows: "$scratch = New-Scratch", linux: "scratch=$(mktemp -d -p /var/tmp)", darwin: "scratch=$(mktemp -d)" }[
-        image.os
-      ],
+      ...{
+        windows: [
+          `$scratch = Join-Path $env:TEMP ([System.IO.Path]::GetRandomFileName())`,
+          `New-Item -ItemType Directory -Force $scratch | Out-Null`,
+        ],
+        linux: ["scratch=$(mktemp -d -p /var/tmp)"],
+        darwin: ["scratch=$(mktemp -d)"],
+      }[image.os],
     );
   }
   lines.push(...body);
   if (context.usesScratch) {
-    lines.push(image.os === "windows" ? "Remove-Temp $scratch" : 'rm -rf "$scratch"');
+    // Windows: a directory that cannot be deleted yet (Defender is still scanning an installer that just ran) is not a failure.
+    lines.push(
+      image.os === "windows"
+        ? "Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue"
+        : 'rm -rf "$scratch"',
+    );
   }
   return lines.join("\n") + "\n";
 }
-
-// ------------------------------------------------- what the scripts start with
-// The helpers the rendered steps call. They are text here and part of every
-// generated script, which is where they are linted.
-
-const linuxPrelude = String.raw`# The helpers the tools below use. Generated scripts run as root under
-# 'set -eu', so a failed command ends the bake.
-
-fail() {
-  echo "bootstrap: $*" >&2
-  exit 1
-}
-
-# download <url> <file>
-download() {
-  curl --fail --silent --show-error --location --retry 3 --output "$2" "$1"
-}
-
-# CI runs every command in a login shell ('sh -elc'), and every login shell
-# reads this file.
-profile=/etc/profile.d/bun-ci.sh
-
-# add_to_path <directory>
-add_to_path() {
-  echo "export PATH=\"$1:\$PATH\"" >> "$profile"
-  export PATH="$1:$PATH"
-}
-
-# set_env <name> <value>
-set_env() {
-  echo "export $1=\"$2\"" >> "$profile"
-  export "$1=$2"
-}`;
-
-const macosPrelude = String.raw`# The helpers the tools below use. The generated script runs under
-# 'set -eu' as the machine's admin user, because Homebrew refuses to run as
-# root, and uses 'sudo' for what belongs to the system.
-
-fail() {
-  echo "bootstrap: $*" >&2
-  exit 1
-}
-
-# download <url> <file>
-download() {
-  curl --fail --silent --show-error --location --retry 3 --output "$2" "$1"
-}
-
-# What a login shell reads: zsh is the default shell, and scripts/darwin-ci
-# looks for the tools with 'bash -lc'. A machine is set up again when the
-# pins move, so a line is only written once.
-add_to_profiles() {
-  for file in "$HOME/.profile" "$HOME/.zshrc" "$HOME/.bash_profile"; do
-    touch "$file"
-    grep -qxF "$1" "$file" || echo "$1" >> "$file"
-  done
-}
-
-# add_to_path <directory>
-add_to_path() {
-  add_to_profiles "export PATH=\"$1:\$PATH\""
-  export PATH="$1:$PATH"
-}
-
-# set_env <name> <value>
-set_env() {
-  add_to_profiles "export $1=\"$2\""
-  export "$1=$2"
-}`;
-
-const windowsPrelude = String.raw`# The helpers the tools below use. A failed command ends the bake. The
-# script runs under Windows PowerShell 5.1: PowerShell 7 is one of the things
-# it installs.
-$ErrorActionPreference = "Stop"
-$ProgressPreference = "SilentlyContinue"
-
-function Fail([string]$Message) {
-  throw "bootstrap: $Message"
-}
-
-# Download <url> <file>
-# A fresh Windows image only has Windows PowerShell 5.1, where Invoke-WebRequest
-# cannot retry and is slow on large files.
-function Download([string]$Url, [string]$File) {
-  $client = New-Object System.Net.WebClient
-  foreach ($attempt in 1..3) {
-    try {
-      $client.DownloadFile($Url, $File)
-      return
-    } catch {
-      if ($attempt -eq 3) { Fail "could not download $($Url): $_" }
-      Start-Sleep -Seconds 5
-    }
-  }
-}
-
-# Remove-Temp <path>...
-# Deletes downloads and scratch directories. One that cannot be deleted yet
-# (Defender is still scanning an installer that just ran) is not a failure.
-function Remove-Temp {
-  Remove-Item $args -Recurse -Force -ErrorAction SilentlyContinue
-}
-
-# A directory for a tool's downloads, removed by Remove-Temp when the tool is done.
-function New-Scratch {
-  $path = Join-Path $env:TEMP ([System.IO.Path]::GetRandomFileName())
-  New-Item -ItemType Directory -Force $path | Out-Null
-  return $path
-}
-
-function Assert-Sha256([string]$File, [string]$Expected) {
-  $actual = (Get-FileHash $File -Algorithm SHA256).Hash
-  if ($actual -ne $Expected) { Fail "the sha256 of $File is $actual, expected $Expected" }
-}
-
-# Runs a native command and fails when it does; PowerShell does not by itself.
-function Run {
-  $command, $arguments = $args
-  & $command @arguments
-  if ($LASTEXITCODE -ne 0) {
-    Fail "$command exited with code $LASTEXITCODE"
-  }
-}
-
-function Refresh-Path {
-  $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-}
-
-function Add-To-Path([string]$Directory) {
-  $path = [Environment]::GetEnvironmentVariable("Path", "Machine").TrimEnd(";")
-  [Environment]::SetEnvironmentVariable("Path", "$path;$Directory", "Machine")
-  Refresh-Path
-}
-
-function Set-Env([string]$Name, [string]$Value) {
-  [Environment]::SetEnvironmentVariable($Name, $Value, "Machine")
-  [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
-}
-
-# Scoop reports a failed install on stdout and exits 0; the package's
-# directory is what says whether it worked. <package> may be name@version.
-function Install-Scoop-Package([string]$Package) {
-  # Scoop is PowerShell running in this session, and its manifests' cleanup
-  # steps write errors that are not failures (7zip on ARM64 cannot delete its
-  # own 7zr.exe; llvm on ARM64 has no Uninstall.exe to remove). Under "Stop"
-  # each of those would end the bake. Whether the install worked is what the
-  # check below decides.
-  $ErrorActionPreference = "SilentlyContinue"
-  scoop install $Package *>&1 | ForEach-Object { "$_" } | Write-Host
-  $ErrorActionPreference = "Stop"
-  # Scoop puts an app's directories (node, clang, python have no shim) on the
-  # PATH of the user who installs it. The agent's jobs run as another account,
-  # so they go on the machine's PATH.
-  $machine = [Environment]::GetEnvironmentVariable("Path", "Machine").Split(";")
-  foreach ($directory in [Environment]::GetEnvironmentVariable("Path", "User").Split(";")) {
-    if ($directory -like "$SCOOP\*" -and $machine -notcontains $directory) { Add-To-Path $directory }
-  }
-  Refresh-Path
-  $name = $Package.Split("@")[0]
-  if (-not (Test-Path "$SCOOP\apps\$name\current")) {
-    Fail "scoop install $Package failed"
-  }
-}`;
 
 // ------------------------------------- programs the bake puts on the machine
 
@@ -2693,9 +2592,8 @@ build {
 const repoRoot = resolve(import.meta.dirname, "../../..");
 
 /**
- * The script a bake runs. Linux: `sh bootstrap.sh <checkout> <image name>`, as
- * root on the machine being baked, where <checkout> is the repository at the
- * commit being built. Windows: Packer uploads the directory and runs
+ * The script a bake runs. Linux: `sh bootstrap.sh <commit> <image name>`, as
+ * root on the machine being baked. Windows: Packer uploads the directory and runs
  * `bootstrap.ps1` with REPO_COMMIT and IMAGE_NAME in the environment. macOS:
  * scripts/darwin-ci runs `sh bootstrap.sh` as the machine's admin user.
  */
@@ -2705,10 +2603,10 @@ function renderBootstrap(image: Image): string {
   switch (image.os) {
     case "linux":
       return [
-        ...["#!/bin/sh", "set -eu", generated, "", linuxPrelude, ""],
+        ...["#!/bin/sh", generated, "# Runs as root. A failed command ends the bake.", "set -eu", ""],
+        `[ $# -eq 2 ] || { echo "usage: bootstrap.sh <commit> <image name>" >&2; exit 1; }`,
         `BAKE_DIR=$(cd "$(dirname "$0")" && pwd)`,
-        `[ $# -eq 2 ] || fail "usage: bootstrap.sh <checkout> <image name>"`,
-        `REPO_DIR=$(cd "$1" && pwd)`,
+        `REPO_COMMIT=$1`,
         `IMAGE_NAME=$2`,
         `mkdir -p "$BAKE_DIR/observed"`,
         // Nobody is there to answer a package's questions: not ours, and not those of the installers that call apt (LLVM's, Docker's, Chrome's .deb).
@@ -2718,18 +2616,28 @@ function renderBootstrap(image: Image): string {
       ].join("\n");
     case "darwin":
       return [
-        ...["#!/bin/sh", "set -eu", generated, "", macosPrelude, ""],
-        `[ "$(id -u)" != 0 ] || fail "run this as the machine's admin user: Homebrew refuses to run as root"`,
+        "#!/bin/sh",
+        generated,
+        "# Runs as the machine's admin user, because Homebrew refuses to run as root, and uses sudo for what belongs to",
+        "# the system. A failed command ends it.",
+        "set -eu",
+        "",
+        `[ "$(id -u)" != 0 ] || { echo "run this as the machine's admin user: Homebrew refuses to run as root" >&2; exit 1; }`,
         "",
         ...sections,
       ].join("\n");
     case "windows":
       return [
-        ...[generated, "", `$SCOOP = '${locations.scoop}'`, windowsPrelude, ""],
+        generated,
+        "# Runs under Windows PowerShell 5.1: PowerShell 7 is one of the things it installs. A failed cmdlet ends the",
+        "# bake; a native program only reports through its exit code, which is checked after each one.",
+        `$ErrorActionPreference = "Stop"`,
+        `$ProgressPreference = "SilentlyContinue"`,
+        "",
         "$BAKE_DIR = $PSScriptRoot",
         "$REPO_COMMIT = $env:REPO_COMMIT",
         "$IMAGE_NAME = $env:IMAGE_NAME",
-        `if (-not $REPO_COMMIT -or -not $IMAGE_NAME) { Fail "REPO_COMMIT and IMAGE_NAME must be set" }`,
+        `if (-not $REPO_COMMIT -or -not $IMAGE_NAME) { throw "bootstrap: REPO_COMMIT and IMAGE_NAME must be set" }`,
         `New-Item -ItemType Directory -Force "$BAKE_DIR\\observed" | Out-Null`,
         "",
         ...sections,

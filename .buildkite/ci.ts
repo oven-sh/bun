@@ -1109,7 +1109,7 @@ function getImageSteps(
     // ($$ is a literal $ after pipeline-upload interpolation.)
     command: [
       downloadBakeDirectory,
-      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) sh ${bakeDirectory(key)}/bootstrap.sh "$$PWD" ${name}`,
+      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) sh ${bakeDirectory(key)}/bootstrap.sh "$$BUILDKITE_COMMIT" ${name}`,
       `cp ${locations.imageRecord.linux} ${record}`,
       uploadRecord,
     ],

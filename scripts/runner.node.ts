@@ -2400,8 +2400,8 @@ async function spawnBunInstall(
   // spawnBun sets BUN_INSTALL_CACHE_DIR to a fresh tmpdir so per-test installs
   // are hermetic. This function only runs the runner's own dependency setup
   // (root, test/, scripts/ci-remap-server, vendor), which should hit the
-  // image's baked cache when one exists (the prefetch tools of
-  // scripts/build/ci-images/spec.ts set BUN_INSTALL_CACHE_DIR machine-wide).
+  // image's baked cache when one exists (the `prefetch` tool of
+  // scripts/build/ci-images/spec.ts sets BUN_INSTALL_CACHE_DIR machine-wide).
   const cacheDir = process.env.BUN_INSTALL_CACHE_DIR;
   let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
     args: ["install"],

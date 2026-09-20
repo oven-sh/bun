@@ -54,6 +54,23 @@ import { isCI, printEnvironment, startGroup } from "./buildkite.ts";
 // ───────────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+
+  // Before the VS dev shell below: a tool needs none of it, and loading it takes seconds.
+  // A ninja tool (`-t query <target>`, `-t deps <object>`, `-t commands`, …) inspects what the last configure and
+  // build left behind, so it runs on the build directory as it is, with the ninja the build runs.
+  if (args.ninjaTool !== undefined) {
+    const { cfg } = configOf({ profile: args.profile, overrides: args.overrides });
+    if (!existsSync(join(cfg.buildDir, "build.ninja"))) {
+      throw new BuildError(`${cfg.buildDir} has not been configured`, {
+        hint: "Build it, or configure it with --configure-only, using the same profile flags.",
+      });
+    }
+    const tool = spawnSync(ninjaIfPresent(cfg), ["-C", cfg.buildDir, "-t", ...args.ninjaTool], { stdio: "inherit" });
+    if (tool.error) throw new BuildError(`Failed to run ninja`, { cause: tool.error });
+    process.exit(tool.status ?? 1);
+  }
+
   // Windows: re-exec inside the VS dev shell if not already there.
   // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB,
   // WindowsSdkDir — things clang-cl can mostly self-detect but nested
@@ -73,22 +90,6 @@ async function main(): Promise<void> {
       });
     }
     process.exit(result.status ?? 1);
-  }
-
-  const args = parseArgs(process.argv.slice(2));
-
-  // A ninja tool (`-t query <target>`, `-t deps <object>`, `-t commands`, …) inspects what the last configure and
-  // build left behind, so it runs on the build directory as it is, with the ninja the build runs.
-  if (args.ninjaTool !== undefined) {
-    const { cfg } = configOf({ profile: args.profile, overrides: args.overrides });
-    if (!existsSync(join(cfg.buildDir, "build.ninja"))) {
-      throw new BuildError(`${cfg.buildDir} has not been configured`, {
-        hint: "Build it, or configure it with --configure-only, using the same profile flags.",
-      });
-    }
-    const tool = spawnSync(ninjaIfPresent(cfg), ["-C", cfg.buildDir, "-t", ...args.ninjaTool], { stdio: "inherit" });
-    if (tool.error) throw new BuildError(`Failed to run ninja`, { cause: tool.error });
-    process.exit(tool.status ?? 1);
   }
 
   // Skip on --configure-only / --config-file (ninja regen): those paths

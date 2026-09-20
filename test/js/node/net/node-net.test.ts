@@ -645,17 +645,20 @@ it("should handle connection error", async () => {
   await new Promise(resolve => probe.close(resolve));
 
   const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
-  const errors: any[] = [];
+  const events: unknown[] = [];
   const socket = connect(port, "127.0.0.1", () => reject(new Error("Should not have connected")));
-  socket.on("error", error => errors.push(error));
+  socket.on("error", (e: any) =>
+    events.push({ message: e.message, code: e.code, syscall: e.syscall, address: e.address, port: e.port }),
+  );
   socket.on("connect", () => reject(new Error("Should not have connected")));
-  socket.on("close", () => resolve());
+  socket.on("close", hadError => {
+    events.push(`close hadError=${hadError}`);
+    resolve();
+  });
   await closed;
 
-  // Exactly one 'error', before 'close'.
-  expect(
-    errors.map(e => ({ message: e.message, code: e.code, syscall: e.syscall, address: e.address, port: e.port })),
-  ).toEqual([
+  // Exactly one 'error', then 'close'.
+  expect(events).toEqual([
     {
       message: `connect ECONNREFUSED 127.0.0.1:${port}`,
       code: "ECONNREFUSED",
@@ -663,6 +666,7 @@ it("should handle connection error", async () => {
       address: "127.0.0.1",
       port,
     },
+    "close hadError=true",
   ]);
 });
 
@@ -3079,6 +3083,7 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
         // chunk is still in the kernel, so the next writev takes the whole remainder
         // plus a prefix of the new chunk (written > buffered.len).
         if (sawPartial) {
+          // sent.a counts the partial chunk too: this is a single write, and it was partial.
           if (sent.a === size) {
             console.error("precondition failed: the first write was partial, so the peer has nothing to drain first");
             sock.destroy();

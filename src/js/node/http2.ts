@@ -4878,7 +4878,7 @@ function streamSocketClosed(stream: Http2Stream) {
   }
 }
 // A stream whose session was close()d before the socket finished connecting never reached the
-// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION (no $ERR intrinsic exists for this code).
+// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION.
 function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream) {
   if (typeof stream?.id === "number" && stream.id > lastStreamId) {
     streamRejectedByGoawaySession(stream);
@@ -4886,12 +4886,10 @@ function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream
 }
 function streamRejectedByGoawaySession(stream: Http2Stream) {
   if (!stream.destroyed) {
-    const err = new Error("New streams cannot be created after receiving a GOAWAY");
-    err.code = "ERR_HTTP2_GOAWAY_SESSION";
     // nghttp2 closes unprocessed streams with REFUSED_STREAM, the signal clients (grpc) treat
     // as safely retryable on a fresh connection.
     stream.rstCode = constants.NGHTTP2_REFUSED_STREAM;
-    stream.destroy(err);
+    stream.destroy($ERR_HTTP2_GOAWAY_SESSION());
   }
 }
 class ClientHttp2Session extends Http2Session {
@@ -5865,9 +5863,9 @@ class ClientHttp2Session extends Http2Session {
     // throws before that point must not decrement.
     let connectionsCounted = false;
     try {
-      // node validates the headers, then the options, and only then looks at the session
-      // state: it defers those failures (destroyed/closed/GOAWAY) to the returned stream. So a
-      // bad argument throws even on a destroyed session (lib/internal/http2/core.js request()).
+      if (this.sentTrailers) {
+        throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
+      }
 
       // Raw (flat [name, value, ...] array) headers form: missing pseudo-header
       // defaults are prepended and the pairs are encoded on the wire in their
@@ -5989,6 +5987,35 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
+      assertIsObject(options, "options");
+      // Copy options so user-supplied getters run now, before the header block
+      // is encoded — a getter that re-entrantly calls request() would otherwise
+      // reorder header blocks on the wire (Node does the same).
+      if ($isObject(options)) {
+        options = { ...options };
+      }
+
+      if ($isObject(options) && "weight" in options) {
+        // RFC 9113 deprecated priority signalling: node emits DEP0194 when the option is present
+        // and ignores it (the request always goes out with the default weight).
+        if (!priorityWeightDeprecationWarned) {
+          priorityWeightDeprecationWarned = true;
+          process.emitWarning(
+            "Priority signaling has been deprecated as of RFC 9113.",
+            "DeprecationWarning",
+            "DEP0194",
+          );
+        }
+        delete options.weight;
+      }
+      // node's order, after the headers: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1866
+      if (options !== undefined) {
+        if (options.parent !== undefined) validateNumber(options.parent, "options.parent");
+        if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
+        if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
+        if (options.endStream !== undefined) validateBoolean(options.endStream, "options.endStream");
+      }
+
       // node injects defaulted pseudo-headers in this order: :method, :authority, :scheme,
       // :path - the object's insertion order is the wire order.
       let method = headers[":method"];
@@ -6027,59 +6054,8 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
-      assertIsObject(options, "options");
-      if (options !== undefined) {
-        if (options.endStream !== undefined) validateBoolean(options.endStream, "options.endStream");
-        if (options.parent !== undefined) validateNumber(options.parent, "options.parent");
-        if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
-        if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
-      }
-      if (this.destroyed) {
-        const req = new ClientHttp2Stream(undefined, this, headers);
-        process.nextTick(destroyWithInvalidSessionNT, req);
-        return req;
-      }
-      if (this[kReceivedGoaway]) {
-        const err = new Error("New streams cannot be created after receiving a GOAWAY");
-        err.code = "ERR_HTTP2_GOAWAY_SESSION";
-        throw err;
-      }
-      if (this.closed) {
-        // node: a closed (close() called / GOAWAY pending) session reports
-        // ERR_HTTP2_GOAWAY_SESSION on the stream (verified node v26.3.0); the test
-        // contract accepts a synchronous throw of the same error.
-        const err = new Error("New streams cannot be created after receiving a GOAWAY");
-        err.code = "ERR_HTTP2_GOAWAY_SESSION";
-        throw err;
-      }
-
-      if (this.sentTrailers) {
-        throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
-      }
-
-      // Copy options so user-supplied getters run now, before the header block
-      // is encoded — a getter that re-entrantly calls request() would otherwise
-      // reorder header blocks on the wire (Node does the same).
-      if ($isObject(options)) {
-        options = { ...options };
-      }
-
-      if ($isObject(options) && "weight" in options) {
-        // RFC 9113 deprecated priority signalling: node emits DEP0194 when the option is present
-        // and ignores it (the request always goes out with the default weight).
-        if (!priorityWeightDeprecationWarned) {
-          priorityWeightDeprecationWarned = true;
-          process.emitWarning(
-            "Priority signaling has been deprecated as of RFC 9113.",
-            "DeprecationWarning",
-            "DEP0194",
-          );
-        }
-        delete options.weight;
-      }
-
       let rejectContentLengthOnNoPayload = false;
-      if (NoPayloadMethods.has(method.toUpperCase())) {
+      if (typeof method === "string" && NoPayloadMethods.has(method.toUpperCase())) {
         // Like Node, a payload-meaningless method only defaults endStream to
         // true when the caller expressed no preference; an explicit endStream
         // (validated above) is honored, so { endStream: false } stays open.
@@ -6099,6 +6075,43 @@ class ClientHttp2Session extends Http2Session {
             }
           }
         }
+      }
+
+      // Like Node, a request whose signal is already aborted never touches the
+      // wire: the stream is created without an id and destroyed synchronously
+      // with an AbortError (_destroy skips the RST for id-less streams).
+      // Sending an RST for a stream the peer never saw is a connection error
+      // that makes conforming servers reply with GOAWAY.
+      let signal;
+      if ($isObject(options) && options.signal) {
+        // Node validates the signal before reading .aborted: any object with an
+        // 'aborted' property passes (so a duck-typed { aborted: true } takes
+        // the abort fast path), while objects without one and non-objects
+        // throw ERR_INVALID_ARG_TYPE synchronously.
+        signal = options.signal;
+        validateAbortSignal(signal, "options.signal");
+        if (signal.aborted) {
+          const req = new ClientHttp2Stream(undefined, this, headers);
+          // The writable side is ended first (endStream requests), so the stream is destroyed
+          // without counting as aborted — only the AbortError is reported.
+          if (options.endStream) req.end();
+          req.destroy($makeAbortError(undefined, { cause: signal.reason }));
+          return req;
+        }
+      }
+
+      // Like node, act on the session state last: after every argument check, on a stream that is set up.
+      if (this.destroyed) {
+        const req = new ClientHttp2Stream(undefined, this, headers);
+        setupRequestEndAndSignal(req, options, signal);
+        process.nextTick(destroyWithInvalidSessionNT, req);
+        return req;
+      }
+      if (this[kReceivedGoaway] || this.closed) {
+        // node: a closed (close() called / GOAWAY pending) session reports
+        // ERR_HTTP2_GOAWAY_SESSION on the stream (verified node v26.3.0); the test
+        // contract accepts a synchronous throw of the same error.
+        throw $ERR_HTTP2_GOAWAY_SESSION();
       }
 
       {
@@ -6133,29 +6146,6 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(rejectNoPayloadContentLengthNT, req);
         process.nextTick(emitEventNT, req, "ready");
         return req;
-      }
-
-      // Like Node, a request whose signal is already aborted never touches the
-      // wire: the stream is created without an id and destroyed synchronously
-      // with an AbortError (_destroy skips the RST for id-less streams).
-      // Sending an RST for a stream the peer never saw is a connection error
-      // that makes conforming servers reply with GOAWAY.
-      let signal;
-      if ($isObject(options) && options.signal) {
-        // Node validates the signal before reading .aborted: any object with an
-        // 'aborted' property passes (so a duck-typed { aborted: true } takes
-        // the abort fast path), while objects without one and non-objects
-        // throw ERR_INVALID_ARG_TYPE synchronously.
-        signal = options.signal;
-        validateAbortSignal(signal, "options.signal");
-        if (signal.aborted) {
-          const req = new ClientHttp2Stream(undefined, this, headers);
-          // The writable side is ended first (endStream requests), so the stream is destroyed
-          // without counting as aborted — only the AbortError is reported.
-          if (options.endStream) req.end();
-          req.destroy($makeAbortError(undefined, { cause: signal.reason }));
-          return req;
-        }
       }
 
       // A request made before the socket finished connecting, or while the peer's

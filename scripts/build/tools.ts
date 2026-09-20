@@ -193,6 +193,24 @@ function isExecutable(p: string): boolean {
  * otherwise → failure reason for the rejection log).
  */
 function getToolVersion(exe: string, versionArg: string): { version: string } | { reason: string } {
+  const result = askVersion(exe, versionArg);
+  if ("reason" in result) return result;
+  // Some tools print their version to stderr instead of stdout. Check both.
+  const version = parseVersion(result.stdout) ?? parseVersion(result.stderr);
+  if (version !== undefined) return { version };
+  // Parse failed — include what we saw (truncated) so the error is
+  // actionable instead of just "could not parse".
+  const output = (result.stdout + result.stderr).trim().slice(0, 200);
+  if (result.status !== 0) {
+    return { reason: `exited ${result.status}: ${output || "(no output)"}` };
+  }
+  return { reason: `no X.Y.Z in output: ${output || "(empty)"}` };
+}
+
+function askVersion(
+  exe: string,
+  versionArg: string,
+): { stdout: string; stderr: string; status: number | null } | { reason: string } {
   // stdio ignore on stdin: on Windows CI the parent's stdin can be a
   // handle that blocks the child's CRT init. --version never reads stdin.
   // 30s timeout: cold start of a large binary (clang is 100+ MB) through
@@ -205,16 +223,29 @@ function getToolVersion(exe: string, versionArg: string): { version: string } | 
   if (result.error) {
     return { reason: `spawn failed: ${result.error.message}` };
   }
-  // Some tools print their version to stderr instead of stdout. Check both.
-  const version = parseVersion(result.stdout ?? "") ?? parseVersion(result.stderr ?? "");
-  if (version !== undefined) return { version };
-  // Parse failed — include what we saw (truncated) so the error is
-  // actionable instead of just "could not parse".
-  const output = ((result.stdout ?? "") + (result.stderr ?? "")).trim().slice(0, 200);
-  if (result.status !== 0) {
-    return { reason: `exited ${result.status}: ${output || "(no output)"}` };
+  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status };
+}
+
+/**
+ * What a tool says it is: the line of its `--version` output that carries the version. For an llvm.org build
+ * that is `clang version 23.1.1 (https://github.com/llvm/llvm-project <commit>)` — the release and the exact
+ * commit, the same on every machine. (The lines after it name the install directory.)
+ */
+export function toolIdentity(exe: string): string {
+  const result = askVersion(exe, "--version");
+  const line =
+    "reason" in result
+      ? undefined
+      : `${result.stdout}\n${result.stderr}`
+          .split("\n")
+          .map(l => l.trim())
+          .find(l => /\d+\.\d+/.test(l));
+  if (line === undefined) {
+    throw new BuildError(`Cannot tell which ${exe} this is`, {
+      hint: `\`${exe} --version\` ${"reason" in result ? result.reason : "printed no version"}`,
+    });
   }
-  return { reason: `no X.Y.Z in output: ${output || "(empty)"}` };
+  return line;
 }
 
 /**

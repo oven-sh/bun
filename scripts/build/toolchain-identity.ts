@@ -1,7 +1,9 @@
 /**
- * `<buildDir>/toolchain-identity.txt`: which compiler, assembler, archiver and linker
- * this build directory's artifacts come from. Every edge that runs one of them
- * names this file as an input, so replacing a tool rebuilds what it produced.
+ * `<buildDir>/toolchain-identity.txt`: which compiler, assembler and linker
+ * this build directory's artifacts come from, as each tool reports itself
+ * (`tools.ts` `toolIdentity`). Every edge that runs one of them names this
+ * file as an input, so replacing a tool rebuilds what it produced. The Rust
+ * units get the same from the rustc version and commit in their hash.
  *
  * ninja cannot see a replaced tool on its own. A command line names the tool
  * by path, and an upgrade behind a stable path (a package manager's `current`
@@ -12,16 +14,17 @@
  * objects from two compilers, and with LTO their bitcode meets in one link —
  * LLVM 21's next to LLVM 23's failed with `undefined symbol: hwy::Abort`.
  *
- * A tool is identified by the file it resolves to, its size and its mtime: no
- * process to spawn, and a toolchain rebuilt in place under the same version
- * string counts as replaced too. Written with `writeIfChanged`, so an
- * unchanged toolchain keeps the file's mtime and rebuilds nothing.
+ * The archiver and the resource compiler are not here: llvm-lib and llvm-rc
+ * do not report a version, and what they write does not depend on one.
+ *
+ * Written with `writeIfChanged`, so an unchanged toolchain keeps the file's
+ * mtime and rebuilds nothing.
  */
 
-import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { writeIfChanged } from "./fs.ts";
+import { toolIdentity } from "./tools.ts";
 
 export function toolchainIdentityPath(cfg: Config): string {
   return resolve(cfg.buildDir, "toolchain-identity.txt");
@@ -33,17 +36,12 @@ export function writeToolchainIdentity(cfg: Config): string {
     ["cc", cfg.cc],
     ["cxx", cfg.cxx],
     ["nasm", cfg.nasm],
-    ["rc", cfg.rc],
-    ["ar", cfg.ar],
     ["ld", cfg.ld],
   ];
-  const lines = tools.flatMap(([name, path]) => {
-    // Absent on this platform: no nasm or rc, and `ld` is "" on macOS, where clang finds the linker itself.
-    if (path === undefined || path === "") return [];
-    const file = realpathSync(path);
-    const { size, mtimeMs } = statSync(file);
-    return [`${name} ${file} ${size} ${Math.trunc(mtimeMs)}`];
-  });
+  const lines = tools.flatMap(([name, path]) =>
+    // Absent on this platform: no nasm, and `ld` is "" on macOS, where clang finds the linker itself.
+    path === undefined || path === "" ? [] : [`${name}: ${toolIdentity(path)}`],
+  );
   const path = toolchainIdentityPath(cfg);
   writeIfChanged(path, lines.join("\n") + "\n");
   return path;

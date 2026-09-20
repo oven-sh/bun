@@ -496,7 +496,6 @@ export function ar(n: Ninja, cfg: Config, out: string, objects: string[], valida
     outputs: [absOut],
     rule: "ar",
     inputs: objects,
-    implicitInputs: [toolchainIdentityPath(cfg)],
     ...(validations.length > 0 ? { validations } : {}),
   });
 

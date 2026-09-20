@@ -431,3 +431,62 @@ describe("request that its handler pause()d, with a body below the highWaterMark
     }
   });
 });
+
+it("reading a request body does not reopen the read gate that queued pipelined responses closed", async () => {
+  // Node's readStart() is a no-op while socket._paused, so only the drain of
+  // the queued response bytes lets the parser reach the next pipelined request.
+  const order: string[] = [];
+  const handled = new Map<string, () => void>();
+  const seen = (url: string) => new Promise<void>(resolve => handled.set(url, resolve));
+  const secondHandled = seen("/2");
+  const fourthHandled = seen("/4");
+  let first!: [IncomingMessage, ServerResponse];
+  const server = createServer((req, res) => {
+    if (req.url === "/ping") return void res.end("pong");
+    order.push(req.url!);
+    handled.get(req.url!)?.();
+    if (req.url === "/1") {
+      req.pause();
+      first = [req, res];
+    } else if (req.url === "/2") {
+      res.end(Buffer.alloc(1024 * 1024, "y"));
+    } else {
+      res.end("ok");
+    }
+  });
+  async function ping() {
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket.write("GET /ping HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
+    socket.resume();
+    await once(socket, "close");
+  }
+  try {
+    const client = await connectTo(server);
+    client.socket.write("POST /1 HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello");
+    client.socket.write("GET /2 HTTP/1.1\r\nHost: a\r\n\r\n");
+    await secondHandled;
+    // Separate segments: the parser finishes the chunk that closed the gate.
+    client.socket.write("GET /3 HTTP/1.1\r\nHost: a\r\n\r\n");
+    await ping();
+    client.socket.write("GET /4 HTTP/1.1\r\nHost: a\r\n\r\n");
+    await ping();
+    const whileGateClosed = [...order];
+
+    const [req, res] = first;
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    req.resume();
+    await once(req, "end");
+    await ping();
+    expect({ body, order }).toEqual({ body: "hello", order: whileGateClosed });
+    expect(order).not.toContain("/4");
+
+    res.end("one");
+    await fourthHandled;
+    expect(order).toEqual(["/1", "/2", "/3", "/4"]);
+    await disconnectAndClose(client.socket, server);
+  } finally {
+    server.closeAllConnections();
+    if (server.listening) server.close();
+  }
+});

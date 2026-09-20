@@ -48,8 +48,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Also remove onWritable so that we do not emit when draining behind the scenes. */
         onWritable = nullptr;
         writableUserData = nullptr;
-        /* Ignore data after this point */
-        inStream = nullptr;
+        /* Ignore data after this point, unless the armed handler belongs to a queued pipelined request. */
+        if (nodeHttpQueuedPipelinedCount == 0) {
+            inStream = nullptr;
+        }
 
         // Ensure we don't call a timeout callback
         onTimeout = nullptr;

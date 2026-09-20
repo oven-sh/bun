@@ -45,11 +45,6 @@ pub(crate) struct NodeHTTPResponse {
     pub(crate) promise: JsCell<StrongOptional>, // Strong.Optional
     pub(crate) server: AnyServer,
 
-    /// When you call pause() on the node:http IncomingMessage
-    /// We might've already read from the socket.
-    /// So we need to buffer that data.
-    /// This should be pretty uncommon though.
-    pub(crate) buffered_request_body_data_during_pause: JsCell<Vec<u8>>,
     /// node:http: the raw trailer section that followed THIS request's chunked
     /// body. Moved off the connection's single per-parse buffer the moment the
     /// body finishes (still inside the parser), because a pipelined request's
@@ -89,9 +84,6 @@ bitflags! {
         const UPGRADED                            = 1 << 3;
         const HAS_CUSTOM_ON_DATA                  = 1 << 4;
         const IS_REQUEST_PENDING                  = 1 << 5;
-        const IS_DATA_BUFFERED_DURING_PAUSE       = 1 << 6;
-        /// Did we receive the last chunk of data during pause?
-        const IS_DATA_BUFFERED_DURING_PAUSE_LAST  = 1 << 7;
         /// node:http handed this connection to a raw 'upgrade'/'connect'
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
         const TUNNELED                            = 1 << 8;
@@ -321,10 +313,6 @@ fn on_timeout_shim(this: *mut NodeHTTPResponse, resp: uws::AnyResponse) {
 fn on_data_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) {
     // SAFETY: see on_timeout_shim.
     unsafe { (*this.cast_const()).on_data(chunk, last) }
-}
-fn on_buffer_paused_shim(this: *mut NodeHTTPResponse, chunk: &[u8], last: bool) {
-    // SAFETY: see on_timeout_shim.
-    unsafe { (*this.cast_const()).on_buffer_request_body_while_paused(chunk, last) }
 }
 fn on_drain_shim(this: *mut NodeHTTPResponse, off: u64, resp: uws::AnyResponse) -> bool {
     // SAFETY: see on_timeout_shim.
@@ -647,10 +635,7 @@ impl NodeHTTPResponse {
         {
             let had_ref = self.body_read_ref.get().has;
             if !flags.contains(Flags::UPGRADED) && !flags.contains(Flags::SOCKET_CLOSED) {
-                scoped_log!(NodeHTTPResponse, "clearOnData");
-                if let Some(raw_response) = self.raw_response.get() {
-                    raw_response.clear_on_data();
-                }
+                self.release_body_slot();
             }
 
             self.body_read_ref.with_mut(|r| r.unref(vm));
@@ -658,6 +643,21 @@ impl NodeHTTPResponse {
 
             if had_ref {
                 self.mark_request_as_done_if_necessary();
+            }
+        }
+    }
+
+    /// uws's per-connection body handler slot is still this request's.
+    fn body_still_arriving(&self) -> bool {
+        self.body_read_state.get() == BodyReadState::Pending
+    }
+
+    /// Null uws's data handler slot if it is still this request's.
+    fn release_body_slot(&self) {
+        if self.body_still_arriving() {
+            scoped_log!(NodeHTTPResponse, "clearOnData");
+            if let Some(raw_response) = self.raw_response.get() {
+                raw_response.clear_on_data();
             }
         }
     }
@@ -678,8 +678,7 @@ impl NodeHTTPResponse {
         // `body_read_state` at `Pending` so JS can still drain the buffered
         // tail (`drainRequestBody`), but uws will not deliver anything further,
         // so for this accounting that body is complete as well.
-        let body_pending = self.body_read_state.get() == BodyReadState::Pending
-            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
+        let body_pending = self.body_still_arriving();
 
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
         // same way, except an Upgrade carrying a body keeps parsing as HTTP
@@ -727,18 +726,6 @@ impl NodeHTTPResponse {
             }
         });
 
-        // A body whose fin was buffered during a pause is still owed to the
-        // IncomingMessage, which drains it through `drainRequestBody` when it
-        // next reads (possibly only after the response has ended). Keep it while
-        // JS can still get at it; `set_on_data` frees it once the reader lets go.
-        let flags = self.flags.get();
-        let tail_still_readable = flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-            && !flags.contains(Flags::SOCKET_CLOSED)
-            && !flags.contains(Flags::UPGRADED);
-        if !tail_still_readable {
-            self.buffered_request_body_data_during_pause
-                .with_mut(|b| b.clear_and_free());
-        }
         let mut server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
@@ -800,16 +787,6 @@ impl NodeHTTPResponse {
             BodyReadState::None => {}
             BodyReadState::Pending => result |= 1 << 1,
             BodyReadState::Done => result |= 1 << 2,
-        }
-        if self.buffered_request_body_data_during_pause.get().len() > 0 {
-            result |= 1 << 3;
-        }
-        if self
-            .flags
-            .get()
-            .contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-        {
-            result |= 1 << 2;
         }
 
         JSValue::js_number_from_int32(result)
@@ -1340,102 +1317,34 @@ impl NodeHTTPResponse {
     ) -> JsResult<JSValue> {
         scoped_log!(NodeHTTPResponse, "doPause");
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else {
-            return Ok(JSValue::FALSE);
-        };
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
+        if self.raw_response.get().is_none()
+            || flags.contains(Flags::REQUEST_HAS_COMPLETED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::UPGRADED)
         {
             return Ok(JSValue::FALSE);
         }
-        // Body already delivered: nothing to buffer, and re-arming onData would
-        // overwrite a pipelined request's userData on the shared HttpResponseData.
-        // pause_socket() still runs so pausePipelineReads can gate the fd.
-        if self.body_read_state.get() == BodyReadState::Pending
-            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-        {
-            self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
-            raw.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
-        }
-
         self.pause_socket();
         Ok(JSValue::TRUE)
     }
 
-    pub(crate) fn drain_request_body(
-        &self,
-        global_object: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(self
-            .drain_buffered_request_body_from_pause(global_object)?
-            .unwrap_or(JSValue::UNDEFINED))
-    }
-
-    fn drain_buffered_request_body_from_pause(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> JsResult<Option<JSValue>> {
-        scoped_log!(
-            NodeHTTPResponse,
-            "drainBufferedRequestBodyFromPause {}",
-            self.buffered_request_body_data_during_pause.get().len()
-        );
-        if self.buffered_request_body_data_during_pause.get().len() > 0 {
-            // `Vec` Drops, so the prior `create_buffer(slice_mut)` + `= Vec::new()`
-            // freed the backing allocation while JSC still pointed at it (mimalloc
-            // free-list pointer overwrote the first 8 bytes — test-http-pause.js saw
-            // `'�\x01xУ\x02\x00\x00Body from Client'`). Move the Vec out and hand the
-            // boxed slice to JSC so the deallocator owns the only free.
-            let bytes = self
-                .buffered_request_body_data_during_pause
-                .replace(Vec::new());
-            return JSValue::create_buffer_from_box(global_object, bytes.into_boxed_slice())
-                .map(Some);
-        }
-        Ok(None)
-    }
-
     pub(crate) fn do_resume(
         &self,
-        global_object: &JSGlobalObject,
+        _global_object: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         scoped_log!(NodeHTTPResponse, "doResume");
-        // Re-arm the poll first, unconditionally: a paused socket that received
-        // the peer's FIN has that EOF deferred (loop.c) until it is resumed, so
-        // req._dump() after res.end() (which sets ENDED before calling us) must
-        // still let the deferred onEnd fire and release the fd.
+        // Unconditional: a paused socket defers the peer's FIN until it is resumed.
         self.resume_socket();
         let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else {
-            return Ok(JSValue::FALSE);
-        };
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::ENDED)
-            || flags.contains(Flags::UPGRADED)
-            // A CONNECT tunnel's bytes reach JS via onSocketData; arming inStream
-            // here would deliver them twice (and park them in the body buffer).
-            || raw.is_connect_request()
-        {
-            return Ok(JSValue::FALSE);
-        }
-        // Body already delivered: re-arming onData/onTimeout would overwrite a
-        // pipelined request's userData on the shared HttpResponseData. The drain
-        // below still runs so a body buffered-while-paused reaches its own caller.
-        if self.body_read_state.get() == BodyReadState::Pending
-            && !flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
-        {
-            self.set_on_aborted_handler();
-            raw.on_data(on_data_shim, self.as_ctx_ptr());
-        }
-        self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
-        Ok(self
-            .drain_buffered_request_body_from_pause(global_object)?
-            .unwrap_or(JSValue::TRUE))
+        Ok(JSValue::from(
+            self.raw_response.get().is_some()
+                && !flags.contains(Flags::REQUEST_HAS_COMPLETED)
+                && !flags.contains(Flags::SOCKET_CLOSED)
+                && !flags.contains(Flags::ENDED)
+                && !flags.contains(Flags::UPGRADED),
+        ))
     }
 
     pub(crate) fn on_request_complete(&self) {
@@ -1472,12 +1381,11 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
         if !this_value.is_empty() {
             js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
         }
-        scoped_log!(NodeHTTPResponse, "clearOnData");
         // Put any held zero-copy tail on the wire before terminating so the
         // chunked stream stays well-formed.
         this.spill_pending_pinned_write(global_object);
+        this.release_body_slot();
         if let Some(raw_response) = this.raw_response.get() {
-            raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
             if raw_response.state().is_response_pending() {
@@ -1518,12 +1426,11 @@ fn node_http_request_on_reject(global_object: &JSGlobalObject, callframe: &CallF
         if !this_value.is_empty() {
             js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
         }
-        scoped_log!(NodeHTTPResponse, "clearOnData");
         // Put any held zero-copy tail on the wire before the terminating chunk
         // so the client's chunked decoder stays in sync.
         this.spill_pending_pinned_write(global_object);
+        this.release_body_slot();
         if let Some(raw_response) = this.raw_response.get() {
-            raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
             if !raw_response.state().is_http_status_called() {
@@ -1577,68 +1484,19 @@ impl NodeHTTPResponse {
         Ok(JSValue::UNDEFINED)
     }
 
-    fn on_buffer_request_body_while_paused(&self, chunk: &[u8], last: bool) {
-        scoped_log!(
-            NodeHTTPResponse,
-            "onBufferRequestBodyWhilePaused({}, {})",
-            chunk.len(),
-            last
-        );
-
-        self.buffered_request_body_data_during_pause
-            .with_mut(|b| b.append_slice(chunk));
-        if last {
-            self.capture_request_trailers();
-            self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST));
-            if self.body_read_ref.get().has {
-                self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-                self.mark_request_as_done_if_necessary();
+    fn get_bytes(&self, global_this: &JSGlobalObject, chunk: &[u8]) -> JSValue {
+        if chunk.is_empty() {
+            return JSValue::UNDEFINED;
+        }
+        // TODO: emit an 'error' event instead of reporting an uncaught exception.
+        match jsc::ArrayBuffer::create_buffer(global_this, chunk) {
+            Ok(b) => b,
+            Err(err) => {
+                let exc = global_this.take_exception(err);
+                let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
+                JSValue::UNDEFINED
             }
         }
-    }
-
-    fn get_bytes(&self, global_this: &JSGlobalObject, chunk: &[u8]) -> JSValue {
-        // TODO: we should have a error event for this but is better than ignoring it
-        // right now the socket instead of emitting an error event it will reportUncaughtException
-        // this makes the behavior aligned with current implementation, but not ideal
-        let bytes: JSValue = 'brk: {
-            if !chunk.is_empty() && self.buffered_request_body_data_during_pause.get().len() > 0 {
-                let paused = self
-                    .buffered_request_body_data_during_pause
-                    .replace(Vec::new());
-                let paused_len = paused.len();
-                let mut combined: Vec<u8> = Vec::with_capacity(paused_len + chunk.len());
-                combined.extend_from_slice(&paused);
-                combined.extend_from_slice(chunk);
-                drop(paused);
-                break 'brk match jsc::ArrayBuffer::create_buffer(global_this, &combined) {
-                    Ok(b) => b,
-                    Err(err) => {
-                        let exc = global_this.take_exception(err);
-                        let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
-                        return JSValue::UNDEFINED;
-                    }
-                };
-            }
-
-            let created = match self.drain_buffered_request_body_from_pause(global_this) {
-                Ok(Some(buffered_data)) => Ok(buffered_data),
-                Ok(None) if !chunk.is_empty() => {
-                    jsc::ArrayBuffer::create_buffer(global_this, chunk)
-                }
-                Ok(None) => Ok(JSValue::UNDEFINED),
-                Err(err) => Err(err),
-            };
-            break 'brk match created {
-                Ok(b) => b,
-                Err(err) => {
-                    let exc = global_this.take_exception(err);
-                    let _ = bun_vm_mut(global_this).uncaught_exception(global_this, exc, false);
-                    return JSValue::UNDEFINED;
-                }
-            };
-        };
-        bytes
     }
 
     fn on_data_or_aborted(&self, chunk: &[u8], last: bool, event: AbortEvent, this_value: JSValue) {
@@ -1648,30 +1506,13 @@ impl NodeHTTPResponse {
             chunk.len(),
             last
         );
-        let body_was_pending = self.body_read_state.get() == BodyReadState::Pending;
         // On the last chunk, keep `self` alive across the JS callback below.
         let _guard = last.then(|| self.ref_guard());
         if last {
             self.body_read_state.set(BodyReadState::Done);
         }
 
-        // "Armed" means a callable is cached — the slot holds an explicit
-        // `undefined` between the dispatch reset and the reader's _read() arming
-        // it, and a body arriving in that window used to be dropped outright.
-        let on_data_armed = js::on_data_get_cached(this_value).is_some_and(|cb| cb.is_cell());
-        if !on_data_armed && body_was_pending && event == AbortEvent::None {
-            // No reader armed yet: pipelined request whose body arrived in the same parse burst
-            // as its headers, before JS ran _read() to install ondata. Park it where pause parks;
-            // the reader-arm drain picks it up. (Dumped requests move to Done first, never here.)
-            self.buffered_request_body_data_during_pause
-                .with_mut(|b| b.append_slice(chunk));
-            self.update_flags(|f| {
-                f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE);
-                if last {
-                    f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST);
-                }
-            });
-        } else if let Some(callback) = js::on_data_get_cached(this_value) {
+        if let Some(callback) = js::on_data_get_cached(this_value) {
             if callback.is_cell() {
                 let vm = vm_get();
                 let global_this = vm.global();
@@ -2227,13 +2068,6 @@ impl NodeHTTPResponse {
             if !this_value.is_empty() {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             }
-            let flags = self.flags.get();
-            if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
-                scoped_log!(NodeHTTPResponse, "clearOnData");
-                if let Some(raw_response) = self.raw_response.get() {
-                    raw_response.clear_on_data();
-                }
-            }
             if self.body_read_state.get() != BodyReadState::Done {
                 self.body_read_state.set(BodyReadState::Done);
             }
@@ -2254,7 +2088,6 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::ENDED)
             || flags.contains(Flags::SOCKET_CLOSED)
             || self.body_read_state.get() != BodyReadState::Pending
-            || flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
             || flags.contains(Flags::UPGRADED)
         {
             js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
@@ -2265,10 +2098,7 @@ impl NodeHTTPResponse {
                         && !flags.contains(Flags::SOCKET_CLOSED)
                         && !flags.contains(Flags::UPGRADED)
                     {
-                        scoped_log!(NodeHTTPResponse, "clearOnData");
-                        if let Some(raw_response) = self.raw_response.get() {
-                            raw_response.clear_on_data();
-                        }
+                        self.release_body_slot();
                     }
                     self.body_read_state.set(BodyReadState::Done);
                 }
@@ -2278,11 +2108,6 @@ impl NodeHTTPResponse {
                 self.body_read_ref
                     .with_mut(|r| r.unref(bun_vm_mut(global_object)));
             }
-            // The reader is letting go of the body (_dump / _destroy, or it has
-            // already drained what was buffered), so nothing will drain a tail
-            // that `mark_request_as_done` left in place for it.
-            self.buffered_request_body_data_during_pause
-                .with_mut(|b| b.clear_and_free());
             return;
         }
 
@@ -2296,12 +2121,8 @@ impl NodeHTTPResponse {
         if let Some(raw_response) = self.raw_response.get() {
             raw_response.on_data(on_data_shim, self.as_ctx_ptr());
         }
-        self.update_flags(|f| f.remove(Flags::IS_DATA_BUFFERED_DURING_PAUSE));
 
-        // Every site that unrefs `body_read_ref` also transitions `body_read_state` out of `.pending`
-        // or sets `is_data_buffered_during_pause_last`, both of which are rejected by the guard above.
-        // So reaching here, `body_read_ref` is still held from create(). Do not re-acquire it or
-        // `this.ref()` — there would be no balancing release (PR #18564 removed the paired derefs).
+        // `body_read_ref` is still held from create(): every unref also leaves `.pending`.
         debug_assert!(self.body_read_ref.get().has);
     }
 
@@ -2561,8 +2382,6 @@ impl Drop for NodeHTTPResponse {
                 || flags.contains(Flags::TUNNELED)
         );
 
-        self.buffered_request_body_data_during_pause
-            .with_mut(|b| b.clear_and_free());
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
         self.body_read_ref.with_mut(|r| r.unref(vm_get()));
 
@@ -2658,7 +2477,6 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         poll_ref: JsCell::new(jsc::Ref::default()),
         body_read_ref: JsCell::new(jsc::Ref::default()),
         promise: JsCell::new(StrongOptional::empty()),
-        buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
         raw_request_headers: JsCell::new(Vec::new()),

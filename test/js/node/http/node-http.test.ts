@@ -4550,6 +4550,104 @@ it("connectionListener queues pipelined responses like Node", async () => {
   }
 });
 
+describe("a pipelined request whose body continues after the previous response ends", () => {
+  // uws keeps one request body handler per connection. The pipelined request
+  // arms it while the earlier response is still pending; that response ending
+  // must not drop it, or the rest of the body never reaches the request.
+  async function exchange(steps: { write: string; waitFor: string }[], lastUrl: string) {
+    const { promise: lastDispatched, resolve: resolveLastDispatched } = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      const read = () => {
+        let n = 0;
+        req.on("data", c => (n += c.length));
+        req.on("end", () => res.end(`${req.url}=${n};`));
+      };
+      if (req.url === lastUrl) {
+        resolveLastDispatched();
+        read();
+      } else {
+        // Answer only once the last request is dispatched behind this response.
+        lastDispatched.then(read);
+      }
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    client.setNoDelay(true);
+    let out = "";
+    const { promise: closed, reject: rejectClosed } = Promise.withResolvers<never>();
+    closed.catch(() => {});
+    client.on("data", d => (out += d));
+    client.on("error", rejectClosed);
+    client.on("close", () => rejectClosed(new Error("closed before expected output: " + out)));
+    await once(client, "connect");
+    try {
+      for (const { write, waitFor } of steps) {
+        client.write(write);
+        while (!out.includes(waitFor)) {
+          await Promise.race([once(client, "data"), closed]);
+        }
+      }
+      return out.match(/\/\w+=\d+;/g);
+    } finally {
+      client.destroy();
+      await once(server.close(), "close");
+    }
+  }
+
+  it("Content-Length body", async () => {
+    expect(
+      await exchange(
+        [
+          {
+            write:
+              "POST /one HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello" +
+              "POST /two HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\n01234",
+            waitFor: "/one=5;",
+          },
+          { write: "56789", waitFor: "/two=10;" },
+        ],
+        "/two",
+      ),
+    ).toEqual(["/one=5;", "/two=10;"]);
+  });
+
+  it("chunked body", async () => {
+    expect(
+      await exchange(
+        [
+          {
+            write:
+              "POST /one HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello" +
+              "POST /two HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n5\r\n01234\r\n",
+            waitFor: "/one=5;",
+          },
+          { write: "5\r\n56789\r\n0\r\n\r\n", waitFor: "/two=10;" },
+        ],
+        "/two",
+      ),
+    ).toEqual(["/one=5;", "/two=10;"]);
+  });
+
+  it("third request behind two pending responses, then keep-alive reuse", async () => {
+    expect(
+      await exchange(
+        [
+          {
+            write:
+              "POST /one HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nhello" +
+              "POST /two HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\n\r\nworld" +
+              "POST /three HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\n01234",
+            waitFor: "/two=5;",
+          },
+          { write: "56789", waitFor: "/three=10;" },
+          { write: "POST /four HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\nabc", waitFor: "/four=3;" },
+        ],
+        "/three",
+      ),
+    ).toEqual(["/one=5;", "/two=5;", "/three=10;", "/four=3;"]);
+  });
+});
+
 it("connectionListener aborts queued pipelined responses when the connection dies", async () => {
   // Like Node's socketOnClose (abortIncoming) and the native socket's close
   // path: the in-flight request and a response still queued behind it (with

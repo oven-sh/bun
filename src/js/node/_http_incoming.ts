@@ -54,16 +54,7 @@ function readStop(socket) {
 
 function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
   const handle = this[kHandle];
-  if (handle && !this.destroyed) {
-    const resumed = handle.resume();
-    if (resumed && resumed !== true) {
-      const bodyReadState = handle.hasBody;
-      if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
-        emitEOFIncomingMessage(this);
-      }
-      this.push(resumed);
-    }
-  }
+  if (handle && !this.destroyed) handle.resume();
 }
 
 /* Abstract base class for ServerRequest and ClientResponse. */
@@ -362,7 +353,7 @@ IncomingMessage.prototype._read = function _read(_n) {
       // Resume the native body source directly instead.
       onIncomingMessageResumeNodeHTTPResponse.$call(this);
     } else {
-      socket.resume();
+      readStart(socket);
     }
   }
 
@@ -384,13 +375,6 @@ IncomingMessage.prototype._read = function _read(_n) {
     this._dumped
   ) {
     emitEOFIncomingMessage(this);
-  }
-
-  if ((bodyReadState & NodeHTTPBodyReadState.hasBufferedDataDuringPause) !== 0) {
-    const drained = handle.drainRequestBody();
-    if (drained && !this._dumped) {
-      this.push(drained);
-    }
   }
 
   if (!handle.ondata) {

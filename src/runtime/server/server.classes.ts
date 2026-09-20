@@ -169,10 +169,6 @@ export default [
         fn: "pauseSocketReads",
         length: 0,
       },
-      drainRequestBody: {
-        fn: "drainRequestBody",
-        length: 0,
-      },
       takeRequestTrailers: {
         fn: "takeRequestTrailers",
         length: 0,

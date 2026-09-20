@@ -1830,6 +1830,45 @@ function createTest(input?: string | (string | { filename: string; contents: str
   return cwd;
 }
 
+test.skipIf(isWindows)("preserves large failure reports when stderr is piped", async () => {
+  using dir = tempDir("large-stderr-report", {
+    "big-diff.test.ts": `import { expect, test } from "bun:test";
+const big = Buffer.alloc(100 * 1024, "x").toString();
+test("INV-20 the needle line", () => { expect(big).toContain("THIS STRING IS NOT THERE"); });
+test("passes", () => { expect(1).toBe(1); });
+`,
+  });
+
+  const loaders = Array.from({ length: 6 }, () =>
+    Bun.spawn({
+      cmd: [bunExe(), "test", "big-diff.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    }),
+  );
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "big-diff.test.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("(fail) INV-20 the needle line");
+    expect(stderr).toContain("THIS STRING IS NOT THERE");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  } finally {
+    for (const loader of loaders) {
+      loader.kill();
+      await loader.exited;
+    }
+  }
+});
+
 function runTest({
   input = "",
   cwd,

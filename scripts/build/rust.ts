@@ -657,8 +657,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
  *   - `/NODEFAULTLIB`           — don't pull msvcrt/vcruntime/ucrt; the only imports are kernel32 + ntdll (named
  *                                 via `#[link]` on the externs).
  *   - `/Brepro`                 — the link time and the PDB signature in the PE headers come from the contents
- *                                 instead of the clock, so the same inputs give the same bytes: bun_install
- *                                 embeds this file, and a relink must not look like a change.
+ *                                 instead of the clock, so the same inputs give the same bytes, and with them
+ *                                 the same bun_install, which embeds this file.
  *
  * (`-Cforce-unwind-tables=no` would drop `.pdata`, but the `*-windows-msvc` target spec sets
  * `requires_uwtable: true` so rustc rejects it. The section is ~3 KiB; not worth a custom target JSON.)

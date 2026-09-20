@@ -728,9 +728,12 @@ export const linuxAgentPaths = {
   logsPath: "/var/log/buildkite-agent",
 } as const;
 
+/** The agent's directory on a Windows image; the image's bootstrap installs buildkite-agent and its hooks there. */
+export const windowsAgentHome = "C:\\buildkite-agent";
+
 function getAgentPaths(): AgentPaths {
   if (isWindows) {
-    const homePath = "C:\\buildkite-agent";
+    const homePath = windowsAgentHome;
     const logsPath = join(homePath, "logs");
     return {
       homePath,

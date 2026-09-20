@@ -1,0 +1,1 @@
+systemctl mask tmp.mount

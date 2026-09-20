@@ -443,6 +443,9 @@ interface CliArgs {
  *
  * Boolean overrides accept: on/off, true/false, yes/no, 1/0.
  */
+/** `ninja -d list` */
+const ninjaDebugModes = new Set(["stats", "explain", "keepdepfile", "keeprsp", "nostatcache", "list"]);
+
 function parseArgs(argv: string[]): CliArgs {
   let profile = "debug";
   const overrides: PartialConfig = {};
@@ -516,12 +519,13 @@ function parseArgs(argv: string[]): CliArgs {
     }
 
     // Ninja passthrough: -j<N>, -v, -k<N>, -l<N>, -n, -d <mode>. Short flags only —
-    // anything starting with `--` is OURS.
-    if (arg === "-d" && i + 1 < argv.length) {
+    // anything starting with `--` is OURS. `-d` is ninja's only with one of ninja's debug modes after it:
+    // bun's own `-d K:V` (--define) keeps reaching the built binary.
+    if (arg === "-d" && ninjaDebugModes.has(argv[i + 1] ?? "")) {
       ninjaArgs.push(arg, argv[++i]!);
       continue;
     }
-    if (/^-[jklvnd]/.test(arg)) {
+    if (/^-[jklvn]/.test(arg)) {
       ninjaArgs.push(arg);
       continue;
     }

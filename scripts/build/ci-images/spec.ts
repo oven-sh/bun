@@ -180,7 +180,7 @@ export const images: readonly Image[] = [
       publisher: "MicrosoftWindowsServer",
       offer: "WindowsServer",
       sku: "2019-datacenter-gensecond",
-      version: "latest",
+      version: "17763.9245.260906",
     },
     // An AMD size: the Intel D4ds_v6 kept failing to allocate in the region, and the CPU's vendor does not change the image.
     bakeVmSize: "Standard_D4as_v7",
@@ -194,7 +194,7 @@ export const images: readonly Image[] = [
       publisher: "MicrosoftWindowsDesktop",
       offer: "windows11preview-arm64",
       sku: "win11-24h2-pro",
-      version: "latest",
+      version: "26100.9457.260913",
     },
     bakeVmSize: "Standard_D4pds_v6",
   },

@@ -4926,6 +4926,10 @@ declare module "bun" {
      */
     tls?: TLSOptions & {
       /**
+       * The Node.js spelling of `serverName`.
+       */
+      servername?: string;
+      /**
        * Custom function to check the server identity. When set, it replaces
        * the built-in hostname check, as in `fetch()` and `tls.connect()`.
        * Through an HTTPS proxy it runs for the target's certificate only.

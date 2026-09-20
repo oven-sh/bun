@@ -283,3 +283,9 @@ import { expectType } from "./utilities";
   // Terminate the connection immediately
   ws.terminate();
 }
+
+// tls.servername, the node spelling of tls.serverName
+{
+  const options = { tls: { servername: "dev.local" } } satisfies Bun.WebSocketOptions;
+  expectType<string>(options.tls.servername);
+}

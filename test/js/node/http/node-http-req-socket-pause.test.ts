@@ -122,12 +122,12 @@ it("req.socket emits 'pause' on every body-bearing keep-alive request, not just 
 // parsed in one go.
 const BODY_HEAD = Buffer.alloc(2048, "x").toString();
 const BODY_TAIL = "tail";
-function chunkedPost(path: string, extraHeaders = "") {
+function chunkedPost(path: string, extraHeaders = "", trailers = "") {
   return (
     `POST ${path} HTTP/1.1\r\nHost: a\r\n${extraHeaders}Transfer-Encoding: chunked\r\n\r\n` +
     `${BODY_HEAD.length.toString(16)}\r\n${BODY_HEAD}\r\n` +
     `${BODY_TAIL.length.toString(16)}\r\n${BODY_TAIL}\r\n` +
-    "0\r\n\r\n"
+    `0\r\n${trailers}\r\n`
   );
 }
 
@@ -157,9 +157,25 @@ async function connectTo(server: Server) {
   };
 }
 
-async function disconnectAndClose(socket: Socket, server: Server) {
-  socket.destroy();
+// One whole exchange on a connection of its own. Once its response is here,
+// the server has polled its sockets again, so it has seen (or put off) every
+// byte and FIN that was written before this call.
+async function roundTrip(server: Server) {
+  const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  socket.on("error", () => {});
+  let response = "";
+  socket.on("data", chunk => (response += chunk));
+  socket.write("GET /ping HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n");
   await once(socket, "close");
+  expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("pong");
+}
+
+async function disconnectAndClose(socket: Socket, server: Server) {
+  // The server closes the connection itself after a `Connection: close` request.
+  if (!socket.closed) {
+    socket.destroy();
+    await once(socket, "close");
+  }
   // The server's 'close' event waits for every request the server still
   // counts as in flight, so a request that is never released keeps it from
   // ever firing.
@@ -210,9 +226,9 @@ describe("request whose whole body arrived while it was paused, answered later o
       let received = "";
       req.on("end", () => gotBody(received));
       setImmediate(() => {
-        // The whole body has been received by now, but only its first chunk
-        // fit into the request's buffer. Reading starts on the next tick, so
-        // the response ends before the rest of the body has been handed over.
+        // The whole body has been received by now, although its first chunk
+        // alone filled the request's buffer. Reading starts on the next tick,
+        // so the response ends before the body has been handed over.
         req.on("data", chunk => (received += chunk));
         res.end("alpha");
       });
@@ -278,8 +294,8 @@ it("upgrade request whose whole body arrived while it was paused still hands the
       gotBody(received);
       socket.destroy();
     });
-    // As above: the whole body has been received by the time this runs, but
-    // only its first chunk fit into the request's buffer.
+    // As above: the whole body has been received by the time this runs,
+    // although its first chunk alone filled the request's buffer.
     setImmediate(() => req.on("data", chunk => (received += chunk)));
   });
   try {
@@ -674,6 +690,235 @@ describe("upgrade request whose whole body arrived with its head", () => {
       await orFail(client.receive("101 Switching Protocols"));
     } finally {
       client?.socket.destroy();
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+});
+
+// Node's parserOnBody only stops the socket reads when push() returns false (or
+// when user code pauses): the parser still runs to the end of the segment it
+// was given. So the rest of the body, and its end, reach the request in the
+// same pass, before anything reads it.
+describe("request whose whole body is in the segment that paused the connection", () => {
+  type Sample = { complete: boolean; readableLength: number; rawTrailers: string[]; body: string };
+
+  // Samples the request once the segment that carried it has been parsed to
+  // the end (setImmediate runs after the read callback that dispatched it),
+  // then reads the body.
+  function sampleThenRead(req: IncomingMessage, done: (sample: Sample) => void) {
+    setImmediate(() => {
+      const { complete, readableLength, rawTrailers } = req;
+      let body = "";
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => done({ complete, readableLength, rawTrailers, body }));
+      // A 'data' listener alone does not restart a stream that was pause()d.
+      req.resume();
+    });
+  }
+
+  const TRAILERS = "X-Checksum: abc\r\n";
+  const whole: Sample = {
+    complete: true,
+    readableLength: BODY_HEAD.length + BODY_TAIL.length,
+    rawTrailers: ["X-Checksum", "abc"],
+    body: BODY_HEAD + BODY_TAIL,
+  };
+
+  it.each([
+    ["an unread body above the highWaterMark", (_req: IncomingMessage) => {}],
+    ["req.pause()", (req: IncomingMessage) => void req.pause()],
+    ["req.socket.pause()", (req: IncomingMessage) => void req.socket.pause()],
+  ])("is complete and fully buffered before it is read, paused by %s", async (_name, pause) => {
+    const paused: string[] = [];
+    const { promise: sampled, resolve: gotSample } = Promise.withResolvers<Sample>();
+    const server = createServer({ highWaterMark: 1024 }, (req, res) => {
+      req.socket.on("pause", () => paused.push(req.url!));
+      pause(req);
+      sampleThenRead(req, sample => {
+        gotSample(sample);
+        res.end("alpha");
+      });
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(chunkedPost("/unread", "", TRAILERS));
+      expect(await sampled).toEqual(whole);
+      expect(paused).toEqual(["/unread"]);
+      await client.receive("alpha");
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  it("is complete and fully buffered before it is read, on an upgrade request", async () => {
+    const { promise: sampled, resolve: gotSample } = Promise.withResolvers<Sample>();
+    const server = createServer({ highWaterMark: 1024 });
+    server.on("upgrade", (req, socket) => {
+      socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n");
+      sampleThenRead(req, sample => {
+        gotSample(sample);
+        socket.destroy();
+      });
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(chunkedPost("/upgrade", "Upgrade: test\r\nConnection: Upgrade\r\n", TRAILERS));
+      expect(await sampled).toEqual(whole);
+      await once(client.socket, "close");
+      server.close();
+      await once(server, "close");
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  // The body is already in the request's buffer, so the end of the response
+  // cannot take a part of it away from a reader that comes late.
+  it.each([
+    ["right after the response ends", "", false],
+    ["just before the response ends, on a connection the response closes", "Connection: close\r\n", true],
+    ["right after the response ends, on a connection the response closes", "Connection: close\r\n", false],
+  ])("hands the whole body to a reader attached %s", async (_name, headers, readerFirst) => {
+    const { promise: body, resolve: gotBody } = Promise.withResolvers<string>();
+    const server = createServer({ highWaterMark: 1024 }, (req, res) => {
+      setImmediate(() => {
+        let received = "";
+        const read = () => {
+          req.on("data", chunk => (received += chunk));
+          req.on("end", () => gotBody(received));
+        };
+        if (readerFirst) read();
+        res.end("alpha");
+        if (!readerFirst) read();
+      });
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(chunkedPost("/read", headers));
+      await client.receive("alpha");
+      expect(await body).toBe(BODY_HEAD + BODY_TAIL);
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  // The connection stays paused until the request is read, although the
+  // request is complete. What the peer sends next has to wait for the reader.
+  function serveWhenReleased(released: Promise<void>, onHeld = () => {}) {
+    return createServer({ highWaterMark: 1024 }, (req, res) => {
+      if (req.url === "/ping") return void res.end("pong");
+      const read = () => {
+        let length = 0;
+        req.on("data", chunk => (length += chunk.length));
+        req.on("end", () => res.end(`${req.url}:${length};`));
+      };
+      if (req.url !== "/held") return read();
+      released.then(read);
+      onHeld();
+    });
+  }
+
+  it("serves a request that streams its body behind it on the same connection", async () => {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    const { promise: held, resolve: onHeld } = Promise.withResolvers<void>();
+    const server = serveWhenReleased(released, onHeld);
+    try {
+      const client = await connectTo(server);
+      client.socket.write(chunkedPost("/held"));
+      // The next request must come in a later read than the end of this body.
+      await held;
+      const half = Buffer.alloc(50_000, "y").toString();
+      client.socket.write(`POST /streamed HTTP/1.1\r\nHost: a\r\nContent-Length: ${2 * half.length}\r\n\r\n${half}`);
+      await roundTrip(server);
+      release();
+      await client.receive(`/held:${BODY_HEAD.length + BODY_TAIL.length};`);
+      client.socket.write(half);
+      await client.receive(`/streamed:${2 * half.length};`);
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  // Node's parserOnMessageComplete: readStart() undoes the readStop() that the
+  // last chunk itself caused, so the next request is read while this one is
+  // still unread and unanswered.
+  it("resumes the connection at once when the last chunk is the one that filled the buffer", async () => {
+    const { promise: first, resolve: gotFirst } = Promise.withResolvers<ServerResponse>();
+    const { promise: second, resolve: gotSecond } = Promise.withResolvers<void>();
+    const paused: string[] = [];
+    const server = createServer({ highWaterMark: 1024 }, (req, res) => {
+      if (req.url === "/first") {
+        req.socket.on("pause", () => paused.push(req.url!));
+        return gotFirst(res);
+      }
+      gotSecond();
+      res.end("bravo");
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(`POST /first HTTP/1.1\r\nHost: a\r\nContent-Length: ${BODY_HEAD.length}\r\n\r\n${BODY_HEAD}`);
+      const res = await first;
+      client.socket.write("GET /second HTTP/1.1\r\nHost: a\r\n\r\n");
+      await second;
+      expect(paused).toEqual(["/first"]);
+      res.end("alpha");
+      await client.receive("alpha");
+      await client.receive("bravo");
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  // A reader in paused mode emits no 'resume' on the request. The connection
+  // must still come back once that reader has the whole body.
+  it("reads the connection again after a late `for await` reader has consumed the request", async () => {
+    const { promise: consumed, resolve: gotBody } = Promise.withResolvers<{ res: ServerResponse; length: number }>();
+    const { promise: second, resolve: gotSecond } = Promise.withResolvers<void>();
+    const paused: string[] = [];
+    let current = "";
+    const server = createServer({ highWaterMark: 1024 }, (req, res) => {
+      if (current === "") req.socket.on("pause", () => paused.push(current));
+      current = req.url!;
+      if (req.url === "/first") {
+        setImmediate(async () => {
+          let length = 0;
+          for await (const chunk of req) length += chunk.length;
+          gotBody({ res, length });
+        });
+      } else if (req.url === "/second") {
+        gotSecond();
+        res.end("bravo");
+      } else {
+        setImmediate(() => res.end("charlie"));
+      }
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(chunkedPost("/first"));
+      const { res, length } = await consumed;
+      expect(length).toBe(BODY_HEAD.length + BODY_TAIL.length);
+      // The first request is read but not answered: the next one must be dispatched now.
+      client.socket.write("GET /second HTTP/1.1\r\nHost: a\r\n\r\n");
+      await second;
+      res.end("alpha");
+      await client.receive("alpha");
+      await client.receive("bravo");
+      // The socket's own flow state is back too, so the next body can announce its pause.
+      client.socket.write(chunkedPost("/third"));
+      await client.receive("charlie");
+      expect(paused).toEqual(["/first", "/third"]);
+      await disconnectAndClose(client.socket, server);
+    } finally {
       server.closeAllConnections();
       if (server.listening) server.close();
     }

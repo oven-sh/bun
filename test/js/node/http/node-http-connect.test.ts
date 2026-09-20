@@ -3,9 +3,13 @@ import { bunEnv, bunExe, bunRun, isLinux, isWindows, nodeExe, tempDir, tls as tl
 import http from "http";
 
 import { once } from "node:events";
+import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
+import { Writable } from "node:stream";
+import tls from "node:tls";
+import { WebSocketServer } from "ws";
 function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, add_http_prefix: boolean) {
   const client = net.connect({ port: proxyAddress.port, host: proxyAddress.address }, () => {
     client.write(
@@ -224,58 +228,396 @@ describe("HTTP server CONNECT", () => {
     expect(response).toContain("408 Request Timeout");
   });
 
-  //TODO pause and resume only not supported in bun socket yet
-  test.todo("should handle socket pause and resume", async () => {
-    await using proxyServer = http.createServer();
-    let pauseCount = 0;
-    let resumeCount = 0;
+  // 8 MiB that line up with no chunk and no read: 251 is prime.
+  const tunnelPayload = Buffer.alloc(8 * 1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+  // A read is at most 512 KiB (LIBUS_RECV_BUFFER_LENGTH). The read that fills the buffer stops the reads,
+  // and one more can be on its way to JS by then.
+  const maxReadAhead = 2 * 512 * 1024;
 
-    proxyServer.on("connect", (req, socket, head) => {
-      socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+  describe.each([
+    ["http", "CONNECT"],
+    ["http", "Upgrade"],
+    ["https", "CONNECT"],
+    ["https", "Upgrade"],
+  ] as const)("read backpressure of an %s %s tunnel", (protocol, kind) => {
+    const secure = protocol === "https";
+    const handshake =
+      kind === "CONNECT"
+        ? "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"
+        : "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: Upgrade\r\nUpgrade: tunnel\r\n\r\n";
+    const accept =
+      kind === "CONNECT"
+        ? "HTTP/1.1 200 Connection established\r\n\r\n"
+        : "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tunnel\r\n\r\n";
+    const payload = tunnelPayload;
+    const total = payload.length;
 
-      // Simulate backpressure scenario
-      const interval = setInterval(() => {
-        const canWrite = socket.write("X".repeat(1024));
-        if (!canWrite) {
-          pauseCount++;
-          socket.pause();
-          setTimeout(() => {
-            resumeCount++;
-            socket.resume();
-          }, 50);
+    // The helpers of one test, around the sockets of that test.
+    function setup() {
+      const sockets: net.Socket[] = [];
+
+      async function listen(onTunnel: (socket: net.Socket) => void, onRequest?: http.RequestListener) {
+        const server = secure ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }) : http.createServer();
+        server.on(kind === "CONNECT" ? "connect" : "upgrade", (req, socket) => {
+          sockets.push(socket);
+          onTunnel(socket);
+        });
+        server.on("request", onRequest ?? ((req, res) => res.end("ok")));
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        return server;
+      }
+
+      function connect(server: http.Server) {
+        const { port } = server.address() as AddressInfo;
+        const socket = secure
+          ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+          : net.connect(port, "127.0.0.1");
+        sockets.push(socket);
+        return socket;
+      }
+
+      // One exchange on a connection of its own: the event loop reads every socket that has bytes on the way.
+      async function barrier(server: http.Server) {
+        const socket = connect(server);
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        let response = "";
+        socket.on("data", chunk => (response += chunk));
+        socket.on("error", reject);
+        socket.on("end", () => socket.end());
+        socket.on("close", () => (response.endsWith("ok") ? resolve() : reject(new Error("barrier: " + response))));
+        socket.write("GET /barrier HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+        await promise;
+      }
+
+      // The server has read all that it is going to read when the buffered length is the same after three
+      // barriers in a row. Reads only stop at or above the high water mark.
+      async function untilReadsStop(server: http.Server, tunnel: net.Socket) {
+        let last = -1;
+        for (let same = 0, barriers = 0; same < 3; barriers++) {
+          if (barriers === 100) throw new Error(`the reads did not stop, ${last} bytes are buffered`);
+          await barrier(server);
+          const buffered = tunnel.readableLength;
+          same = buffered === last && buffered >= tunnel.readableHighWaterMark ? same + 1 : 0;
+          last = buffered;
         }
-      }, 10);
+        return last;
+      }
 
-      socket.on("end", () => {
-        clearInterval(interval);
-        socket.end();
+      async function openTunnel(server: http.Server) {
+        const client = connect(server);
+        client.write(handshake);
+        const { promise: accepted, resolve: onAccepted } = Promise.withResolvers<void>();
+        client.once("data", () => onAccepted());
+        await unlessClosed(client, accepted);
+        return client;
+      }
+
+      return {
+        listen,
+        connect,
+        barrier,
+        untilReadsStop,
+        openTunnel,
+        // Declared after the server: the sockets go first, so that the server can close, also when an assertion fails.
+        destroySockets: () => ({ [Symbol.dispose]: () => sockets.splice(0).forEach(socket => socket.destroy()) }),
+      };
+    }
+
+    // Sends the payload as fast as the socket takes it.
+    function sendPayload(client: net.Socket) {
+      let offset = 0;
+      const pump = () => {
+        while (offset < total) {
+          const end = Math.min(offset + 64 * 1024, total);
+          const more = client.write(payload.subarray(offset, end));
+          offset = end;
+          if (!more) return;
+        }
+      };
+      client.on("drain", pump);
+      pump();
+    }
+
+    // Rejects when the socket fails or closes before the promise settles.
+    function unlessClosed<T>(socket: net.Socket, promise: Promise<T>) {
+      const { promise: closed, reject } = Promise.withResolvers<never>();
+      const onClose = () => reject(new Error("the socket closed first"));
+      if (socket.destroyed) onClose();
+      socket.once("error", reject).once("close", onClose);
+      return Promise.race([promise, closed]).finally(() => socket.off("error", reject).off("close", onClose));
+    }
+
+    // The server writes only the accept line, which the socket takes at once: Node.js emits no 'drain' in these tests.
+    test("a full buffer stops the reads, and resume() delivers every byte", async () => {
+      const t = setup();
+      let drains = 0;
+      const { promise: tunnelPromise, resolve: onTunnel } = Promise.withResolvers<net.Socket>();
+      await using server = await t.listen(socket => {
+        socket.pause();
+        socket.on("drain", () => drains++);
+        socket.write(accept);
+        onTunnel(socket);
       });
+      using _ = t.destroySockets();
+      const client = await t.openTunnel(server);
+      sendPayload(client);
+      const tunnel = await tunnelPromise;
+
+      // Without read backpressure the socket holds the whole payload.
+      const buffered = await t.untilReadsStop(server, tunnel);
+      expect(buffered).toBeLessThanOrEqual(tunnel.readableHighWaterMark + maxReadAhead);
+
+      // resume() with a full buffer starts no reads: the reader has made no room yet.
+      tunnel.resume();
+      tunnel.pause();
+      await t.barrier(server);
+      expect(tunnel.readableLength).toBe(buffered);
+
+      const chunks: Buffer[] = [];
+      let received = 0;
+      const { promise: receivedAll, resolve: onReceivedAll } = Promise.withResolvers<void>();
+      tunnel.on("data", chunk => {
+        chunks.push(chunk);
+        received += chunk.length;
+        if (received >= total) onReceivedAll();
+      });
+      tunnel.resume();
+      await unlessClosed(tunnel, receivedAll);
+      expect({ intact: Buffer.concat(chunks).equals(payload), drains }).toEqual({ intact: true, drains: 0 });
     });
 
-    await once(proxyServer.listen(0, "127.0.0.1"), "listening");
-    const proxyAddress = proxyServer.address() as AddressInfo;
+    // An open Upgrade tunnel runs the same code as a CONNECT tunnel. The tests below move 8 to 24 MiB
+    // each, on one thread, so they run for CONNECT only.
+    if (kind === "Upgrade") return;
 
-    const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
-      client.write("CONNECT example.com:80 HTTP/1.1\r\nHost: example.com\r\n\r\n");
+    // The reader takes the first half as fast as it arrives, so the kernel holds megabytes for the
+    // socket when it pauses, and one turn of the read loop can take them all.
+    test("a pause in the middle of a fast transfer stops the reads after two of them", async () => {
+      const t = setup();
+      const chunks: Buffer[] = [];
+      let received = 0;
+      let drains = 0;
+      const { promise: pausedTunnel, resolve: onPaused } = Promise.withResolvers<net.Socket>();
+      const { promise: receivedAll, resolve: onReceivedAll } = Promise.withResolvers<void>();
+      await using server = await t.listen(socket => {
+        socket.write(accept);
+        socket.on("drain", () => drains++);
+        socket.on("data", chunk => {
+          chunks.push(chunk);
+          const before = received;
+          received += chunk.length;
+          if (before < total / 2 && received >= total / 2) {
+            socket.pause();
+            onPaused(socket);
+          }
+          if (received >= total) onReceivedAll();
+        });
+      });
+      using _ = t.destroySockets();
+      const client = await t.openTunnel(server);
+      sendPayload(client);
+      const tunnel = await unlessClosed(client, pausedTunnel);
 
-      setTimeout(() => client.end(), 200);
+      expect(await t.untilReadsStop(server, tunnel)).toBeLessThanOrEqual(tunnel.readableHighWaterMark + maxReadAhead);
+
+      tunnel.resume();
+      await unlessClosed(tunnel, receivedAll);
+      expect({ intact: Buffer.concat(chunks).equals(payload), drains }).toEqual({ intact: true, drains: 0 });
     });
 
-    const { promise, resolve } = Promise.withResolvers<number>();
-    let bytesReceived = 0;
+    // pipe() pauses the socket when the destination is full and resumes it on 'drain'. The buffer is
+    // full at that resume(), so the reads stay stopped until the destination has taken a chunk.
+    test("pipe() to a slow destination holds a bounded buffer", async () => {
+      const t = setup();
+      const chunks: Buffer[] = [];
+      let received = 0;
+      let drains = 0;
+      let maxBuffered = 0;
+      const { promise: receivedAll, resolve: onReceivedAll } = Promise.withResolvers<net.Socket>();
+      await using server = await t.listen(socket => {
+        socket.write(accept);
+        socket.on("drain", () => drains++);
+        socket.pipe(
+          new Writable({
+            highWaterMark: 16 * 1024,
+            write(chunk, encoding, callback) {
+              chunks.push(chunk);
+              received += chunk.length;
+              maxBuffered = Math.max(maxBuffered, socket.readableLength);
+              if (received >= total) onReceivedAll(socket);
+              setImmediate(callback);
+            },
+          }),
+        );
+      });
+      using _ = t.destroySockets();
+      const client = await t.openTunnel(server);
+      sendPayload(client);
+      const tunnel = await unlessClosed(client, receivedAll);
 
-    client.on("data", data => {
-      bytesReceived += data.length;
+      expect(maxBuffered).toBeLessThanOrEqual(tunnel.readableHighWaterMark + maxReadAhead);
+      expect({ intact: Buffer.concat(chunks).equals(payload), drains }).toEqual({ intact: true, drains: 0 });
     });
 
-    client.on("end", () => {
-      resolve(bytesReceived);
+    // The server pauses the reads of a connection whose response the client does not take (flood
+    // prevention), and resumes them when that response has left.
+    test("the end of flood prevention does not resume the reads that a full buffer stopped", async () => {
+      const t = setup();
+      const responseWritten = Promise.withResolvers<void>();
+      const { promise: tunnelPromise, resolve: onTunnel } = Promise.withResolvers<net.Socket>();
+      await using server = await t.listen(
+        socket => {
+          // An earlier request left the socket flowing. Paused, it buffers what it reads.
+          socket.pause();
+          onTunnel(socket);
+        },
+        (req, res) => {
+          if (req.url !== "/unread") return void res.end("ok");
+          // More than the kernel takes for a client that does not read.
+          const chunk = Buffer.alloc(8 * 1024, "r");
+          for (let written = 0; written < 16 * 1024 * 1024; written += chunk.length) res.write(chunk);
+          res.end();
+          responseWritten.resolve();
+        },
+      );
+      using _ = t.destroySockets();
+      const client = t.connect(server);
+      client.pause();
+      client.write("GET /unread HTTP/1.1\r\nHost: example.com\r\n\r\n");
+      await unlessClosed(client, responseWritten.promise);
+      client.write(handshake);
+      const tunnel = await unlessClosed(client, tunnelPromise);
+      sendPayload(client);
+
+      // Flood prevention holds the reads: part of the response is still unsent.
+      await t.barrier(server);
+      expect(tunnel.readableLength).toBe(0);
+      // A reader starts them, as a 'data' listener does, then lets the buffer fill.
+      tunnel.resume();
+      tunnel.pause();
+      const buffered = await t.untilReadsStop(server, tunnel);
+
+      // The client takes the response. It ends with the last chunk of the chunked encoding.
+      const { promise: responseRead, resolve: onResponseRead } = Promise.withResolvers<void>();
+      const lastChunk = Buffer.from("\r\n0\r\n\r\n");
+      let tail = Buffer.alloc(0);
+      client.on("data", chunk => {
+        tail = (chunk.length < lastChunk.length ? Buffer.concat([tail, chunk]) : chunk).subarray(-lastChunk.length);
+        if (tail.equals(lastChunk)) onResponseRead();
+      });
+      client.resume();
+      await unlessClosed(client, responseRead);
+      await t.barrier(server);
+      expect(tunnel.readableLength).toBe(buffered);
     });
 
-    const totalBytes = await promise;
-    expect(totalBytes).toBeGreaterThan(0);
-    expect(pauseCount).toBeGreaterThan(0);
-    expect(resumeCount).toBeGreaterThan(0);
+    // The reader takes each chunk at once here. A reader that falls behind still loses what it has
+    // not taken when the connection closes.
+    test("end() behind a full buffer leaves the reads stopped, and the rest, 'end' and 'close' still arrive", async () => {
+      const t = setup();
+      const { promise: tunnelPromise, resolve: onTunnel } = Promise.withResolvers<net.Socket>();
+      await using server = await t.listen(socket => {
+        socket.pause();
+        socket.write(accept);
+        onTunnel(socket);
+      });
+      using _ = t.destroySockets();
+      const client = await t.openTunnel(server);
+      const sent = payload.subarray(0, 1024 * 1024);
+      client.end(sent);
+      const tunnel = await tunnelPromise;
+      const buffered = await t.untilReadsStop(server, tunnel);
+      expect(buffered).toBeLessThan(sent.length);
+
+      // The socket stays paused with these listeners: pause() was explicit.
+      const events: string[] = [];
+      const chunks: Buffer[] = [];
+      tunnel.on("data", chunk => chunks.push(chunk));
+      tunnel.on("end", () => events.push("end"));
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+      tunnel.on("close", () => onClosed());
+
+      // end() sends the FIN and leaves the reads stopped.
+      tunnel.end();
+      await t.barrier(server);
+      expect({ buffered: tunnel.readableLength, events }).toEqual({ buffered, events: [] });
+
+      tunnel.resume();
+      await closed;
+      expect({ intact: Buffer.concat(chunks).equals(sent), events }).toEqual({ intact: true, events: ["end"] });
+    });
+  });
+
+  // Bytes that reach the socket of an 'upgrade' listener before handleUpgrade() fill its buffer and stop
+  // the reads. The WebSocket takes the connection over from that socket, so it has to start them again.
+  test("handleUpgrade() after the upgrade socket stopped its reads still receives frames", async () => {
+    await using server = http.createServer();
+    const wss = new WebSocketServer({ noServer: true });
+    const upgradeSocket = Promise.withResolvers<net.Socket>();
+    const proceed = Promise.withResolvers<void>();
+    server.on("upgrade", async (req, socket, head) => {
+      upgradeSocket.resolve(socket);
+      await proceed.promise;
+      wss.handleUpgrade(req, socket, head, ws => ws.on("message", data => ws.send(String(data))));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const client = net.connect(port, "127.0.0.1");
+    using _ = {
+      [Symbol.dispose]: () => {
+        client.destroy();
+        wss.close();
+      },
+    };
+    const received: Buffer[] = [];
+    const echoed = Promise.withResolvers<void>();
+    // The unmasked echo of the text frame below: FIN + text, length 5, "hello".
+    const echo = Buffer.from([0x81, 0x05, ...Buffer.from("hello")]);
+    const fail = (error: Error) => {
+      upgradeSocket.reject(error);
+      echoed.reject(error);
+    };
+    // The test awaits one of the two at a time.
+    upgradeSocket.promise.catch(() => {});
+    echoed.promise.catch(() => {});
+    client.on("error", fail);
+    client.on("close", () => fail(new Error("the connection closed before the echo")));
+    client.on("data", chunk => {
+      received.push(chunk);
+      if (Buffer.concat(received).includes(echo)) echoed.resolve();
+    });
+    client.write(
+      `GET / HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`,
+    );
+
+    // A masked frame from the client: 2 bytes of header, the mask, the payload.
+    const mask = [1, 2, 3, 4];
+    const frame = (opcode: number, payload: Buffer) =>
+      Buffer.from([0x80 | opcode, 0x80 | payload.length, ...mask, ...payload.map((byte, i) => byte ^ mask[i % 4])]);
+
+    // Exactly one high water mark of early bytes, sent once the listener has the socket: the socket
+    // buffers all of them, so the text frame after them is the first byte that the WebSocket reads.
+    // They are pongs, which a server ignores, so they are also valid for a WebSocket that would get them.
+    const socket = await upgradeSocket.promise;
+    const highWaterMark = socket.readableHighWaterMark;
+    const pongs: Buffer[] = [];
+    for (let left = highWaterMark; left > 0; ) {
+      // A frame is 6 to 131 bytes. Never leave less than a frame.
+      const length = left <= 131 ? left : Math.min(131, left - 6);
+      pongs.push(frame(0xa, Buffer.alloc(length - 6)));
+      left -= length;
+    }
+    client.write(Buffer.concat(pongs));
+    while (socket.readableLength < highWaterMark && !socket.destroyed && !client.destroyed) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    expect(socket.readableLength).toBe(highWaterMark);
+    proceed.resolve();
+
+    client.write(frame(0x1, Buffer.from("hello")));
+    await echoed.promise;
+    expect(Buffer.concat(received).toString("latin1")).toStartWith("HTTP/1.1 101 ");
   });
 
   test("should deliver bytes following a CONNECT request with Content-Length: 0 to the connect socket, not as a new request", async () => {

@@ -263,6 +263,7 @@ static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
         // the socket is adopted and might not be the same as the rawSocket
         socket->socket = rawSocket;
         socket->upgraded = true;
+        socket->releaseTunnelReadsForUpgrade();
     });
 }
 

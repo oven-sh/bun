@@ -11,6 +11,7 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <wtf/Scope.h>
 #include <wtf/text/WTFString.h>
 #include <bun-uws/src/App.h>
 
@@ -149,6 +150,70 @@ void JSNodeHTTPServerSocket::upgradeToTunnelMode(bool afterBody)
      * pending-request accounting (see Flags::TUNNELED in NodeHTTPResponse.rs). */
     if (auto* res = currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
         Bun__NodeHTTPResponse_markTunneled(res->m_ctx);
+    }
+}
+
+template<bool SSL>
+static bool isInTunnelMode(us_socket_t* socket)
+{
+    return reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->isConnectRequest;
+}
+
+static bool isTunnel(const JSNodeHTTPServerSocket* self)
+{
+    us_socket_t* socket = self->socket;
+    if (!socket || self->upgraded || us_socket_is_closed(socket)) {
+        return false;
+    }
+    return self->is_ssl ? isInTunnelMode<true>(socket) : isInTunnelMode<false>(socket);
+}
+
+void JSNodeHTTPServerSocket::applyTunnelReads()
+{
+    if (!isTunnel(this)) {
+        return;
+    }
+    if (tunnelReadsPaused()) {
+        us_socket_pause(socket);
+    } else {
+        us_socket_resume(socket);
+    }
+}
+
+void JSNodeHTTPServerSocket::readStop()
+{
+    // After the end of the stream no _read() comes to start the reads again.
+    if (!isTunnel(this) || tunnelReadEnded) {
+        return;
+    }
+    tunnelReadsStopped = true;
+    applyTunnelReads();
+}
+
+void JSNodeHTTPServerSocket::readStart()
+{
+    if (!isTunnel(this)) {
+        return;
+    }
+    tunnelReadsStopped = false;
+    applyTunnelReads();
+}
+
+void JSNodeHTTPServerSocket::didDeliverQueuedTunnelBytes(size_t length)
+{
+    queuedTunnelBytes -= length;
+    if (tunnelReadsQueuedFull && queuedTunnelBytes == 0) {
+        tunnelReadsQueuedFull = false;
+        applyTunnelReads();
+    }
+}
+
+void JSNodeHTTPServerSocket::releaseTunnelReadsForUpgrade()
+{
+    tunnelReadsStopped = false;
+    tunnelReadsQueuedFull = false;
+    if (socket && !us_socket_is_closed(socket)) {
+        us_socket_resume(socket);
     }
 }
 
@@ -432,6 +497,18 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
+/* Flood prevention gives the reads back. A tunnel that paused them itself (readStop) also resumes them itself. */
+template<bool SSL>
+static void endFloodPreventionPause(us_socket_t* socket, uWS::NodeHttpResponseData<SSL>* httpResponseData)
+{
+    httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+    auto* cell = reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData);
+    if (cell && cell->tunnelReadsPaused()) {
+        return;
+    }
+    reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
+}
+
 /* node:http flood prevention, resume half. Parked pipelined requests (HttpParser::nodeHttpPausedSpill)
  * must replay before fresh reads (ordering) and not synchronously inside the resuming JS operation.
  * Deferred as an event-loop task rooting the JS socket; reads resume once the spill drains without re-pausing. */
@@ -466,8 +543,7 @@ static void replayNodeHttpPausedSpill(us_socket_t* socket)
          * the queue-drain / writable events re-enter the hook. */
         return;
     }
-    httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
-    reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
+    endFloodPreventionPause<SSL>(socket, httpResponseData);
 }
 
 template<bool SSL>
@@ -488,8 +564,7 @@ static void onNodeHttpReadsResumable(us_socket_t* socket)
     }
     if (httpResponseData->nodeHttpPausedSpill.isEmpty()) {
         httpResponseData->nodeHttpParkAtNextBoundary = false;
-        httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
-        reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->resume();
+        endFloodPreventionPause<SSL>(socket, httpResponseData);
         return;
     }
     if (httpResponseData->nodeHttpSpillReplayScheduled) {
@@ -751,8 +826,11 @@ void JSNodeHTTPServerSocket::onDrain()
         return;
     }
 
-    auto bufferedSize = this->streamBuffer.bufferedSize();
-    if (bufferedSize > 0) {
+    // A read pause or resume arms the writable event too: nothing was buffered, so nothing drained.
+    if (this->streamBuffer.bufferedSize() == 0) {
+        return;
+    }
+    {
         auto* globalObject = defaultGlobalObject(this->globalObject());
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
@@ -762,9 +840,8 @@ void JSNodeHTTPServerSocket::onDrain()
             RETURN_IF_EXCEPTION(scope, );
             return;
         }
-        bufferedSize = this->streamBuffer.bufferedSize();
 
-        if (bufferedSize > 0) {
+        if (this->streamBuffer.bufferedSize() > 0) {
             // need to drain more
             return;
         }
@@ -792,6 +869,9 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
 {
     // This function can be called during GC!
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+    if (last) {
+        tunnelReadEnded = true;
+    }
     if (!functionToCallOnData) {
         return;
     }
@@ -809,12 +889,20 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
             return;
         }
         gcProtect(chunk);
-        scriptExecutionContext->postTask([self = this, chunk = chunk, last = last](ScriptExecutionContext& context) {
+        // JS gets the chunk in a task, so its readStop() comes after the read loop: bound what the loop queues.
+        queuedTunnelBytes += length;
+        if (queuedTunnelBytes >= LIBUS_RECV_BUFFER_LENGTH && !tunnelReadsQueuedFull) {
+            tunnelReadsQueuedFull = true;
+            applyTunnelReads();
+        }
+        scriptExecutionContext->postTask([self = this, chunk = chunk, last = last, length = static_cast<size_t>(length)](ScriptExecutionContext& context) {
             auto* globalObject = defaultGlobalObject(context.globalObject());
             auto* thisObject = self;
             auto* callbackObject = thisObject->functionToCallOnData.get();
             EnsureStillAliveScope ensureChunkStillAlive(chunk);
             gcUnprotect(chunk);
+            // After the callback: a readStop() from it keeps the reads paused, with no resume in between.
+            auto delivered = WTF::makeScopeExit([&] { thisObject->didDeliverQueuedTunnelBytes(length); });
             if (!callbackObject) {
                 return;
             }

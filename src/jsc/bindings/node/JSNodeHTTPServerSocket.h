@@ -54,9 +54,14 @@ public:
     unsigned ended : 1 = 0;
     unsigned upgraded : 1 = 0;
     unsigned peer_cert_verified : 1 = 0;
-    /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
-    unsigned peer_ended : 1 = 0;
-    int closeReadError = 0;
+    /* The JS Duplex of a tunnel is full: readStop() to readStart(). */
+    unsigned tunnelReadsStopped : 1 = 0;
+    /* queuedTunnelBytes reached one recv buffer, until JS has those bytes. */
+    unsigned tunnelReadsQueuedFull : 1 = 0;
+    /* onData() got the end of the stream. The task that tells JS can still be queued. */
+    unsigned tunnelReadEnded : 1 = 0;
+    /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
+    size_t queuedTunnelBytes = 0;
     const char* peerCertVerifyErrorCode = nullptr;
     JSC::Strong<JSNodeHTTPServerSocket> strongThis = {};
 
@@ -116,6 +121,13 @@ public:
      * body deliver it through the request first, like Node 26). */
     void upgradeToTunnelMode(bool afterBody = false);
 
+    /* Tunnel read backpressure, like net.Socket's handle. Both do nothing outside tunnel mode. */
+    void readStop();
+    void readStart();
+    bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
+    /* The WebSocket that adopted the connection reads from here on. */
+    void releaseTunnelReadsForUpgrade();
+
     /* Trailer fields received after the current request's chunked body, as a
      * flat [name, value, ...] JS array preserving wire casing; jsUndefined()
      * when there are none. Clears the captured section. */
@@ -160,6 +172,8 @@ public:
     void onClose(int readError, bool peerEnded);
     void onDrain();
     void onData(const char* data, int length, bool last);
+    void applyTunnelReads();
+    void didDeliverQueuedTunnelBytes(size_t length);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     void finishCreation(JSC::VM& vm);

@@ -56,6 +56,7 @@ function onIncomingMessagePauseNodeHTTPResponse(this: IncomingMessage) {
   const handle = this[kHandle];
   if (handle && !this.destroyed) {
     handle.pause();
+    // No reads from here on, so the end of an Upgrade request's body can go unseen.
     if (this.upgrade) finishUpgradeHandoff(this);
   }
 }

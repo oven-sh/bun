@@ -40,11 +40,7 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
-// node:_http_server sets this on an accepted Upgrade request whose body still
-// arrives. Until finishUpgradeHandoff(req) runs, the server keeps the socket's
-// 'timeout' listener and parser, like Node. It runs when the message completes.
-// It also runs when the 'upgrade' listener pauses the request or the socket, or
-// ends the socket: reads stop, so Bun can no longer see the body complete.
+// Set by node:_http_server while the body of an accepted Upgrade request arrives: releases its socket.
 const kFinishUpgradeHandoff = Symbol("finishUpgradeHandoff");
 function finishUpgradeHandoff(req) {
   const finish = req[kFinishUpgradeHandoff];

@@ -676,11 +676,7 @@ impl NodeHTTPResponse {
             return false;
         }
 
-        // The body keeps the request pending only while uws still owes it
-        // chunks. A fin that arrived while the request was paused leaves
-        // `body_read_state` at `Pending` so JS can still drain the buffered
-        // tail (`drainRequestBody`), but uws will not deliver anything further,
-        // so for this accounting that body is complete as well.
+        // The body keeps the request pending only while uws still owes it chunks.
         let body_pending = self.body_still_arriving();
 
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the

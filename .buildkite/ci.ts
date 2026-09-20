@@ -11,7 +11,7 @@ import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
 import { output, run } from "../scripts/agent.ts";
 import { type GeneratedImage, generateImage } from "../scripts/build/ci-images/generate.ts";
 import { type BakedImage, imageKey } from "../scripts/build/ci-images/image.ts";
-import { images } from "../scripts/build/ci-images/spec.ts";
+import { images, locations } from "../scripts/build/ci-images/spec.ts";
 import {
   getBuildMetadata,
   getCommit,
@@ -766,7 +766,7 @@ function getEmulatorBinary(platform: Platform): string {
   // Intel SDE is baked into the Windows image (scripts/build/ci-images/tools/intel-sde.ts):
   // downloadmirror.intel.com sits behind a bot challenge
   // that blocks non-browser clients, so it cannot be downloaded at job time.
-  if (os === "windows") return "C:\\intel-sde\\sde.exe";
+  if (os === "windows") return `${locations.intelSde}\\sde.exe`;
   // Fetched into the checkout root by the setup command below (see PINNED_QEMU).
   return `./${PINNED_QEMU[arch].binary}`;
 }

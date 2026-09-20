@@ -51,6 +51,38 @@ import { uninstallDefender, windowsSystem } from "./tools/windows-system.ts";
 const alpineRelease = "3.23";
 
 /**
+ * Where a bake puts what is not the operating system's to place (a binary in
+ * /usr/local/bin is). Whatever looks for one of these imports it from here:
+ * the build's sysroot lookups, the download cache, the step that runs Intel
+ * SDE. Two readers cannot import it and say it again: scripts/agent.ts, which
+ * runs on the machines by itself, and scripts/darwin-ci/guest/job.sh, which is
+ * shell, both put the Linux and macOS `rust` directory's bin on PATH.
+ *
+ * The agent's own directories (its home, cache and logs) are not here but in
+ * scripts/agent.ts, as `linuxAgentPaths` and `windowsAgentHome`: that file is
+ * copied to the machine and runs there alone, so it has to contain them, and
+ * the generator imports them from it (`AGENT_HOME`, `AGENT_CACHE`, `AGENT_LOGS`).
+ */
+export const locations = {
+  rust: { linux: "/opt/rust", darwin: "/opt/rust", windows: "C:\\Program Files\\Rust" },
+  bunNinja: { linux: "/opt/bun-ninja", darwin: "/opt/bun-ninja", windows: "C:\\Program Files\\bun-ninja" },
+  /** Dependency sources for scripts/build/download.ts, fetched while the image is baked. */
+  prefetch: { linux: "/opt/bun-prefetch", windows: "C:\\bun-prefetch" },
+  // What the build image cross-compiles with.
+  androidNdk: "/opt/android-ndk",
+  macosSdk: "/opt/macos-sdk",
+  windowsSysroot: "/opt/winsysroot",
+  freebsdSysroot: { x64: "/opt/freebsd-sysroot", aarch64: "/opt/freebsd-sysroot-arm64" },
+  glibcSysroot: { x64: "/opt/linux-sysroot-glibc", aarch64: "/opt/linux-sysroot-glibc-arm64" },
+  muslSysroot: { x64: "/opt/linux-sysroot-musl", aarch64: "/opt/linux-sysroot-musl-arm64" },
+  // Windows only.
+  scoop: "C:\\Scoop",
+  intelSde: "C:\\intel-sde",
+  ccache: "C:\\Program Files\\ccache",
+  openssh: "C:\\Program Files\\OpenSSH",
+} as const;
+
+/**
  * TEMPORARY, while this work is being tested: delete before merging.
  *
  * A number here goes into every image's hash, so changing it renames every
@@ -280,22 +312,22 @@ export function linuxTools(image: LinuxImage): readonly Tool[] {
     agentUser(image),
     nodejs(image, pins.nodejs),
     bun(image, pins.bun),
-    bunNinja(image, pins.bunNinja),
+    bunNinja(image, pins.bunNinja, locations.bunNinja),
     curlH3(image, pins.curlH3),
     tailscale(),
     buildkiteAgent(image, pins.buildkiteAgent),
     cmake(image, pins.cmake),
     llvm(image, pins.llvm),
-    rust(image, pins.rust),
+    rust(image, pins.rust, locations.rust),
     ...(image.role === "build"
       ? [
           crossCompilerRt(pins.llvm),
-          androidNdk(pins.androidNdk),
-          freebsdSysroot(pins.freebsd),
-          glibcSysroot(pins.glibcSysroot),
-          muslSysroot(image, pins.muslSysroot),
-          windowsSysroot(image, pins.windowsSysroot),
-          macosSdk(pins.macosSdk),
+          androidNdk(pins.androidNdk, locations.androidNdk),
+          freebsdSysroot(pins.freebsd, locations.freebsdSysroot),
+          glibcSysroot(pins.glibcSysroot, locations.glibcSysroot),
+          muslSysroot(image, pins.muslSysroot, locations.muslSysroot),
+          windowsSysroot(image, pins.windowsSysroot, locations.windowsSysroot),
+          macosSdk(pins.macosSdk, locations.macosSdk),
         ]
       : []),
     docker(image),
@@ -306,7 +338,7 @@ export function linuxTools(image: LinuxImage): readonly Tool[] {
     age(image, pins.age),
     coreDumps(image),
     ...(apt ? [noTmpfs()] : []),
-    prefetchBuildDeps(),
+    prefetchBuildDeps(locations.prefetch.linux),
     prefetchTestImages(image),
     prefetchInstallCache(),
     agentService(image),
@@ -330,17 +362,17 @@ export function windowsTools(image: WindowsImage): readonly Tool[] {
     llvm(image, pins.llvm),
     nssm(pins.nssm),
     pwsh(image, pins.pwsh),
-    openssh(image, pins.openssh),
+    openssh(image, pins.openssh, locations.openssh),
     bun(image, pins.bun),
-    bunNinja(image, pins.bunNinja),
+    bunNinja(image, pins.bunNinja, locations.bunNinja),
     curlH3(image, pins.curlH3),
-    ccache(image, pins.ccache),
-    rust(image, pins.rust),
+    ccache(image, pins.ccache, locations.ccache),
+    rust(image, pins.rust, locations.rust),
     visualStudio(pins.visualStudio),
     pdbAddr2line(pins.pdbAddr2line),
-    ...(x64 ? [intelSde(pins.intelSde)] : []),
+    ...(x64 ? [intelSde(pins.intelSde, locations.intelSde)] : []),
     buildkiteAgent(image, pins.buildkiteAgent),
-    prefetchWindows(),
+    prefetchWindows(locations.prefetch.windows),
     agentService(image),
     recordImage(image),
     ...(image.release === "2019" ? [uninstallDefender()] : []),
@@ -362,10 +394,10 @@ export function macosTools(image: MacosImage): readonly Tool[] {
     brewPackages(["cmake", "ninja", "nasm", "pkg-config", "golang", "ccache"]),
     nodejs(image, pins.nodejs),
     bun(image, pins.bun),
-    bunNinja(image, pins.bunNinja),
+    bunNinja(image, pins.bunNinja, locations.bunNinja),
     curlH3(image, pins.curlH3),
     llvm(image, pins.llvm),
-    rust(image, pins.rust),
+    rust(image, pins.rust, locations.rust),
   ];
 }
 

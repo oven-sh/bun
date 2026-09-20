@@ -5,11 +5,11 @@ import type { Tool } from "../image.ts";
  * Tools by scripts/build/xmac.mjs. The generator copies that script into the
  * bake directory, so it is part of the image's hash.
  */
-export function macosSdk(pin: { sdk: string; commandLineTools: string }): Tool {
+export function macosSdk(pin: { sdk: string; commandLineTools: string }, directory: string): Tool {
   return {
     name: "macos-sdk",
     script: "linux/macos-sdk.sh",
-    variables: { MACOS_SDK_VERSION: pin.sdk, MACOS_CLT_RELEASE: pin.commandLineTools },
+    variables: { MACOS_SDK_DIR: directory, MACOS_SDK_VERSION: pin.sdk, MACOS_CLT_RELEASE: pin.commandLineTools },
     files: { "xmac.mjs": "scripts/build/xmac.mjs" },
   };
 }

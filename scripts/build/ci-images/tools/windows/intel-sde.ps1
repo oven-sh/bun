@@ -7,5 +7,5 @@ $hash = (Get-FileHash $archive -Algorithm SHA256).Hash
 if ($hash -ne $INTEL_SDE_SHA256) { Fail "Intel SDE's sha256 is $hash, expected $INTEL_SDE_SHA256" }
 Run 7z x $archive "-o$extracted" -y | Out-Null
 Run 7z x "$extracted\sde.tar" "-o$extracted" -y | Out-Null
-Move-Item "$extracted\$INTEL_SDE_DIRECTORY" "C:\intel-sde" -Force
+Move-Item "$extracted\$INTEL_SDE_ARCHIVE_ROOT" $INTEL_SDE_DIR -Force
 Remove-Temp $archive $extracted

@@ -31,7 +31,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { pins } from "./ci-images/spec.ts";
+import { locations, pins } from "./ci-images/spec.ts";
 import { BuildError } from "./error.ts";
 
 /**
@@ -98,7 +98,7 @@ export function resolveMacosSdkPath(explicit: string | undefined, cacheDir: stri
 
   // 2. Well-known install locations: /opt/MacOSX*.sdk (what CI images /
   //    bootstrap install) or an osxcross tree.
-  for (const candidate of [newestSdkIn("/opt"), newestSdkIn("/opt/macos-sdk"), newestSdkIn("/opt/osxcross/SDK")]) {
+  for (const candidate of [newestSdkIn("/opt"), newestSdkIn(locations.macosSdk), newestSdkIn("/opt/osxcross/SDK")]) {
     if (candidate !== undefined) return candidate;
   }
 

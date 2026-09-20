@@ -1,6 +1,6 @@
-Set-Env SCOOP "C:\Scoop"
+Set-Env SCOOP $SCOOP
 $installer = "$env:TEMP\install-scoop.ps1"
 Download $SCOOP_INSTALL_URL $installer
-& $installer -RunAsAdmin -ScoopDir C:\Scoop
+& $installer -RunAsAdmin -ScoopDir $SCOOP
 Remove-Temp $installer
-Add-To-Path "C:\Scoop\shims"
+Add-To-Path "$SCOOP\shims"

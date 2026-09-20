@@ -71,11 +71,11 @@ function Install-Scoop-Package([string]$Package) {
   # so they go on the machine's PATH.
   $machine = [Environment]::GetEnvironmentVariable("Path", "Machine").Split(";")
   foreach ($directory in [Environment]::GetEnvironmentVariable("Path", "User").Split(";")) {
-    if ($directory -like "C:\Scoop\*" -and $machine -notcontains $directory) { Add-To-Path $directory }
+    if ($directory -like "$SCOOP\*" -and $machine -notcontains $directory) { Add-To-Path $directory }
   }
   Refresh-Path
   $name = $Package.Split("@")[0]
-  if (-not (Test-Path "C:\Scoop\apps\$name\current")) {
+  if (-not (Test-Path "$SCOOP\apps\$name\current")) {
     Fail "scoop install $Package failed"
   }
 }

@@ -52,6 +52,7 @@ import { basename, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
+import { locations } from "./ci-images/spec.ts";
 import { BuildError, assert, describeError } from "./error.ts";
 import { formatElapsed } from "./tty.ts";
 
@@ -88,7 +89,8 @@ const tarExe =
 export const prefetchDir: string | undefined = (() => {
   const env = process.env.BUN_BUILD_PREFETCH_DIR;
   if (env) return env;
-  const wellKnown = process.platform === "win32" ? "C:\\bun-prefetch" : "/opt/bun-prefetch";
+  // Where a CI image's bake put them.
+  const wellKnown = process.platform === "win32" ? locations.prefetch.windows : locations.prefetch.linux;
   return existsSync(wellKnown) ? wellKnown : undefined;
 })();
 

@@ -7,7 +7,11 @@ import type { Arch, Image, Tool } from "../image.ts";
  * sha256 in its `bun-ninja.json`. The Linux binary is static, so every distro
  * gets the same one.
  */
-export function bunNinja(image: Image, pin: { tag: string; sha256: Record<`${Image["os"]}-${Arch}`, string> }): Tool {
+export function bunNinja(
+  image: Image,
+  pin: { tag: string; sha256: Record<`${Image["os"]}-${Arch}`, string> },
+  directory: Record<Image["os"], string>,
+): Tool {
   const platform = `${image.os}-${image.arch}` as const;
   const url = `https://github.com/oven-sh/ninja/releases/download/${pin.tag}/bun-ninja-${platform}.zip`;
   return {
@@ -16,7 +20,7 @@ export function bunNinja(image: Image, pin: { tag: string; sha256: Record<`${Ima
     variables: {
       BUN_NINJA_URL: url,
       BUN_NINJA_SHA256: pin.sha256[platform],
-      BUN_NINJA_DIR: image.os === "windows" ? "C:\\Program Files\\bun-ninja" : "/opt/bun-ninja",
+      BUN_NINJA_DIR: directory[image.os],
     },
   };
 }

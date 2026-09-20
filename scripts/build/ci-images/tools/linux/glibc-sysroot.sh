@@ -3,8 +3,8 @@ apt-get install --yes --no-install-recommends skopeo jq binutils-x86-64-linux-gn
 
 for arch in amd64 arm64; do
   case "$arch" in
-    amd64) sysroot=/opt/linux-sysroot-glibc triple=x86_64-linux-gnu mirror=http://archive.ubuntu.com/ubuntu debs=$GCC_DEBS_AMD64_URL ;;
-    arm64) sysroot=/opt/linux-sysroot-glibc-arm64 triple=aarch64-linux-gnu mirror=http://ports.ubuntu.com/ubuntu-ports debs=$GCC_DEBS_ARM64_URL ;;
+    amd64) sysroot=$GLIBC_SYSROOT_X64 triple=x86_64-linux-gnu mirror=http://archive.ubuntu.com/ubuntu debs=$GCC_DEBS_AMD64_URL ;;
+    arm64) sysroot=$GLIBC_SYSROOT_AARCH64 triple=aarch64-linux-gnu mirror=http://ports.ubuntu.com/ubuntu-ports debs=$GCC_DEBS_ARM64_URL ;;
   esac
   dir=$(mktemp -d)
   mkdir -p "$sysroot" "$dir/image" "$dir/gcc"

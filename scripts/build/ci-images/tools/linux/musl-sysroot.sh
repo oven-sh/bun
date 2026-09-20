@@ -6,7 +6,7 @@ version=$(tar -xzOf "$dir/APKINDEX.tar.gz" APKINDEX | awk '/^P:apk-tools-static$
 download "$ALPINE_REPOSITORY/$ALPINE_HOST_ARCH/apk-tools-static-$version.apk" "$dir/apk-tools-static.apk"
 tar -xzf "$dir/apk-tools-static.apk" -C "$dir" sbin/apk.static
 
-for pair in "x86_64 /opt/linux-sysroot-musl" "aarch64 /opt/linux-sysroot-musl-arm64"; do
+for pair in "x86_64 $MUSL_SYSROOT_X64" "aarch64 $MUSL_SYSROOT_AARCH64"; do
   arch=${pair% *}
   sysroot=${pair#* }
   mkdir -p "$sysroot"

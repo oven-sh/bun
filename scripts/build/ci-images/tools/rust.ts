@@ -19,12 +19,14 @@ function hostTriple(image: Image): string {
 export function rust(
   image: Image,
   pin: { rustup: string; channel: string; components: readonly string[]; targets: readonly string[] },
+  directory: Record<Image["os"], string>,
 ): Tool {
   const url = `https://static.rust-lang.org/rustup/archive/${pin.rustup}/${hostTriple(image)}/rustup-init${image.os === "windows" ? ".exe" : ""}`;
   return {
     name: "rust",
     script: { linux: "linux/rust.sh", windows: "windows/rust.ps1", darwin: "macos/rust.sh" }[image.os],
     variables: {
+      RUST_DIR: directory[image.os],
       RUSTUP_INIT_URL: url,
       RUST_CHANNEL: pin.channel,
       RUST_COMPONENTS: pin.components.join(","),

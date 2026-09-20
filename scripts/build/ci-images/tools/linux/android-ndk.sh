@@ -1,8 +1,10 @@
-ndk=/opt/android-ndk
+ndk=$ANDROID_NDK_DIR
 dir=$(mktemp -d)
 download "$ANDROID_NDK_URL" "$dir/ndk.zip"
-unzip -q "$dir/ndk.zip" -d /opt
-mv "/opt/android-ndk-$ANDROID_NDK_VERSION" "$ndk"
+# Unpacked beside where it goes, not in the scratch directory: /tmp is a tmpfs on the base image and the NDK is gigabytes.
+parent=$(dirname "$ndk")
+unzip -q "$dir/ndk.zip" -d "$parent"
+mv "$parent/android-ndk-$ANDROID_NDK_VERSION" "$ndk"
 rm -rf "$dir"
 # The NDK's own clang, lldb and non-Android runtimes: about 1.1 GB nothing uses.
 prebuilt="$ndk/toolchains/llvm/prebuilt/linux-x86_64"

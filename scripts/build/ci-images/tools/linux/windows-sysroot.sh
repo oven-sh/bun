@@ -1,4 +1,4 @@
-sysroot=/opt/winsysroot
+sysroot=$WINDOWS_SYSROOT
 dir=$(mktemp -d)
 download "$XWIN_URL" "$dir/xwin.tar.gz"
 tar -xzf "$dir/xwin.tar.gz" -C "$dir" --strip-components=1

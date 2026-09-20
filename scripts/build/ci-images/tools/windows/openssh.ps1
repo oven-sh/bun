@@ -1,13 +1,12 @@
 $zip = "$env:TEMP\OpenSSH.zip"
 $extracted = "$env:TEMP\OpenSSH"
-$destination = "$env:ProgramFiles\OpenSSH"
 Download $OPENSSH_URL $zip
 Expand-Archive -Path $zip -DestinationPath $extracted -Force
-New-Item -Path $destination -ItemType Directory -Force | Out-Null
-Get-ChildItem -Path (Get-ChildItem -Path $extracted -Directory | Select-Object -First 1).FullName -Recurse | Move-Item -Destination $destination -Force
+New-Item -Path $OPENSSH_DIR -ItemType Directory -Force | Out-Null
+Get-ChildItem -Path (Get-ChildItem -Path $extracted -Directory | Select-Object -First 1).FullName -Recurse | Move-Item -Destination $OPENSSH_DIR -Force
 Remove-Temp $zip $extracted
-& "$destination\install-sshd.ps1"
-& "$destination\FixHostFilePermissions.ps1" -Confirm:$false
+& "$OPENSSH_DIR\install-sshd.ps1"
+& "$OPENSSH_DIR\FixHostFilePermissions.ps1" -Confirm:$false
 Set-Service -Name sshd -StartupType Automatic
 
 New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value (Get-Command pwsh).Path -PropertyType String -Force | Out-Null

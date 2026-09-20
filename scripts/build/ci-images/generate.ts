@@ -29,7 +29,7 @@ import { linuxAgentPaths, windowsAgentHome } from "../../agent.ts";
 import { BuildError } from "../error.ts";
 import { type Image, type Tool, imageKey } from "./image.ts";
 import { renderPackerTemplate } from "./packer.ts";
-import { epoch, images, macosMachines, pins, tools } from "./spec.ts";
+import { epoch, images, locations, macosMachines, pins, tools } from "./spec.ts";
 
 const here = import.meta.dirname;
 const repoRoot = resolve(here, "../../..");
@@ -84,7 +84,7 @@ const macosSh: Shell = {
 const powershell: Shell = {
   scriptName: "bootstrap.ps1",
   library: "lib/windows.ps1",
-  variables: { AGENT_HOME: windowsAgentHome },
+  variables: { AGENT_HOME: windowsAgentHome, SCOOP: locations.scoop },
   runtime: [
     `$BAKE_DIR = $PSScriptRoot`,
     `$REPO_COMMIT = $env:REPO_COMMIT`,

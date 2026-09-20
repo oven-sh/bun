@@ -9,8 +9,12 @@
 import type { LinuxImage, Tool } from "../image.ts";
 
 /** `scripts/prefetch-deps.ts`: every dependency source and prebuilt the build downloads, read-only under `$BUN_BUILD_PREFETCH_DIR`. */
-export function prefetchBuildDeps(): Tool {
-  return { name: "prefetch-build-deps", script: "linux/prefetch-build-deps.sh", variables: {} };
+export function prefetchBuildDeps(directory: string): Tool {
+  return {
+    name: "prefetch-build-deps",
+    script: "linux/prefetch-build-deps.sh",
+    variables: { PREFETCH_DIR: directory },
+  };
 }
 
 /** The database and service images the tests start, pulled and built into Docker's store. */
@@ -29,6 +33,6 @@ export function prefetchInstallCache(): Tool {
 }
 
 /** Windows: the build dependencies and the install cache, from a clone of the commit being built. There is no Docker there. */
-export function prefetchWindows(): Tool {
-  return { name: "prefetch", script: "windows/prefetch.ps1", variables: {} };
+export function prefetchWindows(directory: string): Tool {
+  return { name: "prefetch", script: "windows/prefetch.ps1", variables: { PREFETCH_DIR: directory } };
 }

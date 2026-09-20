@@ -1,5 +1,5 @@
 dir=$(mktemp -d)
-for pair in "$FREEBSD_AMD64_URL /opt/freebsd-sysroot" "$FREEBSD_ARM64_URL /opt/freebsd-sysroot-arm64"; do
+for pair in "$FREEBSD_AMD64_URL $FREEBSD_SYSROOT_X64" "$FREEBSD_ARM64_URL $FREEBSD_SYSROOT_AARCH64"; do
   url=${pair% *}
   sysroot=${pair#* }
   download "$url" "$dir/base.txz"

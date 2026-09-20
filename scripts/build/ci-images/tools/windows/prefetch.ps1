@@ -5,10 +5,9 @@ Run git init --quiet $repo
 Run git -C $repo fetch --quiet --depth=1 https://github.com/oven-sh/bun.git $REPO_COMMIT
 Run git -C $repo checkout --quiet FETCH_HEAD
 
-$prefetch = "C:\bun-prefetch"
-New-Item -Path $prefetch -ItemType Directory -Force | Out-Null
+New-Item -Path $PREFETCH_DIR -ItemType Directory -Force | Out-Null
 Push-Location $repo
-Run bun scripts\prefetch-deps.ts $prefetch
+Run bun scripts\prefetch-deps.ts $PREFETCH_DIR
 Pop-Location
 Run attrib +R "$prefetch\*" /S /D
 Set-Env BUN_BUILD_PREFETCH_DIR $prefetch

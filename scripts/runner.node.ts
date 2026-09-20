@@ -85,7 +85,7 @@ function escapePowershell(string: string): string {
 async function unzip(filename: string, output?: string): Promise<string> {
   const destination = output || mkdtempSync(join(tmpdir(), "unzip-"));
   if (isWindows) {
-    const command = `Expand-Archive -Force -LiteralPath "${escapePowershell(filename)}" -DestinationPath "${escapePowershell(destination)}"`;
+    const command = `$ProgressPreference = 'SilentlyContinue'; Expand-Archive -Force -LiteralPath "${escapePowershell(filename)}" -DestinationPath "${escapePowershell(destination)}"`;
     await run(["powershell", "-Command", command]);
   } else {
     await run(["unzip", "-o", "-q", filename, "-d", destination]);
@@ -1100,7 +1100,7 @@ async function runTests(): Promise<TestResult[]> {
         return runTest(
           title,
           async index => {
-            const { ok, error, stdout, crashes } = await spawnBun(execPath, {
+            const { ok, error, stdout, crashes, exitCode, signalCode, duration } = await spawnBun(execPath, {
               cwd: cwd,
               args: [
                 subcommand,
@@ -1131,6 +1131,9 @@ async function runTests(): Promise<TestResult[]> {
               tests: [],
               stdout: stdout,
               stdoutPreview: stdoutPreview,
+              exitCode,
+              signalCode,
+              duration,
             };
           },
           concurrent,
@@ -2976,7 +2979,16 @@ function formatTestToMarkdown(
       continue;
     }
 
-    const errorLine = tests.flatMap(({ errors }) => errors ?? []).find(({ line }) => line)?.line;
+    // An error is reported at the top frame of its stack, which can be in a helper;
+    // its line only belongs in a link to the test file when that is its file.
+    // The two paths are relative to different directories, so one ends with the other.
+    const testFile = testPath.replaceAll("\\", "/");
+    const errorLine = tests
+      .flatMap(({ errors }) => errors ?? [])
+      .find(({ file, line }) => {
+        const errorFile = file?.replaceAll("\\", "/");
+        return line && errorFile && (testFile.endsWith(errorFile) || errorFile.endsWith(testFile));
+      })?.line;
 
     const testTitle = testPath.replace(/\\/g, "/");
     const testUrl = getFileUrl(testPath, errorLine);

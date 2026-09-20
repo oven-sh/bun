@@ -77,7 +77,8 @@ interface MaxListenersExceededWarning extends Error {
 type EventName = string | symbol;
 type EventEmitterInstance = Required<EventEmitter>;
 
-interface EventEmitter {
+declare class EventEmitter {
+  constructor(opts?: { captureRejections?: boolean });
   _events?: Record<EventName, Listener | ListenerList | undefined>;
   _eventsCount?: number;
   _maxListeners?: number;
@@ -98,10 +99,6 @@ interface EventEmitter {
   rawListeners?(this: EventEmitterInstance, type: EventName): Function[];
   listenerCount?(this: EventEmitterInstance, type: EventName, method?: Function): number;
   eventNames?(this: EventEmitterInstance): EventName[];
-}
-
-declare class EventEmitter {
-  constructor(opts?: { captureRejections?: boolean });
 }
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.

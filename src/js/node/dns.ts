@@ -63,20 +63,20 @@ interface NativeResolver {
 
 declare module "bun" {
   namespace dns {
-    const getServers: NativeResolver["getServers"];
-    const setServers: NativeResolver["setServers"];
-    const resolve: NativeResolver["resolve"];
-    const resolveAny: NativeResolver["resolveAny"];
-    const resolveCname: NativeResolver["resolveCname"];
-    const resolveCaa: NativeResolver["resolveCaa"];
-    const resolveMx: NativeResolver["resolveMx"];
-    const resolveNaptr: NativeResolver["resolveNaptr"];
-    const resolveNs: NativeResolver["resolveNs"];
-    const resolvePtr: NativeResolver["resolvePtr"];
-    const resolveSoa: NativeResolver["resolveSoa"];
-    const resolveSrv: NativeResolver["resolveSrv"];
-    const resolveTxt: NativeResolver["resolveTxt"];
-    const reverse: NativeResolver["reverse"];
+    export const getServers: NativeResolver["getServers"];
+    export const setServers: NativeResolver["setServers"];
+    export const resolve: NativeResolver["resolve"];
+    export const resolveAny: NativeResolver["resolveAny"];
+    export const resolveCname: NativeResolver["resolveCname"];
+    export const resolveCaa: NativeResolver["resolveCaa"];
+    export const resolveMx: NativeResolver["resolveMx"];
+    export const resolveNaptr: NativeResolver["resolveNaptr"];
+    export const resolveNs: NativeResolver["resolveNs"];
+    export const resolvePtr: NativeResolver["resolvePtr"];
+    export const resolveSoa: NativeResolver["resolveSoa"];
+    export const resolveSrv: NativeResolver["resolveSrv"];
+    export const resolveTxt: NativeResolver["resolveTxt"];
+    export const reverse: NativeResolver["reverse"];
     function lookupService(
       address: string,
       port: number,
@@ -132,7 +132,7 @@ function newResolver(options) {
   return newResolver.native(options);
 }
 declare namespace newResolver {
-  let native: NewNativeResolver | undefined;
+  export let native: NewNativeResolver | undefined;
 }
 
 function defaultResultOrder() {
@@ -143,7 +143,7 @@ function defaultResultOrder() {
   return defaultResultOrder.value;
 }
 declare namespace defaultResultOrder {
-  let value: string | undefined;
+  export let value: string | undefined;
 }
 
 function setDefaultResultOrder(order) {
@@ -304,7 +304,7 @@ function invalidHostname(hostname) {
   );
 }
 declare namespace invalidHostname {
-  let warned: boolean | undefined;
+  export let warned: boolean | undefined;
 }
 
 function translateLookupOptions(options) {

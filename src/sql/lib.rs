@@ -119,6 +119,8 @@ pub mod mysql {
 pub mod postgres {
     #[path = "AnyPostgresError.rs"]
     pub mod any_postgres_error;
+    #[path = "ChannelBinding.rs"]
+    pub mod channel_binding;
     #[path = "CommandTag.rs"]
     pub mod command_tag;
     #[path = "PostgresProtocol.rs"]
@@ -207,6 +209,7 @@ pub mod postgres {
     }
 
     pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};
+    pub use channel_binding::ChannelBinding;
     pub use command_tag::CommandTag;
     pub use ssl_mode::SSLMode;
     pub use status::Status;

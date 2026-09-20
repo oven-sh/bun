@@ -55,6 +55,7 @@ pub(crate) fn postgres_error_to_js(
 ) -> JSValue {
     use AnyPostgresError::*;
     let code: &'static [u8] = match err {
+        ChannelBindingRequired => b"ERR_POSTGRES_CHANNEL_BINDING_REQUIRED",
         ConnectionClosed => b"ERR_POSTGRES_CONNECTION_CLOSED",
         ConnectionFailed => b"ERR_POSTGRES_CONNECTION_FAILED",
         ConnectionRefused => b"ERR_POSTGRES_CONNECTION_REFUSED",
@@ -75,6 +76,7 @@ pub(crate) fn postgres_error_to_js(
         NullsInArrayNotSupportedYet => b"ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET",
         Overflow => b"ERR_POSTGRES_OVERFLOW",
         PBKDFD2 => b"ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2",
+        SASL_NO_KNOWN_MECHANISM => b"ERR_POSTGRES_SASL_NO_KNOWN_MECHANISM",
         SASL_SIGNATURE_MISMATCH => b"ERR_POSTGRES_SASL_SIGNATURE_MISMATCH",
         SASL_SIGNATURE_INVALID_BASE64 => b"ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64",
         TLSNotAvailable => b"ERR_POSTGRES_TLS_NOT_AVAILABLE",

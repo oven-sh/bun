@@ -54,19 +54,14 @@ type FgOpts = NonNullable<Parameters<typeof fg.glob>[1]>;
 const fgOpts = {
   followSymbolicLinks: followSymlinks,
   onlyFiles: false,
-  // fast-glob reads every directory below a `**`, hidden ones included, and only
-  // then drops the entries that `dot: false` hides. test/node_modules/.bun holds
-  // every installed package, which makes that walk several times slower than the
-  // rest of this file. A wildcard cannot match a hidden directory without
-  // `dot: true`, so pruning those directories leaves the result unchanged.
+  // Prunes hidden directories (node_modules/.bun is most of test/). `dot: false` drops their entries anyway.
   ignore: ["**/.*/**"],
 } satisfies FgOpts;
 
 describe("glob.match", async () => {
   const timeout = 30 * 1000;
 
-  // fast-glob is the reference. It walks test/ once per pattern, and every test
-  // that needs the pattern shares that walk.
+  // fast-glob is the reference. The tests that use a pattern share one walk of test/.
   const references = new Map<string, Promise<string[]>>();
   function reference(pattern: string): Promise<string[]> {
     let entries = references.get(pattern);
@@ -90,8 +85,7 @@ describe("glob.match", async () => {
   }
 
   function testWithOpts(namePrefix: string, bunGlobOpts: GlobScanOptions) {
-    // What the scan has to return, in fast-glob's format: forward slashes, and
-    // with `absolute: true` the same entries under the cwd.
+    // In fast-glob's format: forward slashes, and with `absolute: true` the same entries under the cwd.
     const expected = async (pattern: string) => {
       const entries = await reference(pattern);
       if (!bunGlobOpts.absolute) return entries;
@@ -100,8 +94,7 @@ describe("glob.match", async () => {
     };
 
     test.each([
-      // The last column is an entry that has to be found: fast-glob's own entry
-      // point (behind a symlink when the install is isolated), and this file.
+      // Last column: an entry that has to be in the reference, so two empty results cannot pass.
       ["recursively search node_modules", "**/node_modules/**/*.js", "node_modules/fast-glob/out/index.js"],
       ["recursive search js files", "**/*.js", "node_modules/fast-glob/out/index.js"],
       ["recursive search ts files", "**/*.ts", "js/bun/glob/scan.test.ts"],

@@ -162,9 +162,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     // Founding an env tree swaps the parent's process.env, so it is deferred until
     // every option has validated (below).
     bool shareEnv = false;
-    // node:worker_threads passes its Worker instance as a third argument. Only an
-    // object it branded selects the node kind, so a user's 3-argument
-    // `new globalThis.Worker(...)` still creates a Web Worker.
+    // Only the branded node:worker_threads instance selects the node kind, not arity.
     JSValue nodeWorkerObject {};
     if (auto* candidate = callFrame->argument(2).getObject()) {
         if (!!candidate->getDirect(vm, builtinNames(vm).isNodeWorkerThreadsWorkerPrivateName())) {

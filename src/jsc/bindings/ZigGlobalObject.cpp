@@ -3020,11 +3020,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    // The Web Worker global scope surface. A node:worker_threads worker has none
-    // of it (node's parentPort is the only channel), and its presence makes
-    // libraries such as workerpool take their browser-worker branch. These live
-    // here and not on the lookup table because that table is static per class
-    // and this set is per VM.
+    // The Web Worker global scope surface. A node:worker_threads worker has none of it,
+    // as in node. Not on the lookup table because that table is static per class.
     if (!clientData->isNodeWorkerVM()) {
         putDirectAccessor(
             this,

@@ -171,6 +171,74 @@ test("empty Transfer-Encoding with Content-Length frames the body like node", as
   expect(response).toStartWith("HTTP/1.1 200");
 });
 
+// llhttp checks a Transfer-Encoding field against an already-seen Content-Length
+// when the field name completes, before it reads the value. So the leniency
+// above is one-directional: an empty field before Content-Length is ignored,
+// the same field after Content-Length fails the request, and no 'request' is
+// emitted because the head never completes.
+describe("empty Transfer-Encoding field relative to Content-Length", () => {
+  // The pipelined GET carries Connection: close so the socket closes (and the
+  // test finishes) whether the POST is rejected or wrongly served.
+  async function send(headers: string[], options: { insecureHTTPParser?: boolean } = {}) {
+    const events: string[] = [];
+    await using server = createServer(options, (req, res) => {
+      let body = "";
+      req.on("data", d => (body += d));
+      req.on("end", () => {
+        events.push(`request ${req.url} body=${body}`);
+        res.end("ok");
+      });
+    });
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write(
+        `POST /p HTTP/1.1\r\nHost: x\r\n${headers.join("\r\n")}\r\n\r\nhello` +
+          "GET /after HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      );
+    });
+    let raw = "";
+    socket.on("data", chunk => (raw += chunk.toString()));
+    socket.on("error", () => {});
+    socket.on("close", () => resolve(raw));
+    const response = await promise;
+    return { events, statuses: response.match(/HTTP\/1\.1 \d+/g) ?? [] };
+  }
+
+  test.each([
+    ["empty", ["Content-Length: 5", "Transfer-Encoding:"]],
+    ["whitespace-only", ["Content-Length: 5", "Transfer-Encoding:   "]],
+    ["a second empty", ["Transfer-Encoding:", "Content-Length: 5", "Transfer-Encoding:"]],
+  ])("%s Transfer-Encoding after Content-Length fires clientError like node", async (name, headers) => {
+    expect(await send(headers)).toEqual({
+      events: ["clientError HPE_INVALID_TRANSFER_ENCODING"],
+      statuses: [],
+    });
+  });
+
+  test("two empty Transfer-Encoding fields before Content-Length are ignored like node", async () => {
+    expect(await send(["Transfer-Encoding:", "Transfer-Encoding:", "Content-Length: 5"])).toEqual({
+      events: ["request /p body=hello", "request /after body="],
+      statuses: ["HTTP/1.1 200", "HTTP/1.1 200"],
+    });
+  });
+
+  // kLenientAll (insecureHTTPParser) includes LENIENT_CHUNKED_LENGTH, which
+  // skips llhttp's name check, so the empty value is ignored in either order.
+  test("insecureHTTPParser ignores an empty Transfer-Encoding after Content-Length like node", async () => {
+    expect(await send(["Content-Length: 5", "Transfer-Encoding:"], { insecureHTTPParser: true })).toEqual({
+      events: ["request /p body=hello", "request /after body="],
+      statuses: ["HTTP/1.1 200", "HTTP/1.1 200"],
+    });
+  });
+});
+
 // An empty field followed by "Transfer-Encoding: chunked" combines to just
 // "chunked" (RFC 9110 5.6.1). llhttp frames the body as chunked and node
 // delivers it. The has-body decision must look at every Transfer-Encoding
@@ -1216,5 +1284,308 @@ describe("tearing down a response with its headers on the wire adds no bytes", (
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toBe("5\r\nhello\r\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+// llhttp under LENIENT_TRANSFER_ENCODING (insecureHTTPParser: true, httpValidation: "insecure")
+// accepts any Transfer-Encoding list. Its chunked verdict is the last element's. When that is not
+// "chunked", the request has no body framing: every byte until the client ends the connection is
+// the body (llhttp__after_headers_complete returns 4), and the body bytes are raw. The strict
+// parser keeps rejecting such requests. The event sequences below are Node v26.3.0's.
+//
+// The client's FIN completes the unframed body, so the server answers after 'end' and needs
+// server.httpAllowHalfOpen (without it Node ends the socket at the FIN and the response is lost).
+describe("insecureHTTPParser: Transfer-Encoding without a final chunked coding", () => {
+  const rawBody = "5\r\nHELLO\r\n0\r\n\r\n";
+
+  async function run(
+    teFields: string,
+    options: { insecure?: boolean; httpValidation?: "insecure"; splitHead?: boolean; bodyAfterRequest?: boolean },
+  ) {
+    const events: string[] = [];
+    const dispatched = Promise.withResolvers<void>();
+    const serverOptions: any = {};
+    if (options.insecure) serverOptions.insecureHTTPParser = true;
+    if (options.httpValidation) serverOptions.httpValidation = options.httpValidation;
+    await using server = createServer(serverOptions, (req, res) => {
+      if (req.url === "/barrier") {
+        res.end();
+        return;
+      }
+      let body = "";
+      req.on("data", d => (body += d));
+      req.on("end", () => {
+        events.push(`end body=${JSON.stringify(body)}`);
+        res.end("ok");
+      });
+      events.push(`request ${req.method} ${req.url}`);
+      dispatched.resolve();
+    });
+    server.httpAllowHalfOpen = true;
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+      dispatched.resolve();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    let raw = "";
+    socket.on("data", chunk => (raw += chunk.toString("latin1")));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    await once(socket, "connect");
+
+    const head = `POST /p HTTP/1.1\r\nHost: x\r\n${teFields}\r\n\r\n`;
+    if (options.splitHead) {
+      // A partial head emits nothing on the server, so a whole request on a second connection
+      // is the barrier: the server has read the first part once it has answered and closed
+      // that connection. Then the second part reaches the parser in its own read.
+      socket.write(head.slice(0, 20));
+      const barrier = connect(port, "127.0.0.1");
+      barrier.resume();
+      barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      await once(barrier, "close");
+      socket.write(head.slice(20) + rawBody.slice(0, 4));
+    } else if (options.bodyAfterRequest) {
+      socket.write(head);
+    } else {
+      socket.write(head + rawBody.slice(0, 4));
+    }
+    await dispatched.promise;
+    // A chunked body ends at its 0-size chunk, an unframed one at the FIN.
+    socket.end(options.bodyAfterRequest ? rawBody : rawBody.slice(4));
+    await closed;
+    return { events, raw };
+  }
+
+  const okEvents = (body: string) => ["request POST /p", `end body=${JSON.stringify(body)}`];
+
+  test.concurrent.each([
+    ["gzip", "Transfer-Encoding: gzip", rawBody],
+    ["identity", "Transfer-Encoding: identity", rawBody],
+    ["chunkedchunked", "Transfer-Encoding: chunkedchunked", rawBody],
+    ["chunked, gzip", "Transfer-Encoding: chunked, gzip", rawBody],
+    ["chunked, (trailing comma)", "Transfer-Encoding: chunked,", rawBody],
+    ["chunked field then gzip field", "Transfer-Encoding: chunked\r\nTransfer-Encoding: gzip", rawBody],
+    [
+      "chunked field, empty field, gzip field",
+      "Transfer-Encoding: chunked\r\nTransfer-Encoding:\r\nTransfer-Encoding: gzip",
+      rawBody,
+    ],
+    ["chunked, chunked", "Transfer-Encoding: chunked, chunked", "HELLO"],
+    ["chunked, gzip, chunked", "Transfer-Encoding: chunked, gzip, chunked", "HELLO"],
+    ["chunked field then chunked field", "Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked", "HELLO"],
+    ["chunked field then empty field", "Transfer-Encoding: chunked\r\nTransfer-Encoding:", "HELLO"],
+    ["gzip, chunked", "Transfer-Encoding: gzip, chunked", "HELLO"],
+  ])("insecureHTTPParser reads the body of %s like node", async (_name, teFields, body) => {
+    const { events, raw } = await run(teFields, { insecure: true });
+    expect(events).toEqual(okEvents(body));
+    expect(raw).toStartWith("HTTP/1.1 200");
+    expect(raw).toEndWith("\r\n\r\nok");
+  });
+
+  test.concurrent('httpValidation: "insecure" reads the unframed body like node', async () => {
+    const { events, raw } = await run("Transfer-Encoding: gzip", { httpValidation: "insecure" });
+    expect(events).toEqual(okEvents(rawBody));
+    expect(raw).toEndWith("\r\n\r\nok");
+  });
+
+  test.concurrent("the unframed body arrives in a read after the head", async () => {
+    const { events, raw } = await run("Transfer-Encoding: chunked, gzip", { insecure: true, bodyAfterRequest: true });
+    expect(events).toEqual(okEvents(rawBody));
+    expect(raw).toEndWith("\r\n\r\nok");
+  });
+
+  test.concurrent("the head arrives in two reads", async () => {
+    const { events, raw } = await run("Transfer-Encoding: gzip", { insecure: true, splitHead: true });
+    expect(events).toEqual(okEvents(rawBody));
+    expect(raw).toEndWith("\r\n\r\nok");
+  });
+
+  test.concurrent("a large unframed body is delivered whole", async () => {
+    const big = Buffer.alloc(256 * 1024, "x").toString();
+    const events: string[] = [];
+    await using server = createServer({ insecureHTTPParser: true }, (req, res) => {
+      let size = 0;
+      req.on("data", d => (size += d.length));
+      req.on("end", () => {
+        events.push(`end size=${size}`);
+        res.end("ok");
+      });
+    });
+    server.httpAllowHalfOpen = true;
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    let raw = "";
+    socket.on("data", chunk => (raw += chunk.toString("latin1")));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    await once(socket, "connect");
+    socket.write(`POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\n`);
+    socket.end(big);
+    await closed;
+    expect(events).toEqual([`end size=${big.length}`]);
+    expect(raw).toEndWith("\r\n\r\nok");
+  });
+
+  // The FIN can arrive before the application reads the body. The native body reader is armed
+  // at dispatch (not at the first _read), so the fin is recorded and a later reader still gets
+  // the body and 'end'.
+  test.concurrent("a FIN that arrives before the application reads the body still ends the request", async () => {
+    const events: string[] = [];
+    const ended = Promise.withResolvers<void>();
+    await using server = createServer({ insecureHTTPParser: true }, async (req, res) => {
+      events.push(`request ${req.method} ${req.url}`);
+      // The recorded fin is the pushed EOF: wait for it before the first reader attaches.
+      while (!req._readableState.ended) {
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      let body = "";
+      req.on("data", d => (body += d));
+      req.on("end", () => {
+        events.push(`end body=${JSON.stringify(body)}`);
+        res.end("ok");
+        ended.resolve();
+      });
+    });
+    server.httpAllowHalfOpen = true;
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+      ended.resolve();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    socket.resume();
+    await once(socket, "connect");
+    // Head, body and FIN in one write: the server sees the FIN before the handler's reader exists.
+    socket.end(`POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked, gzip\r\n\r\n${rawBody}`);
+    await ended.promise;
+    expect(events).toEqual(["request POST /p", `end body=${JSON.stringify(rawBody)}`]);
+  });
+
+  // The message boundary: bytes after the head that spell a whole request are body, never a
+  // second request. Before the fix, "chunked, gzip" was framed as no body and these bytes were
+  // dispatched as GET /smuggled.
+  test.concurrent.each([
+    ["gzip", "Transfer-Encoding: gzip"],
+    ["chunked, gzip", "Transfer-Encoding: chunked, gzip"],
+  ])("a request line in the unframed body of %s is not dispatched as a second request", async (_name, teFields) => {
+    const smuggled = "GET /smuggled HTTP/1.1\r\nHost: x\r\n\r\n";
+    const events: string[] = [];
+    await using server = createServer({ insecureHTTPParser: true }, (req, res) => {
+      if (req.url === "/barrier") {
+        res.end();
+        return;
+      }
+      let body = "";
+      req.on("data", d => (body += d));
+      req.on("end", () => {
+        events.push(`end body=${JSON.stringify(body)}`);
+        res.end("ok");
+      });
+      events.push(`request ${req.method} ${req.url}`);
+    });
+    server.httpAllowHalfOpen = true;
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    let raw = "";
+    socket.on("data", chunk => (raw += chunk.toString("latin1")));
+    const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+    await once(socket, "connect");
+    socket.write(`POST /p HTTP/1.1\r\nHost: x\r\n${teFields}\r\n\r\n`);
+    // In its own read, so a parser that ends the first message at its head sees a clean request.
+    const barrier = connect(port, "127.0.0.1");
+    barrier.resume();
+    barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    await once(barrier, "close");
+    socket.end(smuggled);
+    await closed;
+    expect(events).toEqual(["request POST /p", `end body=${JSON.stringify(smuggled)}`]);
+    expect(raw.match(/HTTP\/1\.1 200/g)).toHaveLength(1);
+  });
+
+  test.concurrent.each([
+    ["gzip", "Transfer-Encoding: gzip", ["request POST /p", "clientError HPE_INVALID_TRANSFER_ENCODING"]],
+    ["chunked, gzip", "Transfer-Encoding: chunked, gzip", ["clientError HPE_INVALID_TRANSFER_ENCODING"]],
+  ])("the strict parser still rejects %s", async (_name, teFields, expected) => {
+    const { events } = await run(teFields, {});
+    expect(events).toEqual(expected);
+  });
+
+  // Bun's lenient mode implements llhttp's LENIENT_TRANSFER_ENCODING but not LENIENT_CHUNKED_LENGTH
+  // (HttpContextData.h), so the Transfer-Encoding plus Content-Length conflict still rejects here.
+  // Node's kLenientAll includes both bits and reads such a request until EOF.
+  test.concurrent("insecureHTTPParser still rejects Transfer-Encoding with Content-Length (Bun)", async () => {
+    const { events } = await run("Transfer-Encoding: gzip\r\nContent-Length: 5", { insecure: true });
+    expect(events).toEqual(["clientError HPE_INVALID_TRANSFER_ENCODING"]);
+  });
+
+  // llhttp takes its upgrade verdict before the Transfer-Encoding one, so a CONNECT or an accepted
+  // Upgrade never reads a body until EOF: the bytes after the head belong to the tunnel. Bun still
+  // fires the deferred clientError for them (Node does not, that is a separate divergence); what this
+  // guards is that the tunnel starts and the connection settles without a FIN from the client.
+  test.concurrent.each([
+    [
+      "CONNECT",
+      "connect",
+      "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nTransfer-Encoding: gzip\r\n\r\n",
+      [`connect example.com:80 head=${JSON.stringify(rawBody)}`, "tunnel data:4"],
+    ],
+    [
+      "Upgrade",
+      "upgrade",
+      "GET /u HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: x\r\nTransfer-Encoding: gzip\r\n\r\n",
+      [`upgrade /u head=${JSON.stringify(rawBody)}`, "tunnel data:4"],
+    ],
+  ])("insecureHTTPParser does not read a %s request's body until EOF", async (_name, event, head, expected) => {
+    const events: string[] = [];
+    await using server = createServer({ insecureHTTPParser: true }, (req, res) => {
+      events.push(`request ${req.method} ${req.url}`);
+      req.on("end", () => events.push("end"));
+    });
+    server.httpAllowHalfOpen = true;
+    // llhttp takes its upgrade verdict before it looks at Transfer-Encoding: the tunnel starts and stays open.
+    const { promise: tunnelData, resolve: onTunnelData } = Promise.withResolvers<void>();
+    server.on(event, (req, socket, tunnelHead: Buffer) => {
+      events.push(`${event} ${req.url} head=${JSON.stringify(tunnelHead.toString())}`);
+      socket.write("HTTP/1.1 200 OK\r\n\r\n");
+      socket.on("data", (chunk: Buffer) => {
+        events.push(`tunnel data:${chunk.length}`);
+        onTunnelData();
+      });
+    });
+    server.on("clientError", (err: any, socket) => {
+      events.push(`clientError ${err.code}`);
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    const { promise: accepted, resolve: onAccepted } = Promise.withResolvers<void>();
+    socket.on("data", () => onAccepted());
+    await once(socket, "connect");
+    socket.write(head + rawBody);
+    await accepted;
+    socket.write("more");
+    await tunnelData;
+    socket.destroy();
+    expect(events).toEqual(expected);
   });
 });

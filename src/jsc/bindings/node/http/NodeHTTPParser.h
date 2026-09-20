@@ -165,6 +165,7 @@ public:
     int onChunkComplete();
 
     int trackHeader(size_t len);
+    int trackHeaderPair();
     void flush();
     // Return value for an llhttp callback whose JS threw: stops llhttp; execute() rethrows the exception.
     int stopForPendingException();
@@ -196,6 +197,9 @@ public:
     size_t m_currentBufferLen;
     const char* m_currentBufferData;
     bool m_headersCompleted = false;
+    size_t m_headerPairs = 0;
+    // Read once per header section; -1 until then.
+    double m_maxHeaderPairs = -1;
     bool m_pendingPause = false;
     // Set while execute() is running llhttp over a buffer. Owned exclusively
     // by execute(); finish() must never clear it.

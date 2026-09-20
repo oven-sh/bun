@@ -32,6 +32,7 @@
 #include <climits>
 #include <string_view>
 #include <span>
+#include <type_traits>
 #include <wtf/Vector.h>
 #include "MoveOnlyFunction.h"
 #include "ChunkedEncoding.h"
@@ -374,6 +375,16 @@ struct HttpResponseData;
              * field values are all empty or whitespace-only as if the header
              * were absent (no error, Content-Length framing applies). */
             bool nonEmptyValue: 1 = false;
+            /* A Transfer-Encoding field follows a Content-Length field. llhttp
+             * rejects that field when its name completes, before it reads the
+             * value, so node:http rejects it even when the value is empty (the
+             * nonEmptyValue leniency above does not apply). */
+            bool afterContentLength: 1 = false;
+            /* llhttp's F_CHUNKED under LENIENT_TRANSFER_ENCODING, where a coding
+             * after "chunked" is not an error: the last list element of the last
+             * field that has a non-whitespace byte is "chunked". An element after a
+             * trailing comma is empty ("chunked," is not chunked). */
+            bool lenientChunked: 1 = false;
         };
 
         TransferEncoding getTransferEncoding()
@@ -385,20 +396,45 @@ struct HttpResponseData;
             }
 
             bool seenAnyCoding = false;
+            bool seenContentLength = false;
             for (Header *h = headers; (++h)->key.length();) {
+                if (!seenContentLength && h->key.length() == 14 && !strncasecmp(h->key.data(), "content-length", 14)) {
+                    seenContentLength = true;
+                    continue;
+                }
                 if (h->key.length() == 17 && !strncasecmp(h->key.data(), "transfer-encoding", 17)) {
+                    if (seenContentLength) {
+                        te.afterContentLength = true;
+                    }
+
+                    /* Present even when the value names no transfer coding: treating
+                     * an empty/whitespace-only field as absent would fall back to
+                     * Content-Length framing (request smuggling; RFC 9112 6.3). */
+                    te.has = true;
+
                     /* An earlier Transfer-Encoding field already named "chunked": any
                      * later TE field (even one with an empty value) is invalid. The
                      * per-token guard below handles the non-empty case too; this catches
                      * the empty one so the change is strictly tightening. */
                     if (te.chunked) [[unlikely]] {
                         te.invalid = true;
-                        return te;
                     }
 
                     // Parse comma-separated values, ensuring "chunked" is last if present
                     const auto value = h->value;
                     size_t pos = 0;
+
+                    const size_t lastComma = value.rfind(',');
+                    std::string_view lastElement = lastComma == std::string_view::npos ? value : value.substr(lastComma + 1);
+                    while (lastElement.length() && (lastElement.front() == ' ' || lastElement.front() == '\t')) {
+                        lastElement.remove_prefix(1);
+                    }
+                    while (lastElement.length() && (lastElement.back() == ' ' || lastElement.back() == '\t')) {
+                        lastElement.remove_suffix(1);
+                    }
+                    if (lastElement.length() || lastComma != std::string_view::npos) {
+                        te.lenientChunked = lastElement.length() == 7 && !strncasecmp(lastElement.data(), "chunked", 7);
+                    }
 
                     while (pos < value.length()) {
                         // Skip leading whitespace
@@ -435,7 +471,6 @@ struct HttpResponseData;
                              * rejects here too, for "chunked, chunked" as well. */
                             if (te.chunked) [[unlikely]] {
                                 te.invalid = true;
-                                return te;
                             }
                             if (seenAnyCoding) {
                                 te.multipleCodings = true;
@@ -449,11 +484,6 @@ struct HttpResponseData;
                             pos++;
                         }
                     }
-
-                    /* Present even when the value names no transfer coding: treating
-                     * an empty/whitespace-only field as absent would fall back to
-                     * Content-Length framing (request smuggling; RFC 9112 6.3). */
-                    te.has = true;
                 }
             }
 
@@ -560,6 +590,10 @@ struct HttpResponseData;
             sawConnectionClose = true;
         }
 
+        /* Header fields one request can carry: HttpRequest::headers also holds the request line in slot 0 and a sentinel after the last field. */
+        static constexpr unsigned MAX_HEADER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 2;
+        static_assert(MAX_HEADER_FIELDS + 2 <= std::extent_v<decltype(HttpRequest::headers)>);
+
         /* Maximum number of trailer fields surfaced to JS (the section size cap
          * already bounds memory; this matches the regular-header count cap). */
         static constexpr unsigned MAX_TRAILER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 1;
@@ -636,13 +670,14 @@ struct HttpResponseData;
          * llhttp does (it runs trailers through the same header state machine, so
          * the already-set F_CHUNKED collides), unless insecureHTTPParser is set
          * (llhttp's LENIENT_CHUNKED_LENGTH / LENIENT_TRANSFER_ENCODING). An empty
-         * section (bare CRLF, no trailers) is valid.
+         * section (bare CRLF, no trailers) is valid. Node counts trailer fields from
+         * zero against server.maxHeadersCount (maxHeadersCount here, 0 = not set).
          *
          * Known bound: parseTrailerFields stops at MAX_TRAILER_FIELDS, so a section with
          * more valid fields than that followed by a malformed line is accepted where node
          * still errors; reaching it requires a deliberately padded (but size-capped)
          * section, and rejecting it would need a second scanning mode. */
-        static HttpParserError validateNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser) {
+        static HttpParserError validateNodeTrailerSection(const std::string *section, bool useInsecureHTTPParser, uint32_t maxHeadersCount) {
             if (!section || section->size() <= 2) {
                 return HTTP_PARSER_ERROR_NONE;
             }
@@ -652,6 +687,9 @@ struct HttpResponseData;
             unsigned count = parseTrailerFields(copy, scratch, useInsecureHTTPParser);
             if (count == 0) {
                 return HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN;
+            }
+            if (maxHeadersCount && count > maxHeadersCount) {
+                return HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE;
             }
             if (!useInsecureHTTPParser) {
                 for (unsigned i = 0; i < count; i++) {
@@ -675,6 +713,11 @@ struct HttpResponseData;
          * at the next request boundary and park the rest", cleared for replay so it can make progress. */
         bool nodeHttpParkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
+        /* node:http under LENIENT_TRANSFER_ENCODING: the current request's
+         * Transfer-Encoding has no chunked final coding, so its body has no
+         * framing. Every byte until the peer's FIN is body (llhttp's
+         * body_identity_eof); onEnd delivers the fin and clears this. */
+        bool nodeHttpBodyUntilEof = false;
         /* A request on this connection had Connection: close or was HTTP/1.0, or a Bun.serve response closed it (RFC 9112 9.6). */
         bool sawConnectionClose = false;
         WTF::Vector<char> nodeHttpPausedSpill;
@@ -983,8 +1026,8 @@ struct HttpResponseData;
             }
         }
 
-        /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequestLine, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize) {
+        /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. maxHeaderFields must not exceed MAX_HEADER_FIELDS: it bounds the writes to headers. */
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequestLine, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize, unsigned int maxHeaderFields) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
             /* It is critical for fallback buffering logic that we only return with success
@@ -1044,7 +1087,7 @@ struct HttpResponseData;
 
             headers++;
 
-            for (unsigned int i = 1; i < UWS_HTTP_MAX_HEADERS_COUNT - 1; i++) {
+            for (unsigned int i = 0; i < maxHeaderFields; i++) {
                 /* Lower case and consume the field name */
                 preliminaryKey = postPaddedBuffer;
                 postPaddedBuffer = consumeFieldName(postPaddedBuffer);
@@ -1157,16 +1200,19 @@ struct HttpResponseData;
                     return HttpParserResult::shortRead();
                 }
             }
-            /* We ran out of header space, too large request */
+            /* More fields follow than maxHeaderFields allows, too large request */
             return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
         }
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally, bool IsNodeHttp>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
+
+        /* maxHeadersCount (node:http server.maxHeadersCount, 0 = not set) can only lower the field limit. */
+        const unsigned int maxHeaderFields = maxHeadersCount && maxHeadersCount < MAX_HEADER_FIELDS ? maxHeadersCount : MAX_HEADER_FIELDS;
 
         /* Fence two bytes past end of our buffer (buffer has post padded margins).
          * This is to always catch scan for \r but not for \r\n. */
@@ -1223,7 +1269,7 @@ struct HttpResponseData;
                 return HttpParserResult::success(consumedTotal + length, user);
             }
             bool isConnectRequestLine = false;
-            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
+            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize, maxHeaderFields);
             if(result.isError()) {
                 return result;
             }
@@ -1289,8 +1335,16 @@ struct HttpResponseData;
              * length) and no error is raised. Bun.serve keeps treating it as
              * present and rejects below; treating it as absent is the
              * Content-Length fallback that getTransferEncoding() guards
-             * against. */
-            if (IsNodeHttp && transferEncoding.has && !transferEncoding.nonEmptyValue) {
+             * against.
+             *
+             * The exception is a TE field that follows a Content-Length field:
+             * llhttp fails that field by name, before it reads the value
+             * (HPE_INVALID_TRANSFER_ENCODING), so the empty value never gets
+             * the chance to be ignored. LENIENT_CHUNKED_LENGTH skips that name
+             * check; node sets it only as part of kLenientAll, which is what
+             * useLenientTransferEncoding tracks. */
+            if (IsNodeHttp && transferEncoding.has && !transferEncoding.nonEmptyValue
+                && (!transferEncoding.afterContentLength || useLenientTransferEncoding)) {
                 transferEncoding = {};
             }
 
@@ -1305,36 +1359,47 @@ struct HttpResponseData;
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_TRANSFER_ENCODING);
             }
 
+            /* llhttp LENIENT_TRANSFER_ENCODING (kLenientAll / "insecure", never "relaxed")
+             * accepts chunked with another value after it, and its chunked verdict is
+             * then the last element's. It does not relax the TE+CL conflict, so only
+             * the coding-shape verdict is cleared; conflicts below still reject. */
+            if (useLenientTransferEncoding) {
+                transferEncoding.invalid = false;
+                transferEncoding.chunked = transferEncoding.lenientChunked;
+            }
+
             /* node:http compat: a Transfer-Encoding that names no chunked coding (e.g.
              * "chunkedchunked") and no Content-Length is rejected by llhttp only after
              * the request head completes - Node dispatches the 'request' first and the
              * error then surfaces through 'clientError'. The error is deferred until
-             * after the request handler below; no body data is ever emitted. */
-            bool deferredTransferEncodingError = IsNodeHttp && transferEncoding.has
+             * after the request handler below; no body data is ever emitted.
+             * Under LENIENT_TRANSFER_ENCODING llhttp__after_headers_complete instead
+             * reads the body until EOF (return 4), like a response body. It takes
+             * its upgrade verdict first, so a CONNECT or Upgrade request never
+             * enters that mode: an accepted upgrade would wait for a body that
+             * ends only at the FIN. */
+            const bool nodeHttpUnframedBody = IsNodeHttp && transferEncoding.has
                 && !transferEncoding.invalid && !transferEncoding.chunked && !contentLengthStringLen;
+            bool bodyUntilEof = nodeHttpUnframedBody && useLenientTransferEncoding
+                && !isConnectRequestLine && !req->isUpgradeRequest();
+            bool deferredTransferEncodingError = nodeHttpUnframedBody && !bodyUntilEof;
 
             /* llhttp__after_headers_complete returns its upgrade verdict before that check: a
              * CONNECT or an upgrade with no chunked coding and no Content-Length ends at its
              * head, whether or not the server accepts it. The header is treated as absent.
              * https://github.com/nodejs/llhttp/blob/v9.4.1/src/native/http.c#L41-L50 */
-            if (deferredTransferEncodingError && (req->getCaseSensitiveMethod() == "CONNECT" || req->isUpgradeRequest())) [[unlikely]] {
+            if (deferredTransferEncodingError && (isConnectRequestLine || req->isUpgradeRequest())) [[unlikely]] {
                 transferEncoding = {};
                 deferredTransferEncodingError = false;
             }
 
-            /* llhttp LENIENT_TRANSFER_ENCODING (kLenientAll / "insecure", never "relaxed")
-             * accepts chunked with another value after it. It does not relax the TE+CL
-             * conflict, so only the coding-shape verdict is cleared; conflicts below still reject. */
-            if (useLenientTransferEncoding) {
-                transferEncoding.invalid = false;
-            }
             /* Bun.serve: no transfer coding other than chunked is implemented, so a
              * list that ends in chunked but also names another coding ("gzip, chunked",
              * "x, chunked", two TE fields) would hand the still-encoded body to the
              * app. Reject it. node:http keeps llhttp's behaviour (accepts the list,
              * body remains un-decoded for the other coding). */
             transferEncoding.invalid = transferEncoding.invalid
-                || (transferEncoding.has && (contentLengthStringLen || !transferEncoding.chunked))
+                || (transferEncoding.has && (contentLengthStringLen || (!transferEncoding.chunked && !bodyUntilEof)))
                 || (!IsNodeHttp && transferEncoding.multipleCodings);
 
             if (transferEncoding.invalid && !deferredTransferEncodingError) [[unlikely]] {
@@ -1423,6 +1488,21 @@ struct HttpResponseData;
                 // Mark remaining data as consumed and break - it's not HTTP
                 consumedTotal += length;
                 break;
+            } else if (bodyUntilEof) {
+                /* No framing: the body is every byte up to the peer's FIN, never a
+                 * pipelined request. consumePostPadded routes later reads here and
+                 * HttpContext::onEnd delivers the fin. */
+                nodeHttpBodyUntilEof = true;
+                if constexpr (!ConsumeMinimally) {
+                    if (length) {
+                        void *returnedUser = dataHandler(user, std::string_view(data, length), false);
+                        consumedTotal += length;
+                        length = 0;
+                        if (returnedUser != user) {
+                            return HttpParserResult::success(consumedTotal, returnedUser);
+                        }
+                    }
+                }
             } else if (transferEncoding.has) {
                 /* We already validated that chunked is last if present, before calling the handler */
                 remainingStreamingBytes = STATE_IS_CHUNKED;
@@ -1440,7 +1520,7 @@ struct HttpResponseData;
                         /* The fin dispatch completes the message: a malformed or
                          * framing-field trailer must fail it first (node: HPE_*). */
                         if (IsNodeHttp && chunk.length() == 0) {
-                            if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
+                            if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, maxHeadersCount)) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                             }
                         }
@@ -1511,7 +1591,7 @@ public:
      * head, or WHOLE_READ when the request declared a body: the body is not parsed
      * and is not the caller's. The handler may have destroyed this parser. */
     template <bool IsNodeHttp>
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, uint32_t maxHeadersCount, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool useLenientTransferEncoding, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         char *const readStart = data;
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
@@ -1519,7 +1599,10 @@ public:
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
-        if (remainingStreamingBytes) {
+        if (IsNodeHttp && nodeHttpBodyUntilEof) {
+            void *returnedUser = dataHandler(user, std::string_view(data, length), false);
+            return HttpParserResult::success(0, returnedUser);
+        } else if (remainingStreamingBytes) {
             if (isConnectRequest) {
                 dataHandler(user, std::string_view(data, length), false);
                 return HttpParserResult::success(0, user);
@@ -1533,7 +1616,7 @@ public:
                     /* The fin dispatch completes the message: a malformed or
                      * framing-field trailer must fail it first (node: HPE_*). */
                     if (IsNodeHttp && chunk.length() == 0) {
-                        if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
+                        if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, maxHeadersCount)) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                         }
                     }
@@ -1591,7 +1674,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, fallback.data(), (unsigned int) fallback.length(), user, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 /* The count is in fallback bytes, and the first `had` of them came from
@@ -1612,7 +1695,13 @@ public:
                 data += consumedBytes - had;
                 length -= consumedBytes - had;
 
-                if (remainingStreamingBytes) {
+                if (IsNodeHttp && nodeHttpBodyUntilEof) {
+                    if (length) {
+                        void *returnedUser = dataHandler(user, std::string_view(data, length), false);
+                        return HttpParserResult::success(0, returnedUser);
+                    }
+                    return HttpParserResult::success(0, user);
+                } else if (remainingStreamingBytes) {
                     if(isConnectRequest) {
                         dataHandler(user, std::string_view(data, length), false);
                         return HttpParserResult::success(0, user);
@@ -1626,7 +1715,7 @@ public:
                             /* The fin dispatch completes the message: a malformed or
                              * framing-field trailer must fail it first (node: HPE_*). */
                             if (IsNodeHttp && chunk.length() == 0) {
-                                if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser)) [[unlikely]] {
+                                if (HttpParserError trailerError = validateNodeTrailerSection(nodeHttpRequestTrailers, useInsecureHTTPParser, maxHeadersCount)) [[unlikely]] {
                                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, trailerError);
                                 }
                             }
@@ -1678,7 +1767,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false, IsNodeHttp>(maxHeaderSize, maxHeadersCount, isConnectRequest, requireHostHeader, useStrictMethodValidation, useInsecureHTTPParser, useLenientTransferEncoding, nodeHttpRequestTrailers, chunkedExtensionsByteCount, data, length, user, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             /* A body or a fallback head ahead of this request moved data forward. */

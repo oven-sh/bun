@@ -53,6 +53,7 @@ const {
   drainMicrotasks,
   setServerCustomOptions,
   setServerAppFlags,
+  setServerMaxHeadersCount,
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
   kOutHeaders,
@@ -79,6 +80,7 @@ let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
+const kMaxHeadersCount = Symbol("http.server.maxHeadersCount");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
 // only created on the first request, and emission is gated per-request on the
@@ -290,7 +292,7 @@ function Server(options, callback): void {
   this._unref = false;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
-  this.maxHeadersCount = null;
+  defineMaxHeadersCount(this);
   defineHttpAllowHalfOpen(this);
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
@@ -1094,6 +1096,7 @@ function applyServerCustomOptions(server: Server) {
     onServerConnection.bind(server),
     !!server.httpAllowHalfOpen,
   );
+  setServerMaxHeadersCount(handle, nativeMaxHeadersCount(server.maxHeadersCount));
 }
 
 // Resolution: httpValidation > explicit insecureHTTPParser > --insecure-http-parser. Native
@@ -1130,6 +1133,38 @@ function defineHttpAllowHalfOpen(server: Server) {
     enumerable: true,
     get: httpAllowHalfOpenGet,
     set: httpAllowHalfOpenSet,
+  });
+}
+
+// Node's connectionListener: parser.maxHeaderPairs = server.maxHeadersCount << 1, enforced
+// while that is > 0. Same int32 arithmetic, as a field count. 0 means no limit is set.
+// https://github.com/nodejs/node/blob/v26.5.1/lib/_http_server.js#L795-L797
+function nativeMaxHeadersCount(maxHeadersCount) {
+  if (typeof maxHeadersCount !== "number") return 0;
+  const maxHeaderPairs = maxHeadersCount << 1;
+  return maxHeaderPairs > 0 ? maxHeaderPairs >>> 1 : 0;
+}
+
+function maxHeadersCountGet(this: Server) {
+  return this[kMaxHeadersCount];
+}
+
+// Node reads `server.maxHeadersCount` for every new connection, so assigning it after
+// listen() has to reach the native parser too.
+function maxHeadersCountSet(this: Server, value) {
+  this[kMaxHeadersCount] = value;
+  const handle = this[serverSymbol];
+  if (handle) setServerMaxHeadersCount(handle, nativeMaxHeadersCount(value));
+}
+
+// Node.js keeps maxHeadersCount as an own enumerable property of the server.
+function defineMaxHeadersCount(server: Server) {
+  server[kMaxHeadersCount] = null;
+  Object.defineProperty(server, "maxHeadersCount", {
+    configurable: true,
+    enumerable: true,
+    get: maxHeadersCountGet,
+    set: maxHeadersCountSet,
   });
 }
 

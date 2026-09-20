@@ -6,3 +6,6 @@ if systemctl list-unit-files apport.service | grep -q apport; then
   systemctl disable apport.service
 fi
 apt-get install --yes --no-install-recommends gdb
+# The test runner reads the pattern back with `sysctl`, as the agent's user, and
+# Debian gives a user who is not root no sbin directory on PATH.
+add_to_path /sbin

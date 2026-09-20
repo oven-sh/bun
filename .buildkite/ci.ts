@@ -437,6 +437,19 @@ function getImageKey(platform: Platform): string {
   return imageKey(getImage(platform));
 }
 
+/** The platform whose jobs run on `image`: what a machine started from it is asked for with. */
+function getImagePlatform(image: BakedImage): Platform {
+  return image.os === "windows"
+    ? { os: "windows", arch: image.arch, release: image.release }
+    : {
+        os: "linux",
+        arch: image.arch,
+        distro: image.distro,
+        release: image.release,
+        ...(image.abi === "musl" ? { abi: "musl" as const } : {}),
+      };
+}
+
 /**
  * The step a platform's jobs wait for when this build bakes their image
  * (`baking` is the keys of the images it bakes). darwin machines are not
@@ -1719,25 +1732,21 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   const { buildPlatforms = [], testPlatforms = [] } = options;
-  // Every build lane runs on buildHostPlatform (see getBuildAgent), so the
-  // images a build needs are exactly {buildHostPlatform} ∪ testPlatforms'
-  // native images — buildPlatforms entries encode TARGET os/arch/abi, not a
-  // host image. darwin has no cloud images (bare-metal test fleet only).
   // Sign with [sign windows] in the commit message (for testing the sign step
   // on a branch). DigiCert charges per signature, so canary builds are never signed.
   const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
   const signWindows = ((isMainBranch() && !options.canary) || !!options.signWindows) && windowsPlatforms.length > 0;
-  const neededImages = new Map<string, Platform>(
-    [buildHostPlatform, ...testPlatforms, ...(signWindows ? [windowsSignPlatform] : [])]
-      .filter(({ os }) => os !== "darwin")
-      .map(platform => [getImageKey(platform), platform]),
-  );
 
-  // The ones that cannot be booted yet. Whether an image exists can only be
-  // asked in CI, where the cloud credentials are.
+  // A build makes sure every image of the spec exists, not only the ones its
+  // own steps start from: which steps a build has depends on its options (a
+  // manual build can pick platforms; verify-baseline, signing and symbol-order
+  // steps each choose their own machine), and an image only exists once some
+  // build has baked it. Whether one exists can only be asked in CI, where the
+  // cloud credentials are.
   const baking = new Set<string>();
   const imageSteps: CommandStep[] = [];
-  for (const [key, platform] of isBuildkite ? neededImages : []) {
+  for (const platform of isBuildkite ? images.map(getImagePlatform) : []) {
+    const key = getImageKey(platform);
     const { image, generated } = getGeneratedImage(platform);
     const state = await getImageState(image.os, generated.name);
     console.log(` - ${generated.name}: ${state}`);

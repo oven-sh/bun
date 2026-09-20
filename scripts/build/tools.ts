@@ -306,8 +306,7 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
  * snapshots while we target 23.1.1).
  */
 export const LLVM_VERSION = pins.llvm.version;
-const LLVM_MAJOR = "23";
-const LLVM_MINOR = "1";
+const [LLVM_MAJOR, LLVM_MINOR] = LLVM_VERSION.split(".");
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
 
 /**

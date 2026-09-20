@@ -3020,8 +3020,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    // The Web Worker global scope surface. A node:worker_threads worker has none of it,
-    // as in node. Not on the lookup table because that table is static per class.
+    // Web Worker global scope surface: absent in a node:worker_threads worker, as in node.
     if (!clientData->isNodeWorkerVM()) {
         putDirectAccessor(
             this,

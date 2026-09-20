@@ -768,8 +768,7 @@ public:
     JSObject* nodeWorkerStdioPorts() { return m_nodeWorkerStdioPorts.get(); }
     void setNodeWorkerStdioPorts(JSObject* ports);
     void setNodeWorkerEnvironmentData(JSMap* data);
-    // node:worker_threads parentPort, the only parent-to-worker channel in a node worker.
-    // Registered so start() can defer delivery until the entry module has settled.
+    // node:worker_threads parentPort, registered so start() defers delivery until the entry settles.
     void setNodeParentPort(WebCore::MessagePort*);
     WebCore::MessagePort* nodeParentPort() const { return m_nodeParentPort.get(); }
     // A node worker's parentPort delivers nothing until the entry module has evaluated (node's

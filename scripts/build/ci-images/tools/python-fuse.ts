@@ -7,6 +7,5 @@ export function pythonFuse(pin: { version: string }): Tool {
     name: "python-fuse",
     script: "linux/python-fuse.sh",
     variables: { PYTHON_FUSE_URL: url, PYTHON_FUSE_VERSION: pin.version },
-    urls: [url],
   };
 }

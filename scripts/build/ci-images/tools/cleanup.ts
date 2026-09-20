@@ -6,6 +6,5 @@ export function cleanup(image: LinuxImage): Tool {
     name: "cleanup",
     script: image.distro === "alpine" ? "linux/cleanup.apk.sh" : "linux/cleanup.apt.sh",
     variables: {},
-    urls: [],
   };
 }

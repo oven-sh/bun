@@ -72,8 +72,6 @@ export type Tool = {
   script: string;
   /** Shell variables set before the script. It may read these and no other upper-case variable. */
   variables: Readonly<Record<string, string>>;
-  /** Every URL the script downloads, so they can be checked before a bake starts. */
-  urls: readonly string[];
   /**
    * Files the script uses, copied into the bake directory (`$BAKE_DIR`) and so
    * part of the hash: the name there, and the file's path in the repository.

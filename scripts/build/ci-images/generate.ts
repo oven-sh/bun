@@ -132,7 +132,7 @@ function renderBootstrap(image: Image, shell: Shell): string {
 }
 
 /** sha256 over every file of the directory, by sorted name. */
-function hashDirectory(directory: string): string {
+export function hashDirectory(directory: string): string {
   const hash = createHash("sha256");
   for (const name of readdirSync(directory).sort()) {
     hash
@@ -157,7 +157,7 @@ export function generateImage(image: Image, outputRoot: string): GeneratedImage 
   const shell = image.os === "windows" ? powershell : sh;
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
-  const described = tools(image).map(({ name, variables, urls }) => ({ name, variables, urls }));
+  const described = tools(image).map(({ name, variables }) => ({ name, variables }));
   writeFileSync(join(directory, "image.json"), JSON.stringify({ ...image, tools: described }, null, 2) + "\n");
   writeFileSync(join(directory, shell.scriptName), renderBootstrap(image, shell));
   for (const tool of tools(image)) {

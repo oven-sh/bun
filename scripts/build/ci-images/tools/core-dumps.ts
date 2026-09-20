@@ -6,6 +6,5 @@ export function coreDumps(image: LinuxImage): Tool {
     name: "core-dumps",
     script: image.distro === "alpine" ? "linux/core-dumps.apk.sh" : "linux/core-dumps.apt.sh",
     variables: { CORES_DIR: `/var/bun-cores-${image.distro}-${image.release}-${image.arch}` },
-    urls: [],
   };
 }

@@ -7,6 +7,5 @@ export function androidNdk(pin: { version: string; apiLevel: number }): Tool {
     name: "android-ndk",
     script: "linux/android-ndk.sh",
     variables: { ANDROID_NDK_URL: url, ANDROID_NDK_VERSION: pin.version, ANDROID_API_LEVEL: String(pin.apiLevel) },
-    urls: [url],
   };
 }

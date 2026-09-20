@@ -11,6 +11,5 @@ export function buildkiteAgent(image: Image, pin: { version: string }): Tool {
     name: "buildkite-agent",
     script: image.os === "windows" ? "windows/buildkite-agent.ps1" : "linux/buildkite-agent.sh",
     variables: { BUILDKITE_AGENT_URL: url },
-    urls: [url],
   };
 }

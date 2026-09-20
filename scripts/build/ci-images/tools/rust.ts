@@ -20,6 +20,5 @@ export function rust(
       RUST_COMPONENTS: pin.components.join(","),
       RUST_TARGETS: pin.targets.join(","),
     },
-    urls: [url],
   };
 }

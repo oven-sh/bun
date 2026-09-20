@@ -9,7 +9,6 @@ export function agentService(image: Image): Tool {
     name: "agent-service",
     script: image.os === "windows" ? "windows/agent-service.ps1" : "linux/agent-service.sh",
     variables: {},
-    urls: [],
     // .mts: an ES module whatever directory it is in.
     files: { "agent.mts": "scripts/agent.ts" },
   };

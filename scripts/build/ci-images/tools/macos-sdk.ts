@@ -10,7 +10,6 @@ export function macosSdk(pin: { sdk: string; commandLineTools: string }): Tool {
     name: "macos-sdk",
     script: "linux/macos-sdk.sh",
     variables: { MACOS_SDK_VERSION: pin.sdk, MACOS_CLT_RELEASE: pin.commandLineTools },
-    urls: [],
     files: { "xmac.mjs": "scripts/build/xmac.mjs" },
   };
 }

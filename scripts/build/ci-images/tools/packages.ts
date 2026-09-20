@@ -10,6 +10,5 @@ export function packages(image: LinuxImage, names: readonly string[]): Tool {
     name: "packages",
     script: image.distro === "alpine" ? "linux/packages.apk.sh" : "linux/packages.apt.sh",
     variables: { PACKAGES: names.join(" ") },
-    urls: [],
   };
 }

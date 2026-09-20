@@ -6,11 +6,10 @@ export function windowsSystem(pin: { disabledServices: readonly string[] }): Too
     name: "system",
     script: "windows/system.ps1",
     variables: { DISABLED_SERVICES: pin.disabledServices.join(" ") },
-    urls: [],
   };
 }
 
 /** Only Windows Server can remove Defender. */
 export function uninstallDefender(): Tool {
-  return { name: "uninstall-defender", script: "windows/uninstall-defender.ps1", variables: {}, urls: [] };
+  return { name: "uninstall-defender", script: "windows/uninstall-defender.ps1", variables: {} };
 }

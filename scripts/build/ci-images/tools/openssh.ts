@@ -7,7 +7,6 @@ export function openssh(image: WindowsImage, pin: { version: string }): Tool {
     name: "openssh",
     script: "windows/openssh.ps1",
     variables: { OPENSSH_URL: url },
-    urls: [url],
     files: { "fetch-ssh-keys.ps1": "scripts/build/ci-images/tools/windows/fetch-ssh-keys.ps1" },
   };
 }

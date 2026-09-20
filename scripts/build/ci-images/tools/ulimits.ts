@@ -6,6 +6,5 @@ export function ulimits(image: LinuxImage): Tool {
     name: "ulimits",
     script: image.distro === "alpine" ? "linux/ulimits.openrc.sh" : "linux/ulimits.systemd.sh",
     variables: { MAX_OPEN_FILES: "1048576", MAX_PROCESSES: "1048576" },
-    urls: [],
   };
 }

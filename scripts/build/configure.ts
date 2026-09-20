@@ -30,7 +30,15 @@ import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
-import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import {
+  checkImageTools,
+  findBun,
+  findCargo,
+  findMsvcLinker,
+  findNpm,
+  findSystemTool,
+  resolveLlvmToolchain,
+} from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
@@ -88,7 +96,7 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   // A codegen script that a module can also import runs its command line
   // only when import.meta.main is true. Node 24.2 added import.meta.main.
   // Before that it is undefined, and the script would write nothing. CI
-  // installs Node 26 (scripts/bootstrap.sh), so the minimum is 25.
+  // installs Node 26 (scripts/build/ci-images/spec.ts), so the minimum is 25.
   if (process.versions.bun === undefined) {
     const major = Number(process.versions.node.split(".")[0]);
     if (major < 25) {
@@ -275,6 +283,9 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   const cfg = resolveConfig(partial, toolchain);
 
   validateBunConfig(cfg);
+  if (cfg.ci) {
+    checkImageTools(toolchain);
+  }
 
   // Darwin cross-compile: the SDK must exist before ninja runs (every compile
   // edge passes -isysroot) and before checkWorkarounds() (the darwin-cross

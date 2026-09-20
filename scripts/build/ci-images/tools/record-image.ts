@@ -10,7 +10,6 @@ export function recordImage(image: Image): Tool {
     name: "record-image",
     script: image.os === "windows" ? "windows/record-image.ps1" : "linux/record-image.sh",
     variables: { IMAGE_RECORD: image.os === "windows" ? "C:\\bun-image.json" : "/etc/bun-image.json" },
-    urls: [],
     files: { "record-image.mts": "scripts/build/ci-images/tools/record-image.mts" },
   };
 }

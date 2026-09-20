@@ -7,6 +7,5 @@ export function freebsdSysroot(pin: { version: string; baseUrl: string }): Tool 
     name: "freebsd-sysroot",
     script: "linux/freebsd-sysroot.sh",
     variables: { FREEBSD_AMD64_URL: url("amd64"), FREEBSD_ARM64_URL: url("arm64") },
-    urls: [url("amd64"), url("arm64")],
   };
 }

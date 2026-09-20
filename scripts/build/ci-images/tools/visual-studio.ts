@@ -6,6 +6,5 @@ export function visualStudio(pin: { channel: string }): Tool {
     name: "visual-studio",
     script: "windows/visual-studio.ps1",
     variables: { VISUAL_STUDIO_URL: url },
-    urls: [url],
   };
 }

@@ -7,6 +7,5 @@ export function nssm(pin: { version: string }): Tool {
     name: "nssm",
     script: "windows/nssm.ps1",
     variables: { NSSM_URL: url, NSSM_DIRECTORY: directory },
-    urls: [url],
   };
 }

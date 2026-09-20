@@ -13,6 +13,5 @@ export function muslSysroot(image: LinuxImage, pin: { alpineRelease: string }): 
     name: "musl-sysroot",
     script: "linux/musl-sysroot.sh",
     variables: { ALPINE_REPOSITORY: repository, ALPINE_HOST_ARCH: host },
-    urls: [index],
   };
 }

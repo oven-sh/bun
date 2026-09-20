@@ -12,13 +12,12 @@ export function llvm(image: Image, pin: { version: string }): Tool {
       name: "llvm",
       script: "windows/llvm.ps1",
       variables: { LLVM_VERSION: pin.version, LLVM_SCOOP_PACKAGE: image.arch === "x64" ? "llvm" : "llvm-arm64" },
-      urls: [],
     };
   }
   const variables = { LLVM_MAJOR: pin.version.split(".")[0]! };
   if (image.distro === "alpine") {
-    return { name: "llvm", script: "linux/llvm.apk.sh", variables, urls: [] };
+    return { name: "llvm", script: "linux/llvm.apk.sh", variables };
   }
   const url = "https://apt.llvm.org/llvm.sh";
-  return { name: "llvm", script: "linux/llvm.apt.sh", variables: { ...variables, LLVM_SH_URL: url }, urls: [url] };
+  return { name: "llvm", script: "linux/llvm.apt.sh", variables: { ...variables, LLVM_SH_URL: url } };
 }

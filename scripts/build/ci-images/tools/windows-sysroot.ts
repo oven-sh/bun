@@ -8,6 +8,5 @@ export function windowsSysroot(image: LinuxImage, pin: { xwin: string; sdk: stri
     name: "windows-sysroot",
     script: "linux/windows-sysroot.sh",
     variables: { XWIN_URL: url, WINDOWS_SDK_VERSION: pin.sdk, MSVC_CRT_VERSION: pin.crt },
-    urls: [url],
   };
 }

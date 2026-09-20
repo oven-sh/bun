@@ -14,6 +14,5 @@ export function glibcSysroot(pin: { gccDebsUrl: string }): Tool {
     name: "glibc-sysroot",
     script: "linux/glibc-sysroot.sh",
     variables: { GCC_DEBS_AMD64_URL: debs("amd64"), GCC_DEBS_ARM64_URL: debs("arm64") },
-    urls: [debs("amd64"), debs("arm64")],
   };
 }

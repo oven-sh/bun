@@ -8,6 +8,5 @@ export function pwsh(image: WindowsImage, pin: { version: string }): Tool {
     name: "pwsh",
     script: "windows/pwsh.ps1",
     variables: { PWSH_URL: url },
-    urls: [url],
   };
 }

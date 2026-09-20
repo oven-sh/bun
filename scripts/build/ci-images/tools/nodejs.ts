@@ -18,7 +18,6 @@ export function nodejs(image: Image, pin: { version: string; nodeGypInstallVersi
         NODEJS_LIB_URL: libUrl,
         NODE_GYP_INSTALL_VERSION: pin.nodeGypInstallVersion,
       },
-      urls: [headersUrl, libUrl],
     };
   }
   // nodejs.org only ships glibc builds.
@@ -35,6 +34,5 @@ export function nodejs(image: Image, pin: { version: string; nodeGypInstallVersi
       NODEJS_HEADERS_URL: headersUrl,
       NODE_GYP_INSTALL_VERSION: pin.nodeGypInstallVersion,
     },
-    urls: [url, headersUrl],
   };
 }

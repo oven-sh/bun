@@ -8,6 +8,5 @@ export function intelSde(pin: { version: string; sha256: string }): Tool {
     name: "intel-sde",
     script: "windows/intel-sde.ps1",
     variables: { INTEL_SDE_URL: url, INTEL_SDE_DIRECTORY: directory, INTEL_SDE_SHA256: pin.sha256 },
-    urls: [url],
   };
 }

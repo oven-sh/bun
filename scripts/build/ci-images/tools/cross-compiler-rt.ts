@@ -6,6 +6,5 @@ export function crossCompilerRt(llvmPin: { version: string }): Tool {
     name: "cross-compiler-rt",
     script: "linux/cross-compiler-rt.sh",
     variables: { LLVM_MAJOR: llvmPin.version.split(".")[0]! },
-    urls: [],
   };
 }

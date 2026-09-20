@@ -7,5 +7,5 @@ import type { Tool } from "../image.ts";
  */
 export function chrome(): Tool {
   const url = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
-  return { name: "chrome", script: "linux/chrome.sh", variables: { CHROME_DEB_URL: url }, urls: [url] };
+  return { name: "chrome", script: "linux/chrome.sh", variables: { CHROME_DEB_URL: url } };
 }

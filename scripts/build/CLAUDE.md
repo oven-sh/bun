@@ -184,7 +184,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                                                                                                      |
 | `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`                                                                                                    |
 | `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                                                                          |
-| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing                                                                                                 |
+| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing, `checkImageTools()`                                                                            |
 | `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                                                                      |
 | `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                                                                   |
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                                                                         |
@@ -216,9 +216,21 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                                                |
+| `ci-images/spec.ts`            | CI machine images: every image with its base image, every version pin, and the tools each image gets, in order                                                          |
+| `ci-images/tools/*.ts`         | One typed function per tool: the script it runs and the values that script is given                                                                                     |
+| `ci-images/generate.ts`        | `generateImage()` — writes `build/ci-images/<key>/` and names the image by that directory's hash; `bun run ci:images`                                                   |
 | `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                                                                |
 | `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                                                                              |
 | `shims/*.c`                    | Platform workaround sources                                                                                                                                             |
+
+## CI machine images (`ci-images/`)
+
+CI's build and test machines boot from images baked ahead of time. `ci-images/spec.ts` is the one place that says what is on them: the images (each with the exact base image it starts from), `pins` (every version), and `linuxTools()` / `windowsTools()` (what a bake installs, in order). The build system's own LLVM, Node.js, xwin, Windows SDK, macOS SDK, Android API level and FreeBSD versions import from `pins`.
+
+- **A tool** is a function in `ci-images/tools/<name>.ts` that takes the image and its pin and returns the script to run (`tools/linux/*.sh`, `tools/windows/*.ps1`) and the variables that script gets. URLs and per-architecture names are computed in the function, so scripts do not branch on distro or architecture. A script may read its tool's variables, `$BAKE_DIR`, `$REPO_DIR` / `$REPO_COMMIT`, `$IMAGE_NAME` and the helpers of `lib/`; the generator refuses a script that reads a variable its tool does not provide, and a tool that provides one its script never reads.
+- **A script installs.** It does not compare what it installed with the pin: on a CI machine the build does that (`checkImageTools()` and `findLlvmTool()` in `tools.ts`). It fails on a download's checksum where the spec has one, on an installer's exit code, and on a lookup it cannot go on without.
+- **An image's name** is `<key>-<first 16 hex of the sha256 of its bake directory>`. `bun run ci:images [key…]` writes the directories under `build/ci-images/` and prints the names; the output depends only on committed files. `.buildkite/ci.ts` asks the cloud whether each image a build needs exists and bakes the ones that do not, so changing the spec or a script is all it takes to get new images. Only builds of this repository's own branches can bake.
+- **`bun-image.json`** (`/etc/`, `C:\`) is written by the last install step: the spec's facts about the image, its name, and the exact packages the bake got from the distro or Scoop. The bake job also publishes it as an artifact. It is for keying caches of build outputs; it never feeds the image's name.
 
 ## Key types
 

@@ -6,6 +6,5 @@ export function agentUser(image: LinuxImage): Tool {
     name: "agent-user",
     script: image.distro === "alpine" ? "linux/agent-user.busybox.sh" : "linux/agent-user.shadow.sh",
     variables: {},
-    urls: [],
   };
 }

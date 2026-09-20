@@ -1,5 +1,4 @@
 use bun_core::ZStr;
-#[cfg(unix)]
 use bun_sys::FdExt;
 use bun_sys::{self, Fd, Mode};
 
@@ -108,6 +107,9 @@ where
             is_pollable,
         );
     }
+    // NtCreateFile makes an `O_NONBLOCK` handle asynchronous; `uv_fs_write` then fails with EINVAL.
+    #[cfg(windows)]
+    let input_flags = input_flags & !bun_sys::O::NONBLOCK;
     // TODO: this should be concurrent.
     #[cfg(unix)]
     let mut isatty = false;
@@ -176,6 +178,8 @@ where
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
             && !force_sync;
-        return Ok(fd);
+        // Both arms yield a HANDLE; the libuv writer needs a CRT fd (`Fd::uv()` panics on a HANDLE).
+        return fd
+            .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail);
     }
 }

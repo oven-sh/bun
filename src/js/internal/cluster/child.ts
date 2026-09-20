@@ -54,7 +54,6 @@ cluster._setupWorker = function () {
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
   $newRustFunction("node_cluster_binding.rs", "channelIgnoreOneDisconnectEventListener", 0)();
   process.once("disconnect", () => {
-    process.channel = null;
     worker.emit("disconnect");
 
     if (!worker.exitedAfterDisconnect) {

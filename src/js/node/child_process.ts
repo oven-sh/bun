@@ -1566,6 +1566,7 @@ class ChildProcess extends EventEmitter {
       return;
     }
     $assert(!this.connected);
+    this.channel = null;
     process.nextTick(() => this.emit("disconnect"));
     process.nextTick(() => this.#maybeClose());
   }

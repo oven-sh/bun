@@ -598,12 +598,7 @@ struct PosixSpawnFdGuard {
 
 #[cfg(unix)]
 impl PosixSpawnFdGuard {
-    /// The fd to pass to `dup2` as the source for a stdio slot. File actions
-    /// run in slot order in the child, so a source that sits at or below the
-    /// highest slot (`max_slot`) can be closed or overwritten by an earlier
-    /// slot's action (the `close` of an "ignore" slot, another slot's `dup2`)
-    /// before its own `dup2` runs. Move such a source above every slot first,
-    /// like libuv does.
+    /// File actions run in slot order, so an earlier slot's `close`/`dup2` would hit a `dup2` source numbered at or below `max_slot`; dup it above every slot first, like libuv.
     fn source_above_slots(&mut self, max_slot: i32, src: Fd) -> bun_sys::Result<Fd> {
         if src.native() > max_slot {
             return Ok(src);
@@ -781,9 +776,7 @@ pub unsafe fn spawn_process_posix(
                     actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
                 }
                 Ok(fl) => {
-                    // O_NONBLOCK lives on the open file description, so one that
-                    // `process.stdout` set on a pipe reaches the child, where a
-                    // plain write(2) then fails with EAGAIN. libuv clears it too.
+                    // O_NONBLOCK is on the shared open file description: left set (by `process.stdout` on a pipe), the child's plain write(2) fails with EAGAIN. libuv clears it too.
                     if (fl & bun_sys::O::NONBLOCK as bun_sys::FcntlInt) != 0 {
                         let _ = bun_sys::update_nonblocking(fileno, false);
                     }
@@ -960,10 +953,7 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::Unavailable);
             }
             PosixStdio::Ipc | PosixStdio::Buffer | PosixStdio::SocketFd => {
-                // Both ends start blocking. Only the parent's end goes
-                // nonblocking: the child's end is handed over as is, so a
-                // child that is not bun or node (a plain write(2) on the IPC
-                // fd) gets a blocking socket, like libuv hands out.
+                // Only the parent's end goes nonblocking: a child that is not bun or node does a plain write(2) on its end, and libuv hands out a blocking one too.
                 let fds: [Fd; 2] =
                     match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, false) {
                         Ok(p) => p,

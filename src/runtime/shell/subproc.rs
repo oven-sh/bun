@@ -1189,10 +1189,11 @@ impl Readable {
             _ => return,
         };
         let p = arc_as_mut_ptr(&keepalive);
-        // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; the
-        // re-entrant reader callbacks only hold raw `*mut PipeReader`, and
-        // each `&mut` below is scoped to its own call.
-        unsafe { (*p).start(process, event_loop) };
+        // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; `keepalive`
+        // holds `p` live across both calls, the re-entrant reader callbacks
+        // only hold raw `*mut PipeReader`, and the `&mut` for `read_all` is
+        // scoped to its own call.
+        unsafe { PipeReader::start(p, process, event_loop) };
         if eager {
             // SAFETY: as above.
             unsafe { (*p).read_all() };
@@ -1785,44 +1786,68 @@ impl PipeReader {
     /// reported through `on_reader_error`, not returned: the Cmd records the
     /// errno as the command's exit code and the slot is detached, while the
     /// spawn carries on with the sibling pipe and the child's exit.
-    pub(crate) fn start(&mut self, process: *mut ShellSubprocess, event_loop: EventLoopHandle) {
-        // self.ref();
-        self.process = Some(process);
-        self.event_loop = event_loop;
+    ///
+    /// Takes `*mut Self` (not `&mut self`): the error dispatch re-enters this
+    /// same allocation through the `Readable::Pipe` `Arc` (`detach` clears
+    /// `process`, `close_io` drops the slot's ref), so no `&mut PipeReader`
+    /// may be live across it. Every access below is scoped to one statement.
+    ///
+    /// # Safety
+    /// `this` must point into a live `Arc<PipeReader>` that the caller keeps
+    /// alive across the call (see [`Readable::start_pipe_reader`]).
+    pub(crate) unsafe fn start(
+        this: *mut Self,
+        process: *mut ShellSubprocess,
+        event_loop: EventLoopHandle,
+    ) {
+        // SAFETY: caller contract; plain field writes, no callback runs.
+        unsafe {
+            (*this).process = Some(process);
+            (*this).event_loop = event_loop;
+        }
         #[cfg(windows)]
         {
-            if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
+            // SAFETY: caller contract; the `&mut reader` ends when the call
+            // returns, before any dispatch.
+            if let bun_sys::Result::Err(err) = unsafe { (*this).reader.start_with_current_pipe() } {
                 // `uv_read_start` failed, so nothing will ever read this
                 // pipe. Release the handle (no `on_reader_done`), then run
                 // the read-error path. Returning `Err` instead made the
                 // spawn abort and leak the subprocess with its exit handler
                 // armed; the killed child's exit then resolved a `CmdHandle`
                 // whose node was already freed.
-                self.reader.deinit();
-                // SAFETY: `self` lives inside the `Arc` that
-                // `start_pipe_reader` keeps alive across this call; nothing
-                // touches `self` after the dispatch.
-                unsafe { Self::on_reader_error(core::ptr::from_mut(self), &err) };
+                // SAFETY: as above.
+                unsafe { (*this).reader.deinit() };
+                // SAFETY: caller contract; nothing touches `this` afterwards.
+                unsafe { Self::on_reader_error(this, &err) };
             }
         }
 
         // `reader` owns the fd from here; `Drop` closes an un-started one.
         // `PosixBufferedReader::start` always returns `Ok` and reports a
-        // poll-registration failure through `on_reader_error`, so the reader
-        // may already be errored/torn down here; same guard as
-        // `SubprocessPipeReader::start`.
+        // poll-registration failure through `on_reader_error` from inside the
+        // call, so the reader may already be errored/torn down afterwards;
+        // same guard as `SubprocessPipeReader::start`.
         #[cfg(not(windows))]
         {
-            let _ = self.reader.start(self.stdio_result.take().unwrap(), true);
-            if matches!(self.state, PipeReaderState::Err(_)) {
+            // SAFETY: caller contract; the `&mut reader` is scoped to the
+            // call. The dispatch inside reaches the parent through the raw
+            // pointer registered in `create`, not through this borrow.
+            let fd = unsafe { (*this).stdio_result.take() }.unwrap();
+            let _ = unsafe { (*this).reader.start(fd, true) };
+            // SAFETY: caller contract; the keepalive `Arc` means `this` is
+            // still live even if the reader errored.
+            if matches!(unsafe { &(*this).state }, PipeReaderState::Err(_)) {
                 return;
             }
             #[cfg(unix)]
-            {
-                if let Some(poll) = self.reader.handle.get_poll() {
+            // SAFETY: as above; no callback runs from these flag writes.
+            unsafe {
+                if let Some(poll) = (*this).reader.handle.get_poll() {
                     poll.set_flag(bun_io::FilePollFlag::Socket);
                 }
-                self.reader
+                (*this)
+                    .reader
                     .flags
                     .insert(bun_io::pipe_reader::PosixFlags::SOCKET);
             }

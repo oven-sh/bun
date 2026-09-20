@@ -387,6 +387,43 @@ describe("a late end() or write() answers its callback like Node.js", () => {
   });
 });
 
+test("res close cannot remove a socket listener from the current close emission", async () => {
+  const events: string[] = [];
+  const gotRequest = Promise.withResolvers<void>();
+  const responseClosed = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    const onSocketClose = () => events.push("socket.close");
+    req.socket.on("close", onSocketClose);
+    res.on("close", () => {
+      events.push("res.close");
+      req.socket.off("close", onSocketClose);
+      responseClosed.resolve();
+    });
+    req.on("data", () => {});
+    gotRequest.resolve();
+  });
+  let client: ReturnType<typeof connect> | undefined;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    client = connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    await once(client, "connect");
+    client.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\npartial");
+    await gotRequest.promise;
+    const clientClosed = once(client, "close");
+    client.destroy();
+    await Promise.all([responseClosed.promise, clientClosed]);
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    expect(events).toEqual(["res.close", "socket.close"]);
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
 // Like Node.js's OutgoingMessage#destroy, res.destroy() does not emit 'close'
 // itself. A response that still has its socket gets 'close' from the socket
 // teardown (so an ended response still emits 'finish' first); a response

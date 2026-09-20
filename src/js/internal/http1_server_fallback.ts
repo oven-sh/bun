@@ -7,6 +7,8 @@ const AsyncContextFrame = require("internal/async_context_frame");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
+// Node does not count a connection as idle before its first message: closeIdleConnections() leaves it alone.
+const kHttp1HadRequest = Symbol("http1HadRequest");
 const reportError = globalThis.reportError;
 
 function rethrowUncaught(err) {
@@ -362,6 +364,7 @@ function connectionListenerHTTP1(server, socket, options) {
   const connections = (server[kHttp1Connections] ??= new SafeSet());
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
+  socket[kHttp1HadRequest] = false;
 
   const kOnHeaders = HTTPParser.kOnHeaders | 0;
   const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
@@ -379,8 +382,10 @@ function connectionListenerHTTP1(server, socket, options) {
   const { maxHeadersCount } = server;
   parser.maxHeaderPairs = typeof maxHeadersCount === "number" ? maxHeadersCount << 1 : MAX_HEADER_PAIRS;
 
-  let req: Http1FallbackRequest | null = null;
-  let pendingUpgrade: Http1FallbackRequest | null = null;
+  let req = null;
+  let pendingUpgrade = null;
+  // Node's per-connection state.requestsCount, behind server.maxRequestsPerSocket.
+  let requestsCount = 0;
 
   // Like node:_http_common: the parser hands fields to kOnHeaders when its 32-field buffer is
   // full, and all trailers. After the first such flush on a connection, kOnHeadersComplete
@@ -413,6 +418,7 @@ function connectionListenerHTTP1(server, socket, options) {
     }
 
     socket[kHttp1ActiveRequests]++;
+    socket[kHttp1HadRequest] = true;
 
     req = new IncomingMessageClass(socket);
     req.socket = socket;
@@ -450,7 +456,8 @@ function connectionListenerHTTP1(server, socket, options) {
     // reads them to decide the Keep-Alive auto-header bits, so the fallback
     // path must carry them too or keep-alive responses lose their timeout line.
     res._keepAliveTimeout = keepAliveTimeout;
-    res._maxRequestsPerSocket = server.maxRequestsPerSocket;
+    const { maxRequestsPerSocket } = server;
+    res._maxRequestsPerSocket = maxRequestsPerSocket;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
@@ -493,6 +500,23 @@ function connectionListenerHTTP1(server, socket, options) {
     // Node's parserOnIncoming read gate: stop reading once the connection's
     // outgoing side is backed up, so pipelined requests cannot flood it.
     maybePauseFallbackReads(socket);
+
+    // Like Node's parserOnIncoming: upgrades (handed off above) are not counted, and the socket is never closed here.
+    if (
+      versionMajor === 1 &&
+      versionMinor === 1 &&
+      typeof maxRequestsPerSocket === "number" &&
+      maxRequestsPerSocket > 0
+    ) {
+      requestsCount++;
+      res.maxRequestsOnConnectionReached = maxRequestsPerSocket <= requestsCount;
+      if (maxRequestsPerSocket < requestsCount) {
+        server.emit("dropRequest", req, socket);
+        res.writeHead(503);
+        res.end();
+        return 0;
+      }
+    }
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
     // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).
@@ -656,7 +680,7 @@ function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;
   for (const socket of connections) {
-    if (!socket[kHttp1ActiveRequests] && !socket.destroyed) {
+    if (!socket[kHttp1ActiveRequests] && socket[kHttp1HadRequest] && !socket.destroyed) {
       socket.destroy();
     }
   }

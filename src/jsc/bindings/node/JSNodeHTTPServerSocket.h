@@ -171,6 +171,7 @@ public:
     }
 
     void detach();
+    void reset();
     void syncPeerCertificateVerification();
     void onClose(int readError, bool peerEnded);
     void onDrain();

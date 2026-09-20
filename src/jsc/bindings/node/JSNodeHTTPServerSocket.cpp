@@ -115,6 +115,13 @@ void JSNodeHTTPServerSocket::close()
     }
 }
 
+void JSNodeHTTPServerSocket::reset()
+{
+    if (socket) {
+        us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+    }
+}
+
 template<bool SSL>
 static void onNodeHttpReadsResumable(us_socket_t* socket);
 

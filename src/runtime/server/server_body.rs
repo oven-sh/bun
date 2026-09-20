@@ -1669,15 +1669,13 @@ where
             // SAFETY: from_js returns a live *mut NodeHTTPResponse; shared —
             // its mutable state is `Cell`/`JsCell` and `upgrade` takes `&self`.
             let node_http_response = unsafe { &*node_http_response };
-            if node_http_response
-                .flags
-                .get()
-                .contains(NodeHTTPResponseFlags::ENDED)
-                || node_http_response
+            let is_ended_or_closed = || {
+                node_http_response
                     .flags
                     .get()
-                    .contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
-            {
+                    .intersects(NodeHTTPResponseFlags::ENDED | NodeHTTPResponseFlags::SOCKET_CLOSED)
+            };
+            if is_ended_or_closed() {
                 return Ok(JSValue::FALSE);
             }
 
@@ -1756,6 +1754,10 @@ where
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
+                        }
+                        // Option getters and the headers conversion may have ended the response.
+                        if is_ended_or_closed() {
+                            return Ok(JSValue::FALSE);
                         }
                         if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written
@@ -3630,6 +3632,9 @@ fn server_set_on_connection(
                 // SAFETY: as_ returned a non-null *mut to a live server; nothing
                 // here re-enters through it, so each scoped access is exclusive.
                 if let Some(app) = unsafe { (*this_ptr).app } {
+                    // The filter is registered once per native server: `bun --hot` gets here again, and the thunk reads the slot at call time.
+                    // SAFETY: see above — shared read scoped to this statement.
+                    let first = unsafe { (*this_ptr).on_connection.is_empty() };
                     // SAFETY: see above — `&mut` scoped to this statement.
                     unsafe {
                         (*this_ptr).on_connection = callback;
@@ -3657,8 +3662,10 @@ fn server_set_on_connection(
                         let this = unsafe { &*user_data.cast::<$T>() };
                         crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
                     }
-                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());
+                    if first {
+                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                        bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());
+                    }
                 }
                 return Ok(JSValue::UNDEFINED);
             }

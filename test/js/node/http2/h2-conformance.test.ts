@@ -1546,15 +1546,34 @@ describe("a PUSH_PROMISE over the send limit (RFC 9113 §8.4)", () => {
   const endOfStream = (id: number) => (f: Frame) =>
     f.streamId === id && f.type === FrameType.DATA && (f.flags & 0x1) !== 0;
 
+  // What the pushStream() callback does with the reserved stream.
+  const answers = {
+    respondAndEnd(pushed: http2.ServerHttp2Stream) {
+      pushed.respond({ ":status": 200 });
+      pushed.end("pushed body");
+    },
+    respond: (pushed: http2.ServerHttp2Stream) => pushed.respond({ ":status": 200 }),
+    close: (pushed: http2.ServerHttp2Stream) => pushed.close(),
+    cancel: (pushed: http2.ServerHttp2Stream) => pushed.close(ErrorCode.CANCEL),
+  };
+
   // The handler pushes, then answers the parent in the same tick. The callback answers the push,
   // at once or from a microtask (an async callback that awaits a settled promise).
   async function pushWith(
     fields: http2.OutgoingHttpHeaders,
     {
       options = {},
+      pushOptions = {},
       refused = true,
+      answer = answers.respondAndEnd,
       answerFromMicrotask = false,
-    }: { options?: http2.ServerOptions; refused?: boolean; answerFromMicrotask?: boolean } = {},
+    }: {
+      options?: http2.ServerOptions;
+      pushOptions?: http2.StreamResponseOptions;
+      refused?: boolean;
+      answer?: (pushed: http2.ServerHttp2Stream) => void;
+      answerFromMicrotask?: boolean;
+    } = {},
   ) {
     const parent: string[] = [];
     const push: string[] = [];
@@ -1572,22 +1591,24 @@ describe("a PUSH_PROMISE over the send limit (RFC 9113 §8.4)", () => {
         parent.push(`close ${stream.rstCode}`);
         parentClosed.resolve();
       });
-      stream.pushStream({ ":path": "/pushed", ...fields }, (err: NodeJS.ErrnoException | null, pushed) => {
-        push.push(`callback ${err?.code ?? null} id=${pushed?.id}`);
+      const onPush = (err: NodeJS.ErrnoException | null, pushed: http2.ServerHttp2Stream) => {
+        push.push(`callback ${err?.code ?? null} id=${pushed?.id} ended=${pushed?.writableEnded}`);
         if (err) return pushClosed.reject(err);
         pushed.on("error", (e: NodeJS.ErrnoException) => push.push(`error ${e.code}: ${e.message}`));
+        pushed.on("aborted", () => push.push("aborted"));
+        pushed.on("finish", () => push.push("finish"));
         pushed.on("close", () => {
           push.push(`close ${pushed.rstCode}`);
           pushClosed.resolve();
         });
-        const answer = () => {
-          pushed.respond({ ":status": 200 });
-          pushed.end("pushed body");
-          push.push("respond() and end() returned");
+        const run = () => {
+          answer(pushed);
+          push.push("answered");
         };
-        if (answerFromMicrotask) Promise.resolve().then(answer).catch(pushClosed.reject);
-        else answer();
-      });
+        if (answerFromMicrotask) Promise.resolve().then(run).catch(pushClosed.reject);
+        else run();
+      };
+      stream.pushStream({ ":path": "/pushed", ...fields }, pushOptions, onPush);
       stream.respond({ ":status": 200 });
       stream.end("x");
     });
@@ -1614,8 +1635,8 @@ describe("a PUSH_PROMISE over the send limit (RFC 9113 §8.4)", () => {
     wire: ["1 HEADERS", "1 DATA END_STREAM", `0 GOAWAY ${ErrorCode.NO_ERROR} last=1`],
     parent: [`frameError ${FrameType.PUSH_PROMISE} ${ErrorCode.FRAME_SIZE_ERROR}`, `close ${ErrorCode.NO_ERROR}`],
     push: [
-      "callback null id=2",
-      "respond() and end() returned",
+      "callback null id=2 ended=false",
+      "answered",
       "error ERR_HTTP2_STREAM_ERROR: Stream closed with error code NGHTTP2_INTERNAL_ERROR",
       `close ${ErrorCode.INTERNAL_ERROR}`,
     ],
@@ -1652,6 +1673,32 @@ describe("a PUSH_PROMISE over the send limit (RFC 9113 §8.4)", () => {
   test("the reserved stream stays usable for the rest of the tick", async () => {
     const outcome = await pushWith({ "x-big": big(90_000) }, { answerFromMicrotask: true });
     expect(outcome).toEqual(onlyThePushFails);
+  });
+
+  // Like a push that was sent, the writable is already ended when the callback runs, so the
+  // failure is not an abort.
+  test.each<[string, http2.OutgoingHttpHeaders, http2.StreamResponseOptions]>([
+    ["a HEAD push", { ":method": "HEAD", "x-big": big(90_000) }, {}],
+    ["a push with endStream", { "x-big": big(90_000) }, { endStream: true }],
+  ])("%s over the limit reaches the callback ended", async (_, fields, pushOptions) => {
+    const { push } = await pushWith(fields, { pushOptions, answer: answers.respond });
+    expect(push).toEqual([
+      "callback null id=2 ended=true",
+      "answered",
+      "error ERR_HTTP2_STREAM_ERROR: Stream closed with error code NGHTTP2_INTERNAL_ERROR",
+      `close ${ErrorCode.INTERNAL_ERROR}`,
+    ]);
+  });
+
+  test.each([
+    ["close()", answers.close, ErrorCode.NO_ERROR],
+    ["close(NGHTTP2_CANCEL)", answers.cancel, ErrorCode.CANCEL],
+  ])("a refused push that the callback ends with %s keeps that code", async (_, answer, code) => {
+    const { push, wire } = await pushWith({ "x-big": big(90_000) }, { answer });
+    expect({ push, wire }).toEqual({
+      push: ["callback null id=2 ended=false", "aborted", "answered", "finish", `close ${code}`],
+      wire: onlyThePushFails.wire,
+    });
   });
 
   test("an unanswered parent is reset and a stream in flight still completes", async () => {

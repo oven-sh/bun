@@ -1310,9 +1310,8 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     if (entry == signalNumberToNamesMap->end()) [[unlikely]]
         return false;
 
-    // Node starts one watcher per event name, so the listeners of every name of the number run:
+    // Like Node's one watcher per event name, every name that has a listener now gets the event:
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/signal.js#L22-L41
-    // A name that gets its first listener during this delivery has no watcher yet in Node, so it waits for the next one.
     Vector<Identifier, 2> eventNames;
     for (const String& signalName : entry->value) {
         Identifier eventName = Identifier::fromString(vm, signalName);

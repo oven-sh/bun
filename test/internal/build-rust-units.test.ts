@@ -396,14 +396,16 @@ describe("buildRustGraph + unitManifest", () => {
     ...["-C", `metadata=${bin.symbolHash}`, "--out-dir", targetDir, "--target", triple],
     ...["-C", "linker=link.exe", "-C", "strip=symbols"],
     ...searchPaths,
-    // A link reads object code: the dependency's rlib, not its metadata.
-    ...["--extern", `dep_a=${dep.output}`],
+    // A link reads the dependency's object code from its rlib and, as the rlib does not embed it, its metadata
+    // from the rmeta.
+    ...["--extern", `dep_a=${dep.output}`, "--extern", `dep_a=${dep.rmeta}`],
     ...["-Cpanic=immediate-abort", "-Z", "binary-dep-depinfo"],
   ];
   const DEP_ARGS = (dep: RustUnit) => [
     ...["--crate-name", "dep_a", "--edition=2024", "/cargo/registry/dep-a/src/lib.rs"],
     ...diagnostics,
     ...["--crate-type", "lib", `--emit=dep-info=${join(targetDir, "deps", `dep_a-${dep.hash}.d`)},metadata,link`],
+    ...["-Z", "embed-metadata=no"],
     ...["-C", "opt-level=z", "-C", "panic=abort", "-C", "linker-plugin-lto", "-C", "codegen-units=1"],
     ...checkCfg,
     ...["-C", `metadata=${dep.symbolHash}`, "-C", `extra-filename=-${dep.hash}`],

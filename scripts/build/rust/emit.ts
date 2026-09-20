@@ -26,7 +26,7 @@ import { type PlanInput, planInputPath, planPath } from "./plan.ts";
 import {
   type ManifestContext,
   externDeps,
-  externPath,
+  externPaths,
   isRootKind,
   transitiveLinkInputs,
   unitManifest,
@@ -160,7 +160,7 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
     // What rebuilds this unit: the artifacts it names with --extern (`.rmeta`s for a library, `.rlib`s and
     // dylibs for a link), the build-script outputs run.ts reads for it, its manifest, the driver scripts; sources and
     // `include!`d files come from the depfile.
-    const externs = externDeps(unit).map(d => externPath(unit, d.unit));
+    const externs = externDeps(unit).flatMap(d => externPaths(unit, d.unit));
     const scriptOutputs =
       manifest.kind === "build-script-run"
         ? []
@@ -194,10 +194,11 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
       case "build-script":
       case "staticlib":
       case "bin": {
-        // These link, so beyond the direct `--extern`ed rlibs they read every transitive rlib through `-L`
+        // These link, so beyond the direct `--extern`ed rlibs they read every transitive rlib (and its `.rmeta`,
+        // where the metadata is) through `-L`
         // (cargo: a linking unit gets Artifact::All edges to all of them). A direct dependency's rlib being done
         // says nothing about *its* dependencies' rlibs: it was compiled against their `.rmeta`s.
-        const all = transitiveLinkInputs(unit).map(u => u.output);
+        const all = transitiveLinkInputs(unit).flatMap(u => (u.rmeta !== undefined ? [u.output, u.rmeta] : [u.output]));
         const what = isRootKind(manifest.kind) ? `→ ${basename(unit.output)}` : "";
         n.build({
           outputs: [unit.output, ...(manifest.binDestination !== undefined ? [manifest.binDestination] : [])],

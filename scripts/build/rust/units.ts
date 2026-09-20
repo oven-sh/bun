@@ -455,6 +455,9 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   // cargo: dep-info,metadata,link for rlib-only libs (pipelining), dep-info,link for everything that links.
   args.push(
     unit.kind === "lib" ? `--emit=dep-info=${unit.depInfo},metadata,link` : `--emit=dep-info=${unit.depInfo},link`,
+    // A library's metadata lives in its `.rmeta` alone, not a second time inside the `.rlib` (cargo does the same
+    // on nightly): less to write and keep. What links the `.rlib` is given the `.rmeta` beside it (externPaths).
+    ...(unit.kind === "lib" ? ["-Z", "embed-metadata=no"] : []),
   );
   if (unit.kind === "proc-macro") args.push("-C", "prefer-dynamic");
 
@@ -527,7 +530,9 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
       o => o !== "",
     );
     if (opts.length > 0) externOpts = true;
-    args.push("--extern", `${opts.length > 0 ? opts.join(",") + ":" : ""}${d.externName}=${externPath(unit, d.unit)}`);
+    for (const path of externPaths(unit, d.unit)) {
+      args.push("--extern", `${opts.length > 0 ? opts.join(",") + ":" : ""}${d.externName}=${path}`);
+    }
   }
   if (unit.kind === "proc-macro") args.push("--extern", "proc_macro");
   if (externOpts) args.push("-Z", "unstable-options");
@@ -676,9 +681,11 @@ export function externDeps(unit: RustUnit): UnitDep[] {
  * a proc-macro's dylib; a lib's `.rmeta` when both sides are pipelined rlib builds (the dependent needs
  * type information only); its `.rlib` when the dependent links (staticlib, proc-macro, build script).
  */
-export function externPath(unit: RustUnit, dep: RustUnit): string {
-  if (dep.kind === "proc-macro") return dep.output;
-  return requiresUpstreamObjects(unit) ? dep.output : dep.rmeta!;
+export function externPaths(unit: RustUnit, dep: RustUnit): string[] {
+  if (dep.kind === "proc-macro") return [dep.output];
+  // A unit that links reads the library's object code from the `.rlib` and, since that no longer carries the
+  // metadata (`-Z embed-metadata=no`), the metadata from the `.rmeta`: cargo names both, in this order.
+  return requiresUpstreamObjects(unit) ? [dep.output, dep.rmeta!] : [dep.rmeta!];
 }
 
 /** cargo `Unit::requires_upstream_objects`: does compiling this unit link (so it needs deps' object code, not just metadata)? */

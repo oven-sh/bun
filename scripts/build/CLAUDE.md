@@ -87,14 +87,13 @@ Edge dependency types:
 ## Iterating on the build system
 
 ```sh
-bun scripts/build.ts --configure-only       # regenerate build.ninja, don't run ninja; prints the ninja to run
+bun scripts/build.ts --configure-only       # regenerate build.ninja, don't run ninja
 bunx tsc --noEmit -p scripts/build/tsconfig.json   # typecheck
 grep "yourtarget\|yourrule" build/debug/build.ninja  # inspect generated output
 bun run build --target=<target>             # build a specific target (e.g. tinycc, bun-rust)
-# $NINJA below is the path `--configure-only` prints (`run: <ninja> -C …`): the build pins its own ninja
-# (ninja-release.ts), and another version run in the same directory starts its build log over → full rebuild.
-$NINJA -C build/debug -t query <target>     # why does <target> rebuild?
-$NINJA -C build/debug -t deps <target>      # what headers does foo.o depend on?
+bun run build -n -d explain                 # what would rebuild, and why (dry run)
+bun run build -t query <target>             # <target>'s inputs and outputs
+bun run build -t deps <target>              # what headers does foo.o depend on?
 ```
 
 The generated `build.ninja` is the ground truth. If an edge isn't doing what you expect, read it there first.
@@ -105,12 +104,15 @@ The generated `build.ninja` is the ground truth. If an edge isn't doing what you
 
 | Arg shape                                          | Goes to                                        |
 | -------------------------------------------------- | ---------------------------------------------- |
-| `-j<N>`, `-k<N>`, `-l<N>`, `-v`                    | ninja                                          |
+| `-j<N>`, `-k<N>`, `-l<N>`, `-v`, `-n`, `-d <mode>` | ninja                                          |
+| `-t <tool> [args…]`                                | the ninja tool, and nothing else (see below)   |
 | `--configure-only`, `--help`                       | build.ts                                       |
 | `--<known-field>=<val>` or `--<known-field> <val>` | build.ts (profile/target/config overrides)     |
 | `--`                                               | ends parsing — rest to runtime unconditionally |
 | `--<unknown-field>=<val>`                          | **errors** (typo detection)                    |
 | Anything else                                      | runtime, and everything after too              |
+
+Everything ninja does goes through build.ts, never a bare `ninja`: the build runs a pinned ninja (`ninja-release.ts`), and a different version in the same directory can start the build log over. `-t <tool>` (`query`, `deps`, `commands`, `targets`, …) runs that ninja's tool on the build directory as it is, without configuring or building, and everything after `-t` is the tool's.
 
 Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `bun bd test --asan=off foo.ts` sends `--asan=off` to bun-debug. Use `--` when a runtime flag collides with a build flag: `bun bd -- --target=browser script.ts`.
 

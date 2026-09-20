@@ -95,10 +95,6 @@ Get-Command mt
 
 ```ps1
 bun run build
-
-# after the initial `bun run build` you can also run ninja directly: use the one the build runs,
-# which `bun scripts/build.ts --configure-only` prints (another ninja version would rebuild everything)
-& "<path printed by --configure-only>" -Cbuild/debug
 ```
 
 A successful build writes `bun-debug.exe` to the `build/debug` folder.

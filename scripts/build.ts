@@ -13,7 +13,8 @@
  * after go to the built binary. `--` forces the cutoff. When exec-args are
  * present, build output is suppressed unless the build fails.
  *
- *   -j/-k/-l/-v                     → ninja
+ *   -j/-k/-l/-v/-n, -d <mode>       → ninja
+ *   -t <tool> [args…]               → the ninja tool, on the build directory as it is (no configure, no build)
  *   --configure-only, --quiet, --help  → here
  *   --<field>=<v> or --<field> <v>  → here (profile/target/config override)
  *   --<unknown>=<v>                 → error (typo check)
@@ -21,7 +22,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   canTraceOrderFile,
@@ -41,7 +42,8 @@ import {
   verifyOrderFileApplied,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
-import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
+import { configOf, configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
+import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { BuildError } from "./build/error.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
@@ -74,6 +76,20 @@ async function main(): Promise<void> {
   }
 
   const args = parseArgs(process.argv.slice(2));
+
+  // A ninja tool (`-t query <target>`, `-t deps <object>`, `-t commands`, …) inspects what the last configure and
+  // build left behind, so it runs on the build directory as it is, with the ninja the build runs.
+  if (args.ninjaTool !== undefined) {
+    const { cfg } = configOf({ profile: args.profile, overrides: args.overrides });
+    if (!existsSync(join(cfg.buildDir, "build.ninja"))) {
+      throw new BuildError(`${cfg.buildDir} has not been configured`, {
+        hint: "Build it, or configure it with --configure-only, using the same profile flags.",
+      });
+    }
+    const tool = spawnSync(ninjaIfPresent(cfg), ["-C", cfg.buildDir, "-t", ...args.ninjaTool], { stdio: "inherit" });
+    if (tool.error) throw new BuildError(`Failed to run ninja`, { cause: tool.error });
+    process.exit(tool.status ?? 1);
+  }
 
   // Skip on --configure-only / --config-file (ninja regen): those paths
   // return before spawning ninja, so the NO_PROXY mutation can't reach any
@@ -238,13 +254,7 @@ async function main(): Promise<void> {
       }
     }
 
-    if (args.configureOnly) {
-      // Hint only for manual --configure-only, not generator replay.
-      if (!args.configFile) {
-        process.stderr.write(`run: ${result.ninja} -C ${result.cfg.buildDir}\n`);
-      }
-      return;
-    }
+    if (args.configureOnly) return;
     // FD 3 sideband — only when interactive. stream.ts (wrapping deps and
     // the cargo plan) writes live output there, bypassing ninja's per-job buffering.
     // A human watching a terminal wants to see cmake configure spew and
@@ -401,8 +411,10 @@ interface CliArgs {
   configureOnly: boolean;
   /** Suppress build output unless it fails. Also auto-enabled when execArgs present. */
   quiet: boolean;
-  /** Extra ninja args (e.g. -j8, -v). */
+  /** Extra ninja args (e.g. -j8, -v, -n, -d explain). */
   ninjaArgs: string[];
+  /** `-t <tool> [args…]`: run this ninja tool instead of configuring and building. */
+  ninjaTool: string[] | undefined;
   /**
    * Args to exec the built binary with. First bare positional and everything
    * after. Empty = just build, don't exec.
@@ -421,7 +433,8 @@ interface CliArgs {
  *   --<field>=<value>         Override any PartialConfig boolean/string field
  *   --target=<name>           Build a specific ninja target (repeatable)
  *   --configure-only          Emit build.ninja, don't run it
- *   -j<N> / -v / -k<N>        Passed through to ninja
+ *   -j<N> / -v / -k<N> / -n / -d <mode>   Passed through to ninja
+ *   -t <tool> [args…]         Run a ninja tool on the build directory; everything after -t is the tool's
  *   <args...>                 Exec the built binary with these args
  *
  * First bare positional ends flag parsing — everything after goes to the
@@ -435,6 +448,7 @@ function parseArgs(argv: string[]): CliArgs {
   const overrides: PartialConfig = {};
   const ninjaTargets: string[] = [];
   const ninjaArgs: string[] = [];
+  let ninjaTool: string[] | undefined;
   const execArgs: string[] = [];
   let configureOnly = false;
   let quiet = false;
@@ -495,9 +509,19 @@ function parseArgs(argv: string[]): CliArgs {
       continue;
     }
 
-    // Ninja passthrough: -j<N>, -v, -k<N>, -l<N>. Short flags only —
+    // A ninja tool: it and everything after it are ninja's (a tool's arguments are positionals).
+    if (arg === "-t") {
+      ninjaTool = argv.slice(i + 1);
+      break;
+    }
+
+    // Ninja passthrough: -j<N>, -v, -k<N>, -l<N>, -n, -d <mode>. Short flags only —
     // anything starting with `--` is OURS.
-    if (/^-[jklv]/.test(arg)) {
+    if (arg === "-d" && i + 1 < argv.length) {
+      ninjaArgs.push(arg, argv[++i]!);
+      continue;
+    }
+    if (/^-[jklvnd]/.test(arg)) {
       ninjaArgs.push(arg);
       continue;
     }
@@ -578,7 +602,7 @@ function parseArgs(argv: string[]): CliArgs {
     }
   }
 
-  return { profile, overrides, ninjaTargets, ninjaArgs, execArgs, configureOnly, quiet, configFile };
+  return { profile, overrides, ninjaTargets, ninjaArgs, ninjaTool, execArgs, configureOnly, quiet, configFile };
 }
 
 function parseBool(v: string): boolean {

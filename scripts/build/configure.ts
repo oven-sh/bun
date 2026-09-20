@@ -286,6 +286,17 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * no buildDir is set, one is computed from the build type (build/debug,
  * build/release, etc).
  */
+/** The Config an input stands for. Writes and fetches nothing: for configure, and for what only needs to find a build directory. */
+export function configOf(input: ConfigureInput): { cfg: Config; toolchain: Toolchain } {
+  // Expand profile → PartialConfig. Overrides win.
+  const partial: PartialConfig = {
+    ...(input.profile !== undefined ? getProfile(input.profile) : {}),
+    ...(input.overrides ?? {}),
+  };
+  const toolchain = resolveToolchain(partial.os, partial.packageManager);
+  return { cfg: resolveConfig(partial, toolchain), toolchain };
+}
+
 /**
  * `fromNinja`: this run is ninja's own `regen` edge replaying configure.json
  * (build.ts --config-file), as opposed to build.ts configuring before it
@@ -298,15 +309,8 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
     if (trace) process.stderr.write(`  ${label}: ${Math.round(performance.now() - start)}ms\n`);
   };
 
-  // Expand profile → PartialConfig. Overrides win.
-  const partial: PartialConfig = {
-    ...(input.profile !== undefined ? getProfile(input.profile) : {}),
-    ...(input.overrides ?? {}),
-  };
-
-  const toolchain = resolveToolchain(partial.os, partial.packageManager);
-  mark("resolveToolchain");
-  const cfg = resolveConfig(partial, toolchain);
+  const { cfg, toolchain } = configOf(input);
+  mark("resolveConfig");
 
   validateBunConfig(cfg);
   // Not cfg.ci or cfg.buildkite: those are what a ci-* profile asks for, and a

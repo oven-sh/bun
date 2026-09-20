@@ -13,6 +13,11 @@ test("a string comes back from YAML as the same string", () => {
     "exponent": "1e3",
     "hex": "0x10",
     "leading-dot": ".5",
+    "octal": "0777",
+    "binary": "0b101",
+    "date": "2026-09-20",
+    "sexagesimal": "1:30",
+    "y": "y",
     "yes": "yes",
     "true": "true",
     "null": "null",
@@ -22,7 +27,10 @@ test("a string comes back from YAML as the same string", () => {
     "base-image": "ubuntu/images/hvm-ssd-gp3/ubuntu-plucky-25.04-amd64-server-20251210",
     "path": "C:\\intel-sde",
   };
-  expect(Bun.YAML.parse(toYaml({ steps: [{ key: "bake", agents }] }))).toEqual({ steps: [{ key: "bake", agents }] });
+  // A list item is a string too: a command with ": " in it would otherwise read as a mapping.
+  const command = ["echo key: value", "099720109477", 'buildkite-agent artifact download "build/ci-images/x/*" .'];
+  const pipeline = { steps: [{ key: "bake", agents, command }] };
+  expect(Bun.YAML.parse(toYaml(pipeline))).toEqual(pipeline);
 });
 
 test("numbers, booleans and null stay what they are, and undefined is left out", () => {

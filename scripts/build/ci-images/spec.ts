@@ -1231,20 +1231,33 @@ function agentService(): Tool {
  */
 function recordImage(image: BakedImage): Tool {
   const record = locations.imageRecord[image.os];
-  const installedPackages: Step =
+  // sh has no pipefail: a query whose output went straight into sort and sed could fail and leave a record
+  // with no packages. So the query is a statement of its own, into a scratch file, and the rest reads the file.
+  const queried = scratch("packages");
+  const installedPackages: Step[] =
     image.os === "windows"
-      ? pipe(
-          printLine(
-            // Out-String: one string for ConvertFrom-Json, whatever it does with several.
-            property(pipe(cmdlet("scoop", {}, "export"), cmdlet("Out-String"), cmdlet("ConvertFrom-Json")), "apps"),
+      ? [
+          toFile(
+            pipe(
+              // Out-String: one string for ConvertFrom-Json, whatever it does with several.
+              printLine(
+                property(pipe(cmdlet("scoop", {}, "export"), cmdlet("Out-String"), cmdlet("ConvertFrom-Json")), "apps"),
+              ),
+              cmdlet("ForEach-Object", {}, expression(`{ "$($_.Name) $($_.Version)" }`)),
+            ),
+            queried,
           ),
-          cmdlet("ForEach-Object", {}, expression(`{ "$($_.Name) $($_.Version)" }`)),
-        )
+        ]
       : image.distro === "alpine"
-        ? // "name-version arch {origin} (license) [installed]"
-          pipe(run("apk", "list", "--installed"), run("cut", "-d", " ", "-f1"))
-        : // binary:Package says which architecture a package of another one is for (libc6:amd64 on the arm64 build image).
-          run("dpkg-query", "--show", "--showformat", "${binary:Package} ${Version}\\n");
+        ? [
+            toFile(run("apk", "list", "--installed"), scratch("apk-list")),
+            // "name-version arch {origin} (license) [installed]"
+            toFile(run("cut", "-d", " ", "-f1", scratch("apk-list")), queried),
+          ]
+        : [
+            // binary:Package says which architecture a package of another one is for (libc6:amd64 on the arm64 build image).
+            toFile(run("dpkg-query", "--show", "--showformat", "${binary:Package} ${Version}\\n"), queried),
+          ];
   const recorded = (tool: Tool): string => {
     const { identity } = tool;
     const value =
@@ -1266,7 +1279,8 @@ function recordImage(image: BakedImage): Tool {
             toFile(prefixed(`observed ${tool.name}: `, linesOf(observation)), record, { append: true }),
           ];
         }),
-      toFile(prefixed("package ", sorted(installedPackages)), record, { append: true }),
+      ...installedPackages,
+      toFile(prefixed("package ", sorted(linesOf(queried))), record, { append: true }),
     ];
   };
   return { name: "record-image", identity: configuration, steps: [c => render(steps(), c)] };

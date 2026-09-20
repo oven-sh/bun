@@ -792,12 +792,12 @@ export function printEnvironment(): void {
 }
 
 /**
- * A string that YAML, unquoted, reads as a number, a boolean or null. An AWS
- * account id is one: "099720109477" became the number 99720109477, and the
- * agent tag lost its zero. So is a release like "3.20", which is 3.2.
+ * A value as YAML reads it back. A string is always quoted, as JSON, which YAML
+ * reads as the same string: bare, YAML reads many strings as something else.
+ * An AWS account id is one ("099720109477" became the number 99720109477 and
+ * the agent tag lost its zero), and so are "3.20", "yes" and "2026-09-20".
  */
-const yamlReadsAsSomethingElse =
-  /^(|~|null|true|false|yes|no|on|off|[-+]?(\d[\d_]*)?(\.\d*)?(e[-+]?\d+)?|0x[\da-f]+|0o[0-7]+|[-+]?\.(inf|nan))$/i;
+const yamlScalar = (value: unknown) => (typeof value === "string" ? JSON.stringify(value) : String(value));
 
 /** The pipeline, as the YAML `buildkite-agent pipeline upload` reads. */
 export function toYaml(obj: object, indent = 0): string {
@@ -806,10 +806,6 @@ export function toYaml(obj: object, indent = 0): string {
   const entries: [string, unknown][] = Object.entries(obj);
   for (const [key, value] of entries) {
     if (value === undefined) {
-      continue;
-    }
-    if (value === null) {
-      result += `${spaces}${key}: null\n`;
       continue;
     }
     if (Array.isArray(value)) {
@@ -821,43 +817,16 @@ export function toYaml(obj: object, indent = 0): string {
             .map(line => `${spaces}  ${line}`)
             .join("\n")}\n`;
         } else {
-          result += `${spaces}- ${item}\n`;
+          result += `${spaces}- ${yamlScalar(item)}\n`;
         }
       });
       continue;
     }
-    if (typeof value === "object") {
+    if (typeof value === "object" && value !== null) {
       result += `${spaces}${key}:\n${toYaml(value, indent + 2)}`;
       continue;
     }
-    if (
-      typeof value === "string" &&
-      (yamlReadsAsSomethingElse.test(value) ||
-        value.includes(":") ||
-        value.includes("#") ||
-        value.includes("'") ||
-        value.includes('"') ||
-        value.includes("\\") ||
-        value.includes("\n") ||
-        value.includes("*") ||
-        value.includes("&") ||
-        value.includes("!") ||
-        value.includes("|") ||
-        value.includes(">") ||
-        value.includes("%") ||
-        value.includes("@") ||
-        value.includes("`") ||
-        value.includes("{") ||
-        value.includes("}") ||
-        value.includes("[") ||
-        value.includes("]") ||
-        value.includes(",") ||
-        value.includes(";"))
-    ) {
-      result += `${spaces}${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
-      continue;
-    }
-    result += `${spaces}${key}: ${value}\n`;
+    result += `${spaces}${key}: ${yamlScalar(value)}\n`;
   }
   return result;
 }

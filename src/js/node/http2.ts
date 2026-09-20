@@ -3209,6 +3209,7 @@ class ServerHttp2Stream extends Http2Stream {
       }
     }
     // RFC 9113 §8.4: a pushed (even-id) stream cannot itself initiate a push.
+    // node reads pushAllowed first. Here a pushed stream is `closed` right after its end(), so this check leads.
     if ((this.id & 1) === 0) {
       const err = new Error("A push stream cannot initiate another push stream.");
       err.code = "ERR_HTTP2_NESTED_PUSH";

@@ -17,12 +17,12 @@
 
 import { basename, resolve } from "node:path";
 import type { Config } from "../config.ts";
+import { assert } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
 import type { Ninja } from "../ninja.ts";
 import { quote } from "../shell.ts";
 import { streamPath } from "../stream.ts";
 import { type PlanInput, planInputPath, planPath } from "./plan.ts";
-import { assert } from "../error.ts";
 import {
   type ManifestContext,
   externDeps,

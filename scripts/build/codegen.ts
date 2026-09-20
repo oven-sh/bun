@@ -456,9 +456,12 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
  * Release builds embed these via `bun_zstd::embed_compressed!` and inflate on
  * first use instead of carrying the plain text in `.rodata`. Anything that runs
  * inside Bun (builtin modules, bake.server.js, FFI headers, …) stays as-is.
+ * The C compiler's own headers (`src/cc/include`) are here too: they are text
+ * that is read only when a C file being compiled includes one, and `arm_neon.h`
+ * alone is 350 KB of the 450.
  * Output: `<codegenDir>/compressed/<name>.zst`.
  */
-function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
+function emitCompressedEmbeds({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "compress-embed.ts");
   const assets: { input: string; name: string }[] = [
     // Repo files, named by repo-relative path.
@@ -467,6 +470,7 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
       "completions/bun.zsh",
       "completions/bun.fish",
       "src/runtime/bake/bun-framework-react/client.tsx",
+      ...sources.ccHeaders.map(header => relative(cfg.cwd, header).replace(/\\/g, "/")),
     ].map(rel => ({ input: resolve(cfg.cwd, rel), name: rel })),
     // Codegen outputs (browser bundles), named `codegen/<path in codegenDir>`.
     ...[

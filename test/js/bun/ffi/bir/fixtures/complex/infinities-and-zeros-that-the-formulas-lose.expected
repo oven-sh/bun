@@ -1,0 +1,26 @@
+static: divided by zero              inf inf
+static: infinite times finite        inf inf
+static: finite over infinite         0 0
+static: infinite over finite         inf -inf
+static: infinite times a NaN         nan inf
+static: of floats                    inf inf
+static: nothing to recover           1 1
+(1+2i) / (0+0i)                      inf inf
+(1+2i) / (-0+0i)                     -inf -inf
+(inf+inf i) * (1+0i)                 inf inf
+(1+0i) * (inf+inf i)                 inf inf
+(inf+inf i) * (inf+inf i)            nan inf
+(inf+0i) * (nan+1i)                  nan inf
+(1+1i) / (inf+inf i)                 0 0
+(inf+1i) / (2+3i)                    inf -inf
+(-inf+inf i) / (2+3i)                nan inf
+(1e308+1e308i) * (1e308+1e308i)      nan inf
+(nan+1i) * (2+3i) is two NaNs        nan nan
+1 / (0+0i), a real dividend          inf nan
+floats: (inf+inf i) * (1+0i)         inf inf
+floats: (1+1i) / (0+0i)              inf inf
+floats: (3e38+3e38i) * (3e38+3e38i)  nan inf
+*=                                   inf inf
+/=                                   inf inf
+/= of floats                         0 0
+ordinary                             12 3

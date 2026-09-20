@@ -43,6 +43,9 @@ pub struct ResolvedSource {
     /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
     /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
     pub origin_path: BunString,
+    /// For a C file (`Tag::ExportsObject` whose `jsvalue_for_export` is the object of its
+    /// functions): the loaded module, whose constructors evaluating the module runs.
+    pub c_module: Option<core::ptr::NonNull<core::ffi::c_void>>,
 }
 
 /// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; }`
@@ -121,5 +124,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 144, 8; is_prelinked_module @ 77, bytecode_cache @ 80, module_info @ 104, c_module @ 136);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17);

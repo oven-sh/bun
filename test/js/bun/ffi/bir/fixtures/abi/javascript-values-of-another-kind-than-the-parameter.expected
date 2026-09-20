@@ -1,0 +1,35 @@
+a subarray => 30
+a typed array at an offset => 20
+an ArrayBuffer => 10
+a DataView at an offset => 40
+an Int32Array of the same buffer => 673059850
+null => -1
+undefined => -1
+a Buffer with a terminator => 5
+a string threw TypeError
+an object threw TypeError
+a view of a detached buffer => -1
+a BigInt => -5
+a Number => 42
+a Number with a fraction => 1
+a Number of 2 to the 63 => -9223372036854775808
+a BigInt of 2 to the 64 minus 1, signed => -1
+a BigInt of 2 to the 64 minus 1, unsigned => 18446744073709551615
+a negative BigInt, unsigned => 18446744073709551615
+a string of digits threw TypeError
+too few arguments => 1
+too many arguments => 3
+a string of digits for an int threw TypeError
+an object with valueOf => 9
+a BigInt for an int => 7
+NaN and Infinity for ints => 0
+2 to the 32 plus 5 for an int => 5
+a BigInt for a double => 1.5
+a Symbol for a double threw TypeError
+a string for a double threw TypeError
+a double that does not fit a float => Infinity
+an object for a bool => true
+an empty string for a bool => false
+new threw TypeError
+call, apply, bind => 3,7,11
+name, length, typeof => add,2,function

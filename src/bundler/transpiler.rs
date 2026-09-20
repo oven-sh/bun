@@ -1851,6 +1851,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Bunsh
             | options::Loader::Sqlite
             | options::Loader::SqliteEmbedded
+            | options::Loader::C
             | options::Loader::Html => parse_unsupported_loader(loader, &path),
         }
 
@@ -3057,6 +3058,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Sqlite
             | options::Loader::Wasm
             | options::Loader::File
+            | options::Loader::C
             | options::Loader::Napi => {
                 output_file.value = self.build_copied_file_output(file_path_text, file_path_ext)?;
             }

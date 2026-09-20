@@ -1,0 +1,18 @@
+const struct pointer: 3.5 4.5
+volatile struct pointer: 3.5 4.5
+const volatile struct pointer: 3.5 4.5
+file scope const: 1.5 2.5
+file scope const volatile: 3.5 4.5
+const array element: 3 4
+const parameter: 0 8
+double: const struct pointer: 3.5 4.5
+double: file scope const: 1.5 2.5
+double: through a pointer: 0 4.5
+after ++: 4.5 4.5
+after -- twice: 2.5 4.5
+after +=: 3.5 5.5
+after writing the parts: -1 9
+written through a volatile struct pointer: -1 2
+the neighbour is untouched: 99
+double: after ++ and += on a part: 4.5 5.5
+halves: 5 6 7 8 1

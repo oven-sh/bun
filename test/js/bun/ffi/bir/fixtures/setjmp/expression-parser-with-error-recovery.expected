@@ -1,0 +1,6 @@
+(1 + 2) * (3 + 4)    error 0 result 21
+2 * (3 +             error 10 result -1
+10 / (5 - 5)         error 13 result -1
+7 + * 2              error 5 result -1
+-(-(-4)) * 2         error 0 result -8
+stress 487213344

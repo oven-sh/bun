@@ -1,0 +1,11 @@
+[
+["__builtin___strlcpy_chk(buffer, \"copied\", sizeof buffer, UNKNOWN) == 6 && strcmp(buffer, \"copied\") == 0", 1],
+["__builtin___strlcpy_chk(buffer, \"much too long to fit in there\", sizeof buffer, 16) == 29 && strcmp(buffer, \"much too long t\") == 0", 1],
+["__builtin___strlcpy_chk(buffer, \"cut\", 3, sixteen) == 3 && strcmp(buffer, \"cu\") == 0", 1],
+["__builtin___strlcat_chk(buffer, \"t and\", sizeof buffer, UNKNOWN) == 7 && strcmp(buffer, \"cut and\") == 0", 1],
+["__builtin___strlcat_chk(buffer, \" pasted on\", sizeof buffer, 16) == 17 && strcmp(buffer, \"cut and pasted \") == 0", 1],
+["__builtin___strlcat_chk(buffer, \"!\", sizeof buffer, sixteen) == 16 && strcmp(buffer, \"cut and pasted \") == 0", 1],
+["__builtin___memccpy_chk(buffer, \"key=value\", '=', 9, UNKNOWN) == buffer + 4 && memcmp(buffer, \"key=and\", 7) == 0", 1],
+["__builtin___memccpy_chk(buffer, \"no such byte\", '=', 12, 16) == NULL && memcmp(buffer, \"no such byte\", 12) == 0", 1],
+["__builtin___memccpy_chk(other, \"a,b\", ',', 3, sixteen) == other + 2 && memcmp(other, \"a,###\", 5) == 0", 1]
+]

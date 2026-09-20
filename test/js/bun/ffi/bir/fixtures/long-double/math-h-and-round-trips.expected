@@ -1,0 +1,24 @@
+0: nan 0 inf 0 finite 1 normal 0 sign 0 class zero
+-0: nan 0 inf 0 finite 1 normal 0 sign 1 class zero
+1: nan 0 inf 0 finite 1 normal 1 sign 0 class normal
+0.1: nan 0 inf 0 finite 1 normal 1 sign 0 class normal
+1e-4940: nan 0 inf 0 finite 1 normal 0 sign 0 class subnormal
+3.3621e-4932: nan 0 inf 0 finite 1 normal 1 sign 0 class normal
+1.18973e+4932: nan 0 inf 0 finite 1 normal 1 sign 0 class normal
+-1.0842e-19: nan 0 inf 0 finite 1 normal 1 sign 1 class normal
+0.333333: nan 0 inf 0 finite 1 normal 1 sign 0 class normal
+1.23457e+08: nan 0 inf 0 finite 1 normal 1 sign 0 class normal
+inf: nan 0 inf 1 finite 0 normal 0 sign 0 class infinite
+-inf: nan 0 inf 1 finite 0 normal 0 sign 1 class infinite
+nan: nan 1 inf 0 finite 0 normal 0 sign 0 class nan
+1 1 1 1 1 1
+1.414213562373095049 3.000000000000000000 5.000000000000000000
+2.718281828459045 2.302585092994046 0.841470984807897 3.141592653589793
+-2 -1 3 -2 1.5
+2 1 3 1000000000000000
+0.5714936956 333 1e+100 1.0842e-19
+-3 -0.75 1 1
+2.5 20 3 3.5 4.5
+2.5 16 32 16
+2 3.25 -1e-10
+1

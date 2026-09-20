@@ -1,0 +1,5 @@
+[
+["keeps_many_values_alive(seed, real, clobbers_everything)", 1],
+["keeps_many_values_alive(-seed, -real, clobbers_everything)", 1],
+["found == &sorted[17]", 1]
+]

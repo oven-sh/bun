@@ -1,0 +1,30 @@
+foo + foo foo + bar
+2*9*g
+F [1] [2]
+"A" "1"
+AA A2
+a + "b\n" '\''
+13 3 |
+p(a) p(a, b, c)
+p(a) p(a , b)
+<> <1> <1, (2, 3)>
+(1, 2)|h(3, 4)
+A0 () 1
+1 + 2
+2
+57 0 file 0 1 20 1
+-1
+a b
+100 other.c
+elif !defined
+elifndef
+defined and greater
+-1 is not less than 0u
+arithmetic
+characters
+conditional
+short circuit
+unknown identifiers are 0
+skipped group
+__has_include
+eaten

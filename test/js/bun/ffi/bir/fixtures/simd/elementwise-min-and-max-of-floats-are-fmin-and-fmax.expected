@@ -1,0 +1,13 @@
+min(a, b)              40000000 3f800000 c0c00000 c1000000
+min(b, a)              40000000 3f800000 c0c00000 c1000000
+max(a, b)              40000000 3f800000 40c00000 41000000
+max(b, a)              40000000 3f800000 40c00000 41000000
+min(both, plain)       40a00000 c0a00000 40400000 c0800000
+max(plain, both)       40a00000 c0a00000 40800000 c0400000
+min(both, both)        nan nan 40400000 c0400000
+min of doubles         4000000000000000 3ff0000000000000
+max of doubles         4000000000000000 3ff0000000000000
+of eight bytes         2 1 2 1
+reduce                 -7 5 -7 5
+reduce, none a number  1 1 2
+integers               -1 -2 -3 -4 -4 4

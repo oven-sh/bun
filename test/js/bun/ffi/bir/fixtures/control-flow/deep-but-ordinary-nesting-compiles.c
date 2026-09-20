@@ -1,0 +1,7 @@
+int f(void) { return ((((((((((((((((((((((((((((((((7)))))))))))))))))))))))))))))))); }
+
+int printf(const char *, ...);
+int main(void) {
+  printf("%d\n", (int)f());
+  return 0;
+}

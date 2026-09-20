@@ -1,0 +1,23 @@
+[
+["__builtin_types_compatible_p(int, int)", 1],
+["__builtin_types_compatible_p(double, double)", 1],
+["__builtin_types_compatible_p(int, long)", 0],
+["__builtin_types_compatible_p(long, float)", 0],
+["__builtin_types_compatible_p(int *, int *)", 1],
+["__builtin_types_compatible_p(short *, int *)", 0],
+["__builtin_types_compatible_p(int **, int *)", 0],
+["__builtin_types_compatible_p(const int, int)", 1],
+["__builtin_types_compatible_p(unsigned, int)", 0],
+["__builtin_types_compatible_p(signed, int)", 1],
+["__builtin_types_compatible_p(struct {int a;}, struct {int a;})", 0],
+["__builtin_types_compatible_p(int (*)(void), int (*)(void))", 1],
+["__builtin_types_compatible_p(void (*)(int), void (*)(int))", 1],
+["__builtin_types_compatible_p(void (*)(int, double), void (*)(int, double))", 1],
+["__builtin_types_compatible_p(int (*)(float, double), int (*)(float, double))", 1],
+["__builtin_types_compatible_p(int (*)(float, double), int)", 0],
+["__builtin_types_compatible_p(int (*)(float, double), int (*)(float))", 0],
+["__builtin_types_compatible_p(int (*)(float, double), int (*)(float, double, int))", 0],
+["({ typedef struct {int a;} T; __builtin_types_compatible_p(T, T); })", 1],
+["({ typedef struct {int a;} T; __builtin_types_compatible_p(T, const T); })", 1],
+["({ struct {int a; int b;} x; __builtin_types_compatible_p(typeof(x.a), typeof(x.b)); })", 1]
+]

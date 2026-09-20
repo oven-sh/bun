@@ -1,0 +1,21 @@
+[
+["check_8()", 1],
+["check_16()", 1],
+["check_24()", 1],
+["check_120()", 1],
+["check_256()", 1],
+["check_4096()", 1],
+["stepped(8)", 1],
+["stepped(16)", 1],
+["stepped(0x78)", 1],
+["stepped(255)", 1],
+["stepped(256)", 1],
+["stepped(-16)", 1],
+["stepped(-255)", 1],
+["stepped(9)", 1],
+["ok", 1],
+["ok #2", 1],
+["ok #3", 1],
+["chase(words, 64) == 0", 1],
+["ok && length == 10", 1]
+]

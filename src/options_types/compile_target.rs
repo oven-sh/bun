@@ -18,10 +18,10 @@ use bun_sys::Fd;
 #[derive(Clone, Copy)]
 pub struct CompileTarget {
     pub os: OperatingSystem,
-    pub(crate) arch: Architecture,
+    pub arch: Architecture,
     pub(crate) baseline: bool,
     pub(crate) version: Version,
-    pub(crate) libc: Libc,
+    pub libc: Libc,
 }
 
 impl Default for CompileTarget {

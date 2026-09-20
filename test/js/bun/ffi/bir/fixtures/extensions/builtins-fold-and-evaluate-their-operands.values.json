@@ -1,0 +1,20 @@
+[
+["CLZ_1 == 31 && CLZ_TOP == 0 && CLZL == (int)sizeof(long) * CHAR_BIT - 1 && CLZLL == 55", 1],
+["CTZ_8 == 3 && CTZL == 20 && CTZLL == 63", 1],
+["POP == 8 && POPL == (int)sizeof(long) * CHAR_BIT && POPLL == 64", 1],
+["PARITY == 1 && PARITYLL == 0 && FFS_0 == 0 && FFS_8 == 4 && FFSLL == 51", 1],
+["CLRSB_0 == 31 && CLRSB_M1 == 31 && CLRSBLL == 62", 1],
+["SWAP16 == 0x3412 && SWAP32 == 0x785634", 1],
+["s_clz == 29 && s_pop == 64 && s_swap64 == 0x0807060504030201ull && s_swap32 == 0xddccbbaau && sizeof sized == 6", 1],
+["__builtin_constant_p(__builtin_clz(4)) && __builtin_constant_p(__builtin_bswap32(1))", 1],
+["1", 1],
+["__builtin_popcount(v) == POP && __builtin_clz(one) == CLZ_1 && __builtin_bswap64(wide) == s_swap64 && __builtin_ctz(v) == 4", 1],
+["_Generic(__builtin_bswap64(1), uint64_t: 1, default: 0) && _Generic(__builtin_bswap32(1), uint32_t: 1, default: 0) && _Generic(__builtin_bswap16(1), uint16_t: 1, default: 0)", 1],
+["_Generic(__builtin_clzll(1), int: 1, default: 0) && _Generic(__builtin_ctzl(1), int: 1, default: 0) && _Generic(__builtin_popcountll(1), int: 1, default: 0) && _Generic(__builtin_ffsll(1), int: 1, default: 0) && _Generic(__builtin_parityl(1), int: 1, default: 0)", 1],
+["a == 5 && calls == 2", 1],
+["b == 6 && calls == 2", 1],
+["c == 7 && calls == 2", 1],
+["p == buffer && calls == 2", 1],
+["calls == 11", 1],
+["!constant && size == (unsigned long)-1 && chosen == 10 && calls == 0", 1]
+]

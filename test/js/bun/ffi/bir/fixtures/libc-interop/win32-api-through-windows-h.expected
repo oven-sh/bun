@@ -1,0 +1,17 @@
+counter 1 1
+process 1 thread 1
+temp path 1
+created 1
+wrote 1 27
+size 1 27
+rewound 8
+read 1 19 through
+closed 1 deleted 1
+gone 1 2
+thread 1 0 1 7 1000 6
+page size 1 processors 1
+wide 6 e9 5
+time 1 1 1
+virtual 1 1 1
+elapsed 1 1
+teb 1

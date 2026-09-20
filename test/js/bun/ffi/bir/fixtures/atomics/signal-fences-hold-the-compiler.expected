@@ -1,0 +1,8 @@
+sequentially consistent 1
+acquire 1
+acquire and release 1
+__atomic_signal_fence 1
+an empty asm with a memory clobber 1
+volatile sig_atomic_t, no fence 1
+a relaxed atomic, then what was stored before it 1 42
+two reads around a fence 1

@@ -1,0 +1,15 @@
+[
+["({ char x; sizeof(x); })", 1],
+["({ short int x; sizeof(x); })", 2],
+["({ int short x; sizeof(x); })", 2],
+["({ int x; sizeof(x); })", 4],
+["({ long int x; sizeof(x); })", 8],
+["({ int long x; sizeof(x); })", 8],
+["({ long long x; sizeof(x); })", 8],
+["({ _Bool x=0; x; })", 0],
+["({ _Bool x=1; x; })", 1],
+["({ _Bool x=2; x; })", 1],
+["(_Bool)1", 1],
+["(_Bool)2", 1],
+["(_Bool)(char)256", 0]
+]

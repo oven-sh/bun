@@ -322,6 +322,16 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     let _ = chunk_meta.imports.put(chunks_ref, ()); // OOM-only Result
                 }
 
+                // The entry point of a C program ends in `require(<asset>, ...)` to run `main`
+                // (`generate_entry_point_tail_js`), which prints as the runtime's `__require`
+                // outside CommonJS output. The file's own parts may be in another chunk.
+                if ctx.options.output_format != crate::options::OutputFormat::Cjs
+                    && ctx.entry_point_runs_c_main(chunk.entry_point.source_index())
+                {
+                    let require_ref = symbols.follow(ctx.graph.runtime_function(b"__require"));
+                    let _ = chunk_meta.imports.put(require_ref, ()); // OOM-only Result
+                }
+
                 // Ensure "exports" is included if the current output format needs it
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if flags.force_include_exports_for_entry_point || default_is_namespace {

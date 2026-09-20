@@ -5,21 +5,12 @@ use crate::shell::yield_::Yield;
 
 #[derive(Default)]
 pub struct Pwd {
-    state: State,
+    /// Which stream the in-flight write was enqueued on; decides the exit code
+    /// once it lands.
+    waiting_on: Option<WaitKind>,
 }
 
-#[derive(Default)]
-enum State {
-    #[default]
-    Idle,
-    WaitingIo {
-        kind: WaitKind,
-    },
-    Err,
-    Done,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum WaitKind {
     Stdout,
     Stderr,
@@ -30,9 +21,7 @@ impl Pwd {
         if !Builtin::of(interp, cmd).args_slice().is_empty() {
             let msg: &[u8] = b"pwd: too many arguments\n";
             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-                Self::state_mut(interp, cmd).state = State::WaitingIo {
-                    kind: WaitKind::Stderr,
-                };
+                Self::state_mut(interp, cmd).waiting_on = Some(WaitKind::Stderr);
                 let child = ChildPtr::new(cmd, WriterTag::Builtin);
                 return Builtin::of_mut(interp, cmd)
                     .stderr
@@ -48,16 +37,13 @@ impl Pwd {
             v
         };
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            Self::state_mut(interp, cmd).state = State::WaitingIo {
-                kind: WaitKind::Stdout,
-            };
+            Self::state_mut(interp, cmd).waiting_on = Some(WaitKind::Stdout);
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stdout
                 .enqueue(child, &cwd, safeguard);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &cwd);
-        Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 0)
     }
 
@@ -67,15 +53,13 @@ impl Pwd {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(_err) = err {
-            Self::state_mut(interp, cmd).state = State::Err;
+        if err.is_some() {
             return Builtin::done(interp, cmd, 1);
         }
-        let kind = match &Self::state_mut(interp, cmd).state {
-            State::WaitingIo { kind } => *kind,
-            _ => return Builtin::done(interp, cmd, 0),
+        let exit_code = match Self::state_mut(interp, cmd).waiting_on {
+            Some(WaitKind::Stderr) => 1,
+            Some(WaitKind::Stdout) | None => 0,
         };
-        Self::state_mut(interp, cmd).state = State::Done;
-        Builtin::done(interp, cmd, if kind == WaitKind::Stderr { 1 } else { 0 })
+        Builtin::done(interp, cmd, exit_code)
     }
 }

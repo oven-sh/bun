@@ -253,6 +253,8 @@ Ninja requires all rules defined before any build references them. Hence:
 1. `registerXxxRules(n, cfg)` — each module registers its rules. Called once via `registerAllRules()`.
 2. `emitXxx(n, cfg, ...)` — each module emits build edges.
 
+Rule and pool names are the `RuleName` / `PoolName` unions in `ninja.ts`: a new rule or pool is added there too, and a misspelled name at a build statement is a type error on every host (some edges only exist on one platform).
+
 Why not auto-register in emit functions? Some rules are shared (`dep_configure` used by both `source.ts` and `webkit.ts` local mode). Explicit registration keeps "which rule lives where" clear.
 
 ## Gotchas

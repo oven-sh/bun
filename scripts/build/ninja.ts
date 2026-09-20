@@ -16,6 +16,61 @@ import { writeIfChanged } from "./fs.ts";
 /**
  * A ninja `rule` — a reusable command template.
  */
+/**
+ * Every rule of the build, by the module that registers it. A build statement names one of these (or `phony`), so
+ * a misspelled rule is a type error on every host, not an assert on the one platform that emits the edge.
+ */
+export type RuleName =
+  // bun.ts
+  | "binary_verify"
+  | "bk_upload"
+  | "bk_upload_gz"
+  | "dsymutil"
+  | "duplicate_symbols"
+  | "rc"
+  | "shim_verify"
+  | "smoke_test"
+  | "strip"
+  // codegen.ts
+  | "bun_install"
+  | "codegen"
+  | "codegen_bun"
+  | "esbuild"
+  | "npm_install"
+  // compile.ts
+  | "ar"
+  | "cc"
+  | "cxx"
+  | "cxx_pch"
+  | "link"
+  | "mkdir_stamp"
+  | "nasm"
+  | "pch"
+  // configure.ts
+  | "regen"
+  // rust/emit.ts
+  | "rust_build_script"
+  | "rust_plan"
+  | "rust_rustc"
+  // shims.ts
+  | "host_tool_cc"
+  | "shim_crt_decompress"
+  // source.ts
+  | "dep_build"
+  | "dep_cargo"
+  | "dep_cargo_cross"
+  | "dep_check_undefined"
+  | "dep_codegen"
+  | "dep_configure"
+  | "dep_fetch"
+  | "dep_fetch_prebuilt"
+  | "dep_host_cc"
+  | "dep_prebuild"
+  | "dep_subst";
+
+/** Every job pool: ninja's built-in `console`, and the ones the build declares. */
+export type PoolName = "bk_upload" | "bun_install" | "compile" | "console" | "dep";
+
 export interface Rule {
   /** The shell command. Use $in, $out, and custom vars like $flags. */
   command: string;
@@ -33,7 +88,7 @@ export interface Rule {
    */
   generator?: boolean;
   /** Job pool for parallelism control (e.g. "console" for stdout access). */
-  pool?: string;
+  pool?: PoolName;
   /** Response file path. Needed when command line would exceed OS limits. */
   rspfile?: string;
   /** Content written to rspfile (usually $in or $in_newline). */
@@ -50,8 +105,8 @@ export interface BuildNode {
   outputs: string[];
   /** Additional outputs that ninja tracks but that don't appear in $out. */
   implicitOutputs?: string[];
-  /** The rule to use (name of a previously registered rule, or "phony"). */
-  rule: string;
+  /** The rule to use (a registered rule, or "phony"). */
+  rule: RuleName | "phony";
   /** Explicit inputs. Available as $in in the rule command. */
   inputs: string[];
   /**
@@ -74,7 +129,7 @@ export interface BuildNode {
   /** Variable bindings local to this build statement. */
   vars?: Record<string, string>;
   /** Job pool override (overrides rule's pool). */
-  pool?: string;
+  pool?: PoolName;
 }
 
 /**
@@ -109,8 +164,8 @@ export class Ninja {
   private readonly ninjaVersion: string;
 
   private readonly lines: string[] = [];
-  private readonly ruleNames = new Set<string>();
-  private readonly generatorRules = new Set<string>();
+  private readonly ruleNames = new Set<RuleName>();
+  private readonly generatorRules = new Set<RuleName>();
   private readonly outputSet = new Set<string>();
   private readonly pools = new Map<string, number>();
   private readonly defaults: string[] = [];
@@ -154,15 +209,14 @@ export class Ninja {
   }
 
   /** Define a ninja pool for parallelism control. */
-  pool(name: string, depth: number): void {
+  pool(name: Exclude<PoolName, "console">, depth: number): void {
     assert(!this.pools.has(name), `Duplicate pool: ${name}`);
     assert(depth >= 1, `Pool depth must be >= 1, got: ${depth}`);
     this.pools.set(name, depth);
   }
 
   /** Define a ninja rule. */
-  rule(name: string, spec: Rule): void {
-    assert(/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name), `Invalid ninja rule name: ${name}`);
+  rule(name: RuleName, spec: Rule): void {
     assert(!this.ruleNames.has(name), `Duplicate rule: ${name}`);
     this.ruleNames.add(name);
 

@@ -12,7 +12,7 @@ import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
-import type { BuildNode, Ninja, Rule } from "./ninja.ts";
+import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
 import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
 
@@ -221,7 +221,7 @@ export interface CompileOpts {
    */
   orderOnlyInputs?: string[];
   /** Job pool override. */
-  pool?: string;
+  pool?: PoolName;
 }
 
 /**

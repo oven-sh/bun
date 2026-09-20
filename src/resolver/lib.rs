@@ -38,6 +38,7 @@ pub use data_url::DataURL;
 /// Re-export real `DirInfo`.
 pub use dir_info::DirInfo;
 pub use dir_info::DirInfoRef;
+pub use dir_info::RealPath;
 /// Re-export real filesystem `Path`.
 pub use fs::Path;
 /// Re-export real `PackageJSON`.

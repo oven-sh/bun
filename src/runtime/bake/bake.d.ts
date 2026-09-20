@@ -246,6 +246,7 @@ declare module "bun" {
     interface FrameworkFileSystemRouterType {
       /**
        * Relative to project root. For example: `src/pages`.
+       * A route file behind a symlink is bundled under its real path, which is the path plugins see.
        */
       root: string;
       /**

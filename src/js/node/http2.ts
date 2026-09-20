@@ -4985,7 +4985,8 @@ class ClientHttp2Session extends Http2Session {
       }
       if (self.#closeCalled) {
         // close() ran earlier in this read, so the engine has not seen the GOAWAY yet. node refuses
-        // the stream in JS too: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
+        // the stream in JS too, after nghttp2 applied the limit above:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
         self.#parser?.rstStream(pushId, constants.NGHTTP2_REFUSED_STREAM);
         return;
       }

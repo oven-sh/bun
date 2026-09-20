@@ -1957,16 +1957,16 @@ describe("PUSH_PROMISE after the client sent GOAWAY (RFC 9113 §6.8)", () => {
 
   /** A client with request stream 1 open and the SETTINGS exchange done. Over "duplexPair" one
    *  write of the raw server is exactly one read of the client. */
-  async function connectedClient(transport: "tcp" | "duplexPair" = "tcp") {
+  async function connectedClient(transport: "tcp" | "duplexPair" = "tcp", options: http2.ClientSessionOptions = {}) {
     let raw: RawH2Server;
     let client: http2.ClientHttp2Session;
     if (transport === "duplexPair") {
       const [clientSide, serverSide] = duplexPair();
       raw = RawH2Server.overDuplex(serverSide);
-      client = http2.connect("http://localhost", { createConnection: () => clientSide });
+      client = http2.connect("http://localhost", { ...options, createConnection: () => clientSide });
     } else {
       raw = await RawH2Server.listen();
-      client = http2.connect(`http://127.0.0.1:${raw.port}`);
+      client = http2.connect(`http://127.0.0.1:${raw.port}`, options);
     }
     const dispose = () => {
       client.destroy();
@@ -2124,6 +2124,28 @@ describe("PUSH_PROMISE after the client sent GOAWAY (RFC 9113 §6.8)", () => {
     expect(await peer.response).toEqual({ status: 200, xPushed: undefined, rstCode: 0 });
     expect(peer.pushed.map(stream => stream.id)).toEqual([]);
     await peer.sessionClosed;
+    expect(peer.sessionErrors).toEqual([]);
+  });
+
+  // nghttp2 applies the reserved-stream limit before node's JS layer sees the stream, so a
+  // PUSH_PROMISE over that limit gets CANCEL after close() too, not REFUSED_STREAM.
+  test("close() from a 'response' listener leaves a PUSH_PROMISE over maxReservedRemoteStreams to CANCEL", async () => {
+    using peer = await connectedClient("tcp", { maxReservedRemoteStreams: 1 });
+    // Stream 2 gets no response and stays reserved. The PING ACK shows that the client has it.
+    peer.raw.socket!.write(Buffer.concat([pushPromise(2, 0x4), encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))]));
+    await peer.raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+    peer.req.once("response", () => peer.client.close());
+    peer.raw.socket!.write(
+      Buffer.concat([
+        encodeFrame(FrameType.HEADERS, 0x4, 1, STATUS_200),
+        pushPromise(4, 0x4),
+        encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("body")),
+      ]),
+    );
+    const rst = await peer.raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 4);
+    expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.CANCEL);
+    expect(await peer.response).toEqual({ status: 200, xPushed: undefined, rstCode: 0 });
+    expect(peer.pushed.map(stream => stream.id)).toEqual([2]);
     expect(peer.sessionErrors).toEqual([]);
   });
 

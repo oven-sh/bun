@@ -232,6 +232,8 @@ CI's build and test machines boot from images baked ahead of time. `ci-images/sp
 - **An image's name** is `<key>-<first 16 hex of the sha256 of its bake directory>`. `bun run ci:images [key…]` writes the directories under `build/ci-images/` and prints the names; the output depends only on committed files. `.buildkite/ci.ts` asks the cloud whether each image a build needs exists and bakes the ones that do not, so changing the spec or a script is all it takes to get new images. Only builds of this repository's own branches can bake.
 - **`bun-image.json`** (`/etc/`, `C:\`) is written by the last install step: the spec's facts about the image, its name, and the exact packages the bake got from the distro or Scoop. The bake job also publishes it as an artifact. It is for keying caches of build outputs; it never feeds the image's name.
 
+**macOS machines are not baked.** They are standing hosts set up by hand, so the generator outputs nothing for them. TODO for whoever sets up managed, ephemeral macOS machines: give macOS a `Image` kind, tools and a generated `bootstrap.sh` like the Linux ones; until then `scripts/bootstrap.sh` is what `scripts/darwin-ci` runs on a macOS host.
+
 ## Key types
 
 **`Dependency`** (`source.ts`) — `{name, source, patches?, fetchDeps?, build, provides, enabled?, versionMacro?}`. The `source`/`build`/`provides` fields are functions of `Config` so they vary per-target. `Source` variants: `github-archive`, `local`, `in-tree`, `prebuilt`. `BuildSpec` variants covered in Goals above.

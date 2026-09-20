@@ -572,7 +572,7 @@ export function detectFreebsdSysroot(arch: Arch): string | undefined {
 /**
  * Locate the linux-gnu sysroot: ubuntu:20.04 (glibc 2.31) + gcc-13 libstdc++,
  * matching the WebKit prebuilt's build environment. Arch-specific. See
- * install_linux_glibc_sysroot() in scripts/bootstrap.sh.
+ * ci-images/tools/glibc-sysroot.ts.
  */
 export function detectLinuxGlibcSysroot(arch: Arch): string | undefined {
   const looksValid = (p: string) => existsSync(join(p, "usr", "include", "c++", "13"));
@@ -584,7 +584,7 @@ export function detectLinuxGlibcSysroot(arch: Arch): string | undefined {
 
 /**
  * Locate a linux-musl sysroot — alpine rootfs with musl + modern libstdc++;
- * see install_linux_musl_sysroot() in scripts/bootstrap.sh. Checks env var then
+ * see ci-images/tools/musl-sysroot.ts. Checks env var then
  * well-known install paths. Arch-specific. Returns undefined if none found.
  */
 export function detectLinuxMuslSysroot(arch: Arch): string | undefined {
@@ -664,7 +664,7 @@ function ndkHostTag(host: Host): string {
  * setup for NDK cross-builds (Chromium does the same).
  *
  * Idempotent. Warns with a sudo hint if the resource dir isn't writable
- * (CI build images create the symlinks as root in bootstrap.sh).
+ * (CI's build image creates the symlinks as root: ci-images/tools/android-ndk.ts).
  */
 function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: string): void {
   const resourceDir = execSync(`"${cc}" -print-resource-dir`, { encoding: "utf8" }).trim();
@@ -702,8 +702,8 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
-    // Don't throw — rust-only mode doesn't need these, and on CI bootstrap.sh
-    // creates them as root during image build. The actual link step will fail
+    // Don't throw — rust-only mode doesn't need these, and on CI the image's
+    // bake creates them as root. The actual link step will fail
     // loudly later if they're genuinely missing where needed.
     const lnCmds = Object.entries(links)
       .map(([dst, src]) => `sudo ln -sf "${src}" "${dst}"`)
@@ -1037,7 +1037,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         if (sysroot === undefined) {
           const p = arch === "aarch64" ? "/opt/linux-sysroot-musl-arm64" : "/opt/linux-sysroot-musl";
           throw new BuildError(`--os=linux --arch=${arch} --abi=musl requires a musl sysroot when cross-compiling`, {
-            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see install_linux_musl_sysroot() in scripts/bootstrap.sh).`,
+            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see scripts/build/ci-images/tools/musl-sysroot.ts).`,
           });
         }
       }
@@ -1053,7 +1053,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         if (sysroot === undefined) {
           const p = arch === "aarch64" ? "/opt/linux-sysroot-glibc-arm64" : "/opt/linux-sysroot-glibc";
           throw new BuildError(`--os=linux --arch=${arch} --abi=gnu cross-compile requires a glibc sysroot`, {
-            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see install_linux_glibc_sysroot() in scripts/bootstrap.sh).`,
+            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see scripts/build/ci-images/tools/glibc-sysroot.ts).`,
           });
         }
       }

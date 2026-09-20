@@ -428,7 +428,7 @@ if (isBuildkite) {
 let coresDir: string | undefined;
 
 if (options["coredump-upload"]) {
-  // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
+  // the image's bake sets this sysctl to /var/bun-cores-$distro-$release-$arch (ci-images/tools/core-dumps.ts)
   const sysctl = await spawnWithTimeout({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
   coresDir = sysctl.stdout;
   if (sysctl.ok) {

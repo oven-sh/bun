@@ -68,6 +68,7 @@
 #include "JSDOMURL.h"
 #include "headers.h"
 #include "ObjectBindings.h"
+#include "ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -277,9 +278,13 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tlsOptionsValue)) };
             RETURN_IF_EXCEPTION(throwScope, {});
 
-            auto checkServerIdentityValue = Bun::getOwnPropertyIfExists(globalObject, tlsOptions, PropertyName(Identifier::fromString(vm, "checkServerIdentity"_s)));
+            // Read and validated like fetch(): a value that cannot run must not
+            // pass for an installed pin.
+            auto checkServerIdentityValue = Bun::getIfPropertyExistsPrototypePollutionMitigation(globalObject, tlsOptions, PropertyName(Identifier::fromString(vm, "checkServerIdentity"_s)));
             RETURN_IF_EXCEPTION(throwScope, {});
-            if (checkServerIdentityValue && checkServerIdentityValue.isCallable()) {
+            if (checkServerIdentityValue && !checkServerIdentityValue.isUndefinedOrNull()) {
+                if (!checkServerIdentityValue.isCallable())
+                    return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "tls.checkServerIdentity"_s, "function"_s, checkServerIdentityValue);
                 checkServerIdentity = checkServerIdentityValue;
             }
         }

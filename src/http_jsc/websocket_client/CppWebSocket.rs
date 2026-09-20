@@ -156,10 +156,11 @@ impl CppWebSocket {
         result
     }
 
-    /// `tls.checkServerIdentity`, or `undefined`. Marked through the JS
-    /// wrapper, which is alive while the upgrade is pending.
-    pub(crate) fn check_server_identity(&self) -> JSValue {
-        WebSocket__checkServerIdentity(self)
+    /// The user's `tls.checkServerIdentity`, if one is installed. Marked
+    /// through the JS wrapper, which is alive while the socket is.
+    pub(crate) fn check_server_identity(&self) -> Option<JSValue> {
+        let callback = WebSocket__checkServerIdentity(self);
+        (!callback.is_empty_or_undefined_or_null() && callback.is_callable()).then_some(callback)
     }
 
     /// `buffered_data` and `secure` are handed on to the connected client.

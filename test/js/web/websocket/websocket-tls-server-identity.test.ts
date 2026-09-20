@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { tls as tlsCerts } from "harness";
+import { bunEnv, tls as tlsCerts } from "harness";
 import { createHash, X509Certificate } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import tls from "node:tls";
@@ -89,6 +89,42 @@ function startSniServer() {
     },
   };
 }
+
+// A TLS 1.2 server that answers one WebSocket upgrade, then forces a TLS
+// renegotiation and sends a text frame. It runs in real node because a
+// BoringSSL server cannot renegotiate. It waits for the client's first frame,
+// so the connected client, not the upgrade client, owns the socket by then.
+const renegotiatingServer = `
+  const tls = require("tls");
+  const crypto = require("crypto");
+  const server = tls.createServer(
+    { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+    socket => {
+      socket.on("error", () => {});
+      let head = "";
+      const onHead = chunk => {
+        head += chunk.toString("latin1");
+        if (!head.includes("\\r\\n\\r\\n")) return;
+        socket.off("data", onHead);
+        const key = /sec-websocket-key:\\s*(\\S+)/i.exec(head)[1];
+        const accept = crypto.createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+        socket.write(
+          "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
+            "Sec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n",
+        );
+        socket.once("data", () => {
+          socket.renegotiate({ rejectUnauthorized: false }, err => {
+            if (err) return socket.destroy(err);
+            const payload = Buffer.from("after renegotiation");
+            socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
+          });
+        });
+      };
+      socket.on("data", onHead);
+    },
+  );
+  server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+`;
 
 function openSession(ws: WebSocket) {
   ws.addEventListener("open", () => ws.close(1000));
@@ -264,6 +300,140 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     });
     expect(await openSession(ws)).toEqual(opened);
     expect(calls).toEqual(["evil.test"]);
+  });
+
+  test.each([
+    ["a string", "pin"],
+    ["an object", {}],
+    ["a boolean", true],
+  ] as const)("throws when it is %s, like fetch", (_label, value) => {
+    let error: unknown;
+    try {
+      new WebSocket("wss://localhost:1/", { tls: { checkServerIdentity: value as never } });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toMatchObject({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining('The "tls.checkServerIdentity" property must be of type function'),
+    });
+  });
+
+  test("is ignored when it is null, and the built-in check applies", async () => {
+    using server = startSniServer();
+    const url = `wss://127.0.0.1:${await server.port}/`;
+    const ws = new WebSocket(url, {
+      tls: { ca: tlsCerts.cert, serverName: "evil.test", checkServerIdentity: null as never },
+    });
+    expect(await openSession(ws)).toEqual(tlsFailed(url));
+  });
+
+  test("is found on the prototype of the tls object, like the other tls options", async () => {
+    using server = startSniServer();
+    const url = `wss://localhost:${await server.port}/`;
+    let calls = 0;
+    const tlsOptions = Object.create({
+      checkServerIdentity() {
+        calls++;
+        return new Error("PIN-REJECT");
+      },
+    });
+    tlsOptions.ca = tlsCerts.cert;
+    const ws = new WebSocket(url, { tls: tlsOptions });
+    expect(await openSession(ws)).toEqual(tlsFailed(url));
+    expect(calls).toBe(1);
+  });
+
+  describe("with rejectUnauthorized: false, like fetch", () => {
+    test("still runs on a chain that verified, but its verdict is not enforced", async () => {
+      using server = startSniServer();
+      const url = `wss://localhost:${await server.port}/`;
+      const calls: string[] = [];
+      const ws = new WebSocket(url, {
+        tls: {
+          ca: tlsCerts.cert,
+          rejectUnauthorized: false,
+          checkServerIdentity(hostname: string) {
+            calls.push(hostname);
+            return new Error("PIN-REJECT");
+          },
+        },
+      });
+      expect(await openSession(ws)).toEqual(opened);
+      expect(calls).toEqual(["localhost"]);
+    });
+
+    test("does the same for the target inside a proxy tunnel", async () => {
+      using server = startSniServer();
+      using proxy = await startRecordingProxy();
+      const url = `wss://localhost:${await server.port}/`;
+      const calls: string[] = [];
+      const ws = new WebSocket(url, {
+        proxy: `http://127.0.0.1:${proxy.port}`,
+        tls: {
+          ca: tlsCerts.cert,
+          rejectUnauthorized: false,
+          checkServerIdentity(hostname: string) {
+            calls.push(hostname);
+            return new Error("PIN-REJECT");
+          },
+        },
+      });
+      expect(await openSession(ws)).toEqual(opened);
+      expect(calls).toEqual(["localhost"]);
+      expect(proxy.requests).toHaveLength(1);
+    });
+
+    test("does not run when the chain did not verify", async () => {
+      using server = startSniServer();
+      const url = `wss://localhost:${await server.port}/`;
+      let calls = 0;
+      // No `ca`: the harness certificate is self-signed, so the chain fails.
+      const ws = new WebSocket(url, {
+        tls: {
+          rejectUnauthorized: false,
+          checkServerIdentity() {
+            calls++;
+            return undefined;
+          },
+        },
+      });
+      expect(await openSession(ws)).toEqual(opened);
+      expect(calls).toBe(0);
+    });
+  });
+
+  // On a renegotiation BoringSSL requires the same certificate, so the verdict
+  // of the callback still holds and the callback does not run again.
+  test.each([
+    ["a name the certificate does not have", { serverName: "evil.test" }, "evil.test"],
+    ["an IP URL, which has no SNI", {}, "127.0.0.1"],
+  ] as const)("a certificate it approved survives a TLS 1.2 renegotiation: %s", async (_label, names, hostname) => {
+    await using server = Bun.spawn({
+      cmd: ["node", "-e", renegotiatingServer],
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+      env: { ...bunEnv, SERVER_CERT: tlsCerts.cert, SERVER_KEY: tlsCerts.key },
+    });
+    const { value } = await server.stdout.getReader().read();
+    const port = Number(new TextDecoder().decode(value).trim());
+
+    const calls: string[] = [];
+    const ws = new WebSocket(`wss://127.0.0.1:${port}/`, {
+      tls: {
+        ca: tlsCerts.cert,
+        ...names,
+        checkServerIdentity(name: string) {
+          calls.push(name);
+          return undefined;
+        },
+      },
+    });
+    ws.addEventListener("open", () => ws.send("ready"));
+    ws.addEventListener("message", () => ws.close(1000));
+    expect(await clientEvents(ws)).toEqual(["after renegotiation", ...opened]);
+    expect(calls).toEqual([hostname]);
   });
 
   test("is called for the target certificate through an HTTP proxy", async () => {

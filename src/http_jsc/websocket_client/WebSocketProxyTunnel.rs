@@ -98,13 +98,18 @@ impl UpgradeClientRef {
         );
     }
 
-    fn verify_peer_identity(self, ssl: &mut boringssl::c::SSL, hostname: &[u8]) -> bool {
+    fn verify_peer_identity(
+        self,
+        ssl: &mut boringssl::c::SSL,
+        hostname: &[u8],
+        enforce: bool,
+    ) -> bool {
         match self {
             UpgradeClientRef::Http(client) => {
-                HttpUpgradeClient::verify_peer_identity(client.this_ptr(), ssl, hostname)
+                HttpUpgradeClient::verify_peer_identity(client.this_ptr(), ssl, hostname, enforce)
             }
             UpgradeClientRef::Https(client) => {
-                HttpsUpgradeClient::verify_peer_identity(client.this_ptr(), ssl, hostname)
+                HttpsUpgradeClient::verify_peer_identity(client.this_ptr(), ssl, hostname, enforce)
             }
         }
     }
@@ -306,17 +311,20 @@ impl WebSocketProxyTunnel {
         }
 
         // Check for SSL errors if we need to reject unauthorized
-        if reject_unauthorized {
-            if ssl_error.error_no != 0 {
-                upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
-                return;
-            }
+        if reject_unauthorized && ssl_error.error_no != 0 {
+            upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
+            return;
+        }
 
+        if reject_unauthorized || ssl_error.error_no == 0 {
             // User JS in `verify_peer_identity` may detach `upgrade_client`.
             let ssl = this.wrapper.get().and_then(|w| w.ssl.get());
             let failed_identity = match (ssl, this.sni_hostname.as_deref()) {
-                (Some(ssl_ptr), Some(hostname)) => !upgrade_client
-                    .verify_peer_identity(bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()), hostname),
+                (Some(ssl_ptr), Some(hostname)) => !upgrade_client.verify_peer_identity(
+                    bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
+                    hostname,
+                    reject_unauthorized,
+                ),
                 _ => false,
             };
             upgrade_client = match this.upgrade_client.get() {

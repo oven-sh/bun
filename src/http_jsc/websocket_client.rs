@@ -266,6 +266,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             return;
         }
 
+        // The user's `checkServerIdentity` admitted this peer in place of the name
+        // check, and BoringSSL rejects a renegotiation that changes the certificate.
+        if ws.check_server_identity().is_some() {
+            return;
+        }
+
         // Fail closed: without the SSL handle or a name to check against we
         // cannot verify the peer.
         let Some(ssl) = socket.ssl_mut() else {

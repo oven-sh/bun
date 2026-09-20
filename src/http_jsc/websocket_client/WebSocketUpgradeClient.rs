@@ -635,21 +635,13 @@ where
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
                     return;
                 };
-                // Owned: user JS below may run `clear_data`.
-                let hostname: Vec<u8> = {
-                    let own_hostname = this.hostname.get();
-                    if !own_hostname.is_empty() {
-                        own_hostname.as_bytes().to_vec()
-                    } else {
-                        ssl.servername().map(<[u8]>::to_vec).unwrap_or_default()
-                    }
-                };
+                let hostname = Self::verification_hostname(this, ssl);
                 // Through a proxy this is the proxy's certificate; the user
                 // callback is for the target only (tunnel handshake), as in fetch.
                 let identity_ok = if this.proxy.get().is_some() {
                     !hostname.is_empty() && boringssl::check_server_identity(ssl, &hostname)
                 } else {
-                    Self::verify_peer_identity(this, ssl, &hostname)
+                    Self::verify_peer_identity(this, ssl, &hostname, true)
                 };
                 if this.cpp_websocket().is_none() {
                     // The callback closed the WebSocket.
@@ -657,6 +649,12 @@ where
                 }
                 if !identity_ok {
                     Self::fail(this, ErrorCode::TlsHandshakeFailed);
+                }
+            } else if ssl_error.error_no == 0 && this.proxy.get().is_none() {
+                if let Some(ssl) = socket.ssl_mut() {
+                    let _guard = RefPtr::from_this(this);
+                    let hostname = Self::verification_hostname(this, ssl);
+                    Self::verify_peer_identity(this, ssl, &hostname, false);
                 }
             }
         } else {
@@ -669,24 +667,38 @@ where
     /// A user `tls.checkServerIdentity` replaces the built-in name check (as
     /// in Node and `fetch`). It runs JS that may close the WebSocket: the
     /// caller holds a `RefPtr` guard and re-checks `cpp_websocket()` after.
+    ///
+    /// `enforce` is `rejectUnauthorized`. Without it only a user callback
+    /// runs, on a chain that verified, and its verdict is ignored (as in fetch).
     pub(crate) fn verify_peer_identity(
         this: ThisPtr<Self>,
         ssl: &mut boringssl::c::SSL,
         hostname: &[u8],
+        enforce: bool,
     ) -> bool {
         let callback = this
             .cpp_websocket()
-            .map(|ws| ws.check_server_identity())
-            .filter(|cb| !cb.is_empty_or_undefined_or_null() && cb.is_callable());
+            .and_then(|ws| ws.check_server_identity());
         let Some(callback) = callback else {
-            return !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname);
+            return !enforce
+                || (!hostname.is_empty() && boringssl::check_server_identity(ssl, hostname));
         };
         let vm = VirtualMachineRef::get();
         let event_loop = vm.event_loop_mut();
         event_loop.enter();
         let verdict = call_check_server_identity(vm.global(), callback, ssl, hostname);
         event_loop.exit();
-        verdict
+        verdict || !enforce
+    }
+
+    /// Owned, because user JS that runs during verification may `clear_data`.
+    fn verification_hostname(this: ThisPtr<Self>, ssl: &boringssl::c::SSL) -> Vec<u8> {
+        let own_hostname = this.hostname.get();
+        if !own_hostname.is_empty() {
+            own_hostname.as_bytes().to_vec()
+        } else {
+            ssl.servername().map(<[u8]>::to_vec).unwrap_or_default()
+        }
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.

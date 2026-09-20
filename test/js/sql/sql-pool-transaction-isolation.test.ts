@@ -5,8 +5,9 @@
 // Wire bytes come from ./wire-frames.ts.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import type net from "node:net";
+import path from "node:path";
 import {
   listeningServer,
   mysqlAckSessionSetup,
@@ -109,9 +110,50 @@ function firstInterleaving(received: Received[]): string | null {
   return null;
 }
 
-const adapters: Array<{ adapter: "postgres" | "mysql"; mockServer: MockServer; beginCommand: string }> = [
-  { adapter: "postgres", mockServer: pgMockServer, beginCommand: "BEGIN" },
-  { adapter: "mysql", mockServer: mysqlMockServer, beginCommand: "START TRANSACTION" },
+const adapters: Array<{
+  adapter: "postgres" | "mysql";
+  mockServer: MockServer;
+  beginCommand: string;
+  closedCode: string;
+}> = [
+  {
+    adapter: "postgres",
+    mockServer: pgMockServer,
+    beginCommand: "BEGIN",
+    closedCode: "ERR_POSTGRES_CONNECTION_CLOSED",
+  },
+  {
+    adapter: "mysql",
+    mockServer: mysqlMockServer,
+    beginCommand: "START TRANSACTION",
+    closedCode: "ERR_MYSQL_CONNECTION_CLOSED",
+  },
+];
+
+// Ways to hold a pool slot. `use` keeps running after the connection under it closed.
+// A transaction rejects when its connection closes. A reservation has nothing to reject.
+const slotHolders: Array<{
+  name: string;
+  rejects: boolean;
+  hold: (sql: SQL, use: (handle: SQL) => Promise<void>) => Promise<void>;
+}> = [
+  { name: "sql.begin() callback", rejects: true, hold: (sql, use) => sql.begin(use) },
+  {
+    name: "sql.reserve() handle",
+    rejects: false,
+    hold: async (sql, use) => {
+      await using reserved = await sql.reserve();
+      await use(reserved);
+    },
+  },
+  {
+    name: "reserved.begin() callback",
+    rejects: true,
+    hold: async (sql, use) => {
+      await using reserved = await sql.reserve();
+      await reserved.begin(use);
+    },
+  },
 ];
 
 // reserved.begin() / beginDistributed() calls that reject before anything is sent.
@@ -128,7 +170,7 @@ const rejectedBeforeBegin = [
   },
 ];
 
-describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
+describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, closedCode }) => {
   const options = (port: number): Bun.SQL.Options => ({
     adapter,
     hostname: "127.0.0.1",
@@ -277,6 +319,181 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
 
       expect(firstInterleaving(received)).toBeNull();
     } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // sql.begin() rejects as soon as its connection closes, but the callback can keep
+  // running. The pool's only slot must not stay with it: reserve() and begin() need an
+  // idle slot, while a plain query is answered either way.
+  test("sql.begin() gives its pool slot back when its connection closes, not when the callback returns", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    const callbackMayReturn = Promise.withResolvers<void>();
+    try {
+      let callbackReturned = false;
+      const abandoned = sql.begin(async tx => {
+        await tx.unsafe("SELECT 'KILL'").catch(() => {});
+        await callbackMayReturn.promise;
+        callbackReturned = true;
+      });
+      expect(
+        await abandoned.then(
+          () => null,
+          e => e?.code,
+        ),
+      ).toBe(closedCode);
+
+      const r1 = sql.reserve().then(async reserved => {
+        const servedAfterCallbackReturned = callbackReturned;
+        await reserved.unsafe("SELECT 'R1'");
+        reserved.release();
+        return servedAfterCallbackReturned;
+      });
+      const t2 = sql.begin(async tx => {
+        const servedAfterCallbackReturned = callbackReturned;
+        await tx.unsafe("SELECT 'T2a'");
+        // The abandoned callback returns while this transaction holds the slot. It must
+        // not release the slot a second time, or t3 starts inside this transaction.
+        callbackMayReturn.resolve();
+        await tx.unsafe("SELECT 'T2b'");
+        return servedAfterCallbackReturned;
+      });
+      const t3 = sql.begin(async tx => {
+        await tx.unsafe("SELECT 'T3a'");
+      });
+      // Queued last on purpose. A plain query is answered even while reserve() and begin()
+      // are stuck, so this await cannot hang. Only then may the abandoned callback return.
+      await sql.unsafe("SELECT 'plain'");
+      callbackMayReturn.resolve();
+
+      const [reserve, begin] = await Promise.all([r1, t2, t3]);
+      expect({ servedAfterCallbackReturned: { reserve, begin }, received }).toEqual({
+        servedAfterCallbackReturned: { reserve: false, begin: false },
+        received: [
+          { conn: 0, sql: beginCommand },
+          { conn: 0, sql: "SELECT 'KILL'" },
+          { conn: 1, sql: "SELECT 'R1'" },
+          { conn: 1, sql: beginCommand },
+          { conn: 1, sql: "SELECT 'T2a'" },
+          { conn: 1, sql: "SELECT 'T2b'" },
+          { conn: 1, sql: "COMMIT" },
+          { conn: 1, sql: beginCommand },
+          { conn: 1, sql: "SELECT 'T3a'" },
+          { conn: 1, sql: "COMMIT" },
+          { conn: 1, sql: "SELECT 'plain'" },
+        ],
+      });
+    } finally {
+      callbackMayReturn.resolve();
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // A graceful close() waits for the work the pool still counts. The abandoned transaction
+  // must not be part of it. Nothing is left to close, so close() settles in microtasks, and
+  // one turn of the event loop tells the two outcomes apart without a wait on time.
+  test("sql.close() does not wait for a sql.begin() callback that lost its connection", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    const callbackMayReturn = Promise.withResolvers<void>();
+    try {
+      let callbackReturned = false;
+      const abandoned = sql.begin(async tx => {
+        await tx.unsafe("SELECT 'KILL'").catch(() => {});
+        await callbackMayReturn.promise;
+        callbackReturned = true;
+      });
+      expect(
+        await abandoned.then(
+          () => null,
+          e => e?.code,
+        ),
+      ).toBe(closedCode);
+
+      const closedAfterCallbackReturned = sql.close().then(() => callbackReturned);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      callbackMayReturn.resolve();
+      expect(await closedAfterCallbackReturned).toBe(false);
+    } finally {
+      callbackMayReturn.resolve();
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // The slot reconnects and serves other callers. A statement from the holder that lost
+  // the connection must not reach the new one: it would run outside its transaction, or
+  // inside the transaction of whoever has the slot by then.
+  test.each(slotHolders)("a $name that outlives its connection cannot query the next one", async holder => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    using dir = tempDir("sql-pool-stowaway", { "stowaway.sql": "SELECT 'stowaway file'" });
+    const connectionLost = Promise.withResolvers<void>();
+    const slotReconnected = Promise.withResolvers<void>();
+    const stowaways = Promise.withResolvers<PromiseSettledResult<unknown>[]>();
+    try {
+      let holding = false;
+      const holderSettled = holder.hold(sql, async handle => {
+        holding = true;
+        await handle.unsafe("SELECT 'KILL'").catch(() => {});
+        connectionLost.resolve();
+        await slotReconnected.promise;
+        // allSettled does not reject. The catch turns a synchronous throw into a failure, not a hang.
+        try {
+          stowaways.resolve(
+            await Promise.allSettled([
+              handle.unsafe("SELECT 'stowaway'"),
+              handle.unsafe("SELECT 'stowaway values'").values(),
+              handle.file(path.join(String(dir), "stowaway.sql")),
+            ]),
+          );
+        } catch (err) {
+          stowaways.reject(err);
+        }
+      });
+      const held = holderSettled.then(
+        () => "fulfilled",
+        err => {
+          // A rejection before `use` ran is a setup failure. Nothing else would end the wait below.
+          if (!holding) connectionLost.reject(err);
+          return err?.code;
+        },
+      );
+
+      await connectionLost.promise;
+      await sql.unsafe("SELECT 'reconnect'");
+      slotReconnected.resolve();
+
+      const outcomes = (await stowaways.promise).map(result =>
+        result.status === "rejected" ? result.reason?.code : "sent",
+      );
+      expect({ held: await held, outcomes, received: received.filter(({ conn }) => conn === 1) }).toEqual({
+        held: holder.rejects ? closedCode : "fulfilled",
+        outcomes: [closedCode, closedCode, closedCode],
+        received: [{ conn: 1, sql: "SELECT 'reconnect'" }],
+      });
+
+      // Each holder gave the slot back exactly once, so the slot is idle and reserve() takes
+      // it synchronously. With any other count the reservation is queued, and the abort
+      // cancels it before it can wait.
+      const controller = new AbortController();
+      const reservedAgain = sql.reserve({ signal: controller.signal }).then(
+        reserved => {
+          reserved.release();
+          return true;
+        },
+        () => false,
+      );
+      controller.abort();
+      expect(await reservedAgain).toBe(true);
+    } finally {
+      slotReconnected.resolve();
       await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));
     }

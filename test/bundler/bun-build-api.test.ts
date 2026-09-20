@@ -2220,16 +2220,20 @@ describe.concurrent("cssTarget", () => {
   // oklch() is supported in Chrome 111+, Safari 15.4+, Firefox 113+. The
   // default browser targets predate it, so without cssTarget the bundler
   // replaces it with a hex + display-p3 + lab() fallback chain.
-  async function buildCss(options: Partial<Parameters<typeof Bun.build>[0]> = {}): Promise<string> {
+  type BuildOptions = Partial<Parameters<typeof Bun.build>[0]>;
+  function cssConfig(options: BuildOptions = {}): Parameters<typeof Bun.build>[0] {
     const dir = tempDirWithFiles("bun-build-css-target", {
       "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
     });
-    const result = await Bun.build({
-      entrypoints: [join(dir, "app.css")],
-      minify: true,
-      ...options,
-    });
+    return { entrypoints: [join(dir, "app.css")], minify: true, ...options };
+  }
+  async function buildCss(options: BuildOptions = {}): Promise<string> {
+    const result = await Bun.build(cssConfig(options));
     return await result.outputs[0].text();
+  }
+  // Invalid config throws synchronously, before Bun.build returns a promise.
+  function expectInvalid(options: BuildOptions, message: string) {
+    expect(() => Bun.build(cssConfig(options))).toThrow(message);
   }
 
   test("default browser targets replace oklch() with fallbacks", async () => {
@@ -2275,7 +2279,7 @@ describe.concurrent("cssTarget", () => {
   });
 
   test("rejects an unsupported ES version year", async () => {
-    await expect(buildCss({ cssTarget: "es2024" })).rejects.toThrow('Invalid cssTarget "es2024"');
+    expectInvalid({ cssTarget: "es2024" }, 'Invalid cssTarget "es2024"');
   });
 
   test("honors the minor version", async () => {
@@ -2290,12 +2294,12 @@ describe.concurrent("cssTarget", () => {
   });
 
   test("rejects a malformed version", async () => {
-    await expect(buildCss({ cssTarget: "safari16.4.x" })).rejects.toThrow('Invalid cssTarget "safari16.4.x"');
+    expectInvalid({ cssTarget: "safari16.4.x" }, 'Invalid cssTarget "safari16.4.x"');
   });
 
   test("rejects a version component over 255", async () => {
     // Each component is one byte in the packed version encoding.
-    await expect(buildCss({ cssTarget: "safari15.300" })).rejects.toThrow('Invalid cssTarget "safari15.300"');
+    expectInvalid({ cssTarget: "safari15.300" }, 'Invalid cssTarget "safari15.300"');
   });
 
   test("applies to target bun, which does not downlevel by default", async () => {
@@ -2304,13 +2308,21 @@ describe.concurrent("cssTarget", () => {
   });
 
   test("rejects an unknown target string", async () => {
-    await expect(buildCss({ cssTarget: "internet-explorer" })).rejects.toThrow('Invalid cssTarget "internet-explorer"');
+    expectInvalid({ cssTarget: "internet-explorer" }, 'Invalid cssTarget "internet-explorer"');
   });
 
   test("rejects a non-string cssTarget", async () => {
     // @ts-expect-error testing invalid input
-    await expect(buildCss({ cssTarget: 123 })).rejects.toThrow(
-      "Expected cssTarget to be a string or an array of strings",
-    );
+    expectInvalid({ cssTarget: 123 }, "Expected cssTarget to be a string or an array of strings");
+  });
+
+  test("rejects an empty cssTarget instead of disabling downleveling", async () => {
+    expectInvalid({ cssTarget: "" }, 'Invalid cssTarget ""');
+    expectInvalid({ cssTarget: [] }, "Expected cssTarget to contain at least one target");
+  });
+
+  test("undefined cssTarget keeps the default targets", async () => {
+    const output = await buildCss({ cssTarget: undefined });
+    expect(output).toContain("lab(");
   });
 });

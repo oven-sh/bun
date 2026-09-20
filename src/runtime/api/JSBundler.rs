@@ -899,7 +899,12 @@ pub mod js_bundler {
                 }
             }
 
-            if let Some(css_target) = config.get_truthy(global_this, "cssTarget")? {
+            // `get`, not `get_truthy`: an empty string is an invalid target,
+            // not an absent option. Only undefined and null mean "unset".
+            if let Some(css_target) = config
+                .get(global_this, "cssTarget")?
+                .filter(|v| !v.is_empty_or_undefined_or_null())
+            {
                 fn merge_css_target(
                     global_this: &JSGlobalObject,
                     browsers: &mut bun_css::Browsers,
@@ -915,20 +920,28 @@ pub mod js_bundler {
                 }
 
                 let mut browsers = bun_css::Browsers::default();
+                let mut entry_count: usize = 0;
                 if css_target.is_string() {
                     let slice = css_target.to_utf8(global_this)?;
                     merge_css_target(global_this, &mut browsers, slice.slice())?;
                     drop(slice);
+                    entry_count = 1;
                 } else if css_target.js_type().is_array() {
                     let mut iter = css_target.array_iterator(global_this)?;
                     while let Some(entry) = iter.next()? {
                         let slice = entry.to_utf8(global_this)?;
                         merge_css_target(global_this, &mut browsers, slice.slice())?;
                         drop(slice);
+                        entry_count += 1;
                     }
                 } else {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "Expected cssTarget to be a string or an array of strings"
+                    )));
+                }
+                if entry_count == 0 {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Expected cssTarget to contain at least one target, for example \"chrome100\""
                     )));
                 }
                 this.css_target = Some(browsers);

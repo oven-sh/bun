@@ -1092,4 +1092,43 @@ describe.concurrent("--css-target", () => {
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
+
+  test("--css-target applies to --no-bundle, in the minify pass too", async () => {
+    // Color fallbacks are added by the minify pass, not the printer.
+    using dir = tempDir("build-css-target-no-bundle", {
+      "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+    });
+    const build = async (...cssTarget: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", "app.css", "--minify", "--css-target", ...cssTarget],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return stdout;
+    };
+    expect(await build("chrome80")).toContain("lab(");
+    expect(await build("chrome130")).toContain("oklch(");
+  });
+
+  test("--css-target rejects a blank value instead of disabling downleveling", async () => {
+    using dir = tempDir("build-css-target-blank", {
+      "app.css": ".a { color: oklch(92.73% 0.0139 247.98); }\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "app.css", "--css-target", ""],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("--css-target needs at least one target");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });

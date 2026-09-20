@@ -281,6 +281,7 @@ function createConnection(...args) {
     socket = require("node:tls").connect(options);
   } else {
     const connectOptions = {
+      noDelay: true,
       ...this[kProxyConfig].proxyConnectionOptions,
     };
     $debug("Create proxy socket", connectOptions);

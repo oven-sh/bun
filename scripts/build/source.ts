@@ -531,7 +531,7 @@ export interface Dependency {
  * Resolved dependency — absolute paths ready for link()/cxx() calls.
  */
 export interface ResolvedDep {
-  name: string;
+  name: DepName;
   /**
    * Absolute paths to .a/.lib files for link(). Populated by nested-cmake/
    * cargo/prebuilt deps, and by `direct` deps when `cfg.archiveDeps` is on.
@@ -758,7 +758,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
  * NOT handle in-tree sources or WebKit's $BUN_WEBKIT_PATH — use the per-dep
  * `srcDir` computed in resolveDep() for those.
  */
-export function depSourceDir(cfg: Config, name: string): string {
+export function depSourceDir(cfg: Config, name: DepName): string {
   return cfg.localDeps[name] ?? resolve(cfg.vendorDir, name);
 }
 
@@ -766,7 +766,7 @@ export function depSourceDir(cfg: Config, name: string): string {
  * Path to a dep's cmake build output. Separate from source so multiple
  * profiles (debug/release) don't clash.
  */
-export function depBuildDir(cfg: Config, name: string): string {
+export function depBuildDir(cfg: Config, name: DepName): string {
   return resolve(cfg.buildDir, "deps", name);
 }
 
@@ -1058,7 +1058,7 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
 function emitFetch(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   source: Extract<Source, { kind: "github-archive" }>,
   patches: string[],
   compiledSources: string[],
@@ -1122,7 +1122,7 @@ function emitFetch(
 function emitPrebuilt(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   source: Extract<Source, { kind: "prebuilt" }>,
   provides: Provides,
 ): ResolvedDep {
@@ -1206,7 +1206,7 @@ interface EmitNestedCmakeInput {
 function emitNestedCmake(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   spec: NestedCmakeBuild,
   input: EmitNestedCmakeInput,
 ): { libs: string[] } {
@@ -1444,7 +1444,7 @@ interface EmitCargoInput {
  * everything. Its own incremental build is reliable, so restat=1 on the
  * rule keeps our downstream no-ops fast.
  */
-function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input: EmitCargoInput): { libs: string[] } {
+function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input: EmitCargoInput): { libs: string[] } {
   const hostWin = cfg.host.os === "windows";
   assert(cfg.cargo !== undefined, `dep "${name}" requires cargo but no rust toolchain was found`, {
     hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
@@ -1590,7 +1590,7 @@ interface EmitDirectInput {
 function emitDirect(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   spec: DirectBuild,
   input: EmitDirectInput,
 ): { libs: string[]; objects: string[]; headerOutputs: string[]; checks: string[] } {
@@ -1773,7 +1773,7 @@ function emitDirect(
 function emitForbidUndefined(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   spec: DirectBuild,
   objects: string[],
   buildDir: string,

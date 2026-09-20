@@ -192,12 +192,17 @@ export interface NinjaOptions {
   ninjaVersion?: string;
 }
 
-/** The `$name` / `${name}` variables in a rule's text, other than ninja's own (`$in`, `$out`, `$in_newline`). `$$` is a literal dollar. */
+/**
+ * The variables in a rule's text, other than ninja's own (`$in`, `$out`, `$in_newline`), read the way ninja's lexer
+ * reads them (src/lexer.in.cc): `$name` is `[a-zA-Z0-9_-]+`, so `$out-tmp` is the variable `out-tmp`, and `${name}`
+ * may also contain `.`. `$$` is a literal dollar.
+ */
 function variablesIn(...texts: (string | undefined)[]): string[] {
   const found = new Set<string>();
   for (const text of texts) {
-    for (const m of (text ?? "").replaceAll("$$", "").matchAll(/\$\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?/g)) {
-      if (m[1] !== "in" && m[1] !== "out" && m[1] !== "in_newline") found.add(m[1]!);
+    for (const m of (text ?? "").replaceAll("$$", "").matchAll(/\$(?:\{([a-zA-Z0-9_.-]+)\}|([a-zA-Z0-9_-]+))/g)) {
+      const name = (m[1] ?? m[2])!;
+      if (name !== "in" && name !== "out" && name !== "in_newline") found.add(name);
     }
   }
   return [...found];

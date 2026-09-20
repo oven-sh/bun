@@ -155,6 +155,12 @@ cluster._getServer = function (obj, options, cb) {
   });
 };
 
+// For servers that listen without _getServer (node:http), so _disconnect still closes them.
+cluster._trackServer = function (server) {
+  handles.set(server, server);
+  server.once("close", () => handles.delete(server));
+};
+
 function removeIndexesKey(indexesKey, index) {
   const indexSet = indexes.get(indexesKey);
   if (!indexSet) {
@@ -310,6 +316,7 @@ Worker.prototype.disconnect = function () {
 };
 
 Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?) {
+  if (this.exitedAfterDisconnect) return;
   this.exitedAfterDisconnect = true;
   let waitingCount = 1;
 

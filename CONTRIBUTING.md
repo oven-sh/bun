@@ -283,7 +283,7 @@ $ bun sync-webkit-source
 $ bun run build:local
 ```
 
-`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed. Running ninja directly on `build/debug-local` also works after the first build, as long as it is the ninja the build runs (`bun scripts/build.ts --configure-only` prints it; a different ninja version starts the build log over and rebuilds everything), and will build Bun+JSC.
+`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed. After the first build, you can also run ninja directly on `build/debug-local` to build Bun and JSC. Use the ninja that the build runs. `bun scripts/build.ts --configure-only` prints its path. A different ninja version starts the build log over and rebuilds everything.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 

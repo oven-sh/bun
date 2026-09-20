@@ -191,7 +191,7 @@ Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a)
 | `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing, `checkImageTools()`                                                                            |
 | `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                                                                      |
 | `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                                                                   |
-| `ninja-release.ts`             | The pinned oven-sh/ninja release (tag + per-host sha256) and `resolveNinja()`: fetch into the build cache, fall back to PATH                                            |
+| `ninja-release.ts`             | `ensureNinja()`/`ninjaIfPresent()`: the oven-sh/ninja release pinned in `ci-images/spec.ts` — the CI image's copy, else fetched into the build cache, else PATH         |
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                                                                         |
 | `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                                                                 |
 | `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                                                                                                        |
@@ -271,12 +271,13 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 The build system runs under Node 25+ (configure checks the version). CI images have Node 26, and the build steps `.buildkite/ci.ts` generates run `node scripts/build.ts` (literal `node`: the steps run on a different machine from the generator).
 
-`cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (stream.ts, fetch-cli.ts, the regen rule, the `codegen` rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. The subprocesses inherit whichever runtime started the build.
+`cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (stream.ts, fetch-cli.ts, `rust/plan.ts`, the regen rule, the `codegen` rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. The subprocesses inherit whichever runtime started the build.
 
-**Remaining `cfg.bun` usage (codegen only):** For a fully bun-optional build:
+**Remaining `cfg.bun` usage:** For a fully bun-optional build:
 
 - `cfg.packageManager` — `--package-manager=npm` runs the codegen installs with npm (`npm-ci.ts`). The default is bun.
 - Codegen scripts on the `codegen_bun` rule still need bun. Move a script to the `codegen` rule once it runs under node, and check that both runtimes write the same output.
+- `rust/run.ts` (every rustc and build-script edge) is launched with `cfg.bun` for its startup time: it starts once per edge along a crate chain ~30 deep (bun ~20 ms, node ~80 ms). Its code uses only `node:` modules, so launching it with `cfg.jsRuntime` is a one-line change in `rust/emit.ts`.
 - `cfg.esbuild` — already separate.
 
 With those done, `cfg.bun` disappears.

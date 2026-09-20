@@ -9,7 +9,7 @@
  * ninja edges (scripts/build/rust/), not through cargo, so this is cargo's
  * schedule of the same crate graph — per-crate compile times carry over, the
  * exact interleaving with C++ does not — built into cargo's own target dir
- * (`<buildDir>/rust-target`), which the ninja build no longer populates.
+ * (`<buildDir>/rust-target`), which the ninja build does not populate.
  *
  * Usage:
  *   bun run rust:timings                 # timing (warm if a previous rust:timings run left the target dir)

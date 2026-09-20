@@ -286,3 +286,23 @@ test("ERR_IPC_CHANNEL_CLOSED message", async () => {
   expect(`${err?.code} | ${err?.name} | ${err?.message}`).toBe("ERR_IPC_CHANNEL_CLOSED | Error | Channel closed");
   await exited;
 });
+
+test("ERR_IPC_CHANNEL_CLOSED message from process.send() in the child", async () => {
+  using dir = tempDir("ipc-channel-closed-child", {
+    "child.js": `
+      process.disconnect();
+      process.send("x", e => console.log(e.code + " | " + e.name + " | " + e.message));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "child.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+    ipc() {},
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERR_IPC_CHANNEL_CLOSED | Error | Channel closed\n");
+  expect(exitCode).toBe(0);
+});

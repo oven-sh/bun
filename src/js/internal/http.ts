@@ -41,6 +41,8 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+// Set on a server socket at the 'connect'/'upgrade' handoff: the native response of that request.
+const kHandoffResponse = Symbol("kHandoffResponse");
 const kCloseCallback = Symbol("closeCallback");
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -51,8 +53,10 @@ const http1ServerPipeline: {
   queuePipelinedResponse?: (socket: unknown, res: unknown, isAncient: boolean) => void;
   advanceResponsePipeline?: (server: unknown, socket: unknown) => void;
   abortQueuedPipelinedResponses?: (socket: unknown) => void;
+  lastPipelinedResponse?: (socket: unknown) => { _last: boolean } | undefined;
   maybePauseFallbackReads?: (socket: unknown) => void;
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
+  finishDrainedResponse?: (res: unknown) => void;
   kMustCloseConnection?: symbol;
 } = {};
 
@@ -318,10 +322,11 @@ const STATUS_CODES = {
   511: "Network Authentication Required",
 };
 
-function hasServerResponseFinished(self, chunk, callback) {
+function hasServerResponseFinished(self, chunk, callback, fromEnd) {
   const finished = self.finished;
 
-  if (chunk) {
+  // Only end() takes "" for no chunk. To Node.js's write_() it is a write: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L943-L957
+  if (chunk || (!fromEnd && chunk === "")) {
     const destroyed = self.destroyed;
 
     if (finished || destroyed) {
@@ -334,7 +339,8 @@ function hasServerResponseFinished(self, chunk, callback) {
 
       if (!destroyed) {
         process.nextTick(emitErrorNt, self, err, callback);
-      } else if ($isCallable(callback)) {
+      } else if (!fromEnd && $isCallable(callback)) {
+        // Node.js's end() never gives this error to its callback: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1086-L1098
         process.nextTick(callback, err);
       }
 
@@ -545,6 +551,7 @@ export {
   kAbortController,
   kCloseCallback,
   kHandle,
+  kHandoffResponse,
   kInternalSocketData,
   kNeedDrain,
   kOnReadParsed,

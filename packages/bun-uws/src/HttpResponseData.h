@@ -76,6 +76,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Run borrowed onWritable */
         bool ret = borrowedOnWritable(response, offset, writableUserData);
 
+        /* The callback runs application code; if it closed the socket, this object is destructed. */
+        if (us_socket_is_closed((us_socket_t *) response)) {
+            return ret;
+        }
+
         /* If we still have onWritable (the placeholder) then move back the real one */
         if (onWritable) {
             /* We haven't reset onWritable, so give it back */
@@ -159,6 +164,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_SEND_WHEN_COMPLETE = 1 << 18,
         /* node:http: JavaScript destroyed this socket during its parse. Closed at the current message's last body chunk, or when the read is consumed, like Node's parser. */
         HTTP_NODE_CLOSE_AFTER_MESSAGE = 1 << 20,
+        /* node:http socket.destroySoon() with outgoing bytes still queued: close when they have flushed, whether or not the response in flight has ended. */
+        HTTP_NODE_CLOSE_AFTER_DRAIN = 1 << 21,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -169,7 +176,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
-            | HTTP_NODE_CLOSE_AFTER_MESSAGE,
+            | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -241,7 +248,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
-        return (state & HTTP_CONNECTION_CLOSE)
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }

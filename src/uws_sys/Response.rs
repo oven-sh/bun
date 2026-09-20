@@ -294,6 +294,11 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_get_buffered_amount(Self::ssl_flag(), self.as_raw())
     }
 
+    /// `get_buffered_amount() == 0` and, for TLS, no ciphertext batch tail left in userspace.
+    pub(crate) fn has_fully_drained(&mut self) -> bool {
+        c::uws_res_has_fully_drained(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn write(&mut self, data: &[u8]) -> WriteResult {
         let mut len: usize = data.len();
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
@@ -820,6 +825,16 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_buffered_amount())
     }
 
+    /// H2 and H3 have no batch tail.
+    pub fn has_fully_drained(self) -> bool {
+        match self {
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).has_fully_drained(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).has_fully_drained(),
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).get_buffered_amount() == 0,
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).get_buffered_amount() == 0,
+        }
+    }
+
     pub fn write_continue(self) {
         any_dispatch!(self, |r| r.write_continue())
     }
@@ -1270,6 +1285,7 @@ pub mod c {
         pub(crate) safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_close_if_done_and_marked(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
+        pub(crate) safe fn uws_res_has_fully_drained(ssl: i32, res: &mut uws_res) -> bool;
         pub(crate) fn uws_res_write(
             ssl: i32,
             res: *mut uws_res,

@@ -7,6 +7,7 @@ const AsyncContextFrame = require("internal/async_context_frame");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
+const reportError = globalThis.reportError;
 
 function rethrowUncaught(err) {
   throw err;
@@ -145,7 +146,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       out += "Transfer-Encoding: chunked\r\n";
     }
     out += "\r\n";
-    socket.write(out);
+    writeToSocket(out);
   }
 
   function toBuffer(chunk, encoding) {
@@ -154,15 +155,20 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     return chunk;
   }
 
-  function writeBody(buf) {
+  // Like the `conn.writable` gate of Node's _writeRaw: a write to a socket that was ended (after the client's FIN) would destroy it.
+  function writeToSocket(data, callback) {
+    if (!socket.writableEnded) socket.write(data, callback);
+  }
+
+  function writeBody(buf, callback) {
     const length = buf ? (buf.byteLength ?? buf.length) : 0;
     if (length) {
       if (chunked) {
-        socket.write(length.toString(16) + "\r\n");
-        socket.write(buf);
-        socket.write("\r\n");
+        writeToSocket(length.toString(16) + "\r\n");
+        writeToSocket(buf);
+        writeToSocket("\r\n", callback);
       } else {
-        socket.write(buf);
+        writeToSocket(buf, callback);
       }
     }
     return length;
@@ -176,9 +182,27 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     AsyncContextFrame.run(frame, fn);
   }
 
+  // The bytes end() left in the socket are out, or the socket closed with them.
+  function flushed() {
+    if (!handle.ended || handle.finished) return;
+    handle.finished = true;
+    try {
+      handle.onflushed?.();
+    } catch (err) {
+      // A 'finish' listener that throws must not unwind into the socket's write callbacks or 'close' listeners.
+      reportError(err);
+    }
+  }
+
+  // A failed write or a destroyed socket leaves 'finish' to the socket's 'close': streams fail writes inside destroy(), or just before it.
+  function onEndWritten(err) {
+    if (!err && !socket.destroyed) flushed();
+  }
+
   const handle = {
     flags: 0,
     ended: false,
+    // True once the bytes end() wrote have left the socket, like the native handle's.
     finished: false,
     aborted: false,
     shouldKeepAlive,
@@ -191,9 +215,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       onwritable = callback;
       onwritableFrame = callback ? AsyncContextFrame.current() : undefined;
     },
-    // Non-zero tells writableNeedDrain that a 'drain' will come. A socket under its high water mark emits none.
+    // The socket's bytes while a write waits for 'drain' or an ended response is still flushing; a socket under its high water mark emits no 'drain'.
     get bufferedAmount() {
-      return onwritable ? socket.writableLength : 0;
+      return onwritable || (this.ended && !this.finished) ? socket.writableLength : 0;
     },
     // Native on_drain: the socket drained, so the waiting callback runs.
     socketDrained() {
@@ -203,16 +227,18 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     socketEnded(fn) {
       if (onwritable) settleWaiting(fn);
     },
+    // Runs once, from flushed(). ServerResponse#end()'s `onwritable` stays unused: its 'finish' comes a tick later, after a closing socket's 'close'.
+    onflushed: null,
     cork(callback) {
       return callback();
     },
     writeContinue() {
-      socket.write("HTTP/1.1 100 Continue\r\n\r\n");
+      writeToSocket("HTTP/1.1 100 Continue\r\n\r\n");
     },
     writeInformational(chunk, encoding) {
       // _writeRaw hands the fully-rendered 1xx block here (writeEarlyHints /
       // writeProcessing / writeInformation all route through it).
-      socket.write(chunk, encoding);
+      if (!socket.writableEnded) socket.write(chunk, encoding);
     },
     writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs) {
       const originalStatusCode = statusCode;
@@ -261,13 +287,21 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       const buf = toBuffer(chunk, encoding);
       const length = buf ? (buf.byteLength ?? buf.length) : 0;
       writeHeadToSocket(length);
-      writeBody(buf);
       // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
       // response never writes the terminating chunk, even when the user set
       // Transfer-Encoding: chunked themselves.
-      if (chunked && !noBody) socket.write("0\r\n\r\n");
+      const terminated = chunked && !noBody;
+      writeBody(buf, terminated ? undefined : onEndWritten);
+      if (terminated) writeToSocket("0\r\n\r\n", onEndWritten);
       this.ended = true;
-      this.finished = true;
+      // Like Node's OutgoingMessage#end(): while the socket holds bytes, the response has finished when its last write completes.
+      if (socket.writableLength > 0 && !socket.destroyed) {
+        // An ended socket took no write, so its own 'finish' tells. The empty write is for an end() that wrote nothing: behind a body, _writev would copy that body.
+        if (socket.writableEnded) socket.once("finish", onEndWritten);
+        else if (!length && !terminated) socket.write("", "latin1", onEndWritten);
+      } else {
+        this.finished = true;
+      }
       const onfinished = this.onfinished;
       if (onfinished) {
         this.onfinished = null;
@@ -277,8 +311,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (closeDelimited && !socket.destroyed) {
         socket.end();
       }
-      return length;
+      // The native handle's contract: -(length + 1) while bytes still drain, so that ServerResponse#end() holds 'finish' back.
+      return this.finished ? length : -(length + 1);
     },
+    flushed,
     abort() {
       this.aborted = true;
       if (!socket.destroyed) socket.destroy();
@@ -305,8 +341,10 @@ function connectionListenerHTTP1(server, socket, options) {
     queuePipelinedResponse,
     advanceResponsePipeline,
     abortQueuedPipelinedResponses,
+    lastPipelinedResponse,
     maybePauseFallbackReads,
     resumeFallbackReadsOnDrain,
+    finishDrainedResponse,
     kMustCloseConnection,
   } = http1ServerPipeline;
   const { allMethods } = process.binding("http_parser");
@@ -420,6 +458,9 @@ function connectionListenerHTTP1(server, socket, options) {
         socket.end();
       }
     };
+    handle.onflushed = function () {
+      finishDrainedResponse(res);
+    };
     res[kHttp1ResponseHandle] = handle;
     // Node's parserOnIncoming outgoing queue: pipelined requests parse while
     // the previous response is still assigned (its 'finish' detach is a tick
@@ -437,7 +478,8 @@ function connectionListenerHTTP1(server, socket, options) {
     // response, replaying whatever it buffered.
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
-      if (this[kMustCloseConnection]) {
+      // `_last`: onHttp1SocketEnd saw the client's FIN while this response owned the socket.
+      if (this[kMustCloseConnection] || this._last) {
         if (typeof socket.destroySoon === "function") {
           socket.destroySoon();
         } else if (!socket.writableEnded) {
@@ -556,7 +598,7 @@ function connectionListenerHTTP1(server, socket, options) {
       if (socket.writable) socket.end();
       return;
     }
-    const httpMessage = socket._httpMessage;
+    const httpMessage = lastPipelinedResponse(socket) ?? socket._httpMessage;
     if (httpMessage) {
       httpMessage._last = true;
     } else if (socket.writable) {
@@ -578,6 +620,10 @@ function connectionListenerHTTP1(server, socket, options) {
     const inflight = socket._httpMessage;
     // An ended socket emits no 'drain', and all that the response wrote is out: the write callbacks that wait succeed.
     inflight?.[kHttp1ResponseHandle]?.socketEnded(() => inflight._callPendingCallbacks());
+  });
+  // Prepended: like Node's 'finish' after a failed last write, a draining response finishes (and detaches) before the other 'close' listeners run.
+  socket.prependOnceListener("close", () => {
+    socket._httpMessage?.[kHttp1ResponseHandle]?.flushed();
   });
   socket.once("close", () => {
     connections.delete(socket);

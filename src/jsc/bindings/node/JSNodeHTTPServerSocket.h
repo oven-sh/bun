@@ -111,8 +111,8 @@ public:
      * parser when 'close' is emitted on the socket). */
     void stopHTTPParsing();
 
-    /* socket.end(): true when uWS will shut down later, after the buffered response and (afterResponseFinished) the body parse. */
-    bool shutdownAfterResponseDrains(bool afterResponseFinished);
+    /* socket.end(): true when uWS will shut down later, after the buffered response. destroySoon also waits for the body parse and closes behind the FIN. */
+    bool shutdownAfterResponseDrains(bool destroySoon);
 
     /* Close once the bytes of the responses that ended have left. close() discards them, end() waits for the peer. */
     void closeWhenDrained();
@@ -122,7 +122,7 @@ public:
      * ondata callback as opaque data. With afterBody, the switch is deferred
      * until the request body has been fully parsed (Upgrade requests with a
      * body deliver it through the request first, like Node 26). */
-    void upgradeToTunnelMode(bool afterBody = false);
+    void upgradeToTunnelMode(bool afterBody, WebCore::JSNodeHTTPResponse* response);
 
     /* Tunnel read backpressure, like net.Socket's handle. Both do nothing outside tunnel mode. */
     void readStop();

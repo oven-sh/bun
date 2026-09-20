@@ -11,6 +11,7 @@ const {
   abortedSymbol,
   eofInProgress,
   kHandle,
+  kHandoffResponse,
   noBodySymbol,
   typeSymbol,
   NodeHTTPIncomingRequestType,
@@ -337,12 +338,13 @@ IncomingMessage.prototype._read = function _read(_n) {
   // Native server path.
   const socket = this.socket;
   if (socket && socket.readable) {
-    if (this.upgrade) {
+    if (this.upgrade || socket[kHandoffResponse] !== undefined) {
       // Upgrade request with a body (Node 26 semantics): reading the request
       // must not flip the raw socket into flowing mode - tunnel bytes pushed
       // to the socket before the 'upgrade' listener attaches its own 'data'
       // handler would be discarded by a flowing stream with no readers.
       // Resume the native body source directly instead.
+      // Same for a request ahead of a pipelined CONNECT: res.end() dumps it after the handoff.
       onIncomingMessageResumeNodeHTTPResponse.$call(this);
     } else {
       readStart(socket);

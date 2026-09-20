@@ -14,7 +14,7 @@ extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" void us_socket_resume(us_socket_t*);
 extern "C" void us_socket_pause(us_socket_t*);
-extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code);
+extern "C" void us_socket_shutdown(us_socket_t*);
 
 namespace Bun {
 
@@ -129,9 +129,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel, (JSC::JS
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    // upgradeToTunnel(afterBody): with a truthy argument the switch happens only
+    // upgradeToTunnel(afterBody, response): with a truthy afterBody the switch happens only
     // once the request body has been fully parsed (Upgrade requests with a body).
-    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject));
+    thisObject->upgradeToTunnelMode(callFrame->argument(0).toBoolean(globalObject), dynamicDowncast<WebCore::JSNodeHTTPResponse>(callFrame->argument(1)));
     return JSValue::encode(JSC::jsUndefined());
 }
 
@@ -263,12 +263,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     }
 
     thisObject->ended = true;
-    // Argument 0 marks the end() of a finished response: uWS then also waits for the body parse.
-    bool afterResponseFinished = callFrame->argument(0).isTrue();
-    if (thisObject->shutdownAfterResponseDrains(afterResponseFinished)) {
+    // end(true) is Node's destroySoon() after a finished response: uWS waits for the body parse and the flush, then closes behind the FIN.
+    bool destroySoon = callFrame->argument(0).isTrue();
+    if (thisObject->shutdownAfterResponseDrains(destroySoon)) {
         return JSValue::encode(JSC::jsUndefined());
     }
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();
+    if (destroySoon) {
+        // One flush for raw socket.write() bytes; the close drops the rest, as destroy() did.
+        if (bufferedSize == 0) {
+            us_socket_shutdown(thisObject->socket);
+        } else {
+            us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        }
+        thisObject->close();
+        return JSValue::encode(JSC::jsUndefined());
+    }
     if (bufferedSize == 0) {
         // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
         // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then

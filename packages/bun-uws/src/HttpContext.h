@@ -209,6 +209,10 @@ private:
          * so a client that connects and never sends anything still expires. */
         if constexpr (IsNodeHttp) {
             ((HttpResponseData<SSL, true> *) us_socket_ext(s))->lastMessageStartMs = nodeCompatMonotonicMs();
+
+            /* The pause for backed-up pipelined responses lifts when their bytes drain, and after
+             * a hangup they never do. Node.js destroys the socket on the failed write. */
+            s->hangup_closes_unsent = 1;
         }
 
         /* A peer FIN must not tear the connection down at the loop level:
@@ -480,9 +484,22 @@ private:
             /* Are we not ready for another request yet? Terminate the connection.
              * Important for denying async pipelining until, if ever, we want to support it.
              * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
-            bool hasQueuedPipelinedResponses = false;
-            if constexpr (IsNodeHttp) hasQueuedPipelinedResponses = httpResponseData->nodeHttpQueuedPipelinedCount > 0;
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || hasQueuedPipelinedResponses) {
+            bool queueBehindEarlierResponse = false;
+            if constexpr (IsNodeHttp) {
+                /* node:http also queues behind responses that were dispatched but
+                 * are not the connection's current response yet, and behind a
+                 * response that has ended but not finished: its bytes are still
+                 * in the outgoing buffer (or the TLS spill slot), and it owns the
+                 * connection (Node's socket._httpMessage) until they have been
+                 * written out, with later responses queued behind it (Node's
+                 * state.outgoing). A write or uncork can empty the buffer before
+                 * the writable event tells that response so (kqueue reports read
+                 * and write readiness separately); onWritable stays armed until then. */
+                queueBehindEarlierResponse = httpResponseData->nodeHttpQueuedPipelinedCount > 0
+                    || !((AsyncSocket<SSL> *) s)->hasFullyDrained()
+                    || httpResponseData->onWritable != nullptr;
+            }
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || queueBehindEarlierResponse) {
                 if constexpr (!IsNodeHttp) {
                     /* Responses that completed earlier in this read can still
                      * sit in the cork buffer. close() sends them first. */
@@ -502,7 +519,9 @@ private:
                  * backs up), so reads are paused only when this connection already
                  * has unsent outgoing backpressure; they resume once the pipeline
                  * drains and the backpressure flushes (startPipelinedResponse /
-                 * onWritable). */
+                 * onWritable). That pause is also Node's flood prevention for sync
+                 * write()+end() handlers that back up the socket: the request
+                 * behind the backed-up response lands here and parks the rest. */
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PIPELINED_DISPATCH;
                 httpResponseData->nodeHttpQueuedPipelinedCount++;
                 if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
@@ -536,15 +555,6 @@ private:
                  * on this keep-alive connection (the flag itself was cleared above). */
                 if constexpr (IsNodeHttp) {
                     ((HttpResponseData<SSL, true> *) httpResponseData)->nodeHttpResponseTrailers.clear();
-
-                    /* Node's flood prevention: sync write()+end() handlers bypass the pipelined
-                     * branch yet still back up the socket. On outgoing backpressure, pause reads
-                     * and park already-received requests. No already-paused guard (replay clears the park flag only). */
-                    if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
-                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
-                        httpResponseData->nodeHttpParkAtNextBoundary = true;
-                        ((HttpResponse<SSL> *) s)->pause();
-                    }
                 }
             }
 
@@ -907,6 +917,11 @@ private:
              * If write was never called, the developer should still return true so that we may drain. */
             bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
 
+            /* The callback runs application code, which may have closed this socket. */
+            if (us_socket_is_closed(s)) {
+                return s;
+            }
+
             if constexpr (!IsNodeHttp) {
                 /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,
                  * nothing in AsyncSocketData::buffer). A retry that moves zero bytes
@@ -959,6 +974,12 @@ private:
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
                     && !httpContextData->flags.httpAllowHalfOpen
                     && httpResponseData->onWritable == nullptr) {
+                    responseDone = true;
+                }
+                /* socket.destroySoon() issued while bytes were queued: Node's
+                 * destroy() on 'finish' closes once they are out, whether or
+                 * not the response in flight ever ends. */
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN) {
                     responseDone = true;
                 }
             }

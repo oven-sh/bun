@@ -138,6 +138,19 @@ public:
         return false;
     }
 
+    /* node:http socket.destroy() during this socket's parse: onData closes it after the current message. False when the caller must close it now. */
+    bool closeAfterMessageIfParsing() {
+        if (!HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->isParsing((us_socket_t *) this)) {
+            return false;
+        }
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (httpResponseData->isConnectRequest) {
+            return false;
+        }
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE;
+        return true;
+    }
+
     /* Marks the response in flight as one that user JavaScript produces. See
      * HTTP_SEND_WHEN_COMPLETE. */
     void sendWhenComplete() {
@@ -862,6 +875,16 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         return !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
+    }
+
+    /* node:http: the response is complete and its request body is still being parsed out of this read. A shutdown now would drop that body; the after-parse gate closes instead. */
+    bool isDeliveringBodyAfterResponse() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        return hasResponded()
+            && !httpResponseData->isConnectRequest
+            && httpResponseData->inStream != nullptr
+            && HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->isParsing((us_socket_t *) this);
     }
 
      /* Corks the response if possible. Leaves already corked socket be. */

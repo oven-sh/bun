@@ -2,14 +2,18 @@
  * This test must also pass in Node.js.
  */
 import { describe, expect, test } from "bun:test";
+import { execFile } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo, Socket } from "node:net";
 import { connect } from "node:net";
-import { join } from "node:path";
+import path from "node:path";
 import { duplexPair } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
+import { promisify } from "node:util";
 
 test("aborted request body emits 'error' ECONNRESET and res 'close' before req 'close'", async () => {
   // Like Node.js's socketOnClose → abortIncoming: the aborted request is
@@ -841,4 +845,132 @@ describe("request body arriving after the response was ended", () => {
       },
     );
   });
+});
+
+// Like Node.js, whose parser runs to the end of the read before the destroyed
+// handle closes: the body bytes that arrived in the same read as the head still
+// reach the request after the 'request' listener destroyed the connection.
+describe.concurrent.each([
+  ["http", "req.socket.destroy()"],
+  ["http", "res.destroy()"],
+  ["https", "req.socket.destroy()"],
+  ["https", "res.destroy()"],
+])("%s: %s inside the 'request' listener", (protocol, destroyCall) => {
+  const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+  const tlsOptions = {
+    cert: readFileSync(path.join(keysDir, "agent1-cert.pem")),
+    key: readFileSync(path.join(keysDir, "agent1-key.pem")),
+  };
+
+  // Serves one POST whose head and body arrive in one write, destroys the
+  // connection from the 'request' listener (or from the first 'data' event),
+  // and returns the events once the request and the connection have closed.
+  async function destroyAndRecord(body: string, destroyFrom: "request" | "data", { respondOnEnd = false } = {}) {
+    const events: string[] = [];
+    const reqClosed = Promise.withResolvers<void>();
+    const listener = (req: IncomingMessage, res: ServerResponse) => {
+      const destroy = () => {
+        if (req.socket.destroyed) return;
+        if (destroyCall === "res.destroy()") res.destroy();
+        else req.socket.destroy();
+      };
+      req.on("data", chunk => {
+        events.push("req.data:" + chunk.length);
+        if (destroyFrom === "data") destroy();
+      });
+      req.on("aborted", () => events.push("req.aborted"));
+      req.on("error", e => events.push("req.error:" + (e as NodeJS.ErrnoException).code));
+      req.on("end", () => {
+        events.push("req.end");
+        if (respondOnEnd) res.end("x");
+      });
+      req.on("close", () => {
+        events.push(`req.close (complete: ${req.complete})`);
+        reqClosed.resolve();
+      });
+      res.on("finish", () => events.push("res.finish"));
+      if (destroyFrom === "request") destroy();
+    };
+    const server = protocol === "https" ? createHttpsServer(tlsOptions, listener) : createServer(listener);
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const client =
+        protocol === "https"
+          ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+          : connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      client.on("data", chunk => events.push("client.data:" + chunk.length));
+      await once(client, protocol === "https" ? "secureConnect" : "connect");
+      client.write(body);
+      await Promise.all([reqClosed.promise, once(client, "close")]);
+      return events;
+    } finally {
+      server.close();
+    }
+  }
+
+  const head = "POST / HTTP/1.1\r\nHost: x\r\n";
+
+  test("the body that arrived with the head still reaches the request", async () => {
+    const events = await destroyAndRecord(head + "Content-Length: 10\r\n\r\naaaaaaaaaa", "request");
+    expect(events).toEqual(["req.data:10", "req.end", "req.close (complete: true)"]);
+  });
+
+  test("a partial body is delivered before the request is aborted", async () => {
+    const events = await destroyAndRecord(head + "Content-Length: 10\r\n\r\naaa", "request");
+    expect(events).toEqual(["req.data:3", "req.aborted", "req.error:ECONNRESET", "req.close (complete: false)"]);
+  });
+
+  test("destroyed from 'data': the chunks that follow in the same read still complete the request", async () => {
+    const events = await destroyAndRecord(
+      head + "Transfer-Encoding: chunked\r\n\r\n5\r\naaaaa\r\n5\r\nbbbbb\r\n0\r\n\r\n",
+      "data",
+    );
+    expect(events).toEqual(["req.data:5", "req.data:5", "req.end", "req.close (complete: true)"]);
+  });
+
+  test("a response written after destroy() does not reach the client and does not finish", async () => {
+    const events = await destroyAndRecord(head + "Content-Length: 2\r\n\r\nab", "request", { respondOnEnd: true });
+    expect(events).toEqual(["req.data:2", "req.end", "req.close (complete: true)"]);
+  });
+});
+
+// The listener destroys the connection and then throws. The runtime's error
+// response for a throwing listener must not reach a destroyed connection.
+// Runs in a subprocess because the throw is an uncaught exception.
+test.concurrent("a listener that destroys the connection and then throws sends nothing", async () => {
+  const fixture = /* js */ `
+    const http = require("node:http");
+    const net = require("node:net");
+    const events = [];
+    process.on("uncaughtException", e => events.push("uncaught:" + e.message));
+    const server = http.createServer((req, res) => {
+      req.on("data", chunk => events.push("req.data:" + chunk.length));
+      req.on("end", () => events.push("req.end"));
+      req.on("close", () => events.push("req.close (complete=" + req.complete + ")"));
+      req.socket.destroy();
+      throw new Error("boom");
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const c = net.connect(server.address().port, "127.0.0.1", () =>
+        c.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 2\\r\\n\\r\\nab"));
+      let received = 0;
+      c.on("data", d => (received += d.length));
+      c.on("error", () => {});
+      c.on("close", () => {
+        console.log(JSON.stringify({ received, events }));
+        server.close();
+      });
+    });
+  `;
+  const { stdout } = await promisify(execFile)(process.execPath, ["-e", fixture], {
+    env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+  });
+  // Node's parser stops at the throw, so the request events differ there: only
+  // the bytes on the wire are compared.
+  const { received, events } = JSON.parse(stdout);
+  expect({ received, uncaught: events[0] }).toEqual({ received: 0, uncaught: "uncaught:boom" });
 });

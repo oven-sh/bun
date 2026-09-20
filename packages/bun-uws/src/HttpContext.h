@@ -238,6 +238,13 @@ private:
         return s;
     }
 
+    /* Closes a socket that JavaScript destroyed during its parse. The bit goes first: a TLS socket with spilled ciphertext defers its own close, and a second close would drop the spill. */
+    static void closeDestroyedNodeHttpSocket(us_socket_t *s, HttpResponseData<SSL> *httpResponseData) {
+        httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE;
+        httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
+        us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onClose(us_socket_t *s, int code, void * /*reason*/) {
         ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
@@ -676,6 +683,14 @@ private:
                     }
                 }
             }
+            /* JavaScript destroyed this socket earlier in this read: its message is delivered, so close before the next request is parsed. */
+            if constexpr (IsNodeHttp) {
+                if (fin && !us_socket_is_closed((us_socket_t *) user)
+                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE)) {
+                    closeDestroyedNodeHttpSocket((us_socket_t *) user, httpResponseData);
+                    return nullptr;
+                }
+            }
             return user;
         });
 
@@ -698,10 +713,19 @@ private:
                     /* Balance the parsing ref taken at the top of onData (the
                      * success path does this through returnedData). */
                     us_socket_unref(s);
+                    /* JavaScript destroyed the socket earlier in this read: run the deferred close now. */
+                    if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE) {
+                        closeDestroyedNodeHttpSocket(s, httpResponseData);
+                        return s;
+                    }
                 }
                 /* Flush anything the 'clientError' handler wrote (uncorking a
                  * closed socket is a no-op). */
                 ((AsyncSocket<SSL> *) s)->uncork();
+                /* A close that was deferred to the after-parse gate must still run when the parse ends in an error. */
+                if (!us_socket_is_closed(s) && !us_socket_is_shut_down(s)) {
+                    ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
+                }
                 return s;
             }
             if(httpContextData->onClientError) {
@@ -719,6 +743,16 @@ private:
         }
 
         auto returnedData = result.returnedData;
+
+        /* JavaScript destroyed the socket and its message did not complete in this read: close now, unless the read made this socket a WebSocket. */
+        if constexpr (IsNodeHttp) {
+            if (httpContextData->upgradedWebSocket != s && !us_socket_is_closed(s)
+                && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE)) {
+                closeDestroyedNodeHttpSocket(s, httpResponseData);
+                returnedData = nullptr;
+            }
+        }
+
         /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
         if (returnedData != nullptr) {
             /* We don't want open sockets to keep the event loop alive between HTTP requests */

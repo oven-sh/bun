@@ -100,6 +100,15 @@ void JSNodeHTTPServerSocket::close()
                 flushPartialResponseBeforeClose<false>(socket);
             }
         }
+        // uws is parsing this socket: it delivers the rest of the read, then closes (HTTP_NODE_CLOSE_AFTER_MESSAGE).
+        if (!upgraded && !us_socket_is_closed(socket)) {
+            bool deferred = is_ssl
+                ? reinterpret_cast<uWS::HttpResponse<true>*>(socket)->closeAfterMessageIfParsing()
+                : reinterpret_cast<uWS::HttpResponse<false>*>(socket)->closeAfterMessageIfParsing();
+            if (deferred) {
+                return;
+            }
+        }
         // Forceful: code 0 defers the fd close until a close_notify reply that a half-open peer never sends.
         us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
@@ -257,28 +266,29 @@ bool JSNodeHTTPServerSocket::isClosed() const
 }
 
 template<bool SSL>
-static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
+static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool afterResponseFinished)
 {
-    if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
+    /* The end() of a finished response whose request body is still being parsed: Node parses the whole read before destroySoon(). */
+    bool bodyStillParsing = afterResponseFinished && reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->isDeliveringBodyAfterResponse();
+    if (!bodyStillParsing && reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
         return false;
     }
-    /* HttpContext<SSL>::onWritable shuts the socket down once the buffered
-     * response data has flushed and HTTP_CONNECTION_CLOSE is set, so the FIN
-     * is sequenced after the response bytes (like Node's destroySoon). */
+    /* uWS shuts down after the parse and the flush. A new dispatch would clear HTTP_CONNECTION_CLOSE, so stop dispatching too. */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+    httpResponseData->nodeHttpStopDispatchingAfterCurrentMessage();
     return true;
 }
 
-bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
+bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool afterResponseFinished)
 {
     if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }
     if (is_ssl) {
-        return deferShutdownUntilResponseDrains<true>(socket);
+        return deferShutdownUntilResponseDrains<true>(socket, afterResponseFinished);
     }
-    return deferShutdownUntilResponseDrains<false>(socket);
+    return deferShutdownUntilResponseDrains<false>(socket, afterResponseFinished);
 }
 
 template<bool SSL>

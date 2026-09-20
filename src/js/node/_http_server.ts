@@ -1034,10 +1034,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
         }
 
-        // Like Node.js's parserOnMessageComplete: llhttp completes a message
-        // without a body as soon as the listener returns, read or not. EOF
-        // itself stays lazy (IncomingMessage.prototype._read).
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L143-L163
+        // Node's parserOnMessageComplete: a message without a body is complete once the listener returns. EOF stays lazy (_read).
         if (!hasBody) http_req.complete = true;
 
         socket.cork();
@@ -1321,6 +1318,8 @@ const kEnableStreaming = Symbol("kEnableStreaming");
 // resumes this request, like Node.js's UpgradeStream._read, so an unread body
 // can never stall the upgrade data behind it.
 const kUpgradeIncoming = Symbol("kUpgradeIncoming");
+// The end() of a finished response (Node's destroySoon): native first lets the read that is being parsed reach the request.
+const kEndAfterResponse = Symbol("kEndAfterResponse");
 
 // Like Node.js's net.Socket onReadableStreamEnd: every socket carries one 'end'
 // listener. http server connections have allowHalfOpen: true, so it is a no-op,
@@ -1524,7 +1523,8 @@ function getNodeHTTPServerSocket() {
     [kKeepAliveIdleStart] = undefined;
     [kBytesWritten] = 0;
     [kHandle];
-    [kUpgradeIncoming]: import("node:http").IncomingMessage | undefined = undefined;
+    [kUpgradeIncoming] = undefined;
+    [kEndAfterResponse] = false;
     server: Server;
     _httpMessage;
     _secureEstablished = false;
@@ -1802,7 +1802,7 @@ function getNodeHTTPServerSocket() {
         callback();
         return;
       }
-      handle.end();
+      handle.end(this[kEndAfterResponse]);
       callback();
     }
 
@@ -2435,7 +2435,10 @@ function emitResponseFinish() {
 // is eventually closed.
 function onResponseFinishHandleSocket(server, socket, res) {
   if (res[kMustCloseConnection]) {
-    socket?.end();
+    if (socket != null) {
+      socket[kEndAfterResponse] = true;
+      socket.end();
+    }
     return;
   }
   if (!socket || socket.destroyed || typeof socket.setTimeout !== "function") {

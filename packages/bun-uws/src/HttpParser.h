@@ -523,6 +523,11 @@ struct HttpResponseData;
             return remainingStreamingBytes != 0;
         }
 
+        /* node:http: JS ended the connection during a parse. Dispatch nothing after the current message, as after Connection: close (HPE_CLOSED_CONNECTION). */
+        void nodeHttpStopDispatchingAfterCurrentMessage() {
+            sawConnectionClose = true;
+        }
+
         /* Maximum number of trailer fields surfaced to JS (the section size cap
          * already bounds memory; this matches the regular-header count cap). */
         static constexpr unsigned MAX_TRAILER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 1;

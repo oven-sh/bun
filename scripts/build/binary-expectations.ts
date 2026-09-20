@@ -433,6 +433,10 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "?*@node@@*",
             "llhttp_*",
             ...PREBUILT_BMALLOC_DLLEXPORTS.patterns,
+            // The debug WebKit prebuilt's libpas exports its system-heap entry
+            // points the same way (`-export:` directives in the archive
+            // members); the release prebuilt has none. Debug builds only.
+            ...(cfg.debug ? ["pas_system_heap_*"] : []),
           ],
         },
         neededLibs: {
@@ -454,7 +458,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "ole32.dll",
           ],
           exact: true,
-          allowed: sanitizerLibs,
+          // bcrypt.dll: libarchive's archive_random.c / archive_digest.c call
+          // BCryptOpenAlgorithmProvider and BCryptGenRandom. A release link
+          // drops them as unreferenced (/OPT:REF); a debug link keeps every
+          // section, and the import with them. Never in a shipped binary.
+          allowed: [...sanitizerLibs, ...(cfg.debug ? ["bcrypt.dll"] : [])],
         },
         minOSVersion: "6.0",
         forbiddenImports: forbiddenImports(cfg),

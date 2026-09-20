@@ -19,7 +19,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { basename, relative, resolve } from "node:path";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getJson, isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
@@ -278,7 +278,11 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
     console.log("Cleaning intermediate files to free disk...");
     rmSync(cfg.codegenDir, { recursive: true, force: true });
     rmSync(resolve(cfg.buildDir, "obj"), { recursive: true, force: true });
-    rmSync(cfg.cacheDir, { recursive: true, force: true });
+    // The build's own cache only: one placed elsewhere (--cacheDir, $BUN_BUILD_CACHE_DIR) is not this build's disk to free.
+    const cacheFromBuildDir = relative(cfg.buildDir, cfg.cacheDir);
+    if (!cacheFromBuildDir.startsWith("..") && !isAbsolute(cacheFromBuildDir)) {
+      rmSync(cfg.cacheDir, { recursive: true, force: true });
+    }
 
     // gzip: posix only (matches cmake — only libbun-*.a are gzipped,
     // Windows .lib archives uploaded uncompressed). gzip isn't a

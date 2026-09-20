@@ -190,7 +190,11 @@ export interface Config {
   buildDir: string;
   /** Generated code output, e.g. buildDir/codegen/. */
   codegenDir: string;
-  /** Persistent cache for dep tarballs and builds. */
+  /**
+   * Persistent cache for dep tarballs and builds: `--cacheDir`, else
+   * `$BUN_BUILD_CACHE_DIR`, else the default (see `sharedCacheDir`; CI keeps
+   * it inside the build directory).
+   */
   cacheDir: string;
   /** Vendored dependencies (gitignored). */
   vendorDir: string;
@@ -730,6 +734,20 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
  * This is where all the "X defaults to Y unless Z" chains get resolved into
  * concrete values. After this runs, everything downstream sees plain booleans.
  */
+/**
+ * The machine-shared build cache: `$BUN_BUILD_CACHE_DIR`, else
+ * `$BUN_INSTALL/build-cache` (`~/.bun/build-cache`). A relative value is
+ * anchored to the repo root (not process.cwd()) so the ninja regen rule —
+ * which runs from buildDir — resolves the same path. Like $BUN_INSTALL, the
+ * variable is read on every configure: set it in the environment of every
+ * build of a build directory, not for one invocation.
+ */
+export function sharedCacheDir(cwd: string): string {
+  if (process.env.BUN_BUILD_CACHE_DIR) return resolve(cwd, process.env.BUN_BUILD_CACHE_DIR);
+  const bunInstall = process.env.BUN_INSTALL ? resolve(cwd, process.env.BUN_INSTALL) : join(homedir(), ".bun");
+  return resolve(bunInstall, "build-cache");
+}
+
 export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
   const host = detectHost();
 
@@ -938,20 +956,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : resolve(cwd, partial.buildDir)
       : resolve(cwd, "build", defaultBuildDirName);
   const codegenDir = resolve(buildDir, "codegen");
-  // Local builds share $BUN_INSTALL/build-cache across checkouts and profiles
-  // so ccache/tarballs/webkit reuse one another's work. CI stays per-build
-  // so runners remain hermetic and `rm -rf build/` is a full reset.
-  // Relative BUN_INSTALL is anchored to repo root (not process.cwd()) so the
-  // ninja regen rule — which runs from buildDir — resolves the same path.
-  const bunInstall = process.env.BUN_INSTALL ? resolve(cwd, process.env.BUN_INSTALL) : join(homedir(), ".bun");
+  // Local builds share one cache across checkouts and profiles so
+  // ccache/tarballs/webkit reuse one another's work. CI stays per-build so
+  // runners remain hermetic and `rm -rf build/` is a full reset — unless
+  // $BUN_BUILD_CACHE_DIR says where the cache is, which holds everywhere.
   const cacheDir =
     partial.cacheDir !== undefined
       ? isAbsolute(partial.cacheDir)
         ? partial.cacheDir
         : resolve(cwd, partial.cacheDir)
-      : ci
+      : ci && !process.env.BUN_BUILD_CACHE_DIR
         ? resolve(buildDir, "cache")
-        : resolve(bunInstall, "build-cache");
+        : sharedCacheDir(cwd);
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───

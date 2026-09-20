@@ -267,7 +267,6 @@ export interface CargoInvocation {
 export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   const targetDir = rustTargetDir(cfg);
   const triple = rustTarget(cfg);
-  const tier3 = rustTargetIsTier3(triple);
   const profile = cargoProfile(cfg);
 
   // ─── Build args ───
@@ -283,26 +282,26 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     profile,
     "--locked",
   ];
-  if (tier3 || cfg.release || cfg.asan) {
-    // Rebuild std from source (cargoBuildStdArg) because:
-    // tier3:   no prebuilt `rust-std` exists.
-    // release: prebuilt std is native code built for generic x86-64 with no
-    //          `.llvm_addrsig`. Rebuilding with our RUSTFLAGS gets it
-    //          `-Ctarget-cpu=` (AVX2/BMI in core::str / hashbrown), and under
-    //          `cfg.lto` it becomes bitcode that joins the cross-language LTO
-    //          unit + safe ICF instead of being an opaque blob in the link.
-    // asan:    prebuilt std is uninstrumented; rebuilding applies
-    //          `-Zsanitizer=address` so OOB/UAF inside Vec/String/HashMap are
-    //          visible instead of stopping at the std boundary.
-    args.push(cargoBuildStdArg);
-    if (cfg.release && !cfg.asan) {
-      // Cargo's default build-std feature set is `panic-unwind,backtrace,default`.
-      // `backtrace` links std's symbolizer (gimli, addr2line, miniz_oxide,
-      // rustc-demangle, ~200 KB on linux-x64) for `std::backtrace` and the
-      // default panic hook; bun installs its own panic hook and symbolizes
-      // crash traces out of process, so nothing reads it.
-      args.push("-Zbuild-std-features=panic-unwind,default");
-    }
+  // std is compiled from source (cargoBuildStdArg) in every build: the link is bun's own and takes each crate's rlib
+  // as the output of an edge (rust/units.ts linkedRlibs), so std's crates have to be units of the graph like the
+  // rest; the toolchain's prebuilt std is not. It also gives:
+  // tier3:   a std at all; no prebuilt `rust-std` exists.
+  // release: prebuilt std is native code built for generic x86-64 with no
+  //          `.llvm_addrsig`. Rebuilding with our RUSTFLAGS gets it
+  //          `-Ctarget-cpu=` (AVX2/BMI in core::str / hashbrown), and under
+  //          `cfg.lto` it becomes bitcode that joins the cross-language LTO
+  //          unit + safe ICF instead of being an opaque blob in the link.
+  // asan:    prebuilt std is uninstrumented; rebuilding applies
+  //          `-Zsanitizer=address` so OOB/UAF inside Vec/String/HashMap are
+  //          visible instead of stopping at the std boundary.
+  args.push(cargoBuildStdArg);
+  if (cfg.release && !cfg.asan) {
+    // Cargo's default build-std feature set is `panic-unwind,backtrace,default`.
+    // `backtrace` links std's symbolizer (gimli, addr2line, miniz_oxide,
+    // rustc-demangle, ~200 KB on linux-x64) for `std::backtrace` and the
+    // default panic hook; bun installs its own panic hook and symbolizes
+    // crash traces out of process, so nothing reads it.
+    args.push("-Zbuild-std-features=panic-unwind,default");
   }
 
   // ─── rustflags ───

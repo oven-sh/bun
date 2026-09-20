@@ -51,3 +51,36 @@ pub fn parse_status_pseudo_header(value: &[u8]) -> Option<u16> {
     let status = u16::from(a - b'0') * 100 + u16::from(b - b'0') * 10 + u16::from(c - b'0');
     (status != 101).then_some(status)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_status_pseudo_header;
+
+    #[test]
+    fn status_pseudo_header() {
+        for n in 0..=999u16 {
+            let text = format!("{n:03}");
+            let expected = (n >= 100 && n != 101).then_some(n);
+            assert_eq!(
+                parse_status_pseudo_header(text.as_bytes()),
+                expected,
+                "{text}"
+            );
+        }
+        let not_three_digits: [&[u8]; 10] = [
+            b"",
+            b"20",
+            b"1000",
+            b"0200",
+            b"+20",
+            b"2_0",
+            b"2e2",
+            b" 20",
+            b"20 ",
+            b"\xb2\xb0\xb0",
+        ];
+        for value in not_three_digits {
+            assert_eq!(parse_status_pseudo_header(value), None, "{value:?}");
+        }
+    }
+}

@@ -223,6 +223,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
     stream.decoded_headers.clear();
     stream.decoded_headers.reserve(n as usize);
     let mut status: u16 = 0;
+    let mut seen_status = false;
     let mut i: c_uint = 0;
     while i < n {
         let Some(h) = s.header(i) else {
@@ -233,7 +234,12 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         let value = h.value_bytes();
         if name.first() == Some(&b':') {
             if name == b":status" {
-                status = parse_status_pseudo_header(value).unwrap_or(0);
+                // A repeated `:status` is malformed, so a valid one cannot replace a bad one.
+                status = match parse_status_pseudo_header(value) {
+                    Some(code) if !seen_status => code,
+                    _ => 0,
+                };
+                seen_status = true;
             }
             i += 1;
             continue;

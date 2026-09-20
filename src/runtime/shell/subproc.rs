@@ -403,48 +403,43 @@ impl ShellSubprocess {
         }
     }
 
-    /// Tear down a subprocess whose stdio start() failed. Marks pending pipe readers as
-    /// errored so PipeReader.deinit's done-assert passes, drops the exit handler so a
-    /// later onProcessExit doesn't touch the freed Subprocess, then deinits.
-    ///
-    /// Windows: PipeReader.deinit asserts the libuv source is closed. Whether the source
-    /// is uv-initialized depends on how far startWithCurrentPipe got, so a blind close or
-    /// destroy is unsafe. Fall back to leaking the Subprocess (pre-existing behavior)
-    /// rather than risk closing an uninitialized handle.
+    /// Tear down a subprocess whose stdin writer `start()` failed (the
+    /// stdout/stderr readers report a failed start through `on_reader_error`
+    /// and never reach here). Marks the not-yet-started pipe readers as
+    /// errored so PipeReader.deinit's done-assert passes, drops the exit
+    /// handler so a later onProcessExit doesn't touch the freed Subprocess,
+    /// then deinits.
     fn abort_after_failed_start(this: *mut Self) {
-        #[cfg(windows)]
-        {
-            // SAFETY: `this` is the live allocation; it is deliberately leaked below,
-            // so release the Ctrl+C accounting by hand.
-            unsafe { (*this).ctrl_c_child = None };
-            return;
-        }
-        #[cfg(not(windows))]
-        {
-            // SAFETY: `this` was created via `heap::alloc` in `spawn` and is
-            // uniquely owned here; reclaim and tear down.
-            let mut subproc = unsafe { bun_core::heap::take(this) };
-            for r in [&mut subproc.stdout, &mut subproc.stderr] {
-                if let Readable::Pipe(pipe) = r {
-                    // `start()` failed before any reader callback registered,
-                    // so the `Arc` is expected to be uniquely held. Write
-                    // unconditionally rather than via
-                    // `Arc::get_mut`, which would silently skip the state
-                    // transition if a future change bumped the strong count.
-                    debug_assert_eq!(Arc::strong_count(pipe), 1);
-                    let p = arc_as_mut_ptr(pipe);
-                    // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; no
-                    // other borrow live. Accesses scoped to this statement.
-                    unsafe {
-                        if matches!((*p).state, PipeReaderState::Pending) {
-                            (*p).state = PipeReaderState::Err(None);
-                        }
+        // SAFETY: `this` was created via `heap::alloc` in `spawn` and is
+        // uniquely owned here; reclaim and tear down.
+        let mut subproc = unsafe { bun_core::heap::take(this) };
+        for r in [&mut subproc.stdout, &mut subproc.stderr] {
+            if let Readable::Pipe(pipe) = r {
+                // `start()` failed before any reader callback registered,
+                // so the `Arc` is expected to be uniquely held. Write
+                // unconditionally rather than via
+                // `Arc::get_mut`, which would silently skip the state
+                // transition if a future change bumped the strong count.
+                debug_assert_eq!(Arc::strong_count(pipe), 1);
+                let p = arc_as_mut_ptr(pipe);
+                // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; no
+                // other borrow live. Accesses scoped to this statement.
+                unsafe {
+                    if matches!((*p).state, PipeReaderState::Pending) {
+                        // The reader owns the spawned `uv::Pipe` from
+                        // `create()` on; hand it to `uv_close` now (no
+                        // `on_reader_done`) so the drop below sees a closed
+                        // source. POSIX readers take their fd in `start()`,
+                        // so `PipeReader::drop` closes it there.
+                        #[cfg(windows)]
+                        (*p).reader.deinit();
+                        (*p).state = PipeReaderState::Err(None);
                     }
                 }
             }
-            subproc.proc().set_exit_handler_default();
-            // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
         }
+        subproc.proc().set_exit_handler_default();
+        // Dropping `subproc` runs `ShellSubprocess::drop` → `finalize_sync`.
     }
 
     /// Stop stdio still active because the `Cmd` is deinited mid-flight (VM
@@ -887,37 +882,28 @@ impl ShellSubprocess {
             return Err(ShellErr::Sys(sys_err));
         }
 
+        // A reader whose start fails reports it through `on_reader_error`
+        // from inside the call (the Cmd records the errno, the slot is
+        // detached) and the spawn carries on; see `PipeReader::start`.
         // SAFETY: `subprocess` is live; the slot is passed raw because the
         // reader can complete synchronously and overwrite it via `on_close_io`.
-        if let Err(err) = unsafe {
+        unsafe {
             Readable::start_pipe_reader(
                 &raw mut (*subprocess).stdout,
                 subprocess,
                 event_loop,
                 !spawn_args.lazy,
-            )
-        } {
-            let sys_err = err.to_shell_system_error();
-            // SAFETY: scoped `&mut` for the kill; see above.
-            let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
-            Self::abort_after_failed_start(subprocess);
-            return Err(ShellErr::Sys(sys_err));
+            );
         }
 
         // SAFETY: as for stdout above.
-        if let Err(err) = unsafe {
+        unsafe {
             Readable::start_pipe_reader(
                 &raw mut (*subprocess).stderr,
                 subprocess,
                 event_loop,
                 !spawn_args.lazy,
-            )
-        } {
-            let sys_err = err.to_shell_system_error();
-            // SAFETY: scoped `&mut` for the kill; see above.
-            let _ = unsafe { (*subprocess).try_kill(SignalCode::SIGTERM as i32) };
-            Self::abort_after_failed_start(subprocess);
-            return Err(ShellErr::Sys(sys_err));
+            );
         }
 
         log!("returning");
@@ -1194,24 +1180,23 @@ impl Readable {
         process: *mut ShellSubprocess,
         event_loop: EventLoopHandle,
         eager: bool,
-    ) -> bun_sys::Result<()> {
+    ) {
         // The reader must outlive the re-entrant calls below even if they
         // drop this slot's `Arc`; clone it as a keepalive.
         // SAFETY: caller contract; borrow scoped to the clone.
         let keepalive = match unsafe { &*slot } {
             Readable::Pipe(pipe) => Arc::clone(pipe),
-            _ => return Ok(()),
+            _ => return,
         };
         let p = arc_as_mut_ptr(&keepalive);
         // SAFETY: see `arc_as_mut_ptr` — single-threaded shell; the
         // re-entrant reader callbacks only hold raw `*mut PipeReader`, and
         // each `&mut` below is scoped to its own call.
-        unsafe { (*p).start(process, event_loop) }?;
+        unsafe { (*p).start(process, event_loop) };
         if eager {
             // SAFETY: as above.
             unsafe { (*p).read_all() };
         }
-        Ok(())
     }
 
     pub(crate) fn r#ref(&mut self) {
@@ -1796,43 +1781,50 @@ impl PipeReader {
         }
     }
 
-    pub(crate) fn start(
-        &mut self,
-        process: *mut ShellSubprocess,
-        event_loop: EventLoopHandle,
-    ) -> bun_sys::Result<()> {
+    /// Start reading. A failure to register the pipe with the event loop is
+    /// reported through `on_reader_error`, not returned: the Cmd records the
+    /// errno as the command's exit code and the slot is detached, while the
+    /// spawn carries on with the sibling pipe and the child's exit.
+    pub(crate) fn start(&mut self, process: *mut ShellSubprocess, event_loop: EventLoopHandle) {
         // self.ref();
         self.process = Some(process);
         self.event_loop = event_loop;
         #[cfg(windows)]
         {
-            return self.reader.start_with_current_pipe();
+            if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
+                // `uv_read_start` failed, so nothing will ever read this
+                // pipe. Release the handle (no `on_reader_done`), then run
+                // the read-error path. Returning `Err` instead made the
+                // spawn abort and leak the subprocess with its exit handler
+                // armed; the killed child's exit then resolved a `CmdHandle`
+                // whose node was already freed.
+                self.reader.deinit();
+                // SAFETY: `self` lives inside the `Arc` that
+                // `start_pipe_reader` keeps alive across this call; nothing
+                // touches `self` after the dispatch.
+                unsafe { Self::on_reader_error(core::ptr::from_mut(self), &err) };
+            }
         }
 
         // `reader` owns the fd from here; `Drop` closes an un-started one.
+        // `PosixBufferedReader::start` always returns `Ok` and reports a
+        // poll-registration failure through `on_reader_error`, so the reader
+        // may already be errored/torn down here; same guard as
+        // `SubprocessPipeReader::start`.
         #[cfg(not(windows))]
-        match self.reader.start(self.stdio_result.take().unwrap(), true) {
-            bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
-            bun_sys::Result::Ok(()) => {
-                // `reader.start` reports a poll-registration failure through
-                // `on_reader_error` (not its return value), so the reader may
-                // already be errored/torn down here; same guard as
-                // `SubprocessPipeReader::start`.
-                if matches!(self.state, PipeReaderState::Err(_)) {
-                    return Ok(());
+        {
+            let _ = self.reader.start(self.stdio_result.take().unwrap(), true);
+            if matches!(self.state, PipeReaderState::Err(_)) {
+                return;
+            }
+            #[cfg(unix)]
+            {
+                if let Some(poll) = self.reader.handle.get_poll() {
+                    poll.set_flag(bun_io::FilePollFlag::Socket);
                 }
-                #[cfg(unix)]
-                {
-                    // TODO: are these flags correct
-                    if let Some(poll) = self.reader.handle.get_poll() {
-                        poll.set_flag(bun_io::FilePollFlag::Socket);
-                    }
-                    self.reader
-                        .flags
-                        .insert(bun_io::pipe_reader::PosixFlags::SOCKET);
-                }
-
-                Ok(())
+                self.reader
+                    .flags
+                    .insert(bun_io::pipe_reader::PosixFlags::SOCKET);
             }
         }
     }

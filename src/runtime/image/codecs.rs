@@ -207,7 +207,7 @@ bun_core::comptime_string_map! {
     };
 }
 
-#[derive(Default)]
+/// Never empty and never mis-sized outside `decode`, which refuses both.
 pub(crate) struct Decoded {
     pub(crate) rgba: Vec<u8>, // global allocator (mimalloc)
     pub(crate) width: u32,
@@ -266,6 +266,21 @@ pub(crate) struct DecodeHint {
 }
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
+    let d = decode_inner(bytes, max_pixels, hint)?;
+    // The one place the RGBA8-everywhere invariant is checked in release
+    // builds: a zero dimension or a buffer that is not exactly `w * h * 4`
+    // never leaves this function, so every consumer (the transforms, the
+    // encoders, the `pixels()` hand-off) may index by shape without a check
+    // of its own. Each codec also rejects a zero dimension, but a decoder
+    // added later is not obliged to, and an empty `Vec` handed to
+    // `Encoded::from_owned` would carry a dangling pointer to a finalizer.
+    if d.width == 0 || d.height == 0 || d.rgba.len() != d.width as usize * d.height as usize * 4 {
+        return Err(Error::DecodeFailed);
+    }
+    Ok(d)
+}
+
+fn decode_inner(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
     let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
     match fmt {
         Format::Jpeg => jpeg::decode(bytes, max_pixels, hint),
@@ -524,8 +539,12 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    #[allow(dead_code)]
+    /// Hand a global-allocator `Vec` to JS as-is; `pixels()` delivers the
+    /// decode buffer through the same path as an encoder's output. `bytes`
+    /// must be non-empty: an unallocated `Vec` reports a dangling pointer,
+    /// and `free` on it is undefined. `decode` guarantees this for planes.
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
+        debug_assert!(!bytes.is_empty());
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         // SAFETY: Vec data ptr is non-null; len is valid.
         let slice = unsafe {

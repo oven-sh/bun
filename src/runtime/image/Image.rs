@@ -6,7 +6,8 @@
 //! write one slot of `Pipeline` and return `this` — there is no op list, so
 //! calling a setter twice overwrites. The actual decode → transform → encode
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
-//! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
+//! `toBase64`/`pixels`/`metadata`) is awaited, as a `bun_jsc::Job`
+//! (`PipelineTask`).
 
 use core::cell::Cell;
 use core::mem;
@@ -1052,6 +1053,18 @@ impl Image {
         self.schedule(&cx, cf.this(), Kind::Placeholder, Deliver::DataUrl)
     }
 
+    /// Terminal: run the pipeline and resolve with the RGBA8 plane it ended
+    /// on, as `{ data, width, height, channels: 4 }`. The shape travels with
+    /// the bytes because a plane, unlike an encoded container, cannot describe
+    /// its own dimensions, and `width`/`height` on the Image are overwritten
+    /// by whichever terminal settles next.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn do_pixels(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(cf);
+        // `Deliver` is unread for this kind; `then()` builds the object.
+        self.schedule(&cx, cf.this(), Kind::Pixels, Deliver::Uint8Array)
+    }
+
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
     /// then `Bun.write(dest, encoded)` — same path as `await Bun.write(...)`, so
     /// `dest` may be a path string, `Bun.file()`, `Bun.s3()`, or an fd. Resolves
@@ -1227,7 +1240,7 @@ impl Image {
             ))),
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
-            TaskResult::Meta { .. } => unreachable!(),
+            TaskResult::Meta { .. } | TaskResult::Pixels { .. } => unreachable!(),
         }
     }
 }
@@ -1519,12 +1532,24 @@ pub(crate) enum Kind {
     /// hash itself never crosses the JS boundary unless we add an
     /// `as: "hash"` option later.
     Placeholder,
+    /// `.pixels()` — decode → transform, then the RGBA8 plane itself instead
+    /// of an encoder's output.
+    Pixels,
 }
 
 pub(crate) enum TaskResult {
     Encoded {
         out: codecs::Encoded,
         format: codecs::Format,
+        w: u32,
+        h: u32,
+    },
+    /// The post-pipeline decode buffer, still the `Vec` the decoder or the
+    /// last transform allocated: `w * h * 4` bytes, rows top to bottom, no
+    /// padding (`codecs::decode` refuses anything else, and every transform
+    /// allocates exactly that).
+    Pixels {
+        plane: Vec<u8>,
         w: u32,
         h: u32,
     },
@@ -1710,6 +1735,22 @@ impl PipelineTask {
             return;
         }
 
+        if matches!(self.kind, Kind::Pixels) {
+            // The decode buffer itself goes to JS; nothing is copied. The
+            // emptied `Decoded` then frees only its ICC profile, which is
+            // why a plane carries no colour-space information (documented
+            // on `pixels()`).
+            let w = decoded.width;
+            let h = decoded.height;
+            debug_assert_eq!(decoded.rgba.len(), w as usize * h as usize * 4);
+            self.result = TaskResult::Pixels {
+                plane: mem::take(&mut decoded.rgba),
+                w,
+                h,
+            };
+            return;
+        }
+
         // No format method chained ⇒ re-encode in the source format. For
         // decode-only sources (bmp/tiff/gif) that would dead-end in the
         // "HEIC/AVIF require macOS or Windows" message, which is wrong twice
@@ -1763,7 +1804,9 @@ impl PipelineTask {
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `image.*` there would race the synchronous getters.
         match &self.result {
-            TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => {
+            TaskResult::Encoded { w, h, .. }
+            | TaskResult::Pixels { w, h, .. }
+            | TaskResult::Meta { w, h, .. } => {
                 image.last_width.set(i32::try_from(*w).expect("int cast"));
                 image.last_height.set(i32::try_from(*h).expect("int cast"));
             }
@@ -1927,6 +1970,42 @@ impl PipelineTask {
                     .to_js(global)
                     .unwrap_or(JSValue::UNDEFINED);
                 obj.put(global, b"format", fmt_js);
+                promise.resolve(global, obj)?;
+            }
+            TaskResult::Pixels { plane, w, h } => {
+                // Same hand-off as the `Uint8Array` arm above: the `Vec`'s
+                // allocation becomes the Uint8Array's backing store and the
+                // global allocator's free is its finalizer. Two properties
+                // this relies on, both held by `bun_alloc::default_alloc`
+                // (mimalloc, libc under ASAN): the free takes no layout, so
+                // the `Vec`'s capacity may be forgotten, and it accepts a
+                // pointer allocated on another thread, because the plane was
+                // allocated on a work-pool thread and is freed on the JS
+                // thread at a later GC.
+                let out = mem::ManuallyDrop::new(codecs::Encoded::from_owned(plane));
+                // SAFETY: `out.bytes` is the live `Vec` allocation whose
+                // ownership transfers to JSC; `out.free` frees it exactly once
+                // at GC and ignores the null ctx.
+                let data = unsafe {
+                    let slice = core::slice::from_raw_parts_mut(
+                        out.bytes.as_ptr().cast::<u8>(),
+                        out.bytes.len(),
+                    );
+                    ArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array).to_js_with_context(
+                        global,
+                        core::ptr::null_mut(),
+                        Some(out.free),
+                    )
+                };
+                let data = match data {
+                    Ok(v) => v,
+                    Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                };
+                let obj = JSValue::create_empty_object(global, 4);
+                obj.put(global, b"data", data);
+                obj.put(global, b"width", JSValue::js_number(f64::from(w)));
+                obj.put(global, b"height", JSValue::js_number(f64::from(h)));
+                obj.put(global, b"channels", JSValue::js_number(4.0));
                 promise.resolve(global, obj)?;
             }
             TaskResult::Err(e) => promise.reject(global, Ok(reject_error(global, e)))?,

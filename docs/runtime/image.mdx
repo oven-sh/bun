@@ -125,9 +125,25 @@ await img.toBase64(); // string
 await img.dataurl(); // "data:image/png;base64,…"
 await img.write("out.webp"); // number (bytes written)
 await img.write(Bun.s3.file("bucket/out.webp"));
+await img.pixels(); // { data: Uint8Array, width, height, channels: 4 }
 ```
 
 `.write()` accepts the same destinations as `Bun.write` — a path string, `Bun.file()`, `Bun.s3.file()`, or an fd. If you didn't chain a format method and the destination is a path string, the extension picks one (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`).
+
+### Raw pixels
+
+`.pixels()` skips the encoder and resolves with the pixels the pipeline ends on. This is the input a model, a pixel statistic or a third-party encoder wants, without a PNG round-trip:
+
+```ts
+const { data, width, height, channels } = await new Bun.Image("photo.jpg").resize(224, 224, { fit: "fill" }).pixels();
+console.log(data.length, width, height, channels); // 200704 224 224 4
+```
+
+`data` is RGBA, 8 bits per channel, `width * height * 4` bytes, rows top to bottom, no row padding. The shape comes with the bytes rather than from `img.width`, so it stays correct however the image is used afterwards. This is the equivalent of Sharp's `.raw().toBuffer({ resolveWithObject: true })`.
+
+Bun applies no color transform and does not deliver the ICC profile. JPEG, PNG and WebP pixels are the decoder's output, in the space the source profile describes. Formats the system backend decodes (HEIC, AVIF, TIFF) arrive as sRGB. Sharp converts to sRGB by default, so the two differ for a source with a non-sRGB profile. Alpha is straight, not premultiplied.
+
+Nothing else from the source travels with the plane: no EXIF, no GPS, no profile. What consumes `data` sees pixels and nothing about where they came from.
 
 ## Placeholders
 

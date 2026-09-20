@@ -9360,6 +9360,19 @@ declare module "bun" {
       height: number;
       format: Format;
     }
+
+    /** What {@link Image.pixels} resolves with. */
+    interface Pixels {
+      /**
+       * RGBA, 8 bits per channel, `width * height * 4` bytes, rows top to
+       * bottom, no row padding. Alpha is straight (not premultiplied).
+       */
+      data: Uint8Array;
+      width: number;
+      height: number;
+      /** Always 4. Bun holds RGBA between decode and encode. */
+      channels: 4;
+    }
   }
 
   /**
@@ -9369,7 +9382,7 @@ declare module "bun" {
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a
-   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `metadata`) is awaited.
+   * terminal (`bytes`, `buffer`, `blob`, `toBase64`, `pixels`, `metadata`) is awaited.
    *
    * Chainables overwrite (calling `.resize()` twice keeps the second). Order
    * of execution is fixed regardless of call order:
@@ -9514,6 +9527,30 @@ declare module "bun" {
     toBase64(): Promise<string>;
     /** Decode just enough to read width/height/format. */
     metadata(): Promise<Image.Metadata>;
+    /**
+     * Run the pipeline and return the pixels it ends on instead of an encoded
+     * container: `{ data, width, height, channels: 4 }`, where `data` is RGBA8,
+     * `width * height * 4` bytes, rows top to bottom, no row padding. The shape
+     * travels with the bytes, so it stays correct however the `Image` is used
+     * afterwards. The equivalent of Sharp's
+     * `.raw().toBuffer({ resolveWithObject: true })`.
+     *
+     * Bun applies no color transform and does not deliver the ICC profile.
+     * JPEG, PNG and WebP pixels are the decoder's output, in the space the
+     * source profile describes; formats the system backend decodes (HEIC,
+     * AVIF, TIFF) arrive as sRGB. Sharp converts to sRGB by default, so the
+     * two differ for a source with a non-sRGB profile. Alpha is straight, not
+     * premultiplied. Nothing else from the source travels with the plane:
+     * no EXIF, no GPS, no profile.
+     *
+     * ```ts
+     * const { data, width, height } = await new Bun.Image(bytes)
+     *   .resize(224, 224, { fit: "fill" })
+     *   .pixels();
+     * // data.length === width * height * 4
+     * ```
+     */
+    pixels(): Promise<Image.Pixels>;
 
     /** Populated after the first awaited terminal; `-1` before. */
     readonly width: number;

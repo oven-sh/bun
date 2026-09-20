@@ -78,6 +78,7 @@ struct SSABuilder {
 impl SSABuilder {
     fn new(blocks: &IndexMap<BlockId, BasicBlock>, num_blocks: usize) -> Self {
         let mut block_preds: Vec<Vec<BlockId>> = vec![Vec::new(); num_blocks];
+        // Not in upstream: the successor counts that `end_lookup` compares with.
         let mut successors: Vec<u32> = vec![0; num_blocks];
         for (id, block) in blocks {
             block_preds[id.0 as usize] = block.preds.iter().copied().collect();
@@ -96,6 +97,7 @@ impl SSABuilder {
             context: HashSet::new(),
             pending_phis: vec![Vec::new(); num_blocks],
             processed_functions: Vec::new(),
+            // Not in upstream: the fields from here on.
             successors,
             passed: vec![
                 Passed {
@@ -115,6 +117,7 @@ impl SSABuilder {
     fn define_function(&mut self, func: &HirFunction) {
         for (id, block) in &func.body.blocks {
             self.block_preds[id.0 as usize] = block.preds.iter().copied().collect();
+            // Not in upstream: the successor counts, as in `new`.
             for pred in &block.preds {
                 self.successors[pred.0 as usize] += 1;
             }
@@ -195,6 +198,7 @@ impl SSABuilder {
     fn get_place(&mut self, old_place: &Place, env: &mut Environment) -> Place {
         let current_id = self.current.expect("must be in a block");
         let new_id = self.get_id_at(old_place, current_id, env);
+        // Not in upstream: this lookup is over.
         self.end_lookup(old_place.identifier);
         Place {
             identifier: new_id,
@@ -436,6 +440,7 @@ impl SSABuilder {
         );
         for phi in &incomplete_phis {
             self.add_phi(block_id, &phi.old_place, &phi.new_place, env);
+            // Not in upstream: each incomplete phi is a lookup of its own.
             self.end_lookup(phi.old_place.identifier);
         }
     }

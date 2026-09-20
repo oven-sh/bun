@@ -254,8 +254,6 @@ for (const entrypoint of bundledEntryPoints) {
   captured =
     captured
       .replace(/\$\$EXPORT\$\$\((.*)\).\$\$EXPORT_END\$\$;/, "return $1")
-      .replace(/]\s*,\s*__(debug|assert)_end__\)/g, ")")
-      .replace(/]\s*,\s*__debug_end__\)/g, ")")
       .replace(/import.meta.require\((.*?)\)/g, (expr, specifier) => {
         throw new Error(`Builtin Bundler: do not use import.meta.require() (in ${file_path}))`);
       })
@@ -377,7 +375,6 @@ mark("Bundle Functions");
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+numberOfModules.h"),
   `#define BUN_INTERNAL_MODULE_COUNT ${moduleList.length}
-#define BUN_NATIVE_MODULE_START_INDEX ${nativeStartIndex}
 `,
 );
 

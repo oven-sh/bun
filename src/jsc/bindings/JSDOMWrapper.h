@@ -77,7 +77,6 @@ public:
 
     ImplementationClass& wrapped() const { return m_wrapped; }
     Ref<ImplementationClass> protectedWrapped() const { return m_wrapped; }
-    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDOMWrapper, m_wrapped); }
 
 protected:
     JSDOMWrapper(JSC::Structure* structure, JSC::JSGlobalObject& globalObject, Ref<ImplementationClass>&& impl)

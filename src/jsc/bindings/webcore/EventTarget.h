@@ -117,7 +117,6 @@ public:
     void setAttributeEventListener(const AtomString& eventType, JSC::JSValue listener, JSC::JSObject& jsEventTarget);
     JSEventListener* attributeEventListener(const AtomString& eventType, DOMWrapperWorld&);
 
-    bool hasEventListeners() const;
     bool hasEventListeners(const AtomString& eventType) const;
     bool hasActiveEventListeners(const AtomString& eventType) const;
 
@@ -212,12 +211,6 @@ inline bool EventTarget::isFiringEventListeners() const
 {
     auto* data = eventTargetData();
     return data && data->isFiringEventListeners;
-}
-
-inline bool EventTarget::hasEventListeners() const
-{
-    auto* data = eventTargetData();
-    return data && !data->eventListenerMap.isEmpty();
 }
 
 inline bool EventTarget::hasEventListeners(const AtomString& eventType) const

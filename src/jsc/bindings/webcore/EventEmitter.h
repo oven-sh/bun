@@ -62,10 +62,8 @@ public:
     WEBCORE_EXPORT Vector<JSObject*> getListeners(const Identifier& eventType);
     WEBCORE_EXPORT int listenerCount(const Identifier& eventType);
 
-    bool hasEventListeners() const;
     bool hasEventListeners(const Identifier& eventType) const;
     bool hasActiveEventListeners(const Identifier& eventType) const;
-    bool hasEventListeners(JSC::VM& vm, ASCIILiteral eventType) const;
 
     WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)> onDidChangeListener = WTF::Function<void(EventEmitter&, const Identifier& eventName, bool isAdded)>(nullptr);
 
@@ -121,21 +119,10 @@ inline bool EventEmitter::isFiringEventListeners() const
     return data && data->isFiringEventListeners;
 }
 
-inline bool EventEmitter::hasEventListeners() const
-{
-    auto* data = eventTargetData();
-    return data && !data->eventListenerMap.isEmpty();
-}
-
 inline bool EventEmitter::hasEventListeners(const Identifier& eventType) const
 {
     auto* data = eventTargetData();
     return data && data->eventListenerMap.contains(eventType);
-}
-
-inline bool EventEmitter::hasEventListeners(JSC::VM& vm, ASCIILiteral eventType) const
-{
-    return this->hasEventListeners(Identifier::fromString(vm, eventType));
 }
 
 inline void EventEmitter::setMaxListeners(unsigned count)

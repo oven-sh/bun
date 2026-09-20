@@ -129,8 +129,6 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
 export interface ConfigureResult {
   cfg: Config;
   output: BunOutput;
-  /** Build.ninja absolute path. */
-  ninjaFile: string;
   /** Env vars the caller should set before spawning ninja. */
   env: Record<string, string>;
   /** Wall-clock ms for the configure pass. */
@@ -408,10 +406,8 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   }
   mark("orderFile");
 
-  const ninjaFile = ninjaPath;
-
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");
 
-  return { cfg, output, ninjaFile, env: ccacheEnv(cfg), elapsed, changed, exe };
+  return { cfg, output, env: ccacheEnv(cfg), elapsed, changed, exe };
 }

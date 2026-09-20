@@ -320,13 +320,6 @@ declare interface Promise<T> extends ClassWithIntrinsics<Promise<T>> {}
 declare interface ArrayBufferConstructor extends ClassWithIntrinsics<ArrayBufferConstructor> {}
 declare interface PromiseConstructor extends ClassWithIntrinsics<PromiseConstructor> {}
 
-declare interface UnderlyingSource {
-  $lazy?: boolean;
-  $bunNativePtr?: undefined | TODO;
-  autoAllocateChunkSize?: number;
-  $stream?: ReadableStream;
-}
-
 declare interface AddEventListenerOptions {
   /**
    * Private symbol read by the native EventTarget. A listener registered with it still
@@ -358,8 +351,6 @@ declare const $LoaderLabelToId: Record<import("bun").Loader, number>;
 declare function notImplementedIssue(issueNumber: number, description: string): Error;
 /** Return a function that throws a not implemented error that points to a github issue */
 declare function notImplementedIssueFn(issueNumber: number, description: string): (...args: any[]) => never;
-
-declare type JSCSourceCodeObject = unique symbol;
 
 declare interface Function {
   path: string;

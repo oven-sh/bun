@@ -79,7 +79,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   const mod = $createCommonJSModule(id, {}, false, this);
   requireMap.$set(id, mod);
 
-  var out: LoaderModule | -1;
+  var out: any;
 
   // This is where we load the module. We will see if Module._load and
   // Module._compile are actually important for compatibility.

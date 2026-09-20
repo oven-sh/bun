@@ -36,8 +36,6 @@ let wait =
         })
     : () => new Promise<void>(done => setTimeout(done, 2_500));
 
-let mainWebSocket: WebSocketWrapper | null = null;
-
 interface WebSocketWrapper {
   /** When re-connected, this is re-assigned */
   wrapped: WebSocket | null;
@@ -102,18 +100,11 @@ export function initWebSocket(
     close() {
       closed = true;
       this.wrapped?.close();
-      if (mainWebSocket === this) {
-        mainWebSocket = null;
-      }
     },
     [Symbol.dispose]() {
       this.close();
     },
   };
-
-  if (mainWebSocket === null) {
-    mainWebSocket = wsProxy;
-  }
 
   function onFirstOpen() {
     console.info("[Bun] Hot-module-reloading socket connected, waiting for changes...");

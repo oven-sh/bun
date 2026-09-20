@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { argParse, writeIfNotChanged } from "./helpers";
 
@@ -204,9 +204,6 @@ async function run() {
     process.exit(1);
   } else {
     console.log("-> bake.client.js, bake.server.js, bake.error.js");
-
-    const empty_file = join(codegenRoot, "bake_empty_file");
-    if (!existsSync(empty_file)) writeIfNotChanged(empty_file, "this is used to fulfill a build dependency");
   }
 }
 

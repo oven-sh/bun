@@ -3443,25 +3443,32 @@ async function runsFixture(
   return { stdout: stdout.trim(), stderr: stderr || undefined, exitCode };
 }
 
-describe.concurrent("ModuleGraph isolation: a disposed graph cannot keep itself running", () => {
-  // If what a disposed graph's leftover code starts reported back, a loop that retries on failure
-  // would go on for ever inside the disposed graph (and a spawn loop would go on launching processes).
-  for (const name of Object.keys(hostApp.steps)) {
-    test(name, async () => {
+describe.concurrent("ModuleGraph isolation: what a disposed graph had open does not keep the process running", () => {
+  // With every node: module the app uses imported by the graph, as the graphs of the tests in this process have
+  // them. The other fixtures that open one kind of thing, and the one that retries, load app.mjs as it is: their
+  // processes load the modules they use and no others.
+  for (const kind of Object.keys(kinds)) {
+    test(kind, async () => {
+      const state = newState(kind + "-exits");
       expect(
         await runsFixture(
-          "retries-then-is-disposed.mjs",
-          name,
-          JSON.stringify({ http: hostHttp.port, tcp: hostTcp.port }),
+          "opens-then-disposes.mjs",
+          kind,
+          JSON.stringify(state),
+          JSON.stringify(kinds[kind].args?.(state) ?? []),
+          "app-with-every-import.mjs",
         ),
-      ).toEqual({ stdout: "armed\nstops", exitCode: 0 });
+      ).toEqual({
+        stdout: "disposed",
+        exitCode: 0,
+      });
     });
   }
 });
 
-// After the short processes of the block above, ahead of those of the blocks below. Tests that run concurrently
-// are started in the order they are declared: the few long fixtures here would finish by themselves if they
-// were started last, and would take the processor from the in-process tests above if they were started first.
+// After the first block of processes and ahead of the others. Tests that run concurrently are started in the
+// order they are declared: the few long fixtures here would finish by themselves if they were started last, and
+// would take the processor from the in-process tests above if they were started first.
 describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behind in what is the realm's", () => {
   test("its node:perf_hooks observer is disconnected: the host's requests are not buffered for it", async () => {
     const [observed, control] = await Promise.all(
@@ -3773,25 +3780,6 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
   });
 });
 
-describe.concurrent("ModuleGraph isolation: what a disposed graph had open does not keep the process running", () => {
-  for (const kind of Object.keys(kinds)) {
-    test(kind, async () => {
-      const state = newState(kind + "-exits");
-      expect(
-        await runsFixture(
-          "opens-then-disposes.mjs",
-          kind,
-          JSON.stringify(state),
-          JSON.stringify(kinds[kind].args?.(state) ?? []),
-        ),
-      ).toEqual({
-        stdout: "disposed",
-        exitCode: 0,
-      });
-    });
-  }
-});
-
 describe.concurrent(
   "ModuleGraph isolation: what a graph was still opening when it was disposed does not keep the process running",
   () => {
@@ -3833,13 +3821,11 @@ describe.concurrent("ModuleGraph isolation: what a disposed graph opens does not
   }
 });
 
-// The processes above load app.mjs as it is: each loads the node: modules its opener uses and no others. Once
-// for each fixture with the graph importing every one of them, as the graphs of the tests in this process do.
+// The fixtures of the two blocks above, once each with the graph importing every node: module the app uses.
 describe.concurrent(
   "ModuleGraph isolation: a disposed graph that imported every node: module the app uses does not keep the process running",
   () => {
     for (const [what, fixture] of [
-      ["what it had open", "opens-then-disposes.mjs"],
       ["what it was still opening", "disposes-while-opening.mjs"],
       ["what it opens afterwards", "disposes-then-opens.mjs"],
     ]) {
@@ -3855,6 +3841,22 @@ describe.concurrent(
     }
   },
 );
+
+describe.concurrent("ModuleGraph isolation: a disposed graph cannot keep itself running", () => {
+  // If what a disposed graph's leftover code starts reported back, a loop that retries on failure
+  // would go on for ever inside the disposed graph (and a spawn loop would go on launching processes).
+  for (const name of Object.keys(hostApp.steps)) {
+    test(name, async () => {
+      expect(
+        await runsFixture(
+          "retries-then-is-disposed.mjs",
+          name,
+          JSON.stringify({ http: hostHttp.port, tcp: hostTcp.port }),
+        ),
+      ).toEqual({ stdout: "armed\nstops", exitCode: 0 });
+    });
+  }
+});
 
 // A forcing function: whoever adds something to `Bun` has to say here what a graph's dispose() does
 // with it. "owned": something it opens outlives the call and a test above (or in

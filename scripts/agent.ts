@@ -10,7 +10,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir, hostname, tmpdir as osTmpdir, release, userInfo, type UserInfo } from "node:os";
+import { homedir, hostname, tmpdir as osTmpdir, release } from "node:os";
 import { dirname, join } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { fileURLToPath } from "node:url";
@@ -297,17 +297,6 @@ export function getHostname(): string {
   }
 
   return hostname();
-}
-
-let user: UserInfo<string> | undefined;
-
-/**
- * The user this process runs as, looked up once. The lookup can start to fail
- * while the process runs: on macOS opendirectoryd answers it, and a shutdown
- * stops that daemon some seconds before it ends this process.
- */
-export function getUser(): UserInfo<string> {
-  return (user ??= userInfo());
 }
 
 export function getDistro(): string | undefined {

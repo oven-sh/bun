@@ -4,6 +4,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { basename, dirname, relative, resolve } from "node:path";
 import {
   getAbi,
@@ -14,7 +15,6 @@ import {
   getHostname,
   getKernel,
   getOs,
-  getUser,
   isLinux,
   isMacOS,
   isPosix,
@@ -729,7 +729,7 @@ export function printEnvironment(): void {
       console.log("Tailscale IP:", getTailscaleIp());
       console.log("Public IP:", getPublicIp());
     }
-    console.log("Username:", getUser().username);
+    console.log("Username:", userInfo().username);
     console.log("Working Directory:", process.cwd());
     console.log("Temporary Directory:", tmpdir());
     if (process.isBun) {

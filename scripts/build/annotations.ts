@@ -188,18 +188,13 @@ export function parseAnnotations(content: string): AnnotationResult {
           return [key!, value];
         }) || [],
       );
-      if (title === undefined) {
-        // A workflow command without `title=` cannot be turned into an
-        // annotation. The caller reports the error and carries on.
-        throw new TypeError("The workflow command has no title");
-      }
-
       const annotation = parseAnnotation({
         level,
         filename: file,
         line,
         column: col,
-        content: unescapeGitHubAction(title) + unescapeGitHubAction(content!),
+        // Every parameter of a workflow command is optional, the title too.
+        content: unescapeGitHubAction(title ?? "") + unescapeGitHubAction(content!),
       });
       annotations.push(annotation);
       continue;

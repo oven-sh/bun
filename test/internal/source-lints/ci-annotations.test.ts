@@ -183,6 +183,26 @@ describe("other sources", () => {
     ]);
   });
 
+  test("a workflow command without a title is an annotation too, and does not lose the others", () => {
+    const output = [
+      "::warning file=b.ts,line=9,title=With a title::and a message",
+      "::error file=src/a.ts,line=3::no title",
+      "::error::nothing but a message",
+    ].join("\n");
+    expect(
+      parseAnnotations(output).annotations.map(({ level, filename, line, content }) => ({
+        level,
+        filename,
+        line,
+        content,
+      })),
+    ).toEqual([
+      { level: "warning", filename: "b.ts", line: 9, content: "With a titleand a message" },
+      { level: "error", filename: "src/a.ts", line: 3, content: "no title" },
+      { level: "error", filename: undefined, line: undefined, content: "nothing but a message" },
+    ]);
+  });
+
   test("clang diagnostics run through the 'N errors generated' trailer", () => {
     const diagnostic = [
       "src/jsc/bindings/Foo.cpp:12:5: error: use of undeclared identifier 'bar'",

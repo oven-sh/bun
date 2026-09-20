@@ -2082,10 +2082,15 @@ describe.concurrent("a repeated resolution", () => {
           const where = () => [basename(require.resolve("./x")), basename(require.resolve("./lib/x"))];
           const out = [where(), where()];
           writeFileSync(join(import.meta.dir, "x.js"), "module.exports = 1;");
-          writeFileSync(join(import.meta.dir, "lib", "x.js"), "module.exports = 1;");
+          writeFileSync(join(import.meta.dir, "lib", "x.js"), "module.exports = 'new file';");
           out.push(where());
-          const { success } = await Bun.build({ entrypoints: [join(import.meta.dir, "entry.js")] });
-          out.push(success, where(), where());
+          // A build at the resolver generation of the runtime reads no directory again. Build until one does.
+          let sawNewFile = false;
+          for (let builds = 0; !sawNewFile && builds < 100; builds++) {
+            const { outputs } = await Bun.build({ entrypoints: [join(import.meta.dir, "entry.js")] });
+            sawNewFile = (await outputs[0].text()).includes("new file");
+          }
+          out.push(sawNewFile, where(), where());
           console.log(JSON.stringify(out));
         `,
       },
@@ -2118,15 +2123,20 @@ describe.concurrent("a repeated resolution", () => {
           const out = [where(), where(), where()];
           rmSync(join(import.meta.dir, "lib"), { recursive: true });
           out.push(where());
-          const { success } = await Bun.build({ entrypoints: [join(import.meta.dir, "entry.js")], throw: false });
-          out.push(success, where(), where());
+          // A build at the resolver generation of the runtime reads no directory again. Build until one does.
+          let sawDirectoryGone = false;
+          for (let builds = 0; !sawDirectoryGone && builds < 100; builds++) {
+            const { logs } = await Bun.build({ entrypoints: [join(import.meta.dir, "entry.js")], throw: false });
+            sawDirectoryGone = logs.some(log => log.message.includes("Could not resolve"));
+          }
+          out.push(sawDirectoryGone, where(), where());
           console.log(JSON.stringify(out));
         `,
       },
       ["main.mjs"],
     );
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(["x.js", "x.js", "x.js", "x.js", false, "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]);
+    expect(JSON.parse(stdout)).toEqual(["x.js", "x.js", "x.js", "x.js", true, "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]);
     expect(exitCode).toBe(0);
   });
 

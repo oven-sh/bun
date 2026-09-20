@@ -744,20 +744,25 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     const requiredError =
       'error: package "one-range-dep@1.0.0" depends on workspace "no-deps" (packages/no-deps), which is listed in bun.lock but not on disk\n';
 
-    // The isolated linker exits 0 with --ignore-scripts on main: it leaves a dangling link and installs the pruned workspace.
-    test.concurrent.each([[[]], [["--ignore-scripts"]]])("fails before node_modules changes %j", async flags => {
-      const tree = workspaceLinkedTree({ "one-range-dep": "1.0.0" });
-      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
-      expect(full).not.toContain('"no-deps@1.');
+    // With --ignore-scripts the isolated linker exits 0 on main: it links into the missing folder and installs the pruned workspace.
+    describe.each([
+      ["default flags", []],
+      ["--ignore-scripts", ["--ignore-scripts"]],
+    ] as [string, string[]][])("%s", (_label, flags) => {
+      test.concurrent("fails before node_modules changes", async () => {
+        const tree = workspaceLinkedTree({ "one-range-dep": "1.0.0" });
+        const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+        expect(full).not.toContain('"no-deps@1.');
 
-      const { stdout, stderr, exitCode } = await raw(packageDir, linker, ["install", "--frozen-lockfile", ...flags]);
+        const { stdout, stderr, exitCode } = await raw(packageDir, linker, ["install", "--frozen-lockfile", ...flags]);
 
-      expect(stderr).toBe(`${noDepsPrunedNote}${requiredError}${survivorNote}\n`);
-      expect(stdout).not.toContain("Failed to install");
-      expect(await lockText(packageDir)).toBe(full);
-      expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
-      expect(await exists(join(packageDir, "packages", "no-deps"))).toBeFalse();
-      expect(exitCode).toBe(1);
+        expect(stderr).toBe(`${noDepsPrunedNote}${requiredError}${survivorNote}\n`);
+        expect(stdout).not.toContain("Failed to install");
+        expect(await lockText(packageDir)).toBe(full);
+        expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+        expect(await exists(join(packageDir, "packages", "no-deps"))).toBeFalse();
+        expect(exitCode).toBe(1);
+      });
     });
 
     // Guard that passes on main too: --production does not place one-range-dep, so nothing links the pruned workspace.

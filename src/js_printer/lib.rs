@@ -2117,11 +2117,38 @@ pub(crate) mod __gated_printer {
         #[inline]
         pub(crate) fn print_space_before_identifier(&mut self) {
             if self.writer.written() > 0
-                && (lexer::is_identifier_continue(self.writer.prev_char() as i32)
+                && (lexer::is_identifier_continue(self.prev_code_point())
                     || self.writer.written() == self.prev_reg_exp_end)
             {
                 self.print(b" ");
             }
+        }
+
+        /// The last code point written, decoded from its UTF-8 bytes. After a
+        /// non-ASCII identifier such as `café` the last byte is a UTF-8
+        /// continuation byte, so `prev_char` alone says nothing about whether
+        /// the output ends in an identifier character.
+        fn prev_code_point(&self) -> i32 {
+            let out = self.writer.slice();
+            let Some(&last) = out.last() else {
+                return 0;
+            };
+            if last < 0x80 {
+                return last as i32;
+            }
+            let mut start = out.len() - 1;
+            let lowest = out.len().saturating_sub(4);
+            while start > lowest && (out[start] & 0xC0) == 0x80 {
+                start -= 1;
+            }
+            let tail = &out[start..];
+            let len = strings::wtf8_byte_sequence_length_with_invalid(out[start]);
+            if len as usize != tail.len() {
+                return 0;
+            }
+            let mut bytes = [0u8; 4];
+            bytes[..tail.len()].copy_from_slice(tail);
+            strings::decode_wtf8_rune_t::<i32>(bytes, len, 0)
         }
 
         #[inline]

@@ -1824,6 +1824,34 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // The last byte of a non-ASCII identifier is a UTF-8 continuation byte. The
+  // space check before a keyword must decode the whole code point, or the
+  // keyword glues onto the identifier.
+  // https://github.com/oven-sh/bun/issues/43607
+  itBundled("minify/SpaceBeforeKeywordAfterNonAsciiIdentifier", {
+    files: {
+      "/entry.js": /* js */ `
+        const o = { 中文属性: new Date(), café: "other", other: [1, 2, 3] };
+        console.log(o.中文属性 instanceof Date, o.café in o, o.other instanceof Array);
+        console.log(typeof o.中文属性 instanceof Function, void o.café in o);
+      `,
+    },
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("o.中文属性 instanceof Date");
+      expect(out).toContain("o.café in o");
+      expect(out).not.toContain("性instanceof");
+      expect(out).not.toContain("éin");
+    },
+    run: {
+      stdout: `
+        true true true
+        false false
+      `,
+    },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

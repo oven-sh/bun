@@ -182,10 +182,25 @@ test("getUser() looks the user up once", () => {
   }
 });
 
+// The runner only loads in a Node that has import.meta.main (scripts/agent.ts checks for it at import),
+// which is 24.2 or newer and so strips types as well. CI has one. Elsewhere `node` can be older or absent.
+const node = nodeExe();
+const nodeLoadsTheRunner = await (async () => {
+  if (!node) return false;
+  await using probe = Bun.spawn({
+    cmd: [node, "--input-type=module", "-e", "console.log(typeof import.meta.main)"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [stdout] = await Promise.all([probe.stdout.text(), probe.exited]);
+  return stdout.trim() === "boolean";
+})();
+
 // What the nightly cleanup of a bare macOS agent does to a shard that is in flight: files the runner
 // has listed are gone when their turn comes, and the user lookup fails. Neither may end the run. This
 // drives the runner itself, under node as CI does, on a copy in a scratch repository.
-test.skipIf(!nodeExe())(
+test.skipIf(!nodeLoadsTheRunner)(
   "the runner outlives a failing os.userInfo() and a listed node test file that vanished",
   async () => {
     const repo = join(import.meta.dir, "..", "..");
@@ -226,7 +241,7 @@ test.skipIf(!nodeExe())(
 
     await using runner = Bun.spawn({
       cmd: [
-        nodeExe()!,
+        node!,
         `--import=${pathToFileURL(join(String(dir), "user-info-fails.mjs"))}`,
         join("scripts", "runner.node.ts"),
         `--exec-path=${bunExe()}`,

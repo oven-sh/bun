@@ -432,7 +432,7 @@ describe("Bun.file in serve routes", () => {
             },
           });
           expect(res.status).toBe(200);
-          if (method === "GET") expect(await res.text()).toBe("Hello, World!");
+          expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
         });
 
         it("still 304s for If-None-Match: * when If-Modified-Since is also present", async () => {
@@ -477,6 +477,8 @@ describe("Bun.file in serve routes", () => {
 
     // RFC 9110 §13.2.2 steps 1–2: If-Match / If-Unmodified-Since evaluate
     // first and short-circuit with 412 before If-None-Match / If-Modified-Since.
+    // fetch() reads no body for HEAD, so the "" expected for HEAD shows only
+    // what the client exposes. It cannot see body bytes a server puts on the wire.
     describe.each(["GET", "HEAD"])("If-Match / If-Unmodified-Since (%s)", method => {
       it("If-Match: non-matching tag on a file route with ETag → 412", async () => {
         const res = await fetch(new URL(`/with-etag.txt`, server.url), {
@@ -493,7 +495,7 @@ describe("Bun.file in serve routes", () => {
           headers: { "If-Match": '"custom-etag"' },
         });
         expect(res.status).toBe(200);
-        if (method === "GET") expect(await res.text()).toBe("Hello, World!");
+        expect(await res.text()).toBe(method === "GET" ? "Hello, World!" : "");
       });
 
       it("If-Match: * on a file route without a stored ETag → 200", async () => {

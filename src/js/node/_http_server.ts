@@ -1565,8 +1565,7 @@ function getNodeHTTPServerSocket() {
       this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
       const callback = this.#pendingCallback;
       if (!callback) {
-        // No write was waiting: the writable poll re-armed for another reason
-        // (readStop pauses the socket into writable-only interest).
+        // No write was waiting (readStop re-arms the writable poll).
         return;
       }
       this.#pendingCallback = null;

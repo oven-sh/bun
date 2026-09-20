@@ -6253,6 +6253,229 @@ it("an oversized respond() over a JS Duplex transport still puts RST_STREAM and 
   }
 });
 
+describe("sendTrailers() over maxSendHeaderBlockLength", () => {
+  // Verified against node v26.3.0: the stream gets 'frameError' (HEADERS, FRAME_SIZE_ERROR) and no
+  // trailer block goes out. The stream is still open on the wire, so node's onFrameError closes
+  // it, and the session closes with GOAWAY NO_ERROR.
+  async function refuseTrailers(handleRequest, expected) {
+    const server = http2.createServer({ maxSendHeaderBlockLength: 100 });
+    let client;
+    try {
+      const serverEvents = [];
+      const serverStreamClosed = Promise.withResolvers();
+      server.on("stream", stream => {
+        stream.on("error", e => serverEvents.push(`error ${e.code} ${e.message}`));
+        stream.on("frameError", (type, code) => serverEvents.push(`frameError type=${type} code=${code}`));
+        stream.on("close", () => serverStreamClosed.resolve(stream.rstCode));
+        handleRequest(stream);
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-big": Buffer.alloc(300, "b").toString() }));
+        stream.end("body");
+      });
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://localhost:${port}`);
+      client.on("error", () => {});
+      const goaways = [];
+      client.on("goaway", (code, lastStreamID) => goaways.push({ code, lastStreamID }));
+      const clientClosed = new Promise(resolve => client.on("close", resolve));
+
+      const req = client.request({ ":path": "/" });
+      const reqResult = new Promise(resolve => {
+        const result = { trailers: false, ended: false, error: undefined };
+        req.on("trailers", () => (result.trailers = true));
+        req.on("end", () => (result.ended = true));
+        req.on("error", e => (result.error = e.message));
+        req.on("close", () => resolve({ ...result, rstCode: req.rstCode }));
+      });
+      req.resume();
+      req.end();
+
+      const [request, serverRstCode] = await Promise.all([reqResult, serverStreamClosed.promise]);
+      expect({ request, serverRstCode, serverEvents }).toEqual(expected);
+      await clientClosed;
+      expect(goaways).toEqual([{ code: http2.constants.NGHTTP2_NO_ERROR, lastStreamID: 1 }]);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  }
+
+  it("closes a request that nobody read with NO_ERROR", async () => {
+    // node's finishSendTrailers() runs kMaybeDestroy before the block is refused. It closes the
+    // unread request with NO_ERROR, so the client sees a clean end of the response.
+    await refuseTrailers(() => {}, {
+      request: { trailers: false, ended: true, error: undefined, rstCode: http2.constants.NGHTTP2_NO_ERROR },
+      serverRstCode: http2.constants.NGHTTP2_NO_ERROR,
+      // frame type 1 is HEADERS
+      serverEvents: ["frameError type=1 code=6"],
+    });
+  });
+
+  it("resets a request that was read with FRAME_SIZE_ERROR", async () => {
+    const error = "Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR";
+    await refuseTrailers(stream => stream.resume(), {
+      request: { trailers: false, ended: false, error, rstCode: http2.constants.NGHTTP2_FRAME_SIZE_ERROR },
+      serverRstCode: http2.constants.NGHTTP2_FRAME_SIZE_ERROR,
+      serverEvents: ["frameError type=1 code=6", `error ERR_HTTP2_STREAM_ERROR ${error}`],
+    });
+  });
+
+  it("resets a client request with FRAME_SIZE_ERROR and closes the client session", async () => {
+    // The client's own limit refuses its trailers. Verified against node v26.3.0.
+    const server = http2.createServer();
+    let client;
+    try {
+      const serverStream = Promise.withResolvers();
+      server.on("stream", stream => {
+        const result = { trailers: false, error: undefined };
+        stream.on("trailers", () => (result.trailers = true));
+        stream.on("error", e => (result.error = e.message));
+        stream.on("close", () => serverStream.resolve({ ...result, rstCode: stream.rstCode }));
+        stream.resume();
+        stream.respond({ ":status": 200 });
+        stream.end("response");
+      });
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://localhost:${port}`, { maxSendHeaderBlockLength: 200 });
+      client.on("error", () => {});
+      const clientClosed = new Promise(resolve => client.on("close", resolve));
+
+      const req = client.request({ ":path": "/", ":method": "POST" }, { waitForTrailers: true });
+      const clientEvents = [];
+      const reqClosed = new Promise(resolve => req.on("close", resolve));
+      req.on("wantTrailers", () => req.sendTrailers({ "x-big": Buffer.alloc(300, "b").toString() }));
+      req.on("frameError", (type, code) => clientEvents.push(`frameError type=${type} code=${code}`));
+      req.on("error", e => clientEvents.push(`error ${e.code} ${e.message}`));
+      req.resume();
+      req.end("request");
+
+      const [serverResult] = await Promise.all([serverStream.promise, reqClosed]);
+      const rstCode = http2.constants.NGHTTP2_FRAME_SIZE_ERROR;
+      const error = "Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR";
+      expect({ clientEvents, clientRstCode: req.rstCode, serverResult }).toEqual({
+        clientEvents: ["frameError type=1 code=6", `error ERR_HTTP2_STREAM_ERROR ${error}`],
+        clientRstCode: rstCode,
+        serverResult: { trailers: false, error, rstCode },
+      });
+      await clientClosed;
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
+it("after sendTrailers() exceeds maxSendHeaderBlockLength, later header blocks decode and streams in flight complete", async () => {
+  // Verified against node v26.3.0: the session closes gracefully, so /slow receives the rest of
+  // its body after the GOAWAY. The /late response follows the refused block and reuses an
+  // indexed field, so it only decodes if the refused block never reached the HPACK encoder.
+  const HALF = Buffer.alloc(1000, "a").toString();
+  const server = http2.createServer({ maxSendHeaderBlockLength: 200 });
+  let client;
+  try {
+    let late;
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      const path = headers[":path"];
+      if (path === "/slow") {
+        stream.respond({ ":status": 200, "x-marker": "indexed" });
+        stream.write(HALF);
+        // The client ends this request once it has seen the GOAWAY.
+        stream.on("end", () => {
+          stream.end(HALF);
+          // Only destroyed when an assertion below has failed and torn the client down.
+          if (late.destroyed) return;
+          late.respond({ ":status": 200, "x-marker": "indexed" });
+          late.end("late");
+        });
+        stream.resume();
+      } else if (path === "/late") {
+        late = stream;
+      } else {
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-big": Buffer.alloc(1000, "b").toString() }));
+        stream.end("refused");
+      }
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://localhost:${port}`);
+    client.on("error", () => {});
+    const goaway = new Promise(resolve => client.once("goaway", resolve));
+    const clientClosed = new Promise(resolve => client.on("close", resolve));
+    const collect = req =>
+      new Promise(resolve => {
+        const result = { status: undefined, marker: undefined, bytes: 0, trailers: false, error: undefined };
+        req.on("response", responseHeaders => {
+          result.status = responseHeaders[":status"];
+          result.marker = responseHeaders["x-marker"];
+        });
+        req.on("trailers", () => (result.trailers = true));
+        req.on("data", chunk => (result.bytes += chunk.length));
+        req.on("error", e => (result.error = e.code));
+        req.on("close", () => resolve({ ...result, rstCode: req.rstCode }));
+      });
+
+    const slow = client.request({ ":path": "/slow", ":method": "POST" });
+    const slowResult = collect(slow);
+    const firstHalf = new Promise(resolve => slow.once("data", resolve));
+    const lateResult = collect(client.request({ ":path": "/late" }));
+    await firstHalf;
+    expect(await collect(client.request({ ":path": "/refused" }))).toEqual({
+      status: 200,
+      marker: undefined,
+      bytes: 7,
+      trailers: false,
+      error: undefined,
+      rstCode: 0,
+    });
+    await goaway;
+    slow.end();
+
+    const [slowRes, lateRes] = await Promise.all([slowResult, lateResult, clientClosed]);
+    expect({ slow: slowRes, late: lateRes }).toEqual({
+      slow: { status: 200, marker: "indexed", bytes: 2000, trailers: false, error: undefined, rstCode: 0 },
+      late: { status: 200, marker: "indexed", bytes: 4, trailers: false, error: undefined, rstCode: 0 },
+    });
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("maxSendHeaderBlockLength counts the priority bytes of a HEADERS frame for trailers", async () => {
+  // nghttp2's bound is 12, plus 12 per field, plus the name and value bytes, plus the 5 priority
+  // bytes of a HEADERS frame: { "x-trailer-name": "value-0123456789" } is 54 + 5.
+  // Verified against node v26.3.0: 59 delivers the trailers, 58 refuses them.
+  const probe = async limit => {
+    const server = http2.createServer({ maxSendHeaderBlockLength: limit });
+    let client;
+    try {
+      server.on("stream", stream => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": 200 }, { sendDate: false, waitForTrailers: true });
+        stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer-name": "value-0123456789" }));
+        stream.end("body");
+      });
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://localhost:${port}`);
+      client.on("error", () => {});
+      const req = client.request({ ":path": "/" });
+      return await new Promise(resolve => {
+        let trailer;
+        req.on("trailers", trailers => (trailer = trailers["x-trailer-name"]));
+        req.on("error", () => {});
+        req.on("close", () => resolve(trailer));
+        req.resume();
+        req.end();
+      });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  };
+  expect(await Promise.all([probe(59), probe(58)])).toEqual(["value-0123456789", undefined]);
+});
+
 it("PerformanceObserver receives http2 session and stream entries", async () => {
   const entries = [];
   // Two streams (client+server) + two sessions (client+server): resolve once

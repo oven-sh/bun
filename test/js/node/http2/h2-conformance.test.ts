@@ -1821,6 +1821,101 @@ describe("a PUSH_PROMISE over the send limit (RFC 9113 §8.4)", () => {
   });
 });
 
+describe.concurrent("a trailer block over the send limit (RFC 9113 §8.1)", () => {
+  // Verified against node v26.3.0 with the same raw client: nghttp2 refuses the block before it
+  // deflates it, so no trailer HEADERS frame goes out and the stream gets 'frameError'. The
+  // response is still open on the wire. node closes it with NO_ERROR when nobody read the
+  // request and with FRAME_SIZE_ERROR when somebody did. The session then closes with GOAWAY
+  // NO_ERROR (node sends that GOAWAY twice).
+  const big = (size: number) => Buffer.alloc(size, "B").toString();
+  const respondWithTrailers = (trailers: http2.OutgoingHttpHeaders) => (stream: http2.ServerHttp2Stream) => {
+    stream.on("error", () => {});
+    stream.respond({ ":status": 200 }, { waitForTrailers: true });
+    stream.on("wantTrailers", () => stream.sendTrailers(trailers));
+    stream.end("ok");
+  };
+  const RESPONSE = { type: FrameType.HEADERS, streamId: 1, endStream: false, code: undefined };
+  const BODY = { type: FrameType.DATA, streamId: 1, endStream: false, code: undefined };
+  const GOAWAY = { type: FrameType.GOAWAY, streamId: 0, endStream: false, code: ErrorCode.NO_ERROR };
+  const reset = (code: number) => ({ type: FrameType.RST_STREAM, streamId: 1, endStream: false, code });
+  type Case = [string, http2.ServerOptions, (server: http2.Http2Server) => void, number];
+  const cases: Case[] = [
+    [
+      "sendTrailers() on a request that nobody read",
+      { maxSendHeaderBlockLength: 100 },
+      server => server.on("stream", respondWithTrailers({ "x-big": big(300) })),
+      ErrorCode.NO_ERROR,
+    ],
+    [
+      "sendTrailers() on a request that was read",
+      { maxSendHeaderBlockLength: 100 },
+      server =>
+        server.on("stream", stream => {
+          stream.resume();
+          respondWithTrailers({ "x-big": big(300) })(stream);
+        }),
+      ErrorCode.FRAME_SIZE_ERROR,
+    ],
+    [
+      "addTrailers() in the compat API",
+      { maxSendHeaderBlockLength: 100 },
+      server =>
+        server.on("request", (req, res) => {
+          res.on("error", () => {});
+          res.addTrailers({ "x-big": big(300) });
+          res.end("ok");
+        }),
+      ErrorCode.NO_ERROR,
+    ],
+    [
+      "a field over 64 KiB with the limit unset",
+      {},
+      server => server.on("stream", respondWithTrailers({ "x-big": big(70_000) })),
+      ErrorCode.NO_ERROR,
+    ],
+  ];
+
+  test.each(cases)("%s", async (_name, options, listen, rstCode) => {
+    const server = http2.createServer(options);
+    listen(server);
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      const closed = once(c.socket, "close");
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      const endsStream = (f: Frame) =>
+        (f.type === FrameType.DATA || f.type === FrameType.HEADERS) && (f.flags & 0x1) !== 0;
+      const received = () =>
+        c.frames
+          .filter(f => f.type !== FrameType.SETTINGS && f.type !== FrameType.WINDOW_UPDATE)
+          .map(f => ({
+            type: f.type,
+            streamId: f.streamId,
+            endStream: endsStream(f),
+            code:
+              f.type === FrameType.GOAWAY
+                ? goawayErrorCode(f)
+                : f.type === FrameType.RST_STREAM
+                  ? f.payload.readUInt32BE(0)
+                  : undefined,
+          }));
+      // The last frame of the response: END_STREAM or a reset.
+      await c.waitFor(f => f.streamId === 1 && (f.type === FrameType.RST_STREAM || endsStream(f)));
+      expect(received().filter(f => f.streamId === 1)).toEqual([RESPONSE, BODY, reset(rstCode)]);
+      // This client never closes the socket: the server does, once no stream is left.
+      await closed;
+      expect(received()).toEqual([RESPONSE, BODY, reset(rstCode), GOAWAY]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+});
+
 // A stream nothing references any more can still survive a bounded number of collections: JSC scans
 // the machine stack conservatively and honors interior pointers, so a stale word left in a native
 // frame (seen on x64 as cell+0x84 in the microtask-drain frames; near-deterministic on aarch64) pins

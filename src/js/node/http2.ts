@@ -393,6 +393,7 @@ const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
 // pushPromise() result for a block over the send limit that was not sent (PUSH_PROMISE_OVER_SEND_LIMIT in h2_frame_parser.rs).
 const kPushPromiseOverSendLimit = -2;
+const kFrameTypeHeaders = 0x1;
 const kFrameTypePushPromise = 0x5;
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
@@ -2032,6 +2033,9 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // The session resumed a request that nobody was reading so that it can finish. From then on
+  // readableFlowing does not say that user code consumed the request.
+  AutoResumed = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2415,8 +2419,10 @@ class Http2Stream extends Duplex {
     try {
       if (ObjectKeys(headers).length === 0) {
         session[bunHTTP2Native]?.noTrailers(this.#id);
-      } else {
-        session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
+      } else if (session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames) === false) {
+        // The block is over the send limit and no frame was sent. nghttp2 refuses it when the session next sends, so node reports it after sendTrailers() has returned.
+        process.nextTick(emitFrameErrorEventNT, this, kFrameTypeHeaders, constants.NGHTTP2_FRAME_SIZE_ERROR);
+        setImmediate(closeAfterRefusedTrailers, session, this);
       }
     } catch (error) {
       this.#sentTrailers = undefined;
@@ -4080,6 +4086,7 @@ class ServerHttp2Session extends Http2Session {
           // attach a tick later (e.g. a CONNECT tunnel piping once its socket connects) and
           // resuming with buffered data would silently discard it. At full close, dump as before.
           if ((state == 7 || stream.readableLength === 0) && stream.readableFlowing === null) {
+            stream[bunHTTP2StreamStatus] |= StreamState.AutoResumed;
             stream.resume();
           }
         }
@@ -6604,6 +6611,23 @@ function closeAfterFrameError(session: ServerHttp2Session, stream: ServerHttp2St
   }
   stream.close(code);
   session.close();
+}
+// node's onFrameError for a trailer block that nghttp2 refused: the stream is still open on the wire. finishSendTrailers() has run kMaybeDestroy by then, which closes a server request that nobody read with NO_ERROR, so close(FRAME_SIZE_ERROR) only reaches a stream that was read: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1987-L2003
+function closeAfterRefusedTrailers(session: ServerHttp2Session | ClientHttp2Session, stream: Http2Stream) {
+  if (!stream.destroyed && !stream.closed) {
+    const unread = stream instanceof ServerHttp2Stream && isUnreadRequest(stream);
+    // Reset here, not through close(): node's RST_STREAM leaves before the GOAWAY.
+    session[bunHTTP2Native]?.rstStream(stream.id, unread ? NGHTTP2_NO_ERROR : constants.NGHTTP2_FRAME_SIZE_ERROR);
+  }
+  session.close();
+}
+// node's kMaybeDestroy test for a request that user code never tried to read. The session resumes such a request itself once it has ended, so a flowing request with no consumer counts too.
+function isUnreadRequest(stream: ServerHttp2Stream) {
+  if (stream.readableDidRead) return false;
+  const flowing = stream.readableFlowing;
+  if (flowing === null) return true;
+  const autoResumed = (stream[bunHTTP2StreamStatus] & StreamState.AutoResumed) !== 0;
+  return flowing && autoResumed && stream.listenerCount("data") === 0;
 }
 // nghttp2 closes the promised stream of an unsent PUSH_PROMISE with INTERNAL_ERROR: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2897-L2904
 function failUnannouncedPush(pushedStream: ServerHttp2Stream) {

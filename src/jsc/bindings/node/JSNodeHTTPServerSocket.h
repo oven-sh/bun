@@ -114,6 +114,9 @@ public:
     /* socket.end(): true when uWS will shut down later, after the buffered response and (afterResponseFinished) the body parse. */
     bool shutdownAfterResponseDrains(bool afterResponseFinished);
 
+    /* Close once the bytes of the responses that ended have left. close() discards them, end() waits for the peer. */
+    void closeWhenDrained();
+
     /* Switch the connection into CONNECT-style tunnel mode after an accepted
      * Upgrade: subsequent bytes bypass the HTTP parser and stream to the
      * ondata callback as opaque data. With afterBody, the switch is deferred

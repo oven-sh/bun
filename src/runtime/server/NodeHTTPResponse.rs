@@ -86,6 +86,8 @@ bitflags! {
         /// node:http handed this connection to a raw 'upgrade'/'connect'
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
         const TUNNELED                            = 1 << 8;
+        /// Its dispatch threw while it was queued (pipelining): advanceResponsePipeline decides at its turn.
+        const DISPATCH_THREW_WHILE_QUEUED         = 1 << 9;
     }
 }
 
@@ -438,6 +440,18 @@ impl NodeHTTPResponse {
             return JSValue::ZERO;
         }
         Bun__getNodeHTTPResponseThisValue(any_response_is_ssl(&raw), raw.socket().cast())
+    }
+
+    /// Flags this response when another one is the connection's current response, and says so.
+    pub(crate) fn mark_dispatch_threw_if_queued(&self) -> bool {
+        let queued = self
+            .get_this_value()
+            .as_class_ref::<Self>()
+            .is_some_and(|current| !ptr::eq(current, self));
+        if queued {
+            self.update_flags(|f| f.insert(Flags::DISPATCH_THREW_WHILE_QUEUED));
+        }
+        queued
     }
 
     fn get_server_socket_value(&self) -> JSValue {
@@ -932,27 +946,7 @@ impl NodeHTTPResponse {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
     ) -> JsResult<JSValue> {
-        if self.is_requested_completed_or_ended() {
-            return err_throw(
-                global_object,
-                ErrorCode::ERR_STREAM_ALREADY_FINISHED,
-                "Stream is already ended",
-            );
-        }
-
-        let flags = self.flags.get();
-        let Some(raw_response) = self.raw_response.get() else {
-            // We haven't emitted the "close" event yet.
-            return Ok(JSValue::UNDEFINED);
-        };
-        if flags.contains(Flags::UPGRADED) || self.is_socket_closed_or_closing() {
-            // We haven't emitted the "close" event yet.
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        let state = raw_response.state();
-        handle_ended_if_necessary(state, global_object)?;
-
+        // Arguments are converted first: ToString on statusMessage can run JS that ends or destroys the response.
         let status_code_value: JSValue = arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
         let status_message_value: JSValue = match arguments.get(1).copied() {
             Some(v) if v != JSValue::NULL => v,
@@ -987,6 +981,27 @@ impl NodeHTTPResponse {
         } else {
             &[]
         };
+
+        if self.is_requested_completed_or_ended() {
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_ALREADY_FINISHED,
+                "Stream is already ended",
+            );
+        }
+
+        let flags = self.flags.get();
+        let Some(raw_response) = self.raw_response.get() else {
+            // We haven't emitted the "close" event yet.
+            return Ok(JSValue::UNDEFINED);
+        };
+        if flags.contains(Flags::UPGRADED) || self.is_socket_closed_or_closing() {
+            // We haven't emitted the "close" event yet.
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        let state = raw_response.state();
+        handle_ended_if_necessary(state, global_object)?;
 
         if state.is_http_status_called() {
             return err_throw(
@@ -1220,16 +1235,6 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.is_done() || self.is_socket_closed_or_closing() {
-            return Ok(JSValue::UNDEFINED);
-        }
-        {
-            let Some(raw_response) = self.raw_response.get() else {
-                return Ok(JSValue::UNDEFINED);
-            };
-            handle_ended_if_necessary(raw_response.state(), global_object)?;
-        }
-
         let arguments = callframe.arguments();
         let input_value = arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
         if input_value.is_undefined_or_null() {
@@ -1257,13 +1262,14 @@ impl NodeHTTPResponse {
             ));
         }
 
-        // Re-read after the JS-capable coercion above (R-2: re-entry may clear it).
+        // Response state is read only after the conversion above, which can run JS.
+        if self.is_done() || self.is_socket_closed_or_closing() {
+            return Ok(JSValue::UNDEFINED);
+        }
         let Some(raw_response) = self.raw_response.get() else {
             return Ok(JSValue::UNDEFINED);
         };
-        if self.is_socket_closed_or_closing() {
-            return Ok(JSValue::UNDEFINED);
-        }
+        handle_ended_if_necessary(raw_response.state(), global_object)?;
         raw_response.write_informational(string_or_buffer.slice());
         Ok(JSValue::UNDEFINED)
     }
@@ -1712,6 +1718,15 @@ impl NodeHTTPResponse {
         self.clear_pending_pinned_write(global_object, JSValue::ZERO);
     }
 
+    /// True while the zero-copy tail or the uWS backpressure buffer still holds bytes.
+    fn has_unflushed_write(&self) -> bool {
+        self.pending_pinned_write.get().is_some()
+            || self
+                .raw_response
+                .get()
+                .is_some_and(|raw| raw.get_buffered_amount() > 0)
+    }
+
     /// Continue a zero-copy write from the stored offset. Returns `true` if
     /// bytes are still outstanding (the caller should wait for another
     /// onWritable before notifying JS).
@@ -1796,47 +1811,26 @@ impl NodeHTTPResponse {
         true
     }
 
+    /// Disarms the drain callback unless an earlier write still owes a 'drain': that write reported backpressure and its writable event still comes.
+    fn disarm_on_writable_unless_owed(
+        raw_response: uws::AnyResponse,
+        js_this: JSValue,
+        global_object: &JSGlobalObject,
+    ) {
+        if js::on_writable_get_cached(js_this).is_some_and(|callback| callback.is_cell()) {
+            return;
+        }
+        raw_response.clear_on_writable();
+        js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
+    }
+
     fn write_or_end<const IS_END: bool>(
         &self,
         global_object: &JSGlobalObject,
         arguments: &[JSValue],
         this_value: JSValue,
     ) -> JsResult<JSValue> {
-        if self.is_requested_completed_or_ended() {
-            return err_throw(
-                global_object,
-                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
-                "Stream already ended",
-            );
-        }
-
-        // Loosely mimicking this code:
-        //      function _writeRaw(data, encoding, callback, size) {
-        //        const conn = this[kSocket];
-        //        if (conn?.destroyed) {
-        //          // The socket was destroyed. If we're still trying to write to it,
-        //          // then we haven't gotten the 'close' event yet.
-        //          return false;
-        //        }
-        if self.raw_response.get().is_none() || self.is_socket_closed_or_closing() {
-            return Ok(if IS_END {
-                JSValue::UNDEFINED
-            } else {
-                JSValue::js_number_from_int32(0)
-            });
-        }
-
-        // Re-read raw_response at each use site (R-2: methods that
-        // re-enter may clear it).
-        let state = self.raw_response.get().unwrap().state();
-        if !state.is_response_pending() {
-            return err_throw(
-                global_object,
-                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
-                "Stream already ended",
-            );
-        }
-
+        // Arguments are converted first: the conversion can run JS that ends or destroys the response.
         let input_value: JSValue = if arguments.len() > 0 {
             arguments[0]
         } else {
@@ -1881,21 +1875,30 @@ impl NodeHTTPResponse {
         let mut string_or_buffer = crate::node::StringOrBuffer::EMPTY;
         if !input_value.is_undefined_or_null() {
             let mut encoding = crate::node::Encoding::Utf8;
-            if !encoding_value.is_undefined_or_null() {
-                if !encoding_value.is_string() {
-                    return Err(global_object.throw_invalid_argument_type_value(
-                        b"encoding",
-                        b"string",
-                        encoding_value,
-                    ));
-                }
-
-                encoding = match crate::node::Encoding::from_js(encoding_value, global_object)? {
+            // Like Writable.prototype.write: a falsy encoding means the default.
+            if !encoding_value.is_falsey() {
+                let known = if encoding_value.is_string() {
+                    crate::node::Encoding::from_js(encoding_value, global_object)?
+                } else {
+                    None
+                };
+                encoding = match known {
                     Some(e) => e,
                     None => {
-                        return Err(
-                            global_object.throw_invalid_arguments(format_args!("Invalid encoding"))
-                        );
+                        let name = if encoding_value.is_string() {
+                            encoding_value.to_bun_string(global_object)?
+                        } else {
+                            JSGlobalObject::inspect_for_error_message(
+                                global_object,
+                                encoding_value,
+                            )?
+                        };
+                        return Err(global_object
+                            .err(
+                                ErrorCode::UNKNOWN_ENCODING,
+                                format_args!("Unknown encoding: {}", name),
+                            )
+                            .throw());
                     }
                 };
             }
@@ -1915,13 +1918,31 @@ impl NodeHTTPResponse {
         }
         // string_or_buffer drops at scope exit.
 
-        // The coercion above can run JS that destroys the socket.
-        if self.is_socket_closed_or_closing() {
+        if self.is_requested_completed_or_ended() {
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
+                "Stream already ended",
+            );
+        }
+
+        // Like Node's _writeRaw on a destroyed socket: 'close' has not been emitted yet, so the write is dropped.
+        if self.raw_response.get().is_none() || self.is_socket_closed_or_closing() {
             return Ok(if IS_END {
                 JSValue::UNDEFINED
             } else {
                 JSValue::js_number_from_int32(0)
             });
+        }
+
+        // Re-read raw_response at each use site: methods that re-enter may clear it.
+        let state = self.raw_response.get().unwrap().state();
+        if !state.is_response_pending() {
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
+                "Stream already ended",
+            );
         }
 
         let bytes = string_or_buffer.slice();
@@ -1967,6 +1988,21 @@ impl NodeHTTPResponse {
             self.get_this_value()
         };
 
+        // An empty write looks flushed to uWS; WantMore would disarm the drain that is still owed.
+        if !IS_END && bytes.is_empty() && self.has_unflushed_write() {
+            if !callback_value.is_undefined() {
+                js::on_writable_set_cached(
+                    js_this,
+                    global_object,
+                    callback_value.with_async_context_if_needed(global_object),
+                );
+                let raw_response = self.raw_response.get().unwrap();
+                raw_response.on_writable(on_drain_shim, self.as_ctx_ptr());
+            }
+            // -0 would not read as negative (backpressure) in JS.
+            return Ok(JSValue::js_number_from_int32(-1));
+        }
+
         // A previous zero-copy write's tail must hit the wire before this one;
         // copy it into backpressure so ordering is preserved. No-op when the
         // caller correctly waited for 'drain' (the tail was already consumed).
@@ -2005,8 +2041,7 @@ impl NodeHTTPResponse {
                 scoped_log!(NodeHTTPResponse, "tryWriteBody({} bytes)", bytes_len);
                 let consumed = raw_response.try_write_body(bytes, true);
                 if consumed >= bytes_len {
-                    raw_response.clear_on_writable();
-                    js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
+                    Self::disarm_on_writable_unless_owed(raw_response, js_this, global_object);
                     return Ok(JSValue::js_number_from_uint64(bytes_len as u64));
                 }
                 scoped_log!(
@@ -2069,8 +2104,7 @@ impl NodeHTTPResponse {
 
             match raw_response.write(bytes) {
                 uws::WriteResult::WantMore(written) => {
-                    raw_response.clear_on_writable();
-                    js::on_writable_set_cached(js_this, global_object, JSValue::UNDEFINED);
+                    Self::disarm_on_writable_unless_owed(raw_response, js_this, global_object);
                     Ok(JSValue::js_number_from_uint64(written as u64))
                 }
                 uws::WriteResult::Backpressure(written) => {
@@ -2109,7 +2143,13 @@ impl NodeHTTPResponse {
     }
 
     pub(crate) fn get_on_writable(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
-        js::on_writable_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+        // Only the armed drain callback of a live response: end() and a close leave the slot as it was.
+        if self.is_done() {
+            return JSValue::UNDEFINED;
+        }
+        js::on_writable_get_cached(this_value)
+            .filter(|callback| callback.is_cell())
+            .unwrap_or(JSValue::UNDEFINED)
     }
 
     pub(crate) fn get_on_abort(&self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {

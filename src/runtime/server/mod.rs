@@ -1460,7 +1460,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     )
                 };
 
-                if !node_http_response.is_null() {
+                // A pipelined response stays queued: `raw_response` describes the one ahead of it.
+                let threw_while_queued = !node_http_response.is_null()
+                    // SAFETY: see `nhr` above.
+                    && unsafe { &*node_http_response }.mark_dispatch_threw_if_queued();
+
+                if !node_http_response.is_null() && !threw_while_queued {
                     // SAFETY: see `nhr` above.
                     let nhr = unsafe { &*node_http_response };
                     let nhr_flags = nhr.flags.get();

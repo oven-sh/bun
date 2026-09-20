@@ -585,11 +585,6 @@ struct HttpResponseData;
             return remainingStreamingBytes != 0;
         }
 
-        /* node:http: JS ended the connection during a parse. Dispatch nothing after the current message, as after Connection: close (HPE_CLOSED_CONNECTION). */
-        void nodeHttpStopDispatchingAfterCurrentMessage() {
-            sawConnectionClose = true;
-        }
-
         /* Header fields one request can carry: HttpRequest::headers also holds the request line in slot 0 and a sentinel after the last field. */
         static constexpr unsigned MAX_HEADER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 2;
         static_assert(MAX_HEADER_FIELDS + 2 <= std::extent_v<decltype(HttpRequest::headers)>);

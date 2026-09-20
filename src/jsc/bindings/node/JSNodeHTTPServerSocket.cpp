@@ -338,10 +338,9 @@ static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool afterResp
     if (!bodyStillParsing && reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
         return false;
     }
-    /* uWS shuts down after the parse and the flush. A new dispatch would clear HTTP_CONNECTION_CLOSE, so stop dispatching too. */
+    /* uWS shuts down after the parse and the flush. HttpContext dispatches nothing behind a complete response that closes the connection. */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-    httpResponseData->nodeHttpStopDispatchingAfterCurrentMessage();
     return true;
 }
 
@@ -354,6 +353,29 @@ bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool afterResponseFinis
         return deferShutdownUntilResponseDrains<true>(socket, afterResponseFinished);
     }
     return deferShutdownUntilResponseDrains<false>(socket, afterResponseFinished);
+}
+
+template<bool SSL>
+static void closeWhenDrainedImpl(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
+    /* uWS's close gates (below, or onWritable after the flush) close a connection marked like this. */
+    httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+    /* A response that ended inside the read being parsed is still in the cork buffer. */
+    reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->uncork();
+    reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->closeIfDoneAndMarked(httpResponseData);
+}
+
+void JSNodeHTTPServerSocket::closeWhenDrained()
+{
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
+        return;
+    }
+    if (is_ssl) {
+        closeWhenDrainedImpl<true>(socket);
+    } else {
+        closeWhenDrainedImpl<false>(socket);
+    }
 }
 
 template<bool SSL>

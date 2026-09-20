@@ -330,6 +330,54 @@ describe("node:http", () => {
         "test": "test",
       });
     });
+
+    // Node's Writable.prototype.write uses the default encoding for a falsy
+    // encoding argument, so res.write(chunk, "") and res.end(chunk, "") write utf8.
+    test.each(["write", "end"])("res.%s accepts an empty-string encoding (#43370)", async method => {
+      const body = "héllo wörld ✓";
+      await using server = http.createServer((req, res) => {
+        try {
+          if (method === "write") {
+            res.write(body, "");
+            res.end();
+          } else {
+            res.end(body, "");
+          }
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.end(`${e.code}: ${e.message}`);
+        }
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe(body);
+      expect(response.status).toBe(200);
+    });
+
+    test.each(["write", "end"])("res.%s throws ERR_UNKNOWN_ENCODING for an unknown encoding", async method => {
+      const errors: string[] = [];
+      await using server = http.createServer((req, res) => {
+        for (const encoding of ["bogus", 123, {}]) {
+          try {
+            res[method]("x", encoding);
+          } catch (e: any) {
+            errors.push(`${e.code}: ${e.message}`);
+          }
+        }
+        res.end();
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      await fetch(`http://127.0.0.1:${port}/`);
+      expect(errors).toEqual([
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: bogus",
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: 123",
+        "ERR_UNKNOWN_ENCODING: Unknown encoding: {}",
+      ]);
+    });
   });
 
   describe("request", () => {
@@ -2384,6 +2432,49 @@ it("socket handle write keeps buffered data intact when encoding coercion re-ent
   expect(exitCode).toBe(0);
 }, 30_000);
 
+it.each([
+  ["write", `result = res.write(payload, enc); res.end();`, "returned boolean"],
+  ["end", `res.flushHeaders(); result = res.end(payload, enc);`, "returned object"],
+])(
+  "ServerResponse.%s() with an encoding whose toPrimitive destroys the response does not crash",
+  async (_method, call, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("node:http");
+        const server = http.createServer((req, res) => {
+          const enc = Object.assign(new String("hex"), {
+            [Symbol.toPrimitive]() { res.destroy(); Bun.gc(true); return "hex"; },
+          });
+          const payload = Buffer.alloc(40000, "41").toString();
+          let result;
+          try {
+            ${call}
+            result = "returned " + typeof result;
+          } catch (e) {
+            result = "threw " + (e.code || e.message);
+          }
+          console.log(result);
+          setImmediate(() => { server.close(); process.exit(0); });
+        });
+        server.listen(0, "127.0.0.1", () => {
+          fetch("http://127.0.0.1:" + server.address().port + "/").then(r => r.text()).catch(() => {});
+        });
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected + "\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
 it("client request path that does not begin with a slash stays on the configured host", async () => {
   // `options.path` must only ever influence the request target that is written
   // on the wire; it must never change which server the client connects to,
@@ -2891,6 +2982,146 @@ it("pipelined responses buffered past the high water mark pause reads on the con
   } finally {
     server.close();
   }
+});
+
+it("a pipelined response is started when no response is in flight to hand it the socket", async () => {
+  // The dispatcher kicks the pipeline when it queues a response and nothing is in flight (the
+  // previous response finished and detached while it still counts as pending). Clearing
+  // socket._httpMessage by hand reaches that state: only the kick can start /second then.
+  // Bun only: Node.js v26.3.0 fails an internal assertion (resOnFinish) on this use of its internals.
+  const server = createServer((req, res) => {
+    if (req.url === "/first") {
+      (req.socket as any)._httpMessage = null;
+      return;
+    }
+    res.end("second-response");
+  });
+  let socket: ReturnType<typeof connect> | undefined;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    const { promise: started, resolve: onStarted, reject: onFailure } = Promise.withResolvers<void>();
+    let received = "";
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      if (received.includes("second-response")) onStarted();
+    });
+    socket.on("error", onFailure);
+    socket.on("close", () => onFailure(new Error("closed before the queued response was started")));
+    socket.write("GET /first HTTP/1.1\r\nHost: x\r\n\r\nGET /second HTTP/1.1\r\nHost: x\r\n\r\n");
+    await started;
+    // /first never writes, so the stream is the one response to /second and nothing else.
+    const [head, ...bodies] = received.split("\r\n\r\n");
+    expect({ status: head.split("\r\n")[0], bodies }).toEqual({
+      status: "HTTP/1.1 200 OK",
+      bodies: ["second-response"],
+    });
+  } finally {
+    socket?.destroy();
+    server.close();
+  }
+});
+
+// The native dispatch tail answers a throw by ending the connection's current response. For a
+// pipelined request that was the response ahead of it: the client got "first" of a 10-byte body,
+// then the close. The throw is an uncaught exception, so each scenario runs in a child process.
+describe("a dispatch that throws while an earlier response on the connection is pending", () => {
+  async function run(mode: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "node-http-pipelined-throw-fixture.js")],
+      env: { ...bunEnv, MODE: mode },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { result: stdout ? JSON.parse(stdout) : undefined, exitCode };
+  }
+
+  // node v26.3.0 gives the same result for the tests in these four loops.
+  for (const emitted of ["request", "checkContinue", "checkExpectation"]) {
+    it.concurrent(`'${emitted}' listener: the response ahead still completes`, async () => {
+      expect(await run(emitted)).toEqual({
+        result: {
+          events: ["request /first", `${emitted} /second`, `uncaught: ${emitted} threw`],
+          bodies: ["first-done"],
+          closed: false,
+        },
+        exitCode: 0,
+      });
+    });
+  }
+  // The response ahead has ended, and most of its 8 MB are still in the send buffer when the
+  // connection is reset at the turn of the response behind it. A destroyed queued response
+  // resets the connection in the same way, with no throw.
+  for (const [mode, events] of [
+    ["large", ["request /first", "request /second", "uncaught: request threw"]],
+    ["large-destroyed", ["request /first", "request /second"]],
+  ] as const) {
+    it.concurrent(`a large response ahead arrives in full before the connection is reset (${mode})`, async () => {
+      expect(await run(mode)).toEqual({
+        result: { events, firstBodyBytes: 8 * 1024 * 1024, closed: false },
+        exitCode: 0,
+      });
+    });
+  }
+  for (const mode of ["ended", "ended-later"]) {
+    it.concurrent(`a response that is complete when its turn comes is sent (${mode})`, async () => {
+      expect(await run(mode)).toEqual({
+        result: {
+          events: ["request /first", "request /second", "uncaught: request threw"],
+          bodies: ["first-done", "second"],
+          closed: false,
+        },
+        exitCode: 0,
+      });
+    });
+  }
+
+  // The throw comes before node:http has a response to queue. The turn of /second is still held:
+  // the connection closes when it comes, and no later response goes out in its place. Node ends
+  // with the same result, because it answers the next request with a 400 and closes.
+  for (const thrower of ["ServerResponse", "IncomingMessage"]) {
+    it.concurrent(`a throw from the ${thrower} constructor closes the connection at its turn`, async () => {
+      const mode = thrower === "ServerResponse" ? "constructor-response" : "constructor-request";
+      expect(await run(mode)).toEqual({
+        result: {
+          events: ["request /first", `${thrower} /second`, `uncaught: ${thrower} threw`],
+          bodies: ["first-done"],
+          closed: true,
+        },
+        exitCode: 0,
+      });
+    });
+  }
+
+  // The tests below wait for a close. Node never makes it: it answers nothing and keeps the
+  // connection, which then waits forever. Bun answers a throw with a close. For a queued response
+  // that happens when its turn comes, after the responses ahead of it. The requests behind it are
+  // aborted with the connection.
+  it.concurrent("a response that is not complete resets the connection when its turn comes", async () => {
+    expect(await run("unfinished")).toEqual({
+      result: {
+        events: ["request /first", "request /third", "uncaught: request threw"],
+        bodies: ["first-done", "second"],
+        closed: true,
+        serverSideCloses: ["/fourth", "/fourth", "/second", "/second", "/third", "/third"],
+      },
+      exitCode: 0,
+    });
+  });
+
+  // Unchanged: with no response ahead, the throwing request is the current one and is answered at once.
+  it.concurrent("a request that is not pipelined is still answered with a close", async () => {
+    expect(await run("not-pipelined")).toEqual({
+      result: {
+        events: ["request /first", "request /second", "uncaught: request threw"],
+        bodies: ["first-done"],
+        closed: true,
+      },
+      exitCode: 0,
+    });
+  });
 });
 
 it("requireHostHeader still rejects Upgrade-carrying requests that dispatch as normal requests", async () => {
@@ -5302,4 +5533,114 @@ describe("request body still flows after res.end() was called in the handler", (
     },
     30_000,
   );
+});
+
+describe("res.strictContentLength", () => {
+  // Runs `handler(res)` inside a request handler and resolves with its return
+  // value. The raw socket client keeps the response from being consumed, so the
+  // only observable effect is what the handler throws.
+  async function inServer<T>(handler: (res: http.ServerResponse) => T): Promise<T> {
+    const { promise, resolve, reject } = Promise.withResolvers<T>();
+    const server = http.createServer((req, res) => {
+      new Promise<T>(done => done(handler(res))).then(resolve, reject).finally(() => res.destroy());
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    try {
+      return await promise;
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  function code(fn: () => unknown): string | undefined {
+    try {
+      fn();
+    } catch (e: any) {
+      return e.code;
+    }
+    return undefined;
+  }
+
+  const MISMATCH = "ERR_HTTP_CONTENT_LENGTH_MISMATCH";
+
+  test("Content-Length: 0 is checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 0);
+      return code(() => res.end("abc"));
+    });
+    expect(result).toBe(MISMATCH);
+  });
+
+  test("Content-Length: 0 with an empty body does not throw", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 0);
+      return code(() => res.end());
+    });
+    expect(result).toBeUndefined();
+  });
+
+  test("the write that sends the headers is counted but not checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 5);
+      return [code(() => res.write("abcdefghijk")), code(() => res.end("abc"))];
+    });
+    expect(result).toEqual([undefined, MISMATCH]);
+  });
+
+  test("writes after writeHead are checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.writeHead(200, { "Content-Length": 10 });
+      return [code(() => res.write("123456789")), code(() => res.write("123456789")), code(() => res.end("0"))];
+    });
+    expect(result).toEqual([undefined, MISMATCH, undefined]);
+  });
+
+  test("a Content-Length set after removeHeader is checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", 3);
+      res.removeHeader("Content-Length");
+      res.setHeader("Content-Length", 5);
+      return code(() => res.end("hello world"));
+    });
+    expect(result).toBe(MISMATCH);
+  });
+
+  test("a Content-Length from writeHead's flat array form is checked", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.writeHead(200, ["Content-Length", "5"]);
+      return [code(() => res.write("hello")), code(() => res.end("!"))];
+    });
+    expect(result).toEqual([undefined, MISMATCH]);
+  });
+
+  test("a string header value is parsed like Node (+value)", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", "1e1");
+      return [code(() => res.end("abcdefghij"))];
+    });
+    expect(result).toEqual([undefined]);
+  });
+
+  test("a string header value with a mismatch throws", async () => {
+    const result = await inServer(res => {
+      res.strictContentLength = true;
+      res.setHeader("Content-Length", "5");
+      return [code(() => res.write("hello")), code(() => res.end("!"))];
+    });
+    expect(result).toEqual([undefined, MISMATCH]);
+  });
 });

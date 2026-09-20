@@ -396,6 +396,12 @@ private:
                 us_socket_unref(s);
                 return s;
             }
+            /* Same for bytes that arrive behind a finished response that closes the
+             * connection while its body is still draining (onWritable closes then). */
+            if (httpResponseData->isDrainingBeforeClose() && !httpResponseData->isConnectRequest) [[unlikely]] {
+                us_socket_unref(s);
+                return s;
+            }
         }
 
         /* Cork this socket */
@@ -428,21 +434,22 @@ private:
 
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
 
-            /* Bun.serve, RFC 9112 9.6: a complete response marked this connection close
+            /* RFC 9112 9.6: a complete response marked this connection close
              * and sawConnectionClose did not see it (a Connection: close response
-             * header). Run onData's tail now: resetResponseState() below drops the mark.
-             * Latch first: a socket that has not drained stays open, and the parser
-             * holds this request's framing, so later bytes must not reach it. Before
-             * the timeout reset, so that socket still times out. */
-            if constexpr (!IsNodeHttp) {
-                constexpr uint32_t closeOrPending = HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
-                if ((httpResponseData->state & closeOrPending) == HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) [[unlikely]] {
+             * header, or a close-delimited node:http body). Run onData's tail now:
+             * resetResponseState() below drops the mark. Latch first: a socket that
+             * has not drained stays open, and the parser holds this request's
+             * framing, so later bytes must not reach it. Before the timeout reset,
+             * so that socket still times out. */
+            if (httpResponseData->isDrainingBeforeClose()) [[unlikely]] {
+                /* node:http stops without the latch: llhttp does not see the response, so a later read is no parse error. */
+                if constexpr (!IsNodeHttp) {
                     httpResponseData->sawConnectionClose = true;
-                    us_socket_unref((us_socket_t *) s);
-                    ((AsyncSocket<SSL> *) s)->uncork();
-                    ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
-                    return nullptr;
                 }
+                us_socket_unref((us_socket_t *) s);
+                ((AsyncSocket<SSL> *) s)->uncork();
+                ((HttpResponse<SSL> *) s)->closeIfDoneAndMarked(httpResponseData);
+                return nullptr;
             }
 
             /* For every request we reset the timeout and hang until user makes action */

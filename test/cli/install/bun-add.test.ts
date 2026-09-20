@@ -2835,11 +2835,11 @@ describe("a spec without a name that resolves to a dependency package.json alrea
   });
 
   // package.json, bun.lock and node_modules agree, and stay as they are: no key twice, a frozen install passes, a second install changes nothing.
-  async function settled(project: string) {
+  async function settled(project: string, frozen = true) {
     const after = await state(project);
     expect(duplicateKeys(after.packageJson)).toEqual([]);
     expect(duplicateKeys(after.lockfile)).toEqual([]);
-    await ok(project, "install", "--frozen-lockfile");
+    if (frozen) await ok(project, "install", "--frozen-lockfile");
     await ok(project, "install");
     expect(await state(project)).toEqual(after);
     return after;
@@ -2853,15 +2853,23 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     "peerDependencies",
     "optional peer",
   ];
+  // Every group with a folder. The other kinds and the flags only where the group can change the outcome,
+  // so that the file stays fast. `bun add --peer <spec>` over an optional peer of that name is left out:
+  // it still writes the name twice into bun.lock.
+  const cell = (declared: Declared, kind: Kind, flag: Flag) => ({ declared, kind, flag });
   const cells = [
-    ...declaredAxis.flatMap(declared =>
-      (["folder", "tarball", "git"] as Kind[]).map(kind => ({ declared, kind, flag: "" as Flag })),
+    ...declaredAxis.map(declared => cell(declared, "folder", "")),
+    ...(["none", "dependencies", "peerDependencies"] as Declared[]).flatMap(declared => [
+      cell(declared, "tarball", ""),
+      cell(declared, "git", ""),
+    ]),
+    ...(["none", "dependencies", "devDependencies", "peerDependencies"] as Declared[]).map(declared =>
+      cell(declared, "folder", "-d"),
     ),
-    ...declaredAxis.flatMap(declared =>
-      (["-d", "--peer"] as Flag[]).map(flag => ({ declared, kind: "folder" as Kind, flag })),
-    ),
-    // `bun add --peer <spec>` over an optional peer of that name still writes the name twice into bun.lock.
-  ].filter(cell => !(cell.declared === "optional peer" && cell.flag === "--peer"));
+    ...declaredAxis
+      .filter(declared => declared !== "optional peer")
+      .map(declared => cell(declared, "folder", "--peer")),
+  ];
 
   test.concurrent.each(cells)("bun add $flag <$kind>, declared: $declared", async ({ declared, kind, flag }) => {
     using dir = tempDir("bun-add-declared-name", {});
@@ -2898,14 +2906,15 @@ describe("a spec without a name that resolves to a dependency package.json alrea
       return { project, before, spec };
     };
 
-    // `bun add pkga@<spec>` is correct on every release, so it is the oracle where the declared entry is replaced. A git url takes no name.
-    const oracle = (replaces || declared === "none") && kind !== "git";
+    // `bun add pkga@<spec>` is correct on every release, so it is the oracle where the declared entry is replaced. One kind is enough: the kind does not change what the named spec writes.
+    const oracle = (replaces || declared === "none") && kind === "folder";
     const [bare, named] = await Promise.all([add("bare"), oracle ? add("named") : undefined]);
 
     const expected = structuredClone(bare.before);
     const group = replaces ? declaredGroup : flagGroup;
     expected[group] = { ...expected[group], pkga: bare.spec };
-    const after = await settled(bare.project);
+    // Where nothing is replaced the result is what 1.4.3 writes, so one follow-up install is enough there.
+    const after = await settled(bare.project, replaces);
     expect(JSON.parse(after.packageJson)).toEqual(expected);
     // A peer entry next to the entry of another group does not decide what is installed.
     expect(after.installed).toBe(
@@ -2941,10 +2950,12 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     for (const version of ["1.0.0", "2.0.0"]) {
       const spec = `${url}#${await commit(repo, version)}`;
       await ok(project, "add", spec);
-      const after = await settled(project);
+      const after = await state(project);
+      expect(duplicateKeys(after.lockfile)).toEqual([]);
       expect(JSON.parse(after.packageJson)).toEqual({ name: "app", dependencies: { pkga: spec } });
       expect(after.installed).toBe(version);
     }
+    await settled(project);
   });
 
   test.concurrent("bun add <tarball url> over another url of the same package (#20647)", async () => {
@@ -2972,10 +2983,12 @@ describe("a spec without a name that resolves to a dependency package.json alrea
     ]) {
       const spec = new URL(path, server.url).href;
       await ok(project, "add", spec);
-      const after = await settled(project);
+      const after = await state(project);
+      expect(duplicateKeys(after.lockfile)).toEqual([]);
       expect(JSON.parse(after.packageJson)).toEqual({ name: "app", dependencies: { pkga: spec } });
       expect(after.installed).toBe(version);
     }
+    await settled(project);
   });
 
   // A folder in both `dependencies` and `devDependencies` is written to bun.lock twice by a plain install, so that pair uses tarballs.

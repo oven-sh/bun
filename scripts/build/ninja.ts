@@ -283,6 +283,25 @@ export class Ninja {
     });
   }
 
+  /**
+   * Returns an always-dirty phony target. Depending on this forces a rule
+   * to re-run every build. Useful for nested builds (cmake/cargo) where the
+   * inner build system tracks its own staleness — we always invoke it, it
+   * no-ops if nothing changed, `restat=1` on the outer rule prunes downstream.
+   *
+   * Emitted lazily on first call; subsequent calls return the same name.
+   */
+  always(): string {
+    const name = "always";
+    // outputSet stores absolute paths; phony targets resolve relative to buildDir.
+    const abs = resolve(this.buildDir, name);
+    if (!this.outputSet.has(abs)) {
+      // A phony with no inputs is always dirty (its output file never exists).
+      this.phony(name, []);
+    }
+    return name;
+  }
+
   /** Mark targets as default (built when running `ninja` with no args). */
   default(targets: string[]): void {
     for (const t of targets) {

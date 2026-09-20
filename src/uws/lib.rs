@@ -595,21 +595,7 @@ pub mod ssl_wrapper {
             // we already sent the ssl shutdown
             if self.flags.sent_ssl_shutdown() || self.flags.fatal_error() {
                 if fast_shutdown {
-                    // A fast shutdown is a full teardown — the owner calls it
-                    // right before detaching/freeing handlers.ctx (proxy tunnel
-                    // on response-complete; TLS-over-duplex on raw EOF).
-                    //
-                    // Run the close callback now, regardless of whether the
-                    // peer's close_notify has arrived: if it HAS (processed
-                    // mid handle_reading, which sets sent_ssl_shutdown before
-                    // flushing the final decrypted bytes), closed_notified may
-                    // still be unset and handle_reading's deferred
-                    // trigger_close_callback would otherwise fire on_close
-                    // into the freed ctx; if it has NOT (peer went away after
-                    // our shutdown), the TLS-over-duplex teardown chain
-                    // (UpgradedDuplex::on_close -> DuplexUpgradeContext::on_close
-                    // -> deinit) never runs and leaks the whole context graph.
-                    // trigger_close_callback is idempotent (closed_notified).
+                    // The owner frees handlers.ctx next, so run the close callback now (#31959).
                     self.flags.set_received_ssl_shutdown(true);
                     self.trigger_close_callback();
                     // Do not read self after the close callback: the owner's
@@ -1034,8 +1020,6 @@ pub mod ssl_wrapper {
                             // Remotely-Initiated Shutdown
                             // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
                             self.flags.set_received_ssl_shutdown(true);
-                            // 2-step shutdown
-                            let _ = self.shutdown(false);
                             self.handle_end_of_renegotiation();
                         }
                         if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL
@@ -1059,6 +1043,10 @@ pub mod ssl_wrapper {
                         self.flush_pending_events(buffer);
                         if self.ssl.get().is_none() || self.flags.closed_notified() {
                             return false;
+                        }
+                        if err == boring_sys::SSL_ERROR_ZERO_RETURN {
+                            // 2-step shutdown, last: write_data fails once our close_notify is out.
+                            let _ = self.shutdown(false);
                         }
                         self.trigger_close_callback();
                         return false;
@@ -1367,6 +1355,7 @@ pub use bun_uws_sys::SocketKind;
 pub type DispatchKind = SocketKind;
 
 pub use bun_uws_sys::CloseCode;
+pub use bun_uws_sys::QueuedInput;
 /// Legacy alias — `bun_uws_sys::CloseCode` is the one canonical `#[repr(i32)]`
 /// enum (`normal`/`failure`/`fast_shutdown`, with `Normal`/`Failure`/
 /// `FastShutdown` associated-const aliases).
@@ -1430,12 +1419,6 @@ impl MaybeAnySocket {
 /// Variants: `H1(*mut Request)`, `H3(*mut H3::Request)` (same field types as
 /// the previous local enum — both crates name `bun_uws_sys::{Request, h3::Request}`).
 pub use bun_uws_sys::AnyRequest;
-
-/// `uws::Response<SSL>` — re-exported from `bun_uws_sys` so callers get the full
-/// method surface (`write`/`end`/`try_end`/`on_aborted`/`on_writable`/...) without
-/// a separate local opaque. Both are `#[repr(C)]` zero-sized handles, so this is
-/// a pure namespace reconciliation.
-pub type Response<const SSL: bool> = bun_uws_sys::response::Response<SSL>;
 
 /// Transport-agnostic response handle. Re-exported from `bun_uws_sys` — the
 /// sys-crate version already carries the full dispatch impl (`write`, `end`,

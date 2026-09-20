@@ -105,29 +105,29 @@ mod static_adapters {
 
     pub(super) fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::connect(g, opts)
+        crate::socket::Listener::connect(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::listen(g, opts)
+        crate::socket::Listener::listen(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::udp_socket_draft::UDPSocket::udp_socket(g, opts)
+        crate::socket::udp_socket_draft::UDPSocket::udp_socket(&g.js_thread_of_caller(cf), opts)
     }
 
     pub(super) fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [a0] = cf.arguments_as_array::<1>();
         let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn(g, a0, a1)
+        crate::api::js_bun_spawn_bindings::spawn(&g.js_thread_of_caller(cf), a0, a1)
     }
 
     pub(super) fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
         let [a0] = cf.arguments_as_array::<1>();
         let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn_sync(g, a0, a1)
+        crate::api::js_bun_spawn_bindings::spawn_sync(&g.js_thread_of_caller(cf), a0, a1)
     }
 
     pub(super) fn js_bundler_build(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
@@ -295,6 +295,7 @@ pub mod bun_object {
         BunObject_lazyPropCb_CryptoHasher => Crypto::CryptoHasher::getter,
         BunObject_lazyPropCb_CSRF => super::get_csrf_object,
         BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
+        BunObject_lazyPropCb_FetchSession => super::get_fetch_session_constructor,
         BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
         BunObject_lazyPropCb_Glob => super::get_glob_constructor,
         BunObject_lazyPropCb_Image => super::get_image_constructor,
@@ -589,7 +590,7 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         value,
         properties,
     )?;
-    table_printer.value_formatter.depth = format_options.max_depth;
+    table_printer.set_start_depth(format_options.max_depth);
     table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
     table_printer.value_formatter.single_line = format_options.single_line;
 
@@ -1032,7 +1033,7 @@ fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 
 // HOST_EXPORT(Bun__gc, c)
 pub fn gc(vm: &mut VirtualMachine, sync: bool) -> usize {
-    vm.garbage_collect(sync)
+    vm.garbage_collect_from_js(sync)
 }
 
 #[bun_jsc::host_fn]
@@ -1152,12 +1153,8 @@ fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let value = match do_resolve(global_object, callframe.arguments()) {
         Ok(v) => v,
         Err(e) => {
-            let err = global_object.take_error(e);
             return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_object,
-                    err,
-                ),
+                JSPromise::rejected_promise_with_caught_exception(global_object, e)?.to_js(),
             );
         }
     };
@@ -1351,6 +1348,8 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
 #[bun_jsc::host_fn]
 fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    // The server is the calling script's.
+    let context = global_object.bun_vm().context_of_caller(callframe);
     let arguments = callframe.arguments();
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global_object.bun_vm().as_mut();
@@ -1408,6 +1407,12 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
                         let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
                         server.on_reload_from_zig(&mut config, global_object);
+                        // Its handlers are the calling script's now, and so is the server: it goes
+                        // with that script's context, not with the one that first listened.
+                        server.abort_handle.leave();
+                        server.context.set(context.id());
+                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
+                        unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(server), context) };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
                 }
@@ -1481,12 +1486,12 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             drop(_handler_pins);
             server_ref.gc_hint_after_listen();
 
-            if let Some(handles) = crate::jsc_hooks::active_handles() {
-                bun_core::handle_oom(handles.put(
-                    crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(server.cast_const())),
-                    (),
-                ));
-            }
+            // SAFETY: `server` is heap-allocated and leaves its context in
+            // `stop_listening` / `deinit`.
+            unsafe {
+                (*server).context.set(context.id());
+                bun_jsc::AbortHandle::arm_owner(server, context)
+            };
 
             // `init` moved `config` into the server (`mem::take`), so the
             // local `config` is defaulted from here on — read `allow_hot`
@@ -1688,6 +1693,10 @@ fn get_transpiler_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSV
     jsc::codegen::js::get_constructor::<crate::api::js_transpiler::JSTranspiler>(global_this)
 }
 
+fn get_fetch_session_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::webcore::fetch::FetchSession>(global_this)
+}
+
 fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     jsc::codegen::js::get_constructor::<crate::api::filesystem_router::FileSystemRouter>(
         global_this,
@@ -1790,7 +1799,13 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
 fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     use crate::valkey_jsc::JSValkeyClient;
 
-    let valkey = match JSValkeyClient::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED]) {
+    // `Bun.redis` is the realm's: not owned (and closed at dispose()) by whichever
+    // Bun.ModuleGraph reads the property first.
+    let vm = global_this.bun_vm();
+    let valkey = match JSValkeyClient::create_no_js_no_pubsub(
+        &global_this.js_thread(vm.root_context()),
+        &[JSValue::UNDEFINED],
+    ) {
         Ok(p) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
@@ -1997,25 +2012,11 @@ pub(crate) mod environment_variables {
         false
     }
 
-    /// The value borrows the env map; the caller copies before the map can
-    /// mutate. `Dead` when absent.
-    #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvValueBunString<'a>(
-        global_object: &'a JSGlobalObject,
-        name: &BunString,
-    ) -> bun_core::StringView<'a> {
-        let vm = global_object.bun_vm();
-        let name_slice = name.to_utf8();
-        match vm.env_loader().get(name_slice.slice()) {
-            Some(val) => bun_core::StringView::borrow_utf8(val),
-            None => bun_core::StringView::DEAD,
-        }
-    }
-
     /// Sync a process.env write back to the native env map so that native
     /// consumers (e.g. fetch's proxy resolution via env.getHttpProxyFor)
-    /// observe the updated value. Used by custom setters for proxy-related
-    /// env vars (HTTP_PROXY, HTTPS_PROXY, NO_PROXY and lowercase variants).
+    /// observe the updated value. Used by process.env's write and delete paths for proxy-related
+    /// env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY and lowercase variants).
+    /// A `Dead` value removes the variable.
     ///
     /// Values are ref-counted in RareData.proxy_env_storage so that
     /// worker_threads share the parent's strings (refcount bumped at spawn)
@@ -2046,6 +2047,12 @@ pub(crate) mod environment_variables {
         *slot.ptr = None;
 
         let env_map = &mut vm.transpiler.env_mut().map;
+
+        // `delete process.env.X`
+        if value.tag() == bun_core::Tag::Dead {
+            env_map.remove(slot.key);
+            return;
+        }
 
         if value.is_empty() {
             // Store a static empty string rather than removing, so that
@@ -2764,16 +2771,15 @@ pub mod JSZstd {
     }
 
     fn create_job(
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         buffer: node::ThreadIsolated<node::StringOrBuffer<'static>>,
         is_compress: bool,
         level: i32,
     ) -> JSValue {
-        let cx = global_this.js_thread();
-        let promise = jsc::JSPromiseStrong::init(global_this);
+        let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
         jsc::Job::<ZstdJob>::schedule(
-            &cx,
+            cx,
             ZstdJob {
                 buffer,
                 is_compress,
@@ -2790,8 +2796,9 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global_this.js_thread_of_caller(callframe);
         let (buffer, _, level) = get_options_async(global_this, callframe)?;
-        Ok(create_job(global_this, buffer, true, level))
+        Ok(create_job(&cx, buffer, true, level))
     }
 
     #[bun_jsc::host_fn]
@@ -2799,8 +2806,9 @@ pub mod JSZstd {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global_this.js_thread_of_caller(callframe);
         let (buffer, _, _) = get_options_async(global_this, callframe)?;
-        Ok(create_job(global_this, buffer, false, 0)) // level is ignored for decompression
+        Ok(create_job(&cx, buffer, false, 0)) // level is ignored for decompression
     }
 }
 

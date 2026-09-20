@@ -148,6 +148,7 @@ const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
     own_properties_only: true,
     observable: true,
     only_non_index_properties: false,
+    include_symbols: false,
 };
 
 impl Config {
@@ -674,7 +675,7 @@ impl TransformTask {
         transpiler: &JSTranspiler,
         transpiler_js: JSValue,
         input_code: ThreadIsolated<StringOrBuffer<'static>>,
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         loader: Loader,
     ) -> JSValue {
         let config = transpiler.config.get();
@@ -704,15 +705,14 @@ impl TransformTask {
                 entries: config.runtime.replace_exports.entries.clone().expect("OOM"),
             },
         };
-        let cx = global.js_thread();
-        let promise = jsc::JSPromiseStrong::init(global);
+        let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
         jsc::Job::<TransformTask>::schedule(
-            &cx,
+            cx,
             task,
             TransformJs {
                 promise,
-                _transpiler: jsc::Strong::create(transpiler_js, global),
+                _transpiler: jsc::Strong::create(transpiler_js, cx.global()),
             },
         );
         value
@@ -1345,6 +1345,7 @@ impl JSTranspiler {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(callframe);
         jsc::mark_binding();
         // SAFETY: bun_vm() returns the live VM singleton on this thread.
         let vm = global.bun_vm();
@@ -1385,7 +1386,7 @@ impl JSTranspiler {
             self,
             callframe.this(),
             code,
-            global,
+            &cx,
             loader.unwrap_or(default_loader),
         ))
     }

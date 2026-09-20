@@ -1321,6 +1321,10 @@ pub struct BundleOptions<'a> {
     /// 0 disables that; chunks with identical load conditions always fold.
     /// `None` picks `default_min_chunk_size(target)`.
     pub min_chunk_size: Option<u64>,
+    /// Code splitting: fold chunks together (`merge_small_chunks`). Only
+    /// tests turn it off (`foldChunksForTesting: false`), to compare a bundle
+    /// with and without folding.
+    pub fold_chunks: bool,
     /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
     pub module_preload: bool,
 
@@ -1333,6 +1337,8 @@ pub struct BundleOptions<'a> {
     pub bytecode: bool,
     /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
     pub bytecode_depth: u32,
+    /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
+    pub optimize_bytecode: bool,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
     pub compile_target_builtins: CompileTargetBuiltins,
 
@@ -1528,12 +1534,14 @@ impl<'a> BundleOptions<'a> {
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
             min_chunk_size: self.min_chunk_size,
+            fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
             deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
+            optimize_bytecode: self.optimize_bytecode,
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
@@ -1708,6 +1716,7 @@ impl<'a> BundleOptions<'a> {
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
             min_chunk_size: None,
+            fold_chunks: true,
             module_preload: true,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
@@ -1781,6 +1790,7 @@ impl<'a> BundleOptions<'a> {
             deprecated_namespace_object_setters: true,
             bytecode: false,
             bytecode_depth: u32::MAX,
+            optimize_bytecode: true,
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,

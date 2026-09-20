@@ -163,7 +163,7 @@ function ReadStream(this: FSStream, path, options): void {
     this[kFs] = customFs || fs;
   } else if (typeof fd === "object" && fd instanceof FileHandle) {
     if (options.fs) {
-      throw $ERR_METHOD_NOT_IMPLEMENTED("fs.FileHandle with custom fs operations");
+      throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = fileHandleStreamFs(fd);
     this.fd = fd[kFd];
@@ -408,7 +408,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this[kFs] = customFs || fs;
   } else if (typeof fd === "object" && fd instanceof FileHandle) {
     if (options.fs) {
-      throw $ERR_METHOD_NOT_IMPLEMENTED("fs.FileHandle with custom fs operations");
+      throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
     this[kFs] = customFs = fileHandleStreamFs(fd);
     fd[kRef]();

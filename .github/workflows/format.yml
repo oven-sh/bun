@@ -10,8 +10,8 @@ on:
   merge_group:
 env:
   BUN_VERSION: "1.3.14"
-  LLVM_VERSION: "21.1.8"
-  LLVM_VERSION_MAJOR: "21"
+  LLVM_VERSION: "23.1.1"
+  LLVM_VERSION_MAJOR: "23"
 
 jobs:
   autofix:
@@ -42,7 +42,7 @@ jobs:
           # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
           # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't
           # need just to run rustfmt). Keep this in sync with `channel` there.
-          RUSTUP_TOOLCHAIN: nightly-2026-07-20
+          RUSTUP_TOOLCHAIN: nightly-2026-09-15
         run: |
           # Without pipefail, `cmd | sed` always reports sed's exit status, so a
           # failing formatter is invisible to the `wait $PID` checks below.

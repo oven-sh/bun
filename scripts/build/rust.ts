@@ -76,7 +76,7 @@ export function cargoProfile(cfg: Config): { name: string; subdir: string } {
 }
 
 /**
- * All target triples CI builds (`buildPlatforms` in .buildkite/ci.mjs, one
+ * All target triples CI builds (`buildPlatforms` in .buildkite/ci.ts, one
  * triple per os/arch/abi; test/internal/source-lints/build-rust.test.ts keeps
  * the two in sync). Drives `rust:check-all` and the generated
  * `.cargo/config.toml` (cargo-config.ts). `rust-toolchain.toml`'s `targets`
@@ -113,7 +113,7 @@ export function rustTargetIsTier3(triple: string): boolean {
  * needed because `cargo build --target` still resolves proc-macro crates for
  * the host through the same `-Zbuild-std` flag set. Requires the `rust-src`
  * component, which `rust-toolchain.toml` requests and CI images preinstall
- * (Dockerfile / bootstrap.sh `rustup component add rust-src`). Shared with
+ * (bootstrap.sh `rustup component add rust-src`). Shared with
  * `rust:check-all`, which needs it for the Tier 3 triples.
  */
 export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abort";
@@ -426,6 +426,10 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // and shadow-memory bookkeeping agree. Nightly-only flag; the pinned
     // toolchain in `rust-toolchain.toml` is nightly.
     rustflags.push("-Zsanitizer=address");
+    // The C/C++ side's `-fsanitize-address-use-after-return=never` (flags.ts).
+    // rustc builds the ASAN pass in `runtime` mode and has no flag to change
+    // that; the pass's own LLVM option overrides the mode.
+    rustflags.push("-Cllvm-args=-asan-use-after-return=never");
     rustflags.push("--cfg=bun_asan");
   }
   // `bun_debug`: the cargo profile is `dev` (a Debug-buildtype build).
@@ -554,7 +558,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // LLVM bitcode is forward-compatible (newer reads older), so this works
     // when the linker's LLVM ≥ rustc's bundled LLVM. resolveConfig() swaps
     // `cfg.ld` to rustc's bundled rust-lld when rustc's LLVM major is ahead
-    // of clang's — see workarounds.ts "rust-lld-for-crosslang-lto".
+    // of clang's (the wantRustLld block in config.ts).
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit

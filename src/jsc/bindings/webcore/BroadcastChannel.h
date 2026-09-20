@@ -96,7 +96,7 @@ private:
     // ActiveDOMObject.
     void contextDestroyed() final;
     bool virtualHasPendingActivity() const final;
-    void stop() final { close(); }
+    void stop() final;
 
     // State is a single atomic so the GC-thread hasPendingActivity() check
     // never takes a lock.

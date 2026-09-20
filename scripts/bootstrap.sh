@@ -15,7 +15,7 @@
 #   2. Once green, change the subject to `[publish images]` and push again to
 #      bake the real `-vN` image tag.
 #   3. Merge after the publish run finishes so main never waits on a bake.
-# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.mjs.
+# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.ts.
 
 pid="$$"
 
@@ -101,6 +101,17 @@ fetch() {
 		else
 			error "Command \"curl\" or \"wget\" is required, but is not installed."
 		fi
+	fi
+}
+
+# url_exists URL — true if a HEAD request succeeds. Never fatal.
+url_exists() {
+	if [ -f "$(which curl)" ]; then
+		curl -fsIL "$1" >/dev/null 2>&1
+	elif [ -f "$(which wget)" ]; then
+		wget -q --spider "$1" >/dev/null 2>&1
+	else
+		return 1
 	fi
 }
 
@@ -1139,11 +1150,6 @@ install_build_essentials() {
 
 	case "$os" in
 		linux)
-			# ruby/perl/python3: JavaScriptCore's code generators (offlineasm,
-			# create_hash_table, builtins/inspector scripts). zstd: trains the
-			# dictionary for the ICU data package (scripts/build/icu-data.ts).
-			# flex/bison: build Apple's migcom (host tool) for the macOS lanes,
-			# which generates WTF's Mach exception stubs.
 			install_packages \
 				make \
 				nasm \
@@ -1151,9 +1157,6 @@ install_build_essentials() {
 				libtool \
 				ruby \
 				perl \
-				zstd \
-				flex \
-				bison \
 			;;
 	esac
 
@@ -1162,7 +1165,7 @@ install_build_essentials() {
 	install_gcc
 	install_rust
 	# Cross-compile sysroots + runtimes are only needed on the single build
-	# host (buildHostPlatform in .buildkite/ci.mjs); test images never
+	# host (buildHostPlatform in .buildkite/ci.ts); test images never
 	# cross-compile, so skip the ~3GB of NDK/SDK/sysroot downloads there.
 	if is_ci_build_host; then
 		install_cross_compiler_rt
@@ -1178,12 +1181,12 @@ install_build_essentials() {
 }
 
 is_ci_build_host() {
-	# Must match buildHostPlatform in .buildkite/ci.mjs.
+	# Must match buildHostPlatform in .buildkite/ci.ts.
 	[ "$os-$distro-$arch-$ci" = "linux-debian-aarch64-1" ]
 }
 
 llvm_version_exact() {
-	print "21.1.8"
+	print "23.1.1"
 }
 
 llvm_version() {
@@ -1212,15 +1215,47 @@ install_llvm() {
 		append_to_path "/usr/lib/llvm-$(llvm_version)/bin"
 		;;
 	brew)
-		install_packages "llvm@$(llvm_version)"
+		# llvm@N is a versioned formula, or while N is Homebrew's current LLVM
+		# an alias of `llvm`; either way it is keg-only and opt/llvm@N is its
+		# keg. `brew link --force` refuses the aliased one ("macOS provided"),
+		# and scripts/darwin-ci/guest/job.sh has only $brew_prefix/bin on PATH
+		# (no profile), so link the keg's bin there by hand for both.
+		execute_as_user brew install --formula "llvm@$(llvm_version)"
+		brew_prefix="$(execute_as_user brew --prefix)"
+		llvm_bin="$brew_prefix/opt/llvm@$(llvm_version)/bin"
+		if ! [ -x "$llvm_bin/clang-$(llvm_version)" ]; then
+			error "Homebrew's llvm@$(llvm_version) has no clang-$(llvm_version) at $llvm_bin"
+		fi
+		execute_as_user "ln -sf '$llvm_bin'/* '$brew_prefix/bin/'"
+		append_to_path "$llvm_bin"
 		;;
 	apk)
+		# An Alpine release carries the LLVM majors that existed when it was
+		# cut (3.23 stops at 21); newer ones are in edge/main. `@edge` is a
+		# tagged repository: apk takes a package from it only when asked for
+		# with the tag, or when a tagged package needs something the release
+		# lacks (today: libgcc-static, same GCC version as the release's). musl
+		# and libstdc++ stay the release's. llvmN-dev is left out there: it
+		# needs edge's python3.
+		# `apk policy` lists the repositories a package comes from, a tagged
+		# one as "@edge https://…": an untagged URL means the release has it,
+		# whether or not the @edge line is already there.
+		llvm_tag=""
+		llvm_dev="llvm$(llvm_version)-dev"
+		if ! apk policy "clang$(llvm_version)" 2>/dev/null | grep -qE '^[[:space:]]+https?://'; then
+			append_file /etc/apk/repositories "@edge https://dl-cdn.alpinelinux.org/alpine/edge/main"
+			package_manager update
+			llvm_tag="@edge"
+			llvm_dev=""
+		fi
 		install_packages \
-			"llvm$(llvm_version)" \
-			"clang$(llvm_version)" \
+			"llvm$(llvm_version)$llvm_tag" \
+			"clang$(llvm_version)$llvm_tag" \
 			"scudo-malloc" \
-			"lld$(llvm_version)" \
-			"llvm$(llvm_version)-dev" # Ensures llvm-symbolizer is installed
+			"lld$(llvm_version)$llvm_tag" \
+			$llvm_dev
+		# llvm-symbolizer, llvm-objcopy etc. are only versioned in /usr/bin.
+		append_to_path "/usr/lib/llvm$(llvm_version)/bin"
 		;;
 	esac
 }
@@ -1274,7 +1309,7 @@ install_gcc() {
 		;;
 	esac
 
-	llvm_v="21"
+	llvm_v="$(llvm_version)"
 
 	append_to_profile "export CC=clang-${llvm_v}"
 	append_to_profile "export CXX=clang++-${llvm_v}"
@@ -1444,7 +1479,19 @@ install_freebsd_sysroot() {
 		fi
 		execute_sudo rm -rf "$sysroot"
 		execute_sudo mkdir -p "$sysroot"
-		base_txz=$(download_file "https://download.freebsd.org/releases/${fbsd_arch}/${freebsd_ver}-RELEASE/base.txz")
+		# A release moves from download.freebsd.org to the archive once it is EOL.
+		base_path="${fbsd_arch}/${freebsd_ver}-RELEASE/base.txz"
+		base_url=""
+		for candidate in "https://download.freebsd.org/releases/$base_path" "https://archive.freebsd.org/old-releases/$base_path"; do
+			if url_exists "$candidate"; then
+				base_url="$candidate"
+				break
+			fi
+		done
+		if [ -z "$base_url" ]; then
+			error "FreeBSD $freebsd_ver base.txz is at neither download.freebsd.org/releases/$base_path nor archive.freebsd.org/old-releases/$base_path"
+		fi
+		base_txz=$(download_file "$base_url")
 		execute_sudo tar -C "$sysroot" -xJf "$base_txz" ./usr/include ./usr/lib ./lib
 	done
 	# No FREEBSD_SYSROOT export — detectFreebsdSysroot() picks the
@@ -1609,8 +1656,7 @@ install_linux_musl_sysroot() {
 }
 
 xwin_version() {
-	# Keep in sync with XWIN_VERSION in scripts/build/winsysroot.ts and
-	# .buildkite/Dockerfile.
+	# Keep in sync with XWIN_VERSION in scripts/build/winsysroot.ts.
 	print "0.9.0"
 }
 
@@ -2209,7 +2255,7 @@ prefetch_build_deps() {
 
 	# Warm a shared `bun install` download cache so every test shard's
 	# `bun install` (root + test/ + scripts/ci-remap-server, whose only
-	# dependency is a github: package that runner.node.mjs would otherwise
+	# dependency is a github: package that runner.node.ts would otherwise
 	# fetch from GitHub on every shard) hits disk instead of npm. Keyed by
 	# name@version, so a test/package.json bump after the bake just misses for
 	# that one package. Left writable and owned by the buildkite user: bun

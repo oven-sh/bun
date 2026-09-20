@@ -8,11 +8,11 @@ Two modes:
   `buildkite-agent` and [Tart](https://tart.run); every test job runs in a
   fresh macOS guest cloned from a baked image and deleted afterwards.
 - `bare`: for Intel hosts (Tart cannot virtualize macOS on Intel) and small
-  Apple Silicon hosts. The bun toolchain and `scripts/agent.mjs` service run
+  Apple Silicon hosts. The bun toolchain and `scripts/agent.ts` service run
   on the host itself.
 
 Agents tag themselves `os=darwin arch=... release=<macOS major> release-tier=...`
-and `.buildkite/ci.mjs` selects on those. In tart mode `release` is the
+and `.buildkite/ci.ts` selects on those. In tart mode `release` is the
 guest's macOS version, and a guest cannot be newer than its host.
 
 ## Layout
@@ -34,7 +34,7 @@ session), bakes the guest image from a public base image plus
 its hooks path. It asks for one reboot the first time and is re-run after it.
 
 `provision <hostname> bare` does the same host setup, then runs
-`scripts/bootstrap.sh` on the host and installs the `scripts/agent.mjs` service.
+`scripts/bootstrap.sh` on the host and installs the `scripts/agent.ts` service.
 
 `bake` is safe on a live host: it builds a staging image and swaps it in only
 after the toolchain verifies. Re-run it when toolchain pins move.

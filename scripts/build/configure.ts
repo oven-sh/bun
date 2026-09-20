@@ -29,7 +29,7 @@ import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
-import { quote, quoteArgs } from "./shell.ts";
+import { quote } from "./shell.ts";
 import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
@@ -48,7 +48,7 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   const host = detectHost();
   const llvm = resolveLlvmToolchain(host.os, host.arch, targetOs ?? host.os);
 
-  // cmake — ci.ts writes the artifact zips with `cmake -E tar`.
+  // cmake — required for nested dep builds.
   const cmake = findSystemTool("cmake", { required: true, hint: "Install cmake (>= 3.24)" });
   if (cmake === undefined) throw new BuildError("unreachable: findSystemTool required=true returned undefined");
 
@@ -97,11 +97,11 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
       });
     }
   }
-  const jsRuntimeArgv =
+  const q = (p: string) => quote(p, host.os === "windows");
+  const jsRuntime =
     process.versions.bun !== undefined
-      ? [process.execPath]
-      : [process.execPath, "--experimental-strip-types", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON"];
-  const jsRuntime = quoteArgs(jsRuntimeArgv, host.os === "windows");
+      ? q(process.execPath)
+      : `${q(process.execPath)} --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON`;
 
   return {
     ...llvm,
@@ -109,7 +109,6 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
     bun,
     npm,
     jsRuntime,
-    jsRuntimeArgv,
     esbuild,
     cargo: rust?.cargo,
     cargoHome: rust?.cargoHome,
@@ -228,13 +227,8 @@ function ccacheEnv(cfg: Config): Record<string, string> {
     // source at different checkout locations shares cache entries.
     CCACHE_BASEDIR: cfg.cwd,
     CCACHE_NOHASHDIR: "1",
-    // Not CCACHE_FILECLONE: entries stored under it are raw files, and a hit
-    // on one is materialized by clone (APFS) or CopyFile (Windows), both of
-    // which keep the entry's mtime — the object comes out "older" than
-    // headers generated in the same run and the next build recompiles it.
-    // Embedded entries are written fresh. The namespace keeps the raw
-    // entries earlier builds stored from ever being hit again.
-    CCACHE_NAMESPACE: "bun",
+    // Copy-on-write for cache entries — near-free on btrfs/APFS/ReFS.
+    CCACHE_FILECLONE: "1",
     CCACHE_STATSLOG: resolve(cfg.buildDir, "ccache.log"),
   };
   if (!cfg.ci) {
@@ -270,39 +264,11 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
     if (trace) process.stderr.write(`  ${label}: ${Math.round(performance.now() - start)}ms\n`);
   };
 
-  // Expand profile → PartialConfig. Overrides win — except localDeps, which
-  // is a list and accumulates (a profile may redirect a dep; a CLI
-  // `--local-deps=zstd=…` on top must add to that, not replace it; a repeated
-  // name still takes the CLI's path since later entries win).
-  const profile = input.profile !== undefined ? getProfile(input.profile) : {};
-  const overrides = (input.overrides ??= {});
-  // `--local-deps=WebKit` without a path is shorthand for
-  // `WebKit=$BUN_WEBKIT_PATH` (what `bun run build:local` passes). Resolved
-  // into the persisted overrides here, once, so ninja-driven reconfigures use
-  // the path this build dir was configured with regardless of the
-  // environment they run in. Every other dep spells its path out.
-  if (overrides.localDeps !== undefined) {
-    overrides.localDeps = overrides.localDeps
-      .split(",")
-      .map(entry => {
-        if (entry !== "WebKit") return entry;
-        const fromEnv = process.env.BUN_WEBKIT_PATH;
-        if (!fromEnv) {
-          throw new BuildError(
-            "--local-deps=WebKit needs a path: set $BUN_WEBKIT_PATH to your WebKit clone, or pass --local-deps=WebKit=<path>",
-            {
-              hint: "Clone oven-sh/WebKit somewhere outside vendor/ (vendor/WebKit is the build's own fetch of the pinned commit)",
-            },
-          );
-        }
-        return `WebKit=${fromEnv}`;
-      })
-      .join(",");
-  }
-  const partial: PartialConfig = { ...profile, ...overrides };
-  if (profile.localDeps !== undefined && overrides.localDeps !== undefined) {
-    partial.localDeps = `${profile.localDeps},${overrides.localDeps}`;
-  }
+  // Expand profile → PartialConfig. Overrides win.
+  const partial: PartialConfig = {
+    ...(input.profile !== undefined ? getProfile(input.profile) : {}),
+    ...(input.overrides ?? {}),
+  };
 
   const toolchain = resolveToolchain(partial.os, partial.packageManager);
   mark("resolveToolchain");
@@ -339,37 +305,19 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   generateCargoConfig(cfg);
   mark("generateCargoConfig");
 
-  // Host tools the C++ side shells out to: perl (bun's LUT codegen and JSC's
-  // hash tables), and with JSC built from source ruby + python3 (its other
-  // generators) and zstd (packing the ICU data, where ICU is ours). Missing
-  // ones fail here with a hint rather than mid-build. rust-only/link-only run
-  // none of that — skip so split-CI steps don't need them on the rust box.
-  if (cfg.mode === "full" || cfg.mode === "cpp-only") {
-    const needed: [tool: string, why: string, when: boolean][] = [
-      ["perl", "LUT codegen (create-hash-table.ts) and JSC's hash tables", true],
-      ["ruby", "JavaScriptCore's offlineasm/bytecode generators", cfg.webkit === "source"],
-      [
-        "python3",
-        "JavaScriptCore's builtins/inspector/yarr generators",
-        cfg.webkit === "source" && cfg.host.os !== "windows",
-      ],
-      [
-        "python",
-        "JavaScriptCore's builtins/inspector/yarr generators",
-        cfg.webkit === "source" && cfg.host.os === "windows",
-      ],
-      ["zstd", "packing the ICU data (icu-data.ts)", cfg.webkit === "source" && !cfg.darwin],
-    ];
-    const missing = needed.filter(([tool, , when]) => when && findSystemTool(tool) === undefined);
-    if (missing.length > 0) {
-      throw new BuildError(`${missing.map(([t]) => t).join(", ")} not found in PATH`, {
-        hint:
-          missing.map(([tool, why]) => `${tool}: ${why}`).join("; ") +
-          `. Install with your package manager (e.g. apt install ${missing.map(([t]) => (t === "python" ? "python3" : t)).join(" ")} / brew install …); see CONTRIBUTING.md.`,
+  // Perl check: LUT codegen (create-hash-table.ts) shells out to the
+  // perl script from JSC. If perl is missing, codegen fails cryptically.
+  // Check here so the error is at configure time with a clear hint.
+  // rust-only/link-only don't run LUT codegen — skip the check so split-CI
+  // steps don't require perl on the rust cross-compile box.
+  if (cfg.mode === "full" || cfg.mode === "cpp-only" || cfg.mode === "archive-link") {
+    if (findSystemTool("perl") === undefined) {
+      throw new BuildError("perl not found in PATH", {
+        hint: "LUT codegen (create-hash-table.ts) needs perl. Install it: apt install perl / brew install perl",
       });
     }
   }
-  mark("validate+host-tools");
+  mark("validate+perl");
 
   // Glob all source lists — one pass, consistent filesystem snapshot.
   const sources = globAllSources();
@@ -387,7 +335,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
 
   // Default targets. cpp-only sets its own default inside emitBun (archive,
   // no smoke test). Full/link-only: `bun` phony (or stripped file); the
-  // smoke test and ClassInfo check ride along as validations of the link.
+  // smoke test rides along as a validation of the link.
   // Release builds produce both bun-profile and stripped bun; `bun` is the
   // stripped one. Debug produces bun-debug; `bun` is a phony pointing at it.
   // dsym: darwin release only — pulled into defaults so ninja actually builds
@@ -397,7 +345,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
     const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun";
     const targets = [defaultTarget];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
-    if (output.testFFI !== undefined) targets.push(n.rel(output.testFFI));
+    for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
     n.default(targets);
   }
 

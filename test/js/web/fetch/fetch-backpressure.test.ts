@@ -9,16 +9,27 @@ import { stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createSecureServer } from "node:http2";
 import { createServer as createHttpsServer } from "node:https";
-import { createServer as createTcpServer } from "node:net";
+import { connect, createServer as createTcpServer } from "node:net";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { gzipSync } from "node:zlib";
+import { createServer as createTlsServer } from "node:tls";
+import {
+  brotliCompressSync,
+  createZstdCompress,
+  deflateRawSync,
+  deflateSync,
+  gzipSync,
+  constants as zlibConstants,
+  zstdCompressSync,
+} from "node:zlib";
 
 const CHUNK = 64 * 1024;
 const COUNT = 256; // 16 MiB
 const TOTAL = CHUNK * COUNT;
 const PAYLOAD = Buffer.alloc(CHUNK, 65);
+// BODY_HIGH_WATER_MARK (src/http/Signals.rs): what a client stages of a body nothing reads.
+const MARK = 256 * 1024;
 
 function md5(data: Uint8Array | string): string {
   return Bun.CryptoHasher.hash("md5", data, "hex");
@@ -76,10 +87,11 @@ function progress(wire: number) {
       for (let i = waiters.length; i--; ) if (sent >= waiters[i][0]) waiters.splice(i, 1)[0][1]();
       if (sent >= wire) finished.resolve();
     },
-    // A write that did not go through once the socket has taken more than 8 chunks: the kernel is
-    // full, not merely slow to take the first packets.
+    // A write that did not go through once the server is past MARK. A client holds MARK before it
+    // pauses, so every server gets this far. Past it is kernel buffering; on a host without it the
+    // server waits for 'drain' while the paused client waits for settled().
     block() {
-      if (sent > 8 * CHUNK) blocked.resolve();
+      if (sent > MARK) blocked.resolve();
     },
     close: () => closed.resolve(),
     api: {
@@ -446,6 +458,7 @@ describe.concurrent("fetch() receive backpressure — Readable.fromWeb bridge", 
         import net from "node:net";
         import { Readable } from "node:stream";
         import { pipeline } from "node:stream/promises";
+import { createServer as createTlsServer } from "node:tls";
         const C = 40, MB = 32;
         const CHUNK = Buffer.alloc(64 * 1024, 0x41), COUNT = MB * 16, TOTAL = CHUNK.length * COUNT;
         let peak = process.memoryUsage.rss();
@@ -502,6 +515,343 @@ describe.concurrent("fetch() receive backpressure — Readable.fromWeb bridge", 
 // h2 advertises a 16 MiB initial per-stream window (LOCAL_INITIAL_WINDOW_SIZE),
 // so withholding WINDOW_UPDATE only takes effect past that. Asserting a tight
 // RSS bound for h2 needs that window lowered, which is a separate change.
+
+describe.concurrent("fetch() receive backpressure — the decompressor does not run ahead of the reader", () => {
+  // Pausing the socket bounds COMPRESSED bytes, so a high-ratio body needs its own bound: one
+  // 512 KB read of 1000:1 input inflates to ~500 MB. Each of these bodies is 256 MB of zeros and
+  // at most 270 KB on the wire, so one read hands the client all of it.
+  const DECODED = 256 * 1024 * 1024;
+  const READS = 17;
+  // Unbounded, the client holds all of DECODED (+280 to +305 MB in a debug build). Bounded, it
+  // holds the reader's chunks and one decode pass (+12 to +24 MB).
+  const PEAK_LIMIT = (isASAN || isDebug ? 96 : 64) * 1024 * 1024;
+
+  type Enc = "gzip" | "deflate" | "br" | "zstd";
+  const bombs: Partial<Record<Enc, Buffer>> = {};
+  function bombFor(enc: Enc) {
+    return (bombs[enc] ??= (() => {
+      // A debug build takes seconds to really compress 256 MB, so one compressed MB is repeated:
+      // gzip members and zstd frames concatenate, and so do raw deflate blocks after a full
+      // flush (an empty final stored block then ends the stream). brotli has no such shortcut.
+      const mb = Buffer.alloc(1 << 20);
+      const repeat = (piece: Buffer) => Buffer.concat(Array(DECODED / mb.length).fill(piece));
+      if (enc === "gzip") return repeat(gzipSync(mb, { level: 9 }));
+      if (enc === "zstd") return repeat(zstdCompressSync(mb));
+      if (enc === "deflate") {
+        const block = deflateRawSync(mb, { level: 9, finishFlush: zlibConstants.Z_FULL_FLUSH });
+        return Buffer.concat([repeat(block), Buffer.from([1, 0, 0, 0xff, 0xff])]);
+      }
+      return brotliCompressSync(Buffer.alloc(DECODED), { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 1 } });
+    })());
+  }
+
+  async function listening(srv: import("node:net").Server) {
+    const sockets = new Set<import("node:net").Socket>();
+    srv.on("connection", s => sockets.add(s));
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    return {
+      port: (srv.address() as import("node:net").AddressInfo).port,
+      [Symbol.asyncDispose]: () => {
+        for (const s of sockets) s.destroy();
+        return new Promise<void>(r => srv.close(() => r()));
+      },
+    };
+  }
+
+  // Close-delimited, and the origin never closes: for the client this body does not end.
+  async function serveBomb(enc: Enc, secure: boolean) {
+    const bomb = bombFor(enc);
+    const handler = (s: import("node:net").Socket) => {
+      s.on("error", () => {});
+      s.once("data", () => {
+        s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nConnection: close\r\n\r\n`);
+        s.write(bomb);
+      });
+    };
+    const server = await listening(secure ? createTlsServer(tls, handler) : createTcpServer(handler));
+    return { ...server, url: `${secure ? "https" : "http"}://127.0.0.1:${server.port}/` };
+  }
+
+  // A CONNECT proxy that pipes both ways. bun does not pause a tunnelled socket, so the origin's
+  // bytes keep arriving while the reader is paused.
+  async function serveConnectProxy() {
+    const server = await listening(
+      createTcpServer(client => {
+        let upstream: import("node:net").Socket | undefined;
+        client.on("error", () => upstream?.destroy());
+        client.on("close", () => upstream?.destroy());
+        client.once("data", head => {
+          const [, target] = head.toString("latin1").split(" ");
+          const colon = target.lastIndexOf(":");
+          upstream = connect(Number(target.slice(colon + 1)), target.slice(0, colon), () => {
+            client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+            client.pipe(upstream!);
+            upstream!.pipe(client);
+          });
+          upstream.on("error", () => client.destroy());
+          upstream.on("close", () => client.destroy());
+        });
+      }),
+    );
+    return { ...server, url: `http://127.0.0.1:${server.port}` };
+  }
+
+  // Takes one chunk, lets the client's memory settle, takes a few more, and reports the largest
+  // RSS growth it saw. Nothing here waits on the clock for the decoder: the pulls pace it.
+  const READ_A_LITTLE = /* js */ `
+    const base = process.memoryUsage.rss();
+    let peak = 0;
+    const sample = () => (peak = Math.max(peak, process.memoryUsage.rss() - base));
+    const res = await fetch(url, opts);
+    const reader = res.body.getReader();
+    const first = await reader.read();
+    for (let last = sample(), stable = 0; stable < 3; ) {
+      await Bun.sleep(20);
+      const now = process.memoryUsage.rss() - base;
+      stable = Math.abs(now - last) < (1 << 20) ? stable + 1 : 0;
+      last = now;
+      sample();
+    }
+    let got = first.value.byteLength;
+    for (let i = 1; i < ${READS}; i++) {
+      got += (await reader.read()).value.byteLength;
+      sample();
+    }
+    const zeros = !first.value.some(b => b !== 0);
+    await reader.cancel();
+    process.stdout.write(JSON.stringify({ got, peak, zeros }));
+  `;
+
+  async function runClient(url: string, opts: object, script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const url=${JSON.stringify(url)};const opts=${JSON.stringify(opts)};${script}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (!stdout) throw new Error(`client exited ${exitCode}: ${stderr}`);
+    return { ...JSON.parse(stdout), stderr, exitCode };
+  }
+
+  function expectBounded({
+    got,
+    peak,
+    zeros,
+    exitCode,
+  }: {
+    got: number;
+    peak: number;
+    zeros: boolean;
+    exitCode: number;
+  }) {
+    expect({
+      got: got > 0,
+      zeros,
+      peakUnder: peak < PEAK_LIMIT || { peakMB: peak >> 20, limitMB: PEAK_LIMIT >> 20 },
+    }).toEqual({ got: true, zeros: true, peakUnder: true });
+    expect(exitCode).toBe(0);
+  }
+
+  test.each(["gzip", "deflate", "br", "zstd"] as Enc[])(
+    "%s: a reader that takes a little holds a little",
+    async enc => {
+      await using server = await serveBomb(enc, false);
+      expectBounded(await runClient(server.url, {}, READ_A_LITTLE));
+    },
+  );
+
+  test("zstd through a CONNECT proxy: a reader that takes a little holds a little", async () => {
+    await using server = await serveBomb("zstd", true);
+    await using proxy = await serveConnectProxy();
+    const opts = { proxy: proxy.url, tls: { rejectUnauthorized: false } };
+    expectBounded(await runClient(server.url, opts, READ_A_LITTLE));
+  });
+
+  // A live stream: two flushed messages in one packet, then the origin goes quiet with the frame
+  // open. The budget ends a pass inside the second message's last block, after zstd has taken
+  // every input byte and while it still holds decoded output. No further packet will come to
+  // shake that output loose.
+  test("zstd: output the decoder still holds arrives without another packet", async () => {
+    const z = createZstdCompress();
+    const parts: Buffer[] = [];
+    z.on("data", d => parts.push(d));
+    const message = (n: number) => {
+      const b = Buffer.alloc(n);
+      for (let i = 0; i < n; i += 40_009) b[i] = 1 + (i % 251);
+      return b;
+    };
+    for (const n of [100_000, 200_000]) {
+      z.write(message(n));
+      await new Promise<void>(r => z.flush(zlibConstants.ZSTD_e_flush, () => r()));
+    }
+    const wire = Buffer.concat(parts);
+    await using server = await listening(
+      createTcpServer(s => {
+        s.on("error", () => {});
+        s.once("data", () =>
+          s.write(
+            Buffer.concat([
+              Buffer.from(`HTTP/1.1 200 OK\r\nContent-Encoding: zstd\r\nTransfer-Encoding: chunked\r\n\r\n`),
+              Buffer.from(wire.length.toString(16) + "\r\n"),
+              wire,
+              Buffer.from("\r\n"),
+            ]),
+          ),
+        );
+      }),
+    );
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    const reader = res.body!.getReader();
+    let total = 0;
+    while (total < 300_000) total += (await reader.read()).value!.byteLength;
+    await reader.cancel();
+    expect(total).toBe(300_000);
+  });
+
+  // `await (await fetch(url)).text()` turns the consumer to BufferAll, possibly while the HTTP
+  // thread is inside a pass it began under the reader's budget. A paused consumer asks for the
+  // rest of such a pass; one that has just stopped being a reader never does, and without the
+  // client going on by itself the request hangs. Which thread gets there first is down to
+  // scheduling, so this repeats the request; a debug build is too slow to repeat it enough.
+  test.skipIf(isDebug || isASAN)("text() racing a budgeted pass gets the whole body every time", async () => {
+    const SIZE = 400_000;
+    const body = gzipSync(Buffer.alloc(SIZE, "abcdefghij"), { level: 1 });
+    await using server = await listening(
+      createTcpServer(s => {
+        s.on("error", () => {});
+        s.on("data", () => {
+          // The head goes out a tick before the body, so the caller has the Response in hand
+          // when the body's only packet is decoded.
+          s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n`);
+          setImmediate(() =>
+            s.write(
+              Buffer.concat([Buffer.from(body.length.toString(16) + "\r\n"), body, Buffer.from("\r\n0\r\n\r\n")]),
+            ),
+          );
+        });
+      }),
+    );
+    const script = /* js */ `
+      const TOTAL = 4000, CONCURRENCY = 16;
+      let started = 0, done = 0, wrong = 0;
+      async function worker() {
+        while (started < TOTAL) {
+          started++;
+          const text = await (await fetch(url)).text();
+          if (text.length !== ${SIZE}) wrong++;
+          done++;
+        }
+      }
+      await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+      process.stdout.write(JSON.stringify({ done, wrong }));
+    `;
+    const { done, wrong, exitCode } = await runClient(`http://127.0.0.1:${server.port}/`, {}, script);
+    expect({ done, wrong }).toEqual({ done: 4000, wrong: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  // A bounded decode delivers every byte. The size is not a multiple of anything, so the budget
+  // ends passes in the middle of blocks, and of the decoders' own flush windows.
+  describe("a bounded decode still delivers the whole body", () => {
+    const SIZE = 8 * 1024 * 1024 + 77_777;
+    // Zero runs broken by short islands: the ratio stays high, the block structure irregular.
+    const raw = Buffer.alloc(SIZE);
+    for (let i = 0, x = 12345; i < SIZE; i += 70_001) {
+      for (let j = 0; j < 257 && i + j < SIZE; j++) raw[i + j] = (x = (x * 1103515245 + 12345) & 0x7fffffff) & 0xff;
+    }
+    const digest = md5(raw);
+
+    type Kind = Enc | "br-hq";
+    const bodies: { [k: string]: Buffer } = {};
+    // br-hq packs the body into a few hundred bytes, so the decoder has taken all of its input
+    // long before it has produced the budget's worth of output: the decoder holds the rest.
+    function bodyFor(kind: Kind) {
+      const q = zlibConstants.BROTLI_PARAM_QUALITY;
+      return (bodies[kind] ??=
+        kind === "gzip"
+          ? gzipSync(raw, { level: 1 })
+          : kind === "deflate"
+            ? deflateSync(raw, { level: 1 })
+            : kind === "br"
+              ? brotliCompressSync(raw, { params: { [q]: 0 } })
+              : kind === "br-hq"
+                ? brotliCompressSync(Buffer.alloc(SIZE), { params: { [q]: 4 } })
+                : zstdCompressSync(raw, { level: 1 }));
+    }
+
+    // Content-Length bodies end with the origin's FIN, which reaches a client that still holds
+    // most of the body undecoded. Chunked ones stay open.
+    async function serveBody(kind: Kind, chunked: boolean) {
+      const body = bodyFor(kind);
+      const enc = kind === "br-hq" ? "br" : kind;
+      const server = await listening(
+        createTcpServer(s => {
+          s.on("error", () => {});
+          s.once("data", () => {
+            if (chunked) {
+              s.write(`HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nTransfer-Encoding: chunked\r\n\r\n`);
+              s.write(`${body.length.toString(16)}\r\n`);
+              s.write(body);
+              s.write("\r\n0\r\n\r\n");
+            } else {
+              s.write(
+                `HTTP/1.1 200 OK\r\nContent-Encoding: ${enc}\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+              );
+              s.end(body);
+            }
+          });
+        }),
+      );
+      return { ...server, url: `http://127.0.0.1:${server.port}/` };
+    }
+
+    const STREAM = /* js */ `
+      const res = await fetch(url, opts);
+      const hasher = new Bun.CryptoHasher("md5");
+      let total = 0, chunks = 0;
+      for await (const chunk of res.body) {
+        total += chunk.byteLength;
+        chunks++;
+        hasher.update(chunk);
+      }
+      process.stdout.write(JSON.stringify({ total, several: chunks > 1, digest: hasher.digest("hex") }));
+    `;
+    const BUFFER = /* js */ `
+      const bytes = await (await fetch(url, opts)).bytes();
+      const digest = new Bun.CryptoHasher("md5").update(bytes).digest("hex");
+      process.stdout.write(JSON.stringify({ total: bytes.byteLength, digest }));
+    `;
+
+    const cases: [Kind, boolean][] = [
+      ["gzip", false],
+      ["gzip", true],
+      ["deflate", false],
+      ["br", false],
+      ["br-hq", false],
+      ["zstd", false],
+      ["zstd", true],
+    ];
+    describe.each(cases)("%s chunked=%p", (kind, chunked) => {
+      // `several`: the budget split the decode across pulls instead of one SIZE-byte chunk.
+      test.each([
+        ["a streaming reader", STREAM, { several: true }],
+        ["res.bytes()", BUFFER, {}],
+      ])("%s", async (_, script, seen) => {
+        await using server = await serveBody(kind, chunked);
+        const { stderr, exitCode, ...result } = await runClient(server.url, {}, script);
+        expect(stderr).toBe("");
+        expect(result).toEqual({
+          total: SIZE,
+          digest: kind === "br-hq" ? md5(Buffer.alloc(SIZE)) : digest,
+          ...seen,
+        });
+        expect(exitCode).toBe(0);
+      });
+    });
+  });
+});
 
 describe.concurrent("fetch() receive backpressure — buffered consumers are not throttled", () => {
   const cases: [string, (r: Response) => Promise<string>][] = [
@@ -600,7 +950,7 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
         while (sent < declared) {
           const n = s.write(PAYLOAD);
           sent += Math.max(n, 0);
-          if (n < PAYLOAD.length) return void (sent > 4 * CHUNK && blocked.resolve(s));
+          if (n < PAYLOAD.length) return void (sent > MARK && blocked.resolve(s));
         }
       };
       using listener = Bun.listen({
@@ -633,7 +983,7 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
         name: "TypeError",
         code: "ECONNRESET",
         message:
-          "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+          "ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
         partial: true,
         foreign: 0,
       });

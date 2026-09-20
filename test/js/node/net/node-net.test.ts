@@ -2793,6 +2793,8 @@ it.concurrent("onread: a callback that throws is an uncaught exception", async (
         },
       });
       client.on("error", () => console.log("socket-error"));
+      // If the throw does not end the process, the listening server holds it open.
+      setTimeout(() => process.exit(2), 10_000).unref();
     });
   `;
   await using proc = Bun.spawn({
@@ -3077,6 +3079,11 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
         // chunk is still in the kernel, so the next writev takes the whole remainder
         // plus a prefix of the new chunk (written > buffered.len).
         if (sawPartial) {
+          if (sent.a === size) {
+            console.error("precondition failed: the first write was partial, so the peer has nothing to drain first");
+            sock.destroy();
+            process.exit(3);
+          }
           submitted(sent.a - size);
           const deadline = Date.now() + 60_000;
           while (!fs.existsSync("drained")) {
@@ -3102,6 +3109,11 @@ describe.skipIf(isWindows)("socket write while data is buffered natively", () =>
       // bytesWritten counts flushed plus still-buffered bytes.
       sent.bw = sock.bytesWritten;
       if (phase === "loss") submitted(sent.a + sent.s);
+      // The test runner does not kill the children of a concurrent test that timed out.
+      setTimeout(() => {
+        console.error("the final write did not drain");
+        process.exit(5);
+      }, 60_000).unref();
       flushed.then(() => {
         console.log(JSON.stringify(sent));
         sock.end();

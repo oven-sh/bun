@@ -124,6 +124,8 @@ enum BlockDisposition {
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
+    /// Decoded for HPACK-table sync only: nothing is surfaced and nothing more is sent.
+    Ignored,
 }
 
 pub struct Feed {
@@ -168,6 +170,12 @@ pub trait Sink {
     /// (ENHANCE_YOUR_CALM, node's Http2Session::OnBeginHeadersCallback) before any stream state
     /// is allocated; the header block is still decoded for HPACK-table sync (§4.3).
     fn can_open_stream(&self) -> bool {
+        true
+    }
+    /// Whether the embedder takes a push promised on `parent_id`. `false` once it has submitted
+    /// that stream's RST_STREAM (nghttp2's NGHTTP2_STREAM_CLOSING): the promised stream gets
+    /// RST_STREAM(CANCEL) and its block is decoded for HPACK-table sync only.
+    fn can_accept_push(&self, _parent_id: u32) -> bool {
         true
     }
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
@@ -1078,7 +1086,9 @@ impl Connection {
         } = *meta;
         // Surface the push reservation before its request headers so the embedder can create the
         // pushed stream object that the on_header calls populate.
-        if let Some(parent) = push_parent {
+        if let Some(parent) = push_parent
+            && disposition == BlockDisposition::Deliver
+        {
             sink.on_push_promise(parent.get(), target);
         }
         let block = std::mem::take(&mut self.header_block);
@@ -1121,7 +1131,7 @@ impl Connection {
                         rejected = true;
                         continue;
                     }
-                    // HEADERS on a closed stream: decode for HPACK-table sync only (§4.3); the
+                    // A block that is not delivered: decode for HPACK-table sync only (§4.3); the
                     // fields are never surfaced.
                     if disposition != BlockDisposition::Deliver {
                         continue;
@@ -1244,6 +1254,7 @@ impl Connection {
                 sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
                 return false;
             }
+            BlockDisposition::Ignored => return false,
             BlockDisposition::Deliver => {}
         }
         // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
@@ -1725,6 +1736,12 @@ impl Connection {
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
         }
+        // nghttp2_session_on_push_promise_received decides on receipt of the frame, not of the
+        // block, so a CONTINUATION that arrives later does not change the answer.
+        let cancelled = !sink.can_accept_push(hdr.stream_id);
+        if cancelled {
+            self.send_rst_stream(sink, promised, ErrorCode::Cancel);
+        }
 
         self.header_block.clear();
         self.header_block.extend_from_slice(&payload[off..end]);
@@ -1735,7 +1752,11 @@ impl Connection {
             flags: 0,
             end_stream: false, // PUSH_PROMISE carries a request; it never ends the stream
             is_request: true,
-            disposition: BlockDisposition::Deliver,
+            disposition: if cancelled {
+                BlockDisposition::Ignored
+            } else {
+                BlockDisposition::Deliver
+            },
         };
         self.finish_or_park_header_block(sink, hdr, meta)
     }

@@ -1177,8 +1177,6 @@ pub struct H2FrameParser {
     /// Promised stream id whose PUSH_PROMISE header block is being delivered by the engine (its
     /// on_headers_complete dispatches onStreamPush instead of onStreamHeaders).
     rewrite_pending_push: Cell<u32>,
-    /// The stream that PUSH_PROMISE arrived on. Read only while `rewrite_pending_push` is set.
-    rewrite_pending_push_parent: Cell<u32>,
     /// stream id -> JS stream context object, for the rewrite engine's Sink callbacks.
     sctx: JsCell<BunHashMap<u32, StrongOptional>>,
     /// In-progress decoded header array + sensitive-name array, accumulated across on_header.
@@ -1336,6 +1334,9 @@ pub struct Stream {
     // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
     // replenishing the stream's receive window until reading resumes, backpressuring the peer.
     reading_paused: bool,
+    // nghttp2's NGHTTP2_STREAM_CLOSING: this side sent the stream's RST_STREAM, or JS reports
+    // (setStreamClosing) that node has submitted it by now while ours leaves later.
+    closing: bool,
 
     // when we have backpressure we queue the data e round robin the Streams
     data_frame_queue: PendingQueue,
@@ -1841,6 +1842,7 @@ impl Stream {
             remote_used_window_size: 0,
             signal: None,
             reading_paused: false,
+            closing: false,
             data_frame_queue: PendingQueue::default(),
         }
     }
@@ -2130,6 +2132,7 @@ impl H2FrameParser {
         let _ = writer_stream.write_all(&value.to_ne_bytes());
         let old_state = stream.state;
         stream.state = StreamState::CLOSED;
+        stream.closing = true;
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
@@ -2168,6 +2171,7 @@ impl H2FrameParser {
         let _ = writer_stream.write_all(&value.to_ne_bytes());
 
         stream.state = StreamState::CLOSED;
+        stream.closing = true;
         let identifier = stream.get_identifier();
         identifier.ensure_still_alive();
         stream.free_resources::<false>(self);
@@ -2469,33 +2473,6 @@ impl H2FrameParser {
             this_value,
             ctx_value,
             &[ctx_value, value, extra, extra2],
-        );
-    }
-
-    pub(crate) fn dispatch_with_3_extra(
-        &self,
-        event: JSH2FrameParser::Gc,
-        value: JSValue,
-        extra: JSValue,
-        extra2: JSValue,
-        extra3: JSValue,
-    ) {
-        let Some(this_value) = self.strong_this.get().try_get() else {
-            return;
-        };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
-            return;
-        };
-        value.ensure_still_alive();
-        extra.ensure_still_alive();
-        extra2.ensure_still_alive();
-        extra3.ensure_still_alive();
-        let _dispatch = self.enter_dispatch();
-        let _ = self.handlers.get().call_event_handler(
-            event,
-            this_value,
-            ctx_value,
-            &[ctx_value, value, extra, extra2, extra3],
         );
     }
 
@@ -3991,11 +3968,18 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
     }
 
-    fn on_push_promise(&self, parent_id: u32, promised_id: u32) {
+    fn can_accept_push(&self, parent_id: u32) -> bool {
+        match self.streams.get().get(&parent_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            Some(stream) => unsafe { !(*stream).closing },
+            None => true,
+        }
+    }
+
+    fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
         // The promised request headers follow via on_header/on_headers_complete for promised_id;
         // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.
         self.rewrite_pending_push.set(promised_id);
-        self.rewrite_pending_push_parent.set(parent_id);
     }
 
     fn on_origin(&self, payload: &[u8]) {
@@ -4103,15 +4087,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         };
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
             // A PUSH_PROMISE header block: surface the promised request to JS as a pushed stream.
-            // JS decides with the parent: close() and destroy() reach this parser from setImmediate.
             self.rewrite_pending_push.set(0);
-            let parent_ctx = self.rewrite_stream_ctx(self.rewrite_pending_push_parent.get());
-            self.dispatch_with_3_extra(
+            self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onStreamPush,
                 JSValue::js_number(stream_id as f64),
                 tuple,
                 JSValue::js_number(flags as f64),
-                parent_ctx,
             );
         } else {
             let stream_ctx = self.rewrite_stream_ctx(stream_id);
@@ -5480,6 +5461,31 @@ impl H2FrameParser {
                 }
             }
             let _ = this.flush();
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// setStreamClosing(streamId, heldBackInRead): records that node has submitted the stream's
+    /// RST_STREAM at this point. Only a bit, like setStreamReading, so it is callable from inside a
+    /// dispatch. node holds a close(NGHTTP2_CANCEL) back while it is inside a read
+    /// (Http2Stream::SubmitRstStream), so `heldBackInRead` skips the mark there.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn set_stream_closing(
+        this: &Self,
+        _global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [stream_arg, held_back_arg] = callframe.arguments_as_array::<2>();
+        if !stream_arg.is_number() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // rewrite_read holds the engine borrow for the whole read.
+        if held_back_arg.to_boolean() && this.engine.try_borrow_mut().is_err() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        if let Some(stream) = this.streams.get().get(&stream_arg.to_u32()).copied() {
+            // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
+            unsafe { (*stream).closing = true };
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -7518,7 +7524,6 @@ impl H2FrameParser {
             engine: core::cell::RefCell::new(None),
             rewrite_tail: JsCell::new(Vec::new()),
             rewrite_pending_push: Cell::new(0),
-            rewrite_pending_push_parent: Cell::new(0),
             sctx: JsCell::new(BunHashMap::default()),
             hdr_block: JsCell::new(Vec::new()),
             hdr_meta: JsCell::new(Vec::new()),

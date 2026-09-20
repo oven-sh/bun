@@ -1943,7 +1943,7 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
   });
 });
 
-// Only the first test needs the VM's memo of resolver answers. A stale answer from it fails the others.
+// The first and the last test read the VM's memo of resolver answers. A stale answer from it fails the others.
 describe.concurrent("a repeated resolution", () => {
   async function run(files: Record<string, string>, cmd = ["main.cjs"]) {
     using dir = tempDir("repeated-resolution", files);
@@ -2209,21 +2209,23 @@ describe.concurrent("a repeated resolution", () => {
   test("of more pairs than the memo holds gives each pair its own answer", async () => {
     const { stdout, stderr, exitCode } = await run({
       "main.cjs": `
+        const { resolutionMemoHits } = require("bun:internal-for-testing");
         const fs = require("node:fs");
         const path = require("node:path");
-        const count = 2500;
+        const count = 2100;
         for (let i = 0; i < count; i++) fs.writeFileSync(path.join(__dirname, "m" + i + ".cjs"), "");
         let wrong = 0;
-        for (let round = 0; round < 2; round++) {
-          for (let i = 0; i < count; i++) {
+        // The second round makes the entries, and replaces some. The third one reads some that are left.
+        for (const step of [1, 1, 4]) {
+          for (let i = 0; i < count; i += step) {
             if (require.resolve("./m" + i + ".cjs") !== path.join(__dirname, "m" + i + ".cjs")) wrong++;
           }
         }
-        console.log(JSON.stringify({ wrong }));
+        console.log(JSON.stringify({ wrong, answeredSome: resolutionMemoHits() > 0 }));
       `,
     });
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ wrong: 0 });
+    expect(JSON.parse(stdout)).toEqual({ wrong: 0, answeredSome: true });
     expect(exitCode).toBe(0);
   });
 });

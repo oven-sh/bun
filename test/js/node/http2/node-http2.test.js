@@ -2422,7 +2422,8 @@ function recordEnding(req, { errorListener = true } = {}) {
 
 // node's closeSession() gives ERR_HTTP2_STREAM_CANCEL to pending requests only. An open request gets
 // the session's error, if there is one, and the session's code. The expected values are what node
-// v26.3.0 reports for the same request.
+// v26.3.0 reports for the same request. Serial on purpose: run together, each case waits for the
+// work of the whole block, and that comes close to the test timeout in a cold debug+ASAN process.
 describe("http2 client session.destroy() closes an open request like node", () => {
   const {
     NGHTTP2_NO_ERROR,

@@ -93,8 +93,7 @@ const {
   typeof globalThis.MessagePort,
   typeof globalThis.MessageChannel,
   typeof globalThis.BroadcastChannel,
-  // Hidden third argument: the branded node:worker_threads instance. It selects the node
-  // worker kind and is what the process `worker` event receives.
+  // Hidden third argument: the branded node:worker_threads instance (selects the node kind).
   new (...args: [...ConstructorParameters<typeof globalThis.Worker>, nodeWorker: Worker]) => WebWorker,
 ];
 
@@ -618,9 +617,7 @@ if (
   // removing the listeners let the thread exit — node's parentPort lifecycle.
   if (transferredParentPort) {
     parentPort = transferredParentPort;
-    // Registering the port natively makes start() defer delivery until the entry
-    // module has evaluated, as in node. It arrives without a loop ref: only a
-    // 'message' listener keeps the thread alive.
+    // Registered natively so start() defers delivery until the entry module has evaluated.
     _setParentPort(parentPort);
     parentPort.start();
   }

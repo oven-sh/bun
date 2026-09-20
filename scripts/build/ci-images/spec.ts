@@ -85,13 +85,15 @@ export const locations = {
 } as const;
 
 /**
- * TEMPORARY, while this work is being tested: delete before merging.
- *
- * A number here goes into every image's hash, so changing it renames every
- * image and the next build bakes them all again with nothing else changed.
- * `undefined` adds nothing to the hash.
+ * Raise this to bake every image again so that what the prefetch tools
+ * download is current. What they download is decided by the commit being
+ * built, not by this file, so a dependency bump does not rename an image: the
+ * images keep working and their caches slowly miss more (a build log says
+ * `using prefetch cache` for a hit and `fetching` for a miss). The number is
+ * written into each prefetch tool's section of the generated scripts, which is
+ * how it renames the images. It means nothing else.
  */
-export const epoch: number | undefined = undefined;
+const prefetchTriggerVersion = 1;
 
 export const pins = {
   nodejs: { version: "26.3.0", nodeGypInstallVersion: "11" },
@@ -348,6 +350,7 @@ const nodeArch = { x64: "x64", aarch64: "arm64" } as const;
 
 /** What the prefetch tools download is decided by the commit being built: a dependency bump does not rename an image. */
 const prefetched: Identity = { kind: "notRecorded", reason: "decided by the commit being built, not by this file" };
+const prefetchTrigger = `prefetchTriggerVersion ${prefetchTriggerVersion}: raise it in spec.ts to bake again and refresh what is prefetched.`;
 /** The three `bun install`s a test job runs. */
 const installedPackages = [".", "test", "scripts/ci-remap-server"];
 
@@ -1168,6 +1171,7 @@ function prefetchBuildDeps(): Tool {
     name: "prefetch-build-deps",
     identity: prefetched,
     steps: [
+      comment(prefetchTrigger),
       directory(prefetch),
       inDirectory(checkout, [run("bun", "scripts/prefetch-deps.ts", prefetch)]),
       mode("a-w", prefetch, { recursive: true }),
@@ -1181,7 +1185,11 @@ function prefetchTestImages(): Tool {
   return {
     name: "prefetch-test-images",
     identity: prefetched,
-    steps: [service("docker", "started"), inDirectory(checkout, [run("bun", "test/docker/prepare-ci.ts")])],
+    steps: [
+      comment(prefetchTrigger),
+      service("docker", "started"),
+      inDirectory(checkout, [run("bun", "test/docker/prepare-ci.ts")]),
+    ],
   };
 }
 
@@ -1192,6 +1200,7 @@ function prefetchInstallCache(): Tool {
     name: "prefetch-install-cache",
     identity: prefetched,
     steps: [
+      comment(prefetchTrigger),
       directory(cache),
       ...installedPackages.map(path =>
         inDirectory(text`${checkout}/${path}`, [
@@ -1421,14 +1430,16 @@ function visualStudio(): Tool {
   const installer = scratch("vs_community.exe");
   return {
     name: "visual-studio",
+    // The MSVC toolset and Windows SDK versions the installer chose, where it puts them by default: their
+    // import libraries and CRT objects are what a build on this machine links against.
     identity: observed(
-      run(
-        "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe",
-        "-all",
-        "-latest",
-        "-property",
-        "installationVersion",
-      ),
+      cmdlet("Get-ChildItem", {
+        Name: true,
+        Path: [
+          "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC",
+          "C:/Program Files (x86)/Windows Kits/10/Lib",
+        ],
+      }),
     ),
     steps: [
       download(`https://aka.ms/vs/${pins.visualStudio.channel}/release/vs_community.exe`, installer),
@@ -1482,6 +1493,7 @@ function prefetchWindows(): Tool {
     name: "prefetch-windows",
     identity: prefetched,
     steps: [
+      comment(prefetchTrigger),
       run("git", "init", "--quiet", repo),
       run("git", "-C", repo, "fetch", "--quiet", "--depth=1", "https://github.com/oven-sh/bun.git", commit),
       run("git", "-C", repo, "checkout", "--quiet", "FETCH_HEAD"),
@@ -2765,7 +2777,7 @@ export function generateImage(image: Image, root: string): GeneratedImage {
         ? { reason: identity.reason }
         : {}),
   }));
-  const facts = { ...image, tools: described, ...(epoch === undefined ? {} : { epoch }) };
+  const facts = { ...image, tools: described };
   writeFileSync(join(directory, "image.json"), JSON.stringify(facts, null, 2) + "\n");
   writeFileSync(join(directory, image.os === "windows" ? "bootstrap.ps1" : "bootstrap.sh"), renderBootstrap(image));
   if (image.os !== "darwin") {

@@ -35,7 +35,9 @@ bun test test/internal/source-lints/ci-images.test.ts test/internal/source-lints
 
 **Change or add an image.** Edit `images`. A base image is an exact name and owner (AWS) or an exact Marketplace version (Azure), never "latest": find them with `aws ec2 describe-images --owners <owner> --filters Name=name,Values='<pattern>'` and `az vm image list --publisher … --offer … --sku … --all`. A new image also needs a platform in `.buildkite/ci.ts` that matches its os, arch, distro and release. Two images cannot share a key; the key is also the directory.
 
-**Bake an image again with nothing changed.** There is deliberately no switch for it. A build bakes a name that does not exist, so removing the image in the cloud is what makes the next build bake it.
+**Refresh what is prefetched.** What the prefetch tools download (dependency sources for the build, the test Docker images, `bun install`'s cache) is decided by the commit being built, so a dependency bump does not rename an image: the images keep working and their caches miss more over time (a build log says `using prefetch cache` for a hit and `fetching` for a miss). Raise `prefetchTriggerVersion`. The number is written into each prefetch tool's section of the generated scripts, which renames every baked image, and the next build bakes them all. It means nothing else.
+
+**Bake one image again with nothing changed.** There is deliberately no switch for it. A build bakes a name that does not exist, so removing the image in the cloud is what makes the next build bake it.
 
 **Read what is on an image.** Every bake writes `bun-image.json` on the machine (`/etc/`, `C:\`) and publishes it as the bake job's artifact `build/ci-images/<key>/bun-image.json`: the image's name, the spec's facts, every tool with how it is known, and the exact version of every distro or Scoop package the bake got. It is for keying caches of build outputs (same bytes, same machine content), so nothing in it may differ between two identical machines: no times, hostnames or instance ids. It never feeds the name.
 

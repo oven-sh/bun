@@ -20,11 +20,9 @@
  *   anything else                   → runtime
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { constants as osConstants } from "node:os";
 import { join } from "node:path";
-import { type BuildDirLock, lockBuildDir } from "./build/build-lock.ts";
 import {
   canTraceOrderFile,
   downloadArtifacts,
@@ -104,17 +102,6 @@ async function main(): Promise<void> {
   // found"). Scrub them for Windows cross builds — they are host-targeted by
   // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
   // every other target keep the environment as provisioned.
-  // One build at a time per build directory (build-lock.ts). Held from before configure until ninja returns — not
-  // while the built binary runs (`bun bd test …`), nor by ninja's own regen replay, which runs under the outer
-  // build's lock.
-  let buildDirLock: BuildDirLock | undefined;
-  const takeBuildDirLock = (buildDir: string): void => {
-    buildDirLock ??= lockBuildDir(buildDir);
-  };
-  const unlockBuildDir = (): void => {
-    buildDirLock?.release();
-    buildDirLock = undefined;
-  };
   const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
     const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
     if (cfg.windows && cfg.host.os !== "windows") {
@@ -137,7 +124,7 @@ async function main(): Promise<void> {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
     const result = (await startGroup("Configure", () =>
-      configure(input, args.configFile !== undefined, takeBuildDirLock),
+      configure(input, args.configFile !== undefined),
     )) as ConfigureResult;
     if (args.configureOnly) return;
 
@@ -222,7 +209,7 @@ async function main(): Promise<void> {
     }
   } else {
     // Local: configure, then spawn ninja.
-    const result = await configure(input, args.configFile !== undefined, takeBuildDirLock);
+    const result = await configure(input, args.configFile !== undefined);
 
     // Quiet one-liner when configure was a no-op — the full banner only
     // prints when build.ninja changed. Timing matters: a regression here
@@ -278,29 +265,12 @@ async function main(): Promise<void> {
     if (!quiet && interactive) {
       stdio[STREAM_FD] = 2;
     }
-    // Not spawnSync: the lock names the ninja as soon as it has a pid, so that a ninja which outlives this process
-    // still holds the build directory. That includes Ctrl-C: it kills this process at once (no handler, so the
-    // shell sees the signal), while ninja winds its jobs down for a moment longer.
-    const ninja = await new Promise<{
-      error: Error | undefined;
-      status: number | null;
-      signal: NodeJS.Signals | null;
-      stdout: Buffer;
-      stderr: Buffer;
-    }>(done => {
-      const child = spawn(result.ninja, ninjaArgv(result.cfg), { stdio, env: ninjaEnv(result.cfg, result.env) });
-      const out: Buffer[] = [];
-      const err: Buffer[] = [];
-      child.stdout?.on("data", (chunk: Buffer) => out.push(chunk));
-      child.stderr?.on("data", (chunk: Buffer) => err.push(chunk));
-      const finish = (error: Error | undefined, status: number | null, signal: NodeJS.Signals | null) =>
-        done({ error, status, signal, stdout: Buffer.concat(out), stderr: Buffer.concat(err) });
-      child.on("error", error => finish(error, null, null));
-      // 'close', not 'exit': everything ninja wrote has been read by then.
-      child.on("close", (status, signal) => finish(undefined, status, signal));
-      if (child.pid !== undefined) buildDirLock?.addHolder(child.pid);
+    const ninja = spawnSync(result.ninja, ninjaArgv(result.cfg), {
+      stdio,
+      env: ninjaEnv(result.cfg, result.env),
+      // Captured output (quiet mode) can be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
+      maxBuffer: 1024 * 1024 * 1024,
     });
-    unlockBuildDir(); // the binary we may exec next (`bun bd test …`) must not keep other builds waiting
     if (ninja.error) {
       const hint =
         result.ninja === "ninja"
@@ -308,12 +278,6 @@ async function main(): Promise<void> {
           : "That is the ninja release the build pins. If the file is damaged, delete its directory and the next build fetches it again.";
       process.stderr.write(`Failed to exec ${result.ninja}: ${ninja.error.message}\n${hint}\n`);
       process.exit(127);
-    }
-    if (ninja.signal) {
-      // Interrupted (Ctrl-C reaches ninja and us alike; a signal sent to ninja alone lands here): re-raise so the
-      // parent shell sees the signal.
-      process.kill(process.pid, ninja.signal);
-      process.exit(128 + (osConstants.signals[ninja.signal] ?? 0));
     }
     if (ninja.status !== 0) {
       if (quiet) {

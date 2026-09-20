@@ -291,12 +291,7 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * (build.ts --config-file), as opposed to build.ts configuring before it
  * spawns ninja.
  */
-export async function configure(
-  input: ConfigureInput,
-  fromNinja = false,
-  /** Called with the build directory once it is known, before anything in it is touched (the driver's lock). */
-  beforeWriting: (buildDir: string) => void = () => {},
-): Promise<ConfigureResult> {
+export async function configure(input: ConfigureInput, fromNinja = false): Promise<ConfigureResult> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
@@ -319,7 +314,6 @@ export async function configure(
   if (isBuildkite) {
     checkImageTools(toolchain);
   }
-  beforeWriting(cfg.buildDir);
 
   // Darwin cross-compile: the SDK must exist before ninja runs (every compile
   // edge passes -isysroot) and before checkWorkarounds() (the darwin-cross

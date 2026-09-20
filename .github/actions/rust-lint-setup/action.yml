@@ -68,7 +68,7 @@ runs:
       # bun_core/build.rs needs the build_options.rs that configure writes.
       # `codegen` writes the include!() sources under build/debug/codegen that
       # bun_runtime/bun_jsc/bun_core can't be checked without.
-      # Through build.ts, not a bare `ninja`: it runs the ninja the build pins, and one ninja per build directory.
+      # Through build.ts, not a bare `ninja`: it runs the ninja the build pins.
       shell: bash
       env:
         NINJA_TARGETS: ${{ inputs.ninja-targets }}

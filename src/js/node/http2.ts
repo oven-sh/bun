@@ -3348,7 +3348,7 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
     }
     this[kOwnsFd] = true;
-    fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
+    fs.open(path, "r", afterOpen.bind(this, options, headers));
   }
   respondWithFD(fd, headers, options) {
     if (typeof fd !== "number") {
@@ -5992,11 +5992,11 @@ class ClientHttp2Session extends Http2Session {
       // Copy options so user-supplied getters run now, before the header block
       // is encoded — a getter that re-entrantly calls request() would otherwise
       // reorder header blocks on the wire (Node does the same).
-      if ($isObject(options)) {
+      if (options !== undefined) {
         options = { ...options };
       }
 
-      if ($isObject(options) && "weight" in options) {
+      if (options !== undefined && "weight" in options) {
         // RFC 9113 deprecated priority signalling: node emits DEP0194 when the option is present
         // and ignores it (the request always goes out with the default weight).
         if (!priorityWeightDeprecationWarned) {
@@ -6060,7 +6060,7 @@ class ClientHttp2Session extends Http2Session {
         // Like Node, a payload-meaningless method only defaults endStream to
         // true when the caller expressed no preference; an explicit endStream
         // (validated above) is honored, so { endStream: false } stays open.
-        if (!options || !$isObject(options)) {
+        if (options === undefined) {
           options = { endStream: true };
         } else if (options.endStream === undefined) {
           options = { ...options, endStream: true };
@@ -6084,7 +6084,7 @@ class ClientHttp2Session extends Http2Session {
       // Sending an RST for a stream the peer never saw is a connection error
       // that makes conforming servers reply with GOAWAY.
       let signal;
-      if ($isObject(options) && options.signal) {
+      if (options?.signal) {
         // Node validates the signal before reading .aborted: any object with an
         // 'aborted' property passes (so a duck-typed { aborted: true } takes
         // the abort fast path), while objects without one and non-objects

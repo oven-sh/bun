@@ -1502,9 +1502,8 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   // Tier 3 targets (buildStd=true) have no prebuilt std, so target-add would
   // fail — they use plain dep_cargo with -Zbuild-std instead.
   const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined && !spec.buildStd;
-  n.build({
+  const node = {
     outputs: [lib],
-    rule: cross ? "dep_cargo_cross" : "dep_cargo",
     inputs: [],
     // Rebuild if source changed, cargo binary changed, or the pinned
     // toolchain changed. Cargo's own dependency tracking handles file-level
@@ -1514,19 +1513,20 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     // mismatched std hashes and both get pulled into the link, colliding on
     // unmangled symbols like `rust_eh_personality`.
     implicitInputs: [sourceStamp, cfg.cargo, resolve(cfg.cwd, "rust-toolchain.toml")],
-    vars: {
-      name,
-      manifestdir: manifestDir,
-      args: quoteArgs(args, hostWin),
-      ...(cross ? { rust_target: spec.rustTarget! } : {}),
-      // stream.ts's --env=K=V format. Values platform-quoted since ninja
-      // passes the command line through the host's argv parser; stream.ts
-      // receives them as proper argv entries.
-      env: Object.entries(env)
-        .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
-        .join(" "),
-    },
-  });
+  };
+  const vars = {
+    name,
+    manifestdir: manifestDir,
+    args: quoteArgs(args, hostWin),
+    // stream.ts's --env=K=V format. Values platform-quoted since ninja
+    // passes the command line through the host's argv parser; stream.ts
+    // receives them as proper argv entries.
+    env: Object.entries(env)
+      .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
+      .join(" "),
+  };
+  if (cross) n.build({ ...node, rule: "dep_cargo_cross", vars: { ...vars, rust_target: spec.rustTarget! } });
+  else n.build({ ...node, rule: "dep_cargo", vars });
   n.phony(name, [lib]);
 
   return { libs: [lib] };

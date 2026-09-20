@@ -285,32 +285,28 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
   const absSrc = resolve(cfg.cwd, src);
   const out = objectPath(cfg, src);
 
-  const rule = opts.pch !== undefined && lang === "cxx" ? "cxx_pch" : lang;
-  const flagVar = lang === "cxx" ? "cxxflags" : "cflags";
-
-  const implicitInputs: string[] = [...(opts.implicitInputs ?? [])];
-  const vars: Record<string, string> = {
-    [flagVar]: opts.flags.join(" "),
-  };
-
   // PCH is always an implicit dep — if it changes, recompile.
-  if (opts.pch !== undefined) {
-    assert(opts.pchHeader !== undefined, "cxx with pch requires pchHeader (the wrapper .hxx)");
-    implicitInputs.push(opts.pch);
-    vars.pch_file = n.rel(opts.pch);
-    vars.pch_header = n.rel(opts.pchHeader);
-  }
-
-  const node: BuildNode = {
+  const implicitInputs = [...(opts.implicitInputs ?? []), ...(opts.pch !== undefined ? [opts.pch] : [])];
+  const node = {
     outputs: [out],
-    rule,
     inputs: [absSrc],
     orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
-    vars,
+    ...(implicitInputs.length > 0 ? { implicitInputs } : {}),
+    ...(opts.pool !== undefined ? { pool: opts.pool } : {}),
   };
-  if (implicitInputs.length > 0) node.implicitInputs = implicitInputs;
-  if (opts.pool !== undefined) node.pool = opts.pool;
-  n.build(node);
+  const flags = opts.flags.join(" ");
+  if (lang === "cc") {
+    n.build({ ...node, rule: "cc", vars: { cflags: flags } });
+  } else if (opts.pch === undefined) {
+    n.build({ ...node, rule: "cxx", vars: { cxxflags: flags } });
+  } else {
+    assert(opts.pchHeader !== undefined, "cxx with pch requires pchHeader (the wrapper .hxx)");
+    n.build({
+      ...node,
+      rule: "cxx_pch",
+      vars: { cxxflags: flags, pch_file: n.rel(opts.pch), pch_header: n.rel(opts.pchHeader) },
+    });
+  }
 
   // Record for compile_commands.json
   n.addCompileCommand({

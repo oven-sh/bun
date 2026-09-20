@@ -155,7 +155,6 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
       manifest: quote(unit.manifestPath, hostWin),
       crate: unit.crateName,
       depfile: manifest.depfile, // a ninja `depfile =` binding, read as a path (never part of a command): no shell quoting
-      what: "",
     };
     // What rebuilds this unit: the artifacts it names with --extern (`.rmeta`s for a library, `.rlib`s and
     // dylibs for a link), the build-script outputs run.ts reads for it, its manifest, the driver scripts; sources and
@@ -187,7 +186,8 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
           inputs: [],
           implicitInputs: [...externs, unit.manifestPath, ...common],
           orderOnlyInputs: orderOnly,
-          vars: { ...vars, early_output_prefix: "@ninja-early-output@" },
+          vars: { ...vars, what: "" },
+          earlyOutputPrefix: "@ninja-early-output@",
         });
         break;
       case "proc-macro":

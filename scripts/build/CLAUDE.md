@@ -253,7 +253,7 @@ Ninja requires all rules defined before any build references them. Hence:
 1. `registerXxxRules(n, cfg)` — each module registers its rules. Called once via `registerAllRules()`.
 2. `emitXxx(n, cfg, ...)` — each module emits build edges.
 
-Rule and pool names are the `RuleName` / `PoolName` unions in `ninja.ts`: a new rule or pool is added there too, and a misspelled name at a build statement is a type error on every host (some edges only exist on one platform).
+Every rule is listed in the `ruleVars` table in `ninja.ts` with the `$variables` its text uses (pools are the `PoolName` union). `n.build({ rule, vars })` is typed by it: a misspelled rule, a missing variable or an unknown one is a type error on every host, which matters because some edges only exist on one platform. The table cannot drift: `n.rule()` checks the rule's text against its entry, and `n.build()` that the edge binds what this configuration's text uses. A new rule gets a table entry; a variable only some configurations' text uses is listed as `"name?"`.
 
 Why not auto-register in emit functions? Some rules are shared (`dep_configure` used by both `source.ts` and `webkit.ts` local mode). Explicit registration keeps "which rule lives where" clear.
 

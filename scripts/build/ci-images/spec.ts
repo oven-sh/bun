@@ -349,6 +349,7 @@ function packages(image: LinuxImage): Tool {
   const apt = image.distro === "ubuntu" ? [...aptPackages, "software-properties-common"] : aptPackages;
   return {
     name: "packages",
+    identity: packageDatabase,
     steps: [image.distro === "alpine" ? apkAdd(apkPackages, { update: true }) : aptInstall(apt, { update: true })],
   };
 }
@@ -379,11 +380,13 @@ function ulimits(image: LinuxImage): Tool {
       .join(" ");
     return {
       name: "ulimits",
+      identity: configuration,
       steps: [appendLines("/etc/rc.conf", [`rc_ulimit="${flags} -n ${limits.openFiles} -u ${limits.processes}"`])],
     };
   }
   return {
     name: "ulimits",
+    identity: configuration,
     steps: [
       directory("/etc/security/limits.d"),
       writeFile(
@@ -414,6 +417,7 @@ function agentAccount(): Tool {
   const owner = `${agentUser}:${agentUser}`;
   return {
     name: "agent-user",
+    identity: configuration,
     steps: [
       systemUser(agentUser, homePath),
       ...[homePath, cachePath, logsPath].map(path => directory(path, { owner })),
@@ -451,6 +455,7 @@ function nodejs(image: Image): Tool {
   if (image.os === "windows") {
     return {
       name: "nodejs",
+      identity: pinned(version),
       steps: [
         scoopInstall(`nodejs@${version}`),
         ...headers,
@@ -481,6 +486,7 @@ function nodejs(image: Image): Tool {
       : text`${environment("HOME")}/Library/Caches/node-gyp/${version}`;
   return {
     name: "nodejs",
+    identity: pinned(version),
     steps: [
       download(url, scratch("node.tar.gz")),
       directory(scratch("node")),
@@ -505,6 +511,7 @@ function bun(image: Image): Tool {
     image.os === "linux" && image.abi === "musl" ? `bun-linux-${image.arch}-musl` : `bun-${image.os}-${image.arch}`;
   return {
     name: "bun",
+    identity: pinned(pins.bun.version),
     steps: [
       ...executableFromArchive({
         url: `https://github.com/oven-sh/bun/releases/download/bun-v${pins.bun.version}/${triplet}.zip`,
@@ -528,6 +535,7 @@ function bunNinja(image: Image): Tool {
   const home = locations.bunNinja[image.os];
   return {
     name: "bun-ninja",
+    identity: pinned(pins.bunNinja.tag),
     steps: [
       download(
         `https://github.com/oven-sh/ninja/releases/download/${pins.bunNinja.tag}/bun-ninja-${platform}.zip`,
@@ -554,6 +562,7 @@ function curlH3(image: Image): Tool {
   if (image.os === "windows") {
     return {
       name: "curl-h3",
+      identity: pinned(version),
       steps: [
         download(url, scratch("curl-h3.tar.xz")),
         directory(scratch("curl-h3")),
@@ -566,6 +575,7 @@ function curlH3(image: Image): Tool {
   }
   return {
     name: "curl-h3",
+    identity: pinned(version),
     steps: [
       ...executableFromArchive({ url, kind: "tar.xz", member: "curl", extractOnly: "curl", to: bin(image, "curl-h3") }),
       setEnvironment("CURL_HTTP3", bin(image, "curl-h3")),
@@ -576,6 +586,7 @@ function curlH3(image: Image): Tool {
 function tailscale(): Tool {
   return {
     name: "tailscale",
+    identity: packageDatabase,
     steps: runInstallerScript({ url: "https://tailscale.com/install.sh", interpreter: "sh" }),
   };
 }
@@ -587,6 +598,7 @@ function buildkiteAgent(image: BakedImage): Tool {
   if (image.os === "windows") {
     return {
       name: "buildkite-agent",
+      identity: pinned(version),
       steps: [
         directory(`${windowsAgentHome}/bin`),
         directory(`${windowsAgentHome}/hooks`),
@@ -606,6 +618,7 @@ function buildkiteAgent(image: BakedImage): Tool {
   }
   return {
     name: "buildkite-agent",
+    identity: pinned(version),
     steps: executableFromArchive({
       url: `${release}/buildkite-agent-linux-${arch}-${version}.tar.gz`,
       kind: "tar.gz",
@@ -617,11 +630,12 @@ function buildkiteAgent(image: BakedImage): Tool {
 }
 
 function cmake(image: LinuxImage): Tool {
-  if (image.distro === "alpine") return { name: "cmake", steps: [apkAdd(["cmake"])] };
+  if (image.distro === "alpine") return { name: "cmake", identity: packageDatabase, steps: [apkAdd(["cmake"])] };
   const { version } = pins.cmake;
   const url = `https://github.com/Kitware/CMake/releases/download/v${version}/cmake-${version}-linux-${image.arch === "x64" ? "x86_64" : "aarch64"}.sh`;
   return {
     name: "cmake",
+    identity: pinned(version),
     steps: [download(url, scratch("cmake.sh")), run("sh", scratch("cmake.sh"), "--skip-license", "--prefix=/usr")],
   };
 }
@@ -636,13 +650,18 @@ function llvm(image: Image): Tool {
   const { version } = pins.llvm;
   const major = version.split(".")[0]!;
   if (image.os === "windows") {
-    return { name: "llvm", steps: [scoopInstall(`${image.arch === "x64" ? "llvm" : "llvm-arm64"}@${version}`)] };
+    return {
+      name: "llvm",
+      identity: pinned(version),
+      steps: [scoopInstall(`${image.arch === "x64" ? "llvm" : "llvm-arm64"}@${version}`)],
+    };
   }
   if (image.os === "darwin") {
     const prefix = locations.brew[image.arch];
     const keg = `${prefix}/opt/llvm@${major}/bin`;
     return {
       name: "llvm",
+      identity: packageDatabase,
       steps: [
         brewInstall([`llvm@${major}`], { formula: true }),
         comment(
@@ -657,6 +676,7 @@ function llvm(image: Image): Tool {
   if (image.distro === "alpine") {
     return {
       name: "llvm",
+      identity: packageDatabase,
       steps: [
         comment(
           "Alpine's release stops at an older LLVM; newer majors are in edge/main. `@edge` is a tagged\n" +
@@ -673,6 +693,7 @@ function llvm(image: Image): Tool {
   const sequoia = "/usr/share/apt/default-sequoia.config";
   return {
     name: "llvm",
+    identity: packageDatabase,
     steps: [
       comment(
         "apt.llvm.org signs with a SHA-1 key, which apt's sqv verifier stopped accepting on 2026-02-01:\n" +
@@ -739,6 +760,7 @@ function rust(image: Image): Tool {
   if (image.os === "windows") {
     return {
       name: "rust",
+      identity: pinned(`${channel} (rustup ${rustup})`),
       steps: [
         setEnvironment("CARGO_HOME", `${home}/cargo`),
         setEnvironment("RUSTUP_HOME", `${home}/rustup`),
@@ -749,6 +771,7 @@ function rust(image: Image): Tool {
   }
   return {
     name: "rust",
+    identity: pinned(`${channel} (rustup ${rustup})`),
     steps: [
       // A Mac is set up by its admin user, and a bare host runs its jobs as another.
       ...(image.os === "darwin" ? [directory(home, { owner: output(run("id", "-un")) })] : []),
@@ -767,6 +790,7 @@ function crossCompilerRt(): Tool {
   const major = pins.llvm.version.split(".")[0]!;
   return {
     name: "cross-compiler-rt",
+    identity: packageDatabase,
     steps: [
       run("dpkg", "--add-architecture", "amd64"),
       aptInstall([`libclang-rt-${major}-dev:amd64`], { update: true }),
@@ -782,6 +806,7 @@ function androidNdk(): Tool {
   const ndkRuntime = text`${prebuilt}/lib/clang/${variable("ndk_clang")}/lib/linux`;
   return {
     name: "android-ndk",
+    identity: pinned(version),
     steps: [
       download(`https://dl.google.com/android/repository/android-ndk-${version}-linux.zip`, scratch("ndk.zip")),
       unpack(scratch("ndk.zip"), ndk.slice(0, ndk.lastIndexOf("/")), { kind: "zip" }),
@@ -821,6 +846,7 @@ function freebsdSysroot(): Tool {
   const { version, baseUrl } = pins.freebsd;
   return {
     name: "freebsd-sysroot",
+    identity: pinned(version),
     steps: (["x64", "aarch64"] as const).flatMap(arch => {
       const archive = scratch(`base-${arch}.tar.xz`);
       return [
@@ -845,6 +871,7 @@ function glibcSysroot(): Tool {
   const filenameOf = `$1=="Package:"&&$2==p{f=1} f&&$1=="Filename:"{print $2; exit}`;
   return {
     name: "glibc-sysroot",
+    identity: observed(treeDigest(locations.glibcSysroot.x64, locations.glibcSysroot.aarch64)),
     steps: [
       comment("binutils-x86-64-linux-gnu: a strip that accepts x86-64 objects on the arm64 host."),
       aptInstall(["skopeo", "jq", "binutils-x86-64-linux-gnu"]),
@@ -909,6 +936,7 @@ function muslSysroot(image: LinuxImage): Tool {
   const versionOf = `/^P:apk-tools-static$/{f=1} f&&/^V:/{print substr($0,3); exit}`;
   return {
     name: "musl-sysroot",
+    identity: observed(treeDigest(locations.muslSysroot.x64, locations.muslSysroot.aarch64)),
     steps: [
       download(`${repository}/${host}/APKINDEX.tar.gz`, scratch("APKINDEX.tar.gz")),
       set("version", output(pipe(run("tar", "-xzOf", scratch("APKINDEX.tar.gz"), "APKINDEX"), run("awk", versionOf)))),
@@ -954,6 +982,7 @@ function windowsSysroot(image: LinuxImage): Tool {
   const host = `${image.arch === "x64" ? "x86_64" : "aarch64"}-unknown-linux-musl`;
   return {
     name: "windows-sysroot",
+    identity: pinned(`xwin ${xwin}, SDK ${sdk}, CRT ${crt}`),
     steps: [
       download(
         `https://github.com/Jake-Shadle/xwin/releases/download/${xwin}/xwin-${xwin}-${host}.tar.gz`,
@@ -1002,6 +1031,7 @@ function macosSdk(): Tool {
   const { sdk, commandLineTools } = pins.macosSdk;
   return {
     name: "macos-sdk",
+    identity: pinned(`${sdk} (Command Line Tools ${commandLineTools})`),
     steps: [
       discardOutput(
         run(
@@ -1022,13 +1052,18 @@ function docker(image: LinuxImage): Tool {
     image.distro === "alpine"
       ? [apkAdd(["docker", "docker-cli-compose"])]
       : runInstallerScript({ url: "https://get.docker.com", interpreter: "sh" });
-  return { name: "docker", steps: [...install, service("docker", "enabled"), addUserToGroup(agentUser, "docker")] };
+  return {
+    name: "docker",
+    identity: packageDatabase,
+    steps: [...install, service("docker", "enabled"), addUserToGroup(agentUser, "docker")],
+  };
 }
 
 /** Google publishes Chrome for apt on amd64 only, at this one URL. */
 function chrome(): Tool {
   return {
     name: "chrome",
+    identity: packageDatabase,
     steps: [
       download("https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb", scratch("chrome.deb")),
       run("apt-get", "install", "--yes", scratch("chrome.deb")),
@@ -1041,6 +1076,7 @@ function pythonFuse(): Tool {
   const { version } = pins.pythonFuse;
   return {
     name: "python-fuse",
+    identity: pinned(version),
     steps: [
       apkAdd(["python3-dev", "fuse-dev", "pkgconf", "py3-setuptools"]),
       download(
@@ -1062,6 +1098,7 @@ function age(image: LinuxImage): Tool {
   const { version, sha256 } = pins.age;
   return {
     name: "age",
+    identity: pinned(version),
     steps: executableFromArchive({
       url: `https://github.com/FiloSottile/age/releases/download/v${version}/age-v${version}-linux-${image.arch === "x64" ? "amd64" : "arm64"}.tar.gz`,
       sha256: sha256[image.arch],
@@ -1079,6 +1116,7 @@ function coreDumps(image: LinuxImage): Tool {
   const alpine = image.distro === "alpine";
   return {
     name: "core-dumps",
+    identity: packageDatabase,
     steps: [
       directory(cores, { mode: "1777" }),
       directory("/etc/sysctl.d"),
@@ -1102,7 +1140,7 @@ function coreDumps(image: LinuxImage): Tool {
 
 /** /tmp on the disk: a tmpfs /tmp counts against memory, and tests write a lot there. */
 function noTmpfs(): Tool {
-  return { name: "no-tmpfs", steps: [service("tmp.mount", "masked")] };
+  return { name: "no-tmpfs", identity: configuration, steps: [service("tmp.mount", "masked")] };
 }
 
 // What the prefetch steps download is decided by the commit being built, not
@@ -1113,6 +1151,7 @@ function prefetchBuildDeps(): Tool {
   const prefetch = locations.prefetch.linux;
   return {
     name: "prefetch-build-deps",
+    identity: notRecorded("decided by the commit being built, not by this file"),
     steps: [
       directory(prefetch),
       inDirectory(checkout, [run("bun", "scripts/prefetch-deps.ts", prefetch)]),
@@ -1126,6 +1165,7 @@ function prefetchBuildDeps(): Tool {
 function prefetchTestImages(): Tool {
   return {
     name: "prefetch-test-images",
+    identity: notRecorded("decided by the commit being built, not by this file"),
     steps: [service("docker", "started"), inDirectory(checkout, [run("bun", "test/docker/prepare-ci.ts")])],
   };
 }
@@ -1135,6 +1175,7 @@ function prefetchInstallCache(): Tool {
   const cache = "/var/cache/bun-install";
   return {
     name: "prefetch-install-cache",
+    identity: notRecorded("decided by the commit being built, not by this file"),
     steps: [
       directory(cache),
       ...[".", "test", "scripts/ci-remap-server"].map(path =>
@@ -1150,7 +1191,7 @@ function prefetchInstallCache(): Tool {
 
 /** scripts/agent.ts installs itself as the machine's service. */
 function agentService(): Tool {
-  return { name: "agent-service", steps: [run("node", bakeFile("agent.mts"), "install")] };
+  return { name: "agent-service", identity: configuration, steps: [run("node", bakeFile("agent.mts"), "install")] };
 }
 
 /**
@@ -1162,6 +1203,7 @@ function agentService(): Tool {
 function recordImage(image: BakedImage): Tool {
   return {
     name: "record-image",
+    identity: configuration,
     steps: [
       run(
         "node",
@@ -1177,6 +1219,7 @@ function cleanup(image: LinuxImage): Tool {
   const everythingIn = (path: string) => text`${path}/${glob("*")}`;
   return {
     name: "cleanup",
+    identity: configuration,
     steps: [
       ...(image.distro === "alpine"
         ? [remove(everythingIn("/var/cache/apk"))]
@@ -1193,6 +1236,7 @@ function cleanup(image: LinuxImage): Tool {
 function windowsSystem(): Tool {
   return {
     name: "system",
+    identity: configuration,
     steps: [
       comment("Real-time scanning of every file a build writes costs more than the build."),
       cmdlet("Set-MpPreference", { DisableRealtimeMonitoring: expression("$true") }),
@@ -1228,6 +1272,7 @@ function scoop(image: WindowsImage): Tool {
   const home = locations.scoop;
   return {
     name: "scoop",
+    identity: packageDatabase,
     steps: [
       setEnvironment("SCOOP", home),
       download("https://get.scoop.sh", scratch("install-scoop.ps1")),
@@ -1250,6 +1295,7 @@ function nssm(image: WindowsImage): Tool {
   const root = `nssm-${pins.nssm.version}`;
   return {
     name: "nssm",
+    identity: pinned(pins.nssm.version),
     steps: executableFromArchive({
       url: `https://buncistore.blob.core.windows.net/artifacts/${root}.zip`,
       kind: "zip",
@@ -1265,6 +1311,7 @@ function pwsh(image: WindowsImage): Tool {
   const msi = scratch("pwsh.msi");
   return {
     name: "pwsh",
+    identity: pinned(version),
     steps: [
       download(
         `https://github.com/PowerShell/PowerShell/releases/download/v${version}/PowerShell-${version}-win-${image.arch === "x64" ? "x64" : "arm64"}.msi`,
@@ -1282,6 +1329,7 @@ function openssh(image: WindowsImage): Tool {
   const keysScript = "C:/ProgramData/ssh/fetch-ssh-keys.ps1";
   return {
     name: "openssh",
+    identity: pinned(pins.openssh.version),
     steps: [
       download(
         `https://github.com/PowerShell/Win32-OpenSSH/releases/download/${pins.openssh.version}/OpenSSH-${image.arch === "x64" ? "Win64" : "Arm64"}.zip`,
@@ -1344,6 +1392,7 @@ function ccache(image: WindowsImage): Tool {
   const root = `ccache-${version}-windows-${image.arch === "x64" ? "x86_64" : "aarch64"}`;
   return {
     name: "ccache",
+    identity: pinned(version),
     steps: [
       download(`https://github.com/ccache/ccache/releases/download/v${version}/${root}.zip`, scratch("ccache.zip")),
       unpack(scratch("ccache.zip"), scratch("unpacked"), { kind: "zip" }),
@@ -1359,6 +1408,14 @@ function visualStudio(): Tool {
   const installer = scratch("vs_community.exe");
   return {
     name: "visual-studio",
+    identity: observed(
+      run(
+        "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe",
+        "-latest",
+        "-property",
+        "installationVersion",
+      ),
+    ),
     steps: [
       download(`https://aka.ms/vs/${pins.visualStudio.channel}/release/vs_community.exe`, installer),
       runInstaller(
@@ -1375,6 +1432,7 @@ function visualStudio(): Tool {
 function pdbAddr2line(image: WindowsImage): Tool {
   return {
     name: "pdb-addr2line",
+    identity: pinned(pins.pdbAddr2line.version),
     steps: [
       run("cargo", "install", "--locked", "--examples", `pdb-addr2line@${pins.pdbAddr2line.version}`),
       installExecutable(text`${environment("CARGO_HOME")}/bin/pdb-addr2line.exe`, bin(image, "pdb-addr2line")),
@@ -1388,6 +1446,7 @@ function intelSde(): Tool {
   const root = `sde-external-${version}-win`;
   return {
     name: "intel-sde",
+    identity: pinned(version),
     steps: [
       download(`https://buncistore.blob.core.windows.net/artifacts/${root}.tar.xz`, scratch("sde.tar.xz")),
       checksum(scratch("sde.tar.xz"), sha256),
@@ -1405,6 +1464,7 @@ function prefetchWindows(): Tool {
   const cache = "C:/bun-install-cache";
   return {
     name: "prefetch",
+    identity: notRecorded("decided by the commit being built, not by this file"),
     steps: [
       run("git", "init", "--quiet", repo),
       run("git", "-C", repo, "fetch", "--quiet", "--depth=1", "https://github.com/oven-sh/bun.git", commit),
@@ -1430,6 +1490,7 @@ function prefetchWindows(): Tool {
 function uninstallDefender(): Tool {
   return {
     name: "uninstall-defender",
+    identity: configuration,
     steps: [discardOutput(cmdlet("Uninstall-WindowsFeature", { Name: "Windows-Defender" }))],
   };
 }
@@ -1438,7 +1499,11 @@ function uninstallDefender(): Tool {
 
 /** Homebrew is already there: the Tart base image ships it, and scripts/darwin-ci installs it on a bare host before anything else. */
 function brew(image: MacosImage): Tool {
-  return { name: "brew", steps: [addToPath(`${locations.brew[image.arch]}/bin`), brewInstall(brewPackages)] };
+  return {
+    name: "brew",
+    identity: packageDatabase,
+    steps: [addToPath(`${locations.brew[image.arch]}/bin`), brewInstall(brewPackages)],
+  };
 }
 
 // ---- what a machine gets, in order
@@ -1591,7 +1656,30 @@ export function imageKey(image: Image): string {
 type Context = { image: Image; usesScratch: boolean };
 /** One or more lines of the generated script. */
 export type Step = (context: Context) => string[];
-export type Tool = { name: string; steps: readonly Step[] };
+/**
+ * How what a tool puts on the machine is known, for bun-image.json. A tool
+ * cannot be written without saying which:
+ *
+ * - `pinned`: known in this file. The value is written into the record as it is.
+ * - `observed`: only known on the machine. The step's output is the record.
+ * - `packageDatabase`: it arrives through apt, apk, Scoop or Homebrew, whose
+ *   database the record lists with exact versions.
+ * - `configuration`: nothing arrives from outside; this file decides all of it.
+ * - `notRecorded`: deliberately outside the record, and why.
+ */
+export type Identity =
+  | { kind: "pinned"; value: string }
+  | { kind: "observed"; step: Step }
+  | { kind: "packageDatabase" }
+  | { kind: "configuration" }
+  | { kind: "notRecorded"; reason: string };
+export const pinned = (value: string): Identity => ({ kind: "pinned", value });
+export const observed = (step: Step): Identity => ({ kind: "observed", step });
+export const packageDatabase: Identity = { kind: "packageDatabase" };
+export const configuration: Identity = { kind: "configuration" };
+export const notRecorded = (reason: string): Identity => ({ kind: "notRecorded", reason });
+
+export type Tool = { name: string; identity: Identity; steps: readonly Step[] };
 
 const isPowerShell = (c: Context) => c.image.os === "windows";
 /**
@@ -1742,12 +1830,6 @@ export const run =
   (program: Value, ...args: Value[]): Step =>
   c => [`${isPowerShell(c) ? "Run " : ""}${[program, ...args].map(a => renderValue(a, c)).join(" ")}`];
 
-/** The same command, as the system's owner. */
-export const asRoot =
-  (step: Step): Step =>
-  c =>
-    step(c).map(line => (c.image.os === "darwin" ? "sudo " : "") + line);
-
 export const set =
   (name: string, value: Value): Step =>
   c => [isPowerShell(c) ? `$${name} = ${renderValue(value, c)}` : `${name}=${renderValue(value, c)}`];
@@ -1758,7 +1840,11 @@ export const pipe =
 
 export const toFile =
   (step: Step, file: Value): Step =>
-  c => [`${oneLine(step, c)} > ${renderValue(file, c)}`];
+  c => [
+    isPowerShell(c)
+      ? `${oneLine(step, c)} | Out-File -Encoding ascii ${renderValue(file, c)}`
+      : `${oneLine(step, c)} > ${renderValue(file, c)}`,
+  ];
 
 /** What the command prints is not worth reading. */
 export const discardOutput =
@@ -1789,10 +1875,6 @@ export const withEnvironment =
       ? [...entries.map(([name, value]) => `$env:${name} = ${renderValue(value, c)}`), ...step(c)]
       : [`${entries.map(([name, value]) => `${name}=${renderValue(value, c)}`).join(" ")} ${oneLine(step, c)}`];
   };
-
-export const fail =
-  (message: Value): Step =>
-  c => [`${isPowerShell(c) ? "Fail" : "fail"} ${renderValue(message, c)}`];
 
 export const failUnlessNotEmpty =
   (value: Value, message: Value): Step =>
@@ -1925,9 +2007,15 @@ export const appendLines =
   (path: Value, lines: string[]): Step =>
   c => [`cat >> ${renderValue(path, c)} <<'EOF'`, ...lines, "EOF"];
 
-export const appendLine =
-  (path: Value, line: string): Step =>
-  c => [`echo ${renderValue(line, c)} >> ${renderValue(path, c)}`];
+/**
+ * One sha256 for the content of these directories: every file's hash and every
+ * symlink's target, by sorted path. Modes, owners and times are not in it.
+ */
+export const treeDigest =
+  (...roots: string[]): Step =>
+  () => [
+    `{ find ${roots.join(" ")} -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; find ${roots.join(" ")} -type l -printf '%p -> %l\\n' | LC_ALL=C sort; } | sha256sum | cut -d' ' -f1`,
+  ];
 
 /** PowerShell: each line of the file with the replacements applied, written back. */
 export const editLines =
@@ -2183,6 +2271,9 @@ export function renderTool(tool: Tool, image: Image): string {
     );
   }
   lines.push(...body);
+  if (tool.identity.kind === "observed" && image.os !== "darwin") {
+    lines.push(...toFile(tool.identity.step, bakeFile(`observed/${tool.name}`))(context));
+  }
   if (context.usesScratch) {
     lines.push(image.os === "windows" ? "Remove-Temp $scratch" : 'rm -rf "$scratch"');
   }
@@ -2400,9 +2491,17 @@ function installedPackages() {
   return lines("dpkg-query", ["--show", "--showformat", "$" + "{Package} $" + "{Version}\\n"]).sort();
 }
 
+// What an "observed" tool printed during the bake. A tool that says it is observed and left nothing is a broken record.
+const tools = image.tools.map(tool => {
+  if (tool.identity !== "observed") return tool;
+  const value = readFileSync(join(import.meta.dirname, "observed", tool.name), "utf8").trim();
+  if (!value) throw new Error("nothing was observed for " + tool.name);
+  return { ...tool, value };
+});
+
 const packages = installedPackages();
 const packagesSha256 = createHash("sha256").update(packages.join("\n")).digest("hex");
-writeFileSync(output, JSON.stringify({ name, ...image, packages, packagesSha256 }, null, 2) + "\n");
+writeFileSync(output, JSON.stringify({ name, ...image, tools, packages, packagesSha256 }, null, 2) + "\n");
 console.log(output + ": " + name + ", " + packages.length + " packages, " + packagesSha256);
 `;
 
@@ -2562,6 +2661,7 @@ function renderBootstrap(image: Image): string {
         `[ $# -eq 2 ] || fail "usage: bootstrap.sh <checkout> <image name>"`,
         `REPO_DIR=$(cd "$1" && pwd)`,
         `IMAGE_NAME=$2`,
+        `mkdir -p "$BAKE_DIR/observed"`,
         "",
         ...sections,
       ].join("\n");
@@ -2579,6 +2679,7 @@ function renderBootstrap(image: Image): string {
         "$REPO_COMMIT = $env:REPO_COMMIT",
         "$IMAGE_NAME = $env:IMAGE_NAME",
         `if (-not $REPO_COMMIT -or -not $IMAGE_NAME) { Fail "REPO_COMMIT and IMAGE_NAME must be set" }`,
+        `New-Item -ItemType Directory -Force "$BAKE_DIR\\observed" | Out-Null`,
         "",
         ...sections,
       ].join("\n");
@@ -2616,7 +2717,16 @@ export function generateImage(image: Image, outputRoot: string): GeneratedImage 
   const directory = join(outputRoot, key);
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
-  const facts = { ...image, tools: tools(image).map(tool => tool.name), ...(epoch === undefined ? {} : { epoch }) };
+  const described = tools(image).map(({ name, identity }) => ({
+    name,
+    identity: identity.kind,
+    ...(identity.kind === "pinned"
+      ? { value: identity.value }
+      : identity.kind === "notRecorded"
+        ? { reason: identity.reason }
+        : {}),
+  }));
+  const facts = { ...image, tools: described, ...(epoch === undefined ? {} : { epoch }) };
   writeFileSync(join(directory, "image.json"), JSON.stringify(facts, null, 2) + "\n");
   writeFileSync(join(directory, image.os === "windows" ? "bootstrap.ps1" : "bootstrap.sh"), renderBootstrap(image));
   if (image.os !== "darwin") {

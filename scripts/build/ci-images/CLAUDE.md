@@ -5,7 +5,7 @@ CI's build and test machines start from images baked ahead of time: AWS AMIs for
 ## How `spec.ts` is laid out
 
 1. **The data.** `files` (the repository files copied onto machines), `pins` (every version), `locations` (where a bake puts what is not the operating system's to place), `images` (each with the exact base image it starts from), the package lists, and how Packer bakes a Windows image. The build system's own LLVM, Node.js, xwin, Windows SDK, macOS SDK, Android API level and FreeBSD versions import from `pins`, and its sysroot and cache lookups from `locations`; `test/internal/source-lints/ci-image-pins.test.ts` keeps the files that cannot import them (`rust-toolchain.toml`, the GitHub workflows) in step.
-2. **The tools.** A tool is one thing a bake sets up on the machine, whether it installs something (Bun, LLVM) or configures the system (`ulimits`, the agent's user). Each is a function of the image that returns a list of steps, and `tools(image)` at the end of the section is what a machine gets, in order.
+2. **The tools.** A tool is one thing a bake sets up on the machine, whether it installs something (Bun, LLVM) or configures the system (`ulimits`, the agent's user). Each is a function of the image that returns its steps and its `identity` (how what it puts on the machine is known, for `bun-image.json`), and `tools(image)` at the end of the section is what a machine gets, in order.
 3. **The machinery.** The vocabulary the tools are written in (values and steps), its sh and PowerShell renderers, the helper functions every generated script starts with, the two small programs a bake leaves on the machine, the Packer template, and `generateImage()`.
 
 A tool does not contain shell. It says what should be true (`download`, `unpack`, `installExecutable`, `directory`, `systemUser`, `service`, `registryValue`, `scheduledTaskAtStartup`, …) and the renderer says it in sh for Linux (as root), in sh with `sudo` where needed for macOS, or in PowerShell. One description serves every system a tool exists on: `bun` is one function for Linux, macOS and Windows.
@@ -29,7 +29,7 @@ bun test test/internal/ci-images.test.ts test/internal/source-lints/ci-image-pin
 
 **Bump a version.** Edit the pin. If it has `sha256` values, replace them with the ones the new release publishes. Run the two tests: the lint says if `rust-toolchain.toml` or a workflow has to move with it.
 
-**Add a tool.** Write a function in section 2 and add it to `tools()` after whatever it needs. `bunNinja` is a complete example: a pin with the release's published checksums, a location, and four steps that serve all three systems. Most downloads are one call to `executableFromArchive` or `runInstallerScript`.
+**Add a tool.** Write a function in section 2 and add it to `tools()` after whatever it needs. It does not compile without an `identity` (see below). `bunNinja` is a complete example: a pin with the release's published checksums, a location, and four steps that serve all three systems. Most downloads are one call to `executableFromArchive` or `runInstallerScript`.
 
 **Need something the vocabulary lacks.** Add a function to section 3. It takes what it needs as values and returns the lines for each shell. Keep it about intent (`firewallAllowInbound`, not a cmdlet's parameter list at every call site), and add it once it is needed, not before. `run` and `cmdlet` call any program; program text for another tool (an awk program, a sed expression) is a string argument.
 
@@ -37,7 +37,17 @@ bun test test/internal/ci-images.test.ts test/internal/source-lints/ci-image-pin
 
 **Bake an image again with nothing changed.** There is deliberately no switch for it. A build bakes a name that does not exist, so removing the image in the cloud is what makes the next build bake it.
 
-**Read what is on an image.** Every bake writes `bun-image.json` on the machine (`/etc/`, `C:\`) and publishes it as the bake job's artifact `build/ci-images/<key>/bun-image.json`: the spec's facts, the image's name, and the exact version of every distro or Scoop package the bake got. It is for keying caches of build outputs, and for comparing two bakes; it never feeds the name.
+**Read what is on an image.** Every bake writes `bun-image.json` on the machine (`/etc/`, `C:\`) and publishes it as the bake job's artifact `build/ci-images/<key>/bun-image.json`: the image's name, the spec's facts, every tool with how it is known, and the exact version of every distro or Scoop package the bake got. It is for keying caches of build outputs (same bytes, same machine content), so nothing in it may differ between two identical machines: no times, hostnames or instance ids. It never feeds the name.
+
+## A tool's identity
+
+The name covers everything `spec.ts` decides; `bun-image.json` adds what is only decided on the day of the bake. So that adding or removing a tool cannot leave the record wrong, `Tool` requires an `identity`, and `tsc` refuses a tool without one:
+
+- `pinned(value)`: known in this file (a version, a tag). The value is written into the record as it is.
+- `observed(step)`: only known on the machine. The step is rendered into the script right after the tool's own steps, and what it prints is the record; a tool that observed nothing fails the bake. `treeDigest(...directories)` is the step for something with no version to ask for, like the glibc and musl sysroots, whose packages are whatever the distro serves that day.
+- `packageDatabase`: it arrives through apt, apk, Scoop or Homebrew (also when a publisher's installer script is what calls apt, as Docker's, Tailscale's and LLVM's do). The record lists that database with exact versions.
+- `configuration`: nothing arrives from outside; this file decides all of it.
+- `notRecorded(reason)`: deliberately outside the record. The prefetch steps are: their content is decided by the commit being built.
 
 ## Rules
 

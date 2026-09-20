@@ -49,6 +49,15 @@ import { uninstallDefender, windowsSystem } from "./tools/windows-system.ts";
 
 const alpineRelease = "3.23";
 
+/**
+ * TEMPORARY, while this work is being tested: delete before merging.
+ *
+ * A number here goes into every image's hash, so changing it renames every
+ * image and the next build bakes them all again with nothing else changed.
+ * `undefined` adds nothing to the hash.
+ */
+export const epoch: number | undefined = undefined;
+
 export const pins = {
   nodejs: { version: "26.3.0", nodeGypInstallVersion: "11" },
   bun: { version: "1.4.2" },

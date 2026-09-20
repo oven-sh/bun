@@ -29,7 +29,7 @@ import { linuxAgentPaths, windowsAgentHome } from "../../agent.ts";
 import { BuildError } from "../error.ts";
 import { type Image, type Tool, imageKey } from "./image.ts";
 import { renderPackerTemplate } from "./packer.ts";
-import { images, macosMachines, pins, tools } from "./spec.ts";
+import { epoch, images, macosMachines, pins, tools } from "./spec.ts";
 
 const here = import.meta.dirname;
 const repoRoot = resolve(here, "../../..");
@@ -172,7 +172,8 @@ export function generateImage(image: Image, outputRoot: string): GeneratedImage 
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   const described = tools(image).map(({ name, variables }) => ({ name, variables }));
-  writeFileSync(join(directory, "image.json"), JSON.stringify({ ...image, tools: described }, null, 2) + "\n");
+  const facts = { ...image, tools: described, ...(epoch === undefined ? {} : { epoch }) };
+  writeFileSync(join(directory, "image.json"), JSON.stringify(facts, null, 2) + "\n");
   writeFileSync(join(directory, shell.scriptName), renderBootstrap(image, shell));
   for (const tool of tools(image)) {
     for (const [name, source] of Object.entries(tool.files ?? {})) {

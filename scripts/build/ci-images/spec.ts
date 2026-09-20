@@ -43,6 +43,9 @@ export const bakeInputs: readonly string[] = ["scripts/build/ci-images/spec.ts",
 
 const alpineRelease = "3.23";
 
+/** The file name of the image's record, on the machine and in a bake directory once the bake job has copied it out. */
+export const imageRecordName = "bun-image.txt";
+
 /**
  * Where a bake puts what is not the operating system's to place (a binary in
  * /usr/local/bin is). Whatever looks for one of these imports it from here:
@@ -60,8 +63,8 @@ const alpineRelease = "3.23";
  * .buildkite/ci.ts use them as they are.
  */
 export const locations = {
-  /** bun-image.json: what the bake recorded about the machine (see `Identity`). */
-  imageRecord: { linux: "/etc/bun-image.json", windows: "C:\\bun-image.json" },
+  /** The image's record: what the bake recorded about the machine (see the `recordImage` tool). */
+  imageRecord: { linux: `/etc/${imageRecordName}`, windows: `C:\\${imageRecordName}` },
   /** `bun install`'s cache, filled while the image is baked. */
   installCache: { linux: "/var/cache/bun-install", windows: "C:\\bun-install-cache" },
   rust: { linux: "/opt/rust", darwin: "/opt/rust", windows: "C:\\Program Files\\Rust" },
@@ -330,9 +333,6 @@ const scoopPackages = {
 
 /** Where `bun run ci:images` and CI write an image's bake directory, from the repository's root. */
 export const bakeDirectory = (key: string) => `build/ci-images/${key}`;
-/** The name bun-image.json has in a bake directory, once the bake job has copied it out of the machine. */
-export const imageRecordName = "bun-image.json";
-
 /** Hosts more than one tool downloads from. */
 const mirrors = {
   /** Bun's own copies of what has no stable public URL. */
@@ -989,6 +989,8 @@ function muslSysroot(image: LinuxImage): Tool {
             "libstdc++-dev",
           ],
         ),
+        comment("apk's log has the time of the install in it: with it, no two bakes observe the same sysroot."),
+        remove(`${locations.muslSysroot[arch]}/var/log/apk.log`),
       ]),
     ],
   };
@@ -1216,17 +1218,69 @@ function agentService(): Tool {
 }
 
 /**
- * bun-image.json: what this image is, the name it was baked under, and the
- * exact packages the bake got. For keying caches of build outputs on the
- * machine that made them; it never feeds the image's name. The bake job also
- * publishes it as an artifact.
+ * The image's record: what this image is, the name it was baked under, and
+ * what arrived on the day of the bake. For keying caches of build outputs on
+ * the machine that made them (same bytes, same machine content), so nothing in
+ * it may differ between two identical machines. It never feeds the image's
+ * name. The bake job also publishes it as an artifact.
+ *
+ * It is lines, so that both shells can write it with ordinary steps:
+ *
+ *   name: <the image's name>
+ *   image: <the spec's facts, as one line of JSON>
+ *   tool <name>: <the kind of its identity, then a pinned value or a notRecorded reason>
+ *   observed <name>: <a line an `observed` tool's step printed>
+ *   package <a line of the package manager's database>
  */
 function recordImage(image: BakedImage): Tool {
+  const record = locations.imageRecord[image.os];
+  // sh has no pipefail: a query whose output went straight into sort and sed could fail and leave a record
+  // with no packages. So the query is a statement of its own, into a scratch file, and the rest reads the file.
+  const packageList = scratch("packages");
+  const queryPackages: Step[] =
+    image.os === "windows"
+      ? [toFile(scoopApps(), packageList)]
+      : image.distro === "alpine"
+        ? [
+            toFile(run("apk", "list", "--installed"), scratch("apk-list")),
+            // "name-version arch {origin} (license) [installed]"
+            toFile(run("cut", "-d", " ", "-f1", scratch("apk-list")), packageList),
+          ]
+        : [
+            // binary:Package says which architecture a package of another one is for (libc6:amd64 on the arm64 build image).
+            toFile(run("dpkg-query", "--show", "--showformat", "${binary:Package} ${Version}\\n"), packageList),
+          ];
+  /** A file's lines into the record, each after `prefix`; a file with none fails the bake. */
+  const recordLines = (prefix: string, file: Value, failure: string, order: (lines: Step) => Step = lines => lines) => [
+    failUnlessNotEmpty(output(linesOf(file)), failure),
+    toFile(prefixed(prefix, order(linesOf(file))), record, { append: true }),
+  ];
   return {
     name: "record-image",
     identity: configuration,
-    steps: [run("node", bakeFile("record-image.mjs"), imageName, locations.imageRecord[image.os])],
+    // The record lists every tool, this one included, so the list is only asked for when the steps are.
+    get steps() {
+      const all = tools(image);
+      return [
+        toFile(printLine(text`name: ${imageName}`), record),
+        appendLines(record, [`image: ${JSON.stringify(image)}`, ...all.map(recordedTool)]),
+        ...all
+          .filter(tool => tool.identity.kind === "observed")
+          .flatMap(({ name }) =>
+            recordLines(`observed ${name}: `, bakeFile(`observed/${name}`), `nothing was observed for ${name}`),
+          ),
+        ...queryPackages,
+        recordLines("package ", packageList, "the package manager listed no packages", sorted),
+      ].flat();
+    },
   };
+}
+
+/** A tool's line of the image's record. */
+export function recordedTool({ name, identity }: Tool): string {
+  const value =
+    identity.kind === "pinned" ? ` ${identity.value}` : identity.kind === "notRecorded" ? ` ${identity.reason}` : "";
+  return `tool ${name}: ${identity.kind}${value}`;
 }
 
 function cleanup(image: LinuxImage): Tool {
@@ -1651,7 +1705,7 @@ type Context = {
 /** One or more lines of the generated script. */
 export type Step = (context: Context) => string[];
 /**
- * How what a tool puts on the machine is known, for bun-image.json. A tool
+ * How what a tool puts on the machine is known, for the image's record. A tool
  * cannot be written without saying which:
  *
  * - `pinned`: known in this file. The value is written into the record as it is.
@@ -1829,7 +1883,7 @@ const comment =
   () =>
     note.split("\n").map(line => `# ${line}`);
 
-/** Any program. Its failure fails the bake: `set -e` in sh, the `Run` helper in PowerShell. */
+/** Any program. Its failure fails the bake: `set -e` in sh, the `$LASTEXITCODE` check `render` adds in PowerShell. */
 const run =
   (program: Value, ...args: Value[]): Step =>
   c => {
@@ -1848,13 +1902,42 @@ const pipe =
   (...steps: Step[]): Step =>
   c => [steps.map(step => oneLine(step, c)).join(" | ")];
 
+/** What the command prints, as the file's content, or with `append` at its end. PowerShell writes ASCII: its default is UTF-16. */
 const toFile =
-  (step: Step, file: Value): Step =>
+  (step: Step, file: Value, options: { append?: boolean } = {}): Step =>
   c => [
     isPowerShell(c)
-      ? `${oneLine(step, c)} | Out-File -Encoding ascii ${renderValue(file, c)}`
-      : `${oneLine(step, c)} > ${renderValue(file, c)}`,
+      ? `${oneLine(step, c)} | Out-File ${options.append ? "-Append " : ""}-Encoding ascii ${renderValue(file, c)}`
+      : `${oneLine(step, c)} ${options.append ? ">>" : ">"} ${renderValue(file, c)}`,
   ];
+
+/** Prints the value as a line. */
+const printLine =
+  (value: Value): Step =>
+  c => [isPowerShell(c) ? renderValue(value, c, true) : `printf '%s\\n' ${renderValue(value, c)}`];
+
+/** Prints the file's lines. */
+const linesOf =
+  (file: Value): Step =>
+  c => [`${isPowerShell(c) ? "Get-Content" : "cat"} ${renderValue(file, c)}`];
+
+/** Each line the command prints, with this before it. */
+const prefixed =
+  (prefix: string, step: Step): Step =>
+  c => [
+    isPowerShell(c)
+      ? `${oneLine(step, c)} | ForEach-Object { ${renderValue(text`${prefix}${expression("$_")}`, c, true)} }`
+      : `${oneLine(step, c)} | sed ${renderValue(`s/^/${prefix.replace(/[\\/&]/g, "\\$&")}/`, c)}`,
+  ];
+
+/**
+ * The lines the command prints, in an order that is the same for every bake of
+ * an image: byte order in sh whatever the locale, and in PowerShell the order of
+ * the session's culture, which comes from the image's pinned base.
+ */
+const sorted =
+  (step: Step): Step =>
+  c => [`${oneLine(step, c)} | ${isPowerShell(c) ? "Sort-Object" : "LC_ALL=C sort"}`];
 
 /** What the command prints is not worth reading. */
 const discardOutput =
@@ -1993,26 +2076,28 @@ const installExecutable =
       ? [`Copy-Item ${renderValue(file, c)} ${renderValue(destination, c)} -Force`]
       : [`${sudo(c, destination)}install -m 755 ${renderValue(file, c)} ${renderValue(destination, c)}`];
 
-/** A file with exactly these lines. */
+/** A file with exactly these lines, or with `append` these lines at the end of a file that may exist. */
 const writeFile =
-  (path: Value, lines: string[], options: { executable?: boolean } = {}): Step =>
+  (path: Value, lines: string[], options: { executable?: boolean; append?: boolean } = {}): Step =>
   c => {
     const p = renderValue(path, c);
     if (isPowerShell(c)) {
       // ascii: Windows PowerShell 5.1's UTF8 writes a byte-order mark, which breaks a reader that parses the file (node-gyp's installVersion).
       return [
-        `Set-Content -Path ${p} -Encoding ascii -Value @(`,
+        `${options.append ? "Add" : "Set"}-Content -Path ${p} -Encoding ascii -Value @(`,
         ...indent(lines.map((l, i) => `${renderValue(l, c, true)}${i < lines.length - 1 ? "," : ""}`)),
         ")",
       ];
     }
-    return [`cat > ${p} <<'EOF'`, ...lines, "EOF", ...(options.executable ? [`chmod +x ${p}`] : [])];
+    return [
+      `cat ${options.append ? ">>" : ">"} ${p} <<'EOF'`,
+      ...lines,
+      "EOF",
+      ...(options.executable ? [`chmod +x ${p}`] : []),
+    ];
   };
 
-/** These lines, at the end of a file that may exist. */
-const appendLines =
-  (path: Value, lines: string[]): Step =>
-  c => [`cat >> ${renderValue(path, c)} <<'EOF'`, ...lines, "EOF"];
+const appendLines = (path: Value, lines: string[]): Step => writeFile(path, lines, { append: true });
 
 /**
  * One sha256 for the content of these directories: every file's hash and every
@@ -2205,6 +2290,18 @@ const brewInstall =
   (names: readonly string[], options: { formula?: boolean } = {}): Step =>
   () => [`brew install --quiet ${options.formula ? "--formula " : ""}${names.join(" ")}`];
 
+/** Scoop's installed apps, a "name version" line each. */
+const scoopApps = (): Step =>
+  pipe(
+    // `run`, so that scoop's exit code is checked after the statement.
+    run("scoop", "export"),
+    // Scoop prints its JSON as several lines; ConvertFrom-Json is given them as one string.
+    cmdlet("Out-String"),
+    cmdlet("ConvertFrom-Json"),
+    cmdlet("Select-Object", { ExpandProperty: "apps" }),
+    cmdlet("ForEach-Object", {}, expression(`{ "$($_.Name) $($_.Version)" }`)),
+  );
+
 /**
  * `name` or `name@version`. Scoop is PowerShell running in this session, and
  * its manifests' cleanup steps write errors that are not failures (7zip on
@@ -2392,7 +2489,7 @@ function renderTool(tool: Tool, image: Image): string {
   return lines.join("\n") + "\n";
 }
 
-// ------------------------------------- programs the bake puts on the machine
+// -------------------------------------- the program the bake puts on the machine
 
 /** Run at every start of a Windows machine, by the task the `openssh` tool registers. */
 const fetchSshKeysProgram = [
@@ -2411,48 +2508,6 @@ const fetchSshKeysProgram = [
   '  icacls $keysPath /inheritance:r /grant "SYSTEM:(F)" /grant "Administrators:(R)" | Out-Null',
   "}",
 ].join("\n");
-
-/** Run by the `record-image` tool under the Node.js the bake installed: `node record-image.mjs <image name> <output file>`. */
-const recordImageProgram = String.raw`import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
-const [name, output] = process.argv.slice(2);
-if (!name || !output) throw new Error("usage: node record-image.mjs <image name> <output file>");
-const image = JSON.parse(readFileSync(join(import.meta.dirname, "image.json"), "utf8"));
-
-function lines(command, args) {
-  const { status, stdout, stderr, error } = spawnSync(command, args, { encoding: "utf8", shell: image.os === "windows" });
-  if (error || status !== 0) throw new Error(command + " " + args.join(" ") + " failed: " + (stderr || error));
-  return stdout.split(/\r?\n/).filter(line => line.trim());
-}
-
-// "name version", one per package, sorted.
-function installedPackages() {
-  if (image.os === "windows") {
-    return JSON.parse(lines("scoop", ["export"]).join("\n")).apps.map(app => app.Name + " " + app.Version).sort();
-  }
-  if (image.distro === "alpine") {
-    // "name-version arch {origin} (license) [installed]"
-    return lines("apk", ["list", "--installed"]).map(line => line.split(" ")[0].replace(/-([^-]+-r\d+)$/, " $1")).sort();
-  }
-  return lines("dpkg-query", ["--show", "--showformat", "$" + "{Package} $" + "{Version}\\n"]).sort();
-}
-
-// What an "observed" tool printed during the bake. A tool that says it is observed and left nothing is a broken record.
-const tools = image.tools.map(tool => {
-  if (tool.identity !== "observed") return tool;
-  const value = readFileSync(join(import.meta.dirname, "observed", tool.name), "utf8").trim();
-  if (!value) throw new Error("nothing was observed for " + tool.name);
-  return { ...tool, value };
-});
-
-const packages = installedPackages();
-const packagesSha256 = createHash("sha256").update(packages.join("\n")).digest("hex");
-writeFileSync(output, JSON.stringify({ name, ...image, tools, packages, packagesSha256 }, null, 2) + "\n");
-console.log(output + ": " + name + ", " + packages.length + " packages, " + packagesSha256);
-`;
 
 // --------------------------------------------------------------------- Packer
 
@@ -2661,22 +2716,12 @@ export function hashFiles(contents: ReadonlyMap<string, string | Uint8Array>): s
  * template. Nothing else decides what a bake does.
  */
 function bakeFiles(image: Image): Map<string, string | Uint8Array> {
-  const described = tools(image).map(({ name, identity }) => ({
-    name,
-    identity: identity.kind,
-    ...(identity.kind === "pinned"
-      ? { value: identity.value }
-      : identity.kind === "notRecorded"
-        ? { reason: identity.reason }
-        : {}),
-  }));
   const contents = new Map<string, string | Uint8Array>([
-    ["image.json", JSON.stringify({ ...image, tools: described }, null, 2) + "\n"],
+    ["image.json", JSON.stringify(image, null, 2) + "\n"],
     [image.os === "windows" ? "bootstrap.ps1" : "bootstrap.sh", renderBootstrap(image)],
   ]);
   if (image.os !== "darwin") {
     contents.set("agent.mts", readFileSync(join(repoRoot, files["agent.mts"])));
-    contents.set("record-image.mjs", recordImageProgram);
   }
   if (image.os === "linux" && image.role === "build") {
     contents.set("xmac.mjs", readFileSync(join(repoRoot, files["xmac.mjs"])));

@@ -134,7 +134,9 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 **Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Use the `codegen` rule: it runs the script with `cfg.jsRuntime`, so the script must run under node and bun. Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppHeaders` if it's a header. `emitCodegen()` builds `cppAll` from those groups at the end, so do not push to it).
 
-**Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. If it needs a CLI flag, `build.ts`'s arg parser already handles `--anyfield=value` generically.
+**Add a ninja rule** — add its name to `ruleVars` in `ninja.ts` with the `$variables` its text reads, and `n.rule()` it in the module's `registerXxxRules()`. `n.build({ rule, vars })` is typed by the table, and configure fails if the table and the rule's text disagree. Text that needs other variables on some platform is another rule (`pch` / `pch_msvc`). ninja's own bindings (`pool`, `depfile`, `early_output_prefix`) are fields of the build statement, not `vars`.
+
+**Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. Add its entry to `configFlags` in `build.ts`: every `PartialConfig` field is a `--<field>` flag, and tsc fails without one.
 
 **Add a profile** — one entry in `profiles.ts`. Copy `debug` or `release-asan`.
 

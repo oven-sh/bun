@@ -5,8 +5,8 @@ CI's build and test machines start from images baked ahead of time: AWS AMIs for
 ## How `spec.ts` is laid out
 
 1. **The data.** `files` (the repository files copied onto machines), `pins` (every version), `locations` (where a bake puts what is not the operating system's to place), `images` (each with the exact base image it starts from), the package lists, and how Packer bakes a Windows image. The build system's own LLVM, Node.js, xwin, Windows SDK, macOS SDK, Android API level and FreeBSD versions import from `pins`, and its sysroot and cache lookups from `locations`; `test/internal/source-lints/ci-image-pins.test.ts` keeps what cannot import them in step: `rust-toolchain.toml`, the GitHub workflows, `scripts/darwin-ci` (copied to its hosts), `scripts/agent.ts` (runs on the machines alone) and the Node-API test harness.
-2. **The tools.** A tool is one thing a bake sets up on the machine, whether it installs something (Bun, LLVM) or configures the system (`ulimits`, the agent's user). Each is a function of the image that returns its steps and its `identity` (how what it puts on the machine is known, for `bun-image.json`), and `tools(image)` at the end of the section is what a machine gets, in order.
-3. **The machinery.** The vocabulary the tools are written in (values and steps), its sh and PowerShell renderers, the two small programs a bake leaves on the machine, the Packer template, and `generateImage()`.
+2. **The tools.** A tool is one thing a bake sets up on the machine, whether it installs something (Bun, LLVM) or configures the system (`ulimits`, the agent's user). Each is a function of the image that returns its steps and its `identity` (how what it puts on the machine is known, for the image's record), and `tools(image)` at the end of the section is what a machine gets, in order.
+3. **The machinery.** The vocabulary the tools are written in (values and steps), its sh and PowerShell renderers, the one small program a bake leaves on the machine, the Packer template, and `generateImage()`.
 
 A tool does not contain shell, and neither does the machinery keep any in strings to call: there are no helper functions in the generated script. A step renders the lines themselves (a download is a `curl` line, putting a directory on PATH is the two lines that do it), so every line that runs is where it runs. A tool says what should be true (`download`, `unpack`, `installExecutable`, `directory`, `systemUser`, `service`, `registryValue`, `scheduledTaskAtStartup`, …) and the renderer says it in sh for Linux (as root), in sh with `sudo` where needed for macOS, or in PowerShell. One description serves every system a tool exists on: `bun` is one function for Linux, macOS and Windows.
 
@@ -39,11 +39,11 @@ bun test test/internal/source-lints/ci-images.test.ts test/internal/source-lints
 
 **Bake one image again with nothing changed.** There is deliberately no switch for it. A build bakes a name that does not exist, so removing the image in the cloud is what makes the next build bake it.
 
-**Read what is on an image.** Every bake writes `bun-image.json` on the machine (`/etc/`, `C:\`) and publishes it as the bake job's artifact `build/ci-images/<key>/bun-image.json`: the image's name, the spec's facts, every tool with how it is known, and the exact version of every distro or Scoop package the bake got. It is for keying caches of build outputs (same bytes, same machine content), so nothing in it may differ between two identical machines: no times, hostnames or instance ids. It never feeds the name.
+**Read what is on an image.** Every bake writes the image's record, `bun-image.txt`, on the machine (`/etc/`, `C:\`) and publishes it as the bake job's artifact `build/ci-images/<key>/bun-image.txt`: the image's name, the spec's facts, a line for every tool saying how what it puts on the machine is known, what the observed tools printed, and every entry of the distro's or Scoop's package database. The bake script writes it with ordinary steps in either shell; the `recordImage` tool in `spec.ts` has the format. It is for keying caches of build outputs (same bytes, same machine content), so nothing in it may differ between two identical machines: no times, hostnames or instance ids. It never feeds the name.
 
 ## A tool's identity
 
-The name covers everything `spec.ts` decides; `bun-image.json` adds what is only decided on the day of the bake. So that adding or removing a tool cannot leave the record wrong, `Tool` requires an `identity`, and `tsc` refuses a tool without one:
+The name covers everything `spec.ts` decides; the record adds what is only decided on the day of the bake. So that adding or removing a tool cannot leave the record wrong, `Tool` requires an `identity`, and `tsc` refuses a tool without one:
 
 - `pinned(value)`: known in this file (a version, a tag). The value is written into the record as it is.
 - `observed(step)`: only known on the machine. The step is rendered into the script right after the tool's own steps, and what it prints is the record; a tool that observed nothing fails the bake. `treeDigest(...directories)` is the step for something with no version to ask for, like the glibc and musl sysroots, whose packages are whatever the distro serves that day.
@@ -73,7 +73,7 @@ The name covers everything `spec.ts` decides; `bun-image.json` adds what is only
 
 - `bun run ci:images`, read the script, then `shellcheck -s sh -S warning build/ci-images/<key>/bootstrap.sh`; for Windows parse `bootstrap.ps1` with PowerShell's parser and run `packer validate -syntax-only` with exactly the pinned Packer version.
 - A Linux script can be run for real in a container of the same distro: `tar -C build/ci-images/<key> -c . | docker run -i debian:13 sh -c 'mkdir /bake && tar -x -C /bake && sh /bake/bootstrap.sh <commit> some-name'`. A bare container has no init system (install `systemd` or `openrc` first), cannot start services (Docker, Tailscale), and cannot run the `prefetch` tool past its clone; cut the script before it.
-- Windows and macOS scripts can only be run by a bake. After one, compare its `bun-image.json` with the previous bake's.
+- Windows and macOS scripts can only be run by a bake. After one, compare its `bun-image.txt` with the previous bake's.
 
 ## Debugging a failed bake
 

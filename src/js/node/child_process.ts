@@ -44,6 +44,64 @@ var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
+
+declare global {
+  namespace NodeJS {
+    interface Process {
+      _eval?: string;
+    }
+  }
+}
+
+type NodeStdio = (Bun.SpawnOptions.Writable | ArrayBufferView | "ipc" | "socket-fd")[];
+
+interface NodeSpawnOptions
+  extends Omit<
+    Bun.Spawn.SpawnOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
+    "stdio" | "onDisconnect"
+  > {
+  cmd: string[];
+  stdio: NodeStdio;
+  onDisconnect?(ok: boolean): void;
+}
+
+interface NodeSpawnSyncOptions
+  extends Omit<
+    Bun.Spawn.SpawnSyncOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,
+    "stdio"
+  > {
+  cmd: string[];
+  stdio: NodeStdio;
+}
+
+declare module "bun" {
+  function spawn(options: NodeSpawnOptions): Subprocess;
+  function spawnSync(options: NodeSpawnSyncOptions): SyncSubprocess;
+}
+
+interface ExecException extends Error {
+  cmd?: string;
+}
+
+interface ExecResult {
+  stdout: string | Buffer;
+  stderr: string | Buffer;
+}
+
+interface ExecPromiseWithResolvers extends PromiseWithResolvers<ExecResult> {
+  promise: Promise<ExecResult> & { child?: ChildProcess };
+}
+
+interface SpawnSyncResult {
+  signal: string | null;
+  status: number | null;
+  output: (Buffer | string | null | undefined)[] | null;
+  pid: number;
+  stdout?: Buffer | string | null;
+  stderr?: Buffer | string | null;
+  error?: SystemError;
+}
+
 const kFromNode = Symbol("kFromNode");
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
@@ -210,7 +268,7 @@ function spawn(file, args, options) {
  *   ) => any} [callback]
  * @returns {ChildProcess}
  */
-function execFile(file, args, options, callback) {
+function execFile(file, args, options?, callback?) {
   ({ file, args, options, callback } = normalizeExecFileArgs(file, args, options, callback));
 
   options = {
@@ -262,7 +320,7 @@ function execFile(file, args, options, callback) {
   let exited = false;
   let timeoutId;
 
-  let ex: Error | null = null;
+  let ex: ExecException | null = null;
 
   let cmd = file;
 
@@ -334,7 +392,7 @@ function execFile(file, args, options, callback) {
     try {
       child.kill(options.killSignal);
     } catch (e) {
-      ex = e;
+      ex = e as Error;
       exitHandler();
     }
   }
@@ -433,7 +491,7 @@ const kCustomPromisifySymbol = Symbol.for("nodejs.util.promisify.custom");
 
 const customPromiseExecFunction = orig => {
   return (...args) => {
-    const { resolve, reject, promise } = Promise.withResolvers();
+    const { resolve, reject, promise }: ExecPromiseWithResolvers = Promise.withResolvers();
 
     promise.child = orig(...args, (err, stdout, stderr) => {
       if (err !== null) {
@@ -495,7 +553,7 @@ execFile[kCustomPromisifySymbol][kCustomPromisifySymbol] = execFile[kCustomPromi
  *   error: Error;
  *   }}
  */
-function spawnSync(file, args, options) {
+function spawnSync(file, args, options?): SpawnSyncResult {
   options = {
     __proto__: null,
     maxBuffer: MAX_BUFFER,
@@ -560,6 +618,10 @@ function spawnSync(file, args, options) {
       exitedDueToTimeout,
       exitedDueToMaxBuffer,
       pid,
+    }: Omit<Bun.SyncSubprocess, "exitCode" | "stdout" | "stderr"> & {
+      exitCode: number | null;
+      stdout?: Buffer | number | null;
+      stderr?: Buffer | number | null;
     } = Bun.spawnSync({
       // normalizeSpawnargs has already prepended argv0 to the spawnargs array
       // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
@@ -586,6 +648,8 @@ function spawnSync(file, args, options) {
     error = err;
     stdout = null;
     stderr = null;
+    exitCode = null;
+    pid = 0;
   }
 
   // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
@@ -593,12 +657,13 @@ function spawnSync(file, args, options) {
   const outputStdout = typeof stdout === "number" ? null : stdout;
   const outputStderr = typeof stderr === "number" ? null : stderr;
 
-  const result = {
+  const result: SpawnSyncResult = {
     // A signal with no name (a number from Bun.spawn) is "" in node: https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L732
     signal: typeof signalCode === "number" ? "" : (signalCode ?? null),
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-    output: [null, outputStdout, outputStderr],
+    // node: `output` is null when the process could not be spawned.
+    output: error ? null : [null, outputStdout, outputStderr],
     pid,
   };
 
@@ -606,16 +671,19 @@ function spawnSync(file, args, options) {
     result.error = error;
   }
 
-  if (outputStdout && encoding && encoding !== "buffer") {
-    result.output[1] = result.output[1]?.toString(encoding);
+  const output = result.output;
+  if (output) {
+    if (outputStdout && encoding && encoding !== "buffer") {
+      output[1] = output[1]?.toString(encoding);
+    }
+
+    if (outputStderr && encoding && encoding !== "buffer") {
+      output[2] = output[2]?.toString(encoding);
+    }
   }
 
-  if (outputStderr && encoding && encoding !== "buffer") {
-    result.output[2] = result.output[2]?.toString(encoding);
-  }
-
-  result.stdout = result.output[1];
-  result.stderr = result.output[2];
+  result.stdout = output?.[1];
+  result.stderr = output?.[2];
 
   if (exitedDueToTimeout && error == null) {
     result.error = new SystemError(
@@ -763,7 +831,7 @@ function stdioStringToArray(stdio, channel) {
  *   }} [options]
  * @returns {ChildProcess}
  */
-function fork(modulePath, args = [], options) {
+function fork(modulePath, args: string[] | Record<string, unknown> | null = [], options?) {
   modulePath = getValidatedPath(modulePath, "modulePath");
 
   // Get options and args arguments.
@@ -848,7 +916,7 @@ function getSignalsToNamesMapping() {
   return signalsToNamesMapping;
 }
 
-function normalizeExecFileArgs(file, args, options, callback) {
+function normalizeExecFileArgs(file, args, options, callback?) {
   if ($isJSArray(args)) {
     args = ArrayPrototypeSlice.$call(args);
   } else if (args != null && typeof args === "object") {
@@ -910,7 +978,7 @@ function normalizeExecArgs(command, options, callback) {
 }
 
 const kBunEnv = Symbol("bunEnv");
-function normalizeSpawnArguments(file, args, options) {
+function normalizeSpawnArguments(file, args, options?) {
   validateString(file, "file");
   validateArgumentNullCheck(file, "file");
 
@@ -1107,8 +1175,11 @@ class ChildProcess extends EventEmitter {
   #closesNeeded = 1;
   #closesGot = 0;
 
-  signalCode = null;
-  exitCode = null;
+  declare send?: (message, handle?, options?, callback?) => boolean;
+  declare disconnect?: () => void;
+
+  signalCode: string | null = null;
+  exitCode: number | null = null;
   spawnfile;
   spawnargs;
   pid;
@@ -1488,7 +1559,8 @@ class ChildProcess extends EventEmitter {
         }
       }
     } catch (ex) {
-      const exCode = ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? ex.code : undefined;
+      const exCode =
+        ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? (ex as SystemError).code : undefined;
       if (
         // node sends these errors on the next tick rather than throwing
         exCode === "EACCES" ||
@@ -1498,8 +1570,8 @@ class ChildProcess extends EventEmitter {
         exCode === "ENOENT"
       ) {
         this.#handle = null;
-        ex.syscall = "spawn " + this.spawnfile;
-        ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+        (ex as SystemError).syscall = "spawn " + this.spawnfile;
+        (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
         process.nextTick(() => {
           this.emit("error", ex);
           this.emit("close", (ex as SystemError).errno ?? -1);
@@ -1514,7 +1586,7 @@ class ChildProcess extends EventEmitter {
         if (exCode !== undefined) {
           // Node throws errors that are not in the deferred list above
           // synchronously, with `syscall: "spawn"` (no file appended).
-          ex.syscall = "spawn";
+          (ex as SystemError).syscall = "spawn";
         }
         throw ex;
       }
@@ -1726,7 +1798,7 @@ function streamFdOf(item): number | undefined {
   return undefined;
 }
 
-function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
+function nodeToBun(item: string, index: number): NodeStdio[number] {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
@@ -1982,6 +2054,8 @@ function ERR_INVALID_OPT_VALUE(name, value) {
 }
 
 class SystemError extends Error {
+  declare spawnargs?: string[];
+  declare pid?: number;
   path;
   syscall;
   errno;

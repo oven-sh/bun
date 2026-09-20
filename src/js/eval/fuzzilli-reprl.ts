@@ -6,6 +6,8 @@ const REPRL_CRFD = 100; // Control read FD
 const REPRL_CWFD = 101; // Control write FD
 const REPRL_DRFD = 102; // Data read FD
 
+declare function resetCoverage(): void;
+
 const fs = require("node:fs");
 
 // Make common Node modules available
@@ -15,7 +17,7 @@ globalThis.__filename = "/fuzzilli.js";
 
 // process.execve replaces the process image on success, which kills the REPRL
 // child, so fuzzed scripts must not be able to reach the real implementation.
-process.execve = () => {};
+(process as { execve: unknown }).execve = () => {};
 
 // ============================================================================
 // REPRL Protocol Loop

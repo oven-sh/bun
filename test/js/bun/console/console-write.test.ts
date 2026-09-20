@@ -71,3 +71,31 @@ process.on("exit", () => console.log("beforeExit emitted " + count + " time(s)")
     exitCode: 0,
   });
 });
+
+// A write larger than the pipe buffer leaves the sink backed up, and its write() then returns a
+// Promise instead of a byte count.
+test("console.write returns the number of bytes written when stdout is backed up", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+const big = Buffer.alloc(8 * 1024 * 1024, "é").toString();
+const one = console.write(big);
+const two = console.write(big, new Uint8Array(3));
+console.error(JSON.stringify({ one, two }));
+`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+
+  expect({ stderr, stdoutLength: stdout.length }).toEqual({
+    stderr: JSON.stringify({ one: 8 * 1024 * 1024, two: 8 * 1024 * 1024 + 3 }) + "\n",
+    stdoutLength: 2 * 8 * 1024 * 1024 + 3,
+  });
+  expect(exitCode).toBe(0);
+});

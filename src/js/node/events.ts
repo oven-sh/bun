@@ -36,7 +36,7 @@ const { addAbortListener } = require("internal/abort_listener");
 const { resistStopPropagation } = require("internal/shared");
 
 const types = require("node:util/types");
-let inspect: typeof import("node:util").inspect | undefined;
+let inspect: ((value: unknown, opts?: object) => string) | undefined;
 
 const SymbolFor = Symbol.for;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
@@ -59,6 +59,50 @@ let FixedQueue;
 const kEmptyObject = Object.freeze(Object.create(null));
 
 var defaultMaxListeners = 10;
+
+interface Listener extends Function {
+  listener?: Function;
+}
+
+interface ListenerList extends Array<Listener> {
+  warned?: boolean;
+}
+
+interface MaxListenersExceededWarning extends Error {
+  emitter?: unknown;
+  type?: string | symbol;
+  count?: number;
+}
+
+type EventName = string | symbol;
+type EventEmitterInstance = Required<EventEmitter>;
+
+interface EventEmitter {
+  _events?: Record<EventName, Listener | ListenerList | undefined>;
+  _eventsCount?: number;
+  _maxListeners?: number;
+  [kCapture]?: boolean;
+  [kShapeMode]?: boolean;
+  setMaxListeners?(this: EventEmitterInstance, n: number): EventEmitterInstance;
+  getMaxListeners?(this: EventEmitterInstance): number;
+  emit?(this: EventEmitterInstance, type: EventName, ...args: unknown[]): boolean;
+  addListener?(this: EventEmitterInstance, type: EventName, fn: Listener): EventEmitterInstance;
+  on?(this: EventEmitterInstance, type: EventName, fn: Listener): EventEmitterInstance;
+  prependListener?(this: EventEmitterInstance, type: EventName, fn: Listener): EventEmitterInstance;
+  once?(this: EventEmitterInstance, type: EventName, fn: Listener): EventEmitterInstance;
+  prependOnceListener?(this: EventEmitterInstance, type: EventName, fn: Listener): EventEmitterInstance;
+  removeListener?(this: EventEmitterInstance, type: EventName, listener: Listener): EventEmitterInstance;
+  off?(this: EventEmitterInstance, type: EventName, listener: Listener): EventEmitterInstance;
+  removeAllListeners?(this: EventEmitterInstance, type: EventName): EventEmitterInstance;
+  listeners?(this: EventEmitterInstance, type: EventName): Function[];
+  rawListeners?(this: EventEmitterInstance, type: EventName): Function[];
+  listenerCount?(this: EventEmitterInstance, type: EventName, method?: Function): number;
+  eventNames?(this: EventEmitterInstance): EventName[];
+}
+
+declare class EventEmitter {
+  constructor(opts?: { captureRejections?: boolean });
+}
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(opts) {
@@ -88,7 +132,7 @@ function EventEmitter(opts) {
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
-const EventEmitterPrototype = (EventEmitter.prototype = {});
+const EventEmitterPrototype: EventEmitter = (EventEmitter.prototype = {});
 
 EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   validateNumber(n, "setMaxListeners", 0);
@@ -348,7 +392,7 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
 // An inline loop beats concat/slice here ~10x (host-call boundary).
 function copyWithInserted(list, fn, prepend) {
   const n = list.length;
-  const copy = $newArrayWithSize(n + 1);
+  const copy: ListenerList = $newArrayWithSize(n + 1);
   // Two straight copies, not a per-element ternary (measured ~25% slower).
   if (prepend) {
     copy[0] = fn;
@@ -364,7 +408,7 @@ function copyWithInserted(list, fn, prepend) {
 function overflowWarning(emitter, type, handlers) {
   if (!inspect) inspect = require("internal/util/inspect").inspect;
   handlers.warned = true;
-  const warn = new Error(
+  const warn: MaxListenersExceededWarning = new Error(
     `Possible EventEmitter memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect!(emitter, { depth: -1 })}. MaxListeners is ${_getMaxListeners(emitter)}. Use emitter.setMaxListeners() to increase limit`,
   );
   warn.name = "MaxListenersExceededWarning";
@@ -450,7 +494,7 @@ EventEmitterPrototype.removeListener = function removeListener(type, listener) {
   // Copy-remove (arrays are never mutated in place), and store a lone
   // survivor bare like node does, so `_events[type]` shape matches theirs.
   const n = list.length;
-  const copy = $newArrayWithSize(n - 1);
+  const copy: ListenerList = $newArrayWithSize(n - 1);
   for (let i = 0, j = 0; i < n; i++) {
     if (i !== position) copy[j++] = list[i];
   }
@@ -754,16 +798,16 @@ function on(emitter, event, options = kEmptyObject) {
 Object.defineProperty(on, "name", { value: "on" });
 
 function listenersController() {
-  const listeners = [];
+  const listeners: [emitter: unknown, event: string | symbol, handler: Function, flags: unknown][] = [];
 
   return {
-    addEventListener(emitter, event, handler, flags) {
+    addEventListener(emitter, event, handler, flags?) {
       eventTargetAgnosticAddListener(emitter, event, handler, flags);
       listeners.push([emitter, event, handler, flags]);
     },
     removeAll() {
       while (listeners.length > 0) {
-        const [emitter, event, handler, flags] = listeners.pop();
+        const [emitter, event, handler, flags] = listeners.pop()!;
         eventTargetAgnosticRemoveListener(emitter, event, handler, flags);
       }
     },
@@ -856,7 +900,7 @@ function _getMaxListeners(emitter) {
   return emitter?._maxListeners ?? defaultMaxListeners;
 }
 
-let AsyncResource = null;
+let AsyncResource: typeof import("./async_hooks").default.AsyncResource | null = null;
 
 function getMaxListeners(emitterOrTarget) {
   if (typeof emitterOrTarget?.getMaxListeners === "function") {

@@ -1773,7 +1773,11 @@ declare var PerformanceMeasure: Bun.__internal.UseLibDomIfAvailable<
 interface PerformanceObserver extends Bun.__internal.LibEmptyOrPerformanceObserver {}
 declare var PerformanceObserver: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceObserver",
-  { prototype: PerformanceObserver; new (): PerformanceObserver }
+  {
+    prototype: PerformanceObserver;
+    new (callback: import("node:perf_hooks").PerformanceObserverCallback): PerformanceObserver;
+    readonly supportedEntryTypes: readonly string[];
+  }
 >;
 
 interface PerformanceObserverEntryList extends Bun.__internal.LibEmptyOrPerformanceObserverEntryList {}

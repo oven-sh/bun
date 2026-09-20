@@ -219,7 +219,7 @@ yourself with Bun.serve().
     },
     {} as Record<string, HTMLBundle>,
   );
-  var server: Server;
+  var server: Server<undefined>;
   getServer: {
     try {
       server = Bun.serve({

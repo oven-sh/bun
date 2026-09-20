@@ -175,6 +175,18 @@ For `mode: "full"` (the normal case):
 
 Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (Rust units + poll build-cpp + download archive → link). The pipeline's `build-bun` step uses `archive-link` (`ci-build` profile): the full graph on one agent, linking from the same archive `cpp-only` produces, with the archive, libbun_runtime.a and dep libs uploaded from ninja edges as soon as each exists.
 
+### `mode: "codegen"` — the code generators alone
+
+`--mode=codegen` configures a graph of the codegen steps only, default target `codegen`, for what needs their outputs and no binary. `bun run build:types` (`--mode=codegen --target=builtin-types`) is what `lint.yml` runs before typechecking `src/js`.
+
+**`build/types/` (`cfg.typesDir`)** holds the type declarations `src/js/builtins.d.ts` references: `generated.d.ts`, `ErrorCode.d.ts`, `ZigGeneratedClasses.d.ts`, `WebCoreJSBuiltins.d.ts`. They are made from source alone (byte-identical between debug and release), so they do not live under a profile's build directory: every profile's graph declares the same files there, the way a dep's `vendor/<name>/.ref` is, and any build keeps them current for the editor. They are declared outputs of the edges that write them (`CodegenOutputs.builtinTypes`, target `builtin-types`), with every file the generator reads as an input.
+
+It is configured by `configureCodegen()`, not `configure()`, and resolves a `CodegenConfig`, not a `Config`:
+
+- `resolveJsToolchain()` looks for bun and the root install's esbuild. No compiler, linker, cmake or cargo is looked for, no SDK or sysroot is fetched, and `.cargo/config.toml` is not written. perl is required (the LUT steps).
+- `CodegenFields` (`config.ts`) is the `Pick` of `Config` the generators read, and `codegen.ts` takes that type, so a generator that starts reading a native tool does not compile.
+- `resolveBase()` decides the target, the build type, the paths and what `build_options.rs` is generated from, once, for both `resolveConfig()` and `resolveCodegenConfig()`. The outputs are therefore those of the same profile's full build, in the same build directory: run one after the other and ninja has no work to do.
+
 ### Phase 3 — Execute
 
 - **CI:** collapsible log groups, spawn ninja with `spawnWithAnnotations` (parses compiler errors into Buildkite annotations), upload/download artifacts.

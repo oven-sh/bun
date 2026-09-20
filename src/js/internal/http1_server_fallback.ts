@@ -7,9 +7,53 @@ const { SafeSet } = require("internal/primordials");
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 
+type IncomingMessage = import("node:http").IncomingMessage;
+
+interface Http1FallbackRequest extends IncomingMessage {
+  upgrade: boolean;
+  _dumped: boolean;
+  _addHeaderLines(headers: string[], n: number): void;
+}
+
+interface Http1FallbackResponseHead {
+  statusCode: number;
+  statusMessage: string | undefined;
+  headers: string[];
+  autoHeaderBits: number;
+  keepAliveTimeoutSecs: number;
+}
+
+interface Http1FallbackResponseHandle {
+  flags: number;
+  ended: boolean;
+  finished: boolean;
+  aborted: boolean;
+  bufferedAmount: number;
+  shouldKeepAlive: boolean;
+  onfinished: (() => void) | null;
+  cork<T>(callback: () => T): T;
+  writeContinue(): void;
+  writeInformational(chunk, encoding): void;
+  writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs): void;
+  flushHeaders(): void;
+  writeHeadAndEnd(
+    statusCode,
+    statusMessage,
+    headers,
+    chunk,
+    encoding,
+    strictContentLength,
+    autoHeaderBits,
+    keepAliveTimeoutSecs,
+  ): number;
+  write(chunk, encoding, _callback, _strictContentLength): number;
+  end(chunk, encoding, _callback, _strictContentLength): number;
+  abort(): void;
+}
+
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
-  let head = null;
+  let head: Http1FallbackResponseHead | null = null;
   let headWritten = false;
   let chunked = false;
   let noBody = false;
@@ -146,7 +190,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     return length;
   }
 
-  const handle = {
+  const handle: Http1FallbackResponseHandle = {
     flags: 0,
     ended: false,
     finished: false,
@@ -249,7 +293,8 @@ function connectionListenerHTTP1(server, socket, options) {
   const { allMethods } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};
-  const IncomingMessageClass = http1Options.IncomingMessage || http.IncomingMessage;
+  const IncomingMessageClass: new (socket) => Http1FallbackRequest =
+    http1Options.IncomingMessage || http.IncomingMessage;
   const ServerResponseClass = http1Options.ServerResponse || http.ServerResponse;
   const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
 
@@ -277,8 +322,8 @@ function connectionListenerHTTP1(server, socket, options) {
     parser.maxHeaderPairs = maxHeadersCount << 1;
   }
 
-  let req = null;
-  let pendingUpgrade = null;
+  let req: Http1FallbackRequest | null = null;
+  let pendingUpgrade: Http1FallbackRequest | null = null;
 
   parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
     versionMajor,

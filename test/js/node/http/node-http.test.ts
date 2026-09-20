@@ -4668,3 +4668,27 @@ it("connectionListener pauses reads when queued pipelined responses back up", as
   clientSide.destroy();
   serverSide.destroy();
 });
+
+it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<{ setKeepAlive: boolean; resetAndDestroy: boolean }>();
+  const server = createServer((req, res) => {
+    try {
+      const socket = req.socket;
+      resolve({
+        setKeepAlive: socket.setKeepAlive(true).setNoDelay(true) === socket,
+        resetAndDestroy: socket.resetAndDestroy() === socket,
+      });
+    } catch (e) {
+      reject(e);
+    }
+    res.end();
+  });
+  try {
+    await once(server.listen(0), "listening");
+    const response = await fetch(`http://localhost:${(server.address() as AddressInfo).port}/`);
+    await response.text();
+    expect(await promise).toEqual({ setKeepAlive: true, resetAndDestroy: true });
+  } finally {
+    server.close();
+  }
+});

@@ -30,6 +30,9 @@
   "dependencies": {
     "@types/node": "*"
   },
+  "devDependencies": {
+    "undici-types": "*"
+  },
   "scripts": {
     "prebuild": "echo $(pwd)",
     "build": "bun scripts/build.ts",

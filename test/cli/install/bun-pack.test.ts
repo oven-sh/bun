@@ -3,7 +3,16 @@ import { readTarball } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
 import { readdir, rm } from "fs/promises";
-import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isWindows,
+  MAX_PATH_BYTES,
+  normalizeBunSnapshot,
+  runBunInstall,
+  tempDir,
+} from "harness";
 import { join } from "path";
 
 // Runs `bun pm pack` for the package in `dir`, from `cwd`.
@@ -433,6 +442,21 @@ describe.concurrent("flags", () => {
     const { out, stderr, exitCode } = await runPack(dir, [`--destination=${dest}`]);
     expect(stderr).toBe(`error: archive destination name too long: "${dest}/${name}-1.0.0.tgz"\n`);
     expect(out).toBe("bun pack <version> (<revision>)");
+    expect(exitCode).toBe(1);
+    expect(await sortedNames(dir)).toEqual(["index.js", "package.json"]);
+  });
+
+  // Here the destination alone does not fit, so joining it to the working directory is what fails.
+  test.skipIf(isWindows).each(["--dry-run", "pack"])("--destination longer than the path buffer (%s)", async mode => {
+    using dir = tempDir("pack-dest-over-buffer", {
+      "package.json": JSON.stringify({ name: "pack-dest-over-buffer", version: "1.0.0" }),
+      "index.js": indexJs,
+    });
+
+    const dest = Buffer.alloc(MAX_PATH_BYTES + 4, "d").toString();
+    const args = [`--destination=${dest}`, ...(mode === "--dry-run" ? ["--dry-run"] : [])];
+    const { stderr, exitCode } = await runPack(dir, args);
+    expect(stderr).toBe(`error: archive destination name too long: "${dest}/pack-dest-over-buffer-1.0.0.tgz"\n`);
     expect(exitCode).toBe(1);
     expect(await sortedNames(dir)).toEqual(["index.js", "package.json"]);
   });
@@ -1371,6 +1395,24 @@ describe.concurrent("bundledDependencies", () => {
 });
 
 describe.concurrent("files", () => {
+  // A `files` entry is a glob, not a path, so its length is no reason to stop. It matches nothing.
+  test("an entry longer than the path buffer matches nothing and packs the rest", async () => {
+    const long = Buffer.alloc(MAX_PATH_BYTES + 124, "f").toString();
+    using dir = tempDir("pack-files-long-entry", {
+      "package.json": JSON.stringify({ name: "pack-files-long-entry", version: "1.0.0", files: [long, "lib"] }),
+      "lib/index.js": "console.log('hello ./lib/index.js')",
+      "skipped.js": indexJs,
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    expect(tarballEntries(join(dir, "pack-files-long-entry-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/lib/index.js",
+    ]);
+  });
+
   test("CHANGELOG is not included by default", async () => {
     using dir = tempDir("pack-files-changelog", {
       "package.json": JSON.stringify({ name: "pack-files-changelog", version: "1.1.1", files: ["lib"] }),
@@ -1897,6 +1939,66 @@ describe.concurrent(".gitignore/.npmignore", () => {
 });
 
 describe.concurrent("bins", () => {
+  // The length of one entry is no reason to drop the others.
+  test("a `files` entry longer than the path buffer on every platform is still matched", async () => {
+    // A brace group of 1000 names that do not exist, then "dist". About 100 KB.
+    const unused = Buffer.alloc(100, "x").toString();
+    const pattern = `{${Array.from({ length: 1000 }, (_, i) => `${unused}${i}`).join(",")},dist}`;
+    expect(pattern.length).toBeGreaterThan(100_000);
+    using dir = tempDir("pack-files-long-glob", {
+      "package.json": JSON.stringify({ name: "pack-files-long-glob", version: "1.0.0", files: [pattern] }),
+      "dist/index.js": "console.log('hello ./dist/index.js')",
+      "src/index.js": "console.log('hello ./src/index.js')",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    expect(tarballEntries(join(dir, "pack-files-long-glob-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/dist/index.js",
+    ]);
+  });
+
+  test("a bin longer than the path buffer does not stop the other bins from being packed", async () => {
+    const long = Buffer.alloc(100_000, "b").toString();
+    using dir = tempDir("pack-bins-long-and-short", {
+      "package.json": JSON.stringify({
+        name: "pack-bins-long-and-short",
+        version: "1.0.0",
+        files: ["index.js"],
+        bin: { long, cli: "cli.js" },
+      }),
+      "index.js": indexJs,
+      "cli.js": "#!/usr/bin/env bun\n",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    const tarball = readTarball(join(dir, "pack-bins-long-and-short-1.0.0.tgz"));
+    expect(entryNames(tarball)).toEqual(["package/package.json", "package/cli.js", "package/index.js"]);
+    expect(tarball.entries[1].perm & 0o111).toBe(0o111);
+  });
+
+  // A bin that is not on disk is skipped, whatever its length.
+  test.each([
+    ["string", (long: string) => ({ bin: long })],
+    ["map value", (long: string) => ({ bin: { tool: long } })],
+    ["directories.bin", (long: string) => ({ directories: { bin: long } })],
+  ])("a bin %s longer than the path buffer is skipped like a bin that does not exist", async (_, field) => {
+    const long = "./" + Buffer.alloc(MAX_PATH_BYTES + 4, "b").toString() + ".js";
+    using dir = tempDir("pack-bins-long", {
+      "package.json": JSON.stringify({ name: "pack-bins-long", version: "1.0.0", ...field(long) }),
+      "index.js": indexJs,
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+    expect(tarballEntries(join(dir, "pack-bins-long-1.0.0.tgz"))).toEqual(["package/package.json", "package/index.js"]);
+  });
+
   test("basic", async () => {
     using dir = tempDir("pack-bins", {
       "package.json": JSON.stringify({ name: "pack-bins", version: "1.2.3", bin: "bin.js" }),

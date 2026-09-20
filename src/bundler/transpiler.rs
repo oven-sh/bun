@@ -504,11 +504,13 @@ impl<'a> Transpiler<'a> {
                     let parts: [&[u8]; 2] = [entry_point, b".."];
                     let top_level_dir = self.fs().top_level_dir;
 
-                    let buster_name = bun_paths::resolve_path::join_abs_string_buf_z::<
-                        bun_paths::platform::Auto,
-                    >(
-                        top_level_dir, &mut cache_bust_buf[..], &parts
-                    );
+                    let Some(buster_name) =
+                        bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+                            bun_paths::platform::Auto,
+                        >(top_level_dir, &mut cache_bust_buf[..], &parts)
+                    else {
+                        break 'name false;
+                    };
                     self.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(
                             buster_name.as_bytes(),

@@ -2062,6 +2062,28 @@ describe.concurrent("test file discovery (scanner)", () => {
     );
   }
 
+  // `[test] root` is config text of any length. It is joined onto the cwd, and
+  // a value that did not fit a path buffer aborted the process before any test
+  // ran. It is longer than a path buffer everywhere but Windows, where it is an
+  // ordinary missing directory.
+  test("a bunfig.toml [test] root longer than a path buffer is a non-existent root directory", async () => {
+    const longRoot = Buffer.alloc(4099, "r").toString();
+    using dir = tempDir("test-root-too-long", {
+      "bunfig.toml": `[test]\nroot = "${longRoot}"\n`,
+      "a.test.ts": `import { test } from "bun:test"; test("a", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Failed to scan non-existent root directory for tests: ");
+    expect(stderr).toContain(longRoot);
+    expect(exitCode).toBe(1);
+  });
+
   // https://github.com/oven-sh/bun/issues/39852
   test.skipIf(isWindows)("does not keep a directory fd open per scanned directory", async () => {
     const N = 64;

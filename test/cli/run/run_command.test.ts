@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { dlopen } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, bunRun, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import { join } from "path";
 
 let cwd: string;
@@ -39,6 +39,77 @@ describe("bun", () => {
     expect(stdout.toString()).toBeEmpty();
     expect(stderr.toString()).toMatch(/Script not found/);
     expect(exitCode).toBe(1);
+  });
+
+  // `./<long>` and absolute paths were length-checked; the `../` and `~` arm
+  // joined the argument with the cwd into a fixed-size path buffer unchecked.
+  // A PathBuffer holds 98302 bytes on Windows; a command line cannot carry a path that long.
+  test.skipIf(isWindows).each([["../"], ["run", "../"]])(
+    "a %s-prefixed path longer than PATH_MAX is a module-not-found error",
+    (...args) => {
+      const prefix = args.pop();
+      const long = prefix + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
+      using dir = tempDir("run-long-dotdot", {
+        "package.json": JSON.stringify({ name: "p", scripts: { hi: "echo hi" } }),
+      });
+      const { exitCode, stdout, stderr } = spawnSync({
+        cwd: String(dir),
+        cmd: [bunExe(), ...args, long],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stdout.toString()).toBeEmpty();
+      expect(stderr.toString()).toContain(`error: Module not found "${long}"`);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  // The cwd itself is legal here; `<cwd>/package.json`, the first path joined
+  // onto it, is the one that does not fit a path buffer, and joining it used
+  // to abort the process. A file whose path does not fit is not visible to the
+  // resolver, so this package.json and its scripts are not found. A file that
+  // does fit still runs. Windows cannot build a tree this deep.
+  test.skipIf(isWindows)("a cwd a few bytes short of PATH_MAX", () => {
+    using dir = tempDir("run-deep-cwd", {});
+    let deepCwd = String(dir);
+    const target = MAX_PATH_BYTES - 8;
+    while (Buffer.byteLength(deepCwd) < target) {
+      // Bytes left after the separator. Unless this is the last component,
+      // keep two of them for the separator and first byte of the next one.
+      const remaining = target - Buffer.byteLength(deepCwd) - 1;
+      const size = remaining <= 255 ? remaining : Math.min(255, remaining - 2);
+      deepCwd = join(deepCwd, Buffer.alloc(size, "d").toString());
+      mkdirSync(deepCwd);
+    }
+    expect(Buffer.byteLength(deepCwd)).toBe(target);
+    writeFileSync(join(deepCwd, "e.js"), `console.log("ran e.js");`);
+    // Too long to name in one absolute path, so it is written from inside the directory.
+    const previous = process.cwd();
+    process.chdir(deepCwd);
+    try {
+      writeFileSync("package.json", JSON.stringify({ name: "deep", scripts: { hi: "echo hi" } }));
+    } finally {
+      process.chdir(previous);
+    }
+
+    const file = spawnSync({ cwd: deepCwd, cmd: [bunExe(), "e.js"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    expect({ stdout: file.stdout.toString(), stderr: file.stderr.toString(), exitCode: file.exitCode }).toEqual({
+      stdout: "ran e.js\n",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const script = spawnSync({
+      cwd: deepCwd,
+      cmd: [bunExe(), "run", "hi"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(script.stdout.toString()).toBeEmpty();
+    expect(script.stderr.toString()).toContain(`Script not found "hi"`);
+    expect(script.exitCode).toBe(1);
   });
 });
 

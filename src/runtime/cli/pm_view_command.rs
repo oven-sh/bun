@@ -14,8 +14,7 @@ use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
 use bun_semver as Semver;
 use bun_url::URL; // bumpalo::Bump re-export
-
-use bun_core::fmt::buf_print_infallible as buf_print;
+use std::io::Write as _;
 
 pub(crate) fn view(
     manager: &mut PackageManager,
@@ -78,22 +77,15 @@ pub(crate) fn view(
 
     let scope = manager.scope_for_package_name(name);
 
-    let mut url_buf = bun_paths::path_buffer_pool::get();
-    let encoded_name = buf_print(
-        url_buf.0.as_mut_slice(),
-        format_args!("{}", bun_fmt::dependency_url(name)),
-    );
-    let mut path_buf = bun_paths::path_buffer_pool::get();
     // Always fetch the full registry manifest, not a specific version
-    let url_slice = buf_print(
-        path_buf.0.as_mut_slice(),
-        format_args!(
-            "{}/{}",
-            BStr::new(strings::without_trailing_slash(scope.url.href())),
-            BStr::new(encoded_name),
-        ),
+    let mut url_buf: Vec<u8> = Vec::new();
+    let _ = write!(
+        &mut url_buf,
+        "{}/{}",
+        BStr::new(strings::without_trailing_slash(scope.url.href())),
+        bun_fmt::dependency_url(name),
     );
-    let url = URL::parse(url_slice);
+    let url = URL::parse(&url_buf);
 
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", b"application/json");

@@ -368,12 +368,12 @@ impl File {
     ) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
         let mut buf = bun_paths::path_buffer_pool::get();
-        let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
-            top_level_dir,
-            &mut buf.0,
-            &[input_path],
-        );
-        Self::read_from(dir, normalized.as_bytes())
+        let Some(normalized) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+            bun_paths::platform::Loose,
+        >(top_level_dir, &mut buf.0, &[input_path]) else {
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(input_path));
+        };
+        Self::read_from(dir, normalized)
     }
     /// `bun.sys.File.writeFile` — open + write + close.
     pub fn write_file(dir: impl AsFd, path: &ZStr, data: &[u8]) -> Maybe<()> {

@@ -763,10 +763,12 @@ pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: Resolution
         _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
     };
     let mut buf = bun_paths::path_buffer_pool::get();
-    let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+    let Some(marker_path) = path::resolve_path::join_z_buf_checked::<path::platform::Auto>(
         &mut buf.0,
         &[folder_path.as_bytes(), marker],
-    );
+    ) else {
+        return false;
+    };
     sys::exists_at(cache_dir, marker_path)
 }
 
@@ -884,11 +886,15 @@ pub fn path_for_cached_npm_path<'a>(
         let _ = cache_dir;
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
-        let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
-            &this.cache_directory_path,
-            &mut path_buf,
-            &[cache_path.as_bytes()],
-        );
+        let Some(joined) =
+            path::resolve_path::join_abs_string_buf_z_checked::<path::platform::Windows>(
+                &this.cache_directory_path,
+                &mut path_buf[..],
+                &[cache_path.as_bytes()],
+            )
+        else {
+            return Err(Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+        };
         return match sys::readlink(joined, &mut buf.0[..]) {
             Ok(n) => Ok(&mut buf.0[..n]),
             Err(err) => {
@@ -942,6 +948,17 @@ pub struct CacheDirAndSubpath<'a> {
     pub(crate) cache_dir_subpath: &'a ZStr,
 }
 
+/// A folder, workspace or `link:` path from the lockfile that does not fit a path buffer.
+#[cold]
+fn folder_path_too_long(folder: &[u8]) -> ! {
+    Output::err(
+        "ENAMETOOLONG",
+        "package folder path is too long: \"{}\"",
+        (bstr::BStr::new(folder),),
+    );
+    Global::crash();
+}
+
 /// this is copy pasted from `installPackageWithNameAndResolution()`
 /// it's not great to do this
 pub fn compute_cache_dir_and_subpath<'a>(
@@ -980,6 +997,9 @@ pub fn compute_cache_dir_and_subpath<'a>(
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");
             } else {
+                if folder.len() >= folder_path_buf.len() {
+                    folder_path_too_long(folder);
+                }
                 folder_path_buf[..folder.len()].copy_from_slice(folder);
                 folder_path_buf[folder.len()] = 0;
                 cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
@@ -1003,6 +1023,9 @@ pub fn compute_cache_dir_and_subpath<'a>(
             if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                 cache_dir_subpath = z_static(b".\0");
             } else {
+                if folder.len() >= folder_path_buf.len() {
+                    folder_path_too_long(folder);
+                }
                 folder_path_buf[..folder.len()].copy_from_slice(folder);
                 folder_path_buf[folder.len()] = 0;
                 cache_dir_subpath = ZStr::from_buf(folder_path_buf, folder.len());
@@ -1026,6 +1049,10 @@ pub fn compute_cache_dir_and_subpath<'a>(
             } else {
                 let global_link_dir = global_link_dir_path(manager);
                 let ptr = &mut folder_path_buf.0[..];
+                // One byte each for the separator and the NUL.
+                if global_link_dir.len() + 1 + folder.len() >= ptr.len() {
+                    folder_path_too_long(&folder);
+                }
                 let mut off = 0usize;
                 ptr[off..off + global_link_dir.len()].copy_from_slice(global_link_dir);
                 off += global_link_dir.len();

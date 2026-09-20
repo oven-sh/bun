@@ -27,7 +27,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, LogJsc as _};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
-use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf_checked, platform};
 use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
@@ -239,32 +239,41 @@ fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {
 }
 
 /// Absolute, because the PE metadata operations need an absolute path.
-fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u8]> {
+fn executable_path(
+    config: &JSBundlerConfig,
+    compile: &CompileOptions,
+) -> Result<Box<[u8]>, Vec<u8>> {
     let mut outbuf = paths::path_buffer_pool::get();
     // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
     // initialized during VM startup before any `Bun.build` is reachable.
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-    let outdir_slice = &config.outdir.list;
-    let outfile_slice = &compile.outfile.list;
-    let joined: &[u8] = if !outdir_slice.is_empty() {
-        join_abs_string_buf::<platform::Auto>(
-            top_level_dir,
-            &mut outbuf[..],
-            &[outdir_slice, outfile_slice],
-        )
-    } else if paths::is_absolute(outfile_slice) {
-        outfile_slice
+    let outdir_slice: &[u8] = &config.outdir.list;
+    let outfile_slice: &[u8] = &compile.outfile.list;
+    let parts: &[&[u8]] = if outdir_slice.is_empty() {
+        &[outfile_slice]
     } else {
-        // For relative paths, ensure we make them absolute relative to the current working directory
-        join_abs_string_buf::<platform::Auto>(top_level_dir, &mut outbuf[..], &[outfile_slice])
+        &[outdir_slice, outfile_slice]
     };
-    if compile.compile_target.os == OperatingSystem::Windows && !joined.ends_with(b".exe") {
-        let mut v = Vec::with_capacity(joined.len() + 4);
-        v.extend_from_slice(joined);
-        v.extend_from_slice(b".exe");
-        v.into_boxed_slice()
+    let joined: Option<&[u8]> = if outdir_slice.is_empty() && paths::is_absolute(outfile_slice) {
+        // Used as written: a lexical join would resolve `..` before a symlink does.
+        Some(outfile_slice)
     } else {
-        Box::from(joined)
+        join_abs_string_buf_checked::<platform::Auto>(top_level_dir, &mut outbuf[..], parts)
+    };
+    let with_suffix = joined.map(|joined| {
+        let is_windows = compile.compile_target.os == OperatingSystem::Windows;
+        let suffix: &[u8] = if is_windows && !joined.ends_with(b".exe") {
+            b".exe"
+        } else {
+            b""
+        };
+        [joined, suffix].concat()
+    });
+    match with_suffix {
+        // The suffix counts too: the path is NUL-terminated in a path buffer to be moved into place.
+        Some(path) if path.len() < paths::MAX_PATH_BYTES => Ok(path.into_boxed_slice()),
+        // `Err` holds the unresolved path, for the caller's ENAMETOOLONG message.
+        _ => Err(parts.join(&SEP)),
     }
 }
 
@@ -374,7 +383,15 @@ impl JSBundleCompletionTask {
             return CompileResult::fail(CompileErrorReason::NoEntryPoint);
         };
 
-        let full_outfile_path = executable_path(&self.config, compile_options);
+        let full_outfile_path = match executable_path(&self.config, compile_options) {
+            Ok(path) => path,
+            Err(shown) => {
+                return CompileResult::fail_fmt(format_args!(
+                    "Failed to resolve compile.outfile {}: ENAMETOOLONG",
+                    bun_core::fmt::quote(&shown)
+                ));
+            }
+        };
 
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
@@ -1107,9 +1124,11 @@ impl CompletionStruct for JSBundleCompletionTask {
             config.compile = None;
         }
         if let Some(compile) = &config.compile {
-            let executable = executable_path(config, compile);
-            transpiler.options.compile_entry_point_name =
-                Box::from(executable_entry_point_name(&executable));
+            // An outfile that does not fit is reported by `do_compilation`.
+            if let Ok(executable) = executable_path(config, compile) {
+                transpiler.options.compile_entry_point_name =
+                    Box::from(executable_entry_point_name(&executable));
+            }
         }
         // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into
         // Owned so the static bound holds without tying `&mut self` to `'a`.

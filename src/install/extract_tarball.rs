@@ -749,14 +749,14 @@ impl ExtractTarball {
                 _ => self.in_trusted_dependencies,
             };
             if needs_json {
-                let read_result = sys::File::read_file_from(
-                    cache_dir.fd(),
-                    path::resolve_path::join_z_buf::<path::platform::Auto>(
-                        &mut bufs.json_path_buf.0,
-                        &[folder_name, b"package.json"],
-                    )
-                    .as_bytes(),
-                );
+                let read_result = path::resolve_path::join_z_buf_checked::<path::platform::Auto>(
+                    &mut bufs.json_path_buf.0,
+                    &[folder_name, b"package.json"],
+                )
+                .ok_or_else(|| sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open))
+                .and_then(|json_path| {
+                    sys::File::read_file_from(cache_dir.fd(), json_path.as_bytes())
+                });
                 let (json_file, buf) = match read_result {
                     Ok(pair) => pair,
                     Err(err) => {
@@ -827,14 +827,16 @@ impl ExtractTarball {
                             }
 
                             let mut dest_buf = bun_paths::path_buffer_pool::get();
-                            let dest_path = path::resolve_path::join_abs_string_buf_z::<
+                            let Some(dest_path) = path::resolve_path::join_abs_string_buf_z_checked::<
                                 path::platform::Windows,
                             >(
                                 // only set once, should be fine to read not on main thread
                                 package_manager.cache_directory_path.as_bytes(),
-                                &mut dest_buf,
+                                &mut dest_buf[..],
                                 &[name, dest_name],
-                            );
+                            ) else {
+                                break 'create_index;
+                            };
 
                             if sys::sys_uv::symlink_uv(
                                 final_path,

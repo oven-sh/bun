@@ -374,21 +374,6 @@ pub mod fs {
             join_abs_string::<platform::Loose>(self.top_level_dir, parts)
         }
 
-        /// Like `abs`, but interns the joined path into `DirnameStore` and
-        /// returns the `'static` copy.
-        pub(crate) fn abs_alloc(
-            &self,
-            parts: &[&[u8]],
-        ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
-            use bun_paths::resolve_path::{join_abs_string, platform};
-            let joined = join_abs_string::<platform::Loose>(self.top_level_dir, parts);
-            // Route through DirnameStore so
-            // the resolver's `&'static [u8]` storage contract holds.
-            DirnameStore::instance()
-                .append_slice(joined)
-                .map_err(|_| bun_alloc::AllocError)
-        }
-
         /// Relative path from `from` to `to`. Returns a slice into the
         /// resolver-shared threadlocal relative buffer; caller must dup
         /// before the next call.
@@ -1965,14 +1950,15 @@ pub mod dir_entry_accessor {
             let mut buf = bun_paths::path_buffer_pool::get();
             let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
                 if let Some(entry) = handle.value {
-                    let slice = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
-                        &mut buf,
+                    // `entry.dir` fits a path buffer; with `path_` behind it it need not.
+                    resolve_path::join_z_buf_checked::<bun_paths::platform::Auto>(
+                        &mut buf[..],
                         &[entry.dir, path_.as_bytes()],
-                    );
-                    let len = slice.len();
-                    buf[len] = 0;
-                    // SAFETY: buf[len] == 0 written above
-                    ZStr::from_buf(&buf[..], len)
+                    )
+                    .ok_or_else(|| {
+                        SysError::from_code(Syscall::E::ENAMETOOLONG, Syscall::Tag::fstatat)
+                            .with_path(path_.as_bytes())
+                    })?
                 } else {
                     path_
                 }
@@ -2021,10 +2007,16 @@ pub mod dir_entry_accessor {
 
             if !Platform::AUTO.is_absolute(path) {
                 if let Some(entry) = handle.value {
-                    path = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
-                        &mut buf,
-                        &[entry.dir, path],
-                    );
+                    let Some(joined) = resolve_path::join_string_buf_checked::<
+                        bun_paths::platform::Auto,
+                    >(&mut buf[..], &[entry.dir, path]) else {
+                        return Ok(Err(SysError::from_code(
+                            Syscall::E::ENAMETOOLONG,
+                            Syscall::Tag::open,
+                        )
+                        .with_path(path)));
+                    };
+                    path = joined;
                 }
             }
             // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?

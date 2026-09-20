@@ -4,7 +4,7 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
+use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf_checked};
 use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
 use bun_sys::{self as Syscall, Dir, Fd};
@@ -132,11 +132,11 @@ impl NodeModulesFolder {
     ) -> bool {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
-        bun_sys::directory_exists_at(
-            root_node_modules_dir.fd(),
-            join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
-        )
-        .unwrap_or(false)
+        let Some(joined) = join_z_buf_checked::<platform::Auto>(path_buf.as_mut_slice(), &parts)
+        else {
+            return false;
+        };
+        bun_sys::directory_exists_at(root_node_modules_dir.fd(), joined).unwrap_or(false)
     }
 
     pub(crate) fn directory_exists_at(
@@ -165,11 +165,15 @@ impl NodeModulesFolder {
     ) -> bun_sys::Result<bun_sys::File> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.path.as_slice(), file_path.as_bytes()];
-        root_node_modules_dir.open_file(
-            join_z_buf::<platform::Auto>(path_buf.as_mut_slice(), &parts),
-            bun_sys::O::RDONLY,
-            0,
-        )
+        // `open_file` falls back to opening each directory on `ENAMETOOLONG`.
+        let Some(joined) = join_z_buf_checked::<platform::Auto>(path_buf.as_mut_slice(), &parts)
+        else {
+            return Err(bun_sys::Error::from_code(
+                bun_sys::E::ENAMETOOLONG,
+                bun_sys::Tag::open,
+            ));
+        };
+        root_node_modules_dir.open_file(joined, bun_sys::O::RDONLY, 0)
     }
 
     pub(crate) fn read_small_file(
@@ -370,7 +374,10 @@ fn abs_node_modules_path(
 /// components, absolute paths, drive letters, backslashes, NUL bytes, and any
 /// separator other than the single `/` in a scoped name (`@scope/name`).
 pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
-    if alias.is_empty() || alias.len() >= MAX_PATH_BYTES || strings::contains_any(alias, b"\\:\0") {
+    if alias.is_empty()
+        || alias.len() > crate::dependency::MAX_INSTALL_FOLDER_NAME_LEN
+        || strings::contains_any(alias, b"\\:\0")
+    {
         return false;
     }
 
@@ -1254,11 +1261,21 @@ impl<'a> PackageInstaller<'a> {
 
         // The alias is used as a path relative to `node_modules` for delete,
         // rename, and create operations. Refuse anything that could escape it.
-        if !alias_is_safe_install_target(alias.slice(string_buf!())) {
+        let unsafe_name = if !alias_is_safe_install_target(alias.slice(string_buf!())) {
+            Some(alias)
+        } else if resolution.tag == resolution::Tag::Npm
+            && !crate::dependency::is_safe_install_folder_name(pkg_name.slice(string_buf!()))
+        {
+            // An npm package's own name becomes the cache folder name.
+            Some(pkg_name)
+        } else {
+            None
+        };
+        if let Some(unsafe_name) = unsafe_name {
             if log_level != Options::LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: refusing to install dependency with unsafe name <b>{}<r>",
-                    bstr::BStr::new(alias.slice(string_buf!())),
+                    bstr::BStr::new(unsafe_name.slice(string_buf!())),
                 );
             }
             self.summary.fail += 1;
@@ -1439,8 +1456,31 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Folder => {
                 let folder_str = *resolution.folder();
                 let folder = folder_str.slice(string_buf!());
+                let is_workspace_tree = self.lockfile().is_workspace_tree_id(self.current_tree_id);
 
-                if self.lockfile().is_workspace_tree_id(self.current_tree_id) {
+                if folder.len() >= self.folder_path_buf.len()
+                    // transitive folder dependencies are not hoisted
+                    || (!is_workspace_tree
+                        && bin::bin_target_escapes_package_dir(folder)
+                        && !self.lockfile().is_trusted_folder_dependency(dependency_id))
+                {
+                    if log_level != Options::LogLevel::Silent {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
+                            bstr::BStr::new(pkg_name.slice(string_buf!())),
+                            bstr::BStr::new(folder),
+                        );
+                    }
+                    self.summary.fail += 1;
+                    self.increment_tree_install_count(
+                        !is_pending_package_install,
+                        self.current_tree_id,
+                        log_level,
+                    );
+                    return;
+                }
+
+                if is_workspace_tree {
                     // Handle when a package depends on itself via file:
                     // example:
                     //   "mineflayer": "file:."
@@ -1454,26 +1494,6 @@ impl<'a> PackageInstaller<'a> {
                     }
                     installer.cache_dir = Fd::cwd();
                 } else {
-                    // transitive folder dependencies are not hoisted
-                    if folder.len() >= self.folder_path_buf.len()
-                        || (bin::bin_target_escapes_package_dir(folder)
-                            && !self.lockfile().is_trusted_folder_dependency(dependency_id))
-                    {
-                        if log_level != Options::LogLevel::Silent {
-                            bun_core::pretty_errorln!(
-                                "<r><red>error<r>: refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
-                                bstr::BStr::new(pkg_name.slice(string_buf!())),
-                                bstr::BStr::new(folder),
-                            );
-                        }
-                        self.summary.fail += 1;
-                        self.increment_tree_install_count(
-                            !is_pending_package_install,
-                            self.current_tree_id,
-                            log_level,
-                        );
-                        return;
-                    }
                     self.folder_path_buf[..folder.len()].copy_from_slice(folder);
                     self.folder_path_buf[folder.len()] = 0;
                     // SAFETY: buf[folder.len()] == 0 written above
@@ -1503,6 +1523,22 @@ impl<'a> PackageInstaller<'a> {
             resolution::Tag::Workspace => {
                 let folder_str = *resolution.workspace();
                 let folder = folder_str.slice(string_buf!());
+                if folder.len() >= self.folder_path_buf.len() {
+                    if log_level != Options::LogLevel::Silent {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
+                            bstr::BStr::new(pkg_name.slice(string_buf!())),
+                            bstr::BStr::new(folder),
+                        );
+                    }
+                    self.summary.fail += 1;
+                    self.increment_tree_install_count(
+                        !is_pending_package_install,
+                        self.current_tree_id,
+                        log_level,
+                    );
+                    return;
+                }
                 // Handle when a package depends on itself
                 if folder.is_empty() || (folder.len() == 1 && folder[0] == b'.') {
                     installer.cache_dir_subpath = ZStr::from_static(b".\0");
@@ -1530,16 +1566,31 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir = Fd::cwd();
                 } else {
                     let global_link_dir = package_manager::global_link_dir_path(self.manager_mut());
-                    let buf = self.folder_path_buf.as_mut_slice();
-                    let mut len = 0usize;
-                    buf[len..len + global_link_dir.len()].copy_from_slice(global_link_dir);
-                    len += global_link_dir.len();
-                    if global_link_dir[global_link_dir.len() - 1] != SEP {
-                        buf[len] = SEP;
-                        len += 1;
+                    let sep_len = (global_link_dir[global_link_dir.len() - 1] != SEP) as usize;
+                    let len = global_link_dir.len() + sep_len + folder.len();
+                    // `folder` is the `link:` specifier as written in package.json.
+                    if len >= self.folder_path_buf.len() {
+                        if log_level != Options::LogLevel::Silent {
+                            Output::err(
+                                "ENAMETOOLONG",
+                                "link path for package <b>{}<r> is too long",
+                                (bstr::BStr::new(pkg_name.slice(string_buf!())),),
+                            );
+                        }
+                        self.summary.fail += 1;
+                        self.increment_tree_install_count(
+                            !is_pending_package_install,
+                            self.current_tree_id,
+                            log_level,
+                        );
+                        return;
                     }
-                    buf[len..len + folder.len()].copy_from_slice(folder);
-                    len += folder.len();
+                    let buf = self.folder_path_buf.as_mut_slice();
+                    buf[..global_link_dir.len()].copy_from_slice(global_link_dir);
+                    if sep_len != 0 {
+                        buf[global_link_dir.len()] = SEP;
+                    }
+                    buf[global_link_dir.len() + sep_len..len].copy_from_slice(folder);
                     buf[len] = 0;
                     // SAFETY: buf[len] == 0 written above
                     installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);

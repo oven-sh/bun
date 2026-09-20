@@ -1653,7 +1653,7 @@ impl<'a> Printer<'a> {
         format: PrinterFormat,
     ) -> Result<(), BunError> {
         // We truncate longer than allowed paths. We should probably throw an error instead.
-        let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
+        let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES - 1)];
 
         let mut lockfile_path_buf1 = bun_paths::path_buffer_pool::get();
         let mut lockfile_path_buf2 = bun_paths::path_buffer_pool::get();
@@ -1675,13 +1675,18 @@ impl<'a> Printer<'a> {
             // Copy `cwd` out of `buf1` so the
             // join can write into `buf2` while `cwd` borrows `buf1` only.
             let cwd = &lockfile_path_buf1[..cwd_len];
-            let lockfile_path__len = resolve_path::join_abs_string_buf::<platform::Auto>(
+            let Some(joined) = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
                 cwd,
                 &mut lockfile_path_buf2.0,
                 &parts,
-            )
-            .len();
-            lockfile_path_buf2[lockfile_path__len] = 0;
+            ) else {
+                bun_core::pretty_errorln!(
+                    "<r><red>lockfile not found:<r> {}",
+                    bun_core::fmt::QuotedFormatter { text: path },
+                );
+                Global::crash();
+            };
+            let lockfile_path__len = joined.len();
             // SAFETY: NUL written at [len] above. Not `from_buf`: borrowck
             // can't see that the `path_in_buf2` flag picks the *other* buffer
             // for the chdir scratch write below, so the borrow must be detached.

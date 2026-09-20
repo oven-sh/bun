@@ -13,8 +13,8 @@ import { agentService } from "./tools/agent-service.ts";
 import { agentUser } from "./tools/agent-user.ts";
 import { androidNdk } from "./tools/android-ndk.ts";
 import { buildkiteAgent } from "./tools/buildkite-agent.ts";
-import { ccache } from "./tools/ccache.ts";
 import { bun } from "./tools/bun.ts";
+import { ccache } from "./tools/ccache.ts";
 import { chrome } from "./tools/chrome.ts";
 import { cleanup } from "./tools/cleanup.ts";
 import { cmake } from "./tools/cmake.ts";
@@ -88,6 +88,15 @@ export const pins = {
     },
   },
   // Windows only.
+  // Packer runs the Windows bakes from a Linux machine of the hosted queue.
+  packer: {
+    version: "1.15.0",
+    azurePlugin: "2.5.0",
+    sha256: {
+      x64: "2fd1149c5c6c7604ced64d7b56638af05f6b7ed3f6835182bc913ddaba1f16b8",
+      aarch64: "1687f43bd120601f62e54b970b1cc06f83e95897357dc5c679b57ec9d2fb40a7",
+    },
+  },
   pwsh: { version: "7.5.2" },
   openssh: { version: "v9.8.1.0p1-Preview" },
   ccache: { version: "4.12.2" },

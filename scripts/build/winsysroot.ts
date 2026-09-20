@@ -27,25 +27,22 @@
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { pins } from "./ci-images/spec.ts";
 import type { Arch, Config } from "./config.ts";
 import { downloadWithRetry, extractTarGz, extractZip } from "./download.ts";
 import { BuildError } from "./error.ts";
 
-/**
- * Pinned xwin release — https://github.com/Jake-Shadle/xwin/releases
- * Keep in sync with the baked splat in scripts/bootstrap.sh (xwin_version).
- */
-export const XWIN_VERSION = "0.9.0";
+/** Pinned xwin release — https://github.com/Jake-Shadle/xwin/releases. The CI build image's sysroot is made with the same one. */
+export const XWIN_VERSION = pins.windowsSysroot.xwin;
 
 /**
  * The Windows SDK and MSVC CRT versions the splat is pinned to. Passing them
  * to xwin explicitly means a Visual Studio manifest update can't silently
  * move the toolchain to a different SDK/CRT — the targeted Windows version
  * and API surface stay put until these are bumped on purpose.
- * Keep in sync with scripts/bootstrap.sh.
  */
-export const WINDOWS_SDK_VERSION = "10.0.26100";
-export const MSVC_CRT_VERSION = "14.44.17.14";
+export const WINDOWS_SDK_VERSION = pins.windowsSysroot.sdk;
+export const MSVC_CRT_VERSION = pins.windowsSysroot.crt;
 
 /**
  * Serviced Universal CRT static libraries, fetched from the official

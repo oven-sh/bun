@@ -11,6 +11,14 @@
 
 import type { WindowsImage } from "./image.ts";
 
+/** Every variable the template needs; scripts/ci-image.ts passes them all. */
+export const packerVariables = [
+  ...["client_id", "client_secret", "subscription_id", "tenant_id"],
+  // The resource group the bake's VM is created in, and the gallery's.
+  ...["resource_group", "gallery_resource_group", "gallery_name", "location"],
+  ...["image_name", "bake_directory", "repo_commit"],
+] as const;
+
 /** Where a published image is replicated, besides the gallery's own region: every region CI launches Windows machines in. */
 const galleryRegions = [
   ...["australiaeast", "brazilsouth", "canadacentral", "canadaeast", "centralindia", "centralus", "francecentral"],
@@ -18,8 +26,6 @@ const galleryRegions = [
   ...["northeurope", "southcentralus", "southeastasia", "spaincentral", "swedencentral", "switzerlandnorth"],
   ...["uaenorth", "ukwest", "westeurope", "westus", "westus2", "westus3"],
 ];
-
-const azurePluginVersion = "2.5.0";
 
 /** Sysprep generalizes the disk so every VM created from it gets its own identity. It must be the last thing that runs. */
 const sysprep = String.raw`
@@ -51,30 +57,20 @@ function heredoc(text: string): string {
   return `<<-EOT\n${text.replace(/\$\{/g, "$$${")}\nEOT`;
 }
 
-export function renderPackerTemplate(image: WindowsImage): string {
-  const variable = (name: string, options: string) => `variable "${name}" {\n  type = string\n${options}}\n`;
+export function renderPackerTemplate(image: WindowsImage, pin: { version: string; azurePlugin: string }): string {
   return `# Generated from scripts/build/ci-images/spec.ts. Do not edit.
 
 packer {
+  required_version = "= ${pin.version}"
   required_plugins {
     azure = {
       source  = "github.com/hashicorp/azure"
-      version = "= ${azurePluginVersion}"
+      version = "= ${pin.azurePlugin}"
     }
   }
 }
 
-${variable("client_id", `  default = env("AZURE_CLIENT_ID")\n`)}
-${variable("client_secret", `  sensitive = true\n  default   = env("AZURE_CLIENT_SECRET")\n`)}
-${variable("subscription_id", `  default = env("AZURE_SUBSCRIPTION_ID")\n`)}
-${variable("tenant_id", `  default = env("AZURE_TENANT_ID")\n`)}
-${variable("resource_group", `  default = env("AZURE_RESOURCE_GROUP")\n`)}
-${variable("gallery_resource_group", "")}
-${variable("gallery_name", "")}
-${variable("location", "")}
-${variable("image_name", "")}
-${variable("bake_directory", "")}
-${variable("repo_commit", "")}
+${packerVariables.map(name => `variable "${name}" {\n  type      = string\n  sensitive = ${name === "client_secret"}\n}\n`).join("\n")}
 source "azure-arm" "image" {
   client_id       = var.client_id
   client_secret   = var.client_secret

@@ -24,7 +24,7 @@ import { linuxAgentPaths, windowsAgentHome } from "../../agent.ts";
 import { BuildError } from "../error.ts";
 import { type Image, type Tool, imageKey } from "./image.ts";
 import { renderPackerTemplate } from "./packer.ts";
-import { images, tools } from "./spec.ts";
+import { images, pins, tools } from "./spec.ts";
 
 const here = import.meta.dirname;
 const repoRoot = resolve(here, "../../..");
@@ -152,7 +152,7 @@ export function generateImage(image: Image, outputRoot: string): GeneratedImage 
     }
   }
   if (image.os === "windows") {
-    writeFileSync(join(directory, "image.pkr.hcl"), renderPackerTemplate(image));
+    writeFileSync(join(directory, "image.pkr.hcl"), renderPackerTemplate(image, pins.packer));
   }
   return { key, name: `${key}-${hashDirectory(directory).slice(0, 16)}`, directory };
 }

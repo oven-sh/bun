@@ -33,6 +33,7 @@ on:
       - "test/_util/**"
       - "test/internal/source-lints/**"
       - ".github/workflows/source-lints.yml"
+      - ".github/workflows/format.yml"
       - ".github/workflows/comment-cop.yml"
       - ".github/actions/setup-bun/**"
   pull_request:
@@ -58,6 +59,7 @@ on:
       - "test/_util/**"
       - "test/internal/source-lints/**"
       - ".github/workflows/source-lints.yml"
+      - ".github/workflows/format.yml"
       - ".github/workflows/comment-cop.yml"
       - ".github/actions/setup-bun/**"
   merge_group:

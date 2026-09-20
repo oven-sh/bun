@@ -31,6 +31,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { pins } from "./ci-images/spec.ts";
 import { BuildError } from "./error.ts";
 
 /**
@@ -39,9 +40,9 @@ import { BuildError } from "./error.ts";
  * stop being served — so when the build fails saying the release is gone, run
  * `bun scripts/build/xmac.mjs list` and bump both pins to the newest entry.
  */
-export const MACOS_SDK_VERSION = "26.5";
+export const MACOS_SDK_VERSION = pins.macosSdk.sdk;
 /** The Command Line Tools release whose package contains MACOS_SDK_VERSION. */
-export const MACOS_SDK_CLT_RELEASE = "26.5";
+export const MACOS_SDK_CLT_RELEASE = pins.macosSdk.commandLineTools;
 
 /** The vendored xmac bundle (see the header of that file for provenance). */
 export const XMAC_PATH = join(import.meta.dirname, "xmac.mjs");

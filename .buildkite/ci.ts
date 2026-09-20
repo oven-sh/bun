@@ -5,10 +5,13 @@
  * @link https://buildkite.com/docs/pipelines/defining-steps
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
 import { output, run } from "../scripts/agent.ts";
+import { type GeneratedImage, generateImage } from "../scripts/build/ci-images/generate.ts";
+import { type Image, imageKey } from "../scripts/build/ci-images/image.ts";
+import { images } from "../scripts/build/ci-images/spec.ts";
 import {
   getBuildMetadata,
   getCommit,
@@ -29,6 +32,7 @@ import {
   startGroup,
   uploadArtifact,
 } from "../scripts/buildkite.ts";
+import { type ImageState, getImageState } from "../scripts/ci-image.ts";
 
 function parseGitRepository(url: string | URL): string | undefined {
   const parsed = parseGitUrl(url);
@@ -69,16 +73,6 @@ function isBuildManual(): boolean | undefined {
   }
 
   return undefined;
-}
-
-/** The `# Version:` of the bootstrap script that images of `os` are baked with. */
-function getBootstrapVersion(os: Os): number {
-  const script = os === "windows" ? "bootstrap.ps1" : "bootstrap.sh";
-  const match = /# Version: (\d+)/.exec(readFileSync(join(import.meta.dirname, "..", "scripts", script), "utf8"));
-  if (!match) {
-    throw new Error(`scripts/${script} has no "# Version:" line`);
-  }
-  return parseInt(match[1]!);
 }
 
 function parseBoolean(value = ""): boolean | undefined {
@@ -341,9 +335,8 @@ const buildPlatforms: Platform[] = [
   { os: "darwin", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", distro: "debian", release: "13" },
-  // asan x64 cross-builds from the arm64 host too; if install_cross_compiler_rt()
-  // can't fetch amd64 libclang-rt on arm64, this lane may need an x64 host as
-  // the one exception — see scripts/bootstrap.sh.
+  // asan x64 cross-builds from the arm64 host too, with the amd64 compiler-rt
+  // that scripts/build/ci-images/tools/cross-compiler-rt.ts installs there.
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13" },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "debian", release: "13" },
   { os: "linux", arch: "x64", abi: "musl", distro: "debian", release: "13" },
@@ -420,7 +413,7 @@ function getPlatformLabel(platform: Omit<Platform, "arch"> & { arch: string }): 
 function getImageKey(platform: Platform): string {
   const { os, arch, distro, release, features, abi, crossCompile } = platform;
   // Cross-compiled targets (Android, FreeBSD, macOS-cross) build from a Linux
-  // host image — bootstrap.sh installs the NDK / base.txz sysroot on it (the
+  // host image — its bake installs the NDK / base.txz sysroot on it (the
   // macOS SDK is fetched by the build itself). No separate image is baked.
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
   const version = release.replace(/\./g, "");
@@ -444,25 +437,33 @@ function getImageLabel(platform: Platform): string {
   return `${getBuildkiteEmoji(distro || os)} ${release} ${arch}`;
 }
 
-function getImageName(platform: Platform, options: PipelineOptions): string {
-  const { os, distro, crossCompile } = platform;
-  const { buildImages, publishImages, imageFilter } = options;
-
-  const name = getImageKey(platform);
-
-  // Cross-compiled targets (and FreeBSD) build on a Linux host image (see
-  // getImageKey) — both the [build images] filter below and the published
-  // image tag should be judged by the host, not the target. Windows-cross
-  // would otherwise miss the freshly-baked linux image on a
-  // "[build linux images]" run, and pick up bootstrap.ps1's version for a
-  // linux image tag that doesn't exist.
-  const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
-
-  if (buildImages && !publishImages && (!imageFilter || hostOs === imageFilter || distro === imageFilter)) {
-    return `${name}-build-${getBuildNumber()}`;
+/**
+ * The images of scripts/build/ci-images/spec.ts, generated: each one's bake
+ * directory is written under build/ci-images/, and its name is the hash of
+ * that directory.
+ */
+const generatedImages = new Map<string, { image: Image; generated: GeneratedImage }>();
+function getGeneratedImage(platform: Platform): { image: Image; generated: GeneratedImage } {
+  if (!generatedImages.size) {
+    for (const image of images) {
+      generatedImages.set(imageKey(image), {
+        image,
+        generated: generateImage(image, join(process.cwd(), "build/ci-images")),
+      });
+    }
   }
+  const key = getImageKey(platform);
+  const entry = generatedImages.get(key);
+  if (!entry) {
+    throw new Error(
+      `No image "${key}" in scripts/build/ci-images/spec.ts (images: ${[...generatedImages.keys()].join(", ")})`,
+    );
+  }
+  return entry;
+}
 
-  return `${name}-v${getBootstrapVersion(hostOs)}`;
+function getImageName(platform: Platform): string {
+  return getGeneratedImage(platform).generated.name;
 }
 
 /**
@@ -530,7 +531,7 @@ function getEc2Agent(platform: Platform, options: PipelineOptions, ec2Options: E
     release,
     robobun: true,
     robobun2: true,
-    "image-name": getImageName(platform, options),
+    "image-name": getImageName(platform),
     "instance-type": instanceType,
     "preemptible": false,
   };
@@ -647,7 +648,7 @@ function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMo
   //
   // Literal `node` — ci.ts generates pipeline YAML that runs on a
   // different agent later, so process.execPath (the generator's path)
-  // is wrong. PATH on the agent has node via bootstrap.sh.
+  // is wrong. PATH on the agent has node: the image's bake installs it.
   return `node scripts/build.ts ${getBuildArgs(target, options, mode)}`;
 }
 
@@ -735,8 +736,8 @@ const PINNED_QEMU = {
  */
 function getEmulatorBinary(platform: Platform): string {
   const { os, arch } = platform;
-  // Intel SDE is baked into the Windows image by scripts/bootstrap.ps1
-  // (Install-IntelSde): downloadmirror.intel.com sits behind a bot challenge
+  // Intel SDE is baked into the Windows image (scripts/build/ci-images/tools/intel-sde.ts):
+  // downloadmirror.intel.com sits behind a bot challenge
   // that blocks non-browser clients, so it cannot be downloaded at job time.
   if (os === "windows") return "C:\\intel-sde\\sde.exe";
   // Fetched into the checkout root by the setup command below (see PINNED_QEMU).
@@ -992,121 +993,86 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
 }
 
 /**
- * CI image lifecycle
- * ------------------
- * Build/test agents boot from pre-baked cloud images (AWS AMIs for Linux,
- * Azure Shared Image Gallery for Windows). The image a job requests is
- * `${getImageKey(platform)}-v${N}`, where N is the `# Version:` comment at the
- * top of scripts/bootstrap.sh (Linux) or scripts/bootstrap.ps1 (Windows).
+ * CI machine images
+ * -----------------
+ * Build and test machines boot from images baked ahead of time (AWS AMIs for
+ * Linux, Azure Compute Gallery images for Windows). What is on an image is
+ * described in scripts/build/ci-images/spec.ts, and an image's name is
+ * `<key>-<hash>`, where the hash covers everything its bake runs.
  *
- * To change what's installed on a CI machine:
+ * To change what is installed on a CI machine, edit the spec or a tool's
+ * script. The names of the images it affects change with it; a build that
+ * needs a name that does not exist yet bakes it first, and every later build
+ * (the PR's next push, `main` after the merge) finds it by name.
  *
- *   1. Edit bootstrap.sh / bootstrap.ps1 and bump its `# Version:` line.
- *   2. Open a PR whose **commit subject** contains `[build images]` (or
- *      `[build linux images]` / `[build windows images]` to scope it). This
- *      bakes throwaway `…-build-<buildNumber>` images and runs the full
- *      build+test pipeline against them so you can verify the change.
- *   3. Once green, amend/force-push the subject to `[publish images]` (or the
- *      scoped variant). This bakes the real `…-vN` images that normal CI will
- *      pick up. Publishing replaces the live tag in place — for Windows it
- *      deletes the existing gallery version before the new one finishes — so
- *      don't cancel a publish run mid-bake.
- *   4. Merge the PR **after** the publish run is green. By then the `…-vN`
- *      images already exist, so the post-merge `main` build runs immediately
- *      instead of everyone waiting 2-3 h on a bake.
+ * Only builds of this repository's own branches can bake: a bake runs the
+ * branch's code on a machine that becomes everyone's image.
  *
- * These tags are ignored on `main` — image bakes happen on the PR only.
- *
- * @returns steps for the `build-images` group; the last one's key is
+ * @returns steps for the `images` group; the last one's key is
  *   `${getImageKey(platform)}-build-image`, which is what dependents wait on.
  */
-function getBuildImageSteps(platform: Platform, options: PipelineOptions): CommandStep[] {
-  return platform.os === "windows"
-    ? [getWindowsBuildImageStep(platform, options)]
-    : getLinuxBuildImageSteps(platform, options);
-}
+function getImageSteps(platform: Platform, state: ImageState, options: PipelineOptions): CommandStep[] {
+  const imageKey = getImageKey(platform);
+  const { image, generated } = getGeneratedImage(platform);
+  const { name } = generated;
+  const downloadBakeDirectory = `buildkite-agent artifact download "build/ci-images/${imageKey}/*" .`;
+  const bakeTimeout = 3 * 60;
 
-/**
- * Windows images bake on Azure through Packer (WinRM) from the hosted queue.
- */
-function getWindowsBuildImageStep(platform: Platform, options: PipelineOptions): CommandStep {
-  const { arch } = platform;
-  return {
-    key: `${getImageKey(platform)}-build-image`,
-    label: `${getImageLabel(platform)} - build-image`,
-    agents: {
-      queue: "build-image",
-    },
-    env: {
-      // Packer needs several minutes to delete its temp Azure resources after a cancel;
-      // the agent's default 10s grace SIGKILLs it mid-cleanup and leaks a full
-      // VM/NIC/IP stack per retry. The agent reads this from job env — there's no
-      // step-level property for it.
-      BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
-    },
+  // Another build found the name missing a moment ago and is baking it.
+  const waitStep: CommandStep = {
+    key: `${imageKey}-build-image`,
+    label: `${getImageLabel(platform)} - wait-for-image`,
+    agents: { queue: "build-image" },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: `node ./scripts/ci-image.ts bake-image --arch=${arch} --name=${getImageName(platform, options)}`,
-    timeout_in_minutes: 3 * 60,
+    command: `node ./scripts/ci-image.ts wait-image --os=${image.os} --name=${name} --timeout-minutes=${bakeTimeout - 10}`,
+    timeout_in_minutes: bakeTimeout,
   };
-}
+  if (state === "pending") {
+    return [waitStep];
+  }
 
-/**
- * Linux images bake in two steps:
- *
- *  1. `…-bake-image` runs ON a fresh machine of the target distro (requested
- *     with the `bake` agent tag): bootstrap.sh provisions it — so this step's
- *     log is the bootstrap log — and agent.ts installs the agent service.
- *     The machine is imaged as `image-name` once the step passes.
- *  2. `…-build-image` (labelled wait-for-image) waits for that image to be
- *     available. It keeps the key the rest of the pipeline depends on.
- */
-function getLinuxBuildImageSteps(platform: Platform, options: PipelineOptions): CommandStep[] {
-  const { arch, features } = platform;
-  const imageKey = getImageKey(platform);
-  const imageName = getImageName(platform, options);
-  const bootstrapArgs = ["--ci", ...(features || []).map(feature => `--${feature}`)];
-  // prefetch_build_deps shallow-clones the repo at this ref for the dep pins
-  // in scripts/build/deps/; bake from the branch that changed them.
-  const branch = process.env.BUILDKITE_BRANCH;
-  const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
+  if (image.os === "windows") {
+    // Packer drives the bake on Azure from the hosted queue.
+    return [
+      {
+        ...waitStep,
+        label: `${getImageLabel(platform)} - bake-image`,
+        env: {
+          // Packer needs several minutes to delete its temp Azure resources after a cancel;
+          // the agent's default 10s grace SIGKILLs it mid-cleanup and leaks a full
+          // VM/NIC/IP stack per retry. The agent reads this from job env — there's no
+          // step-level property for it.
+          BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
+        },
+        command: [downloadBakeDirectory, `node ./scripts/ci-image.ts bake-image --key=${imageKey} --name=${name}`],
+      },
+    ];
+  }
 
+  // A Linux image bakes ON a fresh machine of its base image, requested with
+  // the `bake` agent tag: bootstrap.sh provisions it, so this step's log is
+  // the bake's log, and the machine is imaged as `image-name` once the step
+  // passes. The wait step after it keeps the key dependents wait on.
   const bakeStep: CommandStep = {
     key: `${imageKey}-bake-image`,
     label: `${getImageLabel(platform)} - bake-image`,
     agents: {
-      ...getEc2Agent(platform, options, { instanceType: arch === "aarch64" ? "t4g.large" : "t3.large" }),
-      bake: true,
-    },
-    env: {
-      BUN_BOOTSTRAP_REPO_REF: repoRef,
+      ...getEc2Agent(platform, options, { instanceType: image.arch === "aarch64" ? "t4g.large" : "t3.large" }),
+      "bake": true,
+      "base-image": image.base.name,
+      "base-image-owner": image.base.owner,
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    // `install` copies agent.ts out of this checkout into the agent's home, so
-    // the unit outlives the build directory.
     // ($$ is a literal $ after pipeline-upload interpolation.)
     command: [
-      `sh ./scripts/bootstrap.sh ${bootstrapArgs.join(" ")}`,
-      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) node ./scripts/agent.ts install`,
+      downloadBakeDirectory,
+      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) sh build/ci-images/${imageKey}/bootstrap.sh "$$PWD"`,
     ],
-    timeout_in_minutes: 3 * 60,
+    timeout_in_minutes: bakeTimeout,
   };
-
-  const waitStep: CommandStep = {
-    key: `${imageKey}-build-image`,
-    label: `${getImageLabel(platform)} - wait-for-image`,
-    depends_on: [bakeStep.key],
-    agents: {
-      queue: "build-image",
-    },
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    command: `node ./scripts/ci-image.ts wait-image --name=${imageName} --build=${getBuildNumber()}`,
-    timeout_in_minutes: 120,
-  };
-
-  return [bakeStep, waitStep];
+  return [bakeStep, { ...waitStep, depends_on: [bakeStep.key] }];
 }
 
 /**
@@ -1236,8 +1202,14 @@ interface Ec2Agent {
   "image-name": string;
   "instance-type": string | undefined;
   preemptible: boolean;
-  /** Image the machine as `image-name` once the step passes (see getLinuxBuildImageSteps). */
+  /**
+   * Image the machine as `image-name` once the step passes (see
+   * getImageSteps), starting it from `base-image`, an exact image name of the
+   * account `base-image-owner`.
+   */
   bake?: boolean;
+  "base-image"?: string;
+  "base-image-owner"?: string;
 }
 
 /** A standing agent: the hosted queues, and the bare-metal darwin test fleet. */
@@ -1331,12 +1303,8 @@ interface PipelineOptions {
   skipTests?: OptionFlag;
   skipSizeCheck?: OptionFlag;
   forceBuilds?: OptionFlag;
-  buildImages?: OptionFlag;
   signWindows?: OptionFlag;
-  publishImages?: OptionFlag;
   dryRun?: OptionFlag;
-  /** The `windows` or `linux` of a `[build linux images]`-style tag. */
-  imageFilter?: string | undefined;
   canary?: number;
   buildPlatforms?: Platform[];
   testPlatforms?: Platform[];
@@ -1485,22 +1453,6 @@ function getOptionsStep(): BlockStep {
         hint: "If specified, only run test paths that include the list of strings (e.g. 'test/js', 'test/cli/hot/watch.ts')",
         required: false,
       },
-      {
-        key: "build-images",
-        select: "Do you want to re-build the base images?",
-        hint: "This can take 2-3 hours to complete, only do so if you've tested locally",
-        required: false,
-        default: "false",
-        options: booleanOptions,
-      },
-      {
-        key: "publish-images",
-        select: "Do you want to re-build and publish the base images?",
-        hint: "This can take 2-3 hours to complete, only do so if you've tested locally",
-        required: false,
-        default: "false",
-        options: booleanOptions,
-      },
     ],
   };
 }
@@ -1577,8 +1529,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
       skipBuilds: parseBoolean(options["skip-builds"]),
       forceBuilds: parseBoolean(options["force-builds"]),
       skipTests: parseBoolean(options["skip-tests"]),
-      buildImages: parseBoolean(options["build-images"]),
-      publishImages: parseBoolean(options["publish-images"]),
       testFiles: parseArray(options["test-files"]),
       buildPlatforms: buildPlatformKeys?.length
         ? buildPlatformKeys.flatMap(key =>
@@ -1613,22 +1563,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
   const isCanary =
     !parseBoolean(process.env.RELEASE || "false") && !/\[(release|build release|release build)\]/i.test(commitMessage);
 
-  let buildImages = parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i);
-  let publishImages = parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i);
-  let imageFilter = (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase();
-
-  // Image bake/publish is meant to happen on the PR; the squash-merge commit
-  // subject often still carries the [publish images] tag, which would re-run
-  // the multi-hour bake on main and (because publish replaces the live image
-  // tag) briefly delete the images CI runs on. Ignore the tag on main and run
-  // a normal build instead.
-  if (isMainBranch() && (buildImages || publishImages)) {
-    console.log(`Ignoring [${publishImages || buildImages}] on main branch — images are built and published from PRs.`);
-    buildImages = false;
-    publishImages = false;
-    imageFilter = undefined;
-  }
-
   return {
     canary: isCanary ? canary : 0,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
@@ -1637,10 +1571,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    buildImages,
     dryRun: parseOption(/\[(dry run)\]/i),
-    publishImages,
-    imageFilter,
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1760,32 +1691,47 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     return;
   }
 
-  const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages, imageFilter } = options;
-  // Every build lane runs on buildHostPlatform (see getBuildAgent),
-  // so the build-image set is exactly {buildHostPlatform} ∪ testPlatforms' native
-  // images — buildPlatforms entries encode TARGET os/arch/abi, not a host image.
-  const imagePlatforms = new Map<string, Platform>(
-    buildImages || publishImages
-      ? [buildHostPlatform, ...testPlatforms]
-          // darwin: no cloud images (bare-metal test fleet only).
-          .filter(({ os }) => os !== "darwin")
-          .filter(({ os, distro }) => !imageFilter || os === imageFilter || distro === imageFilter)
-          .map(platform => [getImageKey(platform), platform])
-      : [],
+  const { buildPlatforms = [], testPlatforms = [] } = options;
+  // Every build lane runs on buildHostPlatform (see getBuildAgent), so the
+  // images a build needs are exactly {buildHostPlatform} ∪ testPlatforms'
+  // native images — buildPlatforms entries encode TARGET os/arch/abi, not a
+  // host image. darwin has no cloud images (bare-metal test fleet only).
+  const neededImages = new Map<string, Platform>(
+    [buildHostPlatform, ...testPlatforms]
+      .filter(({ os }) => os !== "darwin")
+      .map(platform => [getImageKey(platform), platform]),
   );
+
+  // The ones that cannot be booted yet. Whether an image exists can only be
+  // asked in CI, where the cloud credentials are.
+  const imagePlatforms = new Map<string, Platform>();
+  const imageSteps: CommandStep[] = [];
+  for (const [key, platform] of isBuildkite ? neededImages : []) {
+    const { image, generated } = getGeneratedImage(platform);
+    const state = await getImageState(image.os, generated.name);
+    console.log(` - ${generated.name}: ${state}`);
+    if (state === "available") {
+      continue;
+    }
+    if (state !== "pending") {
+      if (isFork()) {
+        throw new Error(
+          `The CI image ${generated.name} does not exist, and a fork's build cannot bake it: a bake runs the branch's code on a machine that becomes everyone's image. Push the branch to oven-sh/bun to bake it.`,
+        );
+      }
+      await run(["buildkite-agent", "artifact", "upload", `build/ci-images/${key}/*`]);
+    }
+    imagePlatforms.set(key, platform);
+    imageSteps.push(...getImageSteps(platform, state, options));
+  }
 
   const steps: Step[] = [];
 
-  if (imagePlatforms.size) {
-    steps.push({
-      key: "build-images",
-      group: getBuildkiteEmoji("aws"),
-      steps: [...imagePlatforms.values()].flatMap(platform => getBuildImageSteps(platform, options)),
-    });
+  if (imageSteps.length) {
+    steps.push({ key: "images", group: getBuildkiteEmoji("aws"), steps: imageSteps });
   }
 
-  let { skipBuilds, forceBuilds, dryRun } = options;
-  dryRun = dryRun || !!buildImages;
+  const { skipBuilds, forceBuilds, dryRun } = options;
 
   let buildId: string | undefined;
   if (skipBuilds && !forceBuilds) {
@@ -1937,8 +1883,8 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });
           testStepKeys.push(step.key);
-          // Test shards run on their native platform image; on [build images]
-          // runs they must wait for that freshly-baked image before starting.
+          // Test shards run on their native platform image; when this build
+          // bakes it, they wait for it.
           const imageKey = getImageKey(target);
           const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
           return getStepWithDependsOn(
@@ -1969,8 +1915,8 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   if (shouldSignWindows) {
     const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
     if (windowsPlatforms.length > 0) {
-      // Signing runs on a native Windows x64 box — on [build images] runs it
-      // requests the freshly baked native Windows image, so wait for it.
+      // Signing runs on a native Windows x64 box; when this build bakes that
+      // image, signing waits for it.
       steps.push(
         getStepWithDependsOn(
           getWindowsSignStep(windowsPlatforms, options),

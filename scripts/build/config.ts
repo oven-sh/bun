@@ -10,6 +10,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pins } from "./ci-images/spec.ts";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
@@ -539,7 +540,7 @@ export function detectLinuxAbi(): Abi {
  * release with the bionic syscall wrappers we rely on without raw-syscall
  * fallbacks. Covers ~96% of active devices as of 2026.
  */
-export const ANDROID_API_LEVEL_DEFAULT = 28;
+export const ANDROID_API_LEVEL_DEFAULT = pins.androidNdk.apiLevel;
 
 /**
  * FreeBSD release we target. 14.x is the current production series; 14.3
@@ -547,7 +548,7 @@ export const ANDROID_API_LEVEL_DEFAULT = 28;
  * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
  * compat within a major).
  */
-export const FREEBSD_VERSION_DEFAULT = "14.3";
+export const FREEBSD_VERSION_DEFAULT = pins.freebsd.version;
 
 /**
  * Locate a FreeBSD sysroot (extracted base.txz). Checks env var then

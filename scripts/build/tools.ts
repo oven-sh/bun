@@ -10,6 +10,7 @@ import { execSync, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
+import { pins } from "./ci-images/spec.ts";
 import type { Arch, OS, Toolchain } from "./config.ts";
 import { BuildError } from "./error.ts";
 
@@ -277,10 +278,11 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * LLVM version constraint. Any version in the same major.minor range is
- * accepted (e.g. apt.llvm.org serves 23.1.2 snapshots while we target 23.1.1).
+ * LLVM version constraint: the release CI's images install. Any version in
+ * the same major.minor range is accepted (e.g. apt.llvm.org serves 23.1.2
+ * snapshots while we target 23.1.1).
  */
-export const LLVM_VERSION = "23.1.1";
+export const LLVM_VERSION = pins.llvm.version;
 const LLVM_MAJOR = "23";
 const LLVM_MINOR = "1";
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;

@@ -3374,7 +3374,10 @@ test.skipIf(isDebug)(
 test.skipIf(!isDebug && !isASAN)(
   "react-compiler PruneNonEscapingScopes time does not grow with the square of the operands of an instruction",
   async () => {
-    const size = isDebug ? 1000 : 2000;
+    // Two rounds of a debug build fit in the time of one test at this size.
+    const { size, control, rounds } = isDebug
+      ? { size: 500, control: 25, rounds: 2 }
+      : { size: 2000, control: 50, rounds: 3 };
     const source = (perComponent: number) =>
       Array.from({ length: size / perComponent }, (_, c) => {
         const rows = Buffer.alloc(perComponent * 4, "{}, ").toString();
@@ -3382,7 +3385,7 @@ test.skipIf(!isDebug && !isASAN)(
       }).join("");
     using dir = tempDir("react-compiler-operands-time", {
       "large.jsx": source(size),
-      "control.jsx": source(50),
+      "control.jsx": source(control),
     });
 
     const passTime = async (entry: string) => {
@@ -3404,17 +3407,18 @@ test.skipIf(!isDebug && !isASAN)(
       return Number(ms);
     };
 
-    // Large over control: 0.4 to 1.4 with the fix. 9 to 12 with one list of operands
-    // but no cursor, and 14 or more with a set per lvalue. Other load on the machine
-    // adds to a wall time, so the test takes the best of three rounds.
-    let large = Infinity;
-    let control = Infinity;
-    for (let round = 0; round < 3 && !(large / control < 3); round++) {
+    // Large over control: 0.4 to 1.4 with the fix. On an ASAN build 10 to 12 with one
+    // list of operands but no cursor and 20 with a set per lvalue, on a debug build 5
+    // and 6 to 10. Other load on the machine adds to a wall time, so the test takes
+    // the best time of each over all rounds.
+    let largeTime = Infinity;
+    let controlTime = Infinity;
+    for (let round = 0; round < rounds; round++) {
       const times = await Promise.all([passTime("large.jsx"), passTime("control.jsx")]);
-      large = Math.min(large, times[0]);
-      control = Math.min(control, times[1]);
+      largeTime = Math.min(largeTime, times[0]);
+      controlTime = Math.min(controlTime, times[1]);
     }
-    expect(large / control).toBeLessThan(3);
+    expect(largeTime / controlTime).toBeLessThan(3);
   },
 );
 

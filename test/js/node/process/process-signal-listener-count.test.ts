@@ -165,14 +165,14 @@ describe.concurrent("signal names", () => {
       // Node exits with a signal pending when nothing else keeps the loop alive.
       // The timer also ends a child whose SIGUSR2 listener never runs.
       const keepAlive = setTimeout(() => {}, 60_000);
-      // process.kill on the own pid runs the OS handler before it returns, and the numbers queue in order.
-      // So the SIGUSR2 listener runs after the listeners of the signal under test.
       process.on("SIGUSR2", () => {
         clearTimeout(keepAlive);
         console.log(JSON.stringify(calls.sort()));
       });
       process.kill(process.pid, ${JSON.stringify(sent)});
-      process.kill(process.pid, "SIGUSR2");
+      // The loop runs the listeners of the pending signal before it runs the immediate.
+      // So the SIGUSR2 listener prints after the listeners of the signal under test ran.
+      setImmediate(() => process.kill(process.pid, "SIGUSR2"));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -202,12 +202,13 @@ describe.concurrent("signal names", () => {
     linuxOnlySignals.push(["SIGUNUSED", 31]);
     signalAliases.push(["SIGSYS", "SIGUNUSED", 31]);
   }
-  const linuxOnlyNames = linuxOnlySignals.map(([name]) => name);
 
-  test.skipIf(!isLinux)(`process.kill knows ${linuxOnlyNames.join(", ")}`, () => {
-    // Linux pids stay below 2 ** 22, so kill(2) fails with ESRCH.
-    // An unknown name throws ERR_UNKNOWN_SIGNAL before kill(2).
-    const codes = linuxOnlyNames.map(name => {
+  // On Windows, process.kill knows only the signals that libuv can send.
+  test.skipIf(isWindows)("process.kill knows every name in os.constants.signals", () => {
+    // SIGPWR is not covered: JSC suspends threads with it on Linux, and process.kill does not send it by name.
+    const names = Object.keys(constants.signals).filter(name => name !== "SIGPWR");
+    // No process has this pid, so kill(2) fails with ESRCH. An unknown name throws ERR_UNKNOWN_SIGNAL before kill(2).
+    const codes = names.map(name => {
       try {
         process.kill(2147483640, name);
         return [name, null];
@@ -215,7 +216,7 @@ describe.concurrent("signal names", () => {
         return [name, e.code];
       }
     });
-    expect(codes).toEqual(linuxOnlyNames.map(name => [name, "ESRCH"]));
+    expect(codes).toEqual(names.map(name => [name, "ESRCH"]));
   });
 
   test.skipIf(!isLinux).each(linuxOnlySignals)("process.on(%p) listens for signal %d", async (name, number) => {

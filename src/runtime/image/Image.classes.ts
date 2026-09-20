@@ -9,7 +9,8 @@ export default [
     // Report owned input (Blob dupe / data:-URL / path string) so a heap of
     // idle Image objects shows up in the GC's accounting. The js_buffer source
     // is the user's ArrayBuffer and already counted via the cached value slot;
-    // off-thread RGBA scratch lives only for the task's duration so isn't.
+    // off-thread RGBA lives only for the task's duration, except the plane
+    // `pixels()` publishes, which JSC counts as a Uint8Array backing store.
     estimatedSize: true,
     // Strong-ref slot for the input ArrayBuffer/TypedArray so we BORROW its
     // bytes instead of duping in the constructor. While a task is in flight

@@ -160,12 +160,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
     }
     // SAFETY: the shim returned CG_OK only after writing all n bytes.
     unsafe { out.set_len(n) };
-    Ok(codecs::Decoded {
-        rgba: out,
-        width: w,
-        height: h,
-        icc_profile: None,
-    })
+    codecs::Decoded::new(out, w, h, None).map_err(|_| BackendError::DecodeFailed)
 }
 
 #[allow(dead_code)]

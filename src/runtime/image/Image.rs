@@ -310,8 +310,9 @@ impl Image {
 
     pub(crate) fn estimated_size(&self) -> usize {
         // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
-        // counted via the cached value slot); the worker's RGBA scratch is
-        // task-scoped and freed before any GC could observe it.
+        // counted via the cached value slot); the worker's RGBA buffer is
+        // task-scoped for the encoding terminals, and the one `pixels()`
+        // publishes is counted by JSC as the Uint8Array's backing store.
         mem::size_of::<Image>()
             + match self.source.get() {
                 Source::JsBuffer | Source::Blob(_) => 0,
@@ -1544,15 +1545,10 @@ pub(crate) enum TaskResult {
         w: u32,
         h: u32,
     },
-    /// The post-pipeline decode buffer, still the `Vec` the decoder or the
-    /// last transform allocated: `w * h * 4` bytes, rows top to bottom, no
-    /// padding (`codecs::decode` refuses anything else, and every transform
-    /// allocates exactly that).
-    Pixels {
-        plane: Vec<u8>,
-        w: u32,
-        h: u32,
-    },
+    /// The post-pipeline plane, still the `Vec` the decoder or the last
+    /// transform allocated: `w * h * 4` bytes, rows top to bottom, no
+    /// padding, which `Decoded` guarantees by construction.
+    Pixels(codecs::Decoded),
     Meta {
         w: u32,
         h: u32,
@@ -1689,7 +1685,7 @@ impl PipelineTask {
             codecs::DecodeHint::default()
         };
 
-        let mut decoded = match codecs::decode(input, self.max_pixels, hint) {
+        let mut decoded = match codecs::decode(input, self.max_pixels(), hint) {
             Ok(d) => d,
             Err(e) => {
                 self.result = TaskResult::Err(e);
@@ -1715,15 +1711,16 @@ impl PipelineTask {
         if matches!(self.kind, Kind::Metadata) {
             // Reached only for HEIC/AVIF (probe fell through).
             self.result = TaskResult::Meta {
-                w: decoded.width,
-                h: decoded.height,
+                w: decoded.width(),
+                h: decoded.height(),
                 format: src_format,
             };
             return;
         }
 
         if matches!(self.kind, Kind::Placeholder) {
-            self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
+            self.result = match make_placeholder(decoded.rgba(), decoded.width(), decoded.height())
+            {
                 Ok(r) => r,
                 Err(e) => TaskResult::Err(e),
             };
@@ -1736,18 +1733,11 @@ impl PipelineTask {
         }
 
         if matches!(self.kind, Kind::Pixels) {
-            // The decode buffer itself goes to JS; nothing is copied. The
-            // emptied `Decoded` then frees only its ICC profile, which is
-            // why a plane carries no colour-space information (documented
-            // on `pixels()`).
-            let w = decoded.width;
-            let h = decoded.height;
-            debug_assert_eq!(decoded.rgba.len(), w as usize * h as usize * 4);
-            self.result = TaskResult::Pixels {
-                plane: mem::take(&mut decoded.rgba),
-                w,
-                h,
-            };
+            // The plane crosses to the JS thread as the `Decoded` it ended
+            // the pipeline in, buffer and shape together. Its ICC profile is
+            // dropped there, which is why a plane carries no colour-space
+            // information (documented on `pixels()`).
+            self.result = TaskResult::Pixels(decoded);
             return;
         }
 
@@ -1779,7 +1769,7 @@ impl PipelineTask {
             // (raw `NonNull<[u8]>`); `decoded` outlives the call below.
             enc.icc_profile = decoded.icc_profile.as_deref().map(core::ptr::NonNull::from);
         }
-        let out = match codecs::encode(&decoded.rgba, decoded.width, decoded.height, enc) {
+        let out = match codecs::encode(decoded.rgba(), decoded.width(), decoded.height(), enc) {
             Ok(o) => o,
             Err(e) => {
                 self.result = TaskResult::Err(e);
@@ -1790,8 +1780,8 @@ impl PipelineTask {
         self.result = TaskResult::Encoded {
             out,
             format: enc.format,
-            w: decoded.width,
-            h: decoded.height,
+            w: decoded.width(),
+            h: decoded.height(),
         };
     }
 
@@ -1803,14 +1793,14 @@ impl PipelineTask {
         let image = js.image.image(cx);
         // Stash final dims here (JS thread) — `run()` is on a WorkPool thread
         // so writing `image.*` there would race the synchronous getters.
-        match &self.result {
-            TaskResult::Encoded { w, h, .. }
-            | TaskResult::Pixels { w, h, .. }
-            | TaskResult::Meta { w, h, .. } => {
-                image.last_width.set(i32::try_from(*w).expect("int cast"));
-                image.last_height.set(i32::try_from(*h).expect("int cast"));
-            }
-            _ => {}
+        let dims = match &self.result {
+            TaskResult::Encoded { w, h, .. } | TaskResult::Meta { w, h, .. } => Some((*w, *h)),
+            TaskResult::Pixels(d) => Some((d.width(), d.height())),
+            _ => None,
+        };
+        if let Some((w, h)) = dims {
+            image.last_width.set(i32::try_from(w).expect("int cast"));
+            image.last_height.set(i32::try_from(h).expect("int cast"));
         }
         let result = mem::replace(
             &mut self.result,
@@ -1828,27 +1818,10 @@ impl PipelineTask {
                 match &mut js.deliver {
                     // The codec's own allocation is handed straight to JS with the
                     // codec's free as the finalizer — no dupe of the output.
-                    Deliver::Uint8Array => {
-                        // SAFETY: see `out_slice` above; mutability is for the
-                        // `from_bytes` signature only — JS takes ownership.
-                        let mut_slice = unsafe {
-                            core::slice::from_raw_parts_mut(
-                                out.bytes.as_ptr().cast::<u8>(),
-                                out_slice.len(),
-                            )
-                        };
-                        // SAFETY: `out.bytes` is the codec-owned allocation
-                        // whose ownership transfers to JSC; `out.free` frees
-                        // it exactly once at GC and ignores the null ctx.
-                        let v = unsafe {
-                            ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
-                                .to_js_with_context(global, core::ptr::null_mut(), Some(out.free))
-                        };
-                        match v {
-                            Ok(v) => promise.resolve(global, v)?,
-                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
-                        }
-                    }
+                    Deliver::Uint8Array => match adopt_as_uint8array(global, &out) {
+                        Ok(v) => promise.resolve(global, v)?,
+                        Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                    },
                     // createBufferWithCtx returns plain JSValue (its C++ side asserts
                     // the no-throw contract), so the .uint8array catch is unmatched
                     // here by construction, not omission.
@@ -1972,7 +1945,7 @@ impl PipelineTask {
                 obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;
             }
-            TaskResult::Pixels { plane, w, h } => {
+            TaskResult::Pixels(decoded) => {
                 // Same hand-off as the `Uint8Array` arm above: the `Vec`'s
                 // allocation becomes the Uint8Array's backing store and the
                 // global allocator's free is its finalizer. Two properties
@@ -1981,23 +1954,14 @@ impl PipelineTask {
                 // the `Vec`'s capacity may be forgotten, and it accepts a
                 // pointer allocated on another thread, because the plane was
                 // allocated on a work-pool thread and is freed on the JS
-                // thread at a later GC.
-                let out = mem::ManuallyDrop::new(codecs::Encoded::from_owned(plane));
-                // SAFETY: `out.bytes` is the live `Vec` allocation whose
-                // ownership transfers to JSC; `out.free` frees it exactly once
-                // at GC and ignores the null ctx.
-                let data = unsafe {
-                    let slice = core::slice::from_raw_parts_mut(
-                        out.bytes.as_ptr().cast::<u8>(),
-                        out.bytes.len(),
-                    );
-                    ArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array).to_js_with_context(
-                        global,
-                        core::ptr::null_mut(),
-                        Some(out.free),
-                    )
-                };
-                let data = match data {
+                // thread at a later GC. JSC counts the bytes against its
+                // heap (`Heap::addReference`), so live planes drive
+                // collection like any other external buffer.
+                let (plane, w, h) = decoded.into_plane();
+                let out = mem::ManuallyDrop::new(
+                    codecs::Encoded::from_owned(plane).expect("a `Decoded` plane is never empty"),
+                );
+                let data = match adopt_as_uint8array(global, &out) {
                     Ok(v) => v,
                     Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                 };
@@ -2014,55 +1978,62 @@ impl PipelineTask {
         Ok(())
     }
 
-    /// Fixed Sharp order: rotate → flip/flop → resize. Each stage replaces
-    /// `d` in place; the old buffer is freed before assigning the new one so
-    /// peak memory is at most 2× one frame. Every stage hand-swaps only the
-    /// pixel slots — rotate/resize return a fresh `Decoded` with
-    /// `icc_profile == None`, so overwriting `d.*` wholesale would drop the
-    /// source's colour profile. Geometry doesn't change colour meaning, so
-    /// the profile survives unchanged.
+    /// Fixed Sharp order: rotate → flip/flop → resize. Each geometry stage
+    /// swaps its output in through `Decoded::replace_plane`, which drops the
+    /// old buffer (peak memory is at most 2× one frame), checks the new
+    /// length against the new shape, and keeps the source's ICC profile.
     fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
         if p.rotate != 0 {
-            let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
-            // Assignment drops
-            // the old `Vec<u8>`/owned buffer.
-            d.rgba = next.rgba;
-            d.width = next.width;
-            d.height = next.height;
+            let (next, w, h) =
+                codecs::rotate(d.rgba(), d.width(), d.height(), u32::from(p.rotate))?;
+            d.replace_plane(next, w, h)?;
         }
         if p.flip {
-            let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
-            d.rgba = next;
+            let next = codecs::flip(d.rgba(), d.width(), d.height(), false)?;
+            d.replace_plane(next, d.width(), d.height())?;
         }
         if p.flop {
-            let next = codecs::flip(&d.rgba, d.width, d.height, true)?;
-            d.rgba = next;
+            let next = codecs::flip(d.rgba(), d.width(), d.height(), true)?;
+            d.replace_plane(next, d.width(), d.height())?;
         }
         if let Some(r) = p.resize {
-            let t = resolve_resize(r, d.width, d.height);
+            let t = resolve_resize(r, d.width(), d.height());
             // Guard the output canvas AND the H-then-V intermediate (always
             // dst_w × src_h — image_resize.cpp pass order is fixed). A 1×N
             // source → resize(W,1) has tiny input AND output canvases yet a
             // W×N intermediate; with W=262143, N=16383 that's a 17 GiB alloc
             // from a ~200-byte PNG. The src_w×dst_h cross-product is bounded
             // by max(input, output) so doesn't need its own check.
-            if (t.0 as u64) * (t.1 as u64) > self.max_pixels
-                || (t.0 as u64) * (d.height as u64) > self.max_pixels
+            let max_pixels = self.max_pixels();
+            if (t.0 as u64) * (t.1 as u64) > max_pixels
+                || (t.0 as u64) * (d.height() as u64) > max_pixels
             {
                 return Err(codecs::Error::TooManyPixels);
             }
-            if t.0 != d.width || t.1 != d.height {
-                let next = codecs::resize(&d.rgba, d.width, d.height, t.0, t.1, r.filter)?;
-                d.rgba = next;
-                d.width = t.0;
-                d.height = t.1;
+            if t.0 != d.width() || t.1 != d.height() {
+                let next = codecs::resize(d.rgba(), d.width(), d.height(), t.0, t.1, r.filter)?;
+                d.replace_plane(next, t.0, t.1)?;
             }
         }
         if let Some(m) = p.modulate {
-            codecs::modulate(&mut d.rgba, m.brightness, m.saturation);
+            codecs::modulate(d.rgba_mut(), m.brightness, m.saturation);
         }
         Ok(())
+    }
+
+    /// The caller's `maxPixels`, and for `pixels()` also the most a plane can
+    /// be handed to JS as: JSC refuses an `ArrayBuffer` above
+    /// `MAX_ARRAY_BUFFER_SIZE` (4 GiB), and with the same guard this task
+    /// already applies before allocating, that refusal happens before the
+    /// decode instead of after the whole pipeline has run.
+    fn max_pixels(&self) -> u64 {
+        // `MAX_ARRAY_BUFFER_SIZE` in JSC's PageCount.h, in RGBA8 pixels.
+        const MAX_PLANE_PIXELS: u64 = (1u64 << 32) / 4;
+        match self.kind {
+            Kind::Pixels => self.max_pixels.min(MAX_PLANE_PIXELS),
+            _ => self.max_pixels,
+        }
     }
 }
 
@@ -2134,26 +2105,49 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
     (w, h)
 }
 
+/// Hand `out`'s allocation to JS as a `Uint8Array` with `out.free` as its
+/// finalizer: no copy, and the finalizer runs exactly once, at GC or, on
+/// `Err`, before this returns (JSC refuses a buffer above
+/// `MAX_ARRAY_BUFFER_SIZE` and frees it on the spot). The caller keeps `out`
+/// in `ManuallyDrop` so the codec `Drop` never competes with that finalizer.
+fn adopt_as_uint8array(
+    global: &JSGlobalObject,
+    out: &mem::ManuallyDrop<codecs::Encoded>,
+) -> JsResult<JSValue> {
+    // SAFETY: `out.bytes` is a non-null fat pointer into a live codec
+    // allocation; mutability is for the `from_bytes` signature only, JS
+    // takes ownership.
+    let slice = unsafe {
+        core::slice::from_raw_parts_mut(out.bytes.as_ptr().cast::<u8>(), out.bytes.len())
+    };
+    // SAFETY: `out.bytes` is the codec-owned allocation whose ownership
+    // transfers to JSC; `out.free` frees it exactly once and ignores the
+    // null ctx.
+    unsafe {
+        ArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array).to_js_with_context(
+            global,
+            core::ptr::null_mut(),
+            Some(out.free),
+        )
+    }
+}
+
 fn apply_orientation(
     d: &mut codecs::Decoded,
     orient: exif::Orientation,
 ) -> Result<(), codecs::Error> {
     let t = orient.transform();
     if t.flip {
-        let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
-        d.rgba = next;
+        let next = codecs::flip(d.rgba(), d.width(), d.height(), false)?;
+        d.replace_plane(next, d.width(), d.height())?;
     }
     if t.flop {
-        let next = codecs::flip(&d.rgba, d.width, d.height, true)?;
-        d.rgba = next;
+        let next = codecs::flip(d.rgba(), d.width(), d.height(), true)?;
+        d.replace_plane(next, d.width(), d.height())?;
     }
     if t.rotate != 0 {
-        // Swap pixel slots only — `next` carries no ICC profile, and the
-        // one on `d` (set by decode) must survive EXIF auto-orient.
-        let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(t.rotate))?;
-        d.rgba = next.rgba;
-        d.width = next.width;
-        d.height = next.height;
+        let (next, w, h) = codecs::rotate(d.rgba(), d.width(), d.height(), u32::from(t.rotate))?;
+        d.replace_plane(next, w, h)?;
     }
     Ok(())
 }

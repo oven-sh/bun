@@ -9536,12 +9536,26 @@ declare module "bun" {
      * `.raw().toBuffer({ resolveWithObject: true })`.
      *
      * Bun applies no color transform and does not deliver the ICC profile.
-     * JPEG, PNG and WebP pixels are the decoder's output, in the space the
-     * source profile describes; formats the system backend decodes (HEIC,
-     * AVIF, TIFF) arrive as sRGB. Sharp converts to sRGB by default, so the
-     * two differ for a source with a non-sRGB profile. Alpha is straight, not
-     * premultiplied. Nothing else from the source travels with the plane:
-     * no EXIF, no GPS, no profile.
+     * Which pixels arrive depends on which decoder ran, not on the format
+     * name: Bun's own decoders (JPEG, PNG, WebP everywhere; BMP and GIF when
+     * {@link Image.backend} is `"bun"` or on Linux) return their output in
+     * the space the source profile describes, while the system backend
+     * (HEIC, AVIF and TIFF, plus BMP and GIF under the default `"system"`
+     * backend on macOS and Windows) colour-manages into sRGB. Sharp converts
+     * to sRGB by default, so the two differ for a source with a non-sRGB
+     * profile. Alpha is straight, not premultiplied.
+     *
+     * EXIF orientation is applied before the plane is produced (unless
+     * `autoOrient: false`), so a 90° or 270° tag swaps `width` and `height`.
+     * Nothing else from the source travels with the plane: no EXIF, no GPS,
+     * no profile.
+     *
+     * A plane is at most 2^30 pixels (4 GiB, JSC's `ArrayBuffer` limit)
+     * whatever `maxPixels` allows; a pipeline that would exceed it rejects
+     * with `ERR_IMAGE_TOO_MANY_PIXELS` before the resize runs.
+     *
+     * `data` is a `Uint8Array` over its own buffer; for an API that wants a
+     * `Buffer`, `Buffer.from(data.buffer)` views the same bytes without a copy.
      *
      * ```ts
      * const { data, width, height } = await new Bun.Image(bytes)

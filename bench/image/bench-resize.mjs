@@ -161,6 +161,13 @@ const ops = {
     sharp: buf =>
       sharp(buf).resize(1024, 768, { fit: "inside" }).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
   },
+  // The hand-off alone: decode, no resize, the decoder's buffer becomes the
+  // Uint8Array. The number that shows what pixels() saves over an encode.
+  "JPEG decode → raw RGBA (no resize)": {
+    fixture: jpegFixture,
+    bun: buf => new Bun.Image(buf).pixels(),
+    sharp: buf => sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+  },
 };
 
 const ITER = 50;

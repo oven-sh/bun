@@ -215,12 +215,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
             unsafe { core::slice::from_raw_parts(iter.chunk.bytes, iter.chunk.size) }.to_vec(),
         );
     };
-    Ok(codecs::Decoded {
-        rgba: out,
-        width: w,
-        height: h,
-        icc_profile: icc,
-    })
+    codecs::Decoded::new(out, w, h, icc)
 }
 
 pub(crate) fn encode(

@@ -155,12 +155,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, B
 
     // System backends colour-manage into sRGB during decode (WICConvertBitmapSource
     // → 32bppRGBA), so the source ICC profile is consumed, not forwarded.
-    Ok(codecs::Decoded {
-        rgba: out,
-        width: w,
-        height: h,
-        icc_profile: None,
-    })
+    codecs::Decoded::new(out, w, h, None).map_err(|_| BackendError::DecodeFailed)
 }
 
 pub(crate) fn encode(

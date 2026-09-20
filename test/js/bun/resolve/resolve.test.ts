@@ -2215,17 +2215,21 @@ describe.concurrent("a repeated resolution", () => {
         const count = 2100;
         for (let i = 0; i < count; i++) fs.writeFileSync(path.join(__dirname, "m" + i + ".cjs"), "");
         let wrong = 0;
-        // The second round makes the entries, and replaces some. The third one reads some that are left.
-        for (const step of [1, 1, 4]) {
-          for (let i = 0; i < count; i += step) {
+        let hits = 0;
+        // The second round makes the entries, and replaces some. The third one reads those that are left.
+        for (let round = 0; round < 3; round++) {
+          const before = resolutionMemoHits();
+          for (let i = 0; i < count; i++) {
             if (require.resolve("./m" + i + ".cjs") !== path.join(__dirname, "m" + i + ".cjs")) wrong++;
           }
+          hits = resolutionMemoHits() - before;
         }
-        console.log(JSON.stringify({ wrong, answeredSome: resolutionMemoHits() > 0 }));
+        // In the third round the memo answered some pairs, and not all: it had replaced the others.
+        console.log(JSON.stringify({ wrong, answeredSome: hits > 0, replacedSome: hits < count }));
       `,
     });
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ wrong: 0, answeredSome: true });
+    expect(JSON.parse(stdout)).toEqual({ wrong: 0, answeredSome: true, replacedSome: true });
     expect(exitCode).toBe(0);
   });
 });

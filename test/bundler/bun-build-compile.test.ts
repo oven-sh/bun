@@ -101,7 +101,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       expect(copied.anonKB - aliased.anonKB).toBeGreaterThan(4096);
     },
     60_000,
-  );;;
+  );
 
   // --bytecode into an executable for another os/arch/libc embeds bytecode written by this platform's JavaScriptCore for
   // another's; such executables say so in crash reports (Features: cross_compiled_bytecode). The "other platform" build

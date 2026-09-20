@@ -4965,6 +4965,8 @@ class ClientHttp2Session extends Http2Session {
   // (node returns a pending stream with no id and submits it once a slot frees).
   #activeRequestCount: number = 0;
   #pendingRequests: Array<{ req: ClientHttp2Stream; headers: any; sensitiveNames: any; options: any }> | null = null;
+  // True until the 'connect' listener that request() adds has submitted the requests made before the connect.
+  #flushOnConnect: boolean = false;
 
   static #Handlers = {
     binaryType: "buffer",
@@ -5397,10 +5399,7 @@ class ClientHttp2Session extends Http2Session {
       }
       this.#parser?.forEachStream(streamRejectedByGoawaySession);
       this.destroy();
-      return;
     }
-    // Requests made while the socket was still connecting were queued; submit them now.
-    this.#flushPendingRequests();
   }
 
   #onClose() {
@@ -6214,6 +6213,11 @@ class ClientHttp2Session extends Http2Session {
         if (this.#pendingRequests === null) {
           this.#pendingRequests = [];
         }
+        if (!this.#connected && !this.#flushOnConnect) {
+          // node's order: 'connect' listeners added before the first request() still see it pending.
+          this.#flushOnConnect = true;
+          this.once("connect", this.#flushPendingRequestsOnConnect.bind(this));
+        }
         // Preserve both forms: the on-wire (array) form keeps duplicate-header interleaving the
         // object form cannot represent; the object form is what diagnostics channels publish.
         this.#pendingRequests.push({
@@ -6281,11 +6285,15 @@ class ClientHttp2Session extends Http2Session {
     });
   }
 
+  #flushPendingRequestsOnConnect() {
+    this.#flushOnConnect = false;
+    this.#flushPendingRequests();
+  }
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots
   // are available, in the order they were made.
   #flushPendingRequests() {
     const queue = this.#pendingRequests;
-    if (queue === null || queue.length === 0) return;
+    if (queue === null || queue.length === 0 || this.#flushOnConnect) return;
     while (queue.length > 0) {
       const parser = this.#parser;
       if (this.destroyed || !parser) {

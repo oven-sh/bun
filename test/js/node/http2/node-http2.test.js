@@ -2556,6 +2556,32 @@ describe("http2 client session.destroy() closes an open request like node", () =
     expect(result).toEqual({ error: undefined, rstCode: NGHTTP2_NO_ERROR, events: ["close"] });
   });
 
+  // node submits the requests made before the connect from a 'connect' listener that the first
+  // request() adds. So a 'connect' listener added before that request() still finds it pending.
+  it.each([
+    ["before", { pending: true, error: "ERR_HTTP2_STREAM_CANCEL", events: ["error", "close"] }],
+    ["after", { pending: false, error: undefined, events: ["end", "close"] }],
+  ])("from a 'connect' listener added %s the first request()", async (order, expected) => {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      let pending;
+      const destroyOnConnect = () => {
+        pending = req.pending;
+        client.destroy();
+      };
+      if (order === "before") client.on("connect", destroyOnConnect);
+      const req = client.request({ ":path": "/silent-connect" });
+      if (order === "after") client.on("connect", destroyOnConnect);
+      const ending = recordEnding(req);
+      req.resume();
+      await new Promise(resolve => req.once("close", resolve));
+      expect({ pending, ...ending }).toEqual(expected);
+    } finally {
+      client.destroy();
+    }
+  });
+
   it("with the code of a GOAWAY that the session received", async () => {
     const result = await closeOpenRequest((client, req, serverStream) => {
       // The listener runs before the session destroys itself with ERR_HTTP2_SESSION_ERROR.

@@ -104,7 +104,9 @@ describe("emitPostLink ninja ordering", () => {
     expect(buildEdge(out, "smoke_test")).toBe(
       `build bun-profile.smoke-test-passed: smoke_test bun-profile${cfg.exeSuffix} || bun${cfg.exeSuffix}`,
     );
-    expect(buildEdge(out, "strip")).toBe(`build bun${cfg.exeSuffix}: strip bun-profile${cfg.exeSuffix}`);
+    // A Windows target has nothing to strip: its `bun` is a copy.
+    const strip = cfg.windows ? "copy_exe" : "strip";
+    expect(buildEdge(out, strip)).toBe(`build bun${cfg.exeSuffix}: ${strip} bun-profile${cfg.exeSuffix}`);
   });
 
   // `ci` comes from the config alone (resolveConfig never reads the

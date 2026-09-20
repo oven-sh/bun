@@ -14,32 +14,29 @@ import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 
 /**
- * A ninja `rule` — a reusable command template.
- */
-/**
  * Every rule of the build, by the module that registers it, with the `$variables` its text uses (command,
  * description, depfile, rspfile). A build statement names one of these rules (or `phony`) and binds exactly its
  * variables, so a misspelled rule or a missing variable is a type error on every host, not an empty string in a
- * command on the one platform that emits the edge. A trailing `?` marks a variable that only some configurations'
- * text of the rule uses.
+ * command on the one platform that emits the edge. A rule's variables are the same in every configuration: text
+ * that needs other variables is another rule (`pch` / `pch_msvc`, `strip` / `copy_exe`).
  *
- * The table cannot drift from the rules: `Ninja.rule()` checks a rule's text against its entry, and
- * `Ninja.build()` that an edge binds everything its rule's text uses.
+ * The table cannot drift from the rules: `Ninja.rule()` checks a rule's text against its entry.
  *
  * These are the build's own names. The names ninja itself gives a meaning (`reservedBindings`) are not variables:
  * they are the fields of `Rule`, and of a build statement where a value per edge makes sense.
  */
-export const ruleVars = {
+const ruleVars = {
   // bun.ts
   binary_verify: ["spec"],
   bk_upload: ["paths"],
   bk_upload_gz: ["paths"],
+  copy_exe: [],
   dsymutil: [],
   duplicate_symbols: [],
   rc: ["rcflags"],
   shim_verify: ["spec"],
   smoke_test: [],
-  strip: ["stripflags?"],
+  strip: ["stripflags"],
   // codegen.ts
   bun_install: ["dir", "stamp"],
   codegen: ["cwd", "args", "desc"],
@@ -54,7 +51,8 @@ export const ruleVars = {
   link: ["ldflags"],
   mkdir_stamp: ["dir"],
   nasm: ["nasmflags"],
-  pch: ["cxxflags", "pch_header", "pch_stub_obj?"],
+  pch: ["cxxflags", "pch_header"],
+  pch_msvc: ["cxxflags", "pch_header", "pch_stub_obj"],
   // configure.ts
   regen: [],
   // rust/emit.ts
@@ -95,16 +93,15 @@ const reservedBindings = [
 ];
 
 export type RuleName = keyof typeof ruleVars;
-type DeclaredVar<R extends RuleName> = (typeof ruleVars)[R][number];
-type OptionalVar<R extends RuleName> = DeclaredVar<R> extends infer V ? (V extends `${infer N}?` ? N : never) : never;
 /** The `vars` of a build statement of rule `R`. */
-export type RuleVars<R extends RuleName> = { [K in Exclude<DeclaredVar<R>, `${string}?`>]: string } & {
-  [K in OptionalVar<R>]?: string;
-};
+type RuleVars<R extends RuleName> = { [K in (typeof ruleVars)[R][number]]: string };
 
 /** Every job pool: ninja's built-in `console`, and the ones the build declares. */
 export type PoolName = "bk_upload" | "bun_install" | "compile" | "console" | "dep";
 
+/**
+ * A ninja `rule` — a reusable command template.
+ */
 export interface Rule {
   /** The shell command. Use $in, $out, and custom vars like $flags. */
   command: string;
@@ -170,15 +167,11 @@ interface BuildNodeBase {
 }
 
 /** `vars`: required when the rule has variables, absent when it has none. */
-type VarsOf<R extends RuleName> = [keyof RuleVars<R>] extends [never]
-  ? { vars?: never }
-  : {} extends RuleVars<R>
-    ? { vars?: RuleVars<R> }
-    : { vars: RuleVars<R> };
+type VarsField<R extends RuleName> = [keyof RuleVars<R>] extends [never] ? { vars?: never } : { vars: RuleVars<R> };
 
 /** A build statement of rule `R` (or a `phony`): the rule, and that rule's variables. */
 export type BuildNode<R extends RuleName | "phony" = RuleName | "phony"> = R extends RuleName
-  ? BuildNodeBase & { rule: R } & VarsOf<R>
+  ? BuildNodeBase & { rule: R } & VarsField<R>
   : BuildNodeBase & { rule: "phony"; vars?: never };
 
 /**
@@ -226,8 +219,6 @@ export class Ninja {
   private readonly lines: string[] = [];
   private readonly ruleNames = new Set<RuleName>();
   private readonly generatorRules = new Set<RuleName>();
-  /** Per registered rule, the variables its text uses in this configuration. */
-  private readonly usedVars = new Map<RuleName, string[]>();
   private readonly outputSet = new Set<string>();
   private readonly pools = new Map<string, number>();
   private readonly defaults: string[] = [];
@@ -283,31 +274,20 @@ export class Ninja {
     this.ruleNames.add(name);
 
     const declared: readonly string[] = ruleVars[name];
-    for (const v of declared) {
-      assert(!reservedBindings.includes(v.replace(/\?$/, "")), `ruleVars.${name} lists "${v}", a name ninja reserves`, {
-        hint: "A reserved binding is a field of the rule or of the build statement, not a variable.",
-      });
-    }
     const used = variablesIn(spec.command, spec.description, spec.depfile, spec.rspfile, spec.rspfile_content);
     for (const v of used) {
-      assert(
-        declared.includes(v) || declared.includes(`${v}?`),
-        `Rule ${name} uses $${v}, which ruleVars does not list`,
-        {
-          hint: `Add "${v}" to ruleVars.${name} in ninja.ts (with a trailing ? if only some configurations use it).`,
-        },
-      );
+      assert(!reservedBindings.includes(v), `Rule ${name} reads $${v}, a binding ninja reserves`, {
+        hint: "A reserved binding is a field of the rule or of the build statement, not a variable.",
+      });
+      assert(declared.includes(v), `Rule ${name} uses $${v}, which ruleVars does not list`, {
+        hint: `Add "${v}" to ruleVars.${name} in ninja.ts. If only some configurations' text uses it, that text is another rule.`,
+      });
     }
     for (const v of declared) {
-      assert(
-        v.endsWith("?") || used.includes(v),
-        `ruleVars lists "${v}" for rule ${name}, whose text does not use it`,
-        {
-          hint: `Remove it from ruleVars.${name}, or mark it "${v}?" if another configuration's text uses it.`,
-        },
-      );
+      assert(used.includes(v), `ruleVars lists "${v}" for rule ${name}, whose text does not use it`, {
+        hint: `Remove it from ruleVars.${name}. If another configuration's text uses it, that text is another rule.`,
+      });
     }
-    this.usedVars.set(name, used);
 
     this.lines.push(`rule ${name}`);
     this.lines.push(`  command = ${spec.command}`);
@@ -351,18 +331,14 @@ export class Ninja {
       hint: `Define the rule with ninja.rule("${node.rule}", {...}) first`,
     });
     const vars: Record<string, string> = node.vars ?? {};
-    // The types allow leaving out a `?` variable; this configuration's text of the rule may still use it, and
-    // ninja expands an unbound variable to nothing.
+    // A missing variable is always a type error. An undeclared one is only in a literal: an object built elsewhere
+    // and passed in may carry more keys than its type says.
     const rule: RuleName | "phony" = node.rule;
     if (rule !== "phony") {
-      for (const v of this.usedVars.get(rule)!) {
-        assert(v in vars, `A ${node.rule} edge (${node.outputs[0]}) does not bind $${v}, which the rule's text uses`);
-      }
-      // A literal with an undeclared key is a type error; an object built elsewhere and passed in is not.
       const declared: readonly string[] = ruleVars[rule];
       for (const v of Object.keys(vars)) {
         assert(
-          declared.includes(v) || declared.includes(`${v}?`),
+          declared.includes(v),
           `A ${node.rule} edge (${node.outputs[0]}) binds ${v}, which ruleVars does not list for that rule`,
         );
       }
@@ -433,7 +409,7 @@ export class Ninja {
       this.lines.push(`  depfile = ${ninjaEscapeVarValue("depfile", node.depfile)}`);
     }
     if (node.earlyOutputPrefix !== undefined) {
-      this.lines.push(`  early_output_prefix = ${node.earlyOutputPrefix}`);
+      this.lines.push(`  early_output_prefix = ${ninjaEscapeVarValue("early_output_prefix", node.earlyOutputPrefix)}`);
     }
     this.lines.push("");
   }

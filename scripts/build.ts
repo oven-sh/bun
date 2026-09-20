@@ -426,31 +426,15 @@ interface CliArgs {
   configFile: string | undefined;
 }
 
-/**
- * Parse argv. Format:
- *   --profile=<name>          Profile (required, no default here — caller picks)
- *   --<field>=<value>         Override any PartialConfig boolean/string field
- *   --target=<name>           Build a specific ninja target (repeatable)
- *   --configure-only          Emit build.ninja, don't run it
- *   -j<N> / -v / -k<N> / -n / -d <mode>   Passed through to ninja
- *   -t <tool> [args…]         Run a ninja tool on the build directory; everything after -t is the tool's
- *   <args...>                 Exec the built binary with these args
- *
- * First bare positional ends flag parsing — everything after goes to the
- * built binary verbatim, so `build.ts test -t foo` passes `-t foo` to bun,
- * not to this parser.
- *
- * Boolean overrides accept: on/off, true/false, yes/no, 1/0.
- */
 /** How a `--<field>=<value>` is read, which the field's type decides. */
-type CliValueKind<T> = [T] extends [boolean] ? "boolean" : [T] extends [number] ? "number" : "string";
+type ConfigFlagKind<T> = [T] extends [boolean] ? "boolean" : [T] extends [number] ? "number" : "string";
 
 /**
  * Every `PartialConfig` field is a `--<field>` flag. The mapped type makes this list complete and correct by
  * construction: a field added to `PartialConfig` without an entry here, or listed with the wrong kind, does not
  * compile.
  */
-const configFlags: { [K in keyof Required<PartialConfig>]: CliValueKind<NonNullable<PartialConfig[K]>> } = {
+const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNullable<PartialConfig[K]>> } = {
   os: "string",
   arch: "string",
   abi: "string",
@@ -493,12 +477,26 @@ const configFlags: { [K in keyof Required<PartialConfig>]: CliValueKind<NonNulla
   nodejsV8Version: "string",
   webkitVersion: "string",
 };
-const configFlagKind = (key: string): "boolean" | "number" | "string" | undefined =>
-  Object.hasOwn(configFlags, key) ? configFlags[key as keyof typeof configFlags] : undefined;
 
 /** `ninja -d list` */
 const ninjaDebugModes = new Set(["stats", "explain", "keepdepfile", "keeprsp", "nostatcache", "list"]);
 
+/**
+ * Parse argv. Format:
+ *   --profile=<name>          Profile (required, no default here — caller picks)
+ *   --<field>=<value>         Override any PartialConfig field (configFlags)
+ *   --target=<name>           Build a specific ninja target (repeatable)
+ *   --configure-only          Emit build.ninja, don't run it
+ *   -j<N> / -v / -k<N> / -n / -d <mode>   Passed through to ninja
+ *   -t <tool> [args…]         Run a ninja tool on the build directory; everything after -t is the tool's
+ *   <args...>                 Exec the built binary with these args
+ *
+ * First bare positional ends flag parsing — everything after goes to the
+ * built binary verbatim, so `build.ts test -t foo` passes `-t foo` to bun,
+ * not to this parser.
+ *
+ * Boolean overrides accept: on/off, true/false, yes/no, 1/0.
+ */
 function parseArgs(argv: string[]): CliArgs {
   let profile = "debug";
   const overrides: PartialConfig = {};
@@ -572,7 +570,7 @@ function parseArgs(argv: string[]): CliArgs {
     }
     const rawKey = eq[1]!;
     const key = rawKey.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-    const kind = configFlagKind(key);
+    const kind = Object.hasOwn(configFlags, key) ? configFlags[key as keyof PartialConfig] : undefined;
     const isOurs = key === "profile" || key === "target" || key === "configFile" || kind !== undefined;
 
     let value = eq[2];
@@ -616,9 +614,8 @@ function parseArgs(argv: string[]): CliArgs {
 }
 
 function parseInteger(flag: string, v: string): number {
-  const n = Number(v);
-  if (!Number.isInteger(n)) throw new BuildError(`--${flag} takes an integer, got: ${v}`);
-  return n;
+  if (!/^\d+$/.test(v)) throw new BuildError(`--${flag} takes a non-negative integer, got: ${JSON.stringify(v)}`);
+  return Number(v);
 }
 
 function parseBool(v: string): boolean {

@@ -134,7 +134,9 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 **Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Use the `codegen` rule: it runs the script with `cfg.jsRuntime`, so the script must run under node and bun. Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppHeaders` if it's a header. `emitCodegen()` builds `cppAll` from those groups at the end, so do not push to it).
 
-**Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. If it needs a CLI flag, `build.ts`'s arg parser already handles `--anyfield=value` generically.
+**Add a ninja rule** — add its name to `ruleVars` in `ninja.ts` with the `$variables` its text reads, and `n.rule()` it in the module's `registerXxxRules()`. `n.build({ rule, vars })` is typed by the table, and configure fails if the table and the rule's text disagree. Text that needs other variables on some platform is another rule (`pch` / `pch_msvc`). ninja's own bindings (`pool`, `depfile`, `early_output_prefix`) are fields of the build statement, not `vars`.
+
+**Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. Add its entry to `configFlags` in `build.ts`: every `PartialConfig` field is a `--<field>` flag, and tsc fails without one.
 
 **Add a profile** — one entry in `profiles.ts`. Copy `debug` or `release-asan`.
 
@@ -252,8 +254,6 @@ Ninja requires all rules defined before any build references them. Hence:
 
 1. `registerXxxRules(n, cfg)` — each module registers its rules. Called once via `registerAllRules()`.
 2. `emitXxx(n, cfg, ...)` — each module emits build edges.
-
-Every rule is listed in the `ruleVars` table in `ninja.ts` with the `$variables` its text uses (pools are the `PoolName` union). `n.build({ rule, vars })` is typed by it: a misspelled rule, a missing variable or an unknown one is a type error on every host, which matters because some edges only exist on one platform. The table cannot drift: `n.rule()` checks the rule's text against its entry, and `n.build()` that the edge binds what this configuration's text uses. A new rule gets a table entry; a variable only some configurations' text uses is listed as `"name?"`. The table holds the build's own names only. The names ninja itself gives a meaning (`command`, `depfile`, `pool`, … — `Rule::IsReservedBinding` in ninja's `src/eval_env.cc`) are fields of `Rule`, and of the build statement where a value per edge makes sense (`pool`, `depfile`, `earlyOutputPrefix`).
 
 Why not auto-register in emit functions? Some rules are shared (`dep_configure` used by both `source.ts` and `webkit.ts` local mode). Explicit registration keeps "which rule lives where" clear.
 

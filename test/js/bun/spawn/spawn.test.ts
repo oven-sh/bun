@@ -17,7 +17,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -1514,6 +1514,54 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
   expect(stdout.trim()).toBe("pull unavailable");
   expect(readFileSync(file, "utf8")).toContain("still-open");
   expect(exitCode).toBe(0);
+});
+
+// The child opens a path at the slot for "ignore", for "inherit" of a slot that
+// is closed in the parent (both /dev/null), and for Bun.file(path). open() returns
+// the lowest free fd, so with the slot free it returns the slot itself, and the
+// open + dup2 + close sequence closed it again.
+describe.if(isLinux)("a stdio slot that is closed in the parent", () => {
+  for (const fd of [0, 1, 2]) {
+    for (const mode of ["ignore", "inherit", "Bun.file"]) {
+      it.concurrent(`fd ${fd} with ${mode} is open in the child`, async () => {
+        let value = JSON.stringify(mode);
+        let expected = "/dev/null";
+        if (mode === "Bun.file") {
+          expected = join(realpathSync(tmp), `closed-slot-${fd}.txt`);
+          writeFileSync(expected, "");
+          value = `Bun.file(${JSON.stringify(expected)})`;
+        }
+        // The slot has to stay free until the spawn, so no "pipe": its socketpair
+        // would take the slot. The child is not bun, because bun reopens closed
+        // stdio as /dev/null at startup.
+        const fixture = `
+          import { closeSync, readlinkSync } from "node:fs";
+          closeSync(${fd});
+          const stdio = ["inherit", "inherit", "inherit"];
+          stdio[${fd}] = ${value};
+          const child = Bun.spawn({ cmd: ["sleep", "1000"], stdio });
+          let target;
+          try {
+            target = readlinkSync("/proc/" + child.pid + "/fd/${fd}");
+          } catch (e) {
+            target = e.code;
+          }
+          child.kill();
+          await child.exited;
+          // Print to a slot that is still open.
+          (${fd} === 1 ? console.error : console.log)(target);
+        `;
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(fd === 1 ? stderr : stdout).toBe(expected + "\n");
+        expect(exitCode).toBe(0);
+      });
+    }
+  }
 });
 
 // Bun.file(fd).stream() (like the shell's stdio and cwd handles) works on a

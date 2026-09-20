@@ -383,24 +383,26 @@ extern "C" ssize_t posix_spawn_bun(
                 break;
             }
             case FileActionType::Open: {
-                int opened = -1;
-                opened = open(action.path, action.flags, action.mode);
+                int opened = open(action.path, action.flags, action.mode);
 
                 if (opened == -1) {
                     return childFailed();
                 }
 
-                if (opened != -1) {
+                // open() returns the lowest free fd, which is the target itself
+                // when the target is closed. dup2(fd, fd) does nothing, so the
+                // close() below would close the target.
+                if (opened != action.fds[0]) {
                     if (dup2(opened, action.fds[0]) == -1) {
                         close(opened);
                         return childFailed();
                     }
-                    current_max_fd = std::max(current_max_fd, action.fds[0]);
                     if (close(opened)) {
                         return childFailed();
                     }
                 }
 
+                current_max_fd = std::max(current_max_fd, action.fds[0]);
                 break;
             }
             default: {

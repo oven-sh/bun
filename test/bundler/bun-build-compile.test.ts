@@ -101,7 +101,8 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       expect(aliased.n).toBe(2000);
       expect(copied.n).toBe(2000);
       // The on-disk run also holds app.js and app.js.jsc themselves in owned buffers; that much is not copying.
-      const heldKB = (statSync(join(dir + "", "out", "app.js")).size + statSync(join(dir + "", "out", "app.js.jsc")).size) / 1024;
+      const heldKB =
+        (statSync(join(dir + "", "out", "app.js")).size + statSync(join(dir + "", "out", "app.js.jsc")).size) / 1024;
       // 4000 decoded functions carry ~11 MB of instruction stream + expression info; copied, that is anonymous memory the aliasing run never allocates.
       expect(copied.anonKB - heldKB - aliased.anonKB).toBeGreaterThan(4096);
     },

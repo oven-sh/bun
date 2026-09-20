@@ -60,8 +60,8 @@ const alpineRelease = "3.23";
  * .buildkite/ci.ts use them as they are.
  */
 export const locations = {
-  /** bun-image.json: what the bake recorded about the machine (see `Identity`). */
-  imageRecord: { linux: "/etc/bun-image.json", windows: "C:\\bun-image.json" },
+  /** The image's record: what the bake recorded about the machine (see the `recordImage` tool). */
+  imageRecord: { linux: "/etc/bun-image.txt", windows: "C:\\bun-image.txt" },
   /** `bun install`'s cache, filled while the image is baked. */
   installCache: { linux: "/var/cache/bun-install", windows: "C:\\bun-install-cache" },
   rust: { linux: "/opt/rust", darwin: "/opt/rust", windows: "C:\\Program Files\\Rust" },
@@ -330,8 +330,8 @@ const scoopPackages = {
 
 /** Where `bun run ci:images` and CI write an image's bake directory, from the repository's root. */
 export const bakeDirectory = (key: string) => `build/ci-images/${key}`;
-/** The name bun-image.json has in a bake directory, once the bake job has copied it out of the machine. */
-export const imageRecordName = "bun-image.json";
+/** The name the image's record has in a bake directory, once the bake job has copied it out of the machine. */
+export const imageRecordName = "bun-image.txt";
 
 /** Hosts more than one tool downloads from. */
 const mirrors = {
@@ -1215,17 +1215,61 @@ function agentService(): Tool {
 }
 
 /**
- * bun-image.json: what this image is, the name it was baked under, and the
- * exact packages the bake got. For keying caches of build outputs on the
- * machine that made them; it never feeds the image's name. The bake job also
- * publishes it as an artifact.
+ * The image's record: what this image is, the name it was baked under, and
+ * what arrived on the day of the bake. For keying caches of build outputs on
+ * the machine that made them (same bytes, same machine content), so nothing in
+ * it may differ between two identical machines. It never feeds the image's
+ * name. The bake job also publishes it as an artifact.
+ *
+ * It is lines, so that both shells can write it with ordinary steps:
+ *
+ *   name: <the image's name>
+ *   image: <the spec's facts, as one line of JSON>
+ *   tool <name>: <how what it puts on the machine is known, and the value if pinned>
+ *   observed <name>: <a line an `observed` tool's step printed>
+ *   package <a line of the package manager's database>
  */
 function recordImage(image: BakedImage): Tool {
-  return {
-    name: "record-image",
-    identity: configuration,
-    steps: [run("node", bakeFile("record-image.mjs"), imageName, locations.imageRecord[image.os])],
+  const record = locations.imageRecord[image.os];
+  const installedPackages: Step =
+    image.os === "windows"
+      ? pipe(
+          printLine(
+            // Out-String: one string for ConvertFrom-Json, whatever it does with several.
+            property(pipe(cmdlet("scoop", {}, "export"), cmdlet("Out-String"), cmdlet("ConvertFrom-Json")), "apps"),
+          ),
+          cmdlet("ForEach-Object", {}, expression(`{ "$($_.Name) $($_.Version)" }`)),
+        )
+      : image.distro === "alpine"
+        ? // "name-version arch {origin} (license) [installed]"
+          pipe(run("apk", "list", "--installed"), run("cut", "-d", " ", "-f1"))
+        : // binary:Package says which architecture a package of another one is for (libc6:amd64 on the arm64 build image).
+          run("dpkg-query", "--show", "--showformat", "${binary:Package} ${Version}\\n");
+  const recorded = (tool: Tool): string => {
+    const { identity } = tool;
+    const value =
+      identity.kind === "pinned" ? ` ${identity.value}` : identity.kind === "notRecorded" ? ` ${identity.reason}` : "";
+    return `tool ${tool.name}: ${identity.kind}${value}`;
   };
+  // The list of tools includes this one, so it is only asked for when the step is rendered.
+  const steps = (): Step[] => {
+    const all = tools(image);
+    return [
+      toFile(printLine(text`name: ${imageName}`), record),
+      appendLines(record, [`image: ${JSON.stringify(image)}`, ...all.map(recorded)]),
+      ...all
+        .filter(tool => tool.identity.kind === "observed")
+        .flatMap(tool => {
+          const observation = bakeFile(`observed/${tool.name}`);
+          return [
+            failUnlessNotEmpty(output(linesOf(observation)), `nothing was observed for ${tool.name}`),
+            toFile(prefixed(`observed ${tool.name}: `, linesOf(observation)), record, { append: true }),
+          ];
+        }),
+      toFile(prefixed("package ", sorted(installedPackages)), record, { append: true }),
+    ];
+  };
+  return { name: "record-image", identity: configuration, steps: [c => render(steps(), c)] };
 }
 
 function cleanup(image: LinuxImage): Tool {
@@ -1650,7 +1694,7 @@ type Context = {
 /** One or more lines of the generated script. */
 export type Step = (context: Context) => string[];
 /**
- * How what a tool puts on the machine is known, for bun-image.json. A tool
+ * How what a tool puts on the machine is known, for the image's record. A tool
  * cannot be written without saying which:
  *
  * - `pinned`: known in this file. The value is written into the record as it is.
@@ -1847,13 +1891,38 @@ const pipe =
   (...steps: Step[]): Step =>
   c => [steps.map(step => oneLine(step, c)).join(" | ")];
 
+/** What the command prints, as the file's content, or with `append` at its end. PowerShell writes ASCII: its default is UTF-16. */
 const toFile =
-  (step: Step, file: Value): Step =>
+  (step: Step, file: Value, options: { append?: boolean } = {}): Step =>
   c => [
     isPowerShell(c)
-      ? `${oneLine(step, c)} | Out-File -Encoding ascii ${renderValue(file, c)}`
-      : `${oneLine(step, c)} > ${renderValue(file, c)}`,
+      ? `${oneLine(step, c)} | Out-File ${options.append ? "-Append " : ""}-Encoding ascii ${renderValue(file, c)}`
+      : `${oneLine(step, c)} ${options.append ? ">>" : ">"} ${renderValue(file, c)}`,
   ];
+
+/** Prints the value: a line in sh, the value itself in PowerShell (which may be objects for the next command of a pipe). */
+const printLine =
+  (value: Value): Step =>
+  c => [isPowerShell(c) ? renderValue(value, c, true) : `printf '%s\\n' ${renderValue(value, c)}`];
+
+/** Prints the file's lines. */
+const linesOf =
+  (file: Value): Step =>
+  c => [`${isPowerShell(c) ? "Get-Content" : "cat"} ${renderValue(file, c)}`];
+
+/** Each line the command prints, with this before it. */
+const prefixed =
+  (prefix: string, step: Step): Step =>
+  c => [
+    isPowerShell(c)
+      ? `${oneLine(step, c)} | ForEach-Object { "${prefix.replace(/[`"$]/g, "`$&")}$_" }`
+      : `${oneLine(step, c)} | sed ${renderValue(`s/^/${prefix.replace(/[\\/&]/g, "\\$&")}/`, c)}`,
+  ];
+
+/** The lines the command prints, in an order that does not depend on the machine's locale. */
+const sorted =
+  (step: Step): Step =>
+  c => [`${oneLine(step, c)} | ${isPowerShell(c) ? "Sort-Object" : "LC_ALL=C sort"}`];
 
 /** What the command prints is not worth reading. */
 const discardOutput =
@@ -2011,7 +2080,14 @@ const writeFile =
 /** These lines, at the end of a file that may exist. */
 const appendLines =
   (path: Value, lines: string[]): Step =>
-  c => [`cat >> ${renderValue(path, c)} <<'EOF'`, ...lines, "EOF"];
+  c =>
+    isPowerShell(c)
+      ? [
+          `Add-Content -Path ${renderValue(path, c)} -Encoding ascii -Value @(`,
+          ...indent(lines.map((l, i) => `${renderValue(l, c, true)}${i < lines.length - 1 ? "," : ""}`)),
+          ")",
+        ]
+      : [`cat >> ${renderValue(path, c)} <<'EOF'`, ...lines, "EOF"];
 
 /**
  * One sha256 for the content of these directories: every file's hash and every
@@ -2411,48 +2487,6 @@ const fetchSshKeysProgram = [
   "}",
 ].join("\n");
 
-/** Run by the `record-image` tool under the Node.js the bake installed: `node record-image.mjs <image name> <output file>`. */
-const recordImageProgram = String.raw`import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
-const [name, output] = process.argv.slice(2);
-if (!name || !output) throw new Error("usage: node record-image.mjs <image name> <output file>");
-const image = JSON.parse(readFileSync(join(import.meta.dirname, "image.json"), "utf8"));
-
-function lines(command, args) {
-  const { status, stdout, stderr, error } = spawnSync(command, args, { encoding: "utf8", shell: image.os === "windows" });
-  if (error || status !== 0) throw new Error(command + " " + args.join(" ") + " failed: " + (stderr || error));
-  return stdout.split(/\r?\n/).filter(line => line.trim());
-}
-
-// "name version", one per package, sorted.
-function installedPackages() {
-  if (image.os === "windows") {
-    return JSON.parse(lines("scoop", ["export"]).join("\n")).apps.map(app => app.Name + " " + app.Version).sort();
-  }
-  if (image.distro === "alpine") {
-    // "name-version arch {origin} (license) [installed]"
-    return lines("apk", ["list", "--installed"]).map(line => line.split(" ")[0].replace(/-([^-]+-r\d+)$/, " $1")).sort();
-  }
-  return lines("dpkg-query", ["--show", "--showformat", "$" + "{Package} $" + "{Version}\\n"]).sort();
-}
-
-// What an "observed" tool printed during the bake. A tool that says it is observed and left nothing is a broken record.
-const tools = image.tools.map(tool => {
-  if (tool.identity !== "observed") return tool;
-  const value = readFileSync(join(import.meta.dirname, "observed", tool.name), "utf8").trim();
-  if (!value) throw new Error("nothing was observed for " + tool.name);
-  return { ...tool, value };
-});
-
-const packages = installedPackages();
-const packagesSha256 = createHash("sha256").update(packages.join("\n")).digest("hex");
-writeFileSync(output, JSON.stringify({ name, ...image, tools, packages, packagesSha256 }, null, 2) + "\n");
-console.log(output + ": " + name + ", " + packages.length + " packages, " + packagesSha256);
-`;
-
 // --------------------------------------------------------------------- Packer
 
 /** Every variable the template needs; scripts/ci-image.ts passes them all. */
@@ -2675,7 +2709,6 @@ function bakeFiles(image: Image): Map<string, string | Uint8Array> {
   ]);
   if (image.os !== "darwin") {
     contents.set("agent.mts", readFileSync(join(repoRoot, files["agent.mts"])));
-    contents.set("record-image.mjs", recordImageProgram);
   }
   if (image.os === "linux" && image.role === "build") {
     contents.set("xmac.mjs", readFileSync(join(repoRoot, files["xmac.mjs"])));

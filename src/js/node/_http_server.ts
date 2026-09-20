@@ -29,6 +29,7 @@ const {
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
+const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -59,7 +60,6 @@ const {
   fakeSocketSymbol,
   kOutHeaders,
   onDataIncomingMessage,
-  validateMsecs,
   http1ServerPipeline,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
@@ -298,6 +298,7 @@ interface Server extends NodeHTTPServer {
 }
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
+  if (!linkedToNetServer) linkToNetServer();
   EventEmitter.$call(this);
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
@@ -306,7 +307,6 @@ function Server(options, callback): void {
     if (socket != null && typeof socket === "object") socket.server = this;
   });
 
-  this.listening = false;
   this._unref = false;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
@@ -418,6 +418,25 @@ function Server(options, callback): void {
 }
 $toClass(Server, "Server", EventEmitter);
 
+// Node's http.Server extends net.Server. node:net loads lazily, so the chain is linked when the first server is constructed.
+let linkedToNetServer = false;
+function linkToNetServer() {
+  linkedToNetServer = true;
+  const NetServer = require("node:net").Server;
+  Object.setPrototypeOf(Server.prototype, NetServer.prototype);
+  Object.setPrototypeOf(Server, NetServer);
+}
+
+// net.Server's getter reads `_handle`, which a server backed by Bun.serve never sets.
+Object.defineProperty(Server.prototype, "listening", {
+  __proto__: null,
+  get() {
+    return !!this[serverSymbol];
+  },
+  configurable: true,
+  enumerable: true,
+});
+
 Server.prototype[kIncomingMessage] = undefined;
 
 Server.prototype[kServerResponse] = undefined;
@@ -490,7 +509,6 @@ Server.prototype.closeAllConnections = function () {
     this[serverSymbol] = undefined;
     this[kPendingDrainClose] = true;
     clearInterval(this[kConnectionsCheckingInterval]);
-    this.listening = false;
     server.stop(true);
     return;
   }
@@ -543,7 +561,6 @@ Server.prototype.close = function (optionalCallback?) {
   const generation = this[kListenerGeneration];
   if (generation) this[kPendingCloseGenerations].add(generation);
   this[serverSymbol] = undefined;
-  this.listening = false;
   this[kPendingDrainClose] = true;
   server.closeIdleConnections();
   // stop() queues the task that emits 'close', which holds the loop one more turn, as node's uv_close() does.
@@ -569,11 +586,7 @@ Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, ..
       break;
     }
     default:
-      // net.Server.prototype[EventEmitter.captureRejectionSymbol].apply(this, arguments);
-      //   .apply(this, arguments);
-      const { 1: res } = args;
-      res?.socket?.destroy();
-      break;
+      require("node:net").Server.prototype[EventEmitter.captureRejectionSymbol].$apply(this, arguments);
   }
 };
 
@@ -605,6 +618,7 @@ Server.prototype.listen = function () {
     const arg0 = arguments[0];
     if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
       // (options[...][, cb])
+      addServerAbortSignalOption(this, arg0);
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;
@@ -1128,8 +1142,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       nativeClosed: false,
     };
     this[kListenerGeneration] = listenerGeneration;
-    // Bun.serve() has bound and listened by now, so the flag is true at once, as node's getter is.
-    this.listening = true;
     getBunServerAllClosedPromise(handle).$then(emitCloseNTServer.bind(this, listenerGeneration));
     applyServerCustomOptions(this);
 
@@ -1615,7 +1627,8 @@ interface NetSocketConstructor {
 }
 function getNodeHTTPServerSocket() {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
-  const { Socket: NetSocket }: { Socket: NetSocketConstructor } = require("node:net");
+  const { Socket: NetSocket } = require("node:net");
+  const { getTimerDuration } = require("internal/timers");
   NodeHTTPServerSocket = class Socket extends NetSocket {
     bytesRead = 0;
     connecting = false;
@@ -2074,7 +2087,8 @@ function getNodeHTTPServerSocket() {
         return this;
       }
 
-      msecs = validateMsecs(msecs, "msecs");
+      msecs = getTimerDuration(msecs, "msecs");
+      // Assigned after validation (unlike setStreamTimeout): onSocketTimeoutTimerExpired reads this.timeout.
       this.timeout = msecs;
 
       const existingTimer = this[kSocketTimeoutTimer];
@@ -2353,6 +2367,8 @@ const AUTO_HEADER_KEEP_ALIVE_TIMEOUT = 1 << 3;
 // line, so it is rendered natively with the other auto headers rather than being
 // pushed into the flat array (which goes out first).
 const AUTO_HEADER_TRANSFER_ENCODING_CHUNKED = 1 << 4;
+// The largest Keep-Alive timeout, in seconds, handed to the native writeHead (it takes a uint32).
+const kMaxNativeKeepAliveSecs = 0x7fffffff;
 // Out-parameters of renderNativeHeaders, read by its callers in the same
 // tick (no JS can run in between).
 let renderedAutoHeaders = 0;
@@ -2491,16 +2507,22 @@ function renderNativeHeaders(res) {
       ) {
         const keepAliveTimeout = res._keepAliveTimeout;
         const maxRequestsPerSocket = res._maxRequestsPerSocket;
-        if (keepAliveTimeout && !hasKeepAlive && ~~maxRequestsPerSocket > 0) {
-          // Rare path (maxRequestsPerSocket set): render both lines in JS.
-          flat.push("Connection", "keep-alive");
-          flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}, max=${maxRequestsPerSocket}`);
+        if (keepAliveTimeout && !hasKeepAlive) {
+          const timeoutSecs = MathFloor(keepAliveTimeout / 1000);
+          const hasMax = ~~maxRequestsPerSocket > 0;
+          if (!hasMax && timeoutSecs >= 0 && timeoutSecs <= kMaxNativeKeepAliveSecs) {
+            autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE | AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
+            keepAliveSecs = timeoutSecs;
+          } else {
+            // Rare path (maxRequestsPerSocket set, or seconds the native side cannot take): render both lines in JS, as Node prints them.
+            flat.push("Connection", "keep-alive");
+            flat.push(
+              "Keep-Alive",
+              hasMax ? `timeout=${timeoutSecs}, max=${maxRequestsPerSocket}` : `timeout=${timeoutSecs}`,
+            );
+          }
         } else {
           autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE;
-          if (keepAliveTimeout && !hasKeepAlive) {
-            autoHeaders |= AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
-            keepAliveSecs = MathFloor(keepAliveTimeout / 1000);
-          }
         }
       } else {
         // Like Node's shouldSendKeepAlive/_last handling: a user-cleared

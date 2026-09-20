@@ -98,10 +98,10 @@ function setGlobalProxyFromEnv(env = process.env) {
   }
 
   if (httpProxy !== null && URL.canParse(httpProxy) === false) {
-    throw $ERR_PROXY_INVALID_CONFIG(redactInvalidProxyUrl(httpProxy));
+    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${redactInvalidProxyUrl(httpProxy)}`);
   }
   if (httpsProxy !== null && URL.canParse(httpsProxy) === false) {
-    throw $ERR_PROXY_INVALID_CONFIG(redactInvalidProxyUrl(httpsProxy));
+    throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${redactInvalidProxyUrl(httpsProxy)}`);
   }
 
   let originalHttpsAgent, originalHttpAgent;

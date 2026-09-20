@@ -24,7 +24,7 @@ import http, {
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
-import { connect, createServer as createNetServer } from "node:net";
+import net, { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
@@ -146,6 +146,29 @@ describe("node:http", () => {
       listenResponse.close();
     });
 
+    // https://github.com/oven-sh/bun/issues/4360
+    it("http.Server inherits from net.Server", async () => {
+      expect(http.Server.prototype instanceof net.Server).toBe(true);
+      expect(net.Server.prototype instanceof http.Server).toBe(false);
+      expect(Object.getPrototypeOf(http.Server.prototype)).toBe(net.Server.prototype);
+      expect(Object.getPrototypeOf(http.Server)).toBe(net.Server);
+
+      const server = createServer();
+      expect(server instanceof http.Server).toBe(true);
+      expect(server instanceof net.Server).toBe(true);
+      expect(server instanceof EventEmitter).toBe(true);
+
+      expect(server.listening).toBe(false);
+      server.listen(0);
+      try {
+        await once(server, "listening");
+        expect(server.listening).toBe(true);
+      } finally {
+        server.close();
+      }
+      expect(server.listening).toBe(false);
+    });
+
     it("listen callback should be bound to server", async () => {
       const server = createServer();
       const { resolve, reject, promise } = Promise.withResolvers();
@@ -261,6 +284,61 @@ describe("node:http", () => {
         expect({ stdout, stderr }).toEqual({ stdout: "beforeExit again\n", stderr: "" });
         expect(exitCode).toBe(0);
       });
+    });
+
+    it("listen({ signal }) closes the server when the signal is aborted", async () => {
+      const server = createServer();
+      try {
+        const controller = new AbortController();
+        await new Promise<void>(resolve =>
+          server.listen({ port: 0, host: "127.0.0.1", signal: controller.signal }, resolve),
+        );
+        const { port } = server.address() as AddressInfo;
+        const closed = once(server, "close");
+
+        controller.abort();
+
+        expect(server.listening).toBe(false);
+        expect(server.address()).toBeNull();
+        await closed;
+
+        const socket = connect({ port, host: "127.0.0.1" });
+        const [err] = await once(socket, "error");
+        expect(err.code).toBe("ECONNREFUSED");
+      } finally {
+        server.close();
+      }
+    });
+
+    it("listen({ signal }) with an already aborted signal closes the server without emitting 'listening'", async () => {
+      const server = createServer();
+      try {
+        const onListening = mock(() => {});
+        server.on("listening", onListening);
+        const closed = once(server, "close");
+
+        server.listen({ port: 0, host: "127.0.0.1", signal: AbortSignal.abort() }, onListening);
+        await new Promise<void>(resolve => process.nextTick(resolve));
+
+        expect(server.listening).toBe(false);
+        expect(server.address()).toBeNull();
+        await closed;
+        expect(onListening).not.toHaveBeenCalled();
+      } finally {
+        server.close();
+      }
+    });
+
+    it("listen({ signal }) rejects a value that is not an AbortSignal", () => {
+      const server = createServer();
+      try {
+        expect(() => server.listen({ port: 0, host: "127.0.0.1", signal: "INVALID_SIGNAL" as any })).toThrow(
+          expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+        );
+        expect(server.address()).toBeNull();
+      } finally {
+        server.close();
+      }
     });
 
     it("should use the provided port", async () => {
@@ -1630,6 +1708,63 @@ it("should propagate exception in async data handler", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("request(urlString, cb) does not read options from Object.prototype", async () => {
+  // Pollutes Object.prototype, so it runs in a subprocess.
+  const script = `
+    const net = require("node:net");
+    const http = require("node:http");
+    const heads = [];
+    const server = net.createServer(socket => {
+      socket.once("data", data => {
+        heads.push(String(data).split("\\r\\n\\r\\n")[0]);
+        socket.end("HTTP/1.1 200 OK\\r\\nContent-Length: 0\\r\\nConnection: close\\r\\n\\r\\n");
+      });
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const url = "http://127.0.0.1:" + server.address().port + "/victim";
+    const get = () =>
+      new Promise((resolve, reject) => {
+        http.get(url, res => {
+          res.resume();
+          res.on("end", resolve);
+        }).on("error", reject);
+      });
+    const clean = await get().then(() => heads[0]);
+
+    Object.prototype.headers = { "x-injected": "1", host: "attacker.example" };
+    Object.prototype.auth = "attacker:pw";
+    Object.prototype.method = "DELETE";
+    await get();
+
+    let hijacked = false;
+    const { promise: hijack, resolve: onHijack } = Promise.withResolvers();
+    Object.prototype.agent = {
+      addRequest(req) {
+        hijacked = true;
+        req.destroy();
+        onHijack();
+      },
+    };
+    await Promise.race([get(), hijack]);
+    server.close();
+    console.log(JSON.stringify({ same: heads[1] === clean, hijacked, head: heads[1] }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout);
+  expect(result.head).not.toContain("x-injected");
+  expect(result.head).not.toContain("Authorization");
+  expect(result.head).toStartWith("GET /victim HTTP/1.1");
+  expect(result).toMatchObject({ same: true, hijacked: false });
+  expect(exitCode).toBe(0);
+});
+
 // This test is disabled because it can OOM the CI
 it.skip("should be able to stream huge amounts of data", async () => {
   const buf = Buffer.alloc(1024 * 1024 * 256);
@@ -2706,6 +2841,44 @@ it("ClientRequest.destroy(err) with a throwing error listener still tears down; 
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // node v26.3.0 verified: 'close' is async (after destroy() returns).
   expect(stdout.trim().split("\n")).toEqual(["destroy-returned", "teardown-ran:false", "async-uncaught:handler bug"]);
+  expect(exitCode).toBe(0);
+});
+
+it("captureRejections: a rejecting async listener on a Server event other than 'request' emits 'error'", async () => {
+  // node: http.Server's and Http2Server's [captureRejectionSymbol] handle
+  // 'request' (and 'stream') themselves and hand every other event to
+  // net.Server's handler, whose default is this.emit('error', err). The
+  // rejection must not be dropped.
+  const script = `
+    const events = require("node:events");
+    events.captureRejections = true;
+    const http = require("node:http");
+    const http2 = require("node:http2");
+    process.on("unhandledRejection", err => console.log("unhandledRejection: " + err.message));
+    for (const [name, server] of [["http", http.createServer()], ["http2", http2.createServer()]]) {
+      server.on("error", err => console.log(name + " error event: " + err.message));
+      server.on("custom", async () => {
+        throw new Error(name + " custom-rejects");
+      });
+      server.emit("custom");
+    }
+    // rejection (microtask) -> nextTick -> 'error'; all settle within one turn.
+    setImmediate(() => setImmediate(() => console.log("done")));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // node v26.3.0 verified.
+  expect(stdout.trim().split("\n")).toEqual([
+    "http error event: http custom-rejects",
+    "http2 error event: http2 custom-rejects",
+    "done",
+  ]);
   expect(exitCode).toBe(0);
 });
 
@@ -4682,6 +4855,60 @@ it.concurrent("a declined upgrade without Host past maxRequestsPerSocket gets th
   });
 });
 
+it.each([
+  ["res.end(body)", res => res.end("ok")],
+  ["res.write(body) then res.end()", res => (res.write("ok"), res.end())],
+])("Keep-Alive prints a server.keepAliveTimeout assigned after construction as is: %s", async (_, respond) => {
+  // server.keepAliveTimeout is a plain property in Node, so only the constructor option is
+  // validated. _storeHeader prints Math.floor(keepAliveTimeout / 1000) without a range check
+  // (Node v26.3.0 answers with exactly these lines). The first four do not fit the integer the
+  // native header writer takes: -5 used to go out as 4294967291 and 2^31 as 2147483647.
+  const expected = [
+    [-5000, "Keep-Alive: timeout=-5"],
+    [-0.5, "Keep-Alive: timeout=-1"],
+    [2 ** 31 * 1000, "Keep-Alive: timeout=2147483648"],
+    [Infinity, "Keep-Alive: timeout=Infinity"],
+    [(2 ** 31 - 1) * 1000, "Keep-Alive: timeout=2147483647"],
+    [5999, "Keep-Alive: timeout=5"],
+  ];
+  const actual: [number, string | undefined][] = [];
+  for (const [keepAliveTimeout] of expected) {
+    const server = createServer((req, res) => {
+      // The response took its copy when the request arrived. The idle timer reads the server's
+      // value once the response is done, and must not be armed with the numbers above.
+      server.keepAliveTimeout = 1000;
+      respond(res);
+    });
+    server.keepAliveTimeout = keepAliveTimeout as number;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const head = await new Promise<string>((resolve, reject) => {
+        const socket = connect(port, "127.0.0.1");
+        let data = "";
+        socket.on("data", chunk => {
+          data += chunk;
+          const end = data.indexOf("\r\n\r\n");
+          if (end === -1) return;
+          socket.destroy();
+          resolve(data.slice(0, end));
+        });
+        socket.on("close", () =>
+          reject(new Error(`closed before the end of the response head: ${JSON.stringify(data)}`)),
+        );
+        socket.on("error", reject);
+        socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      });
+      actual.push([keepAliveTimeout as number, head.split("\r\n").find(line => line.startsWith("Keep-Alive:"))]);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+  expect(actual).toEqual(expected);
+});
+
 it("a non-200 CONNECT through a proxy that holds the connection open is destroyed client-side", async () => {
   // cleanupAndPropagate deliberately defers destroy to req.onSocket for
   // status-code tunnel failures; oncreate must forward the socket so
@@ -4760,6 +4987,32 @@ it.each([
   } finally {
     proxy.close();
   }
+});
+
+// Deliberate divergence from Node v26, which prints the raw proxy URL in these messages, credentials
+// included. Bun removes the userinfo. The message for a URL without credentials is the same as in Node.
+it.each([
+  ["port out of range", "http://user:s3cret@proxy.example.com:99999", "http://proxy.example.com:99999"],
+  ["LF in the password", "http://user:s3c\nret@proxy.example.com:8080", "http://proxy.example.com:8080"],
+  ["unescaped / in the password", "http://user:s3/cret@proxy.example.com:8080", "http://proxy.example.com:8080"],
+  ["unescaped @ in the password", "http://user:s3@cret@proxy.example.com:99999", "http://proxy.example.com:99999"],
+  ["space in the host", "http://user:s3cret@proxy example.com:8080", "http://proxy example.com:8080"],
+  ["no credentials", "http://proxy.example.com:99999", "http://proxy.example.com:99999"],
+])("ERR_PROXY_INVALID_CONFIG does not expose the proxy credentials (%s)", (_name, proxyUrl, printed) => {
+  const errors = [
+    () => new Agent({ proxyEnv: { HTTP_PROXY: proxyUrl } }),
+    () => new https.Agent({ proxyEnv: { HTTPS_PROXY: proxyUrl } }),
+    // Call the returned restore function, so that a missing throw does not replace the global agents.
+    () => (http as any).setGlobalProxyFromEnv({ HTTPS_PROXY: proxyUrl })(),
+  ].map(create => {
+    try {
+      create();
+    } catch (err: any) {
+      return { code: err.code, message: err.message };
+    }
+  });
+  const expected = { code: "ERR_PROXY_INVALID_CONFIG", message: `Invalid proxy URL: ${printed}` };
+  expect(errors).toEqual([expected, expected, expected]);
 });
 
 // Node.js v26 removed res.writeHeader (DEP0063 end-of-life, nodejs/node#60635).
@@ -6602,4 +6855,85 @@ describe("connectionListener maxRequestsPerSocket", () => {
     ).toBe(101);
     expect(events).toEqual(["request /1", "upgrade /ws"]);
   });
+});
+
+it("connectionListener applies the server's joinDuplicateHeaders option like the native path and Node", async () => {
+  // Node keeps only the first value of a header it treats as single-valued (Authorization,
+  // Content-Type, ...) unless the server was created with joinDuplicateHeaders; Cookie and unknown
+  // headers are joined either way. The same raw request goes through server.emit("connection", ...)
+  // (the JS parser path, which has to read the option off the server itself) and through the same
+  // server options listening normally (the native path); both must produce Node's req.headers.
+  const rawRequest =
+    "GET / HTTP/1.1\r\nHost: example.test\r\n" +
+    "Authorization: one\r\nAuthorization: two\r\n" +
+    "Content-Type: text/plain\r\nContent-Type: text/html\r\n" +
+    "Cookie: a=1\r\nCookie: b=2\r\n" +
+    "X-Custom: first\r\nX-Custom: second\r\n" +
+    "Connection: close\r\n\r\n";
+
+  function serverRecordingHeaders(options: { joinDuplicateHeaders?: boolean }) {
+    const { promise: headers, resolve, reject } = Promise.withResolvers<http.IncomingHttpHeaders>();
+    const server = createServer(options, (req, res) => {
+      resolve({ ...req.headers });
+      res.end();
+    });
+    // A no-op once the handler has resolved, so the connection closing after the response is fine.
+    const closedEarly = () => reject(new Error("the connection closed before the request was dispatched"));
+    return { server, headers, reject, closedEarly };
+  }
+
+  async function headersSeenOverEmittedConnection(options: { joinDuplicateHeaders?: boolean }) {
+    const { server, headers, reject, closedEarly } = serverRecordingHeaders(options);
+    const [clientSide, serverSide] = duplexPair();
+    clientSide.on("error", reject);
+    serverSide.on("error", reject);
+    serverSide.on("close", closedEarly);
+    clientSide.resume();
+    server.emit("connection", serverSide);
+    clientSide.write(rawRequest);
+    try {
+      return await headers;
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  }
+
+  async function headersSeenOverListeningServer(options: { joinDuplicateHeaders?: boolean }) {
+    const { server, headers, reject, closedEarly } = serverRecordingHeaders(options);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    socket.on("error", reject);
+    socket.on("close", closedEarly);
+    socket.resume();
+    socket.write(rawRequest);
+    try {
+      return await headers;
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  }
+
+  const joined = {
+    host: "example.test",
+    authorization: "one, two",
+    "content-type": "text/plain, text/html",
+    cookie: "a=1; b=2",
+    "x-custom": "first, second",
+    connection: "close",
+  };
+  const firstValueWins = { ...joined, authorization: "one", "content-type": "text/plain" };
+  for (const [options, expected] of [
+    [{ joinDuplicateHeaders: true }, joined],
+    [{ joinDuplicateHeaders: false }, firstValueWins],
+    [{}, firstValueWins],
+  ] as const) {
+    expect({
+      options,
+      emitted: await headersSeenOverEmittedConnection(options),
+      listening: await headersSeenOverListeningServer(options),
+    }).toEqual({ options, emitted: expected, listening: expected });
+  }
 });

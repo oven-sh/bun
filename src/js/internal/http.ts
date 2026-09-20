@@ -35,7 +35,6 @@ const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const optionsSymbol = Symbol("options");
 const tlsSymbol = Symbol("tls");
-const typeSymbol = Symbol("type");
 const kAbortController = Symbol.for("kAbortController");
 const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
@@ -65,11 +64,6 @@ export const enum NodeHTTPResponseAbortEvent {
   abort = 1,
   timeout = 2,
   readParsed = 3,
-}
-export const enum NodeHTTPIncomingRequestType {
-  FetchRequest,
-  FetchResponse,
-  NodeHTTPResponse,
 }
 export const enum NodeHTTPBodyReadState {
   none,
@@ -208,14 +202,6 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
     // socket's flowing=false, which would swallow the next request's 'pause'.
     if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
   }
-}
-
-function validateMsecs(numberlike: any, field: string) {
-  if (typeof numberlike !== "number" || numberlike < 0) {
-    throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
-  }
-
-  return numberlike;
 }
 
 const METHODS = [
@@ -574,7 +560,5 @@ export {
   setServerCustomOptions,
   setServerMaxHeadersCount,
   tlsSymbol,
-  typeSymbol,
   utcDate,
-  validateMsecs,
 };

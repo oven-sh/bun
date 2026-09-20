@@ -1859,8 +1859,8 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
 
 it("process.execArgv", async () => {
   const script = join(__dirname, "print-process-execArgv.js");
-  const printExpr = "JSON.stringify({execArgv:process.execArgv,argv:process.argv.slice(2)})";
-  const printCode = `console.log(${printExpr})`;
+  // An eval has no script path in process.argv, so its `argv` is process.argv.slice(1).
+  const evalCode = "console.log(JSON.stringify({execArgv:process.execArgv,argv:process.argv.slice(1)}))";
   // Every command below also gets `script` on stdin, so a bare `-` in the script
   // position runs the same fixture from stdin. `argv` is process.argv.slice(2).
   const fixtures = [
@@ -1876,27 +1876,20 @@ it("process.execArgv", async () => {
     ["--smol -- index.ts a", ["--smol"], ["a"]],
     ["run --smol -- - a", ["--smol"], ["a"]],
     ["--bun node --no-warnings -- index.ts a", ["--no-warnings"], ["a"]],
+    // #25387: a user option after `--` is not an exec arg, even when bun has an option with that name.
+    [`-e '${evalCode}' -- --silent a`, ["-e", evalCode], ["--silent", "a"]],
     // ...unless they are the value of an option that takes one (and so is a value spelled `run`).
     ["--conditions - index.ts", ["--conditions", "-"], []],
     ["--conditions -- index.ts", ["--conditions", "--"], []],
     ["--conditions run index.ts", ["--conditions", "run"], []],
-    // `-c`/`--config` only take a value as `--config=path`, so the next arg is the script.
-    ["-c index.ts a", ["-c"], ["a"]],
-    // In a short chain the last short takes the next token (`-be code` is `-b -e code`).
-    [`-be '${printCode}' a`, ["-be", printCode], []],
-    // ...but `-c` ends the chain (`-ce` is `-c`, the `e` is dropped) and the next token is the script.
-    ["-ce index.ts a", ["-ce"], ["a"]],
-    // `-pe` is an alias of `-p` without `run`; `bun run -pe x` is `-p e` and `x` is the script.
-    [`-pe '${printExpr}' a`, ["-pe", printExpr], []],
-    ["run -pe index.ts a", ["-pe"], ["a"]],
+    // `--config` only takes a value as `--config=path`, so the next arg is the script.
+    ["--config index.ts a", ["--config"], ["a"]],
   ];
 
   const results = await Promise.all(
     fixtures.map(async ([cmd]) => {
       const replacedCmd = cmd.replace("index.ts", Bun.$.escape(script));
-      const stdout = await Bun.$`${bunExe()} ${{ raw: replacedCmd }} < ${script}`.text();
-      // `run -pe index.ts` also prints the `-p` result, so pick the fixture's line.
-      return [cmd, JSON.parse(stdout.split("\n").find(line => line.startsWith('{"execArgv"')))];
+      return [cmd, await Bun.$`${bunExe()} ${{ raw: replacedCmd }} < ${script}`.json()];
     }),
   );
   expect(Object.fromEntries(results)).toEqual(

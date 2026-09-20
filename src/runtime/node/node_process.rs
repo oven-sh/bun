@@ -289,41 +289,14 @@ mod _impl {
                         }
                     }
                 }
-                set
-            });
-
-        // Shorts of OneOptional params (`-c`): they end a chain without a value.
-        static ENDS_CHAIN: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| {
-            crate::cli::arguments::AUTO_PARAMS
-                .iter()
-                .filter(|param| param.takes_value == bun_clap::Values::OneOptional)
-                .filter_map(|param| param.names.short)
-                .collect()
-        });
-
-        // Same token rules as `src/clap/streaming.rs`.
-        fn consumes_next_arg(arg: &[u8], seen_run: bool) -> bool {
-            if arg.starts_with(b"--") {
-                return CONSUMES_NEXT_ARG.contains(arg);
-            }
-            // `bun run` parses without the node short aliases (`-pe` is `-p e` there).
-            if !seen_run {
+                // Aliases are not params; one takes a value iff its target does.
                 for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
-                    if arg == *from {
-                        return CONSUMES_NEXT_ARG.contains(to);
+                    if set.contains(to) {
+                        bun_core::handle_oom(set.insert(from));
                     }
                 }
-            }
-            for (i, &short) in arg.iter().enumerate().skip(1) {
-                if bun_core::strings::contains_char(&ENDS_CHAIN, short) {
-                    return false;
-                }
-                if CONSUMES_NEXT_ARG.contains(&[b'-', short]) {
-                    return i == arg.len() - 1;
-                }
-            }
-            false
-        }
+                set
+            });
 
         let mut seen_run = false;
         let mut awaiting_value = false;
@@ -349,7 +322,7 @@ mod _impl {
 
             if arg.len() >= 1 && arg[0] == b'-' {
                 args.push(BunString::clone_utf8(arg));
-                awaiting_value = consumes_next_arg(arg, seen_run);
+                awaiting_value = CONSUMES_NEXT_ARG.contains(arg);
                 continue;
             }
 

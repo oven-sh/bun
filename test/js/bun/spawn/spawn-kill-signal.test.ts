@@ -1,3 +1,4 @@
+import type { Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { isLinux, isWindows, shellExe } from "harness";
 import { constants } from "os";
@@ -190,21 +191,25 @@ describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers"
 
     // SIGABRT and SIGSYS dump core, and CI fails a test that leaves a core file. The child
     // turns core dumps off and then prints a line, so the signal cannot come before that.
-    async function spawnWithoutCoreDump(options: { killSignal?: string; signal?: AbortSignal } = {}) {
-      const proc = Bun.spawn({
-        cmd: ["sh", "-c", "ulimit -c 0 && echo ready && exec sleep 1000"],
-        stdio: ["ignore", "pipe", "ignore"],
-        ...options,
-      });
+    const cmd = ["sh", "-c", "ulimit -c 0 && echo ready && exec sleep 1000"];
+    const stdio = ["ignore", "pipe", "ignore"] as const;
+
+    async function coreDumpsAreOff(proc: Subprocess<"ignore", "pipe", "ignore">) {
       const reader = proc.stdout.getReader();
-      const { value } = await reader.read();
+      const decoder = new TextDecoder();
+      let output = "";
+      while (!output.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+      }
       reader.releaseLock();
-      expect(new TextDecoder().decode(value)).toBe("ready\n");
-      return proc;
+      expect(output).toBe("ready\n");
     }
 
     test("kill(alias) sends the signal, and signalCode is the first name", async () => {
-      await using proc = await spawnWithoutCoreDump();
+      await using proc = Bun.spawn({ cmd, stdio });
+      await coreDumpsAreOff(proc);
       proc.kill(alias);
       expect(await proc.exited).toBe(128 + number);
       expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: null, signalCode: name });
@@ -212,7 +217,8 @@ describe.concurrent.skipIf(isWindows)("signal names map to the OS's own numbers"
 
     test("killSignal: alias is delivered when the AbortSignal fires", async () => {
       const controller = new AbortController();
-      await using proc = await spawnWithoutCoreDump({ killSignal: alias, signal: controller.signal });
+      await using proc = Bun.spawn({ cmd, stdio, killSignal: alias, signal: controller.signal });
+      await coreDumpsAreOff(proc);
       controller.abort();
       expect(await proc.exited).toBe(128 + number);
       expect({ exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: null, signalCode: name });

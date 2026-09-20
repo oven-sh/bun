@@ -99,6 +99,28 @@ test("the record a Debian bake writes", () => {
   ]);
 });
 
+// An observed tool's value goes into the record, so what it observes has to be
+// the same for every bake of the same content. apk writes the time of the
+// install into a log inside the root it installs into.
+test("the musl sysroot is observed without apk's log", () => {
+  using dir = tempDir("ci-images", {});
+  const image = images.find(image => image.os === "linux" && image.role === "build")!;
+  const bootstrap = readFileSync(join(generateImage(image, String(dir)).directory, "bootstrap.sh"), "utf8");
+  const section = bootstrap.slice(
+    bootstrap.indexOf("# ---- musl-sysroot"),
+    bootstrap.indexOf("# ---- windows-sysroot"),
+  );
+  const removed = ["/opt/linux-sysroot-musl", "/opt/linux-sysroot-musl-arm64"].map(
+    root => `rm -rf ${root}/var/log/apk.log`,
+  );
+  const lines = section.split("\n");
+  for (const line of removed) expect(lines).toContain(line);
+  // Removed before it is observed.
+  expect(lines.indexOf(removed[1]!)).toBeLessThan(
+    lines.findIndex(line => line.includes("$BAKE_DIR/observed/musl-sysroot")),
+  );
+});
+
 test("the packages an Alpine bake records", () => {
   using dir = tempDir("ci-images", {});
   const image = images.find(image => image.os === "linux" && image.distro === "alpine")!;

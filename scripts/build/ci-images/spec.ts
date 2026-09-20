@@ -988,6 +988,8 @@ function muslSysroot(image: LinuxImage): Tool {
             "libstdc++-dev",
           ],
         ),
+        comment("apk's log has the time of the install in it: with it, no two bakes observe the same sysroot."),
+        remove(`${locations.muslSysroot[arch]}/var/log/apk.log`),
       ]),
     ],
   };

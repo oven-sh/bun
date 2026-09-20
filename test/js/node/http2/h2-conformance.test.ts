@@ -2113,7 +2113,8 @@ describe("PUSH_PROMISE after the client sent GOAWAY (RFC 9113 §6.8)", () => {
     },
   );
 
-  // node's JS layer refuses every new stream once close() ran, also in the read that ran it.
+  // node's JS layer refuses every new stream once close() ran, also in the read that ran it. Its
+  // RST_STREAM for that stream never leaves: nghttp2 closes the stream when it sends the GOAWAY.
   test("close() from a 'response' listener refuses a PUSH_PROMISE that follows in the same write", async () => {
     using peer = await connectedClient();
     peer.req.once("response", () => peer.client.close());
@@ -2126,7 +2127,7 @@ describe("PUSH_PROMISE after the client sent GOAWAY (RFC 9113 §6.8)", () => {
     );
     expect(await peer.response).toEqual({ status: 200, xPushed: undefined, rstCode: 0 });
     expect(peer.pushed.map(stream => stream.id)).toEqual([]);
-    await peer.sessionClosed;
+    expect(await peer.closeAndCollectErrors()).toEqual([]);
     expect(peer.sessionErrors).toEqual([]);
   });
 

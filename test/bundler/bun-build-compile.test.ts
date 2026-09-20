@@ -62,33 +62,46 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         entrypoints: [join(dir + "", "app.js")],
         compile: { outfile },
         bytecode: true,
-        format: "esm",
+        format: "cjs",
         target: "bun",
       });
       expect(result.success).toBe(true);
 
-      const run = async (extraEnv: Record<string, string>) => {
+      // The same program as `app.js` + `app.js.jsc` on disk: that bytecode is read into an owned buffer and its instruction
+      // streams are copied out of it, which is the private memory the executable's mapped payload never allocates.
+      const ondisk = await Bun.build({
+        entrypoints: [join(dir + "", "app.js")],
+        outdir: join(dir + "", "out"),
+        bytecode: true,
+        format: "cjs",
+        target: "bun",
+      });
+      expect(ondisk.success).toBe(true);
+
+      const run = async (cmd: string[]) => {
         await using proc = Bun.spawn({
-          cmd: [outfile],
-          env: { ...bunEnv, ...extraEnv },
+          cmd,
+          cwd: dir + "",
+          env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
           stdout: "pipe",
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).toBe("");
+        // Both runs execute the bundle from its bytecode, not from a parse.
+        expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
         expect(stdout).toContain("anonKB");
         expect(exitCode).toBe(0);
         return JSON.parse(stdout.trim()) as { n: number; anonKB: number };
       };
-      const aliased = await run({});
-      const copied = await run({ BUN_JSC_useBorrowedBytecodeFromCache: "0" });
+      const aliased = await run([outfile]);
+      const copied = await run([bunExe(), join(dir + "", "out", "app.js")]);
       expect(aliased.n).toBe(2000);
       expect(copied.n).toBe(2000);
       // 4000 decoded functions carry ~11 MB of instruction stream + expression info; copied, that is anonymous memory the aliasing run never allocates.
       expect(copied.anonKB - aliased.anonKB).toBeGreaterThan(4096);
     },
     60_000,
-  );
+  );;;
 
   // --bytecode into an executable for another os/arch/libc embeds bytecode written by this platform's JavaScriptCore for
   // another's; such executables say so in crash reports (Features: cross_compiled_bytecode). The "other platform" build

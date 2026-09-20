@@ -1811,15 +1811,19 @@ impl PipeReader {
         // poll-registration failure through `on_reader_error`.
         #[cfg(not(windows))]
         {
-            // SAFETY: caller contract; the `&mut reader` is scoped to the call.
-            let fd = unsafe { (*this).stdio_result.take() }.unwrap();
-            let _ = unsafe { (*this).reader.start(fd, true) };
-            // SAFETY: caller contract; the keepalive keeps `this` live.
-            if matches!(unsafe { &(*this).state }, PipeReaderState::Err(_)) {
+            // SAFETY: caller contract; the `&mut reader` ends when `start`
+            // returns, and the keepalive keeps `this` live past the error
+            // dispatch inside it.
+            let errored = unsafe {
+                let fd = (*this).stdio_result.take().unwrap();
+                let _ = (*this).reader.start(fd, true);
+                matches!((*this).state, PipeReaderState::Err(_))
+            };
+            if errored {
                 return;
             }
+            // SAFETY: caller contract; no callback runs from these flag writes.
             #[cfg(unix)]
-            // SAFETY: as above; no callback runs from these flag writes.
             unsafe {
                 if let Some(poll) = (*this).reader.handle.get_poll() {
                     poll.set_flag(bun_io::FilePollFlag::Socket);

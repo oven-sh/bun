@@ -43,8 +43,8 @@ import {
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configOf, configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
-import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { BuildError } from "./build/error.ts";
+import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 import { isCI, printEnvironment, startGroup } from "./buildkite.ts";

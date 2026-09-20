@@ -9370,7 +9370,7 @@ declare module "bun" {
        * RGBA, 8 bits per channel, `width * height * 4` bytes, rows top to
        * bottom, no row padding. Alpha is straight (not premultiplied).
        */
-      data: Uint8Array;
+      data: Uint8Array<ArrayBuffer>;
       width: number;
       height: number;
       /** Always 4. Bun holds RGBA between decode and encode. */

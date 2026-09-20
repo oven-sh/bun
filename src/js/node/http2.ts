@@ -4893,8 +4893,7 @@ function destroySelfOnEnd(this: Http2Stream) {
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
 }
-// The engine ended the session on its own and reported no error. A request that this cuts is
-// cancelled: destroy()'s sweep alone would let it end as if its response were complete.
+// An engine-ended session reports no error: the requests that it cuts must not end as if they were complete.
 function cancelStreamForEngineEnd(stream: Http2Stream) {
   if (stream.destroyed || stream.closed) return;
   process.nextTick(destroyStreamForSessionDestroy, createPendingStreamCancelError(), NGHTTP2_CANCEL, stream);
@@ -5044,9 +5043,7 @@ class ClientHttp2Session extends Http2Session {
 
       self.#connections--;
       if (self.#destroying) {
-        // destroy()'s sweep: `error` is the session's code. Like node's closeSession(), an open stream
-        // gets the session's error, if there is one. ERR_HTTP2_STREAM_CANCEL is for pending requests.
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1234-L1239
+        // node's closeSession(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1234-L1239
         process.nextTick(destroyStreamForSessionDestroy, self[kSessionDestroyError], error, stream);
         return;
       }
@@ -5426,9 +5423,7 @@ class ClientHttp2Session extends Http2Session {
       return;
     }
     this[bunHTTP2Socket] = null;
-    // Open streams get the transport error like in node, also on the paths below where the session
-    // stays quiet. Behind a GOAWAY node gives them nothing, so a cut response looks complete there:
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3253-L3263
+    // Open streams get it on the quiet paths too. Behind a GOAWAY node gives none: a cut response looks complete.
     this[kSessionDestroyError] = error;
     if (this.#closed) {
       this.destroy();

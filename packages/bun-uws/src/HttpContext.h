@@ -721,9 +721,10 @@ private:
          * the message it was destroyed under did not complete in it (a partial
          * body, or parsing stopped at a shutdown). Close now: Node delivers only
          * what its parser already has. The ext is still an HttpResponseData
-         * unless the read upgraded the socket to a WebSocket. */
+         * unless the read adopted this socket as a WebSocket (upgradedWebSocket
+         * can name another connection upgraded during this dispatch). */
         if constexpr (IsNodeHttp) {
-            if (!httpContextData->upgradedWebSocket && !us_socket_is_closed(s)
+            if (httpContextData->upgradedWebSocket != s && !us_socket_is_closed(s)
                 && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_MESSAGE)) {
                 us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
                 return s;

@@ -768,20 +768,25 @@ impl NodeHTTPResponse {
         JSValue::from(self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED))
     }
 
-    /// The socket was destroyed from JS and uws closes it after the current read (HTTP_NODE_CLOSE_AFTER_MESSAGE).
-    fn is_close_after_message_pending(&self) -> bool {
+    /// Closed, or destroyed from JS with the close deferred to the end of the read uws is
+    /// parsing (HTTP_NODE_CLOSE_AFTER_MESSAGE). Every write gates on this.
+    pub(crate) fn is_socket_closed_or_closing(&self) -> bool {
         let flags = self.flags.get();
-        !flags.contains(Flags::SOCKET_CLOSED)
-            && !flags.contains(Flags::UPGRADED)
-            && self
-                .raw_response
-                .get()
-                .is_some_and(|raw| raw.state().is_node_close_after_message())
+        if flags.contains(Flags::SOCKET_CLOSED) {
+            return true;
+        }
+        // `raw_response` outlives the socket of a done request: do not read it.
+        if flags.is_done() || flags.contains(Flags::UPGRADED) {
+            return false;
+        }
+        self.raw_response
+            .get()
+            .is_some_and(|raw| raw.state().is_node_close_after_message())
     }
 
     pub(crate) fn get_flags(&self, _global: &JSGlobalObject) -> JSValue {
         let mut flags = self.flags.get();
-        if self.is_close_after_message_pending() {
+        if self.is_socket_closed_or_closing() {
             flags.insert(Flags::SOCKET_CLOSED);
         }
         JSValue::js_number_from_int32(flags.bits() as i32)
@@ -909,10 +914,7 @@ impl NodeHTTPResponse {
             // We haven't emitted the "close" event yet.
             return Ok(JSValue::UNDEFINED);
         };
-        if flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::UPGRADED)
-            || self.is_close_after_message_pending()
-        {
+        if flags.contains(Flags::UPGRADED) || self.is_socket_closed_or_closing() {
             // We haven't emitted the "close" event yet.
             return Ok(JSValue::UNDEFINED);
         }
@@ -1161,7 +1163,7 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.is_done() {
+        if self.is_done() || self.is_socket_closed_or_closing() {
             return Ok(JSValue::UNDEFINED);
         }
         let Some(raw_response) = self.raw_response.get() else {
@@ -1182,7 +1184,7 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.is_done() {
+        if self.is_done() || self.is_socket_closed_or_closing() {
             return Ok(JSValue::UNDEFINED);
         }
         {
@@ -1467,7 +1469,7 @@ fn node_http_request_on_resolve(global_object: &JSGlobalObject, callframe: &Call
     this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
 
     let flags = this.flags.get();
-    if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !flags.contains(Flags::SOCKET_CLOSED) {
+    if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !this.is_socket_closed_or_closing() {
         let this_value = this.get_this_value();
         if !this_value.is_empty() {
             js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
@@ -1882,10 +1884,7 @@ impl NodeHTTPResponse {
         //          // then we haven't gotten the 'close' event yet.
         //          return false;
         //        }
-        if self.flags.get().contains(Flags::SOCKET_CLOSED)
-            || self.raw_response.get().is_none()
-            || self.is_close_after_message_pending()
-        {
+        if self.raw_response.get().is_none() || self.is_socket_closed_or_closing() {
             return Ok(if IS_END {
                 JSValue::UNDEFINED
             } else {
@@ -2379,7 +2378,7 @@ impl NodeHTTPResponse {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let flags = self.flags.get();
-        if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
+        if !flags.contains(Flags::UPGRADED) && !self.is_socket_closed_or_closing() {
             if let Some(raw_response) = self.raw_response.get() {
                 // Don't flush immediately; queue a microtask to uncork the socket.
                 raw_response.flush_headers(false);

@@ -280,15 +280,16 @@ describe("HTTP server CONNECT", () => {
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {
           const buffered = socket.readableLength;
-          if (buffered >= totalBytes) break;
+          if (buffered >= totalBytes) return;
           if (buffered !== previous) {
             previous = buffered;
             stableSince = Date.now();
           } else if (buffered > 0 && Date.now() - stableSince >= 500) {
-            break;
+            return;
           }
           await Bun.sleep(10);
         }
+        throw new Error(`tunnel reads did not settle: readableLength ${socket.readableLength}`);
       },
       // Resolves with the byte count once `expected` bytes arrived.
       async readAll(expected: number) {

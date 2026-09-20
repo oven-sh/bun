@@ -184,7 +184,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                                                                                                      |
 | `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`                                                                                                    |
 | `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                                                                          |
-| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing                                                                                                 |
+| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing, `checkImageTools()`                                                                            |
 | `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                                                                      |
 | `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                                                                   |
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                                                                         |
@@ -216,9 +216,14 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                                                |
+| `ci-images/spec.ts`            | CI's machines in one file: images, version pins, locations, every tool, and the generator of the bake scripts; `bun run ci:images`                                      |
 | `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                                                                |
 | `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                                                                              |
 | `shims/*.c`                    | Platform workaround sources                                                                                                                                             |
+
+## CI machine images (`ci-images/`)
+
+What is on CI's build and test machines, and the generator of what bakes them. `ci-images/spec.ts` is also where the versions this build system uses are written (LLVM, Node.js, xwin and the Windows SDK, the macOS SDK, the Android API level, FreeBSD): `tools.ts`, `deps/nodejs-headers.ts`, `winsysroot.ts`, `macos-sdk.ts` and `config.ts` import them from `pins`, the sysroot and download-cache lookups import where things are from `locations`, and `spec.ts` is one of `build.ninja`'s inputs. `findLlvmTool()` accepts only the pinned LLVM release series on every machine, and on a Buildkite agent `checkImageTools()` compares `bun`, `cmake` and `node` with their pins exactly. How the images work and how to change them: `ci-images/CLAUDE.md`.
 
 ## Key types
 

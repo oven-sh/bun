@@ -1075,11 +1075,8 @@ function getImageSteps(platform: Platform, state: ImageState, options: PipelineO
           // step-level property for it.
           BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
         },
-        command: [
-          downloadBakeDirectory,
-          `node ./scripts/ci-image.ts bake-image --key=${imageKey} --name=${name}`,
-          uploadRecord,
-        ],
+        // One command, so that a cancel reaches Packer (see bakeWindowsImage).
+        command: `node ./scripts/ci-image.ts bake-image --key=${imageKey} --name=${name}`,
       },
     ];
   }

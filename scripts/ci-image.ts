@@ -6,7 +6,9 @@
 //
 //   bake-image --key=<image key> --name=<image name>
 //     Bake a Windows image on Azure with Packer, from the bake directory
-//     build/ci-images/<key>/ that the pipeline step generated.
+//     build/ci-images/<key>/ that the pipeline step generated and uploaded,
+//     and publish the bun-image.json the bake wrote. This has to be the
+//     step's only command: see bakeWindowsImage.
 //   wait-image --os=<linux|windows> --name=<image name> [--timeout-minutes=N]
 //     Block until the image of that name can be booted.
 
@@ -174,8 +176,18 @@ async function downloadPacker(): Promise<string> {
   return packer;
 }
 
-/** Packer creates the VM, uploads the bake directory, runs bootstrap.ps1, runs Sysprep and publishes to the gallery. */
+/**
+ * Packer creates the VM, uploads the bake directory, runs bootstrap.ps1, runs
+ * Sysprep and publishes to the gallery.
+ *
+ * The step runs this and nothing else. When a step has several commands the
+ * agent runs them in a shell, and a cancel ends that shell without this
+ * process or Packer ever seeing the signal, so Packer deletes nothing and the
+ * VM it made keeps its cores until someone removes it by hand. So the download
+ * before the bake and the upload after it happen in here.
+ */
 async function bakeWindowsImage(key: string, name: string): Promise<void> {
+  await run(["buildkite-agent", "artifact", "download", `build/ci-images/${key}/*`, "."]);
   const directory = resolve("build/ci-images", key);
   const image = JSON.parse(readFileSync(join(directory, "image.json"), "utf8")) as WindowsImage;
   const azure = await getAzure();
@@ -271,6 +283,8 @@ async function bakeWindowsImage(key: string, name: string): Promise<void> {
     throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
   }
   console.log(`[packer] Baked ${name}`);
+  // What the bake installed, to read from the build's page without starting a machine from the image.
+  await run(["buildkite-agent", "artifact", "upload", `build/ci-images/${key}/bun-image.json`]);
 }
 
 async function main(): Promise<void> {

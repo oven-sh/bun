@@ -1,32 +1,26 @@
 /**
- * The build directory's toolchain identity file (scripts/build/toolchain-identity.ts).
+ * The build directory's tool identity files (scripts/build/tools.ts).
  *
  * ninja names a tool by path, so a compiler replaced behind a stable path (a package manager's `current` link)
- * leaves every command line unchanged and the old compiler's objects in place. The file records what each tool
- * says it is; the edges that run a tool take it as an input.
+ * leaves every command line unchanged and the old compiler's objects in place. Each file records what one tool
+ * says it is; an edge takes the files of the tools it runs as inputs.
  */
 import { expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
-import { cc } from "../../scripts/build/compile.ts";
+import { cc, cxx, link, nasm } from "../../scripts/build/compile.ts";
 import type { Config } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
-import { toolchainIdentityPath, writeToolchainIdentity } from "../../scripts/build/toolchain-identity.ts";
-import { toolIdentity } from "../../scripts/build/tools.ts";
-
-/** The fields the identity file and the edge helper below read. */
-function configWith(buildDir: string, tools: Partial<Config>): Config {
-  return { buildDir, cwd: buildDir, windows: false, objSuffix: ".o", nasm: undefined, ...tools } as Config;
-}
+import { toolIdentity, toolIdentityFile, writeToolIdentities } from "../../scripts/build/tools.ts";
 
 /** A stand-in tool: answers `--version` the way the real one does. */
 const tool = (...lines: string[]) => `#!/bin/sh\n${lines.map(l => `echo '${l}'`).join("\n")}\n`;
 
 // The stand-ins are shell scripts; on Windows a tool has to be an .exe.
 test.skipIf(isWindows)("a tool's identity is the line of its --version output that carries the version", () => {
-  using dir = tempDir("toolchain-identity-line", {
+  using dir = tempDir("tool-identity-line", {
     "clang": tool(
       "clang version 23.1.1 (https://github.com/llvm/llvm-project 6dfe1677ab8d)",
       "Target: x86_64-unknown-linux-gnu",
@@ -45,8 +39,8 @@ test.skipIf(isWindows)("a tool's identity is the line of its --version output th
   expect(() => toolIdentity(join(String(dir), "missing"))).toThrow("Cannot tell which");
 });
 
-test.skipIf(isWindows)("the file changes when the path resolves to another compiler, and only then", () => {
-  using dir = tempDir("toolchain-identity", {
+test.skipIf(isWindows)("a file changes when its tool's path resolves to another tool, and only then", () => {
+  using dir = tempDir("tool-identity", {
     "v21/clang": tool("clang version 21.1.8 (https://github.com/llvm/llvm-project 2078da43e25a)"),
     "v23/clang": tool("clang version 23.1.1 (https://github.com/llvm/llvm-project 6dfe1677ab8d)"),
     "ld.lld": tool("LLD 23.1.1 (compatible with GNU linkers)"),
@@ -56,57 +50,72 @@ test.skipIf(isWindows)("the file changes when the path resolves to another compi
   // What an in-place upgrade looks like: the path the build knows stays, what it points at changes.
   const current = join(root, "current");
   symlinkSync(join(root, "v21"), current, "dir");
-  const cfg = configWith(join(root, "build"), {
-    cc: join(current, "clang"),
-    cxx: join(current, "clang"),
+  const clang = join(current, "clang");
+  const cfg = {
+    buildDir: join(root, "build"),
+    cc: clang,
+    cxx: clang,
+    hostCc: clang,
     ld: join(root, "ld.lld"),
-  });
-  mkdirSync(cfg.buildDir);
+  } as Config;
+  const read = (name: "cc" | "cxx" | "hostCc" | "ld") => readFileSync(toolIdentityFile(cfg, name), "utf8");
 
-  const identity = writeToolchainIdentity(cfg);
-  expect(identity).toBe(toolchainIdentityPath(cfg));
-  // Nothing of this machine in it: the same toolchain gives the same file anywhere.
-  expect(readFileSync(identity, "utf8")).toBe(
-    [
-      "cc: clang version 21.1.8 (https://github.com/llvm/llvm-project 2078da43e25a)",
-      "cxx: clang version 21.1.8 (https://github.com/llvm/llvm-project 2078da43e25a)",
-      "ld: LLD 23.1.1 (compatible with GNU linkers)",
-      "",
-    ].join("\n"),
+  writeToolIdentities(cfg);
+  // Nothing of this machine in it: the same tool gives the same file anywhere.
+  expect(read("cc")).toBe("clang version 21.1.8 (https://github.com/llvm/llvm-project 2078da43e25a)\n");
+  expect(read("cxx")).toBe(read("cc"));
+  expect(read("hostCc")).toBe(read("cc"));
+  expect(read("ld")).toBe("LLD 23.1.1 (compatible with GNU linkers)\n");
+  // No nasm on this platform: no file, and no edge that would name one.
+  expect(existsSync(toolIdentityFile(cfg, "nasm"))).toBe(false);
+
+  // Same tools: every file is left alone, so nothing that depends on one rebuilds.
+  const written = (["cc", "cxx", "hostCc", "ld"] as const).map(name => statSync(toolIdentityFile(cfg, name)).mtimeMs);
+  writeToolIdentities(cfg);
+  expect((["cc", "cxx", "hostCc", "ld"] as const).map(name => statSync(toolIdentityFile(cfg, name)).mtimeMs)).toEqual(
+    written,
   );
-
-  // Same toolchain: the file is left alone, so nothing that depends on it rebuilds.
-  const written = statSync(identity).mtimeMs;
-  writeToolchainIdentity(cfg);
-  expect(statSync(identity).mtimeMs).toBe(written);
 
   rmSync(current);
   symlinkSync(join(root, "v23"), current, "dir");
-  writeToolchainIdentity(cfg);
-  expect(readFileSync(identity, "utf8")).toBe(
-    [
-      "cc: clang version 23.1.1 (https://github.com/llvm/llvm-project 6dfe1677ab8d)",
-      "cxx: clang version 23.1.1 (https://github.com/llvm/llvm-project 6dfe1677ab8d)",
-      "ld: LLD 23.1.1 (compatible with GNU linkers)",
-      "",
-    ].join("\n"),
-  );
+  writeToolIdentities(cfg);
+  expect(read("cc")).toBe("clang version 23.1.1 (https://github.com/llvm/llvm-project 6dfe1677ab8d)\n");
+  // The linker was not replaced: its file is untouched, and what only it produced stays.
+  expect(statSync(toolIdentityFile(cfg, "ld")).mtimeMs).toBe(written[3]);
 });
 
-test("a compile edge takes the identity file as an input", () => {
-  using dir = tempDir("toolchain-identity-edges", {});
-  const cfg = configWith(String(dir), {});
-  const n = new Ninja({ buildDir: cfg.buildDir });
-  n.rule("cc", { command: "clang $cflags -c $in -o $out" });
-  n.rule("mkdir_stamp", { command: "mkdir -p $dir && touch $out" });
-  cc(n, cfg, "a.c", { flags: ["-O2"] });
+test("an edge takes the identity of the tools it runs, and of no other", () => {
+  using dir = tempDir("tool-identity-edges", {});
+  const buildDir = String(dir);
+  const cfg = {
+    buildDir,
+    cwd: buildDir,
+    windows: false,
+    objSuffix: ".o",
+    exeSuffix: "",
+    host: { os: "linux" },
+    nasm: "/fake/nasm",
+    ld: "/fake/ld.lld",
+  } as Config;
+  const n = new Ninja({ buildDir });
+  for (const rule of ["cc", "cxx", "nasm", "link", "mkdir_stamp"]) n.rule(rule, { command: `${rule} $in $out` });
+  cc(n, cfg, "a.c", { flags: [] });
+  cxx(n, cfg, "b.cpp", { flags: [] });
+  nasm(n, cfg, "c.asm", { flags: [] });
+  link(n, cfg, "exe", ["obj/a.c.o"], { flags: [], libs: [] });
 
-  const edge = n
+  const statements = n
     .toString()
     .replace(/\$\n\s*/g, "")
-    .split("\n")
-    .find(line => line.startsWith("build ") && line.includes(": cc "));
-  // build <outputs>: <rule> <inputs> | <implicit inputs> || <order-only inputs>
-  const implicitInputs = edge?.slice(edge.indexOf(": ")).split(" || ")[0]!.split(" | ")[1];
-  expect(implicitInputs?.split(" ")).toContain("toolchain-identity.txt");
+    .split("\n");
+  const identitiesOf = (rule: string): string[] => {
+    const edge = statements.find(line => line.startsWith("build ") && line.includes(`: ${rule} `));
+    // build <outputs>: <rule> <inputs> | <implicit inputs> || <order-only inputs>
+    const implicitInputs = edge?.slice(edge.indexOf(": ")).split(" || ")[0]!.split(" | ")[1] ?? "";
+    return implicitInputs.split(" ").filter(path => path.startsWith("toolchain-identity/"));
+  };
+  expect(identitiesOf("cc")).toEqual(["toolchain-identity/cc.txt"]);
+  expect(identitiesOf("cxx")).toEqual(["toolchain-identity/cxx.txt"]);
+  expect(identitiesOf("nasm")).toEqual(["toolchain-identity/nasm.txt"]);
+  expect(identitiesOf("link")).toEqual(["toolchain-identity/cxx.txt", "toolchain-identity/ld.txt"]);
 });

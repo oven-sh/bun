@@ -30,6 +30,7 @@ import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs, slash } from "./shell.ts";
 import { streamPath } from "./stream.ts";
+import { toolIdentityFile } from "./tools.ts";
 
 /**
  * If the source dir exists with a stale (or missing) identity stamp,
@@ -1652,6 +1653,7 @@ function emitDirect(
       outputs: [toolOut],
       rule: "dep_host_cc",
       inputs: [toolSrc],
+      implicitInputs: [toolIdentityFile(cfg, "hostCc")],
       orderOnlyInputs: orderOnly,
       vars: { flags: ["-w", ...toolDefs].join(" ") },
     });

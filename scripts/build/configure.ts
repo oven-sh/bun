@@ -33,7 +33,6 @@ import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { rustPlanFiles } from "./rust.ts";
 import { quote } from "./shell.ts";
-import { writeToolchainIdentity } from "./toolchain-identity.ts";
 import {
   checkImageTools,
   findBun,
@@ -42,6 +41,7 @@ import {
   findNpm,
   findSystemTool,
   resolveLlvmToolchain,
+  writeToolIdentities,
 } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
@@ -353,7 +353,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   // (the discovered clang++ from `tools.ts`) so a contributor running `cargo`
   // directly / rust-analyzer use the same toolchain the ninja build does.
   generateCargoConfig(cfg);
-  writeToolchainIdentity(cfg);
+  writeToolIdentities(cfg);
   mark("generateCargoConfig");
 
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the

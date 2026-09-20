@@ -212,6 +212,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                                                                 |
 | `verify-binary.ts`             | Build-time CLI: static scans of the linked executable (exports, dynamic deps, initializers, hardening, debug info) and the duplicate-definition scan of the link inputs |
 | `binary-expectations.ts`       | What each target's executable must look like for `verify-binary.ts`; serialized to `<exe>.verify.json` at configure                                                     |
+| `annotations.ts`               | Compiler output from a failed step, parsed into Buildkite annotations                                                                                                   |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                                                |
@@ -250,7 +251,7 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 ## Node compatibility
 
-The build system runs under Node 25+ (configure checks the version). CI installs Node 26 and invokes it via `process.execPath` in `.buildkite/ci.mjs`.
+The build system runs under Node 25+ (configure checks the version). CI images have Node 26, and the build steps `.buildkite/ci.ts` generates run `node scripts/build.ts` (literal `node`: the steps run on a different machine from the generator).
 
 `cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (stream.ts, fetch-cli.ts, the regen rule, the `codegen` rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. The subprocesses inherit whichever runtime started the build.
 

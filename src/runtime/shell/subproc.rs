@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_void};
 use std::sync::Arc;
 
 use crate::api::bun::process::SpawnResultExt as _;
-use crate::api::bun::process::{self as bun_process, Process, SignalCodeExt, SpawnOptions, Status};
+use crate::api::bun::process::{self as bun_process, Process, SpawnOptions, Status};
 use crate::api::bun::subprocess as JscSubprocess;
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{self, IOWriter};
@@ -832,7 +832,7 @@ impl ShellSubprocess {
         let exit_code: Option<u8> = 'brk: {
             if let Status::Exited(exited) = &status {
                 if exited.is_ctrl_c_exit() {
-                    break 'brk SignalCode::SIGINT.to_exit_code();
+                    break 'brk Some(bun_sys::SignalCode::SIGINT.to_exit_code());
                 }
                 break 'brk Some(exited.code);
             }
@@ -841,10 +841,8 @@ impl ShellSubprocess {
                 // TODO: handle error
             }
 
-            if matches!(status, Status::Signaled(_)) {
-                if let Some(code) = status.signal_code() {
-                    break 'brk Some(code.to_exit_code().unwrap());
-                }
+            if let Some(code) = status.signal().map(|signal| signal.to_exit_code()) {
+                break 'brk Some(code);
             }
 
             break 'brk None;

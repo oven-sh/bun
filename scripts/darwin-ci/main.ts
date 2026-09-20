@@ -121,6 +121,6 @@ async function provisionBare(): Promise<void> {
   step("toolchain (scripts/bootstrap.sh)");
   await bootstrapToolchain();
 
-  step("agent (scripts/agent.mjs)");
+  step("agent (scripts/agent.ts)");
   await installBareAgent();
 }

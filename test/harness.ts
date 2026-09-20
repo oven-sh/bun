@@ -519,7 +519,7 @@ export interface BunRunResult {
   stdout: string;
   stderr: string;
   exitCode: number;
-  signalCode: NodeJS.Signals | null;
+  signalCode: NodeJS.Signals | number | null;
 }
 
 /**

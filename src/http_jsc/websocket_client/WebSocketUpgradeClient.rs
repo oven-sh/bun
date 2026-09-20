@@ -667,9 +667,7 @@ where
     /// A user `tls.checkServerIdentity` replaces the built-in name check (as
     /// in Node and `fetch`). It runs JS that may close the WebSocket: the
     /// caller holds a `RefPtr` guard and re-checks `cpp_websocket()` after.
-    ///
-    /// `enforce` is `rejectUnauthorized`. Without it only a user callback
-    /// runs, on a chain that verified, and its verdict is ignored (as in fetch).
+    /// Without `enforce` (`rejectUnauthorized: false`) the verdict is ignored.
     pub(crate) fn verify_peer_identity(
         this: ThisPtr<Self>,
         ssl: &mut boringssl::c::SSL,

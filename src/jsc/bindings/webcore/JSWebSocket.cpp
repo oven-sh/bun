@@ -278,8 +278,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
             sslConfig = WebSocketSSLConfigPtr { Bun__WebSocket__parseSSLConfig(globalObject, JSValue::encode(tlsOptionsValue)) };
             RETURN_IF_EXCEPTION(throwScope, {});
 
-            // Read and validated like fetch(): a value that cannot run must not
-            // pass for an installed pin.
+            // As in fetch(): a value that cannot run must not pass for a pin.
             auto checkServerIdentityValue = Bun::getIfPropertyExistsPrototypePollutionMitigation(globalObject, tlsOptions, PropertyName(Identifier::fromString(vm, "checkServerIdentity"_s)));
             RETURN_IF_EXCEPTION(throwScope, {});
             if (checkServerIdentityValue && !checkServerIdentityValue.isUndefinedOrNull()) {

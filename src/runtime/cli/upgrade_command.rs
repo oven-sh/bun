@@ -75,10 +75,9 @@ struct UnzipProgram {
     restores_mode: bool,
 }
 
-/// The extractors `bun upgrade` accepts, in probe order.
-///
-/// We could just embed libz2, however we want to be sure that xattrs are
-/// preserved. xattrs are used for codesigning and it'd be easy to mess that up.
+/// The extractors `bun upgrade` accepts, in probe order. The list must match
+/// the `for cmd in ...` probe in `install.sh`. The vendored libarchive only has
+/// its tar reader compiled in, so the zip is extracted by an external program.
 #[cfg(unix)]
 const UNZIP_PROGRAMS: &[UnzipProgram] = &[
     UnzipProgram {

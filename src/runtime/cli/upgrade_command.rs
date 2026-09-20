@@ -63,6 +63,91 @@ fn argv_contains(target: &[u8]) -> bool {
     bun_core::argv().iter().any(|a| a == target)
 }
 
+/// A program that can extract the release zip on POSIX. `before` and `after`
+/// are the arguments placed around the archive path. The archive is extracted
+/// into the current directory.
+#[cfg(unix)]
+struct UnzipProgram {
+    bin: &'static [u8],
+    before: &'static [&'static [u8]],
+    after: &'static [&'static [u8]],
+    /// Whether the program restores the Unix file mode stored in the zip.
+    restores_mode: bool,
+}
+
+/// The extractors `bun upgrade` accepts, in probe order.
+///
+/// We could just embed libz2, however we want to be sure that xattrs are
+/// preserved. xattrs are used for codesigning and it'd be easy to mess that up.
+#[cfg(unix)]
+const UNZIP_PROGRAMS: &[UnzipProgram] = &[
+    UnzipProgram {
+        bin: b"unzip",
+        before: &[b"-q", b"-o"],
+        after: &[],
+        restores_mode: true,
+    },
+    UnzipProgram {
+        bin: b"busybox",
+        before: &[b"unzip", b"-q", b"-o"],
+        after: &[],
+        restores_mode: true,
+    },
+    UnzipProgram {
+        bin: b"7z",
+        before: &[b"x", b"-y"],
+        after: &[],
+        restores_mode: true,
+    },
+    UnzipProgram {
+        bin: b"7zz",
+        before: &[b"x", b"-y"],
+        after: &[],
+        restores_mode: true,
+    },
+    UnzipProgram {
+        bin: b"7za",
+        before: &[b"x", b"-y"],
+        after: &[],
+        restores_mode: true,
+    },
+    UnzipProgram {
+        bin: b"bsdtar",
+        before: &[b"-xf"],
+        after: &[],
+        restores_mode: true,
+    },
+    UnzipProgram {
+        bin: b"python3",
+        before: &[b"-m", b"zipfile", b"-e"],
+        after: &[b"."],
+        restores_mode: false,
+    },
+];
+
+/// Resolves the first entry of `UNZIP_PROGRAMS` found in `path` and returns it
+/// with the argv that extracts `archive`.
+#[cfg(unix)]
+fn find_unzip_argv(
+    path: &[u8],
+    cwd: &[u8],
+    archive: &[u8],
+) -> Option<(&'static UnzipProgram, Vec<Box<[u8]>>)> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    for program in UNZIP_PROGRAMS {
+        let Some(exe) = which(&mut buf, path, cwd, program.bin) else {
+            continue;
+        };
+        let mut argv = Vec::with_capacity(program.before.len() + program.after.len() + 2);
+        argv.push(Box::<[u8]>::from(exe.as_bytes()));
+        argv.extend(program.before.iter().map(|a| Box::<[u8]>::from(*a)));
+        argv.push(Box::<[u8]>::from(archive));
+        argv.extend(program.after.iter().map(|a| Box::<[u8]>::from(*a)));
+        return Some((program, argv));
+    }
+    None
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct Version {
@@ -816,29 +901,20 @@ impl UpgradeCommand {
 
                 #[cfg(unix)]
                 {
-                    let mut unzip_path_buf = bun_paths::path_buffer_pool::get();
-                    let Some(unzip_exe) = which(
-                        &mut unzip_path_buf,
+                    let Some((unzip_program, unzip_argv)) = find_unzip_argv(
                         env_loader.map.get(b"PATH").unwrap_or(b""),
                         filesystem.top_level_dir,
-                        b"unzip",
+                        tmpname.as_bytes(),
                     ) else {
                         let _ = sys::unlinkat(&save_dir, tmpname);
                         bun_core::pretty_errorln!(
-                            "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work."
+                            "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work (7z, busybox, bsdtar, python3 supported)."
                         );
                         Global::exit(1);
                     };
 
-                    // We could just embed libz2
-                    // however, we want to be sure that xattrs are preserved
-                    // xattrs are used for codesigning
-                    // it'd be easy to mess that up
-                    let unzip_argv: [&[u8]; 4] =
-                        [unzip_exe.as_bytes(), b"-q", b"-o", tmpname.as_bytes()];
-
                     let unzip_result = match spawn_sync::spawn(&spawn_sync::Options {
-                        argv: build_argv(&unzip_argv),
+                        argv: unzip_argv,
                         envp: None,
                         cwd: Box::<[u8]>::from(&tmpdir_path_buf[..tmpdir_path_len]),
                         stdin: spawn_sync::SyncStdio::Inherit,
@@ -880,6 +956,24 @@ impl UpgradeCommand {
                         other => {
                             bun_core::pretty_errorln!("<r><red>Unzip failed<r> ({})", other);
                             let _ = sys::unlinkat(&save_dir, tmpname);
+                            Global::exit(1);
+                        }
+                    }
+
+                    if !unzip_program.restores_mode {
+                        // We already chdir'd to tmpdir, so the relative `exe` path works.
+                        let exe_z: &ZStr = ZStr::from_static(if use_profile {
+                            const_format::concatcp!(UpgradeCommand::PROFILE_EXE_SUBPATH, "\0")
+                                .as_bytes()
+                        } else {
+                            const_format::concatcp!(UpgradeCommand::EXE_SUBPATH, "\0").as_bytes()
+                        });
+                        if let Err(err) = sys::chmod(exe_z, 0o755) {
+                            bun_core::pretty_errorln!(
+                                "<r><red>error:<r> Failed to set permissions on {} due to {}.",
+                                bstr::BStr::new(exe),
+                                bstr::BStr::new(err.name())
+                            );
                             Global::exit(1);
                         }
                     }

@@ -5,6 +5,7 @@ import { bunExe, bunEnv as env, isMusl, isWindows, tempDir, tls, tmpdirSync } fr
 import { existsSync, statSync } from "node:fs";
 import { copyFile, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
+import { makeZipStored, restrictedPathDir } from "./fake-release";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
 
 // Cover every platform/arch/abi/cpu combination so the asset list matches
@@ -21,81 +22,6 @@ function allAssetNames(profile = false) {
     }
   }
   return names;
-}
-
-// Build a minimal ZIP archive with a single stored (uncompressed) entry.
-// `unzip -o` on POSIX restores the mode from the Unix external-attrs field;
-// Expand-Archive on Windows ignores it.
-function makeZipStored(entryName: string, data: Buffer, unixMode: number): Buffer {
-  const nameBytes = Buffer.from(entryName, "utf8");
-  const crc = Bun.hash.crc32(data);
-  const size = data.length;
-
-  const lfhLen = 30 + nameBytes.length;
-  const cdhLen = 46 + nameBytes.length;
-  const cdOffset = lfhLen + size;
-
-  const buf = Buffer.alloc(lfhLen + size + cdhLen + 22);
-  let p = 0;
-  const u16 = (v: number) => {
-    buf.writeUInt16LE(v, p);
-    p += 2;
-  };
-  const u32 = (v: number) => {
-    buf.writeUInt32LE(v >>> 0, p);
-    p += 4;
-  };
-  const raw = (b: Buffer) => {
-    b.copy(buf, p);
-    p += b.length;
-  };
-
-  // Local file header
-  u32(0x04034b50);
-  u16(20); // version needed
-  u16(0); // flags
-  u16(0); // method: stored
-  u16(0); // mtime
-  u16(0); // mdate
-  u32(crc);
-  u32(size);
-  u32(size);
-  u16(nameBytes.length);
-  u16(0);
-  raw(nameBytes);
-  raw(data);
-
-  // Central directory header
-  u32(0x02014b50);
-  u16((3 << 8) | 20); // made by: Unix, spec 2.0
-  u16(20);
-  u16(0);
-  u16(0);
-  u16(0);
-  u16(0);
-  u32(crc);
-  u32(size);
-  u32(size);
-  u16(nameBytes.length);
-  u16(0);
-  u16(0);
-  u16(0);
-  u16(0);
-  u32((0o100000 | unixMode) << 16);
-  u32(0); // LFH offset
-  raw(nameBytes);
-
-  // End of central directory
-  u32(0x06054b50);
-  u16(0);
-  u16(0);
-  u16(1);
-  u16(1);
-  u32(cdhLen);
-  u32(cdOffset);
-  u16(0);
-
-  return buf;
 }
 
 // Write a release zip for the current target that, once unpacked, yields an
@@ -294,6 +220,35 @@ it("completes against a locally-served release with the system temp dir held ope
   // on !IS_CANARY); a non-canary build whose version matches the served tag
   // takes the "already on the latest" exit instead.
   expect(stderr).toMatch(/Upgraded\.|already on the latest/);
+  expect(exitCode).toBe(0);
+});
+
+// Minimal hosts often lack `unzip`. `bun upgrade` then falls back to other
+// extractors; python3 is the one most often present. Its zipfile module does
+// not restore the file mode, so the upgrade has to set it before verification.
+const python3OnlyPath = isWindows ? null : restrictedPathDir(["python3"], ["python3"]);
+it.skipIf(!python3OnlyPath)("extracts the release archive with python3 when unzip is not in PATH", async () => {
+  const version = "9.9.9";
+  const cwd = tmpdirSync();
+  const execPath = join(cwd, basename(bunExe()));
+  const zipPath = join(cwd, "release.zip");
+  await Promise.all([copyFile(bunExe(), execPath), writeFakeReleaseZip(zipPath, version)]);
+
+  using server = startReleaseServer({ tagName: `bun-v${version}`, zipPath });
+
+  await using proc = Bun.spawn({
+    cmd: [execPath, "upgrade", "--stable"],
+    cwd,
+    stdout: null,
+    stdin: "pipe",
+    stderr: "pipe",
+    env: { ...server.env, PATH: python3OnlyPath! },
+  });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error:");
+  expect(stderr).toContain("Upgraded.");
   expect(exitCode).toBe(0);
 });
 

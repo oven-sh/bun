@@ -1043,8 +1043,8 @@ pub(crate) fn edit(
     let fold_positionals = !options.before_install
         && manager.subcommand == Subcommand::Add
         && manager.options.add_catalog.is_none();
-    // The slots after the first that take a folded request's literal, by the request's name hash.
-    let mut also_declared: Vec<(PackageNameHash, *mut E::EString)> = Vec::new();
+    // The slots after the first that take a folded request's literal, by the first slot (`request.e_string`).
+    let mut also_declared: Vec<(*mut E::EString, *mut E::EString)> = Vec::new();
 
     // There are three possible scenarios here
     // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -1066,8 +1066,7 @@ pub(crate) fn edit(
                     if let Some((&slot, rest)) = declared.split_first() {
                         if remove_entry(current_package_json, dependency_list, request.get_name()) {
                             request.e_string = Some(slot);
-                            also_declared
-                                .extend(rest.iter().map(|&slot| (request.name_hash, slot)));
+                            also_declared.extend(rest.iter().map(|&rest| (slot, rest)));
                             remaining -= 1;
                             changed = true;
                             i += 1;
@@ -1573,7 +1572,7 @@ pub(crate) fn edit(
             }
             for &(_, slot) in also_declared
                 .iter()
-                .filter(|&&(request_hash, _)| request_hash == request.name_hash)
+                .filter(|&&(first, _)| request.e_string == Some(first))
             {
                 // SAFETY: provenance (b) above, a slot of the parsed `current_package_json` tree that is not `e_string`.
                 unsafe { (*slot).data = bun_ast::StoreStr::new(new_literal) };

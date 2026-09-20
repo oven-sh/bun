@@ -97,6 +97,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
                 let declared = &rows[i - list.off as usize];
                 i != positional as usize
                     && declared.name_hash == row.name_hash
+                    && declared.name.slice(buf) == row.name.slice(buf)
                     && declared.behavior.is_peer() == row.behavior.is_peer()
                     && !declared.behavior.is_optional_peer()
                     && !declared.behavior.is_workspace()
@@ -107,7 +108,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
         if let Some(other) = declared.iter().find_map(|&i| {
             requests.iter().enumerate().position(|(other, candidate)| {
                 other != request as usize
-                    && candidate.matches(&rows[i - list.off as usize], buf)
+                    && candidate.matches_exactly(&rows[i - list.off as usize], buf)
                     && receives(candidate)
             })
         }) {

@@ -266,7 +266,7 @@ impl PackageManager {
             if let Some(request) = self
                 .update_requests
                 .iter()
-                .position(|request| request.matches(dep, string_buf))
+                .position(|request| request.matches_exactly(dep, string_buf))
             {
                 self.named_by_resolution
                     .push((request as u32, dependency_id));

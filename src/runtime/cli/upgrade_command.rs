@@ -63,86 +63,92 @@ fn argv_contains(target: &[u8]) -> bool {
     bun_core::argv().iter().any(|a| a == target)
 }
 
-/// A program that can extract the release zip on POSIX. `before` and `after`
-/// are the arguments placed around the archive path. The archive is extracted
-/// into the current directory.
+/// A program that can extract the release zip on POSIX into the current
+/// directory. `before` and `after` are the arguments around the archive path.
 #[cfg(unix)]
 struct UnzipProgram {
     bin: &'static [u8],
     before: &'static [&'static [u8]],
     after: &'static [&'static [u8]],
-    /// Whether the program restores the Unix file mode stored in the zip.
-    restores_mode: bool,
 }
 
-/// The extractors `bun upgrade` accepts, in probe order. The list must match
-/// the `for cmd in ...` probe in `install.sh`. The vendored libarchive only has
-/// its tar reader compiled in, so the zip is extracted by an external program.
+/// Probe order. Must match the `for cmd in ...` loop in `install.sh`.
+/// The vendored libarchive has no zip reader, so an external program extracts it.
 #[cfg(unix)]
 const UNZIP_PROGRAMS: &[UnzipProgram] = &[
     UnzipProgram {
         bin: b"unzip",
         before: &[b"-q", b"-o"],
         after: &[],
-        restores_mode: true,
     },
     UnzipProgram {
         bin: b"busybox",
         before: &[b"unzip", b"-q", b"-o"],
         after: &[],
-        restores_mode: true,
     },
     UnzipProgram {
         bin: b"7z",
         before: &[b"x", b"-y"],
         after: &[],
-        restores_mode: true,
     },
     UnzipProgram {
         bin: b"7zz",
         before: &[b"x", b"-y"],
         after: &[],
-        restores_mode: true,
     },
     UnzipProgram {
         bin: b"7za",
         before: &[b"x", b"-y"],
         after: &[],
-        restores_mode: true,
     },
     UnzipProgram {
         bin: b"bsdtar",
-        before: &[b"-xf"],
+        before: &[b"--no-same-owner", b"-xf"],
         after: &[],
-        restores_mode: true,
     },
     UnzipProgram {
         bin: b"python3",
         before: &[b"-m", b"zipfile", b"-e"],
         after: &[b"."],
-        restores_mode: false,
     },
 ];
 
-/// Resolves the first entry of `UNZIP_PROGRAMS` found in `path` and returns it
-/// with the argv that extracts `archive`.
+/// A busybox build can leave out the unzip applet. `busybox --list` prints one
+/// applet name per line.
 #[cfg(unix)]
-fn find_unzip_argv(
-    path: &[u8],
-    cwd: &[u8],
-    archive: &[u8],
-) -> Option<(&'static UnzipProgram, Vec<Box<[u8]>>)> {
+fn busybox_has_unzip(busybox: &[u8]) -> bool {
+    let argv: [&[u8]; 2] = [busybox, b"--list"];
+    let Ok(Ok(result)) = spawn_sync::spawn(&spawn_sync::Options {
+        argv: build_argv(&argv),
+        envp: None,
+        stdin: spawn_sync::SyncStdio::Ignore,
+        stdout: spawn_sync::SyncStdio::Buffer,
+        stderr: spawn_sync::SyncStdio::Ignore,
+        ..Default::default()
+    }) else {
+        return false;
+    };
+    result.status.is_ok()
+        && strings::split(result.stdout.as_slice(), b"\n").any(|line| line == b"unzip")
+}
+
+/// Returns the argv of the first entry of `UNZIP_PROGRAMS` found in `path`.
+#[cfg(unix)]
+fn find_unzip_argv(path: &[u8], cwd: &[u8], archive: &[u8]) -> Option<Vec<Box<[u8]>>> {
     let mut buf = bun_paths::path_buffer_pool::get();
     for program in UNZIP_PROGRAMS {
         let Some(exe) = which(&mut buf, path, cwd, program.bin) else {
             continue;
         };
+        if program.bin == b"busybox" && !busybox_has_unzip(exe.as_bytes()) {
+            continue;
+        }
         let mut argv = Vec::with_capacity(program.before.len() + program.after.len() + 2);
         argv.push(Box::<[u8]>::from(exe.as_bytes()));
         argv.extend(program.before.iter().map(|a| Box::<[u8]>::from(*a)));
         argv.push(Box::<[u8]>::from(archive));
         argv.extend(program.after.iter().map(|a| Box::<[u8]>::from(*a)));
-        return Some((program, argv));
+        return Some(argv);
     }
     None
 }
@@ -900,7 +906,7 @@ impl UpgradeCommand {
 
                 #[cfg(unix)]
                 {
-                    let Some((unzip_program, unzip_argv)) = find_unzip_argv(
+                    let Some(unzip_argv) = find_unzip_argv(
                         env_loader.map.get(b"PATH").unwrap_or(b""),
                         filesystem.top_level_dir,
                         tmpname.as_bytes(),
@@ -959,22 +965,23 @@ impl UpgradeCommand {
                         }
                     }
 
-                    if !unzip_program.restores_mode {
-                        // We already chdir'd to tmpdir, so the relative `exe` path works.
-                        let exe_z: &ZStr = ZStr::from_static(if use_profile {
-                            const_format::concatcp!(UpgradeCommand::PROFILE_EXE_SUBPATH, "\0")
-                                .as_bytes()
-                        } else {
-                            const_format::concatcp!(UpgradeCommand::EXE_SUBPATH, "\0").as_bytes()
-                        });
-                        if let Err(err) = sys::chmod(exe_z, 0o755) {
-                            bun_core::pretty_errorln!(
-                                "<r><red>error:<r> Failed to set permissions on {} due to {}.",
-                                bstr::BStr::new(exe),
-                                bstr::BStr::new(err.name())
-                            );
-                            Global::exit(1);
-                        }
+                    // `python3 -m zipfile` does not restore the file mode, and
+                    // some busybox builds do not either.
+                    let exe_z: &ZStr = ZStr::from_static(if use_profile {
+                        const_format::concatcp!(UpgradeCommand::PROFILE_EXE_SUBPATH, "\0")
+                            .as_bytes()
+                    } else {
+                        const_format::concatcp!(UpgradeCommand::EXE_SUBPATH, "\0").as_bytes()
+                    });
+                    if let Err(err) = sys::fchmodat(&save_dir, exe_z, 0o755, 0) {
+                        let _ = sys::unlinkat(&save_dir, tmpname);
+                        let _ = save_dir_.delete_tree(&version_name);
+                        bun_core::pretty_errorln!(
+                            "<r><red>error:<r> Failed to set permissions on {} due to {}.",
+                            bstr::BStr::new(exe),
+                            bstr::BStr::new(err.name())
+                        );
+                        Global::exit(1);
                     }
                 }
                 #[cfg(windows)]

@@ -63,10 +63,13 @@ fi
 
 unzip_cmd=''
 for cmd in unzip busybox 7z 7zz 7za bsdtar python3; do
-    if command -v "$cmd" >/dev/null; then
-        unzip_cmd=$cmd
-        break
+    command -v "$cmd" >/dev/null || continue
+    # A busybox build can leave out the unzip applet.
+    if [[ $cmd = busybox ]] && ! busybox --list 2>/dev/null | grep -x unzip >/dev/null; then
+        continue
     fi
+    unzip_cmd=$cmd
+    break
 done
 
 [[ $unzip_cmd ]] ||
@@ -183,7 +186,7 @@ busybox)
     "$unzip_cmd" x -y -o"$bin_dir" "$exe.zip" >/dev/null
     ;;
 bsdtar)
-    bsdtar -xf "$exe.zip" -C "$bin_dir"
+    bsdtar --no-same-owner -xf "$exe.zip" -C "$bin_dir"
     ;;
 python3)
     python3 -m zipfile -e "$exe.zip" "$bin_dir"

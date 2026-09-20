@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, isMusl, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { existsSync, statSync } from "node:fs";
 import { copyFile, writeFile } from "node:fs/promises";
@@ -223,33 +223,56 @@ it("completes against a locally-served release with the system temp dir held ope
   expect(exitCode).toBe(0);
 });
 
-// Minimal hosts often lack `unzip`. `bun upgrade` then falls back to other
-// extractors; python3 is the one most often present. Its zipfile module does
-// not restore the file mode, so the upgrade has to set it before verification.
-const python3OnlyPath = isWindows ? null : restrictedPathDir(["python3"], ["python3"]);
-it.skipIf(!python3OnlyPath)("extracts the release archive with python3 when unzip is not in PATH", async () => {
-  const version = "9.9.9";
-  const cwd = tmpdirSync();
-  const execPath = join(cwd, basename(bunExe()));
-  const zipPath = join(cwd, "release.zip");
-  await Promise.all([copyFile(bunExe(), execPath), writeFakeReleaseZip(zipPath, version)]);
+// Minimal hosts often lack `unzip`. `bun upgrade` then falls back to the other
+// extractors in its table. The PATH holds one extractor at a time, so each
+// table row runs wherever that program exists on the host. The busybox and
+// python3 probes rule out a busybox without the unzip applet and a python3
+// shim that needs more of PATH than the test gives it.
+const extractors: Record<string, string[] | undefined> = {
+  unzip: undefined,
+  busybox: ["/bin/sh", "-c", "busybox --list | grep -x unzip"],
+  "7z": undefined,
+  "7zz": undefined,
+  "7za": undefined,
+  bsdtar: undefined,
+  python3: ["python3", "-m", "zipfile", "-h"],
+};
+const extractorPaths = Object.entries(extractors).map(
+  ([name, probe]) =>
+    [name, restrictedPathDir(name === "busybox" ? ["busybox", "grep"] : [name], [name], probe)] as const,
+);
+afterAll(() => {
+  for (const [, dir] of extractorPaths) dir?.[Symbol.dispose]();
+});
 
-  using server = startReleaseServer({ tagName: `bun-v${version}`, zipPath });
+describe.concurrent("extracts the release archive when the only extractor in PATH is", () => {
+  for (const [name, dir] of extractorPaths) {
+    it.skipIf(!dir)(name, async () => {
+      const version = "9.9.9";
+      using cwd = tempDir("bun-upgrade-extractor", {});
+      const execPath = join(cwd, basename(bunExe()));
+      const zipPath = join(cwd, "release.zip");
+      await Promise.all([copyFile(bunExe(), execPath), writeFakeReleaseZip(zipPath, version)]);
 
-  await using proc = Bun.spawn({
-    cmd: [execPath, "upgrade", "--stable"],
-    cwd,
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env: { ...server.env, PATH: python3OnlyPath! },
-  });
+      using server = startReleaseServer({ tagName: `bun-v${version}`, zipPath });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: [execPath, "upgrade", "--stable"],
+        cwd: String(cwd),
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        // The staging dir is $TMPDIR/<version>, so each test needs its own.
+        env: { ...server.env, PATH: dir!, BUN_TMPDIR: String(cwd) },
+      });
 
-  expect(stderr).not.toContain("error:");
-  expect(stderr).toContain("Upgraded.");
-  expect(exitCode).toBe(0);
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("Upgraded.");
+      expect(exitCode).toBe(0);
+    });
+  }
 });
 
 it("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {

@@ -1,4 +1,4 @@
-import { tmpdirSync } from "harness";
+import { isWindows, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -77,19 +77,33 @@ export function makeZipStored(entryName: string, data: Buffer, unixMode: number)
   return buf;
 }
 
+export type RestrictedPath = string & Disposable;
+
 // Build a PATH that holds only the named programs (those found on this host),
 // so a test can run the installer or `bun upgrade` on a host that appears to
-// lack `curl` or `unzip`. Returns the directory, or null when a required
-// program is missing on this host.
-export function restrictedPathDir(programs: string[], required: string[] = []): string | null {
-  const dir = tmpdirSync("bun-restricted-path");
+// lack `curl` or `unzip`. Returns null on Windows, when a required program is
+// missing, or when `probe` does not exit 0 under that PATH (a pyenv shim for
+// python3, a busybox without the unzip applet).
+export function restrictedPathDir(programs: string[], required: string[], probe?: string[]): RestrictedPath | null {
+  if (isWindows) return null;
+  const dir = tempDir("bun-restricted-path", {});
   for (const name of programs) {
     const found = Bun.which(name);
     if (!found) {
-      if (required.includes(name)) return null;
+      if (required.includes(name)) {
+        dir[Symbol.dispose]();
+        return null;
+      }
       continue;
     }
     symlinkSync(found, join(dir, name));
+  }
+  if (probe) {
+    const { exitCode } = Bun.spawnSync({ cmd: probe, env: { PATH: dir }, stdout: "ignore", stderr: "ignore" });
+    if (exitCode !== 0) {
+      dir[Symbol.dispose]();
+      return null;
+    }
   }
   return dir;
 }

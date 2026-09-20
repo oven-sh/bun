@@ -25,6 +25,8 @@ const invalid: [expression: string, message: string][] = [
   ["(a = (b = { yield }) => b) => a", "Cannot use 'yield' as a shorthand property name in a generator function."],
   ["(a = (b = [yield] = []) => b) => a", yieldExpression],
   ["(a = (yi\\u0065ld) => 1) => a", "Unexpected escaped characters in keyword token: 'yi\\u0065ld'"],
+  // The name of a generator expression. With the escape it was an error only where the code around it is a generator.
+  ["(a = (b = function* yi\\u0065ld() {}) => b) => a", "Unexpected escaped characters in keyword token: 'yi\\u0065ld'"],
   // "( ... )" is not a parameter list here, but the parser has to try that to find out.
   ["[a = (b = (yield) => 1)] = []", parameterName],
   // One arrow function: rejected before too, with the same messages.
@@ -66,12 +68,16 @@ describe("yield in the parameters of an arrow function", () => {
     expect(syntaxErrorOf(before + expression + after)).not.toBe("no SyntaxError");
   });
 
-  test.each(invalid)("%s is valid where yield is an identifier", expression => {
-    expect(syntaxErrorOf(`(function () { (${expression}); })`)).toBe("no SyntaxError");
-    // The body of an arrow function and a function that is not an arrow function are not part of the generator.
-    expect(syntaxErrorOf(`(function* () { () => { (${expression}); }; })`)).toBe("no SyntaxError");
-    expect(syntaxErrorOf(`(function* () { (a = function () { (${expression}); }) => a; })`)).toBe("no SyntaxError");
-  });
+  // A generator expression cannot have the name `yield` anywhere, so that case has no place here.
+  test.each(invalid.filter(([expression]) => !expression.includes("function*")))(
+    "%s is valid where yield is an identifier",
+    expression => {
+      expect(syntaxErrorOf(`(function () { (${expression}); })`)).toBe("no SyntaxError");
+      // The body of an arrow function and a function that is not an arrow function are not part of the generator.
+      expect(syntaxErrorOf(`(function* () { () => { (${expression}); }; })`)).toBe("no SyntaxError");
+      expect(syntaxErrorOf(`(function* () { (a = function () { (${expression}); }) => a; })`)).toBe("no SyntaxError");
+    },
+  );
 
   // The parser takes these arrow functions from its cache. A version of the engine change that parsed them again
   // rejected the first three: that parse reads `await` in the body of the nested function as the async generator's.

@@ -253,11 +253,9 @@ test("resuming an earlier request after a WebSocket upgrade leaves the WebSocket
   // Masked with a zero key. 0x01 is the first fragment, 0x80 the last, 0x89 a ping.
   const frame = (first: number, payload: string) =>
     Buffer.concat([Buffer.from([first, 0x80 | payload.length, 0, 0, 0, 0]), Buffer.from(payload)]);
-  // The Upgrade request carries a body. The connection switches to tunnel mode only when that
-  // body ends, so the earlier request's resume() is not held back by the tunnel state.
   const upgradeRequest =
     "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
-    "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nContent-Length: 5\r\n\r\nhello";
+    "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
 
   const message = Promise.withResolvers<string>();
   const pinged = Promise.withResolvers<void>();
@@ -265,22 +263,25 @@ test("resuming an earlier request after a WebSocket upgrade leaves the WebSocket
   const switched = Promise.withResolvers<void>();
   for (const { promise } of [message, pinged, answered, switched]) promise.catch(() => {});
 
+  // The 'request' listener accepts the upgrade, so the connection never enters tunnel mode.
+  // Tunnel mode is the one thing that held the earlier request's resume() back.
+  const wss = new WebSocketServer({ noServer: true });
   let earlier!: http.IncomingMessage;
   await using server = http.createServer((req, res) => {
-    if (req.method === "POST") {
-      earlier = req;
-      // A consumed and paused request is not dumped when the response ends, so it stays
-      // readable and keeps its handle.
-      req.on("data", () => {});
-      req.pause();
+    if (req.headers.upgrade) {
+      wss.handleUpgrade(req, req.socket, Buffer.alloc(0), ws => {
+        ws.on("ping", () => pinged.resolve());
+        ws.on("message", data => message.resolve(String(data)));
+        ws.on("close", code => message.reject(new Error(`the WebSocket closed with ${code}`)));
+      });
+      return;
     }
+    earlier = req;
+    // A consumed and paused request is not dumped when the response ends, so it stays
+    // readable and keeps its handle.
+    req.on("data", () => {});
+    req.pause();
     res.end("ok");
-  });
-  const wss = new WebSocketServer({ server });
-  wss.on("connection", ws => {
-    ws.on("ping", () => pinged.resolve());
-    ws.on("message", data => message.resolve(String(data)));
-    ws.on("close", code => message.reject(new Error(`the WebSocket closed with ${code}`)));
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
 

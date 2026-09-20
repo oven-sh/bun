@@ -50,7 +50,7 @@ const alpineRelease = "3.23";
 
 export const pins = {
   nodejs: { version: "26.3.0", nodeGypInstallVersion: "11" },
-  bun: { version: "1.3.13" },
+  bun: { version: "1.4.2" },
   curlH3: { version: "8.19.0" },
   buildkiteAgent: { version: "3.114.0" },
   cmake: { version: "3.30.5" },

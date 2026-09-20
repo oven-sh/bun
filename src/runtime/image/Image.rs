@@ -636,7 +636,7 @@ fn error_code(e: codecs::Error) -> &'static ZStr {
         E::UnknownFormat => zstr!("ERR_IMAGE_UNKNOWN_FORMAT"),
         E::DecodeFailed => zstr!("ERR_IMAGE_DECODE_FAILED"),
         E::EncodeFailed => zstr!("ERR_IMAGE_ENCODE_FAILED"),
-        E::TooManyPixels => zstr!("ERR_IMAGE_TOO_MANY_PIXELS"),
+        E::TooManyPixels | E::OutputTooLarge => zstr!("ERR_IMAGE_TOO_MANY_PIXELS"),
         E::UnsupportedOnPlatform => zstr!("ERR_IMAGE_FORMAT_UNSUPPORTED"),
         E::OutOfMemory => zstr!("ERR_OUT_OF_MEMORY"),
     }
@@ -651,6 +651,9 @@ fn error_message(e: codecs::Error) -> &'static ZStr {
         E::DecodeFailed => zstr!("Image: decode failed"),
         E::EncodeFailed => zstr!("Image: encode failed"),
         E::TooManyPixels => zstr!("Image: input exceeds maxPixels limit"),
+        E::OutputTooLarge => {
+            zstr!("Image: output exceeds the JavaScript engine's ArrayBuffer limit, not maxPixels")
+        }
         E::UnsupportedOnPlatform => zstr!(
             "Image: format not supported on this machine (HEIC/AVIF/TIFF require the OS codec; AVIF encode needs an AV1 encoder)"
         ),
@@ -1687,6 +1690,10 @@ impl PipelineTask {
 
         let mut decoded = match codecs::decode(input, self.max_pixels(), hint) {
             Ok(d) => d,
+            Err(codecs::Error::TooManyPixels) => {
+                self.result = TaskResult::Err(self.too_many_pixels());
+                return;
+            }
             Err(e) => {
                 self.result = TaskResult::Err(e);
                 return;
@@ -1719,8 +1726,7 @@ impl PipelineTask {
         }
 
         if matches!(self.kind, Kind::Placeholder) {
-            self.result = match make_placeholder(decoded.rgba(), decoded.width(), decoded.height())
-            {
+            self.result = match make_placeholder(&decoded) {
                 Ok(r) => r,
                 Err(e) => TaskResult::Err(e),
             };
@@ -1767,7 +1773,7 @@ impl PipelineTask {
         if enc.icc_profile.is_none() {
             // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
             // (raw `NonNull<[u8]>`); `decoded` outlives the call below.
-            enc.icc_profile = decoded.icc_profile.as_deref().map(core::ptr::NonNull::from);
+            enc.icc_profile = decoded.icc_profile().map(core::ptr::NonNull::from);
         }
         let out = match codecs::encode(decoded.rgba(), decoded.width(), decoded.height(), enc) {
             Ok(o) => o,
@@ -1808,6 +1814,20 @@ impl PipelineTask {
         );
         match result {
             TaskResult::Encoded { out, format, .. } => {
+                // An output past JSC's `ArrayBuffer` limit cannot be adopted
+                // as a `Uint8Array` or `Buffer`; refuse it with a coded error
+                // here rather than letting the adoption throw an uncoded one.
+                // The other deliveries (a `Blob`, a string, a file) have no
+                // such limit.
+                if matches!(js.deliver, Deliver::Uint8Array | Deliver::Buffer)
+                    && out.bytes.len() as u64 > jsc::max_array_buffer_size()
+                {
+                    drop(out);
+                    return promise.reject(
+                        global,
+                        Ok(reject_error(global, codecs::Error::OutputTooLarge)),
+                    );
+                }
                 // Ownership of `out.bytes` is transferred to JS below; suppress
                 // the codec `Drop` so the deallocator runs exactly once (via the
                 // ArrayBuffer/Buffer finalizer or explicit drop).
@@ -1978,24 +1998,20 @@ impl PipelineTask {
         Ok(())
     }
 
-    /// Fixed Sharp order: rotate → flip/flop → resize. Each geometry stage
-    /// swaps its output in through `Decoded::replace_plane`, which drops the
-    /// old buffer (peak memory is at most 2× one frame), checks the new
-    /// length against the new shape, and keeps the source's ICC profile.
+    /// Fixed Sharp order: rotate → flip/flop → resize. Each geometry kernel
+    /// returns a `Decoded` of its own shape and `replace_with` swaps it in,
+    /// dropping the old buffer (peak memory is at most 2× one frame) and
+    /// moving the source's ICC profile across.
     fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
         if p.rotate != 0 {
-            let (next, w, h) =
-                codecs::rotate(d.rgba(), d.width(), d.height(), u32::from(p.rotate))?;
-            d.replace_plane(next, w, h)?;
+            d.replace_with(codecs::rotate(d, u32::from(p.rotate))?);
         }
         if p.flip {
-            let next = codecs::flip(d.rgba(), d.width(), d.height(), false)?;
-            d.replace_plane(next, d.width(), d.height())?;
+            d.replace_with(codecs::flip(d, false)?);
         }
         if p.flop {
-            let next = codecs::flip(d.rgba(), d.width(), d.height(), true)?;
-            d.replace_plane(next, d.width(), d.height())?;
+            d.replace_with(codecs::flip(d, true)?);
         }
         if let Some(r) = p.resize {
             let t = resolve_resize(r, d.width(), d.height());
@@ -2004,16 +2020,18 @@ impl PipelineTask {
             // source → resize(W,1) has tiny input AND output canvases yet a
             // W×N intermediate; with W=262143, N=16383 that's a 17 GiB alloc
             // from a ~200-byte PNG. The src_w×dst_h cross-product is bounded
-            // by max(input, output) so doesn't need its own check.
-            let max_pixels = self.max_pixels();
-            if (t.0 as u64) * (t.1 as u64) > max_pixels
-                || (t.0 as u64) * (d.height() as u64) > max_pixels
-            {
+            // by max(input, output) so doesn't need its own check. Only the
+            // output is a plane JS may receive, so only the output is held
+            // to the `ArrayBuffer` limit; the intermediate is scratch and
+            // answers to `maxPixels` alone.
+            if (t.0 as u64) * (t.1 as u64) > self.max_pixels() {
+                return Err(self.too_many_pixels());
+            }
+            if (t.0 as u64) * (d.height() as u64) > self.max_pixels {
                 return Err(codecs::Error::TooManyPixels);
             }
             if t.0 != d.width() || t.1 != d.height() {
-                let next = codecs::resize(d.rgba(), d.width(), d.height(), t.0, t.1, r.filter)?;
-                d.replace_plane(next, t.0, t.1)?;
+                d.replace_with(codecs::resize(d, t.0, t.1, r.filter)?);
             }
         }
         if let Some(m) = p.modulate {
@@ -2022,17 +2040,34 @@ impl PipelineTask {
         Ok(())
     }
 
-    /// The caller's `maxPixels`, and for `pixels()` also the most a plane can
-    /// be handed to JS as: JSC refuses an `ArrayBuffer` above
-    /// `MAX_ARRAY_BUFFER_SIZE` (4 GiB), and with the same guard this task
-    /// already applies before allocating, that refusal happens before the
-    /// decode instead of after the whole pipeline has run.
+    /// The most RGBA8 pixels a `pixels()` plane can hold and still be handed
+    /// to JS: JSC refuses an `ArrayBuffer` above `MAX_ARRAY_BUFFER_SIZE`, and
+    /// a plane is four bytes a pixel. Read from the engine, never copied.
+    fn max_plane_pixels() -> u64 {
+        jsc::max_array_buffer_size() / 4
+    }
+
+    /// The caller's `maxPixels`, and for `pixels()` also the plane limit:
+    /// with the same guard this task already applies before allocating,
+    /// the refusal happens before the decode instead of after the whole
+    /// pipeline has run.
     fn max_pixels(&self) -> u64 {
-        // `MAX_ARRAY_BUFFER_SIZE` in JSC's PageCount.h, in RGBA8 pixels.
-        const MAX_PLANE_PIXELS: u64 = (1u64 << 32) / 4;
         match self.kind {
-            Kind::Pixels => self.max_pixels.min(MAX_PLANE_PIXELS),
+            Kind::Pixels => self.max_pixels.min(Self::max_plane_pixels()),
             _ => self.max_pixels,
+        }
+    }
+
+    /// Which of the two bounds folded into `max_pixels()` a refusal names.
+    /// When the caller's `maxPixels` is the lower one, it is theirs
+    /// (`TooManyPixels`, "exceeds maxPixels"); when the plane limit is, the
+    /// caller did not set the limit that fired and the message says which
+    /// did (`OutputTooLarge`).
+    fn too_many_pixels(&self) -> codecs::Error {
+        if matches!(self.kind, Kind::Pixels) && self.max_pixels > Self::max_plane_pixels() {
+            codecs::Error::OutputTooLarge
+        } else {
+            codecs::Error::TooManyPixels
         }
     }
 }
@@ -2043,32 +2078,31 @@ impl PipelineTask {
 /// `box` (the only filter that's correct for "average everything in a
 /// cell" — Lanczos would ring into the DCT). The hash itself stays on
 /// the worker stack; only the rendered PNG crosses back.
-fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs::Error> {
+fn make_placeholder(decoded: &codecs::Decoded) -> Result<TaskResult, codecs::Error> {
     const MAX_IN: u32 = 100;
-    let mut w = sw;
-    let mut h = sh;
-    let mut owned: Option<Vec<u8>> = None;
-    let mut pixels: &[u8] = rgba;
-    if w > MAX_IN || h > MAX_IN {
-        let r = (w as f32) / (h as f32);
-        if r > 1.0 {
-            w = MAX_IN;
-            h = 1u32.max(((MAX_IN as f32) / r).round() as u32);
+    let (sw, sh) = (decoded.width(), decoded.height());
+    // The downscaled plane, when one is needed; a `Decoded` like the source,
+    // so the hash reads a shape the buffer was checked against.
+    let scaled: codecs::Decoded;
+    let input: &codecs::Decoded = if sw > MAX_IN || sh > MAX_IN {
+        let r = (sw as f32) / (sh as f32);
+        let (w, h) = if r > 1.0 {
+            (MAX_IN, 1u32.max(((MAX_IN as f32) / r).round() as u32))
         } else {
-            h = MAX_IN;
-            w = 1u32.max(((MAX_IN as f32) * r).round() as u32);
-        }
-        owned = Some(codecs::resize(rgba, sw, sh, w, h, codecs::Filter::Box)?);
-        pixels = owned.as_deref().unwrap();
-    }
+            (1u32.max(((MAX_IN as f32) * r).round() as u32), MAX_IN)
+        };
+        scaled = codecs::resize(decoded, w, h, codecs::Filter::Box)?;
+        &scaled
+    } else {
+        decoded
+    };
     let mut buf = [0u8; thumbhash::MAX_LEN];
-    let hash = thumbhash::encode(&mut buf, w, h, pixels);
+    let hash = thumbhash::encode(&mut buf, input.width(), input.height(), input.rgba());
     let rendered = thumbhash::decode(hash)?;
     // `rendered.rgba` is owned; drops at scope exit.
     // Placeholder is a synthetic ThumbHash render, not the source image —
     // no ICC profile attaches to it.
     let out = codecs::png::encode(&rendered.rgba, rendered.w, rendered.h, -1, None)?;
-    let _ = owned; // explicit lifetime hint; drops here.
     Ok(TaskResult::Encoded {
         out,
         format: codecs::Format::Png,
@@ -2136,18 +2170,17 @@ fn apply_orientation(
     d: &mut codecs::Decoded,
     orient: exif::Orientation,
 ) -> Result<(), codecs::Error> {
+    // EXIF's order is mirror then rotate, the reverse of the pipeline's, so
+    // the two stage lists are not one function.
     let t = orient.transform();
     if t.flip {
-        let next = codecs::flip(d.rgba(), d.width(), d.height(), false)?;
-        d.replace_plane(next, d.width(), d.height())?;
+        d.replace_with(codecs::flip(d, false)?);
     }
     if t.flop {
-        let next = codecs::flip(d.rgba(), d.width(), d.height(), true)?;
-        d.replace_plane(next, d.width(), d.height())?;
+        d.replace_with(codecs::flip(d, true)?);
     }
     if t.rotate != 0 {
-        let (next, w, h) = codecs::rotate(d.rgba(), d.width(), d.height(), u32::from(t.rotate))?;
-        d.replace_plane(next, w, h)?;
+        d.replace_with(codecs::rotate(d, u32::from(t.rotate))?);
     }
     Ok(())
 }

@@ -403,6 +403,13 @@ public:
 
 }
 
+// The limit the check below applies, for a producer that can refuse before
+// it allocates (`bun_jsc::max_array_buffer_size`).
+extern "C" size_t Bun__maxArrayBufferSize()
+{
+    return MAX_ARRAY_BUFFER_SIZE;
+}
+
 bool Bun::rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const void* bytes, size_t length, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
 {
     if (length <= MAX_ARRAY_BUFFER_SIZE) [[likely]]

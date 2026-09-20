@@ -9285,7 +9285,10 @@ declare module "bun" {
      *   on this *machine* (HEIC/AVIF without the OS codec, TIFF on Linux).
      *   Catch this to fall back to a portable format.
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
-     *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
+     *   exceed `maxPixels`, a path-backed input is over the 256 MiB cap, or
+     *   the output (a `pixels()` plane, or an encoding delivered as a
+     *   `Uint8Array`/`Buffer`) would exceed the engine's `ArrayBuffer` limit;
+     *   the message says which.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
@@ -9536,14 +9539,14 @@ declare module "bun" {
      * `.raw().toBuffer({ resolveWithObject: true })`.
      *
      * Bun applies no color transform and does not deliver the ICC profile.
-     * Which pixels arrive depends on which decoder ran, not on the format
-     * name: Bun's own decoders (JPEG, PNG, WebP everywhere; BMP and GIF when
+     * Bun's own decoders (JPEG, PNG, WebP everywhere; BMP and GIF when
      * {@link Image.backend} is `"bun"` or on Linux) return their output in
-     * the space the source profile describes, while the system backend
-     * (HEIC, AVIF and TIFF, plus BMP and GIF under the default `"system"`
-     * backend on macOS and Windows) colour-manages into sRGB. Sharp converts
-     * to sRGB by default, so the two differ for a source with a non-sRGB
-     * profile. Alpha is straight, not premultiplied.
+     * the space the source profile describes; the system backend (HEIC,
+     * AVIF and TIFF, plus BMP and GIF under the default `"system"` backend
+     * on macOS and Windows) returns the OS decoder's output, which Bun does
+     * not convert and whose profile it does not read. Sharp converts to
+     * sRGB by default, so it differs for a source with a non-sRGB profile.
+     * Alpha is straight, not premultiplied.
      *
      * EXIF orientation is applied before the plane is produced (unless
      * `autoOrient: false`), so a 90° or 270° tag swaps `width` and `height`.
@@ -9551,8 +9554,10 @@ declare module "bun" {
      * no profile.
      *
      * A plane is at most 2^30 pixels (4 GiB, JSC's `ArrayBuffer` limit)
-     * whatever `maxPixels` allows; a pipeline that would exceed it rejects
-     * with `ERR_IMAGE_TOO_MANY_PIXELS` before the resize runs.
+     * whatever `maxPixels` allows; a pipeline whose output plane would
+     * exceed it rejects with `ERR_IMAGE_TOO_MANY_PIXELS` before the resize
+     * runs, with a message naming the engine's limit rather than
+     * `maxPixels`.
      *
      * `data` is a `Uint8Array` over its own buffer; for an API that wants a
      * `Buffer`, `Buffer.from(data.buffer)` views the same bytes without a copy.

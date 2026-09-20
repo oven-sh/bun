@@ -1957,16 +1957,34 @@ describe("Bun.Image pixels()", () => {
     await expect(img.pixels()).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
   });
 
-  test("a plane above JSC's ArrayBuffer limit is refused before it is allocated, as ERR_IMAGE_TOO_MANY_PIXELS", async () => {
+  test("a plane above JSC's ArrayBuffer limit is refused before it is allocated, naming the engine's limit", async () => {
     // maxPixels raised past 2^30 pixels: the resize target is 2^31 pixels,
     // an 8 GiB plane JSC would refuse to adopt. The cap runs with the
-    // maxPixels guard, before the resize allocates, so this settles in
-    // milliseconds instead of after an 8 GiB resize.
-    const start = performance.now();
+    // maxPixels guard, before the resize allocates. Without it the pipeline
+    // would not merely be slow: it would settle with a different code
+    // (ERR_OUT_OF_MEMORY) or resolve, so the code assertion is the whole
+    // test. The message names the limit that fired, which is not the
+    // caller's maxPixels.
     await expect(
       new Bun.Image(cornersPng, { maxPixels: 2 ** 32 }).resize(65536, 32768, { fit: "fill" }).pixels(),
-    ).rejects.toMatchObject({ code: "ERR_IMAGE_TOO_MANY_PIXELS" });
-    expect(performance.now() - start).toBeLessThan(2000);
+    ).rejects.toMatchObject({
+      code: "ERR_IMAGE_TOO_MANY_PIXELS",
+      message: expect.stringMatching(/ArrayBuffer limit/),
+    });
+  });
+
+  test("a plane's buffer transfers to another realm with its finalizer", async () => {
+    // The plane is an externally backed ArrayBuffer with the allocator's
+    // free as its destructor; a transfer moves the contents, destructor
+    // included, and detaches the source. Both halves must then be collectable
+    // without a double free (ASAN) or a leak.
+    const px = await new Bun.Image(cornersPng).pixels();
+    const moved = structuredClone(px.data.buffer, { transfer: [px.data.buffer] });
+    expect(px.data.buffer.byteLength).toBe(0);
+    expect(moved.byteLength).toBe(4 * 3 * 4);
+    expect(Array.from(new Uint8Array(moved, 0, 4))).toEqual([255, 0, 0, 255]);
+    Bun.gc(true);
+    expect(new Uint8Array(moved)[moved.byteLength - 1]).toBe(255);
   });
 
   test("the plane's finalizer frees it: every wrapper is collected and RSS stays flat", async () => {
@@ -1975,9 +1993,12 @@ describe("Bun.Image pixels()", () => {
     // A retained wrapper shows up in the heap census: the Uint8Array count
     // must return to its baseline once the planes are unreachable, whatever
     // the allocator does with the pages. A missing free shows up in RSS:
-    // 8 rounds × 50 planes × 1 MiB would leave 400 MiB resident, against a
-    // bound of 100 MiB (200 under ASAN/debug). The first round is outside
-    // the measurement so the allocator's arena growth is not counted.
+    // 8 rounds × 50 planes × 1 MiB is 400 MiB; a build whose finalizer is
+    // a no-op measures ~437 MiB against a correct build's ~15, and the
+    // bound of 64 MiB (200 under ASAN/debug, where the baseline is not
+    // measured) is breached once one plane in eight goes unfreed. The
+    // first round is outside the measurement so the allocator's arena
+    // growth is not counted.
     //
     // Between rounds the collection is requested, not forced: a synchronous
     // full collection right after a `Promise.all` batch of large buffers
@@ -1997,15 +2018,17 @@ describe("Bun.Image pixels()", () => {
     await round();
     await settle();
     const before = process.memoryUsage.rss();
-    const wrappersBefore = heapStats().objectTypeCounts.Uint8Array ?? 0;
+    // The census key must be live, or a renamed key would read 0 - 0.
+    const wrappersBefore = heapStats().objectTypeCounts.Uint8Array;
+    expect(wrappersBefore).toBeGreaterThan(0);
     for (let i = 0; i < 8; i++) {
       await round();
       Bun.gc(false);
     }
     await settle();
-    const wrappersAfter = heapStats().objectTypeCounts.Uint8Array ?? 0;
+    const wrappersAfter = heapStats().objectTypeCounts.Uint8Array;
     expect(wrappersAfter - wrappersBefore).toBeLessThan(10);
     const grown = process.memoryUsage.rss() - before;
-    expect(grown).toBeLessThan((isASAN || isDebug ? 200 : 100) * 1024 * 1024);
+    expect(grown).toBeLessThan((isASAN || isDebug ? 200 : 64) * 1024 * 1024);
   });
 });

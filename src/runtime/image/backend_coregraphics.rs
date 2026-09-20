@@ -13,7 +13,7 @@ use super::codecs;
 pub enum BackendError {
     #[error("BackendUnavailable")]
     BackendUnavailable,
-    // ── from codecs::Error ────────────────────────────────────────────────
+    // ── the codecs::Error variants a backend can raise ─────────────────────
     #[error("DecodeFailed")]
     DecodeFailed,
     #[error("EncodeFailed")]
@@ -26,19 +26,6 @@ pub enum BackendError {
     UnknownFormat,
     #[error("UnsupportedOnPlatform")]
     UnsupportedOnPlatform,
-}
-
-impl From<codecs::Error> for BackendError {
-    fn from(e: codecs::Error) -> Self {
-        match e {
-            codecs::Error::DecodeFailed => Self::DecodeFailed,
-            codecs::Error::EncodeFailed => Self::EncodeFailed,
-            codecs::Error::TooManyPixels => Self::TooManyPixels,
-            codecs::Error::OutOfMemory => Self::OutOfMemory,
-            codecs::Error::UnknownFormat => Self::UnknownFormat,
-            codecs::Error::UnsupportedOnPlatform => Self::UnsupportedOnPlatform,
-        }
-    }
 }
 
 impl BackendError {

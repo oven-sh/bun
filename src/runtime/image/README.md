@@ -48,10 +48,12 @@ The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspn
 
 - Pixel format is **RGBA8 everywhere** between decode and encode. Decoders are
   configured to emit it; encoders are fed it. Nothing branches on channels.
-  `codecs::Decoded` enforces the shape in release builds: its fields are
-  private, `Decoded::new` (every decoder's return) and `replace_plane` (every
-  geometry stage's swap-in) refuse zero dimensions and a buffer that is not
-  `w * h * 4`, so a plane and its shape cannot move independently; the
+  `codecs::Decoded` (defined in `plane.rs`, so its fields are private to
+  `codecs.rs` as well) enforces the shape in release builds: `Decoded::new`
+  is the only constructor and refuses zero dimensions and a buffer that is
+  not `w * h * 4`; every decoder and every geometry kernel (`resize`,
+  `rotate`, `flip`) returns one, and `replace_with` swaps a whole `Decoded`
+  in, so no caller ever pairs a buffer with a shape it computed itself. The
   per-codec checks are not the source of truth.
 - **Decode** output is `bun.default_allocator`-owned `[]u8`. **Encode** output
   is `Encoded{bytes, free}` where `free` is the _codec's_ deallocator

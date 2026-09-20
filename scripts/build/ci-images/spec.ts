@@ -1280,6 +1280,8 @@ function recordImage(image: BakedImage): Tool {
           ];
         }),
       ...installedPackages,
+      // Scoop is a PowerShell script, so there is no exit code to check on Windows; an empty list is what a failed query looks like there.
+      failUnlessNotEmpty(output(linesOf(queried)), "the package manager listed no packages"),
       toFile(prefixed("package ", sorted(linesOf(queried))), record, { append: true }),
     ];
   };

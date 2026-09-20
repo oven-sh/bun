@@ -57,6 +57,9 @@ public:
         return subspaceForImpl(vm);
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+    DECLARE_VISIT_CHILDREN;
+    DECLARE_VISIT_OUTPUT_CONSTRAINTS;
+    template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static size_t estimatedSize(JSCell*, JSC::VM&);
     WebSocket& wrapped() const

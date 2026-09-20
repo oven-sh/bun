@@ -1804,6 +1804,11 @@ extern "C" void* WebSocket__bunContext(WebCore::WebSocket* webSocket)
     return webSocket->scriptExecutionContext()->bunContext();
 }
 
+extern "C" JSC::EncodedJSValue WebSocket__checkServerIdentity(WebCore::WebSocket* webSocket)
+{
+    return JSC::JSValue::encode(webSocket->checkServerIdentity().getValue(JSC::jsUndefined()));
+}
+
 // The native client keeps this object (and its wrapper) alive across work it has queued that will
 // call back into it; one such claim at a time.
 extern "C" void WebSocket__holdPendingActivityForClient(WebCore::WebSocket* webSocket)

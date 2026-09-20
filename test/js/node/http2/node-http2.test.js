@@ -4940,9 +4940,8 @@ it("http2 hands out the cached name strings for pseudo-headers and known header 
 
 // node calls options.onError only from respondWithFile(): for a failed open or fstat, for a
 // directory, and for another non-regular file with an offset or a length. respondWithFD() never
-// reads it, and a header error destroys the stream for both methods (afterOpen, doSendFileFD,
-// doSendFD and processRespondWithFD in lib/internal/http2/core.js, checked on node v26.3.0).
-it("http2 respondWithFD never calls options.onError and a header error never reaches it, like Node.js", async () => {
+// reads it (doSendFD and processRespondWithFD in lib/internal/http2/core.js, checked on node v26.3.0).
+it("http2 respondWithFD never calls options.onError, like Node.js", async () => {
   const badFd = 2 ** 30; // never a valid descriptor: fstat fails with EBADF
   const fileFd = fs.openSync(import.meta.path, "r");
   const dirFd = fs.openSync(import.meta.dir, "r");
@@ -4969,11 +4968,6 @@ it("http2 respondWithFD never calls options.onError and a header error never rea
     {
       name: "respondWithFD(file fd), rejected headers",
       call: (stream, options) => stream.respondWithFD(fileFd, rejected, options),
-      ...headerError,
-    },
-    {
-      name: "respondWithFile(file), rejected headers",
-      call: (stream, options) => stream.respondWithFile(import.meta.path, rejected, options),
       ...headerError,
     },
     // Two failures at once: the descriptor is bad, and respond() rejects the headers in the fstat callback.

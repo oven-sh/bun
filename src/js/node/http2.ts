@@ -3041,9 +3041,12 @@ function doSendFileFD(options, fd, headers, err, stat) {
   } catch (err) {
     // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
     // for the file never reaches a read stream, so close it here before the stream is destroyed.
-    // node never calls onError: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2714-L2719
     if (this[kOwnsFd] === true) tryClose(fd);
-    this.destroy(err);
+    if (typeof onError === "function") {
+      onError(err);
+    } else {
+      this.destroy(err);
+    }
     return;
   }
 

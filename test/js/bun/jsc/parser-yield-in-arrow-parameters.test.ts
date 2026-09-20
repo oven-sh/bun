@@ -21,6 +21,10 @@ const invalid: [expression: string, message: string][] = [
   ["([a = (b = yield) => b]) => a", yieldExpression],
   ["(...[a = (yield) => 1]) => a", parameterName],
   ["(a = (b = (c = yield) => c) => b) => a", yieldExpression],
+  // Other ways to use `yield` as an identifier.
+  ["(a = (b = { yield }) => b) => a", "Cannot use 'yield' as a shorthand property name in a generator function."],
+  ["(a = (b = [yield] = []) => b) => a", yieldExpression],
+  ["(a = (yi\\u0065ld) => 1) => a", "Unexpected escaped characters in keyword token: 'yi\\u0065ld'"],
   // "( ... )" is not a parameter list here, but the parser has to try that to find out.
   ["[a = (b = (yield) => 1)] = []", parameterName],
   // One arrow function: rejected before too, with the same messages.
@@ -77,6 +81,10 @@ describe("yield in the parameters of an arrow function", () => {
     "(async function* () { (({ x = 1 }, a = () => { var await; }) => a); })",
     "(function* () { ((a = (await) => 1) => a); })",
     "(function* () { (({ x = 1 }, a = (b = await) => b) => a); })",
+    // `yield` as a property name is not an identifier.
+    "(function* () { ((a = ({ yield: b }) => b) => a); })",
+    "(function* () { ((a = (b = { yield: 1, get yield() { return 1; }, yield() { } }.yield) => b) => a); })",
+    "(function* () { ((a = (b = function yield() { }) => b) => a); })",
   ])("%s is valid", source => {
     expect(syntaxErrorOf(source)).toBe("no SyntaxError");
   });
@@ -100,6 +108,13 @@ describe("yield in the parameters of an arrow function", () => {
       return ({ x = 1 }, a = (b = N + x) => { var N = 7; return b; }) => a;
     })`);
     expect(shadowed().next().value({})()).toBe(41);
+
+    // `yield` as a property name is valid in a generator, so the parser still takes this arrow function from its cache.
+    const yieldAsPropertyName = (0, eval)(`(function* () {
+      let N = 40;
+      return ({ x = 1 }, a = ({ yield: b } = { yield: N }) => { var N = 7; return b; }) => a;
+    })`);
+    expect(yieldAsPropertyName().next().value({})()).toBe(40);
 
     // Where `yield` is an identifier, an arrow function with it in its parameters works as before.
     const yieldAsName = (0, eval)(`(function* () { return () => (a = (yield) => yield * 2) => a; })`);

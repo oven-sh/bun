@@ -7,7 +7,7 @@
 //   bake-image --key=<image key> --name=<image name>
 //     Bake a Windows image on Azure with Packer, from the bake directory
 //     build/ci-images/<key>/ that the pipeline step generated and uploaded,
-//     and publish the bun-image.json the bake wrote. This has to be the
+//     and publish the record the bake wrote. This has to be the
 //     step's only command: see bakeWindowsImage.
 //   wait-image --os=<linux|windows> --name=<image name> [--timeout-minutes=N]
 //     Block until the image of that name can be booted.

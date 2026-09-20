@@ -46,6 +46,7 @@ import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
+import { toolchainStampPath } from "./toolchain-stamp.ts";
 import { generateUnifiedSources } from "./unified.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1202,7 +1203,7 @@ function emitWindowsResources(n: Ninja, cfg: Config): string {
     // .ico and the manifest are embedded by rc at compile time — rebuild if
     // they change. The template is NOT tracked here: it's substituted at
     // configure time, so template edits need a reconfigure (happens rarely).
-    implicitInputs: [ico, manifest],
+    implicitInputs: [ico, manifest, toolchainStampPath(cfg)],
     vars: { rcflags: rcFlags.join(" ") },
   });
 

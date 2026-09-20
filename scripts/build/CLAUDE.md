@@ -208,6 +208,7 @@ Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a)
 | `rust/cargo-env.ts`            | cargo conventions shared by configure and the build-time driver: build-script `output.json` shape, `envify`, dylib path variable                                        |
 | `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                                                                 |
 | `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                                                                                                                  |
+| `toolchain-stamp.ts`           | `<buildDir>/toolchain.stamp`: what each tool path resolves to; an input of every edge that runs one, so a replaced compiler rebuilds its objects                        |
 | `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                                                                                     |
 | `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                                                                                                               |
 | `macos-sdk.ts`                 | macOS SDK resolution/download for darwin cross-compiles — `resolveMacosSdkPath()`, `ensureMacosSdk()`                                                                   |
@@ -264,6 +265,8 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 **`isExecutable` must check `isFile()`.** `X_OK` on a directory means traversable — a `cmake/` dir in PATH would shadow the real cmake binary.
 
 **cmd.exe quoting is partial.** `shell.ts` quote() handles spaces/special chars but NOT `%VAR%` expansion, `^` escape, `&|>` redirection. If an arg contains those, switch to powershell.
+
+**A tool is named by path, so ninja cannot see it replaced.** An LLVM upgrade behind a stable path (scoop's `current`, a Homebrew `opt/` symlink) leaves every command line unchanged, and the new binary's packaged mtime is usually older than the objects, so naming the binary as an input does not help. `toolchain-stamp.ts` records what each tool path resolves to (file, size, mtime); `cc`/`cxx`/`pch`/`nasm`/`rc`/`ar`/`link` edges take the stamp as an implicit input. A new edge that runs a toolchain binary should too. Nested cmake builds are not covered: their own build directory keeps objects from the old compiler.
 
 **`rm -rf build/` doesn't clear the cache locally.** `cfg.cacheDir` is machine-shared at `$BUN_INSTALL/build-cache` for non-CI builds (ccache, tarballs, prebuilt WebKit); `$BUN_BUILD_CACHE_DIR` puts it somewhere else, in CI too (`--cacheDir` still wins for one build). Everything there is content-addressed or version-stamped, so a stale entry can't be hit — don't reach for `bun run clean cache` as a debugging step. If a build misbehaves, the bug is in the inputs or the graph, not the cache; nuking it just costs you a cold rebuild. CI keeps `<buildDir>/cache` so `rm -rf build/` is still a full reset there.
 

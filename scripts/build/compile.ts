@@ -14,6 +14,7 @@ import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
+import { toolchainStampPath } from "./toolchain-stamp.ts";
 import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
 
 // ---------------------------------------------------------------------------
@@ -275,6 +276,7 @@ export function nasm(
     outputs: [out],
     rule: "nasm",
     inputs: [resolve(cfg.cwd, src)],
+    implicitInputs: [toolchainStampPath(cfg)],
     orderOnlyInputs: [objectDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
     vars: { nasmflags: opts.flags.join(" ") },
   });
@@ -288,7 +290,7 @@ function compile(n: Ninja, cfg: Config, src: string, opts: CompileOpts, lang: "c
   const rule = opts.pch !== undefined && lang === "cxx" ? "cxx_pch" : lang;
   const flagVar = lang === "cxx" ? "cxxflags" : "cflags";
 
-  const implicitInputs: string[] = [...(opts.implicitInputs ?? [])];
+  const implicitInputs: string[] = [toolchainStampPath(cfg), ...(opts.implicitInputs ?? [])];
   const vars: Record<string, string> = {
     [flagVar]: opts.flags.join(" "),
   };
@@ -415,7 +417,7 @@ export function pch(
     // absHeader + wrapper editing must rebuild PCH. Dep outputs too — see
     // the docstring above for why these can't be order-only (startup-stat
     // vs mid-build header regeneration). The depfile tracks the REST.
-    implicitInputs: [absHeader, wrapperHeader, ...(opts.implicitInputs ?? [])],
+    implicitInputs: [absHeader, wrapperHeader, toolchainStampPath(cfg), ...(opts.implicitInputs ?? [])],
     orderOnlyInputs: [pchDirStamp(cfg), ...(opts.orderOnlyInputs ?? [])],
     vars: {
       cxxflags: opts.flags.join(" "),
@@ -471,9 +473,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     },
   };
   if (implicitOutputs.length > 0) node.implicitOutputs = implicitOutputs;
-  if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) {
-    node.implicitInputs = opts.implicitInputs;
-  }
+  node.implicitInputs = [toolchainStampPath(cfg), ...(opts.implicitInputs ?? [])];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)
   // and does not create the directory; link-only and rust-and-link compile
   // no objects, so nothing else would have made it.
@@ -496,6 +496,7 @@ export function ar(n: Ninja, cfg: Config, out: string, objects: string[], valida
     outputs: [absOut],
     rule: "ar",
     inputs: objects,
+    implicitInputs: [toolchainStampPath(cfg)],
     ...(validations.length > 0 ? { validations } : {}),
   });
 

@@ -585,7 +585,7 @@ function getTestAgent(platform: Platform): Agent {
  */
 
 /** The `ci-<mode>` profile of scripts/build.ts a build command runs. */
-type BuildMode = "build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link";
+type BuildMode = "build";
 
 /**
  * Build the scripts/build.ts argument list from a target's properties.
@@ -627,7 +627,7 @@ function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMo
 }
 
 /**
- * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
+ * deps + C++ + Rust + link on one agent; also uploads libbun-*.a and the dep libs.
  */
 function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandStep {
   const { arch } = platform;

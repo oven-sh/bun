@@ -8,18 +8,8 @@
  */
 
 import { spawn as nodeSpawn, spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, isAbsolute, relative, resolve } from "node:path";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getJson, isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { generateOrderFile, readTextSymbols } from "../orderfile/generate.ts";
@@ -185,122 +175,6 @@ export async function spawnWithAnnotations(
   process.exit(exitCode ?? 1);
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// Buildkite artifacts — split-build upload/download
-//
-// CI splits builds per-platform into three parallel steps:
-//   build-cpp  → libbun.a + all dep libs (this node uploads)
-//   build-rust → libbun_runtime.a (this node uploads)
-//   build-bun  → downloads both, links (this node downloads first)
-//
-// Paths are uploaded RELATIVE TO buildDir. buildkite-agent recreates the
-// directory structure on download. The link-only ninja graph expects files
-// at the SAME relative paths cpp-only produced them at — computeDepLibs()
-// and emitNestedCmake() share the same path formula.
-// ───────────────────────────────────────────────────────────────────────────
-
-/**
- * Upload build artifacts after a successful cpp-only or rust-only build.
- * Runs `buildkite-agent artifact upload` with paths relative to buildDir.
- *
- * Large archives (libbun-*.a, >1GB) are gzipped — buildkite artifact
- * storage is fine but upload/download is faster. link-only gunzips.
- *
- * ORDER MATTERS: upload dep libs FIRST (some live in cache/ — WebKit
- * prebuilt), THEN rm cache + gzip + upload the archive. If cache is
- * deleted first, WebKit lib upload fails with "file not found". The
- * old cmake had this ordering implicitly — each dep's build uploaded
- * its libs immediately; rm only ran when the archive target fired.
- */
-export function uploadArtifacts(cfg: Config, output: BunOutput): void {
-  if (!isBuildkite) {
-    console.log("Not in Buildkite — skipping artifact upload");
-    return;
-  }
-
-  if (cfg.mode === "rust-only") {
-    // Relative to buildDir so link-only's `artifact download '*' .` recreates
-    // the rust/<triple>/ layout that `rustLibPath(cfg)`
-    // expects. gzip on posix (release staticlib is ~200MB of mostly bitcode
-    // when LTO is on); .lib on Windows is uploaded raw — same convention as
-    // the cpp archive below.
-    const paths = output.rustObjects.map(obj => relative(cfg.buildDir, obj));
-    console.log(`Uploading ${paths.length} rust artifact(s)...`);
-    if (cfg.windows) {
-      upload(paths, cfg.buildDir);
-    } else {
-      for (const p of paths) run(["gzip", "-1", "-k", p], cfg.buildDir);
-      upload(
-        paths.map(p => `${p}.gz`),
-        cfg.buildDir,
-      );
-    }
-    return;
-  }
-
-  if (cfg.mode !== "cpp-only") {
-    // full/link-only don't upload split artifacts.
-    return;
-  }
-
-  // ─── Phase 1: upload dep libs (before we rm anything) ───
-  // In Buildkite, ninja already uploaded these via the bk_upload edge in
-  // bun.ts (overlapped with the cxx compile). The stamp is the witness; if
-  // it's missing (agent unavailable mid-build, or running cpp-only outside
-  // a real BK job), fall back to uploading here so link-only still gets them.
-  if (existsSync(resolve(cfg.buildDir, ".dep-libs-uploaded"))) {
-    console.log("Dep libs already uploaded during build");
-  } else {
-    const depPaths: string[] = [];
-    for (const dep of output.deps) {
-      for (const lib of dep.libs) {
-        depPaths.push(relative(cfg.buildDir, lib));
-      }
-    }
-    console.log(`Uploading ${depPaths.length} dep libs...`);
-    upload(depPaths, cfg.buildDir);
-  }
-
-  const testFFI = webkitTestFFIPath(cfg);
-  if (existsSync(testFFI)) {
-    console.log("Uploading testFFI...");
-    upload([relative(cfg.buildDir, testFFI)], cfg.buildDir);
-  }
-
-  // ─── Phase 2: free disk, gzip (posix only), upload archive ───
-  // CI agents are disk-constrained. Free what we no longer need: codegen/
-  // (sources already compiled into the archive), obj/ (.o files archived),
-  // cache/ (WebKit prebuilt — libs uploaded in phase 1, rest is headers
-  // + tarball we won't touch again).
-  if (output.archive !== undefined) {
-    const archiveName = basename(output.archive);
-
-    console.log("Cleaning intermediate files to free disk...");
-    rmSync(cfg.codegenDir, { recursive: true, force: true });
-    rmSync(resolve(cfg.buildDir, "obj"), { recursive: true, force: true });
-    // The build's own cache only: one placed elsewhere (--cacheDir, $BUN_BUILD_CACHE_DIR) is not this build's disk to free.
-    const cacheFromBuildDir = relative(cfg.buildDir, cfg.cacheDir);
-    if (!cacheFromBuildDir.startsWith("..") && !isAbsolute(cacheFromBuildDir)) {
-      rmSync(cfg.cacheDir, { recursive: true, force: true });
-    }
-
-    // gzip: posix only (matches cmake — only libbun-*.a are gzipped,
-    // Windows .lib archives uploaded uncompressed). gzip isn't a
-    // standard Windows tool anyway; the .lib is smaller (PDB is separate).
-    // downloadArtifacts() only gunzips .gz files it finds, so Windows
-    // archives pass through unchanged.
-    if (cfg.windows) {
-      console.log("Uploading archive (Windows: no gzip)...");
-      upload([archiveName], cfg.buildDir);
-    } else {
-      console.log(`Compressing ${archiveName}...`);
-      run(["gzip", "-1", archiveName], cfg.buildDir);
-      console.log("Uploading archive...");
-      upload([`${archiveName}.gz`], cfg.buildDir);
-    }
-  }
-}
-
 /**
  * Upload via buildkite-agent. Semicolon-joined single arg — the agent
  * splits on ";" by default (--delimiter flag, Value: ";"). Second
@@ -312,7 +186,7 @@ function upload(paths: string[], cwd: string): void {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Link-only post-link: features.json + packaging + upload
+// Post-link: features.json + packaging + upload
 //
 // The zip contract (matching cmake's BuildBun.cmake packaging — test steps
 // download these by exact name):
@@ -499,82 +373,6 @@ function makeZip(cfg: Config, name: string, files: string[]): string {
   return zip;
 }
 
-/**
- * Download artifacts from sibling buildkite steps before a link-only /
- * rust-and-link build. Derives sibling step keys from BUILDKITE_STEP_KEY
- * (swap `-build-bun` → `-build-cpp` / `-build-rust`). Gunzips any .gz files
- * after download.
- *
- * rust-and-link runs in parallel with build-cpp (no depends_on), so it
- * POLLS `buildkite-agent step get outcome` for the cpp step until it passes
- * before attempting the download. link-only has depends_on and skips the
- * poll.
- *
- * Call BEFORE ninja — the downloaded files are ninja's link inputs.
- */
-export async function downloadArtifacts(cfg: Config): Promise<void> {
-  if (cfg.mode !== "link-only" && cfg.mode !== "rust-and-link") return;
-
-  const stepKey = process.env.BUILDKITE_STEP_KEY;
-  if (stepKey === undefined) {
-    throw new BuildError("BUILDKITE_STEP_KEY unset", {
-      hint: `${cfg.mode} mode requires running inside a Buildkite job`,
-    });
-  }
-
-  // step key is `<target>-build-bun`; siblings are `<target>-build-{cpp,rust}`.
-  const m = stepKey.match(/^(.+)-build-bun$/);
-  if (m === null) {
-    throw new BuildError(`Unexpected BUILDKITE_STEP_KEY: ${stepKey}`, {
-      hint: "Expected format: <target>-build-bun",
-    });
-  }
-  const targetKey = m[1]!;
-  const cppStep = `${targetKey}-build-cpp`;
-
-  // rust-and-link: no depends_on on build-cpp (it started alongside us so
-  // cargo could overlap). Poll its outcome; "passed" → download, any
-  // terminal failure → exit 1 with a clear message so the annotation points
-  // at build-cpp rather than a confusing "artifact not found" here.
-  if (cfg.mode === "rust-and-link") {
-    await waitForStepOutcome(cppStep);
-  }
-
-  const dl = (step: string) => {
-    console.log(`Downloading artifacts from ${step}...`);
-    return runAsync(["buildkite-agent", "artifact", "download", "*", ".", "--step", step], cfg.buildDir);
-  };
-  if (cfg.mode === "rust-and-link") {
-    // rust built locally — only the cpp archive + dep libs are fetched.
-    await dl(cppStep);
-  } else {
-    // link-only: both siblings. Overlap the two downloads; gunzip after both
-    // complete (the .gz scan is a recursive walk, so everything on disk first).
-    await Promise.all([dl(cppStep), dl(`${targetKey}-build-rust`)]);
-  }
-
-  // Recursive: rust artifact lands under rust/<triple>/.
-  const gzFiles: string[] = [];
-  const walk = (dir: string) => {
-    if (!existsSync(dir)) return;
-    for (const e of readdirSync(dir, { withFileTypes: true })) {
-      const p = resolve(dir, e.name);
-      if (e.isDirectory()) {
-        // rust-and-link built rust locally; skip the per-crate artifact tree.
-        if (cfg.mode === "rust-and-link" && (e.name === "rust" || e.name === "rust-target")) continue;
-        walk(p);
-      } else if (e.isFile() && e.name.endsWith(".gz")) gzFiles.push(relative(cfg.buildDir, p));
-    }
-  };
-  walk(cfg.buildDir);
-  await Promise.all(
-    gzFiles.map(gz => {
-      console.log(`Decompressing ${gz}...`);
-      return runAsync(["gunzip", "-f", gz], cfg.buildDir);
-    }),
-  );
-}
-
 /** Run a command synchronously, throw BuildError on non-zero exit. */
 function run(argv: string[], cwd: string, env?: Record<string, string>): void {
   const result = spawnSync(argv[0]!, argv.slice(1), {
@@ -589,69 +387,6 @@ function run(argv: string[], cwd: string, env?: Record<string, string>): void {
     throw new BuildError(`${argv[0]} exited with code ${result.status}`, {
       hint: `Command: ${argv.join(" ")}`,
     });
-  }
-}
-
-/** Async variant of `run()` for overlapping independent steps. */
-function runAsync(argv: string[], cwd: string): Promise<void> {
-  return new Promise((res, rej) => {
-    const child = nodeSpawn(argv[0]!, argv.slice(1), { cwd, stdio: "inherit" });
-    child.on("error", (err: Error) => rej(new BuildError(`Failed to spawn ${argv[0]}`, { cause: err })));
-    child.on("close", (code: number | null) => {
-      if (code === 0) res();
-      else rej(new BuildError(`${argv[0]} exited with code ${code}`, { hint: `Command: ${argv.join(" ")}` }));
-    });
-  });
-}
-
-/**
- * Poll `buildkite-agent step get outcome --step <key>` until the step
- * reaches a terminal state. Returns on "passed"; throws on any failure
- * outcome so the caller exits 1 with a message that points at the real
- * failing step (rather than a downstream "artifact not found").
- */
-async function waitForStepOutcome(stepKey: string): Promise<void> {
-  const failed = new Set(["hard_failed", "soft_failed", "errored", "canceled", "cancelled"]);
-  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-  const start = Date.now();
-  const deadlineMs = 60 * 60 * 1000;
-  let last = "";
-  console.log(`Waiting for ${stepKey} to finish...`);
-  for (;;) {
-    const result = spawnSync("buildkite-agent", ["step", "get", "outcome", "--step", stepKey], { encoding: "utf8" });
-    if (result.error) {
-      throw new BuildError(`Failed to spawn buildkite-agent`, { cause: result.error });
-    }
-    if (result.status !== 0) {
-      const err = (result.stderr ?? "").trim();
-      if (err !== last) {
-        console.log(`  buildkite-agent step get exited ${result.status}: ${err}`);
-        last = err;
-      }
-      if (Date.now() - start > deadlineMs) {
-        throw new BuildError(`buildkite-agent step get kept failing for ${stepKey}`, { hint: err });
-      }
-      await sleep(3000);
-      continue;
-    }
-    const outcome = (result.stdout ?? "").trim();
-    if (outcome !== last) {
-      const elapsed = Math.round((Date.now() - start) / 1000);
-      console.log(`  ${stepKey} outcome: ${outcome || "(running)"} [${elapsed}s]`);
-      last = outcome;
-    }
-    if (outcome === "passed") return;
-    if (failed.has(outcome)) {
-      throw new BuildError(`Sibling step ${stepKey} ${outcome} — nothing to link`, {
-        hint: `See the ${stepKey} job for the real error; this step only downloads its artifacts.`,
-      });
-    }
-    if (Date.now() - start > deadlineMs) {
-      throw new BuildError(`Timed out after 60m waiting for ${stepKey}`, {
-        hint: `${stepKey} never reached a terminal outcome; check that job for a hang.`,
-      });
-    }
-    await sleep(3000);
   }
 }
 
@@ -699,10 +434,9 @@ export function orderFileContext(): OrderFileContext {
   };
 }
 
-/** Only builds that link, on targets that use an order file, outside PRs. */
+/** Targets that use an order file, outside PRs. */
 export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
-  if (!usesOrderFile(cfg) || !ctx.buildkite || ctx.pullRequest) return false;
-  return cfg.mode !== "cpp-only" && cfg.mode !== "rust-only";
+  return usesOrderFile(cfg) && ctx.buildkite && !ctx.pullRequest;
 }
 
 /** Tracing runs the binary we just linked, so the host must be able to execute it. */

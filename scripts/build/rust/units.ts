@@ -26,12 +26,7 @@ import { assert } from "../error.ts";
 import { dylibPathVar, envify } from "./cargo-env.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
 
-export type UnitKind = "lib" | "proc-macro" | "staticlib" | "bin" | "build-script" | "build-script-run";
-
-/** The kinds a graph is planned for: `bun_runtime`'s staticlib, the Windows shim's executable. Named by their crate, not by a hash. */
-export function isRootKind(kind: UnitKind): kind is "staticlib" | "bin" {
-  return kind === "staticlib" || kind === "bin";
-}
+export type UnitKind = "lib" | "proc-macro" | "bin" | "build-script" | "build-script-run";
 
 /** A dependency edge as rustc sees it. */
 export interface UnitDep {
@@ -60,11 +55,11 @@ export interface RustUnit {
   features: string[];
   profile: UnitGraphUnit["profile"];
   edition: string;
-  /** cargo `Target::rustc_crate_types`: `lib`, `rlib`, `proc-macro`, `staticlib`, `bin` — passed verbatim. */
+  /** cargo `Target::rustc_crate_types`: `lib`, `rlib`, `proc-macro`, `bin` — passed verbatim. */
   crateTypes: string[];
   srcPath: string;
   deps: UnitDep[];
-  /** For lib/staticlib/proc-macro units of a package with a build script: that script's run unit (its `--cfg`s, env and OUT_DIR apply here). */
+  /** For lib/proc-macro units of a package with a build script: that script's run unit (its `--cfg`s, env and OUT_DIR apply here). */
   buildScript: RustUnit | undefined;
   /**
    * 16 hex digits: `-C extra-filename`, directory and manifest names. Covers everything that changes the output,
@@ -81,7 +76,7 @@ export interface RustUnit {
   // ─── derived paths (absolute) ───
   /** `--out-dir` */
   outDir: string;
-  /** The rlib (lib), dylib (proc-macro), archive (staticlib) or executable (bin, build-script); the `output` file for a build-script run. */
+  /** The rlib (lib), dylib (proc-macro) or executable (bin, build-script); the `output` file for a build-script run. */
   output: string;
   /** lib units only: the `.rmeta`, which the same rustc writes well ahead of `output` and dependent libraries compile against. */
   rmeta: string | undefined;
@@ -95,7 +90,7 @@ export interface RustUnit {
 
 export interface RustGraph {
   units: RustUnit[];
-  /** What the graph was planned for: the `bun_runtime` staticlib, or the Windows shim's `bin`. */
+  /** What the graph was planned for: the `bun_runtime` library, or the Windows shim's `bin`. */
   root: RustUnit;
   /** The graph's own directory under the build directory (`rust-target/`, `rust-target/shim/`): plan, unit manifests, artifacts. */
   dir: string;
@@ -129,15 +124,13 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
           ? "build-script"
           : tkind === "proc-macro"
             ? "proc-macro"
-            : u.target.crate_types.includes("staticlib")
-              ? "staticlib"
-              : tkind === "bin"
-                ? "bin"
-                : "lib";
+            : tkind === "bin"
+              ? "bin"
+              : "lib";
     if (kind === "lib") {
       assert(
         u.target.crate_types.every(t => t === "lib" || t === "rlib"),
-        `rust plan: unit ${u.target.name} has crate types ${u.target.crate_types}; only rlib libraries, proc-macros and a staticlib or bin root are supported`,
+        `rust plan: unit ${u.target.name} has crate types ${u.target.crate_types}; only rlib libraries, proc-macros and a bin root are supported: the build links the rlibs itself, so no crate is a staticlib or cdylib`,
       );
     }
     return {
@@ -261,14 +254,6 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
         unit.depInfo = join(unit.outDir, `${unit.crateName}-${unit.hash}.d`);
         break;
       }
-      case "staticlib": {
-        // No extra-filename: the link step and `rustLibPath()` want a fixed name.
-        const [pre, suf] = info.fileNames.staticlib;
-        unit.outDir = pdir;
-        unit.output = join(unit.outDir, `${pre}${unit.crateName}${suf}`);
-        unit.depInfo = join(unit.outDir, `${unit.crateName}.d`);
-        break;
-      }
       case "bin": {
         // rustc names an executable after the crate (`bun_shim_impl.exe`); run.ts also writes it under the target's
         // name where the graph's owner wants it (`ManifestContext.binDestination`), cargo's "uplift".
@@ -297,9 +282,12 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
   }
 
   const root = units[g.roots[0]!]!;
-  assert(isRootKind(root.kind), `rust plan: root unit ${root.crateName} is ${root.kind}, expected a staticlib or bin`);
+  assert(
+    root.kind === "lib" || root.kind === "bin",
+    `rust plan: root unit ${root.crateName} is a ${root.kind}, expected a library or a bin`,
+  );
   for (const u of units) {
-    assert(u === root || !isRootKind(u.kind), `rust plan: ${u.crateName} is a ${u.kind} but not the root`);
+    assert(u === root || u.kind !== "bin", `rust plan: ${u.crateName} is a bin but not the root`);
   }
   return {
     units,
@@ -322,7 +310,7 @@ interface ManifestCommon {
   crateName: string;
   cwd: string;
   env: Record<string, string>;
-  /** The file ninja knows this unit by: rlib (lib), dylib (proc-macro), archive (staticlib), executable (build-script), output.json (build-script-run). */
+  /** The file ninja knows this unit by: rlib (lib), dylib (proc-macro), executable (build-script), output.json (build-script-run). */
   output: string;
   /** The ninja depfile run.ts writes for the unit's edge. */
   depfile: string;
@@ -334,9 +322,9 @@ interface ManifestCommon {
   libraryPath: { variable: string; prepend: string[] };
 }
 
-/** A rustc invocation: lib, proc-macro, staticlib, bin or build-script compile. */
+/** A rustc invocation: lib, proc-macro, bin or build-script compile. */
 export interface RustcUnitManifest extends ManifestCommon {
-  kind: "lib" | "proc-macro" | "staticlib" | "bin" | "build-script";
+  kind: "lib" | "proc-macro" | "bin" | "build-script";
   rustc: string;
   /** rustc argv without the program. Build-script-derived `-L`/`-l`/`-C link-arg`/`--cfg`/`--check-cfg` and `rustc-env` are added by run.ts. */
   args: string[];
@@ -505,7 +493,8 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
       : "cfg(feature, values())",
   );
   args.push("-C", `metadata=${unit.symbolHash}`);
-  if (!isRootKind(unit.kind)) args.push("-C", `extra-filename=-${unit.hash}`);
+  // A bin is named after its crate (see the paths above); everything else carries its hash.
+  if (unit.kind !== "bin") args.push("-C", `extra-filename=-${unit.hash}`);
   if (p.rpath) args.push("-C", "rpath");
   args.push("--out-dir", unit.outDir);
   if (!isHost) args.push("--target", unit.platform);
@@ -679,7 +668,7 @@ export function externDeps(unit: RustUnit): UnitDep[] {
 /**
  * Which of a dependency's artifacts the `--extern` names (cargo `extern_args` + `only_requires_rmeta`):
  * a proc-macro's dylib; a lib's `.rmeta` when both sides are pipelined rlib builds (the dependent needs
- * type information only); its `.rlib` when the dependent links (staticlib, proc-macro, build script).
+ * type information only); its `.rlib` when the dependent links (proc-macro, build script, bin).
  */
 export function externPaths(unit: RustUnit, dep: RustUnit): string[] {
   if (dep.kind === "proc-macro") return [dep.output];
@@ -697,7 +686,8 @@ export function requiresUpstreamObjects(unit: RustUnit): boolean {
  * cargo `core::compiler::lto::generate`: with the profile's `lto` unset (`false`) every unit gets
  * `-C embed-bitcode=no` (object code only, no wasted bitcode); `"off"` also says `-C lto=off`; with
  * `thin`/`fat`/`true` the target rlibs carry only bitcode for the linker plugin (`-C linker-plugin-lto`)
- * and the root (staticlib or bin) runs the LTO (`-C lto[=…]`). Host units are object-only in every case.
+ * and a bin root runs the LTO (`-C lto[=…]`); a library root has nothing to run it, so its graph's bitcode is
+ * the final link's to optimise. Host units are object-only in every case.
  */
 function ltoArgs(unit: RustUnit): string[] {
   // Host units (build scripts, proc-macros, their deps) are object-only whatever the profile says.
@@ -706,7 +696,7 @@ function ltoArgs(unit: RustUnit): string[] {
   if (lto === "false") return ["-C", "embed-bitcode=no"];
   if (lto === "off") return ["-C", "lto=off", "-C", "embed-bitcode=no"];
   // thin | fat | true
-  if (isRootKind(unit.kind)) return lto === "true" ? ["-C", "lto"] : ["-C", `lto=${lto}`];
+  if (unit.kind === "bin") return lto === "true" ? ["-C", "lto"] : ["-C", `lto=${lto}`];
   return ["-C", "linker-plugin-lto"];
 }
 
@@ -724,6 +714,22 @@ function stripArg(s: UnitGraphUnit["profile"]["strip"]): string | undefined {
   const inner = typeof v === "string" ? v : ((v as { Named?: string }).Named ?? "none");
   const lower = inner.toLowerCase();
   return lower === "none" || lower === "false" ? undefined : lower;
+}
+
+/**
+ * What a link that rustc does not do takes from a graph whose root is a library: the root and every library it
+ * depends on, std's included. rustc decides two things only when it links a final artifact, so they are decided
+ * here:
+ *  - proc-macros, and what they alone depend on, are host code, compiled into the compiler and not into the program;
+ *  - std depends on both panic runtimes, `panic_abort` and `panic_unwind`, and both define `__rust_start_panic`.
+ *    rustc links the one the panic strategy names (rustc_metadata `inject_panic_runtime`) and leaves the other out.
+ * (The third, the allocator shim, is a function in the root crate: src/runtime/bin_entry/mod.rs.)
+ */
+export function linkedRlibs(graph: RustGraph): RustUnit[] {
+  const otherPanicRuntime = graph.root.profile.panic === "abort" ? "panic_unwind" : "panic_abort";
+  return [graph.root, ...transitiveLinkInputs(graph.root, "same-platform")].filter(
+    unit => unit.crateName !== otherPanicRuntime,
+  );
 }
 
 /**

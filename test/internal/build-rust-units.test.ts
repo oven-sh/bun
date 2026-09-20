@@ -14,6 +14,7 @@ import type { MetadataPackage, RustPlan, UnitGraphUnit } from "../../scripts/bui
 import { parseBuildScriptOutput, rustcInvocation, writeDepfile } from "../../scripts/build/rust/run.ts";
 import { parseToml } from "../../scripts/build/rust/toml.ts";
 import {
+  linkedRlibs,
   type ManifestContext,
   type RustUnit,
   type RustcUnitManifest,
@@ -323,7 +324,6 @@ describe("buildRustGraph + unitManifest", () => {
     fileNames: {
       rlib: ["lib", ".rlib"],
       "proc-macro": ["", ".dll"],
-      staticlib: ["", ".lib"],
       bin: ["", ".exe"],
     } as RustPlan["target"]["fileNames"],
     splitDebuginfo: [],
@@ -437,6 +437,48 @@ describe("buildRustGraph + unitManifest", () => {
     expect(depManifest.rmetaNinjaName).toBe(join("rust-target/shim", triple, "deps", `libdep_a-${dep.hash}.rmeta`));
     expect(depManifest.linkArgSelectors).toEqual(["all"]);
     expect(depManifest.args).toEqual(DEP_ARGS(dep));
+  });
+
+  test("a library root's link takes the target libraries, with one panic runtime and no host code", () => {
+    // What a `-Zbuild-std` graph looks like: std depends on both panic runtimes, and a proc-macro brings host-only crates.
+    const names = ["panic_abort", "panic_unwind", "std", "macro_dep", "my_macro", "my-root"] as const;
+    const pkgs = Object.fromEntries(names.map(name => [name, pkg(name, null, `/ws/src/${name}/Cargo.toml`)]));
+    const dep = (index: number, name: string) => ({ index, extern_crate_name: name, public: false, noprelude: false });
+    const lib = (name: (typeof names)[number], platform: string | null, deps: UnitGraphUnit["dependencies"]) => ({
+      ...unit(pkgs[name]!, "lib", deps),
+      platform,
+    });
+    const procMacro: UnitGraphUnit = {
+      ...unit(pkgs.my_macro!, "lib", [dep(3, "macro_dep")]),
+      target: { ...unit(pkgs.my_macro!, "lib", []).target, kind: ["proc-macro"], crate_types: ["proc-macro"] },
+      platform: null,
+    };
+    const base = planWith([]);
+    const plan = (panic: "abort" | "unwind"): RustPlan => ({
+      ...base,
+      unitGraph: {
+        version: 1,
+        units: [
+          lib("panic_abort", triple, []),
+          lib("panic_unwind", triple, []),
+          lib("std", triple, [dep(0, "panic_abort"), dep(1, "panic_unwind")]),
+          lib("macro_dep", null, []),
+          procMacro,
+          lib("my-root", triple, [dep(2, "std"), dep(4, "my_macro")]),
+        ].map(u => ({ ...u, profile: { ...u.profile, panic } })),
+        roots: [5],
+      },
+      packages: Object.fromEntries(Object.values(pkgs).map(p => [p.id, p])),
+    });
+
+    const abort = buildRustGraph(plan("abort"), "/build/rust-target");
+    expect(abort.root.kind).toBe("lib");
+    // The root is named like every other library: by its crate and its hash.
+    expect(abort.root.output).toBe(join("/build/rust-target", triple, "deps", `libmy_root-${abort.root.hash}.rlib`));
+    expect(linkedRlibs(abort).map(u => u.crateName)).toEqual(["my_root", "std", "panic_abort"]);
+
+    const unwind = buildRustGraph(plan("unwind"), "/build/rust-target");
+    expect(linkedRlibs(unwind).map(u => u.crateName)).toEqual(["my_root", "std", "panic_unwind"]);
   });
 
   test("target rustflags change where an artifact is written but not how its symbols are mangled", () => {

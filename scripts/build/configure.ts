@@ -241,13 +241,8 @@ function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
     // The Rust plans: the per-crate edges are generated from them (rust.ts), so a changed plan — new lockfile,
     // manifest, toolchain — must reconfigure. They are build outputs; when one is dirty ninja builds it first,
     // reruns this edge, and restarts with the new manifest.
-    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? rustPlanFiles(cfg) : [])],
+    implicitInputs: [...configureInputs(cfg.cwd), ...rustPlanFiles(cfg)],
   });
-}
-
-/** Whether this graph compiles bun's Rust crates (and therefore has the plan edges emitRust registers). */
-function buildsRust(cfg: Config): boolean {
-  return cfg.mode !== "cpp-only" && cfg.mode !== "link-only";
 }
 
 /**
@@ -359,14 +354,10 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   // Perl check: LUT codegen (create-hash-table.ts) shells out to the
   // perl script from JSC. If perl is missing, codegen fails cryptically.
   // Check here so the error is at configure time with a clear hint.
-  // rust-only/link-only don't run LUT codegen — skip the check so split-CI
-  // steps don't require perl on the rust cross-compile box.
-  if (cfg.mode === "full" || cfg.mode === "cpp-only" || cfg.mode === "archive-link") {
-    if (findSystemTool("perl") === undefined) {
-      throw new BuildError("perl not found in PATH", {
-        hint: "LUT codegen (create-hash-table.ts) needs perl. Install it: apt install perl / brew install perl",
-      });
-    }
+  if (findSystemTool("perl") === undefined) {
+    throw new BuildError("perl not found in PATH", {
+      hint: "LUT codegen (create-hash-table.ts) needs perl. Install it: apt install perl / brew install perl",
+    });
   }
   mark("validate+perl");
 
@@ -384,9 +375,8 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   mark("emitBun");
   emitGeneratorRule(n, cfg, input);
 
-  // Default targets. cpp-only sets its own default inside emitBun (archive,
-  // no smoke test). Full/link-only: `bun` phony (or stripped file); the
-  // smoke test rides along as a validation of the link.
+  // Default targets: the `bun` phony (or stripped file); the smoke test
+  // rides along as a validation of the link.
   // Release builds produce both bun-profile and stripped bun; `bun` is the
   // stripped one. Debug produces bun-debug; `bun` is a phony pointing at it.
   // dsym: darwin release only — pulled into defaults so ninja actually builds

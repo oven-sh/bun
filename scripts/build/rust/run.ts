@@ -1,7 +1,7 @@
 /**
  * Build-time driver for one Rust unit. ninja runs
  *
- *   run.ts rustc        <unit.json>   compile: a library, a proc-macro, a build script, the staticlib or bin root
+ *   run.ts rustc        <unit.json>   compile: a library, a proc-macro, a build script, a bin root
  *   run.ts build-script <unit.json>   run a compiled build script, record its `cargo:` directives
  *
  * `<unit.json>` is the `UnitManifest` configure wrote (units.ts): argv, env, cwd, outputs. This process lives

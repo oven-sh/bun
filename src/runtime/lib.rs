@@ -5,6 +5,9 @@
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
 #![feature(adt_const_params)]
+// For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.
+#![feature(rustc_attrs)]
+#![allow(internal_features)]
 
 pub mod error;
 pub use error::{Error, Result};

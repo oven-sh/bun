@@ -488,8 +488,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
     ...(opts.implicitInputs ?? []),
   ];
   // lld-link writes the exe's import library under obj/ (flags.ts /IMPLIB)
-  // and does not create the directory; link-only and rust-and-link compile
-  // no objects, so nothing else would have made it.
+  // and does not create the directory.
   if (cfg.windows) node.orderOnlyInputs = [objectDirStamp(cfg)];
   if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);

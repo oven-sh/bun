@@ -26,7 +26,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   canTraceOrderFile,
-  downloadArtifacts,
   inheritOrderFile,
   mustGenerateOrderFile,
   orderFileContext,
@@ -38,7 +37,6 @@ import {
   reportOrderFileFailure,
   shouldGenerateOrderFile,
   spawnWithAnnotations,
-  uploadArtifacts,
   verifyOrderFileApplied,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
@@ -142,14 +140,7 @@ async function main(): Promise<void> {
     const result = await startGroup("Configure", () => configure(input, args.configFile !== undefined));
     if (args.configureOnly) return;
 
-    // link-only: download cpp-only + rust-only artifacts before ninja.
-    if (result.cfg.buildkite && result.cfg.mode === "link-only") {
-      await startGroup("Download artifacts", () => downloadArtifacts(result.cfg));
-    }
-
-    // The order file is a link input, so it must land before the linking ninja
-    // pass. In rust-and-link mode it runs between the Rust build and the build-cpp
-    // poll (whose sleep loop yields cleanly) so it doesn't stall the Rust build.
+    // The order file is a link input, so it must land before the linking ninja pass.
     const orderCtx = orderFileContext();
     const runInherit = () =>
       (orderFileEligible(result.cfg, orderCtx) && !shouldGenerateOrderFile(result.cfg, orderCtx)
@@ -159,8 +150,6 @@ async function main(): Promise<void> {
         console.log(`~ symbol order: inherit failed (${(e as Error)?.message ?? e}); linking unordered`);
         return false;
       });
-    let inherited = false;
-
     const ninja = result.ninja;
     const runNinja = (targets: string[] = args.ninjaTargets) =>
       spawnWithAnnotations(ninja, ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
@@ -168,17 +157,7 @@ async function main(): Promise<void> {
         env: ninjaEnv(result.cfg, result.env),
       });
 
-    // rust-and-link: build libbun_runtime.a first so the Rust build overlaps with the
-    // sibling build-cpp job, THEN poll for build-cpp's outcome + download
-    // its archive, THEN link. link-only skips straight to the full build
-    // (its artifacts were downloaded above).
-    if (result.cfg.buildkite && result.cfg.mode === "rust-and-link") {
-      await startGroup("Build Rust", () => runNinja(["bun-rust"]));
-      inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
-      await startGroup("Wait for build-cpp & download artifacts", () => downloadArtifacts(result.cfg));
-    } else {
-      inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
-    }
+    const inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
 
     await startGroup("Build", () => runNinja());
 
@@ -207,19 +186,9 @@ async function main(): Promise<void> {
       verifyOrderFileApplied(result.cfg, orderCtx, result.output.exe, { strict: false });
     }
 
-    // cpp-only/rust-only: upload build outputs for downstream link-only.
-    // link-only/rust-and-link: package + upload zips for downstream test steps.
-    if (result.cfg.buildkite) {
-      if (result.cfg.mode === "cpp-only" || result.cfg.mode === "rust-only") {
-        await startGroup("Upload artifacts", () => uploadArtifacts(result.cfg, result.output));
-      }
-      if (
-        result.cfg.mode === "link-only" ||
-        result.cfg.mode === "rust-and-link" ||
-        result.cfg.mode === "archive-link"
-      ) {
-        await startGroup("Package and upload", () => packageAndUpload(result.cfg, result.output));
-      }
+    // Package + upload zips for downstream test steps.
+    if (result.cfg.buildkite && result.cfg.mode === "archive-link") {
+      await startGroup("Package and upload", () => packageAndUpload(result.cfg, result.output));
     }
   } else {
     // Local: configure, then spawn ninja.
@@ -643,7 +612,7 @@ Options:
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
-                                  buildDir, mode (full|cpp-only|link-only),
+                                  buildDir, mode (full|archive-link),
                                   unifiedSources, timeTrace, os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)

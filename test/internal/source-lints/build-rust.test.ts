@@ -163,7 +163,7 @@ describe("build-std feature set", () => {
     expect(buildStdArgs(linuxX64)).toEqual(release);
     expect(buildStdArgs(withAbi(linuxX64, "musl"))).toEqual(release);
     expect(buildStdArgs(withAbi(linuxX64, "android"))).toEqual(release);
-    expect(buildStdArgs(resolve({ os: "darwin", arch: "aarch64", mode: "rust-only" }))).toEqual(release);
+    expect(buildStdArgs(resolve({ os: "darwin", arch: "aarch64" }))).toEqual(release);
     expect(buildStdArgs(resolve({ os: "windows", arch: "x64", winsysroot: "/fake" }))).toEqual(release);
     expect(buildStdArgs(resolve({ os: "freebsd", arch: "x64", freebsdSysroot: "/fake" }))).toEqual(release);
     // Tier 3: builds std from source either way; release still trims it.
@@ -222,8 +222,8 @@ describe("CPU baseline", () => {
   test("darwin arm64 and x64 name the C++ side's CPU model directly", () => {
     // `-mcpu=apple-m1` and `-march=nehalem` (x86 -march values are CPU names)
     // are LLVM CPU names, which `-Ctarget-cpu` takes as-is.
-    expect(cpuFlags(resolve({ os: "darwin", arch: "aarch64", mode: "rust-only" }))).toEqual(["-Ctarget-cpu=apple-m1"]);
-    expect(cpuFlags(resolve({ os: "darwin", arch: "x64", mode: "rust-only" }))).toEqual(["-Ctarget-cpu=nehalem"]);
+    expect(cpuFlags(resolve({ os: "darwin", arch: "aarch64" }))).toEqual(["-Ctarget-cpu=apple-m1"]);
+    expect(cpuFlags(resolve({ os: "darwin", arch: "x64" }))).toEqual(["-Ctarget-cpu=nehalem"]);
     const linuxX64 = resolve({ os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" });
     expect(cpuFlags(linuxX64)).toEqual(["-Ctarget-cpu=nehalem"]);
     expect(cpuFlags(withAbi(linuxX64, "android"))).toEqual(["-Ctarget-cpu=nehalem"]);

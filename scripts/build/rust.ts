@@ -1,9 +1,10 @@
 /**
  * Rust build step — every crate a ninja edge.
  *
- * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`; the leaf crate is
- * `src/runtime` (`bun_runtime`, `crate-type = ["staticlib"]`), whose `libbun_runtime.a` carries the
- * entire crate graph plus libstd with `main` exported `#[no_mangle] extern "C"`.
+ * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`; the root of the crate graph is
+ * `src/runtime` (`bun_runtime`), a library like the rest, with `main` exported `#[no_mangle] extern "C"`.
+ * Every crate's rlib, std's included, is an input of bun's own link, beside the C/C++ objects: no crate is a
+ * final Rust artifact, and nothing copies the crate graph into one archive.
  *
  * cargo plans, ninja executes: `rust/plan.ts` asks cargo for the unit graph it would build for
  * exactly the arguments computed here (`cargoBuildInvocation`: profile, target, `-Zbuild-std`, the
@@ -22,18 +23,14 @@
  * (`src/install/windows-shim`), planned with its own profile, flags and `-Zbuild-std`, whose root is a
  * `bin`. Its executable lands in the codegen directory, where `bun_install` embeds it from.
  *
- * ## Why an `.a` and not a single `.o`
+ * ## How Rust reaches the link
  *
- * A single `.o` would need either full LTO (`-C lto=fat --emit=obj`, which
- * recompiles the whole crate graph from bitcode every build — minutes in
- * debug) or an `ld -r --whole-archive` post-merge (extra platform-specific
- * step). The staticlib goes into the link's `$in` list between the C++
- * objects and the dependency archives;
- * crt1.o's undefined `main` plus the C++ side's hundreds of `extern "C"`
- * `Bun__*`/`Zig*` references pull every reachable member, and the release
- * link's `--gc-sections` still DCEs per-function. `rustLinkFlags()` wraps
- * the archive in `--whole-archive` so members that are *only* referenced via
- * the dynamic-list / NAPI surface (no inbound static ref) are retained too.
+ * Like the C/C++ objects: every crate's rlib has a name known at configure and is an input of the link edge
+ * (`rust/units.ts` `linkedRlibs`), between the C++ objects and the dependency archives. An rlib is an archive, so
+ * a member is linked when something needs a symbol it defines: crt1.o's undefined `main` plus the C++ side's
+ * hundreds of `extern "C"` `Bun__*`/`Zig*` references pull every reachable member, and the release link's
+ * `--gc-sections` still DCEs per-function. A member is one codegen unit's object, as it was inside the single
+ * archive rustc used to make of all of them, so what gets pulled is unchanged.
  */
 
 import { existsSync } from "node:fs";
@@ -45,7 +42,7 @@ import type { Ninja } from "./ninja.ts";
 import { envify } from "./rust/cargo-env.ts";
 import { emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
 import { type PlanInput, planEnv, planPath, readPlan } from "./rust/plan.ts";
-import { buildRustGraph } from "./rust/units.ts";
+import { buildRustGraph, linkedRlibs } from "./rust/units.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Target / profile mapping
@@ -204,11 +201,6 @@ export function rustPlanFiles(cfg: Config): string[] {
   return [planPath(rustTargetDir(cfg)), ...(cfg.windows ? [planPath(shimGraphDir(cfg))] : [])];
 }
 
-/** Absolute path to `libbun_runtime.a` (or `bun_runtime.lib` on Windows): the staticlib root's output, `<buildDir>/rust-target/<triple>/` (rust/units.ts). */
-export function rustLibPath(cfg: Config): string {
-  return resolve(rustTargetDir(cfg), rustTarget(cfg), `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`);
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Ninja rules
 // ───────────────────────────────────────────────────────────────────────────
@@ -320,7 +312,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // the targets where bun links as a position-dependent ET_EXEC. With the
   // default `pic`, every Rust `&'static [T]` / `&'static str` / vtable is a
   // GOT-relative reference and the constant ends up in `.data.rel.ro` (RW
-  // segment, eagerly faulted) instead of `.rodata`; libbun_runtime.a alone
+  // segment, eagerly faulted) instead of `.rodata`; the Rust crates alone
   // contributes ~561 KiB of `.data.rel.ro` that the Zig binary placed in
   // shareable read-only pages. `static` lets rustc emit absolute references
   // and the constants land in `.rodata`. This is a *target* RUSTFLAG: with
@@ -702,8 +694,8 @@ function shimCargoInvocation(
 
 /**
  * Emit the Rust step: for bun_runtime — and on Windows targets the .bin/ shim — a plan edge and, once the plans
- * exist, one edge per unit. Returns the output staticlib path as a one-element array so the link step can spread it
- * alongside the C++ object list.
+ * exist, one edge per unit. Returns what the link takes beside the C/C++ objects: the rlib of `bun_runtime` and of
+ * every library it depends on, std's included. No crate is a final Rust artifact; the link is bun's own.
  */
 export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
   assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
@@ -727,7 +719,6 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   n.comment("─── Rust ───");
   n.blank();
 
-  const lib = rustLibPath(cfg);
   const { args, env, unitEnv, rustflags, linker, targetDir, triple } = cargoBuildInvocation(cfg);
 
   // ─── Plans ───
@@ -767,11 +758,12 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
 
   // ─── Units ───
   // On a fresh tree there is no plan yet: build.ninja depends on the plans (configure.ts), so ninja produces them,
-  // reconfigures, and restarts with the per-crate graph. Until then `bun-rust` builds just the plans.
+  // reconfigures, and restarts with the per-crate graph, all before it builds anything else. Until then `bun-rust`
+  // builds just the plans, and the rlibs have no names yet.
   if (runtime.plan === undefined || (shim !== undefined && shim.plan === undefined)) {
     n.phony("bun-rust", planFiles);
     n.blank();
-    return [lib];
+    return [];
   }
   const toolchainBin = (tool: string) => join(rustSysroot, "bin", `${tool}${cfg.host.exeSuffix}`);
   const context = {
@@ -809,7 +801,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   }
 
   const graph = buildRustGraph(runtime.plan, runtime.dir);
-  assert(graph.root.output === lib, `rust plan root writes ${graph.root.output}, expected ${lib}`);
+  assert(
+    graph.root.kind === "lib",
+    `rust plan root ${graph.root.crateName} is a ${graph.root.kind}, expected a library`,
+  );
   emitRustUnits(
     n,
     { ...context, graph },
@@ -820,9 +815,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       rootValidations: [],
     },
   );
-  n.phony("bun-rust", [lib]);
+  const rlibs = linkedRlibs(graph).map(unit => unit.output);
+  n.phony("bun-rust", rlibs);
   n.blank();
-  return [lib];
+  return rlibs;
 }
 
 /**
@@ -836,25 +832,4 @@ function hostLinker(cfg: Config, targetTriple: string, targetLinker: string): st
   if (cfg.rustHostTriple === targetTriple) return targetLinker;
   if (cfg.host.os === "windows") return cfg.msvcLinker ?? cfg.ld;
   return cfg.hostCxx;
-}
-
-/**
- * Linker flags to wrap the Rust staticlib so every `#[no_mangle]` member
- * reaches the final image (the dynamic-list / NAPI surface has no inbound
- * static ref, so plain archive extraction would drop those `.o` members).
- * Functionally equivalent to feeding a single merged `.o`.
- *
- * Returned flags reference `libs` by absolute path; the caller must also
- * list them in the link's `implicitInputs` so ninja relinks on change.
- */
-export function rustLinkFlags(cfg: Config, libs: string[]): string[] {
-  if (libs.length === 0) return [];
-  if (cfg.windows) {
-    return libs.map(l => `/WHOLEARCHIVE:${l}`);
-  }
-  if (cfg.darwin) {
-    return libs.flatMap(l => ["-Wl,-force_load", l]);
-  }
-  // ELF (Linux/FreeBSD/Android)
-  return ["-Wl,--whole-archive", ...libs, "-Wl,--no-whole-archive"];
 }

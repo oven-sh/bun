@@ -3299,31 +3299,33 @@ test("react-compiler compile time is not exponential in the function nesting dep
 // kept a set of operands for each lvalue, so N such operands made N sets of N
 // entries, and it copied them all for the walk from the returned value. An
 // array of 4000 objects took 1 GB, and an array of 8000 took 4 GB.
-test("react-compiler memory does not grow with the square of the operands of an instruction", async () => {
-  // A debug build takes 3 seconds for 1300 elements.
-  const small = isDebug || isASAN;
-  const objects = Array.from({ length: small ? 1300 : 4000 }, () => "{}").join(", ");
-  using dir = tempDir("react-compiler-operands", {
-    "empty.jsx": `export default function App() { return null; }`,
-    "array.jsx": `
+// A debug build needs most of the time of one test for a size where the
+// difference shows above its own peak. The test of the pass time below covers it.
+test.skipIf(isDebug)(
+  "react-compiler memory does not grow with the square of the operands of an instruction",
+  async () => {
+    const objects = Array.from({ length: isASAN ? 2000 : 4000 }, () => "{}").join(", ");
+    using dir = tempDir("react-compiler-operands", {
+      "empty.jsx": `export default function App() { return null; }`,
+      "array.jsx": `
       export default function App(p) {
         const rows = [${objects}];
         return <List rows={rows} x={p.x} />;
       }
     `,
-    // A method with a known signature. The arguments of a call to an unknown
-    // function can all capture each other, which costs far more in other passes.
-    "push.jsx": `
+      // A method with a known signature. The arguments of a call to an unknown
+      // function can all capture each other, which costs far more in other passes.
+      "push.jsx": `
       export default function App(p) {
         const rows = [];
         rows.push(${objects});
         return <List rows={rows} x={p.x} />;
       }
     `,
-    // On Linux the peak RSS of a child is never below the peak of the process
-    // that spawned it, and this test runner has reached 400 MB on a debug build.
-    // So a new process spawns the builds.
-    "peaks.js": `
+      // On Linux the peak RSS of a child is never below the peak of the process
+      // that spawned it, and this test runner has reached 250 MB on an ASAN build.
+      // So a new process spawns the builds.
+      "peaks.js": `
       const build = async entry => {
         const proc = Bun.spawn({
           cmd: [process.execPath, "build", "--react-compiler", "--target=browser", "--external=*", entry],
@@ -3336,30 +3338,142 @@ test("react-compiler memory does not grow with the square of the operands of an 
       };
       console.log(JSON.stringify(await Promise.all(process.argv.slice(2).map(build))));
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "peaks.js", "empty.jsx", "array.jsx", "push.jsx"],
-    env: {
-      ...bunEnv,
-      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-        .filter(Boolean)
-        .join(":"),
-    },
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  const [empty, array, push] = JSON.parse(stdout);
-  const built = (memoized: boolean) => ({ stderr: "", exitCode: 0, memoized, peakMB: expect.any(Number) });
-  expect({ empty, array, push }).toEqual({ empty: built(false), array: built(true), push: built(true) });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "peaks.js", "empty.jsx", "array.jsx", "push.jsx"],
+      env: {
+        ...bunEnv,
+        // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const [empty, array, push] = JSON.parse(stdout);
+    const built = (memoized: boolean) => ({ stderr: "", exitCode: 0, memoized, peakMB: expect.any(Number) });
+    expect({ empty, array, push }).toEqual({ empty: built(false), array: built(true), push: built(true) });
 
-  // Above the empty build, for one component: 90 MB without the fix and 7 MB
-  // with it for the small inputs, 1020 MB and 60 MB for the large ones.
-  const bound = small ? 45 : 300;
-  expect(array.peakMB - empty.peakMB).toBeLessThan(bound);
-  expect(push.peakMB - empty.peakMB).toBeLessThan(bound);
+    // Above the empty build, for one component: 1020 MB without the fix and 60 MB
+    // with it, 280 MB and 10 MB for the smaller input of an ASAN build.
+    const bound = isASAN ? 100 : 300;
+    expect(array.peakMB - empty.peakMB).toBeLessThan(bound);
+    expect(push.peakMB - empty.peakMB).toBeLessThan(bound);
+  },
+);
+
+// The same pass, in time. The walk from the returned value visited every operand
+// of an instruction from each of its lvalues, N times N visits for N mutable
+// operands. Other passes are quadratic on this input, so the test reads the time
+// of this pass alone, which only a debug or ASAN build prints.
+test.skipIf(!isDebug && !isASAN)(
+  "react-compiler PruneNonEscapingScopes time does not grow with the square of the operands of an instruction",
+  async () => {
+    const size = isDebug ? 1000 : 2000;
+    const source = (perComponent: number) =>
+      Array.from({ length: size / perComponent }, (_, c) => {
+        const rows = Buffer.alloc(perComponent * 4, "{}, ").toString();
+        return `export function Table${c}(p) {\n  const rows = [${rows}];\n  return <List rows={rows} x={p.x} />;\n}\n`;
+      }).join("");
+    using dir = tempDir("react-compiler-operands-time", {
+      "large.jsx": source(size),
+      "control.jsx": source(50),
+    });
+
+    const passTime = async (entry: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+        env: { ...bunEnv, BUN_REACT_COMPILER_TIMING: "1" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // "     12.34ms   5.6%      20×  PruneNonEscapingScopes"
+      const [, ms] = stderr.match(/^ *([\d.]+)ms +[\d.]+% +\d+× +PruneNonEscapingScopes$/m) ?? [];
+      expect({ ms: ms ?? stderr, compiled: stdout.includes("react/compiler-runtime"), exitCode }).toEqual({
+        ms: expect.stringMatching(/^[\d.]+$/),
+        compiled: true,
+        exitCode: 0,
+      });
+      return Number(ms);
+    };
+
+    // Large over control: 0.4 to 1.4 with the fix. 9 to 12 with one list of operands
+    // but no cursor, and 14 or more with a set per lvalue. Other load on the machine
+    // adds to a wall time, so the test takes the best of three rounds.
+    let large = Infinity;
+    let control = Infinity;
+    for (let round = 0; round < 3 && !(large / control < 3); round++) {
+      const times = await Promise.all([passTime("large.jsx"), passTime("control.jsx")]);
+      large = Math.min(large, times[0]);
+      control = Math.min(control, times[1]);
+    }
+    expect(large / control).toBeLessThan(3);
+  },
+);
+
+// Wrong ways to share the operands of an instruction change what these components
+// memoize, and the upstream fixtures do not notice. In `Row` the walk reaches
+// `style`, an lvalue of the array literal, in the middle of the operands of that
+// literal, and the visit of `style` continues them. In `ScopeForced` a scope forces
+// its dependencies while the operands of `foo(v0, v0)` are in progress. In
+// `PushArgs` the walk enters the operands of `arr.push` at `a`, and reads
+// `arr.length` while `arr` is in progress. In `SharedOperand`, `v1` and `v2` share
+// the operand of the destructuring, `v2` visits it first, and `v1` needs its result.
+test("react-compiler memoizes the same values when lvalues share the operands of an instruction", async () => {
+  using dir = tempDir("react-compiler-operands-order", {
+    "entry.jsx": `
+      export function Row({ items }) {
+        const style = {};
+        const seen = new Set();
+        const label = style.prefix + ":";
+        for (const it of items) {
+          seen.add(it.id);
+        }
+        return <List config={[style, { label }]} />;
+      }
+      export function ScopeForced(props) {
+        const v0 = [() => 1, [props.b]];
+        const v1 = foo(v0, v0);
+        return <div a={v1} />;
+      }
+      export function PushArgs(props) {
+        const arr = [props.z];
+        const a = { p: props.p };
+        const n = arr.length;
+        const b = { n };
+        arr.push(a, b);
+        return <List n={n} x={props.x} />;
+      }
+      export function SharedOperand(props) {
+        let v0 = make(props.c);
+        const [v1, ...v2] = v0;
+        if (v1) { v0 = v2.m(v0); }
+        const { v3, ...v4 } = v1;
+        return <div a={v4} b={v3} />;
+      }
+    `,
+  });
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    reactCompiler: true,
+    throw: false,
+  });
+  expect(result.logs.map(String)).toEqual([]);
+  const output = await result.outputs[0].text();
+  const slots = [...output.matchAll(/function (\w+)\([^)]*\) \{\s+let \$ = _c\((\d+)\)/g)];
+  expect(Object.fromEntries(slots.map(match => [match[1], Number(match[2])]))).toEqual({
+    Row: 2,
+    ScopeForced: 4,
+    PushArgs: 7,
+    SharedOperand: 8,
+  });
 });

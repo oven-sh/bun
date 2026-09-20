@@ -38,7 +38,6 @@ import {
   isPullRequest,
   parseGitUrl,
   startGroup,
-  toYaml,
   uploadArtifact,
 } from "../scripts/buildkite.ts";
 import { type ImageState, getImageState } from "../scripts/ci-image.ts";
@@ -621,7 +620,7 @@ function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMo
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
   //
-  // Literal `node` — ci.ts generates pipeline YAML that runs on a
+  // Literal `node` — ci.ts generates a pipeline that runs on a
   // different agent later, so process.execPath (the generator's path)
   // is wrong. PATH on the agent has node: the image's bake installs it.
   return `node scripts/build.ts ${getBuildArgs(target, options, mode)}`;
@@ -1174,7 +1173,7 @@ interface Pipeline {
 }
 
 /**
- * The agent tags a step targets. toYaml() drops the `undefined` ones.
+ * The agent tags a step targets. JSON.stringify() drops the `undefined` ones.
  */
 type Agent = Ec2Agent | QueueAgent;
 
@@ -1976,8 +1975,9 @@ async function main() {
     return;
   }
 
-  const content = toYaml(pipeline);
-  const contentPath = join(process.cwd(), ".buildkite", "ci.yml");
+  // JSON is YAML, which is what `buildkite-agent pipeline upload` parses every file as.
+  const content = JSON.stringify(pipeline, null, 2);
+  const contentPath = join(process.cwd(), ".buildkite", "ci.json");
   writeFileSync(contentPath, content);
 
   console.log("Generated pipeline:");

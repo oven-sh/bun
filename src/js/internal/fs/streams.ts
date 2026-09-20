@@ -384,9 +384,9 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    // Internal $fastPath callers (writableFromFileSink) discard .path; do not
-    // resolve it - path.resolve("") needs process.cwd(), which throws when
-    // the cwd has been deleted (Node still spawns children in that state).
+    // Internal $fastPath callers discard .path; do not resolve it -
+    // path.resolve("") needs process.cwd(), which throws when the cwd has
+    // been deleted (Node still spawns children in that state).
     this.path = fastPath ? path : getValidatedPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;
@@ -796,20 +796,8 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
   }
 }
 
-function writableFromFileSink(fileSink: any) {
-  $assert(typeof fileSink === "object", "fileSink is not an object");
-  $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
-  $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
-  const w = new WriteStream("", { $fastPath: true });
-  $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
-  w[kWriteStreamFastPath] = fileSink;
-  w.path = undefined;
-  return w;
-}
-
 export default {
   ReadStream,
   WriteStream,
   kWriteStreamFastPath,
-  writableFromFileSink,
 };

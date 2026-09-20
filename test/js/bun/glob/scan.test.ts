@@ -54,72 +54,68 @@ type FgOpts = NonNullable<Parameters<typeof fg.glob>[1]>;
 const fgOpts = {
   followSymbolicLinks: followSymlinks,
   onlyFiles: false,
-  // absolute: true,
+  // fast-glob reads every directory below a `**`, hidden ones included, and only
+  // then drops the entries that `dot: false` hides. test/node_modules/.bun holds
+  // every installed package, which makes that walk several times slower than the
+  // rest of this file. A wildcard cannot match a hidden directory without
+  // `dot: true`, so pruning those directories leaves the result unchanged.
+  ignore: ["**/.*/**"],
 } satisfies FgOpts;
 
 describe("glob.match", async () => {
   const timeout = 30 * 1000;
-  function testWithOpts(namePrefix: string, bunGlobOpts: GlobScanOptions, fgOpts: FgOpts) {
-    test(
-      `${namePrefix} recursively search node_modules`,
-      async () => {
-        const pattern = "**/node_modules/**/*.js";
+
+  // fast-glob is the reference. It walks test/ once per pattern, and every test
+  // that needs the pattern shares that walk.
+  const references = new Map<string, Promise<string[]>>();
+  function reference(pattern: string): Promise<string[]> {
+    let entries = references.get(pattern);
+    if (!entries) references.set(pattern, (entries = fg.glob(pattern, fgOpts)));
+    return entries;
+  }
+
+  // Compares through sets, in any order: sorting this many paths takes seconds in a debug build.
+  function difference(scanned: string[], wanted: string[]) {
+    const found = isWindows ? scanned.map(entry => entry.replaceAll("\\", "/")) : scanned;
+    const foundSet = new Set(found);
+    const wantedSet = new Set(wanted);
+    // A wholesale mismatch would print every path, so each list stops at 20.
+    const atMost20 = (entries: string[]) =>
+      entries.length > 20 ? [...entries.slice(0, 20), `and ${entries.length - 20} more`] : entries;
+    return {
+      missing: atMost20(wanted.filter(entry => !foundSet.has(entry))),
+      unexpected: atMost20(found.filter(entry => !wantedSet.has(entry))),
+      duplicates: found.length - foundSet.size,
+    };
+  }
+
+  function testWithOpts(namePrefix: string, bunGlobOpts: GlobScanOptions) {
+    // What the scan has to return, in fast-glob's format: forward slashes, and
+    // with `absolute: true` the same entries under the cwd.
+    const expected = async (pattern: string) => {
+      const entries = await reference(pattern);
+      if (!bunGlobOpts.absolute) return entries;
+      const cwd = process.cwd().replaceAll("\\", "/");
+      return entries.map(entry => `${cwd}/${entry}`);
+    };
+
+    test.each([
+      // The last column is an entry that has to be found: fast-glob's own entry
+      // point (behind a symlink when the install is isolated), and this file.
+      ["recursively search node_modules", "**/node_modules/**/*.js", "node_modules/fast-glob/out/index.js"],
+      ["recursive search js files", "**/*.js", "node_modules/fast-glob/out/index.js"],
+      ["recursive search ts files", "**/*.ts", "js/bun/glob/scan.test.ts"],
+    ])(
+      `${namePrefix} %s`,
+      async (_, pattern, known) => {
         const glob = new Glob(pattern);
-        const [filepaths, fgFilepths] = await Promise.all([
-          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
-          fg.glob(pattern, fgOpts),
+        const [filepaths, fgFilepaths] = await Promise.all([
+          Array.fromAsync(glob.scan(bunGlobOpts)),
+          expected(pattern),
         ]);
 
-        // console.error(filepaths);
-        expect(filepaths.length).toEqual(fgFilepths.length);
-
-        const bunfilepaths = new Set(filepaths);
-        for (const filepath of fgFilepths) {
-          if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
-          expect(bunfilepaths.has(filepath)).toBeTrue();
-        }
-      },
-      timeout,
-    );
-
-    test(
-      `${namePrefix} recursive search js files`,
-      async () => {
-        const pattern = "**/*.js";
-        const glob = new Glob(pattern);
-        const [filepaths, fgFilepths] = await Promise.all([
-          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
-          fg.glob(pattern, fgOpts),
-        ]);
-
-        expect(filepaths.length).toEqual(fgFilepths.length);
-
-        const bunfilepaths = new Set(filepaths);
-        for (const filepath of fgFilepths) {
-          if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
-          expect(bunfilepaths.has(filepath)).toBeTrue();
-        }
-      },
-      timeout,
-    );
-
-    test(
-      `${namePrefix} recursive search ts files`,
-      async () => {
-        const pattern = "**/*.ts";
-        const glob = new Glob(pattern);
-        const [filepaths, fgFilepths] = await Promise.all([
-          Array.fromAsync(glob.scan(bunGlobOpts)).then(prepareEntries),
-          fg.glob(pattern, fgOpts),
-        ]);
-
-        expect(filepaths.length).toEqual(fgFilepths.length);
-
-        const bunfilepaths = new Set(filepaths);
-        for (const filepath of fgFilepths) {
-          if (!bunfilepaths.has(filepath)) console.error("Missing:", filepath);
-          expect(bunfilepaths.has(filepath)).toBeTrue();
-        }
+        expect(await reference(pattern)).toContain(known);
+        expect(difference(filepaths, fgFilepaths)).toEqual({ missing: [], unexpected: [], duplicates: 0 });
       },
       timeout,
     );
@@ -137,13 +133,18 @@ describe("glob.match", async () => {
         Bun.gc(true);
         const values = await promise;
         Bun.gc(true);
+        expect(difference(values, await expected("**/node_modules/**/*.js"))).toEqual({
+          missing: [],
+          unexpected: [],
+          duplicates: 0,
+        });
       },
       timeout,
     );
   }
 
-  testWithOpts("non-absolute", bunGlobOpts, fgOpts);
-  testWithOpts("absolute", { ...bunGlobOpts, absolute: true }, { ...fgOpts, absolute: true });
+  testWithOpts("non-absolute", bunGlobOpts);
+  testWithOpts("absolute", { ...bunGlobOpts, absolute: true });
 
   test("invalid surrogate pairs", async () => {
     const pattern = `**/*.{md,\uD83D\uD800}`;
@@ -168,26 +169,17 @@ describe("glob.match", async () => {
   });
 
   test("bad options", async () => {
-    const glob = new Glob("lmaowtf");
-    expect(returnError(() => glob.scan())).toBeUndefined();
+    // No options, an empty options object and an empty cwd all scan process.cwd(), which is test/.
+    const glob = new Glob("package.json");
+    expect(await Array.fromAsync(glob.scan())).toEqual(["package.json"]);
     // @ts-expect-error
-    expect(returnError(() => glob.scan(123456))).toBeDefined();
-    expect(returnError(() => glob.scan({}))).toBeUndefined();
-    expect(returnError(() => glob.scan({ cwd: "" }))).toBeUndefined();
+    expect(() => glob.scan(123456)).toThrow("scan: expected first argument");
+    expect(await Array.fromAsync(glob.scan({}))).toEqual(["package.json"]);
+    expect(await Array.fromAsync(glob.scan({ cwd: "" }))).toEqual(["package.json"]);
     // @ts-expect-error
-    expect(returnError(() => glob.scan({ cwd: true }))).toBeDefined();
+    expect(() => glob.scan({ cwd: true })).toThrow("scan: invalid `cwd`, not a string");
     // @ts-expect-error
-    expect(returnError(() => glob.scan({ cwd: 123123 }))).toBeDefined();
-
-    function returnError(cb: () => any): Error | undefined {
-      try {
-        cb();
-      } catch (err) {
-        // @ts-expect-error
-        return err;
-      }
-      return undefined;
-    }
+    expect(() => glob.scan({ cwd: 123123 })).toThrow("scan: invalid `cwd`, not a string");
   });
 
   test("oversized cwd throws instead of crashing", async () => {
@@ -460,11 +452,10 @@ describe("fast-glob e2e tests", async () => {
     });
 
     test(`only files ${pattern}`, () => {
-      let entries = prepareEntries(fg.globSync(pattern, { cwd, absolute: false, onlyFiles: true }));
+      let entries = buildsnapshot
+        ? prepareEntries(fg.globSync(pattern, { cwd, absolute: false, onlyFiles: true }))
+        : prepareEntries(Array.from(new Glob(pattern).scanSync({ cwd, followSymlinks: true, onlyFiles: true })));
 
-      // let entries = prepareEntries(
-      //   Array.from(new Glob(pattern).scanSync({ cwd, followSymlinks: true, onlyFiles: true })),
-      // );
       expect(entries).toMatchSnapshot(pattern);
     });
   });
@@ -530,7 +521,10 @@ test.skipIf(process.platform == "win32")("error broken symlinks", async () => {
   } catch (e) {
     err = e as any;
   }
-  expect(err).toBeDefined();
+  expect(err).toMatchObject({
+    code: "ENOENT",
+    path: expect.stringContaining("broken_link_to_non_existent_"),
+  });
 });
 
 test("error non-existent cwd", async () => {
@@ -549,13 +543,16 @@ test("error non-existent cwd", async () => {
   } catch (e) {
     err = e as any;
   }
-  expect(err).toBeDefined();
+  expect(err).toMatchObject({
+    code: "ENOENT",
+    path: expect.stringContaining("alkfjalskdjfoogaboogaalskjflskdjfl"),
+  });
 });
 
 test("glob.scan(string)", async () => {
   const glob = new Glob("*.md");
   const entries = await Array.fromAsync(glob.scan(path.join(import.meta.dir, "fixtures")));
-  expect(entries.length).toBeGreaterThan(0);
+  expect(entries).toEqual(["file.md"]);
 });
 
 test("glob.scan('.')", async () => {
@@ -691,7 +688,7 @@ describe("absolute path pattern", async () => {
     const tmpdir = tmpdirSync();
     await Bun.$`mkdir -p hello/friends; touch hello/friends/lol.json; echo ${tmpdir}`.cwd(tmpdir);
     const glob = new Glob(`${tmpdir}/hello/friends/nice.json`);
-    console.log(Array.from(glob.scanSync({ cwd: tmpdir })));
+    expect(Array.from(glob.scanSync({ cwd: tmpdir }))).toEqual([]);
   });
 });
 
@@ -853,18 +850,19 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
   const files: Record<string, string> = {};
   const parts: string[] = [];
   for (let i = 0; i < depth; i++) parts.push("a");
-  files[parts.join("/") + "/hit.txt"] = "";
+  const hit = parts.join("/") + "/hit.txt";
+  files[hit] = "";
   files[parts.slice(0, depth - 1).join("/") + "/miss.txt"] = "";
 
   using dir = tempDir("glob-deep", files);
 
   // Exact-depth pattern: depth `*` components + literal tail
   const star = Array(depth).fill("*").join("/") + "/hit.txt";
-  expect([...new Bun.Glob(star).scanSync({ cwd: dir })].length).toBe(1);
+  expect([...new Bun.Glob(star).scanSync({ cwd: dir })]).toEqual([hit]);
 
   // `**` at the start with a deep literal prefix after it
   const deepDouble = "**/" + Array(depth).fill("a").join("/") + "/*.txt";
-  expect([...new Bun.Glob(deepDouble).scanSync({ cwd: dir })].length).toBe(1);
+  expect([...new Bun.Glob(deepDouble).scanSync({ cwd: dir })]).toEqual([hit]);
 
   // `**` sandwiched deep in the pattern (triggers merge at high index)
   const half = Math.floor(depth / 2);
@@ -875,7 +873,7 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
       .fill("a")
       .join("/") +
     "/*.txt";
-  expect([...new Bun.Glob(sandwich).scanSync({ cwd: dir })].length).toBe(1);
+  expect([...new Bun.Glob(sandwich).scanSync({ cwd: dir })]).toEqual([hit]);
 });
 
 // scan() keeps the cwd string it is given verbatim, but child paths pushed for
@@ -924,6 +922,7 @@ test("scan handles a cwd with redundant trailing separators when following symli
   const norm = (s: string) => s.replaceAll("\\", "/");
   const root = norm(path.join(String(dir), "haystack"));
 
+  expect(stderr).toBe("");
   expect(stdout.trim()).not.toBe("");
   const result = JSON.parse(stdout.trim());
   const shallow = result.shallow.map(norm).sort();

@@ -13,6 +13,7 @@ import {
   type BakedImage,
   type GeneratedImage,
   bakeDirectory,
+  bakeInputs,
   generateImage,
   imageKey,
   imageRecordName,
@@ -467,7 +468,7 @@ function getImageDependsOn(platform: Platform, baking: ReadonlySet<string>): str
     return [];
   }
   const key = getImageKey(platform);
-  return baking.has(key) ? [`${key}-build-image`] : [];
+  return baking.has(key) ? [`${key}-image`] : [];
 }
 
 /** Tells kinds of machine apart: the baseline and profile variants of a platform run on the same one. */
@@ -791,7 +792,7 @@ function hasWebKitChanges(options: PipelineOptions): boolean {
 /**
  * Host platform the verify-baseline step runs on — per-TARGET-arch, not the
  * shared arm64 build host. Reuses test-fleet images (debian-13 / win-2019) so
- * no extra bake is needed; getPipeline() keys its build-image depends_on on this.
+ * no extra bake is needed; getPipeline() keys its image depends_on on this.
  */
 function getVerifyBaselineHost(platform: Platform): Platform {
   const { os, arch, abi } = platform;
@@ -1043,7 +1044,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
  * branch's code on a machine that becomes everyone's image.
  *
  * @returns steps for the `images` group; the last one's key is
- *   `${getImageKey(platform)}-build-image`, which is what dependents wait on.
+ *   `${getImageKey(platform)}-image`, which is what dependents wait on: it has passed once the image exists.
  */
 function getImageSteps(
   platform: Platform,
@@ -1059,7 +1060,7 @@ function getImageSteps(
 
   // Another build found the name missing a moment ago and is baking it.
   const waitStep: CommandStep = {
-    key: `${key}-build-image`,
+    key: `${key}-image`,
     label: `${getImageLabel(platform)} - wait-for-image`,
     agents: { queue: "build-image" },
     retry: getRetry(),
@@ -1749,9 +1750,20 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   // steps each choose their own machine), and an image only exists once some
   // build has baked it. Whether one exists can only be asked in CI, where the
   // cloud credentials are.
+  //
+  // A fork's build does not ask: it cannot bake, so it would learn nothing it
+  // can act on, and asking takes the cloud's credentials, which a job that
+  // runs a fork's code has no reason to read. Unless the fork changes what a
+  // bake runs, its images are ones this repository's builds already baked.
+  const changedBakeInputs = options.changedFiles?.filter(file => bakeInputs.includes(file)) ?? [];
+  if (isFork() && changedBakeInputs.length) {
+    throw new Error(
+      `This pull request changes what CI's images are baked from (${changedBakeInputs.join(", ")}), and a fork's build cannot bake: a bake runs the branch's code on a machine that becomes everyone's image. Push the branch to oven-sh/bun to bake them.`,
+    );
+  }
   const baking = new Set<string>();
   const imageSteps: CommandStep[] = [];
-  for (const platform of isBuildkite ? images.map(getImagePlatform) : []) {
+  for (const platform of isBuildkite && !isFork() ? images.map(getImagePlatform) : []) {
     const key = getImageKey(platform);
     const { image, generated } = getGeneratedImage(platform);
     const state = await getImageState(image.os, generated.name);
@@ -1760,11 +1772,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       continue;
     }
     if (state !== "pending") {
-      if (isFork()) {
-        throw new Error(
-          `The CI image ${generated.name} does not exist, and a fork's build cannot bake it: a bake runs the branch's code on a machine that becomes everyone's image. Push the branch to oven-sh/bun to bake it.`,
-        );
-      }
       await run(["buildkite-agent", "artifact", "upload", `${bakeDirectory(key)}/*`]);
     }
     baking.add(key);
@@ -1837,7 +1844,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     steps.push(
       ...relevantBuildPlatforms.flatMap(target => {
         // build-bun always runs on buildHostPlatform regardless of
-        // target, so the only build-image dependency is the host's.
+        // target, so the only image dependency is the host's.
         const dependsOn = getImageDependsOn(buildHostPlatform, baking);
 
         const steps: Step[] = [

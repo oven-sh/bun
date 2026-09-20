@@ -3438,40 +3438,6 @@ function escapeXml(str: string): string {
     .replace(/'/g, "&apos;");
 }
 
-/**
- * Windows 11 ships Smart App Control in evaluation mode. In that mode the kernel
- * hashes every unsigned executable on its first launch and asks the cloud for
- * its reputation, which costs 2 to 3.5 seconds for a 77 MB `bun build --compile`
- * output. bundler_compile.test.ts launches about 85 of those, which puts the file
- * at 220 to 290 seconds against the 300 second per-file cap. Turning the policy
- * off takes effect at once and needs no reboot. The image's bake does the same
- * (the `windowsSystem` tool of scripts/build/ci-images/spec.ts); this covers a machine
- * whose image was baked without it.
- *
- * Only on Buildkite: the policy cannot be turned on again without a reinstall,
- * so a developer's machine running with CI=true must not get this.
- */
-async function disableSmartAppControl(): Promise<void> {
-  if (!isBuildkite) return;
-  const script = [
-    "$p = 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy'",
-    "if (-not (Test-Path $p)) { exit 0 }",
-    "$state = (Get-ItemProperty $p).VerifiedAndReputablePolicyState",
-    "if ($null -eq $state -or $state -eq 0) { exit 0 }",
-    "Set-ItemProperty $p -Name VerifiedAndReputablePolicyState -Value 0 -Type DWord",
-    "if (Get-Command CiTool -ErrorAction SilentlyContinue) { CiTool --refresh -json | Out-Null }",
-    'Write-Output "Smart App Control: state $state -> 0"',
-  ].join("; ");
-  const { ok, error } = await spawnWithTimeout({
-    command: "pwsh",
-    args: ["-NoProfile", "-Command", script],
-    timeout: 60_000,
-  });
-  if (!ok) {
-    console.warn(`Failed to disable Smart App Control: ${error}`);
-  }
-}
-
 async function main(): Promise<void> {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => onExit(signal));
@@ -3489,7 +3455,6 @@ async function main(): Promise<void> {
       "-Command",
       "Set-DnsClientServerAddress -InterfaceAlias 'Ethernet 4' -ServerAddresses ('8.8.8.8','8.8.4.4')",
     ]);
-    await disableSmartAppControl();
   }
 
   let doRunTests = true;

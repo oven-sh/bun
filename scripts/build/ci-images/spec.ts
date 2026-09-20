@@ -38,6 +38,9 @@ const files = {
   "xmac.mjs": "scripts/build/xmac.mjs",
 } as const;
 
+/** Every file of the repository that can change what a bake runs, and so an image's name. */
+export const bakeInputs: readonly string[] = ["scripts/build/ci-images/spec.ts", ...Object.values(files)];
+
 const alpineRelease = "3.23";
 
 /**

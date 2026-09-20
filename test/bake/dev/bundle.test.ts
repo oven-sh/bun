@@ -919,3 +919,62 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+
+// The dev server skips a router type whose root directory does not exist. The
+// server entry point of a later router type must still map to the root route
+// of its own type, not to its position in `fileSystemRouterTypes`. Only one
+// type has a root here, so the position is out of bounds in the route list.
+const routerType = (root: string) => ({
+  root,
+  style: "nextjs-pages" as const,
+  serverEntryPoint: "./framework.server.ts",
+  clientEntryPoint: "./framework.client.ts",
+});
+const serverEntryPointSource = (version: string) => `
+  export function render(req, meta) {
+    const script = '<script type="module" src="' + meta.modules[0] + '"></script>';
+    const body = '<h1>${version} ' + meta.pageModule.default() + '</h1>';
+    return new Response('<!doctype html><html><head>' + script + '</head><body>' + body + '</body></html>', {
+      headers: { "content-type": "text/html" },
+    });
+  }
+`;
+const frameworkWithMissingFirstRoot = {
+  ...minimalFramework,
+  fileSystemRouterTypes: [routerType("missing"), routerType("routes")],
+};
+const indexPage = `export default () => "index";`;
+const filesWithIndexPage = (page: string) => ({
+  "framework.client.ts": `export {};`,
+  "framework.server.ts": serverEntryPointSource("v1"),
+  "routes/index.ts": page,
+});
+devTest("saving the server entry point when an earlier router type has a missing root", {
+  framework: frameworkWithMissingFirstRoot,
+  files: filesWithIndexPage(indexPage),
+  async test(dev) {
+    await using c = await dev.client("/");
+    expect(await c.elemText("h1")).toBe("v1 index");
+
+    await c.expectReload(async () => {
+      await dev.write("framework.server.ts", serverEntryPointSource("v2"));
+    });
+    expect(await c.elemText("h1")).toBe("v2 index");
+  },
+});
+devTest("a build error when an earlier router type has a missing root", {
+  framework: frameworkWithMissingFirstRoot,
+  files: filesWithIndexPage("export default () => {"),
+  async test(dev) {
+    // No browser is needed. A failing bundle reads the route of every route file in it,
+    // and the first bundle of a route includes the server entry point.
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("routes/index.ts", indexPage);
+    await dev.fetch("/").expect.toInclude("<h1>v1 index</h1>");
+
+    await dev.write("framework.server.ts", "export function render(req, meta) {");
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("framework.server.ts", serverEntryPointSource("v2"));
+    await dev.fetch("/").expect.toInclude("<h1>v2 index</h1>");
+  },
+});

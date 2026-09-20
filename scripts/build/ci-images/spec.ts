@@ -19,7 +19,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { type Arch, agentUser, linuxAgentPaths, windowsAgentHome } from "../../agent.ts";
 import { BuildError } from "../error.ts";
@@ -2645,37 +2645,21 @@ function renderBootstrap(image: Image): string {
   }
 }
 
-/** sha256 over every file of the directory, by sorted name. */
-export function hashDirectory(directory: string): string {
+/** sha256 over every file, by sorted name. */
+export function hashFiles(contents: ReadonlyMap<string, string | Uint8Array>): string {
   const hash = createHash("sha256");
-  for (const name of readdirSync(directory).sort()) {
-    hash
-      .update(name)
-      .update("\0")
-      .update(readFileSync(join(directory, name)))
-      .update("\0");
+  for (const name of [...contents.keys()].sort()) {
+    hash.update(name).update("\0").update(contents.get(name)!).update("\0");
   }
   return hash.digest("hex");
 }
 
-export type GeneratedImage = {
-  key: string;
-  /** `<key>-<16 hex>`: the name the image is baked and booted under. */
-  name: string;
-  directory: string;
-};
-
 /**
- * Writes the image's bake directory under `root`: image.json (what the image is), the script,
- * the files the script puts on the machine, and for Windows the Packer
- * template. The image's name is the hash of that directory; nothing else
- * decides what a bake does, so nothing else is in the hash.
+ * An image's bake directory, by file name: image.json (what the image is), the
+ * script, the files the script puts on the machine, and for Windows the Packer
+ * template. Nothing else decides what a bake does.
  */
-export function generateImage(image: Image, root: string): GeneratedImage {
-  const key = imageKey(image);
-  const directory = join(root, bakeDirectory(key));
-  rmSync(directory, { recursive: true, force: true });
-  mkdirSync(directory, { recursive: true });
+function bakeFiles(image: Image): Map<string, string | Uint8Array> {
   const described = tools(image).map(({ name, identity }) => ({
     name,
     identity: identity.kind,
@@ -2685,21 +2669,42 @@ export function generateImage(image: Image, root: string): GeneratedImage {
         ? { reason: identity.reason }
         : {}),
   }));
-  const facts = { ...image, tools: described };
-  writeFileSync(join(directory, "image.json"), JSON.stringify(facts, null, 2) + "\n");
-  writeFileSync(join(directory, image.os === "windows" ? "bootstrap.ps1" : "bootstrap.sh"), renderBootstrap(image));
+  const contents = new Map<string, string | Uint8Array>([
+    ["image.json", JSON.stringify({ ...image, tools: described }, null, 2) + "\n"],
+    [image.os === "windows" ? "bootstrap.ps1" : "bootstrap.sh", renderBootstrap(image)],
+  ]);
   if (image.os !== "darwin") {
-    copyFileSync(join(repoRoot, files["agent.mts"]), join(directory, "agent.mts"));
-    writeFileSync(join(directory, "record-image.mjs"), recordImageProgram);
+    contents.set("agent.mts", readFileSync(join(repoRoot, files["agent.mts"])));
+    contents.set("record-image.mjs", recordImageProgram);
   }
   if (image.os === "linux" && image.role === "build") {
-    copyFileSync(join(repoRoot, files["xmac.mjs"]), join(directory, "xmac.mjs"));
+    contents.set("xmac.mjs", readFileSync(join(repoRoot, files["xmac.mjs"])));
   }
   if (image.os === "windows") {
-    writeFileSync(join(directory, "fetch-ssh-keys.ps1"), fetchSshKeysProgram + "\n");
-    writeFileSync(join(directory, "image.pkr.hcl"), renderPackerTemplate(image));
+    contents.set("fetch-ssh-keys.ps1", fetchSshKeysProgram + "\n");
+    contents.set("image.pkr.hcl", renderPackerTemplate(image));
   }
-  return { key, name: `${key}-${hashDirectory(directory).slice(0, 16)}`, directory };
+  return contents;
+}
+
+export type GeneratedImage = {
+  key: string;
+  /** `<key>-<16 hex>`: the name the image is baked and booted under. */
+  name: string;
+  directory: string;
+};
+
+/** Writes the image's bake directory under `root`. The image's name is the hash of what is written, so nothing else is in it. */
+export function generateImage(image: Image, root: string): GeneratedImage {
+  const key = imageKey(image);
+  const directory = join(root, bakeDirectory(key));
+  const contents = bakeFiles(image);
+  rmSync(directory, { recursive: true, force: true });
+  mkdirSync(directory, { recursive: true });
+  for (const [name, content] of contents) {
+    writeFileSync(join(directory, name), content);
+  }
+  return { key, name: `${key}-${hashFiles(contents).slice(0, 16)}`, directory };
 }
 
 if (import.meta.main) {

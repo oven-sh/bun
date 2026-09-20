@@ -3,11 +3,11 @@
 // function of the generated files. Whether a bake works is only shown by a bake.
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   generateImage,
-  hashDirectory,
+  hashFiles,
   imageKey,
   images,
   macosMachines,
@@ -40,10 +40,14 @@ test("an image's name is the hash of its bake directory", () => {
   const image = images[0]!;
   const first = generateImage(image, String(dir));
   expect(generateImage(image, String(dir)).name).toBe(first.name);
-  expect(first.name).toBe(`${first.key}-${hashDirectory(first.directory).slice(0, 16)}`);
+  // The name is the hash of exactly what is in the directory CI uploads and a bake downloads.
+  const written = new Map(
+    readdirSync(first.directory).map(name => [name, readFileSync(join(first.directory, name))] as const),
+  );
+  expect(first.name).toBe(`${first.key}-${hashFiles(written).slice(0, 16)}`);
 
   // Any byte of any file is part of the name.
-  const file = join(first.directory, readdirSync(first.directory).sort()[0]!);
-  writeFileSync(file, readFileSync(file, "utf8") + "\n");
-  expect(hashDirectory(first.directory).slice(0, 16)).not.toBe(first.name.slice(-16));
+  const [name, content] = [...written][0]!;
+  written.set(name, Buffer.concat([content, Buffer.from("\n")]));
+  expect(hashFiles(written).slice(0, 16)).not.toBe(first.name.slice(-16));
 });

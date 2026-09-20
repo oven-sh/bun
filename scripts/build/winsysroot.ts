@@ -3,8 +3,8 @@
  *
  * Cross-compiling for Windows needs the MSVC CRT/STL + Windows SDK + ATL
  * headers and import libraries (see `Config.winsysroot`). Provisioned
- * sysroots come from the agent image (.buildkite/Dockerfile /
- * scripts/bootstrap.sh bake an xwin splat at /opt/winsysroot) or from a
+ * sysroots come from the agent image (scripts/bootstrap.sh bakes an xwin
+ * splat at /opt/winsysroot) or from a
  * developer-created splat (docs/project/building-windows.mdx). When none is
  * present, CI builds fetch one into the per-build cache dir at configure
  * time — the build never depends on what the agent image happens to carry.
@@ -33,8 +33,7 @@ import { BuildError } from "./error.ts";
 
 /**
  * Pinned xwin release — https://github.com/Jake-Shadle/xwin/releases
- * Keep in sync with the baked splat in .buildkite/Dockerfile (ARG
- * XWIN_VERSION) and scripts/bootstrap.sh (xwin_version).
+ * Keep in sync with the baked splat in scripts/bootstrap.sh (xwin_version).
  */
 export const XWIN_VERSION = "0.9.0";
 
@@ -43,7 +42,7 @@ export const XWIN_VERSION = "0.9.0";
  * to xwin explicitly means a Visual Studio manifest update can't silently
  * move the toolchain to a different SDK/CRT — the targeted Windows version
  * and API surface stay put until these are bumped on purpose.
- * Keep in sync with .buildkite/Dockerfile and scripts/bootstrap.sh.
+ * Keep in sync with scripts/bootstrap.sh.
  */
 export const WINDOWS_SDK_VERSION = "10.0.26100";
 export const MSVC_CRT_VERSION = "14.44.17.14";

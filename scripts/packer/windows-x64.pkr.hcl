@@ -13,7 +13,7 @@ source "azure-arm" "windows-x64" {
   image_version   = "latest"
 
   // Build VM — only used during image creation, not for CI runners.
-  // CI runner VM sizes are set in ci.mjs (azureVmSizes).
+  // CI runner VM sizes are set in ci.ts (azureVmSizes).
   // D4as_v7 (AMD): D4ds_v6 hit repeated AllocationFailed (no capacity for
   // that size in the region); Azure's allocation-guidance suggested this
   // size as an in-region alternative. Build-only VM, so the CPU vendor
@@ -102,16 +102,16 @@ build {
     environment_vars = ["CI=true", "BUN_BOOTSTRAP_REPO_REF=${var.repo_ref}"]
   }
 
-  // Step 2: Upload agent.mjs
+  // Step 2: Upload the agent script (as .mts: see `install` in scripts/agent.ts)
   provisioner "file" {
     source      = var.agent_script
-    destination = "C:\\buildkite-agent\\agent.mjs"
+    destination = "C:\\buildkite-agent\\agent.mts"
   }
 
   // Step 3: Install agent service via nssm
   provisioner "powershell" {
     inline = [
-      "C:\\Scoop\\apps\\nodejs\\current\\node.exe C:\\buildkite-agent\\agent.mjs install"
+      "C:\\Scoop\\apps\\nodejs\\current\\node.exe C:\\buildkite-agent\\agent.mts install"
     ]
     valid_exit_codes = [0]
   }

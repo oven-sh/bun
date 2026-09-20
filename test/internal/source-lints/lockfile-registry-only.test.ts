@@ -14,7 +14,7 @@ import path from "node:path";
 // fresh runners have no install cache to fall back on.
 //
 // That dependency now lives in scripts/ci-remap-server/, whose only consumer is
-// scripts/runner.node.mjs (installed best-effort, from the cache bootstrap.sh
+// scripts/runner.node.ts (installed best-effort, from the cache bootstrap.sh
 // bakes into the agent images). Anything else that needs a package not on the
 // registry belongs in a package.json of its own like that one, not in these.
 const lockfiles = ["bun.lock", "test/bun.lock"];

@@ -492,14 +492,10 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
     debug_assert!(!non_absolute_path.starts_with(b"/"));
 
     let p = non_absolute_path;
-    if p.starts_with(b"./") || p.starts_with(b"../") || p == b"." || p == b".." {
-        return false;
-    }
+    let dot_relative = p.starts_with(b"./") || p.starts_with(b"../") || p == b"." || p == b"..";
     #[cfg(windows)]
-    if p.starts_with(b".\\") || p.starts_with(b"..\\") {
-        return false;
-    }
-    true
+    let dot_relative = dot_relative || p.starts_with(b".\\") || p.starts_with(b"..\\");
+    !dot_relative
 }
 
 // ──────────────────────────────────────────────────────────────────────────

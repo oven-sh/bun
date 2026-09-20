@@ -28,7 +28,7 @@
  */
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
-const { STATUS_CODES } = require("internal/http");
+const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
@@ -425,12 +425,6 @@ const {
   validateAbortSignal,
 } = require("internal/validators");
 
-let utcCache;
-
-function utcDate() {
-  if (!utcCache) cache();
-  return utcCache;
-}
 function emitEventNT(self: any, event: string, ...args: any[]) {
   if (self.listenerCount(event) > 0) {
     self.emit(event, ...args);
@@ -459,16 +453,6 @@ function emitErrorNT(self: any, error: any, destroy: boolean) {
 function emitOutofStreamErrorNT(self: any) {
   self.destroy($ERR_HTTP2_OUT_OF_STREAMS());
 }
-function cache() {
-  const d = new Date();
-  utcCache = d.toUTCString();
-  setTimeout(resetCache, 1000 - d.getMilliseconds()).unref();
-}
-
-function resetCache() {
-  utcCache = undefined;
-}
-
 function getAuthority(headers) {
   // For non-CONNECT requests, HTTP/2 allows either :authority
   // or Host to be used equivalently. The first is preferred
@@ -627,7 +611,7 @@ function assertValidHeader(name, value) {
   }
 }
 function assertIsObject(value: any, name: string, types?: string | string[]): asserts value is object {
-  if (value !== undefined && (!$isObject(value) || $isArray(value))) {
+  if (value !== undefined && (value === null || typeof value !== "object" || $isArray(value))) {
     throw $ERR_INVALID_ARG_TYPE(name, $isArray(types) ? types : [types || "Object"], value);
   }
 }
@@ -2001,14 +1985,7 @@ function validateWindowSize(windowSize) {
 hideFromStack(validateWindowSize);
 
 function pushToStream(stream, data) {
-  if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) {
-    if (!stream._readableState.ended) {
-      // closed, but not ended, so resume and push null to end the stream
-      stream.resume();
-      stream.push(null);
-    }
-    return;
-  }
+  if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) return;
 
   // Node's onStreamRead (lib/internal/stream_base_commons.js): push() returning false
   // is the readable side's backpressure signal, and the reader must readStop()
@@ -2026,6 +2003,12 @@ function pushToStream(stream, data) {
   if (!stream.push(data) && data !== null) {
     streamOnPause.$call(stream);
   }
+}
+
+// Like node's onSessionHeaders, a HEADERS frame with END_STREAM ends the readable before its event.
+function endInboundHalf(stream: Http2Stream) {
+  if (!stream.rstCode) stream.rstCode = 0;
+  pushToStream(stream, null);
 }
 
 enum StreamState {
@@ -2539,7 +2522,10 @@ class Http2Stream extends Duplex {
         validateFunction(callback, "callback");
         this.once("close", callback);
       }
-      this.push(null);
+      if (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
+        // For other rstCodes _destroy ends the readable so 'end' is suppressed.
+        this.push(null);
+      }
       const { ending } = this._writableState;
       if (!ending) {
         // If the writable side of the Http2Stream is still open, emit the
@@ -3270,6 +3256,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (pushedStream && pushedStream[bunHTTP2Headers] == null) {
       pushedStream[bunHTTP2Headers] = headers;
     }
+    if (pushedStream) endInboundHalf(pushedStream);
     if (onServerStreamCreatedChannel.hasSubscribers) {
       onServerStreamCreatedChannel.publish({ stream: pushedStream, headers });
     }
@@ -3734,7 +3721,7 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
     if (stream.listenerCount("error") > 0) {
       if (typeof error === "number") {
         stream.rstCode = error;
-        if (error != 0) {
+        if (error !== NGHTTP2_NO_ERROR && error !== NGHTTP2_CANCEL) {
           error_instance = streamErrorFromCode(error);
         }
       } else {
@@ -4061,10 +4048,7 @@ class ServerHttp2Session extends Http2Session {
       }
       if (state == 6 || state == 7) {
         if (stream.readable) {
-          if (!stream.rstCode) {
-            stream.rstCode = 0;
-          }
-          pushToStream(stream, null);
+          endInboundHalf(stream);
 
           // If the user hasn't tried to consume the stream then dump the incoming data so the
           // stream can finish — but at half-close only when nothing is buffered: a consumer may
@@ -4153,7 +4137,9 @@ class ServerHttp2Session extends Http2Session {
         stream[kHeadRequest] = true;
       }
       const status = stream[bunHTTP2StreamStatus];
+      const endOfStream = (flags & constants.NGHTTP2_FLAG_END_STREAM) !== 0;
       if ((status & StreamState.StreamResponded) !== 0) {
+        if (endOfStream) endInboundHalf(stream);
         stream.emit("trailers", headers, flags, rawheaders);
       } else {
         // Set the StreamResponded bit BEFORE dispatching the 'stream' event
@@ -4170,6 +4156,7 @@ class ServerHttp2Session extends Http2Session {
         if (onServerStreamStartChannel.hasSubscribers) {
           onServerStreamStartChannel.publish({ stream, headers });
         }
+        if (endOfStream) endInboundHalf(stream);
         // performServerHandshake() sessions have no owning server.
         self[kServer]?.emit("stream", stream, headers, flags, rawheaders);
         self.emit("stream", stream, headers, flags, rawheaders);
@@ -4402,7 +4389,8 @@ class ServerHttp2Session extends Http2Session {
       throw $ERR_INVALID_CHAR("alt");
     }
     origin = origin || "";
-    if (Buffer.byteLength(origin) + Buffer.byteLength(alt) > MAX_LENGTH) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1760
+    if (origin.length + alt.length > MAX_LENGTH) {
       throw $ERR_HTTP2_ALTSVC_LENGTH();
     }
     parser.altsvc(origin, alt, stream);
@@ -5059,12 +5047,9 @@ class ClientHttp2Session extends Http2Session {
       }
       if (state == 6 || state == 7) {
         if (stream.readable) {
-          if (!stream.rstCode) {
-            stream.rstCode = 0;
-          }
           // Push a null so the stream can end whenever the client consumes
           // it completely.
-          pushToStream(stream, null);
+          endInboundHalf(stream);
           stream.read(0);
         }
       }
@@ -5132,11 +5117,13 @@ class ClientHttp2Session extends Http2Session {
         }
         const status = stream[bunHTTP2StreamStatus];
         const header_status = headers[HTTP2_HEADER_STATUS];
+        const endOfStream = (flags & constants.NGHTTP2_FLAG_END_STREAM) !== 0;
         if (header_status === HTTP_STATUS_CONTINUE) {
           stream.emit("continue");
         }
 
         if ((status & StreamState.StreamResponded) !== 0) {
+          if (endOfStream) endInboundHalf(stream);
           stream.emit("trailers", headers, flags, rawheaders);
         } else {
           if (header_status >= 100 && header_status < 200) {
@@ -5154,6 +5141,7 @@ class ClientHttp2Session extends Http2Session {
             if (onClientStreamFinishChannel.hasSubscribers) {
               onClientStreamFinishChannel.publish({ stream, headers, flags });
             }
+            if (endOfStream) endInboundHalf(stream);
             if (stream[kPush]) {
               // A pushed stream delivers its response via 'push'; the session 'stream' event already
               // fired (with the promised request headers) when the PUSH_PROMISE arrived.
@@ -5608,6 +5596,12 @@ class ClientHttp2Session extends Http2Session {
       if (options.remoteCustomSettings.length > MAX_ADDITIONAL_SETTINGS) throw $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS();
     }
 
+    if (options.strictSingleValueFields !== undefined) {
+      validateBoolean(options.strictSingleValueFields, "options.strictSingleValueFields");
+    } else {
+      options.strictSingleValueFields = true;
+    }
+
     if (typeof url === "string") url = new URL(url);
 
     assertIsObject(url, "authority", ["string", "Object", "URL"]);
@@ -5618,7 +5612,7 @@ class ClientHttp2Session extends Http2Session {
     if (options.strictFieldWhitespaceValidation === false) {
       this.#strictFieldWhitespaceValidation = false;
     }
-    this[kStrictSingleValueFields] = options.strictSingleValueFields !== false;
+    this[kStrictSingleValueFields] = options.strictSingleValueFields;
     this.#url = url;
 
     const protocol = url.protocol || options?.protocol || "https:";
@@ -5685,6 +5679,8 @@ class ClientHttp2Session extends Http2Session {
         connectOnNextTick = true;
       }
     } else {
+      // Like node, https only: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3638
+      if (protocol === "https:") initializeOptions(options);
       socket = connectWithProtocol(
         protocol,
         options
@@ -5712,8 +5708,8 @@ class ClientHttp2Session extends Http2Session {
     }
     const nativeSettings = { ...options, ...options?.settings };
     this.#localSettings = initialLocalSettings(nativeSettings);
+    // #onConnect attaches the native socket; frames written before that (the preface) queue.
     this.#parser = new H2FrameParser({
-      native: nativeSocket,
       context: this,
       settings: nativeSettings,
       handlers: ClientHttp2Session.#Handlers,
@@ -6465,6 +6461,10 @@ function initializeOptions(options) {
     validateUint32(options.unknownProtocolTimeout, "options.unknownProtocolTimeout");
   else options.unknownProtocolTimeout = 10000;
 
+  if (options.strictSingleValueFields !== undefined) {
+    validateBoolean(options.strictSingleValueFields, "options.strictSingleValueFields");
+  }
+
   // Initialize http1Options bag for HTTP/1 fallback when allowHTTP1 is true.
   options.http1Options = { ...options.http1Options };
   if (options.Http1IncomingMessage !== undefined) {
@@ -6580,26 +6580,6 @@ class Http2SecureServer extends tls.Server {
   timeout = 0;
   [kSessions] = new SafeSet();
   constructor(options, onRequestHandler) {
-    if (typeof options !== "undefined") {
-      if (options && typeof options === "object") {
-        options = { ...options };
-      } else {
-        throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-      }
-    } else {
-      options = {};
-    }
-
-    const settings = options.settings;
-    if (typeof settings !== "undefined") {
-      validateObject(settings, "options.settings");
-    }
-    if (options.maxSessionInvalidFrames !== undefined)
-      validateUint32(options.maxSessionInvalidFrames, "options.maxSessionInvalidFrames");
-
-    if (options.maxSessionRejectedStreams !== undefined) {
-      validateUint32(options.maxSessionRejectedStreams, "options.maxSessionRejectedStreams");
-    }
     options = initializeOptions(options);
     if (!options.ALPNCallback) {
       options.ALPNProtocols = ["h2"];
@@ -6607,7 +6587,7 @@ class Http2SecureServer extends tls.Server {
     }
     super(options, connectionListener);
     this[kSessions] = new SafeSet();
-    this[kOptions] = { settings: settings || {} };
+    this[kOptions] = { settings: options.settings };
     this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (options.allowHTTP1 === true) {
@@ -6687,11 +6667,16 @@ Object.defineProperty(connect, promisify.custom, {
   __proto__: null,
   value: function (authority, options) {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const server = connect(authority, options, () => {
-      server.removeListener("error", reject);
-      return resolve(server);
-    });
-    server.once("error", reject);
+    try {
+      const server = connect(authority, options, () => {
+        server.removeListener("error", reject);
+        return resolve(server);
+      });
+      server.once("error", reject);
+    } catch (e) {
+      // node calls connect() inside the Promise executor, so a throw rejects the promise.
+      reject(e);
+    }
     return promise;
   },
 });

@@ -19,14 +19,6 @@ export default [
         fn: "runFromJS",
         length: 0,
       },
-      isRunning: {
-        fn: "isRunning",
-        length: 0,
-      },
-      started: {
-        fn: "getStarted",
-        length: 0,
-      },
     },
   }),
 ];

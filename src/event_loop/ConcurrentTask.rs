@@ -130,6 +130,35 @@ pub mod task_tag {
 pub struct Task {
     pub tag: TaskTag,
     pub ptr: *mut (),
+    // [`Task::context`], in the padding `tag` leaves.
+    context: ContextId,
+}
+const _: () = assert!(core::mem::size_of::<Task>() == 2 * core::mem::size_of::<usize>());
+
+/// Identifies a script execution context within its VM (`bun_jsc` hands them out, counting up).
+/// What outlived its context (a pool job, a queued task, a timer that was not swept) holds an id
+/// no live context has.
+#[repr(transparent)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Default, Debug)]
+pub struct ContextId(u32);
+
+impl ContextId {
+    /// No script's context. Never handed out to one.
+    pub const NONE: ContextId = ContextId(0);
+
+    /// `VirtualMachine::dead_context`'s, in every VM. Never handed out to another: the
+    /// identifiers contexts are given count up from 1.
+    pub const DEAD: ContextId = ContextId(u32::MAX);
+
+    #[inline]
+    pub const fn from_raw(raw: u32) -> ContextId {
+        ContextId(raw)
+    }
+
+    #[inline]
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
 }
 
 /// What it takes to be queued as a [`Task`]: a tag, and how the task is
@@ -162,6 +191,19 @@ pub trait Taskable {
     /// # Safety
     /// `this` came off the queue under `Self::TAG` and is not used afterwards.
     unsafe fn release_unrun(this: *mut Self);
+
+    /// Whose script the task continues: the context that was current when the work was started.
+    /// Required, so that no type can be queued without having decided it: [`Task::init`] asks
+    /// when the task is made and the task carries the answer. The event loop runs the task inside
+    /// that context, and [releases it unrun](Self::release_unrun) if the context (a
+    /// `Bun.ModuleGraph`'s) has stopped. [`ContextId::NONE`]: no script's. The task runs whenever
+    /// the VM runs script, inside nothing: work that serves the whole realm, and a step of a
+    /// larger operation that enters its own context before it reaches script (the impl says
+    /// which, and where).
+    ///
+    /// # Safety
+    /// `this` is the [`Task::ptr`] about to be queued, live.
+    unsafe fn context(this: *const Self) -> ContextId;
 }
 
 impl TaskTag {
@@ -172,17 +214,30 @@ impl TaskTag {
 }
 
 impl Task {
+    /// For a tag whose `ptr` is not a `*mut T` (it packs an integer, or the payload is erased);
+    /// everything else goes through [`init`](Self::init).
     #[inline]
-    pub const fn new(tag: TaskTag, ptr: *mut ()) -> Task {
-        Task { tag, ptr }
+    pub const fn new(tag: TaskTag, ptr: *mut (), context: ContextId) -> Task {
+        Task { tag, ptr, context }
+    }
+
+    /// Whose script the task continues: what its type's [`Taskable::context`] said when the task
+    /// was made. The event loop checks it before it runs the task.
+    #[inline]
+    pub const fn context(&self) -> ContextId {
+        self.context
     }
 
     /// The type→tag table is the [`Taskable`] trait; the per-type impl
-    /// supplies `T::TAG`.
+    /// supplies `T::TAG`, and says whose script the task continues.
     // Takes `*mut T` directly; `&mut T` coerces at call sites.
+    // The precondition is the queue's own: the event loop dereferences `ptr` when it runs the task.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub fn init<T: Taskable>(ptr: *mut T) -> Task {
-        Task::new(T::TAG, ptr.cast::<()>())
+        // SAFETY: `ptr` is what is about to be queued, which is all `Taskable::context` asks for
+        // (a task is made to be queued: its type's fields are set by then).
+        Task::new(T::TAG, ptr.cast::<()>(), unsafe { T::context(ptr) })
     }
 
     /// Build a [`Task`] from an owned `Box<T>`. The dispatch arm for `T::TAG`
@@ -191,7 +246,7 @@ impl Task {
     /// callers use instead of open-coding `heap::alloc`.
     #[inline]
     pub fn from_boxed<T: Taskable>(task: Box<T>) -> Task {
-        Task::new(T::TAG, bun_core::heap::into_raw(task).cast::<()>())
+        Task::init(bun_core::heap::into_raw(task))
     }
 }
 
@@ -201,6 +256,11 @@ impl Taskable for crate::ManagedTask::ManagedTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — a queued ManagedTask is the heap box `new*` made.
         unsafe { crate::ManagedTask::ManagedTask::release(this) }
+    }
+    /// A callback task always runs: a callback that continues some script enters that script's
+    /// context itself, so what it reports goes to nobody once the context has stopped.
+    unsafe fn context(_this: *const Self) -> ContextId {
+        ContextId::NONE
     }
 }
 // ────────────────────────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@
 //!
 //! **Adding a variant** (do all four):
 //!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
-//!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..) }`;
+//!   2. `impl bun_jsc::Taskable for YourType { const TAG; unsafe fn release_unrun(..); unsafe fn context(..) }`;
 //!   3. a `run_task` arm and a `release_task_unrun` arm here;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
@@ -206,7 +206,7 @@ pub(crate) fn run_task(
         task_tag::AnyTaskJob => {
             // SAFETY: §Dispatch — `task.ptr` is a live heap `Job<C>` posted by
             // its `Completion`; the erased entry runs `then` and frees it.
-            unsafe { bun_jsc::job::complete_erased(task.ptr, &global.js_thread()) }?;
+            unsafe { bun_jsc::job::complete_erased(task.ptr, global) }?;
         }
         task_tag::SendQueueDeferred => {
             // SAFETY: §Dispatch — the queued pointer is the SendQueue root and
@@ -611,6 +611,26 @@ pub(crate) fn tick_queue_with_count(
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
+        // A task continues what the script of some context started: it runs inside that context
+        // (what it opens next, and the script it calls, are that context's), and once that context
+        // has stopped it is released unrun. Not live either: the context of a file
+        // `bun test --isolate` has since retired (the swap was that file's exit), and any context
+        // once the VM was asked to stop (a parent's terminate() while the worker still ticks).
+        let _context = match task.context() {
+            bun_event_loop::ContextId::NONE => None,
+            context => {
+                let vm = global.bun_vm();
+                let entered = vm.enter_context(context);
+                if !(vm.script_allowed() && vm.is_context_live(context)) {
+                    __bun_release_task_unrun(task);
+                    if global.has_exception() {
+                        report_error_or_terminate(global, bun_jsc::JsError::Thrown)?;
+                    }
+                    continue;
+                }
+                Some(entered)
+            }
+        };
         match run_task(task, el, vm, global) {
             Ok(RunTaskResult::Continue) => {}
             Ok(RunTaskResult::EarlyReturn) => {

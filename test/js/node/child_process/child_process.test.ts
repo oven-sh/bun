@@ -880,6 +880,53 @@ it.if(!isWindows)("spawnSync correctly reports signal codes", () => {
   expect(signal).toBe("SIGTRAP");
 });
 
+// Signal numbers differ between Linux and macOS (SIGUSR1 is 10 on Linux and 30
+// on macOS), and SIGSTKFLT exists only on Linux. The reported name must be the
+// OS's name for the number the child died from, as in node.
+const platformSignals = (["SIGUSR1", "SIGUSR2", "SIGSTKFLT"] as const).filter(name => name in os.constants.signals);
+
+describe.skipIf(!isPosix)("exit signals are named with the OS's own numbering", () => {
+  it.concurrent.each(platformSignals)("child.kill(%s) exits with that signal", async name => {
+    const child = spawn("sleep", ["1000"], { stdio: "ignore" });
+    try {
+      await once(child, "spawn");
+      const exit = once(child, "exit");
+      expect(child.kill(name)).toBe(true);
+      expect(await exit).toEqual([null, name]);
+      expect(child.signalCode).toBe(name);
+    } finally {
+      child.kill("SIGKILL");
+    }
+  });
+
+  it.concurrent.each(platformSignals)("spawnSync({ killSignal: %s }) reports that signal", name => {
+    const { status, signal } = spawnSync("sleep", ["1000"], { stdio: "ignore", timeout: 1, killSignal: name });
+    expect({ status, signal }).toEqual({ status: null, signal: name });
+  });
+});
+
+// A Linux real-time signal has no name. Bun.spawn reports it as its number, but
+// node:child_process has only names, and it reports this death exactly as node
+// does (v26.3.0): 'exit' and 'close' get (0, null) because libuv's exit status
+// of a signaled process is 0, and spawnSync gives `signal: ""`.
+describe.skipIf(!isLinux)("an exit signal with no name is reported as node reports it", () => {
+  it.concurrent.each([40, 64])("spawn: 'exit' and 'close' after signal %d", async signal => {
+    const child = spawn("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
+    const [exit, close] = await Promise.all([once(child, "exit"), once(child, "close")]);
+    expect({ exit, close, exitCode: child.exitCode, signalCode: child.signalCode }).toEqual({
+      exit: [0, null],
+      close: [0, null],
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  it.concurrent.each([40, 64])("spawnSync: signal after signal %d", signal => {
+    const { status, signal: reported } = spawnSync("sh", ["-c", `kill -${signal} $$`], { stdio: "ignore" });
+    expect({ status, signal: reported }).toEqual({ status: null, signal: "" });
+  });
+});
+
 it("spawnSync(does-not-exist)", () => {
   const x = spawnSync("does-not-exist");
   expect(x.error?.code).toEqual("ENOENT");

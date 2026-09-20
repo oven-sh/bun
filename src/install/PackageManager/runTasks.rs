@@ -472,25 +472,16 @@ fn run_tasks_erased(
                 // Headers can arrive and the connection still die before the
                 // body does; for a 2xx/3xx that is a failed download too (an
                 // error status keeps its own handling below).
-                let download_failed = match &task.response.metadata {
-                    None => true,
-                    Some(m) => task.response.fail.is_some() && m.response.status_code < 400,
-                };
+                let DownloadOutcome {
+                    failed: download_failed,
+                    retry,
+                } = DownloadOutcome::of(&task.response);
                 if download_failed {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
 
                 // Handle retry-able errors.
-                if download_failed
-                    || task
-                        .response
-                        .metadata
-                        .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
-                {
+                if retry {
                     let err = task
                         .response
                         .fail
@@ -530,7 +521,7 @@ fn run_tasks_erased(
                     if cb.has_on_package_manifest_error {
                         (cb.on_package_manifest_error)(extract_ctx, name, err, &task.url_buf);
                     } else {
-                        let fmt_args = (err.name(), name);
+                        let fmt_args = (DownloadFailure(err.name(), &task.response), name);
                         if manager.is_network_task_required(task.task_id) {
                             bun_ast::add_error_pretty!(
                                 manager.log_mut(),
@@ -551,16 +542,7 @@ fn run_tasks_erased(
                             );
                         }
 
-                        if manager.subcommand != Subcommand::Remove {
-                            for request in manager.update_requests.iter_mut() {
-                                if strings::eql(request.name, name) {
-                                    request.failed = true;
-                                    manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                    manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                    manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                                }
-                            }
-                        }
+                        fail_update_requests(manager, task.task_id, name, None);
                     }
 
                     continue;
@@ -608,16 +590,7 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, name) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    fail_update_requests(manager, task.task_id, name, None);
 
                     continue;
                 }
@@ -746,24 +719,15 @@ fn run_tasks_erased(
                 // NetworkTask back here to be retried like any failed download.
                 debug_assert!(!task.streaming_committed);
 
-                let download_failed = match &task.response.metadata {
-                    None => true,
-                    Some(m) => task.response.fail.is_some() && m.response.status_code < 400,
-                };
+                let DownloadOutcome {
+                    failed: download_failed,
+                    retry,
+                } = DownloadOutcome::of(&task.response);
                 if download_failed {
                     throttle_after_network_error(manager, &mut has_network_error);
                 }
 
-                if download_failed
-                    || task
-                        .response
-                        .metadata
-                        .as_ref()
-                        .unwrap()
-                        .response
-                        .status_code
-                        > 499
-                {
+                if retry {
                     let err = task
                         .response
                         .fail
@@ -852,7 +816,7 @@ fn run_tasks_erased(
                             None,
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
-                            err.name(),
+                            DownloadFailure(err.name(), &task.response),
                             bstr::BStr::new(extract.name.slice()),
                             extract
                                 .resolution
@@ -864,23 +828,19 @@ fn run_tasks_erased(
                             None,
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
-                            err.name(),
+                            DownloadFailure(err.name(), &task.response),
                             bstr::BStr::new(extract.name.slice()),
                             extract
                                 .resolution
                                 .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    fail_update_requests(
+                        manager,
+                        task.task_id,
+                        extract.name.slice(),
+                        Some(extract.dependency_id),
+                    );
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -954,16 +914,12 @@ fn run_tasks_erased(
                             response.status_code,
                         );
                     }
-                    if manager.subcommand != Subcommand::Remove {
-                        for request in manager.update_requests.iter_mut() {
-                            if strings::eql(request.name, extract.name.slice()) {
-                                request.failed = true;
-                                manager.options.do_.remove(Do::SAVE_LOCKFILE);
-                                manager.options.do_.remove(Do::SAVE_YARN_LOCK);
-                                manager.options.do_.remove(Do::INSTALL_PACKAGES);
-                            }
-                        }
-                    }
+                    fail_update_requests(
+                        manager,
+                        task.task_id,
+                        extract.name.slice(),
+                        Some(extract.dependency_id),
+                    );
 
                     if let Some(removed) = manager.task_queue.remove(&task.task_id) {
                         drop(removed);
@@ -1716,6 +1672,50 @@ fn run_tasks_erased(
     Ok(())
 }
 
+/// `failed`: the connection died, before a response or under a 2xx/3xx one
+/// (an error status keeps its own handling). `retry`: that, or a 5xx from the
+/// registry or from a proxy answering CONNECT. A proxy's 4xx (407, 403) would
+/// be the answer to the retry too.
+struct DownloadOutcome {
+    failed: bool,
+    retry: bool,
+}
+
+impl DownloadOutcome {
+    fn of(response: &http::HTTPClientResult<'static>) -> Self {
+        let proxy_status = response
+            .proxy_connect_response
+            .as_ref()
+            .map(|reply| reply.response.status_code);
+        let failed = match &response.metadata {
+            None => proxy_status.is_none(),
+            Some(m) => response.fail.is_some() && m.response.status_code < 400,
+        };
+        let status = response
+            .metadata
+            .as_ref()
+            .map(|m| m.response.status_code)
+            .or(proxy_status);
+        Self {
+            failed,
+            retry: failed || status.is_some_and(|status| status > 499),
+        }
+    }
+}
+
+/// `ProxyConnectFailed (407)`: a refused CONNECT is reported with the proxy's status.
+struct DownloadFailure<'a>(&'static str, &'a http::HTTPClientResult<'static>);
+
+impl core::fmt::Display for DownloadFailure<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.0)?;
+        match &self.1.proxy_connect_response {
+            Some(reply) => write!(f, " ({})", reply.response.status_code),
+            None => Ok(()),
+        }
+    }
+}
+
 #[inline]
 pub fn pending_task_count(manager: &PackageManager) -> u32 {
     manager.pending_tasks.load(Ordering::Acquire)
@@ -1918,6 +1918,66 @@ pub(crate) fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) 
     this.network_dedupe_map
         .get(&task_id)
         .is_some_and(|e| e.failed)
+}
+
+/// `bun add` / `bun update <name>` exits 1 and saves nothing when a download for the request fails.
+fn fail_update_requests(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    package_name: &[u8],
+    tarball_dependency_id: Option<DependencyID>,
+) {
+    if this.subcommand == Subcommand::Remove {
+        return;
+    }
+    let lockfile = &*this.lockfile;
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let waiters = this.task_queue.get(&task_id).map_or(&[][..], Vec::as_slice);
+    // An npm tarball task has no waiters: the dependencies it was for already resolved to its package.
+    let package_id = tarball_dependency_id
+        .and_then(|id| resolutions.get(id as usize).copied())
+        .filter(|&package_id| package_id != INVALID_PACKAGE_ID);
+    let was_for = |id: DependencyID| {
+        package_id.is_some_and(|package_id| resolutions.get(id as usize) == Some(&package_id))
+            || waiters.iter().any(|waiter| {
+                matches!(
+                    waiter,
+                    bun_install::TaskCallbackContext::Dependency(waiting)
+                    | bun_install::TaskCallbackContext::RootDependency(waiting) if *waiting == id
+                )
+            })
+    };
+    let pending = this.pending_filtered_write.as_deref();
+
+    let mut any_failed = false;
+    for request in this.update_requests.iter_mut() {
+        // A request names a package.json key, which an `npm:` alias or an override spells differently from `package_name`.
+        let names_its_dependency = lockfile
+            .workspaces_of_update_request(pending, this.workspace_name_hash, request)
+            .into_iter()
+            .any(|workspace_id| {
+                let lists = lockfile.packages.items_dependencies();
+                lists.get(workspace_id as usize).is_some_and(|list| {
+                    (list.off..list.off + list.len).any(|id| {
+                        dependencies
+                            .get(id as usize)
+                            .is_some_and(|dependency| request.matches(dependency, string_buf))
+                            && was_for(id)
+                    })
+                })
+            });
+        if names_its_dependency || strings::eql(request.name, package_name) {
+            request.failed = true;
+            any_failed = true;
+        }
+    }
+    if any_failed {
+        this.options
+            .do_
+            .remove(Do::SAVE_LOCKFILE | Do::SAVE_YARN_LOCK | Do::INSTALL_PACKAGES);
+    }
 }
 
 /// The first failed download in a `run_tasks` pass halves the number of

@@ -784,6 +784,11 @@ private:
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED) {
                     httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
                     Bun__NodeHTTP__onReadParsed(SSL, (us_socket_t *) returnedData);
+                    /* That ran JavaScript: a closed or upgraded socket no longer has an HttpResponseData. */
+                    if (us_socket_is_closed((us_socket_t *) returnedData) || us_socket_kind((us_socket_t *) returnedData) != socketKind()) {
+                        ((AsyncSocket<SSL> *) returnedData)->uncork();
+                        return (us_socket_t *) returnedData;
+                    }
                 }
             }
 

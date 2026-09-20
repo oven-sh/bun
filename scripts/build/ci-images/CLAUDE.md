@@ -4,7 +4,7 @@ CI's build and test machines start from images baked ahead of time: AWS AMIs for
 
 ## How `spec.ts` is laid out
 
-1. **The data.** `files` (the repository files copied onto machines), `pins` (every version), `locations` (where a bake puts what is not the operating system's to place), `images` (each with the exact base image it starts from), the package lists, and how Packer bakes a Windows image. The build system's own LLVM, Node.js, xwin, Windows SDK, macOS SDK, Android API level and FreeBSD versions import from `pins`, and its sysroot and cache lookups from `locations`; `test/internal/source-lints/ci-image-pins.test.ts` keeps the files that cannot import them (`rust-toolchain.toml`, the GitHub workflows) in step.
+1. **The data.** `files` (the repository files copied onto machines), `pins` (every version), `locations` (where a bake puts what is not the operating system's to place), `images` (each with the exact base image it starts from), the package lists, and how Packer bakes a Windows image. The build system's own LLVM, Node.js, xwin, Windows SDK, macOS SDK, Android API level and FreeBSD versions import from `pins`, and its sysroot and cache lookups from `locations`; `test/internal/source-lints/ci-image-pins.test.ts` keeps what cannot import them in step: `rust-toolchain.toml`, the GitHub workflows, `scripts/darwin-ci` (copied to its hosts), `scripts/agent.ts` (runs on the machines alone) and the Node-API test harness.
 2. **The tools.** A tool is one thing a bake sets up on the machine, whether it installs something (Bun, LLVM) or configures the system (`ulimits`, the agent's user). Each is a function of the image that returns its steps and its `identity` (how what it puts on the machine is known, for `bun-image.json`), and `tools(image)` at the end of the section is what a machine gets, in order.
 3. **The machinery.** The vocabulary the tools are written in (values and steps), its sh and PowerShell renderers, the helper functions every generated script starts with, the two small programs a bake leaves on the machine, the Packer template, and `generateImage()`.
 
@@ -16,7 +16,7 @@ A tool does not contain shell. It says what should be true (`download`, `unpack`
 bun run ci:images                      # generate every image, print <name>  <directory>
 bun run ci:images linux-x64-debian     # only these keys
 less build/ci-images/linux-x64-debian/bootstrap.sh   # the whole bake, top to bottom
-bun test test/internal/ci-images.test.ts test/internal/source-lints/ci-image-pins.test.ts
+bun test test/internal/source-lints/ci-images.test.ts test/internal/source-lints/ci-image-pins.test.ts
 ```
 
 `build/ci-images/<key>/` holds `image.json` (what the image is), `bootstrap.sh` or `bootstrap.ps1`, the files the script puts on the machine, and for Windows the Packer template. The script is straight-line and has every value in it: a loop over things known in `spec.ts` (architectures, package names) is a loop in TypeScript, and the script only loops over what is known on the machine (a command's output, the files a pattern matches). It does not try to look hand-written. It is what CI runs, what gets linted, and what you read when a bake fails, and it generates the same anywhere: the output depends only on committed files.
@@ -29,7 +29,7 @@ bun test test/internal/ci-images.test.ts test/internal/source-lints/ci-image-pin
 
 **Bump a version.** Edit the pin. If it has `sha256` values, replace them with the ones the new release publishes. Run the two tests: the lint says if `rust-toolchain.toml` or a workflow has to move with it.
 
-**Add a tool.** Write a function in section 2 and add it to `tools()` after whatever it needs. It does not compile without an `identity` (see below). `bunNinja` is a complete example: a pin with the release's published checksums, a location, and four steps that serve all three systems. Most downloads are one call to `executableFromArchive` or `runInstallerScript`.
+**Add a tool.** Write a function in section 2 and add it to `tools()` after whatever it needs. It does not compile without an `identity` (see below). `bunNinja` is a complete example: a pin with the release's published checksums, a location, and one call that serves all three systems. A download is one of three composites: `unpackedArchive` (an archive into a directory), `executableFromArchive` (one program out of an archive, installed) and `runInstallerScript` (a publisher's own installer).
 
 **Need something the vocabulary lacks.** Add a function to section 3. It takes what it needs as values and returns the lines for each shell. Keep it about intent (`firewallAllowInbound`, not a cmdlet's parameter list at every call site), and add it once it is needed, not before. `run` and `cmdlet` call any program; program text for another tool (an awk program, a sed expression) is a string argument.
 
@@ -51,11 +51,11 @@ The name covers everything `spec.ts` decides; `bun-image.json` adds what is only
 
 ## Rules
 
-- **A tool installs. It does not check versions.** Comparing a tool's version with the pin is the build's job (`checkImageTools()` and `findLlvmTool()` in `scripts/build/tools.ts`, on a Buildkite agent). A bake fails on a download's checksum, where the publisher provides one; on a program's or installer's exit code; on a lookup it cannot go on without.
+- **A tool installs. It does not check versions.** Comparing a tool's version with the pin is the build's job, in `scripts/build/tools.ts`: `findLlvmTool()` accepts only the pinned LLVM release series on every machine, and `checkImageTools()` compares `bun`, `cmake` and `node` exactly on a Buildkite agent. A bake fails on a download's checksum, where the publisher provides one; on a program's or installer's exit code; on a lookup it cannot go on without.
 - **Nothing is best-effort.** An image's name says what is on it, so an install that fails has to fail the bake. A swallowed failure would publish an incomplete image under the good name, and every later build would find that name and never bake again.
 - **Downloads go to `scratch(…)`.** A tool that uses it gets a directory made before its steps and removed after them, on the disk: `/tmp` is a tmpfs on the Debian base image while it is baked.
-- **Paths are written with `/`**, also Windows ones (`C:/Windows/System32`); the PowerShell renderer turns a drive, registry or machine-known path into `\`.
-- **On macOS `sudo` is decided by the path written**: an absolute path that is not Homebrew's own gets it. The script runs as the machine's admin user, because Homebrew refuses root.
+- **In a tool, paths are written with `/`**, also Windows ones (`C:/Windows/System32`); the PowerShell renderer turns a drive, registry or machine-known path into `\`. `locations` keeps `\` for Windows, because the build system and `.buildkite/ci.ts` use those strings as they are, and the renderer accepts both.
+- **On macOS `sudo` is decided by the path written**: an absolute path gets it, except under `/opt/homebrew`, which belongs to the user. The script runs as the machine's admin user, because Homebrew refuses root. On an Intel Mac Homebrew's prefix is `/usr/local`, which is also where the system's own programs go, so writes there get `sudo`.
 
 ## Things that are not obvious
 

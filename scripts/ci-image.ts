@@ -20,13 +20,20 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { getArch, requireCommand, run } from "./agent.ts";
-import { type WindowsImage, packerVariables, pins } from "./build/ci-images/spec.ts";
+import {
+  type WindowsImage,
+  bakeDirectory,
+  imageRecordName,
+  packerVariables,
+  pins,
+  windowsBake,
+} from "./build/ci-images/spec.ts";
 import { getEnv, getSecret } from "./buildkite.ts";
 
 /**
- * `failed` is an image that holds its name and will never boot. The
- * provisioner replaces a failed Linux image when the next bake of the name
- * finishes; a failed Windows version is deleted by the next bake.
+ * `failed` is an image that holds its name and will never boot. A failed
+ * Linux image is replaced when the next bake of the name finishes; a failed
+ * Windows version is deleted by the next bake.
  */
 export type ImageState = "available" | "pending" | "failed" | "missing";
 
@@ -103,8 +110,8 @@ function galleryRequest(azure: Azure, name: string, path: string, init?: Request
   });
 }
 
-/** Packer publishes a Windows image as version 1.0.0 of the gallery image definition named after it. */
-const galleryVersion = "/versions/1.0.0";
+/** Packer publishes a Windows image as one fixed version of the gallery image definition named after it. */
+const galleryVersion = `/versions/${windowsBake.galleryVersion}`;
 
 async function getWindowsImageState(azure: Azure, name: string): Promise<ImageState> {
   const response = await galleryRequest(azure, name, galleryVersion);
@@ -184,9 +191,9 @@ async function downloadPacker(): Promise<string> {
  * VM it made keeps its cores until someone removes it by hand. So the download
  * before the bake and the upload after it happen in here.
  */
-async function bakeWindowsImage(key: string, name: string): Promise<void> {
-  await run(["buildkite-agent", "artifact", "download", `build/ci-images/${key}/*`, "."]);
-  const directory = resolve("build/ci-images", key);
+async function bakeWindowsImage(key: string, name: string, timeoutMinutes: number): Promise<void> {
+  await run(["buildkite-agent", "artifact", "download", `${bakeDirectory(key)}/*`, "."]);
+  const directory = resolve(bakeDirectory(key));
   const image = JSON.parse(readFileSync(join(directory, "image.json"), "utf8")) as WindowsImage;
   const azure = await getAzure();
 
@@ -197,7 +204,7 @@ async function bakeWindowsImage(key: string, name: string): Promise<void> {
   }
   if (state === "pending") {
     // Another build found the name missing at the same time and is baking it.
-    await waitImage("windows", name, 170);
+    await waitImage("windows", name, timeoutMinutes);
     return;
   }
 
@@ -282,7 +289,7 @@ async function bakeWindowsImage(key: string, name: string): Promise<void> {
   }
   console.log(`[packer] Baked ${name}`);
   // What the bake installed, to read from the build's page without starting a machine from the image.
-  await run(["buildkite-agent", "artifact", "upload", `build/ci-images/${key}/bun-image.json`]);
+  await run(["buildkite-agent", "artifact", "upload", `${bakeDirectory(key)}/${imageRecordName}`]);
 }
 
 async function main(): Promise<void> {
@@ -292,25 +299,26 @@ async function main(): Promise<void> {
       "key": { type: "string" },
       "name": { type: "string" },
       "os": { type: "string" },
-      "timeout-minutes": { type: "string", default: "110" },
+      "timeout-minutes": { type: "string" },
     },
   });
   const [command] = positionals;
   const { key, name, os } = values;
+  const timeoutMinutes = parseInt(values["timeout-minutes"] ?? "");
 
-  if (command === "wait-image" && name && (os === "linux" || os === "windows")) {
-    await waitImage(os, name, parseInt(values["timeout-minutes"]));
+  if (command === "wait-image" && name && (os === "linux" || os === "windows") && timeoutMinutes) {
+    await waitImage(os, name, timeoutMinutes);
     return;
   }
-  if (command === "bake-image" && key && name) {
-    await bakeWindowsImage(key, name);
+  if (command === "bake-image" && key && name && timeoutMinutes) {
+    await bakeWindowsImage(key, name, timeoutMinutes);
     return;
   }
 
   const scriptPath = relative(process.cwd(), fileURLToPath(import.meta.url));
   throw new Error(
-    `Usage: ./${scriptPath} bake-image --key=<image key> --name=<image name>\n` +
-      `       ./${scriptPath} wait-image --os=<linux|windows> --name=<image name> [--timeout-minutes=N]`,
+    `Usage: ./${scriptPath} bake-image --key=<image key> --name=<image name> --timeout-minutes=N\n` +
+      `       ./${scriptPath} wait-image --os=<linux|windows> --name=<image name> --timeout-minutes=N`,
   );
 }
 

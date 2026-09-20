@@ -12,7 +12,7 @@ import {
   images,
   macosMachines,
   tools,
-} from "../../scripts/build/ci-images/spec.ts";
+} from "../../../scripts/build/ci-images/spec.ts";
 
 test("every image of the spec generates, with its tools in the spec's order", () => {
   using dir = tempDir("ci-images", {});

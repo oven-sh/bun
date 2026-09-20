@@ -96,8 +96,8 @@ export function resolveMacosSdkPath(explicit: string | undefined, cacheDir: stri
     return abs;
   }
 
-  // 2. Well-known install locations: /opt/MacOSX*.sdk (what CI images /
-  //    bootstrap install) or an osxcross tree.
+  // 2. Well-known install locations: /opt, where CI's build image puts it
+  //    (`locations.macosSdk`), or an osxcross tree.
   for (const candidate of [newestSdkIn("/opt"), newestSdkIn(locations.macosSdk), newestSdkIn("/opt/osxcross/SDK")]) {
     if (candidate !== undefined) return candidate;
   }

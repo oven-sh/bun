@@ -26,12 +26,12 @@
           };
         };
 
-        # LLVM 23 - matching the bootstrap script (targets 23.1.1, actual version from nixpkgs-unstable)
+        # LLVM 23 - the major of pins.llvm in scripts/build/ci-images/spec.ts (actual version from nixpkgs-unstable)
         llvm = pkgs.llvmPackages_23.llvm;
         clang = pkgs.llvmPackages_23.clang;
         lld = pkgs.llvmPackages_23.lld;
 
-        # Node.js 26 - matching the bootstrap script (targets 26.3.0, actual version from nixpkgs-unstable)
+        # Node.js 26 - the major of pins.nodejs in scripts/build/ci-images/spec.ts (actual version from nixpkgs-unstable)
         nodejs = pkgs.nodejs_26;
 
         # Build tools and dependencies

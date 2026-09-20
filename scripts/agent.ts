@@ -718,9 +718,12 @@ interface AgentPaths {
   cfgPath?: string;
 }
 
+/** The user CI's jobs run as on Linux; the image's bake creates it. */
+export const agentUser = "buildkite-agent";
+
 /**
- * The agent's directories on a Linux image. The image's bootstrap
- * (scripts/build/ci-images) creates them, owned by the agent's user.
+ * The agent's directories on a Linux image. The image's bake
+ * (scripts/build/ci-images/spec.ts) creates them, owned by the agent's user.
  */
 export const linuxAgentPaths = {
   homePath: "/var/lib/buildkite-agent",
@@ -777,7 +780,7 @@ async function install(queueOption: string | undefined): Promise<void> {
   // The service is of no use without it.
   requireCommand("buildkite-agent");
   const { homePath, cachePath, logsPath, agentLogPath, pidPath, cfgPath } = getAgentPaths();
-  const username = "buildkite-agent";
+  const username = agentUser;
   const command = process.execPath;
 
   // Checked before anything is written, so a Mac that cannot be given a

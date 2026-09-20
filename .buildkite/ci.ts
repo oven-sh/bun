@@ -12,8 +12,10 @@ import { output, run } from "../scripts/agent.ts";
 import {
   type BakedImage,
   type GeneratedImage,
+  bakeDirectory,
   generateImage,
   imageKey,
+  imageRecordName,
   images,
   locations,
 } from "../scripts/build/ci-images/spec.ts";
@@ -488,7 +490,7 @@ function getGeneratedImage(platform: Platform): { image: BakedImage; generated: 
   const image = getImage(platform);
   let generated = generatedImages.get(image);
   if (!generated) {
-    generated = generateImage(image, join(process.cwd(), "build/ci-images"));
+    generated = generateImage(image, process.cwd());
     generatedImages.set(image, generated);
   }
   return { image, generated };
@@ -549,7 +551,7 @@ interface Ec2Options {
   instanceType: string | undefined;
 }
 
-function getEc2Agent(platform: Platform, options: PipelineOptions, ec2Options: Ec2Options): Ec2Agent {
+function getEc2Agent(platform: Platform, ec2Options: Ec2Options): Ec2Agent {
   const { os, arch, abi, distro, release, crossCompile } = platform;
   const { instanceType } = ec2Options;
   // Cross-compiled targets run on a Linux EC2 box; the agent tag must match
@@ -569,7 +571,7 @@ function getEc2Agent(platform: Platform, options: PipelineOptions, ec2Options: E
   };
 }
 
-function getBuildAgent(platform: Platform, options: PipelineOptions): Ec2Agent {
+function getBuildAgent(platform: Platform): Ec2Agent {
   // Every build lane runs on the single debian-13 aarch64 host image
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
@@ -577,13 +579,13 @@ function getBuildAgent(platform: Platform, options: PipelineOptions): Ec2Agent {
   // Lanes without LTO (see ltoDefault in scripts/build/config.ts): rustc does its own fat LTO + codegen inside cargo, so the C++ compile overlapping it costs ~20s on 16 vCPUs; give them 32.
   const nonLto =
     profile === "asan" || abi === "android" || os === "freebsd" || (os === "windows" && arch === "aarch64");
-  return getEc2Agent(buildHostPlatform, options, {
+  return getEc2Agent(buildHostPlatform, {
     // Replaces the c8g.4xlarge (C++) + r8g.2xlarge (cargo + ThinLTO link; r8g.4xlarge for asan) pair.
     instanceType: nonLto ? "r8g.8xlarge" : "r8g.4xlarge",
   });
 }
 
-function getTestAgent(platform: Platform, options: PipelineOptions): Agent {
+function getTestAgent(platform: Platform): Agent {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
@@ -602,7 +604,7 @@ function getTestAgent(platform: Platform, options: PipelineOptions): Agent {
 
   // TODO: delete this block when we upgrade to mimalloc v3
   if (os === "windows") {
-    return getEc2Agent(platform, options, {
+    return getEc2Agent(platform, {
       instanceType: getAzureVmSize(os, arch, "test"),
     });
   }
@@ -618,22 +620,22 @@ function getTestAgent(platform: Platform, options: PipelineOptions): Agent {
       // ASAN needs ~1:8 shadow memory plus a 256 MB quarantine per process
       // plus LSan loading the binary's DWARF; the c-family's 16 GB OOMs the
       // agent. r-family has 4× the RAM at the same vCPU.
-      return getEc2Agent(platform, options, {
+      return getEc2Agent(platform, {
         instanceType: "r8g.2xlarge",
       });
     }
-    return getEc2Agent(platform, options, {
+    return getEc2Agent(platform, {
       instanceType: musl ? "m8g.xlarge" : "c8g.xlarge",
     });
   }
 
   if (profile === "asan") {
     // Same rationale as the aarch64 asan branch above.
-    return getEc2Agent(platform, options, {
+    return getEc2Agent(platform, {
       instanceType: "r7i.2xlarge",
     });
   }
-  return getEc2Agent(platform, options, {
+  return getEc2Agent(platform, {
     instanceType: musl ? "m7i.xlarge" : "c7i.xlarge",
   });
 }
@@ -699,7 +701,7 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
   return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    agents: getBuildAgent(platform, options),
+    agents: getBuildAgent(platform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     timeout_in_minutes: 60,
@@ -847,8 +849,8 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
   const host = getVerifyBaselineHost(platform);
   const agents =
     os === "windows"
-      ? getEc2Agent(host, options, { instanceType: getAzureVmSize("windows", platform.arch) })
-      : getEc2Agent(host, options, {
+      ? getEc2Agent(host, { instanceType: getAzureVmSize("windows", platform.arch) })
+      : getEc2Agent(host, {
           instanceType: platform.arch === "aarch64" ? "r8g.2xlarge" : "r7i.2xlarge",
         });
 
@@ -920,7 +922,7 @@ function getTraceOrderStep(target: Target, tracePlatform: Platform, options: Pip
     key: `${targetKey}-trace-order`,
     label: `${getTargetLabel(target)} - trace-order`,
     depends_on: [`${targetKey}-build-bun`],
-    agents: getTestAgent(tracePlatform, options),
+    agents: getTestAgent(tracePlatform),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     soft_fail: true,
@@ -976,7 +978,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     key: `${getPlatformKey(platform)}-test-bun`,
     label: `${getPlatformLabel(platform)} - test-bun`,
     depends_on: depends,
-    agents: getTestAgent(platform, options),
+    agents: getTestAgent(platform),
 
     // No automatic retry on the beta tier: agent loss would re-queue the
     // job onto a single-box queue with nobody to take it, and a job that
@@ -1032,8 +1034,8 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
  * described in scripts/build/ci-images/spec.ts, and an image's name is
  * `<key>-<hash>`, where the hash covers everything its bake runs.
  *
- * To change what is installed on a CI machine, edit the spec or a tool's
- * script. The names of the images it affects change with it; a build that
+ * To change what is installed on a CI machine, edit that file. The names of
+ * the images it affects change with it; a build that
  * needs a name that does not exist yet bakes it first, and every later build
  * (the PR's next push, `main` after the merge) finds it by name.
  *
@@ -1043,19 +1045,21 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
  * @returns steps for the `images` group; the last one's key is
  *   `${getImageKey(platform)}-build-image`, which is what dependents wait on.
  */
-function getImageSteps(platform: Platform, state: ImageState, options: PipelineOptions): CommandStep[] {
-  const imageKey = getImageKey(platform);
-  const { image, generated } = getGeneratedImage(platform);
-  const { name } = generated;
-  const downloadBakeDirectory = `buildkite-agent artifact download "build/ci-images/${imageKey}/*" .`;
+function getImageSteps(
+  platform: Platform,
+  image: BakedImage,
+  { key, name }: GeneratedImage,
+  state: ImageState,
+): CommandStep[] {
+  const downloadBakeDirectory = `buildkite-agent artifact download "${bakeDirectory(key)}/*" .`;
   // What the bake installed, to read from the build's page without starting a machine from the image.
-  const record = `build/ci-images/${imageKey}/bun-image.json`;
+  const record = `${bakeDirectory(key)}/${imageRecordName}`;
   const uploadRecord = `buildkite-agent artifact upload ${record}`;
   const bakeTimeout = 3 * 60;
 
   // Another build found the name missing a moment ago and is baking it.
   const waitStep: CommandStep = {
-    key: `${imageKey}-build-image`,
+    key: `${key}-build-image`,
     label: `${getImageLabel(platform)} - wait-for-image`,
     agents: { queue: "build-image" },
     retry: getRetry(),
@@ -1081,7 +1085,7 @@ function getImageSteps(platform: Platform, state: ImageState, options: PipelineO
           BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
         },
         // One command, so that a cancel reaches Packer (see bakeWindowsImage).
-        command: `node ./scripts/ci-image.ts bake-image --key=${imageKey} --name=${name}`,
+        command: `node ./scripts/ci-image.ts bake-image --key=${key} --name=${name} --timeout-minutes=${bakeTimeout - 10}`,
       },
     ];
   }
@@ -1091,10 +1095,10 @@ function getImageSteps(platform: Platform, state: ImageState, options: PipelineO
   // the bake's log, and the machine is imaged as `image-name` once the step
   // passes. The wait step after it keeps the key dependents wait on.
   const bakeStep: CommandStep = {
-    key: `${imageKey}-bake-image`,
+    key: `${key}-bake-image`,
     label: `${getImageLabel(platform)} - bake-image`,
     agents: {
-      ...getEc2Agent(platform, options, { instanceType: image.arch === "aarch64" ? "t4g.large" : "t3.large" }),
+      ...getEc2Agent(platform, { instanceType: image.arch === "aarch64" ? "t4g.large" : "t3.large" }),
       "bake": true,
       "base-image": image.base.name,
       "base-image-owner": image.base.owner,
@@ -1104,8 +1108,8 @@ function getImageSteps(platform: Platform, state: ImageState, options: PipelineO
     // ($$ is a literal $ after pipeline-upload interpolation.)
     command: [
       downloadBakeDirectory,
-      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) sh build/ci-images/${imageKey}/bootstrap.sh "$$PWD" ${name}`,
-      `cp /etc/bun-image.json ${record}`,
+      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) sh ${bakeDirectory(key)}/bootstrap.sh "$$PWD" ${name}`,
+      `cp ${locations.imageRecord.linux} ${record}`,
       uploadRecord,
     ],
     timeout_in_minutes: bakeTimeout,
@@ -1113,15 +1117,15 @@ function getImageSteps(platform: Platform, state: ImageState, options: PipelineO
   return [bakeStep, { ...waitStep, depends_on: [bakeStep.key] }];
 }
 
-/**
- * Batch-signs all Windows artifacts on an x64 agent. DigiCert smctl is x64-only
- * and silently fails under ARM64 emulation, so signing must happen here instead
- * of inline during each build. Re-uploads signed zips with the same names so
- * the release step picks them up transparently.
- */
-/** Signing runs on a real Windows x64 machine: smctl does not work on ARM64. */
 const windowsSignPlatform: Platform = { os: "windows", arch: "x64", release: "2019" };
 
+/**
+ * Batch-signs all Windows artifacts on an x64 agent (`windowsSignPlatform`).
+ * DigiCert smctl is x64-only and silently fails under ARM64 emulation, so
+ * signing must happen here instead of inline during each build. Re-uploads
+ * signed zips with the same names so the release step picks them up
+ * transparently.
+ */
 function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptions): CommandStep {
   // Each build-bun step produces two zips: <triplet>-profile.zip and <triplet>.zip
   const artifacts: string[] = [];
@@ -1139,7 +1143,7 @@ function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptio
     key: "windows-sign",
     label: `${getBuildkiteEmoji("windows")} sign`,
     depends_on: windowsPlatforms.map(p => `${getTargetKey(p)}-build-bun`),
-    agents: getEc2Agent(windowsSignPlatform, options, {
+    agents: getEc2Agent(windowsSignPlatform, {
       instanceType: getAzureVmSize("windows", "x64", "test"),
     }),
     retry: getRetry(),
@@ -1171,7 +1175,7 @@ function getBinarySizeStep(
   return {
     key: "binary-size",
     label: `${getBuildkiteEmoji("package")} binary-size`,
-    agents: getEc2Agent(buildHostPlatform, options, { instanceType: "c8g.large" }),
+    agents: getEc2Agent(buildHostPlatform, { instanceType: "c8g.large" }),
     depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
     allow_dependency_failure: true,
     soft_fail: !!options.skipSizeCheck,
@@ -1208,7 +1212,7 @@ function getReleaseStep(
   return {
     key: "release",
     label: getBuildkiteEmoji("rocket"),
-    agents: getEc2Agent(buildHostPlatform, options, { instanceType: "c8g.large" }),
+    agents: getEc2Agent(buildHostPlatform, { instanceType: "c8g.large" }),
     depends_on,
     env: {
       CANARY: revision,
@@ -1761,10 +1765,10 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           `The CI image ${generated.name} does not exist, and a fork's build cannot bake it: a bake runs the branch's code on a machine that becomes everyone's image. Push the branch to oven-sh/bun to bake it.`,
         );
       }
-      await run(["buildkite-agent", "artifact", "upload", `build/ci-images/${key}/*`]);
+      await run(["buildkite-agent", "artifact", "upload", `${bakeDirectory(key)}/*`]);
     }
     baking.add(key);
-    imageSteps.push(...getImageSteps(platform, state, options));
+    imageSteps.push(...getImageSteps(platform, image, generated, state));
   }
 
   const steps: Step[] = [];

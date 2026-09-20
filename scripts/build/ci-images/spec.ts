@@ -21,7 +21,7 @@
 import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { linuxAgentPaths, windowsAgentHome } from "../../agent.ts";
+import { type Arch, agentUser, linuxAgentPaths, windowsAgentHome } from "../../agent.ts";
 import { BuildError } from "../error.ts";
 
 // ═══════════════════════════════════════════════════════════════════ 1. DATA
@@ -31,7 +31,7 @@ import { BuildError } from "../error.ts";
  * machine: their every byte is part of an image's name. Nothing else outside
  * this file is.
  */
-export const files = {
+const files = {
   /** The agent: installed as the machine's service, and run at every start. It runs there alone, so it owns the agent's directories (`linuxAgentPaths`, `windowsAgentHome`). */
   "agent.mts": "scripts/agent.ts",
   /** Third-party, vendored: unpacks the macOS SDK on the build image. */
@@ -48,12 +48,19 @@ const alpineRelease = "3.23";
  * runs on the machines by itself, and scripts/darwin-ci/guest/job.sh, which is
  * shell, both put the Linux and macOS `rust` directory's bin on PATH.
  *
- * The agent's own directories (its home, cache and logs) are not here but in
- * scripts/agent.ts, as `linuxAgentPaths` and `windowsAgentHome`: that file is
- * copied to the machine and runs there alone, so it has to contain them, and
- * the generator imports them from it (`AGENT_HOME`, `AGENT_CACHE`, `AGENT_LOGS`).
+ * The agent's user and its own directories (home, cache and logs) are not here
+ * but in scripts/agent.ts, as `agentUser`, `linuxAgentPaths` and
+ * `windowsAgentHome`: that file is copied to the machine and runs there alone,
+ * so it has to contain them, and the tools import them from it.
+ *
+ * Windows paths are written with `\` here, because the build system and
+ * .buildkite/ci.ts use them as they are.
  */
 export const locations = {
+  /** bun-image.json: what the bake recorded about the machine (see `Identity`). */
+  imageRecord: { linux: "/etc/bun-image.json", windows: "C:\\bun-image.json" },
+  /** `bun install`'s cache, filled while the image is baked. */
+  installCache: { linux: "/var/cache/bun-install", windows: "C:\\bun-install-cache" },
   rust: { linux: "/opt/rust", darwin: "/opt/rust", windows: "C:\\Program Files\\Rust" },
   bunNinja: { linux: "/opt/bun-ninja", darwin: "/opt/bun-ninja", windows: "C:\\Program Files\\bun-ninja" },
   /** Dependency sources for scripts/build/download.ts, fetched while the image is baked. */
@@ -111,7 +118,11 @@ export const pins = {
   androidNdk: { version: "r27c", apiLevel: 28 },
   // A FreeBSD release moves from download.freebsd.org to the archive when it reaches end of life.
   freebsd: { version: "14.3", baseUrl: "https://archive.freebsd.org/old-releases" },
-  glibcSysroot: { gccDebsUrl: "https://github.com/oven-sh/WebKit/releases/download/gcc-13-focal-debs" },
+  // The release WebKit's prebuilt is built on (glibc 2.31).
+  glibcSysroot: {
+    ubuntu: { release: "20.04", codename: "focal" },
+    gccDebsUrl: "https://github.com/oven-sh/WebKit/releases/download/gcc-13-focal-debs",
+  },
   muslSysroot: { alpineRelease },
   windowsSysroot: { xwin: "0.9.0", sdk: "10.0.26100", crt: "14.44.17.14" },
   macosSdk: { sdk: "26.5", commandLineTools: "26.5" },
@@ -312,9 +323,36 @@ const scoopPackages = {
   x64: ["nasm", "mingw"],
 } as const;
 
+/** Where `bun run ci:images` and CI write an image's bake directory, from the repository's root. */
+export const bakeDirectory = (key: string) => `build/ci-images/${key}`;
+/** The name bun-image.json has in a bake directory, once the bake job has copied it out of the machine. */
+export const imageRecordName = "bun-image.json";
+
+/** Hosts more than one tool downloads from. */
+const mirrors = {
+  /** Bun's own copies of what has no stable public URL. */
+  bunArtifacts: "https://buncistore.blob.core.windows.net/artifacts",
+  alpine: "https://dl-cdn.alpinelinux.org/alpine",
+} as const;
+
+/** apt.llvm.org, Alpine and Homebrew name LLVM's packages by its major. */
+const llvmMajor = pins.llvm.version.split(".")[0]!;
+
+/** The same CPU, as each publisher spells it. */
+const cpuName = { x64: "x86_64", aarch64: "aarch64" } as const;
+const debianArch = { x64: "amd64", aarch64: "arm64" } as const;
+const nodeArch = { x64: "x64", aarch64: "arm64" } as const;
+
+/** What the prefetch tools download is decided by the commit being built: a dependency bump does not rename an image. */
+const prefetched: Identity = { kind: "notRecorded", reason: "decided by the commit being built, not by this file" };
+/** The three `bun install`s a test job runs. */
+const installedPackages = [".", "test", "scripts/ci-remap-server"];
+
 /** How Packer bakes a Windows image (the template itself is rendered by `renderPackerTemplate`). */
 export const windowsBake = {
   osDiskGb: 150,
+  /** Packer publishes an image as this version of the gallery image definition named after it. */
+  galleryVersion: "1.0.0",
   /** Where a published image is replicated, besides the gallery's own region: every region CI launches Windows machines in. */
   galleryRegions: [
     ...["australiaeast", "brazilsouth", "canadacentral", "canadaeast", "centralindia", "centralus", "francecentral"],
@@ -332,7 +370,6 @@ export const windowsBake = {
   ],
 } as const;
 
-const agentUser = "buildkite-agent";
 const limits = { openFiles: 1048576, processes: 1048576 };
 
 // ══════════════════════════════════════════════════════════════════ 2. TOOLS
@@ -416,7 +453,7 @@ function agentAccount(): Tool {
   const { homePath, cachePath, logsPath } = linuxAgentPaths;
   const owner = `${agentUser}:${agentUser}`;
   return {
-    name: "agent-user",
+    name: "agent-account",
     identity: configuration,
     steps: [
       systemUser(agentUser, homePath),
@@ -426,9 +463,7 @@ function agentAccount(): Tool {
       writeFile(
         `${homePath}/hooks/environment`,
         ["#!/bin/sh", "set -efu", `export BUILDKITE_BUILD_CHECKOUT_PATH=${homePath}/build`],
-        {
-          executable: true,
-        },
+        { executable: true },
       ),
       ownedBy(owner, `${homePath}/hooks`),
     ],
@@ -438,72 +473,61 @@ function agentAccount(): Tool {
 /** Node.js, its headers, and the node-gyp cache that lets native addons build offline. */
 function nodejs(image: Image): Tool {
   const { version, nodeGypInstallVersion } = pins.nodejs;
-  const arch = image.arch === "x64" ? "x64" : "arm64";
-  const headersUrl = `https://nodejs.org/download/release/v${version}/node-v${version}-headers.tar.gz`;
-  const headers = [
-    download(headersUrl, scratch("headers.tar.gz")),
-    directory(scratch("headers")),
-    unpack(scratch("headers.tar.gz"), scratch("headers"), { kind: "tar.gz", strip: 1 }),
-  ];
-  const gypCache = (cache: Value, extra: Step[]): Step[] => [
+  const arch = nodeArch[image.arch];
+  const headers = unpackedArchive({
+    url: `https://nodejs.org/download/release/v${version}/node-v${version}-headers.tar.gz`,
+    file: "headers.tar.gz",
+    into: scratch("headers"),
+    strip: 1,
+  });
+  /** node-gyp looks in its cache before it downloads anything. */
+  const gypCache = (cache: Value, extra: Step[] = []): Step[] => [
     directory(cache),
     copy(scratch("headers/include"), cache),
     ...extra,
     writeFile(text`${cache}/installVersion`, [nodeGypInstallVersion]),
   ];
+  return { name: "nodejs", identity: pinned(version), steps: image.os === "windows" ? onWindows() : elsewhere(image) };
 
-  if (image.os === "windows") {
-    return {
-      name: "nodejs",
-      identity: pinned(version),
-      steps: [
-        scoopInstall(`nodejs@${version}`),
-        ...headers,
-        comment("node.lib: what a native addon links against on Windows."),
-        download(`https://nodejs.org/dist/v${version}/win-${arch}/node.lib`, scratch("node.lib")),
-        comment(
-          "node-gyp looks in its cache first: the one of the user who runs this, and the one of the agent's service account.",
-        ),
-        ...[environment("LOCALAPPDATA"), `${windowsAgentHome}/AppData/Local`].flatMap(base => {
-          const cache = text`${base}/node-gyp/Cache/${version}`;
-          return gypCache(cache, [
-            directory(text`${cache}/${arch}`),
-            copy(scratch("node.lib"), text`${cache}/${arch}/node.lib`),
-          ]);
-        }),
-      ],
-    };
+  function onWindows(): Step[] {
+    return [
+      scoopInstall(`nodejs@${version}`),
+      ...headers,
+      comment("node.lib: what a native addon links against on Windows."),
+      download(`https://nodejs.org/dist/v${version}/win-${arch}/node.lib`, scratch("node.lib")),
+      comment("Two caches: the one of the user who runs this, and the one of the agent's service account."),
+      ...[environment("LOCALAPPDATA"), `${windowsAgentHome}/AppData/Local`].flatMap(base => {
+        const cache = text`${base}/node-gyp/Cache/${version}`;
+        return gypCache(cache, [
+          directory(text`${cache}/${arch}`),
+          copy(scratch("node.lib"), text`${cache}/${arch}/node.lib`),
+        ]);
+      }),
+    ];
   }
 
-  // nodejs.org only ships glibc builds.
-  const url =
-    image.os === "linux" && image.abi === "musl"
-      ? `https://unofficial-builds.nodejs.org/download/release/v${version}/node-v${version}-linux-${arch}-musl.tar.gz`
-      : `https://nodejs.org/dist/v${version}/node-v${version}-${image.os}-${arch}.tar.gz`;
-  const cache =
-    image.os === "linux"
-      ? `${linuxAgentPaths.homePath}/.cache/node-gyp/${version}`
-      : text`${environment("HOME")}/Library/Caches/node-gyp/${version}`;
-  return {
-    name: "nodejs",
-    identity: pinned(version),
-    steps: [
-      download(url, scratch("node.tar.gz")),
-      directory(scratch("node")),
-      unpack(scratch("node.tar.gz"), scratch("node"), { kind: "tar.gz", strip: 1 }),
+  function elsewhere(image: LinuxImage | MacosImage): Step[] {
+    // nodejs.org only ships glibc builds.
+    const url =
+      image.os === "linux" && image.abi === "musl"
+        ? `https://unofficial-builds.nodejs.org/download/release/v${version}/node-v${version}-linux-${arch}-musl.tar.gz`
+        : `https://nodejs.org/dist/v${version}/node-v${version}-${image.os}-${arch}.tar.gz`;
+    return [
+      ...unpackedArchive({ url, file: "node.tar.gz", into: scratch("node"), strip: 1 }),
       ...["/usr/local/bin", "/usr/local/lib", "/usr/local/include"].map(path => directory(path)),
       copy(scratch("node/bin/."), "/usr/local/bin/"),
       copy(scratch("node/lib/node_modules"), "/usr/local/lib/"),
       copy(scratch("node/include/node"), "/usr/local/include/"),
       ...headers,
       copy(scratch("headers/include/."), "/usr/local/include/"),
-      comment("node-gyp looks here before it downloads anything."),
-      ...gypCache(cache, []),
       ...(image.os === "linux"
-        ? [ownedBy(agentUser, `${linuxAgentPaths.homePath}/.cache`)]
-        : [addToPath("/usr/local/bin")]),
-    ],
-  };
+        ? [
+            ...gypCache(`${linuxAgentPaths.homePath}/.cache/node-gyp/${version}`),
+            ownedBy(agentUser, `${linuxAgentPaths.homePath}/.cache`),
+          ]
+        : [...gypCache(text`${environment("HOME")}/Library/Caches/node-gyp/${version}`), addToPath("/usr/local/bin")]),
+    ];
+  }
 }
 
 function bun(image: Image): Tool {
@@ -528,30 +552,27 @@ function bun(image: Image): Tool {
  * Bun's build of ninja (oven-sh/ninja), in a directory of its own that is not
  * on PATH: the `ninja` the build runs is still the machine's own. The release
  * publishes each zip's sha256 in its bun-ninja.json, and the Linux binary is
- * static, so every distro gets the same one.
+ * static, so every distro gets the same one. Nothing reads it yet.
  */
 function bunNinja(image: Image): Tool {
   const platform = `${image.os}-${image.arch}` as const;
-  const home = locations.bunNinja[image.os];
   return {
     name: "bun-ninja",
     identity: pinned(pins.bunNinja.tag),
-    steps: [
-      download(
-        `https://github.com/oven-sh/ninja/releases/download/${pins.bunNinja.tag}/bun-ninja-${platform}.zip`,
-        scratch("ninja.zip"),
-      ),
-      checksum(scratch("ninja.zip"), pins.bunNinja.sha256[platform]),
-      directory(home),
-      unpack(scratch("ninja.zip"), home, { kind: "zip", ...(image.os === "windows" ? {} : { only: ["ninja"] }) }),
-    ],
+    steps: unpackedArchive({
+      url: `https://github.com/oven-sh/ninja/releases/download/${pins.bunNinja.tag}/bun-ninja-${platform}.zip`,
+      sha256: pins.bunNinja.sha256[platform],
+      file: "ninja.zip",
+      into: locations.bunNinja[image.os],
+      ...(image.os === "windows" ? {} : { only: ["ninja"] }),
+    }),
   };
 }
 
 /** A static curl built with HTTP/3, as `curl-h3` beside the system's curl. The HTTP/3 tests find it through $CURL_HTTP3. */
 function curlH3(image: Image): Tool {
   const { version } = pins.curlH3;
-  const cpu = image.arch === "x64" ? "x86_64" : "aarch64";
+  const cpu = cpuName[image.arch];
   const asset =
     image.os === "linux"
       ? `curl-linux-${cpu}-${image.abi === "musl" ? "musl" : "glibc"}`
@@ -559,25 +580,20 @@ function curlH3(image: Image): Tool {
         ? `curl-windows-${cpu}`
         : `curl-macos-${image.arch === "x64" ? "x86_64" : "arm64"}`;
   const url = `https://github.com/stunnel/static-curl/releases/download/${version}/${asset}-${version}.tar.xz`;
-  if (image.os === "windows") {
-    return {
-      name: "curl-h3",
-      identity: pinned(version),
-      steps: [
-        download(url, scratch("curl-h3.tar.xz")),
-        directory(scratch("curl-h3")),
-        unpack(scratch("curl-h3.tar.xz"), scratch("curl-h3"), { kind: "tar.xz" }),
-        installExecutable(scratch("curl-h3/curl.exe"), bin(image, "curl-h3")),
-        copy(scratch("curl-h3/curl-ca-bundle.crt"), "C:/Windows/System32/curl-ca-bundle.crt"),
-        setEnvironment("CURL_HTTP3", bin(image, "curl-h3")),
-      ],
-    };
-  }
+  const windows = image.os === "windows";
   return {
     name: "curl-h3",
     identity: pinned(version),
     steps: [
-      ...executableFromArchive({ url, kind: "tar.xz", member: "curl", extractOnly: "curl", to: bin(image, "curl-h3") }),
+      ...executableFromArchive({
+        url,
+        kind: "tar.xz",
+        member: windows ? "curl.exe" : "curl",
+        // 7-Zip, which unpacks it on Windows, takes the whole archive out.
+        ...(windows ? {} : { extractOnly: "curl" }),
+        to: bin(image, "curl-h3"),
+      }),
+      ...(windows ? [copy(scratch("unpacked/curl-ca-bundle.crt"), "C:/Windows/System32/curl-ca-bundle.crt")] : []),
       setEnvironment("CURL_HTTP3", bin(image, "curl-h3")),
     ],
   };
@@ -593,46 +609,36 @@ function tailscale(): Tool {
 
 function buildkiteAgent(image: BakedImage): Tool {
   const { version } = pins.buildkiteAgent;
-  const arch = image.arch === "x64" ? "amd64" : "arm64";
   const release = `https://github.com/buildkite/agent/releases/download/v${version}`;
-  if (image.os === "windows") {
-    return {
-      name: "buildkite-agent",
-      identity: pinned(version),
-      steps: [
-        directory(`${windowsAgentHome}/bin`),
-        directory(`${windowsAgentHome}/hooks`),
-        ...executableFromArchive({
-          url: `${release}/buildkite-agent-windows-${arch}-${version}.zip`,
-          kind: "zip",
-          member: "buildkite-agent.exe",
-          to: `${windowsAgentHome}/bin/buildkite-agent.exe`,
-        }),
-        addToPath(`${windowsAgentHome}/bin`),
-        comment("One checkout directory for every job, so compiler caches keyed on paths hit."),
-        writeFile(`${windowsAgentHome}/hooks/environment.ps1`, [
-          `$env:BUILDKITE_BUILD_CHECKOUT_PATH = "${windowsAgentHome}\\build"`,
-        ]),
-      ],
-    };
-  }
-  return {
-    name: "buildkite-agent",
-    identity: pinned(version),
-    steps: executableFromArchive({
-      url: `${release}/buildkite-agent-linux-${arch}-${version}.tar.gz`,
-      kind: "tar.gz",
-      member: "buildkite-agent",
-      extractOnly: "./buildkite-agent",
-      to: bin(image, "buildkite-agent"),
+  const onWindows = [
+    directory(`${windowsAgentHome}/bin`),
+    directory(`${windowsAgentHome}/hooks`),
+    ...executableFromArchive({
+      url: `${release}/buildkite-agent-windows-${debianArch[image.arch]}-${version}.zip`,
+      kind: "zip",
+      member: "buildkite-agent.exe",
+      to: `${windowsAgentHome}/bin/buildkite-agent.exe`,
     }),
-  };
+    addToPath(`${windowsAgentHome}/bin`),
+    comment("One checkout directory for every job, so compiler caches keyed on paths hit."),
+    writeFile(`${windowsAgentHome}/hooks/environment.ps1`, [
+      `$env:BUILDKITE_BUILD_CHECKOUT_PATH = "${windowsAgentHome}\\build"`,
+    ]),
+  ];
+  const onLinux = executableFromArchive({
+    url: `${release}/buildkite-agent-linux-${debianArch[image.arch]}-${version}.tar.gz`,
+    kind: "tar.gz",
+    member: "buildkite-agent",
+    extractOnly: "./buildkite-agent",
+    to: bin(image, "buildkite-agent"),
+  });
+  return { name: "buildkite-agent", identity: pinned(version), steps: image.os === "windows" ? onWindows : onLinux };
 }
 
 function cmake(image: LinuxImage): Tool {
   if (image.distro === "alpine") return { name: "cmake", identity: packageDatabase, steps: [apkAdd(["cmake"])] };
   const { version } = pins.cmake;
-  const url = `https://github.com/Kitware/CMake/releases/download/v${version}/cmake-${version}-linux-${image.arch === "x64" ? "x86_64" : "aarch64"}.sh`;
+  const url = `https://github.com/Kitware/CMake/releases/download/v${version}/cmake-${version}-linux-${cpuName[image.arch]}.sh`;
   return {
     name: "cmake",
     identity: pinned(version),
@@ -648,7 +654,7 @@ function cmake(image: LinuxImage): Tool {
  */
 function llvm(image: Image): Tool {
   const { version } = pins.llvm;
-  const major = version.split(".")[0]!;
+  const major = llvmMajor;
   if (image.os === "windows") {
     return {
       name: "llvm",
@@ -683,7 +689,7 @@ function llvm(image: Image): Tool {
             "repository: apk takes a package from it only when asked for with the tag, so musl and libstdc++\n" +
             "stay the release's. llvmN-dev is left out: it needs edge's python3.",
         ),
-        appendLines("/etc/apk/repositories", ["@edge https://dl-cdn.alpinelinux.org/alpine/edge/main"]),
+        appendLines("/etc/apk/repositories", [`@edge ${mirrors.alpine}/edge/main`]),
         apkAdd([`llvm${major}@edge`, `clang${major}@edge`, `lld${major}@edge`, "scudo-malloc"], { update: true }),
         comment("llvm-symbolizer, llvm-objcopy and the rest are only versioned in /usr/bin."),
         addToPath(`/usr/lib/llvm${major}/bin`),
@@ -728,7 +734,7 @@ function llvm(image: Image): Tool {
  */
 function rust(image: Image): Tool {
   const { rustup, channel, components, targets } = pins.rust;
-  const cpu = image.arch === "x64" ? "x86_64" : "aarch64";
+  const cpu = cpuName[image.arch];
   const host =
     image.os === "linux"
       ? `${cpu}-unknown-linux-${image.abi}`
@@ -757,37 +763,32 @@ function rust(image: Image): Tool {
       targets.join(","),
     ),
   ];
-  if (image.os === "windows") {
-    return {
-      name: "rust",
-      identity: pinned(`${channel} (rustup ${rustup})`),
-      steps: [
-        setEnvironment("CARGO_HOME", `${home}/cargo`),
-        setEnvironment("RUSTUP_HOME", `${home}/rustup`),
-        ...install,
-        addToPath(`${home}/cargo/bin`),
-      ],
-    };
-  }
+  const onWindows = [
+    setEnvironment("CARGO_HOME", `${home}/cargo`),
+    setEnvironment("RUSTUP_HOME", `${home}/rustup`),
+    ...install,
+    addToPath(`${home}/cargo/bin`),
+  ];
+  const elsewhere = [
+    // A Mac is set up by its admin user, and a bare host runs its jobs as another.
+    ...(image.os === "darwin" ? [directory(home, { owner: output(run("id", "-un")) })] : []),
+    setEnvironment("RUSTUP_HOME", home),
+    setEnvironment("CARGO_HOME", home),
+    ...install,
+    addToPath(`${home}/bin`),
+    // Builds run as the agent's user, and cargo writes its registry here.
+    image.os === "linux" ? ownedBy(`${agentUser}:${agentUser}`, home) : mode("a+rwX", home, { recursive: true }),
+  ];
   return {
     name: "rust",
     identity: pinned(`${channel} (rustup ${rustup})`),
-    steps: [
-      // A Mac is set up by its admin user, and a bare host runs its jobs as another.
-      ...(image.os === "darwin" ? [directory(home, { owner: output(run("id", "-un")) })] : []),
-      setEnvironment("RUSTUP_HOME", home),
-      setEnvironment("CARGO_HOME", home),
-      ...install,
-      addToPath(`${home}/bin`),
-      // Builds run as the agent's user, and cargo writes its registry here.
-      image.os === "linux" ? ownedBy(`${agentUser}:${agentUser}`, home) : mode("a+rwX", home, { recursive: true }),
-    ],
+    steps: image.os === "windows" ? onWindows : elsewhere,
   };
 }
 
 /** The x86-64 compiler runtime, so the arm64 build image can link for x64. */
 function crossCompilerRt(): Tool {
-  const major = pins.llvm.version.split(".")[0]!;
+  const major = llvmMajor;
   return {
     name: "cross-compiler-rt",
     identity: packageDatabase,
@@ -801,6 +802,7 @@ function crossCompilerRt(): Tool {
 function androidNdk(): Tool {
   const { version, apiLevel } = pins.androidNdk;
   const ndk = locations.androidNdk;
+  const parent = ndk.slice(0, ndk.lastIndexOf("/"));
   const prebuilt = `${ndk}/toolchains/llvm/prebuilt/linux-x86_64`;
   const resourceDir = variable("resource_dir");
   const ndkRuntime = text`${prebuilt}/lib/clang/${variable("ndk_clang")}/lib/linux`;
@@ -808,9 +810,12 @@ function androidNdk(): Tool {
     name: "android-ndk",
     identity: pinned(version),
     steps: [
-      download(`https://dl.google.com/android/repository/android-ndk-${version}-linux.zip`, scratch("ndk.zip")),
-      unpack(scratch("ndk.zip"), ndk.slice(0, ndk.lastIndexOf("/")), { kind: "zip" }),
-      move(`${ndk.slice(0, ndk.lastIndexOf("/"))}/android-ndk-${version}`, ndk),
+      ...unpackedArchive({
+        url: `https://dl.google.com/android/repository/android-ndk-${version}-linux.zip`,
+        file: "ndk.zip",
+        into: parent,
+      }),
+      move(`${parent}/android-ndk-${version}`, ndk),
       comment("The NDK's own clang, lldb and non-Android runtimes: about 1.1 GB nothing uses."),
       remove(
         `${prebuilt}/bin`,
@@ -847,17 +852,14 @@ function freebsdSysroot(): Tool {
   return {
     name: "freebsd-sysroot",
     identity: pinned(version),
-    steps: (["x64", "aarch64"] as const).flatMap(arch => {
-      const archive = scratch(`base-${arch}.tar.xz`);
-      return [
-        download(`${baseUrl}/${arch === "x64" ? "amd64" : "arm64"}/${version}-RELEASE/base.txz`, archive),
-        directory(locations.freebsdSysroot[arch]),
-        unpack(archive, locations.freebsdSysroot[arch], {
-          kind: "tar.xz",
-          only: ["./usr/include", "./usr/lib", "./lib"],
-        }),
-      ];
-    }),
+    steps: (["x64", "aarch64"] as const).flatMap(arch =>
+      unpackedArchive({
+        url: `${baseUrl}/${debianArch[arch]}/${version}-RELEASE/base.txz`,
+        file: `base-${arch}.tar.xz`,
+        into: locations.freebsdSysroot[arch],
+        only: ["./usr/include", "./usr/lib", "./lib"],
+      }),
+    ),
   };
 }
 
@@ -868,6 +870,7 @@ function freebsdSysroot(): Tool {
  * over what is known on the machine.
  */
 function glibcSysroot(): Tool {
+  const { ubuntu } = pins.glibcSysroot;
   const filenameOf = `$1=="Package:"&&$2==p{f=1} f&&$1=="Filename:"{print $2; exit}`;
   return {
     name: "glibc-sysroot",
@@ -876,30 +879,42 @@ function glibcSysroot(): Tool {
       comment("binutils-x86-64-linux-gnu: a strip that accepts x86-64 objects on the arm64 host."),
       aptInstall(["skopeo", "jq", "binutils-x86-64-linux-gnu"]),
       ...(["x64", "aarch64"] as const).flatMap((arch): Step[] => {
-        const deb = arch === "x64" ? "amd64" : "arm64";
-        const triple = arch === "x64" ? "x86_64-linux-gnu" : "aarch64-linux-gnu";
+        const deb = debianArch[arch];
+        const triple = `${cpuName[arch]}-linux-gnu`;
         const mirror = arch === "x64" ? "http://archive.ubuntu.com/ubuntu" : "http://ports.ubuntu.com/ubuntu-ports";
         const sysroot = locations.glibcSysroot[arch];
         const image = scratch(`image-${deb}`);
         const index = scratch(`Packages-${deb}`);
         return [
-          comment(`${deb}: ubuntu:20.04's root filesystem. Device nodes cannot be made here and are not needed.`),
+          comment(
+            `${deb}: ubuntu:${ubuntu.release}'s root filesystem. Device nodes cannot be made here and are not needed.`,
+          ),
           directory(sysroot),
-          run("skopeo", "copy", "--override-arch", deb, "docker://docker.io/library/ubuntu:20.04", text`dir:${image}`),
+          run(
+            "skopeo",
+            "copy",
+            "--override-arch",
+            deb,
+            `docker://docker.io/library/ubuntu:${ubuntu.release}`,
+            text`dir:${image}`,
+          ),
           forEachOutput(
             "layer",
             pipe(run("jq", "-r", ".layers[].digest", text`${image}/manifest.json`), run("sed", "s/^sha256://")),
             [tolerate(run("tar", "-xzf", text`${image}/${variable("layer")}`, "-C", sysroot))],
           ),
           comment(
-            `${deb}: libc's runtime and headers from focal; focal-updates first, so its version is the one found.`,
+            `${deb}: libc's runtime and headers from ${ubuntu.codename}; ${ubuntu.codename}-updates first, so its version is the one found.`,
           ),
-          download(`${mirror}/dists/focal-updates/main/binary-${deb}/Packages.gz`, scratch(`updates-${deb}.gz`)),
-          download(`${mirror}/dists/focal/main/binary-${deb}/Packages.gz`, scratch(`release-${deb}.gz`)),
+          download(
+            `${mirror}/dists/${ubuntu.codename}-updates/main/binary-${deb}/Packages.gz`,
+            scratch(`updates-${deb}.gz`),
+          ),
+          download(`${mirror}/dists/${ubuntu.codename}/main/binary-${deb}/Packages.gz`, scratch(`release-${deb}.gz`)),
           toFile(run("gzip", "-dc", scratch(`updates-${deb}.gz`), scratch(`release-${deb}.gz`)), index),
           ...["libc6", "libc6-dev", "linux-libc-dev", "libcrypt1", "libcrypt-dev"].flatMap((name): Step[] => [
             set("path", output(run("awk", "-v", `p=${name}`, filenameOf, index))),
-            failUnlessNotEmpty(variable("path"), `focal has no ${name} for ${deb}`),
+            failUnlessNotEmpty(variable("path"), `${ubuntu.codename} has no ${name} for ${deb}`),
             download(text`${mirror}/${variable("path")}`, scratch("package.deb")),
             run("dpkg-deb", "-x", scratch("package.deb"), sysroot),
           ]),
@@ -917,9 +932,11 @@ function glibcSysroot(): Tool {
             ? [unlessExists(`${sysroot}/lib64`, [symlink(`usr/lib/${triple}`, `${sysroot}/lib64`)])]
             : []),
           comment(`${deb}: gcc-13's libstdc++ and libgcc, the same packages WebKit's image uses.`),
-          download(`${pins.glibcSysroot.gccDebsUrl}/gcc-13-focal-${deb}.tar.gz`, scratch(`gcc-${deb}.tar.gz`)),
-          directory(scratch(`gcc-${deb}`)),
-          unpack(scratch(`gcc-${deb}.tar.gz`), scratch(`gcc-${deb}`), { kind: "tar.gz" }),
+          ...unpackedArchive({
+            url: `${pins.glibcSysroot.gccDebsUrl}/gcc-13-${ubuntu.codename}-${deb}.tar.gz`,
+            file: `gcc-${deb}.tar.gz`,
+            into: scratch(`gcc-${deb}`),
+          }),
           forEachFile("deb", text`${scratch(`gcc-${deb}`)}/${glob("*.deb")}`, [
             run("dpkg-deb", "-x", variable("deb"), sysroot),
           ]),
@@ -931,8 +948,8 @@ function glibcSysroot(): Tool {
 
 /** Alpine's musl, headers and libstdc++ for both architectures. apk.static installs packages of any architecture into any root. */
 function muslSysroot(image: LinuxImage): Tool {
-  const repository = `https://dl-cdn.alpinelinux.org/alpine/v${pins.muslSysroot.alpineRelease}/main`;
-  const host = image.arch === "x64" ? "x86_64" : "aarch64";
+  const repository = `${mirrors.alpine}/v${pins.muslSysroot.alpineRelease}/main`;
+  const host = cpuName[image.arch];
   const versionOf = `/^P:apk-tools-static$/{f=1} f&&/^V:/{print substr($0,3); exit}`;
   return {
     name: "musl-sysroot",
@@ -941,23 +958,18 @@ function muslSysroot(image: LinuxImage): Tool {
       download(`${repository}/${host}/APKINDEX.tar.gz`, scratch("APKINDEX.tar.gz")),
       set("version", output(pipe(run("tar", "-xzOf", scratch("APKINDEX.tar.gz"), "APKINDEX"), run("awk", versionOf)))),
       failUnlessNotEmpty(variable("version"), "the Alpine index has no apk-tools-static"),
-      download(
-        text`${repository}/${host}/apk-tools-static-${variable("version")}.apk`,
-        scratch("apk-tools-static.apk"),
-      ),
-      unpack(scratch("apk-tools-static.apk"), scratch(), { kind: "tar.gz", only: ["sbin/apk.static"] }),
+      comment("An .apk is a gzipped tar."),
+      ...unpackedArchive({
+        url: text`${repository}/${host}/apk-tools-static-${variable("version")}.apk`,
+        file: "apk-tools-static.tar.gz",
+        into: scratch(),
+        only: ["sbin/apk.static"],
+      }),
       ...(["x64", "aarch64"] as const).flatMap(arch => [
         directory(locations.muslSysroot[arch]),
         run(
           scratch("sbin/apk.static"),
-          ...[
-            "--arch",
-            arch === "x64" ? "x86_64" : "aarch64",
-            "--root",
-            locations.muslSysroot[arch],
-            "--repository",
-            repository,
-          ],
+          ...["--arch", cpuName[arch], "--root", locations.muslSysroot[arch], "--repository", repository],
           ...[
             "--allow-untrusted",
             "--no-cache",
@@ -979,17 +991,17 @@ function muslSysroot(image: LinuxImage): Tool {
 function windowsSysroot(image: LinuxImage): Tool {
   const { xwin, sdk, crt } = pins.windowsSysroot;
   const sysroot = locations.windowsSysroot;
-  const host = `${image.arch === "x64" ? "x86_64" : "aarch64"}-unknown-linux-musl`;
+  const host = `${cpuName[image.arch]}-unknown-linux-musl`;
   return {
     name: "windows-sysroot",
     identity: pinned(`xwin ${xwin}, SDK ${sdk}, CRT ${crt}`),
     steps: [
-      download(
-        `https://github.com/Jake-Shadle/xwin/releases/download/${xwin}/xwin-${xwin}-${host}.tar.gz`,
-        scratch("xwin.tar.gz"),
-      ),
-      directory(scratch("xwin")),
-      unpack(scratch("xwin.tar.gz"), scratch("xwin"), { kind: "tar.gz", strip: 1 }),
+      ...unpackedArchive({
+        url: `https://github.com/Jake-Shadle/xwin/releases/download/${xwin}/xwin-${xwin}-${host}.tar.gz`,
+        file: "xwin.tar.gz",
+        into: scratch("xwin"),
+        strip: 1,
+      }),
       directory(sysroot),
       comment(
         "splat moves what it unpacked with rename(2), which cannot cross filesystems: the cache goes next to the output.",
@@ -1079,11 +1091,11 @@ function pythonFuse(): Tool {
     identity: pinned(version),
     steps: [
       apkAdd(["python3-dev", "fuse-dev", "pkgconf", "py3-setuptools"]),
-      download(
-        `https://github.com/libfuse/python-fuse/archive/refs/tags/v${version}.tar.gz`,
-        scratch("python-fuse.tar.gz"),
-      ),
-      unpack(scratch("python-fuse.tar.gz"), scratch(), { kind: "tar.gz" }),
+      ...unpackedArchive({
+        url: `https://github.com/libfuse/python-fuse/archive/refs/tags/v${version}.tar.gz`,
+        file: "python-fuse.tar.gz",
+        into: scratch(),
+      }),
       inDirectory(scratch(`python-fuse-${version}`), [
         run("python3", "setup.py", "build"),
         run("python3", "setup.py", "install"),
@@ -1100,7 +1112,7 @@ function age(image: LinuxImage): Tool {
     name: "age",
     identity: pinned(version),
     steps: executableFromArchive({
-      url: `https://github.com/FiloSottile/age/releases/download/v${version}/age-v${version}-linux-${image.arch === "x64" ? "amd64" : "arm64"}.tar.gz`,
+      url: `https://github.com/FiloSottile/age/releases/download/v${version}/age-v${version}-linux-${debianArch[image.arch]}.tar.gz`,
       sha256: sha256[image.arch],
       kind: "tar.gz",
       member: "age/age",
@@ -1151,7 +1163,7 @@ function prefetchBuildDeps(): Tool {
   const prefetch = locations.prefetch.linux;
   return {
     name: "prefetch-build-deps",
-    identity: notRecorded("decided by the commit being built, not by this file"),
+    identity: prefetched,
     steps: [
       directory(prefetch),
       inDirectory(checkout, [run("bun", "scripts/prefetch-deps.ts", prefetch)]),
@@ -1165,20 +1177,20 @@ function prefetchBuildDeps(): Tool {
 function prefetchTestImages(): Tool {
   return {
     name: "prefetch-test-images",
-    identity: notRecorded("decided by the commit being built, not by this file"),
+    identity: prefetched,
     steps: [service("docker", "started"), inDirectory(checkout, [run("bun", "test/docker/prepare-ci.ts")])],
   };
 }
 
 /** `bun install`'s cache, for the three installs a test job runs. */
 function prefetchInstallCache(): Tool {
-  const cache = "/var/cache/bun-install";
+  const cache = locations.installCache.linux;
   return {
     name: "prefetch-install-cache",
-    identity: notRecorded("decided by the commit being built, not by this file"),
+    identity: prefetched,
     steps: [
       directory(cache),
-      ...[".", "test", "scripts/ci-remap-server"].map(path =>
+      ...installedPackages.map(path =>
         inDirectory(text`${checkout}/${path}`, [
           withEnvironment({ BUN_INSTALL_CACHE_DIR: cache }, run("bun", "install", "--ignore-scripts")),
         ]),
@@ -1204,14 +1216,7 @@ function recordImage(image: BakedImage): Tool {
   return {
     name: "record-image",
     identity: configuration,
-    steps: [
-      run(
-        "node",
-        bakeFile("record-image.mjs"),
-        imageName,
-        image.os === "windows" ? "C:/bun-image.json" : "/etc/bun-image.json",
-      ),
-    ],
+    steps: [run("node", bakeFile("record-image.mjs"), imageName, locations.imageRecord[image.os])],
   };
 }
 
@@ -1235,7 +1240,7 @@ function cleanup(image: LinuxImage): Tool {
 
 function windowsSystem(): Tool {
   return {
-    name: "system",
+    name: "windows-system",
     identity: configuration,
     steps: [
       comment("Real-time scanning of every file a build writes costs more than the build."),
@@ -1297,7 +1302,7 @@ function nssm(image: WindowsImage): Tool {
     name: "nssm",
     identity: pinned(pins.nssm.version),
     steps: executableFromArchive({
-      url: `https://buncistore.blob.core.windows.net/artifacts/${root}.zip`,
+      url: `${mirrors.bunArtifacts}/${root}.zip`,
       kind: "zip",
       member: `${root}/win64/nssm.exe`,
       to: bin(image, "nssm"),
@@ -1314,7 +1319,7 @@ function pwsh(image: WindowsImage): Tool {
     identity: pinned(version),
     steps: [
       download(
-        `https://github.com/PowerShell/PowerShell/releases/download/v${version}/PowerShell-${version}-win-${image.arch === "x64" ? "x64" : "arm64"}.msi`,
+        `https://github.com/PowerShell/PowerShell/releases/download/v${version}/PowerShell-${version}-win-${nodeArch[image.arch]}.msi`,
         msi,
       ),
       runInstaller("the PowerShell installer", "msiexec", text`/i "${msi}" /quiet /norestart ADD_PATH=1`),
@@ -1331,11 +1336,11 @@ function openssh(image: WindowsImage): Tool {
     name: "openssh",
     identity: pinned(pins.openssh.version),
     steps: [
-      download(
-        `https://github.com/PowerShell/Win32-OpenSSH/releases/download/${pins.openssh.version}/OpenSSH-${image.arch === "x64" ? "Win64" : "Arm64"}.zip`,
-        scratch("OpenSSH.zip"),
-      ),
-      unpack(scratch("OpenSSH.zip"), scratch("unpacked"), { kind: "zip" }),
+      ...unpackedArchive({
+        url: `https://github.com/PowerShell/Win32-OpenSSH/releases/download/${pins.openssh.version}/OpenSSH-${image.arch === "x64" ? "Win64" : "Arm64"}.zip`,
+        file: "OpenSSH.zip",
+        into: scratch("unpacked"),
+      }),
       directory(home),
       comment("The archive has one top-level directory, whatever it is called."),
       pipe(
@@ -1389,13 +1394,16 @@ function openssh(image: WindowsImage): Tool {
 
 function ccache(image: WindowsImage): Tool {
   const { version } = pins.ccache;
-  const root = `ccache-${version}-windows-${image.arch === "x64" ? "x86_64" : "aarch64"}`;
+  const root = `ccache-${version}-windows-${cpuName[image.arch]}`;
   return {
     name: "ccache",
     identity: pinned(version),
     steps: [
-      download(`https://github.com/ccache/ccache/releases/download/v${version}/${root}.zip`, scratch("ccache.zip")),
-      unpack(scratch("ccache.zip"), scratch("unpacked"), { kind: "zip" }),
+      ...unpackedArchive({
+        url: `https://github.com/ccache/ccache/releases/download/v${version}/${root}.zip`,
+        file: "ccache.zip",
+        into: scratch("unpacked"),
+      }),
       directory(locations.ccache),
       copy(scratch(`unpacked/${root}/*`), locations.ccache),
       addToPath(locations.ccache),
@@ -1449,10 +1457,12 @@ function intelSde(): Tool {
     name: "intel-sde",
     identity: pinned(version),
     steps: [
-      download(`https://buncistore.blob.core.windows.net/artifacts/${root}.tar.xz`, scratch("sde.tar.xz")),
-      checksum(scratch("sde.tar.xz"), sha256),
-      directory(scratch("sde")),
-      unpack(scratch("sde.tar.xz"), scratch("sde"), { kind: "tar.xz" }),
+      ...unpackedArchive({
+        url: `${mirrors.bunArtifacts}/${root}.tar.xz`,
+        sha256,
+        file: "sde.tar.xz",
+        into: scratch("sde"),
+      }),
       move(scratch(`sde/${root}`), locations.intelSde),
     ],
   };
@@ -1462,10 +1472,10 @@ function intelSde(): Tool {
 function prefetchWindows(): Tool {
   const repo = "C:/bun-prefetch-checkout";
   const prefetch = locations.prefetch.windows;
-  const cache = "C:/bun-install-cache";
+  const cache = locations.installCache.windows;
   return {
-    name: "prefetch",
-    identity: notRecorded("decided by the commit being built, not by this file"),
+    name: "prefetch-windows",
+    identity: prefetched,
     steps: [
       run("git", "init", "--quiet", repo),
       run("git", "-C", repo, "fetch", "--quiet", "--depth=1", "https://github.com/oven-sh/bun.git", commit),
@@ -1475,7 +1485,7 @@ function prefetchWindows(): Tool {
       run("attrib", "+R", `${prefetch}/*`, "/S", "/D"),
       setEnvironment("BUN_BUILD_PREFETCH_DIR", prefetch),
       directory(cache),
-      ...[".", "test", "scripts/ci-remap-server"].map(path =>
+      ...installedPackages.map(path =>
         inDirectory(`${repo}/${path}`, [
           withEnvironment({ BUN_INSTALL_CACHE_DIR: cache }, run("bun", "install", "--ignore-scripts")),
         ]),
@@ -1582,16 +1592,14 @@ export function tools(image: Image): readonly Tool[] {
 
 // ---------------------------------------------------------------------- types
 
-export type Arch = "x64" | "aarch64";
-
 /**
  * `build`: the image every Bun target is compiled on (it also runs tests).
  * `test`: an image that only runs tests.
  */
-export type Role = "build" | "test";
+type Role = "build" | "test";
 
 /** The cloud image a bake box boots from: an exact name, never a pattern. */
-export type BaseImage = {
+type BaseImage = {
   /** The AMI's name. */
   name: string;
   /** The AWS account that publishes it. */
@@ -1609,7 +1617,7 @@ export type LinuxImage = {
 };
 
 /** The Azure Marketplace image a Windows bake starts from; `version` is exact, never "latest". */
-export type AzureBaseImage = {
+type AzureBaseImage = {
   publisher: string;
   offer: string;
   sku: string;
@@ -1674,11 +1682,11 @@ export type Identity =
   | { kind: "packageDatabase" }
   | { kind: "configuration" }
   | { kind: "notRecorded"; reason: string };
-export const pinned = (value: string): Identity => ({ kind: "pinned", value });
-export const observed = (step: Step): Identity => ({ kind: "observed", step });
-export const packageDatabase: Identity = { kind: "packageDatabase" };
-export const configuration: Identity = { kind: "configuration" };
-export const notRecorded = (reason: string): Identity => ({ kind: "notRecorded", reason });
+const pinned = (value: string): Identity => ({ kind: "pinned", value });
+const observed = (step: Step): Identity => ({ kind: "observed", step });
+const packageDatabase: Identity = { kind: "packageDatabase" };
+const configuration: Identity = { kind: "configuration" };
+const notRecorded = (reason: string): Identity => ({ kind: "notRecorded", reason });
 
 export type Tool = { name: string; identity: Identity; steps: readonly Step[] };
 
@@ -1720,21 +1728,21 @@ type Part =
 export type Value = string | number | { parts: readonly Part[] };
 
 /** A variable of the generated script, made with `set`. */
-export const variable = (name: string): Value => ({ parts: [{ variable: name }] });
+const variable = (name: string): Value => ({ parts: [{ variable: name }] });
 /** A variable of the process's environment. */
-export const environment = (name: string): Value => ({ parts: [{ environment: name }] });
+const environment = (name: string): Value => ({ parts: [{ environment: name }] });
 /** What a command prints. */
-export const output = (step: Step): Value => ({ parts: [{ output: step }] });
+const output = (step: Step): Value => ({ parts: [{ output: step }] });
 /** PowerShell's `(command).Property`. */
-export const property = (step: Step, name: string): Value => ({ parts: [{ member: [step, name] }] });
+const property = (step: Step, name: string): Value => ({ parts: [{ member: [step, name] }] });
 /** A path in the tool's scratch directory, which the generator makes and removes. */
-export const scratch = (name = ""): Value => ({ parts: [{ scratch: name }] });
+const scratch = (name = ""): Value => ({ parts: [{ scratch: name }] });
 /** A pattern the shell expands: text`${directory}/${glob("*.deb")}`. */
-export const glob = (pattern: string): Value => ({ parts: [{ glob: pattern }] });
+const glob = (pattern: string): Value => ({ parts: [{ glob: pattern }] });
 /** Text the shell has to see as it is, like PowerShell's `$true`. */
-export const expression = (code: string): Value => ({ parts: [{ expression: code }] });
+const expression = (code: string): Value => ({ parts: [{ expression: code }] });
 /** text`${sysroot}/lib/${triple}`: several pieces as one argument. */
-export function text(strings: TemplateStringsArray, ...values: Value[]): Value {
+function text(strings: TemplateStringsArray, ...values: Value[]): Value {
   const parts: Part[] = [];
   strings.forEach((literal, index) => {
     if (literal) parts.push(literal);
@@ -1748,15 +1756,16 @@ export function text(strings: TemplateStringsArray, ...values: Value[]): Value {
 
 // What the generated script is told when it runs.
 /** Linux: the repository, at the commit being built. */
-export const checkout: Value = variable("REPO_DIR");
+const checkout: Value = variable("REPO_DIR");
 /** Windows: the commit being built; the bake machine has no checkout. */
-export const commit: Value = variable("REPO_COMMIT");
+const commit: Value = variable("REPO_COMMIT");
 /** The name the image is baked under. It is the hash of the script, so the script is told it. */
-export const imageName: Value = variable("IMAGE_NAME");
-/** A file of the bake directory (see `files` in spec.ts). */
-export const bakeFile = (name: string): Value => ({ parts: [{ variable: "BAKE_DIR" }, `/${name}`] });
+const imageName: Value = variable("IMAGE_NAME");
+/** A file of the bake directory: one of `files`, a program `generateImage` writes, or what a tool observed. */
+const bakeFile = (name: string): Value => ({ parts: [{ variable: "BAKE_DIR" }, `/${name}`] });
 
-function renderValue(value: Value, c: Context): string {
+/** `asExpression`: the value is an operand (`$x = …`, an array element, `-replace …`), where PowerShell reads a bare word as a command and `1.10` as a number. */
+function renderValue(value: Value, c: Context, asExpression = false): string {
   const parts: readonly Part[] = typeof value === "object" ? value.parts : [String(value)];
   const literal = parts.every(part => typeof part === "string");
   const scratchPath = (name: string, separator: string) => {
@@ -1773,7 +1782,7 @@ function renderValue(value: Value, c: Context): string {
     const slashes = (s: string) => (isPath ? s.replace(/\//g, "\\") : s);
     if (literal) {
       const s = slashes(parts.join(""));
-      return /^[A-Za-z0-9_.=-]+$/.test(s) ? s : `'${s.replace(/'/g, "''")}'`;
+      return !asExpression && /^[A-Za-z0-9_.=-]+$/.test(s) ? s : `'${s.replace(/'/g, "''")}'`;
     }
     const only = parts.length === 1 ? parts[0]! : undefined;
     if (typeof only === "object") {
@@ -1821,25 +1830,25 @@ function renderValue(value: Value, c: Context): string {
 
 // ------------------------------------------------------------ general steps
 
-export const comment =
+const comment =
   (note: string): Step =>
   () =>
     note.split("\n").map(line => `# ${line}`);
 
 /** Any program. Its failure fails the bake: `set -e` in sh, the `Run` helper in PowerShell. */
-export const run =
+const run =
   (program: Value, ...args: Value[]): Step =>
   c => [`${isPowerShell(c) ? "Run " : ""}${[program, ...args].map(a => renderValue(a, c)).join(" ")}`];
 
-export const set =
+const set =
   (name: string, value: Value): Step =>
-  c => [isPowerShell(c) ? `$${name} = ${renderValue(value, c)}` : `${name}=${renderValue(value, c)}`];
+  c => [isPowerShell(c) ? `$${name} = ${renderValue(value, c, true)}` : `${name}=${renderValue(value, c)}`];
 
-export const pipe =
+const pipe =
   (...steps: Step[]): Step =>
   c => [steps.map(step => oneLine(step, c)).join(" | ")];
 
-export const toFile =
+const toFile =
   (step: Step, file: Value): Step =>
   c => [
     isPowerShell(c)
@@ -1848,19 +1857,19 @@ export const toFile =
   ];
 
 /** What the command prints is not worth reading. */
-export const discardOutput =
+const discardOutput =
   (step: Step): Step =>
   c => [`${oneLine(step, c)} ${isPowerShell(c) ? "| Out-Null" : "> /dev/null"}`];
 
 /** The command's complaints are expected, and its failure does not matter. */
-export const tolerate =
+const tolerate =
   (step: Step): Step =>
   c => [
     isPowerShell(c) ? `${oneLine(step, c)} -ErrorAction SilentlyContinue` : `${oneLine(step, c)} 2>/dev/null || true`,
   ];
 
 /** The steps, with this as the working directory. */
-export const inDirectory =
+const inDirectory =
   (directory: Value, steps: Step[]): Step =>
   c =>
     isPowerShell(c)
@@ -1868,7 +1877,7 @@ export const inDirectory =
       : ["(", ...indent([`cd ${renderValue(directory, c)}`, ...render(steps, c)]), ")"];
 
 /** The command, with these in its environment. */
-export const withEnvironment =
+const withEnvironment =
   (variables: Record<string, Value>, step: Step): Step =>
   c => {
     const entries = Object.entries(variables);
@@ -1877,21 +1886,21 @@ export const withEnvironment =
       : [`${entries.map(([name, value]) => `${name}=${renderValue(value, c)}`).join(" ")} ${oneLine(step, c)}`];
   };
 
-export const failUnlessNotEmpty =
+const failUnlessNotEmpty =
   (value: Value, message: Value): Step =>
   c =>
     isPowerShell(c)
       ? [`if (-not ${renderValue(value, c)}) { Fail ${renderValue(message, c)} }`]
       : [`[ -n ${renderValue(value, c)} ] || fail ${renderValue(message, c)}`];
 
-export const ifExists =
+const ifExists =
   (path: Value, steps: Step[]): Step =>
   c =>
     isPowerShell(c)
       ? [`if (Test-Path ${renderValue(path, c)}) {`, ...indent(render(steps, c)), "}"]
       : [`if [ -e ${renderValue(path, c)} ]; then`, ...indent(render(steps, c)), "fi"];
 
-export const unlessExists =
+const unlessExists =
   (path: Value, steps: Step[]): Step =>
   c =>
     isPowerShell(c)
@@ -1899,7 +1908,7 @@ export const unlessExists =
       : [`if ! [ -e ${renderValue(path, c)} ]; then`, ...indent(render(steps, c)), "fi"];
 
 /** The steps, when the command succeeds (sh) or returns something (PowerShell). */
-export const ifSucceeds =
+const ifSucceeds =
   (condition: Step, steps: Step[]): Step =>
   c =>
     isPowerShell(c)
@@ -1907,7 +1916,7 @@ export const ifSucceeds =
       : [`if ${oneLine(condition, c)}; then`, ...indent(render(steps, c)), "fi"];
 
 /** Once for each line a command prints (sh) or each object it returns (PowerShell). */
-export const forEachOutput =
+const forEachOutput =
   (name: string, producer: Step, steps: Step[]): Step =>
   c =>
     isPowerShell(c)
@@ -1915,17 +1924,17 @@ export const forEachOutput =
       : [`${oneLine(producer, c)} | while read -r ${name}; do`, ...indent(render(steps, c)), "done"];
 
 /** Once for each file a pattern matches. */
-export const forEachFile =
+const forEachFile =
   (name: string, pattern: Value, steps: Step[]): Step =>
   c => [`for ${name} in ${renderValue(pattern, c)}; do`, ...indent(render(steps, c)), "done"];
 
-export const whenStartsWith =
+const whenStartsWith =
   (value: Value, prefix: string, steps: Step[]): Step =>
   c => [`case ${renderValue(value, c)} in ${prefix}*)`, ...indent(render(steps, c)), "  ;;", "esac"];
 
 // --------------------------------------------------------------------- files
 
-export const directory =
+const directory =
   (path: Value, options: { owner?: Value; mode?: string } = {}): Step =>
   c => {
     const p = renderValue(path, c);
@@ -1937,7 +1946,7 @@ export const directory =
     ];
   };
 
-export const remove =
+const remove =
   (...paths: Value[]): Step =>
   c => [
     isPowerShell(c)
@@ -1945,7 +1954,7 @@ export const remove =
       : `${sudo(c, ...paths)}rm -rf ${paths.map(p => renderValue(p, c)).join(" ")}`,
   ];
 
-export const move =
+const move =
   (from: Value, to: Value): Step =>
   c => [
     isPowerShell(c)
@@ -1954,7 +1963,7 @@ export const move =
   ];
 
 /** A file, or a directory with everything in it. */
-export const copy =
+const copy =
   (from: Value, to: Value): Step =>
   c => [
     isPowerShell(c)
@@ -1962,20 +1971,20 @@ export const copy =
       : `${sudo(c, to)}cp -R ${renderValue(from, c)} ${renderValue(to, c)}`,
   ];
 
-export const symlink =
+const symlink =
   (target: Value, link: Value): Step =>
   c => [`${sudo(c, link)}ln -sfn ${renderValue(target, c)} ${renderValue(link, c)}`];
 
-export const ownedBy =
+const ownedBy =
   (owner: Value, path: Value): Step =>
   c => [`${sudo(c, path)}chown -R ${renderValue(owner, c)} ${renderValue(path, c)}`];
 
-export const mode =
+const mode =
   (bits: string, path: Value, options: { recursive?: boolean } = {}): Step =>
   c => [`${sudo(c, path)}chmod ${options.recursive ? "-R " : ""}${bits} ${renderValue(path, c)}`];
 
 /** An executable, where every user finds it. */
-export const installExecutable =
+const installExecutable =
   (file: Value, destination: Value): Step =>
   c =>
     isPowerShell(c)
@@ -1983,29 +1992,23 @@ export const installExecutable =
       : [`${sudo(c, destination)}install -m 755 ${renderValue(file, c)} ${renderValue(destination, c)}`];
 
 /** A file with exactly these lines. */
-export const writeFile =
-  (path: Value, lines: string[], options: { executable?: boolean; owner?: Value } = {}): Step =>
+const writeFile =
+  (path: Value, lines: string[], options: { executable?: boolean } = {}): Step =>
   c => {
     const p = renderValue(path, c);
     if (isPowerShell(c)) {
       // ascii: Windows PowerShell 5.1's UTF8 writes a byte-order mark, which breaks a reader that parses the file (node-gyp's installVersion).
       return [
         `Set-Content -Path ${p} -Encoding ascii -Value @(`,
-        ...indent(lines.map((l, i) => `${renderValue(l, c)}${i < lines.length - 1 ? "," : ""}`)),
+        ...indent(lines.map((l, i) => `${renderValue(l, c, true)}${i < lines.length - 1 ? "," : ""}`)),
         ")",
       ];
     }
-    return [
-      `cat > ${p} <<'EOF'`,
-      ...lines,
-      "EOF",
-      ...(options.executable ? [`chmod +x ${p}`] : []),
-      ...(options.owner ? [`chown ${renderValue(options.owner, c)} ${p}`] : []),
-    ];
+    return [`cat > ${p} <<'EOF'`, ...lines, "EOF", ...(options.executable ? [`chmod +x ${p}`] : [])];
   };
 
 /** These lines, at the end of a file that may exist. */
-export const appendLines =
+const appendLines =
   (path: Value, lines: string[]): Step =>
   c => [`cat >> ${renderValue(path, c)} <<'EOF'`, ...lines, "EOF"];
 
@@ -2013,38 +2016,38 @@ export const appendLines =
  * One sha256 for the content of these directories: every file's hash and every
  * symlink's target, by sorted path. Modes, owners and times are not in it.
  */
-export const treeDigest =
+const treeDigest =
   (...roots: string[]): Step =>
   () => [
     `{ find ${roots.join(" ")} -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum; find ${roots.join(" ")} -type l -printf '%p -> %l\\n' | LC_ALL=C sort; } | sha256sum | cut -d' ' -f1`,
   ];
 
 /** PowerShell: each line of the file with the replacements applied, written back. */
-export const editLines =
+const editLines =
   (file: Value, replacements: [pattern: string, replacement: string][]): Step =>
   c => [
-    `(Get-Content ${renderValue(file, c)})${replacements.map(([a, b]) => ` -replace ${renderValue(a, c)}, ${renderValue(b, c)}`).join("")} | Set-Content ${renderValue(file, c)}`,
+    `(Get-Content ${renderValue(file, c)})${replacements.map(([a, b]) => ` -replace ${renderValue(a, c, true)}, ${renderValue(b, c, true)}`).join("")} | Set-Content ${renderValue(file, c)}`,
   ];
 
 // ------------------------------------------------ PATH and the environment
 
 /** For the rest of the script, and for every login shell or process of the machine. */
-export const addToPath =
+const addToPath =
   (path: Value): Step =>
   c => [`${isPowerShell(c) ? "Add-To-Path" : "add_to_path"} ${renderValue(path, c)}`];
 
-export const setEnvironment =
+const setEnvironment =
   (name: string, value: Value): Step =>
   c => [`${isPowerShell(c) ? "Set-Env" : "set_env"} ${name} ${renderValue(value, c)}`];
 
 // ----------------------------------------------------------------- downloads
 
-export const download =
+const download =
   (url: Value, file: Value): Step =>
   c => [`${isPowerShell(c) ? "Download" : "download"} ${renderValue(url, c)} ${renderValue(file, c)}`];
 
 /** Only where the publisher provides the sum. */
-export const checksum =
+const checksum =
   (file: Value, sha256: string): Step =>
   c => [
     isPowerShell(c)
@@ -2052,9 +2055,9 @@ export const checksum =
       : `echo ${renderValue(text`${sha256}  ${file}`, c)} | ${c.image.os === "darwin" ? "shasum -a 256" : "sha256sum"} -c - > /dev/null`,
   ];
 
-export type ArchiveKind = "zip" | "tar.gz" | "tar.xz";
+type ArchiveKind = "zip" | "tar.gz" | "tar.xz";
 /** `only`: just these members. `strip`: drop this many leading directories (tar). */
-export const unpack =
+const unpack =
   (archive: Value, into: Value, options: { kind: ArchiveKind; only?: string[]; strip?: number }): Step =>
   c => {
     const a = renderValue(archive, c);
@@ -2063,7 +2066,7 @@ export const unpack =
     if (options.kind === "zip") {
       return isPowerShell(c)
         ? [`Expand-Archive -Path ${a} -DestinationPath ${d} -Force`]
-        : [[`${sudo(c, into)}unzip`, "-q", a, ...only, "-d", d].join(" ")];
+        : [[`${sudo(c, into)}unzip`, "-q", "-o", a, ...only, "-d", d].join(" ")];
     }
     if (isPowerShell(c) && options.kind === "tar.xz") {
       // Windows Server 2019's tar cannot read xz. 7-Zip takes the .tar out of the .xz, then the files out of the .tar.
@@ -2081,8 +2084,33 @@ export const unpack =
 
 // ---------------------------------------------------------------- composites
 
+/** A published archive, downloaded into the tool's scratch directory as `file` and unpacked into a directory. */
+function unpackedArchive(options: {
+  url: Value;
+  /** Only where the publisher provides it. */
+  sha256?: string;
+  /** Its name says its kind: Windows unpacks a .tar.xz by that name. */
+  file: `${string}.${ArchiveKind}`;
+  into: Value;
+  strip?: number;
+  only?: string[];
+}): Step[] {
+  const archive = scratch(options.file);
+  const kind = (["tar.gz", "tar.xz", "zip"] as const).find(kind => options.file.endsWith(`.${kind}`))!;
+  return [
+    download(options.url, archive),
+    ...(options.sha256 ? [checksum(archive, options.sha256)] : []),
+    directory(options.into),
+    unpack(archive, options.into, {
+      kind,
+      ...(options.strip ? { strip: options.strip } : {}),
+      ...(options.only ? { only: options.only } : {}),
+    }),
+  ];
+}
+
 /** One executable out of a published archive, installed where every user finds it. */
-export function executableFromArchive(options: {
+function executableFromArchive(options: {
   url: string;
   sha256?: string;
   kind: ArchiveKind;
@@ -2092,13 +2120,12 @@ export function executableFromArchive(options: {
   /** tar only: take just the member out, by this name. */
   extractOnly?: string;
 }): Step[] {
-  const archive = scratch(`archive.${options.kind}`);
   return [
-    download(options.url, archive),
-    ...(options.sha256 ? [checksum(archive, options.sha256)] : []),
-    directory(scratch("unpacked")),
-    unpack(archive, scratch("unpacked"), {
-      kind: options.kind,
+    ...unpackedArchive({
+      url: options.url,
+      ...(options.sha256 ? { sha256: options.sha256 } : {}),
+      file: `archive.${options.kind}`,
+      into: scratch("unpacked"),
       ...(options.extractOnly ? { only: [options.extractOnly] } : {}),
     }),
     installExecutable(scratch(`unpacked/${options.member}`), options.to),
@@ -2106,7 +2133,7 @@ export function executableFromArchive(options: {
 }
 
 /** A publisher's own installer script, which changes under its URL, so there is nothing to pin. */
-export function runInstallerScript(options: { url: string; interpreter: "sh" | "bash"; arguments?: Value[] }): Step[] {
+function runInstallerScript(options: { url: string; interpreter: "sh" | "bash"; arguments?: Value[] }): Step[] {
   return [
     download(options.url, scratch("install.sh")),
     run(options.interpreter, scratch("install.sh"), ...(options.arguments ?? [])),
@@ -2115,26 +2142,26 @@ export function runInstallerScript(options: { url: string; interpreter: "sh" | "
 
 // ------------------------------------------------------------------ packages
 
-export const aptInstall =
+const aptInstall =
   (names: readonly string[], options: { update?: boolean } = {}): Step =>
   () => [
     ...(options.update ? ["apt-get update --yes"] : []),
     `apt-get install --yes --no-install-recommends ${names.join(" ")}`,
   ];
 
-export const apkAdd =
+const apkAdd =
   (names: readonly string[], options: { update?: boolean } = {}): Step =>
   () => [
     ...(options.update ? ["apk update"] : []),
     `apk add --no-cache --no-interactive --no-progress ${names.join(" ")}`,
   ];
 
-export const brewInstall =
+const brewInstall =
   (names: readonly string[], options: { formula?: boolean } = {}): Step =>
   () => [`brew install --quiet ${options.formula ? "--formula " : ""}${names.join(" ")}`];
 
-/** `name` or `name@version`. Fails the bake when Scoop did not install it (see lib/windows.ps1). */
-export const scoopInstall =
+/** `name` or `name@version`. Fails the bake when Scoop did not install it (see `windowsPrelude`). */
+const scoopInstall =
   (name: string): Step =>
   c => [`Install-Scoop-Package ${renderValue(name, c)}`];
 
@@ -2144,7 +2171,7 @@ export const scoopInstall =
 const isAlpine = (c: Context) => c.image.os === "linux" && c.image.distro === "alpine";
 
 /** A system user with a group of the same name and no login. */
-export const systemUser =
+const systemUser =
   (name: string, home: string): Step =>
   c =>
     isAlpine(c)
@@ -2154,12 +2181,12 @@ export const systemUser =
           `useradd --system --gid ${name} --shell /bin/sh --no-create-home --home-dir ${home} ${name}`,
         ];
 
-export const addUserToGroup =
+const addUserToGroup =
   (user: string, group: string): Step =>
   c => [isAlpine(c) ? `addgroup ${user} ${group}` : `usermod -aG ${group} ${user}`];
 
 /** `enabled`: starts with the machine. `started`: running now. `masked`, `disabled`: systemd only. */
-export const service =
+const service =
   (name: string, state: "enabled" | "started" | "masked" | "disabled"): Step =>
   c => {
     if (!isAlpine(c))
@@ -2174,8 +2201,8 @@ export const service =
 // ------------------------------------------------------ Windows: intent
 
 type Named = Record<string, Value | readonly Value[] | boolean>;
-/** A cmdlet, or a function of lib/windows.ps1: positional arguments, then named ones. `true` is a switch. */
-export const cmdlet =
+/** A cmdlet, or a function of `windowsPrelude`: positional arguments, then named ones. `true` is a switch. */
+const cmdlet =
   (name: string, named: Named = {}, ...positional: Value[]): Step =>
   c => [
     [
@@ -2192,18 +2219,18 @@ export const cmdlet =
   ];
 
 /** `& script.ps1 …` */
-export const runScript =
+const runScript =
   (script: Value, named: Named = {}): Step =>
   c => [`& ${oneLine(cmdlet(renderValue(script, c), named), c)}`];
 
-export const registryValue =
+const registryValue =
   (key: string, name: string, value: number, options: { onlyIfKeyExists?: boolean } = {}): Step =>
   c => {
     const write = cmdlet("Set-ItemProperty", { Path: key, Name: name, Value: value, Type: "DWORD" });
     return options.onlyIfKeyExists ? ifExists(key, [write])(c) : write(c);
   };
 
-export const serviceStartup =
+const serviceStartup =
   (name: string, startup: "Automatic" | "Disabled", options: { onlyIfExists?: boolean } = {}): Step =>
   c => {
     const write = cmdlet("Set-Service", { Name: name, StartupType: startup });
@@ -2212,7 +2239,7 @@ export const serviceStartup =
       : write(c);
   };
 
-export const firewallAllowInbound = (options: { name: string; displayName: string; port: number }): Step =>
+const firewallAllowInbound = (options: { name: string; displayName: string; port: number }): Step =>
   discardOutput(
     cmdlet("New-NetFirewallRule", {
       Profile: "Any",
@@ -2227,7 +2254,7 @@ export const firewallAllowInbound = (options: { name: string; displayName: strin
   );
 
 /** A task that runs as SYSTEM each time the machine starts. */
-export const scheduledTaskAtStartup = (options: { name: string; program: string; arguments: string }): Step[] => [
+const scheduledTaskAtStartup = (options: { name: string; program: string; arguments: string }): Step[] => [
   set("action", output(cmdlet("New-ScheduledTaskAction", { Execute: options.program, Argument: options.arguments }))),
   set(
     "settings",
@@ -2247,7 +2274,7 @@ export const scheduledTaskAtStartup = (options: { name: string; program: string;
 ];
 
 /** An installer that reports through its exit code. 3010: installed, and a restart is needed; the bake ends with one. */
-export const runInstaller =
+const runInstaller =
   (what: string, program: Value, argumentList: Value, okExitCodes: number[] = [0]): Step =>
   c => [
     `$process = Start-Process ${renderValue(program, c)} -ArgumentList ${renderValue(argumentList, c)} -Wait -PassThru -NoNewWindow`,
@@ -2261,9 +2288,15 @@ export const runInstaller =
  * directory made before its steps and removed after them: on the disk, not
  * under /tmp, which is a tmpfs on the Debian base image while it is baked.
  */
-export function renderTool(tool: Tool, image: Image): string {
+function renderTool(tool: Tool, image: Image): string {
   const context: Context = { image, usesScratch: false };
-  const body = render(tool.steps, context);
+  // Everything is rendered before the scratch directory is decided on: the observation may be what uses it.
+  const body = [
+    ...render(tool.steps, context),
+    ...(tool.identity.kind === "observed"
+      ? toFile(tool.identity.step, bakeFile(`observed/${tool.name}`))(context)
+      : []),
+  ];
   const lines = [`# ---- ${tool.name}`];
   if (context.usesScratch) {
     lines.push(
@@ -2273,9 +2306,6 @@ export function renderTool(tool: Tool, image: Image): string {
     );
   }
   lines.push(...body);
-  if (tool.identity.kind === "observed" && image.os !== "darwin") {
-    lines.push(...toFile(tool.identity.step, bakeFile(`observed/${tool.name}`))(context));
-  }
   if (context.usesScratch) {
     lines.push(image.os === "windows" ? "Remove-Temp $scratch" : 'rm -rf "$scratch"');
   }
@@ -2286,7 +2316,7 @@ export function renderTool(tool: Tool, image: Image): string {
 // The helpers the rendered steps call. They are text here and part of every
 // generated script, which is where they are linted.
 
-const linuxPrelude = String.raw`# The helpers every tool script may use. Generated scripts run as root under
+const linuxPrelude = String.raw`# The helpers the tools below use. Generated scripts run as root under
 # 'set -eu', so a failed command ends the bake.
 
 fail() {
@@ -2315,7 +2345,7 @@ set_env() {
   export "$1=$2"
 }`;
 
-const macosPrelude = String.raw`# The helpers every macOS tool script may use. The generated script runs under
+const macosPrelude = String.raw`# The helpers the tools below use. The generated script runs under
 # 'set -eu' as the machine's admin user, because Homebrew refuses to run as
 # root, and uses 'sudo' for what belongs to the system.
 
@@ -2351,7 +2381,7 @@ set_env() {
   export "$1=$2"
 }`;
 
-const windowsPrelude = String.raw`# The helpers every tool script may use. A failed command ends the bake. The
+const windowsPrelude = String.raw`# The helpers the tools below use. A failed command ends the bake. The
 # script runs under Windows PowerShell 5.1: PowerShell 7 is one of the things
 # it installs.
 $ErrorActionPreference = "Stop"
@@ -2449,7 +2479,7 @@ function Install-Scoop-Package([string]$Package) {
 
 /** Run at every start of a Windows machine, by the task the `openssh` tool registers. */
 const fetchSshKeysProgram = [
-  "# Installed by openssh.ps1 and run at every start: the SSH keys of the GitHub",
+  "# Installed by the openssh tool and run at every start: the SSH keys of the GitHub",
   "# organization's public members become the machine's administrator keys.",
   '$members = Invoke-RestMethod -Uri "https://api.github.com/orgs/oven-sh/members" -Headers @{ "User-Agent" = "bun-ci" }',
   "$keys = @()",
@@ -2595,7 +2625,7 @@ source "azure-arm" "image" {
     resource_group       = var.gallery_resource_group
     gallery_name         = var.gallery_name
     image_name           = var.image_name
-    image_version        = "1.0.0"
+    image_version        = "${windowsBake.galleryVersion}"
     storage_account_type = "Premium_LRS"
     target_region { name = var.location }
 ${windowsBake.galleryRegions.map(region => `    target_region { name = "${region}" }`).join("\n")}
@@ -2625,8 +2655,8 @@ build {
   # What the bake installed, for the job to publish. Sysprep is next, and nothing can be fetched after it.
   provisioner "file" {
     direction   = "download"
-    source      = "C:\\\\bun-image.json"
-    destination = "\${var.bake_directory}/bun-image.json"
+    source      = "${locations.imageRecord.windows.replace(/\\/g, "\\\\")}"
+    destination = "\${var.bake_directory}/${imageRecordName}"
   }
 
   provisioner "windows-restart" {
@@ -2711,14 +2741,14 @@ export type GeneratedImage = {
 };
 
 /**
- * Writes `<outputRoot>/<key>/`: image.json (what the image is), the script,
+ * Writes the image's bake directory under `root`: image.json (what the image is), the script,
  * the files the script puts on the machine, and for Windows the Packer
  * template. The image's name is the hash of that directory; nothing else
  * decides what a bake does, so nothing else is in the hash.
  */
-export function generateImage(image: Image, outputRoot: string): GeneratedImage {
+export function generateImage(image: Image, root: string): GeneratedImage {
   const key = imageKey(image);
-  const directory = join(outputRoot, key);
+  const directory = join(root, bakeDirectory(key));
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   const described = tools(image).map(({ name, identity }) => ({
@@ -2757,7 +2787,7 @@ if (import.meta.main) {
   }
   for (const [key, image] of known) {
     if (wanted.length && !wanted.includes(key)) continue;
-    const { name, directory } = generateImage(image, join(repoRoot, "build/ci-images"));
+    const { name, directory } = generateImage(image, repoRoot);
     console.log(`${name}  ${directory}`);
   }
 }

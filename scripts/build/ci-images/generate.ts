@@ -1,7 +1,7 @@
 /**
  * Turns one image of `spec.ts` into the directory its bake runs:
  *
- *   build/ci-images/<key>/image.json                what the image is, and the exact base image it is baked from
+ *   build/ci-images/<key>/image.json                what the image is: its base image, and every tool with the values it is given
  *   build/ci-images/<key>/bootstrap.sh or .ps1      every tool's variables and script, in order
  *   build/ci-images/<key>/<file>                    the files those scripts use (agent.mts, …)
  *   build/ci-images/<key>/image.pkr.hcl             Windows: the Packer template that runs the bake
@@ -9,10 +9,12 @@
  * The image's name is `<key>-<hash of that directory>`. Nothing else decides
  * what a bake does, so nothing else is in the hash.
  *
- * A Linux bake runs `sh bootstrap.sh <checkout>` as root on the machine being
- * baked, where <checkout> is the repository at the commit being built. A
- * Windows bake is driven by Packer from outside the machine, which uploads
- * the directory and runs `bootstrap.ps1` with `REPO_COMMIT` in the environment.
+ * A Linux bake runs `sh bootstrap.sh <checkout> <image name>` as root on the
+ * machine being baked, where <checkout> is the repository at the commit being
+ * built. A Windows bake is driven by Packer from outside the machine, which
+ * uploads the directory and runs `bootstrap.ps1` with `REPO_COMMIT` and
+ * `IMAGE_NAME` in the environment. The name is an argument because it is the
+ * hash of this directory, which cannot contain it.
  *
  * `bun run ci:images [key...]` writes the directories and prints the names.
  */
@@ -55,10 +57,11 @@ const sh: Shell = {
   },
   runtime: [
     `BAKE_DIR=$(cd "$(dirname "$0")" && pwd)`,
-    `[ $# -eq 1 ] || fail "usage: bootstrap.sh <checkout>"`,
+    `[ $# -eq 2 ] || fail "usage: bootstrap.sh <checkout> <image name>"`,
     `REPO_DIR=$(cd "$1" && pwd)`,
+    `IMAGE_NAME=$2`,
   ],
-  runtimeVariables: ["BAKE_DIR", "REPO_DIR"],
+  runtimeVariables: ["BAKE_DIR", "REPO_DIR", "IMAGE_NAME"],
   shellVariables: new Set(["PATH", "HOME", "TMPDIR", "DEBIAN_FRONTEND"]),
   header: ["#!/bin/sh", "set -eu"],
   assign: (name, value) => `${name}='${value.replace(/'/g, `'\\''`)}'`,
@@ -71,9 +74,10 @@ const powershell: Shell = {
   runtime: [
     `$BAKE_DIR = $PSScriptRoot`,
     `$REPO_COMMIT = $env:REPO_COMMIT`,
-    `if (-not $REPO_COMMIT) { Fail "REPO_COMMIT is not set" }`,
+    `$IMAGE_NAME = $env:IMAGE_NAME`,
+    `if (-not $REPO_COMMIT -or -not $IMAGE_NAME) { Fail "REPO_COMMIT and IMAGE_NAME must be set" }`,
   ],
-  runtimeVariables: ["BAKE_DIR", "REPO_COMMIT"],
+  runtimeVariables: ["BAKE_DIR", "REPO_COMMIT", "IMAGE_NAME"],
   shellVariables: new Set(["LASTEXITCODE"]),
   header: [],
   assign: (name, value) => `$${name} = '${value.replace(/'/g, "''")}'`,
@@ -144,7 +148,8 @@ export function generateImage(image: Image, outputRoot: string): GeneratedImage 
   const shell = image.os === "windows" ? powershell : sh;
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, "image.json"), JSON.stringify(image, null, 2) + "\n");
+  const described = tools(image).map(({ name, variables, urls }) => ({ name, variables, urls }));
+  writeFileSync(join(directory, "image.json"), JSON.stringify({ ...image, tools: described }, null, 2) + "\n");
   writeFileSync(join(directory, shell.scriptName), renderBootstrap(image, shell));
   for (const tool of tools(image)) {
     for (const [name, source] of Object.entries(tool.files ?? {})) {

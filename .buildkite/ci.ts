@@ -1016,6 +1016,9 @@ function getImageSteps(platform: Platform, state: ImageState, options: PipelineO
   const { image, generated } = getGeneratedImage(platform);
   const { name } = generated;
   const downloadBakeDirectory = `buildkite-agent artifact download "build/ci-images/${imageKey}/*" .`;
+  // What the bake installed, to read from the build's page without starting a machine from the image.
+  const record = `build/ci-images/${imageKey}/bun-image.json`;
+  const uploadRecord = `buildkite-agent artifact upload ${record}`;
   const bakeTimeout = 3 * 60;
 
   // Another build found the name missing a moment ago and is baking it.
@@ -1045,7 +1048,11 @@ function getImageSteps(platform: Platform, state: ImageState, options: PipelineO
           // step-level property for it.
           BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
         },
-        command: [downloadBakeDirectory, `node ./scripts/ci-image.ts bake-image --key=${imageKey} --name=${name}`],
+        command: [
+          downloadBakeDirectory,
+          `node ./scripts/ci-image.ts bake-image --key=${imageKey} --name=${name}`,
+          uploadRecord,
+        ],
       },
     ];
   }
@@ -1068,7 +1075,9 @@ function getImageSteps(platform: Platform, state: ImageState, options: PipelineO
     // ($$ is a literal $ after pipeline-upload interpolation.)
     command: [
       downloadBakeDirectory,
-      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) sh build/ci-images/${imageKey}/bootstrap.sh "$$PWD"`,
+      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) sh build/ci-images/${imageKey}/bootstrap.sh "$$PWD" ${name}`,
+      `cp /etc/bun-image.json ${record}`,
+      uploadRecord,
     ],
     timeout_in_minutes: bakeTimeout,
   };

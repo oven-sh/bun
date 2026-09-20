@@ -127,8 +127,15 @@ build {
   # 3010: done, and a restart is needed; the next step is one.
   provisioner "powershell" {
     inline           = ["& C:\\\\bake\\\\bootstrap.ps1"]
-    environment_vars = ["REPO_COMMIT=\${var.repo_commit}"]
+    environment_vars = ["REPO_COMMIT=\${var.repo_commit}", "IMAGE_NAME=\${var.image_name}"]
     valid_exit_codes = [0, 3010]
+  }
+
+  # What the bake installed, for the job to publish. Sysprep is next, and nothing can be fetched after it.
+  provisioner "file" {
+    direction   = "download"
+    source      = "C:\\\\bun-image.json"
+    destination = "\${var.bake_directory}/bun-image.json"
   }
 
   provisioner "windows-restart" {

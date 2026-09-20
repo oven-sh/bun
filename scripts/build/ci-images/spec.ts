@@ -37,6 +37,7 @@ import { pdbAddr2line } from "./tools/pdb-addr2line.ts";
 import { prefetchBuildDeps, prefetchInstallCache, prefetchTestImages, prefetchWindows } from "./tools/prefetch.ts";
 import { pwsh } from "./tools/pwsh.ts";
 import { pythonFuse } from "./tools/python-fuse.ts";
+import { recordImage } from "./tools/record-image.ts";
 import { rust } from "./tools/rust.ts";
 import { scoop, scoopPackages } from "./tools/scoop.ts";
 import { tailscale } from "./tools/tailscale.ts";
@@ -285,6 +286,7 @@ export function linuxTools(image: LinuxImage): readonly Tool[] {
     prefetchTestImages(image),
     prefetchInstallCache(),
     agentService(image),
+    recordImage(image),
     cleanup(image),
   ];
 }
@@ -315,6 +317,7 @@ export function windowsTools(image: WindowsImage): readonly Tool[] {
     buildkiteAgent(image, pins.buildkiteAgent),
     prefetchWindows(),
     agentService(image),
+    recordImage(image),
     ...(image.release === "2019" ? [uninstallDefender()] : []),
   ];
 }

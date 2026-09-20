@@ -5386,20 +5386,20 @@ class ClientHttp2Session extends Http2Session {
     }
     process.nextTick(emitConnectNT, this, socket);
     this.#parser.flush();
-    if (this.#closed) {
-      // close() was called while the socket was still connecting: requests made in the meantime
-      // never reached the peer, so node rejects them with ERR_HTTP2_GOAWAY_SESSION once the
-      // connect completes and then lets the session finish closing.
-      const pendingRequests = this.#pendingRequests;
-      this.#pendingRequests = null;
-      if (pendingRequests !== null) {
-        for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
-        }
+    if (this.#closed) this.#rejectRequestsOfClosedSession();
+  }
+
+  // node's requestOnConnect: after close(), queued requests get ERR_HTTP2_GOAWAY_SESSION and the session closes.
+  #rejectRequestsOfClosedSession() {
+    const pendingRequests = this.#pendingRequests;
+    this.#pendingRequests = null;
+    if (pendingRequests !== null) {
+      for (let i = 0; i < pendingRequests.length; i++) {
+        streamRejectedByGoawaySession(pendingRequests[i].req);
       }
-      this.#parser?.forEachStream(streamRejectedByGoawaySession);
-      this.destroy();
     }
+    this.#parser?.forEachStream(streamRejectedByGoawaySession);
+    this.destroy();
   }
 
   #onClose() {
@@ -6287,6 +6287,8 @@ class ClientHttp2Session extends Http2Session {
 
   #flushPendingRequestsOnConnect() {
     this.#flushOnConnect = false;
+    // A 'connect' listener that ran before this one can close() the session.
+    if (this.#closed) return this.#rejectRequestsOfClosedSession();
     this.#flushPendingRequests();
   }
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots

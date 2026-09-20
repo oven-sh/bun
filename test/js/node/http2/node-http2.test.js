@@ -2420,6 +2420,44 @@ function recordEnding(req, { errorListener = true } = {}) {
   return ending;
 }
 
+// A JS transport whose peer answers the HEADERS of a request with response HEADERS and one DATA frame.
+// `sentFrameTypes` lists the type of each frame that the client wrote.
+function respondingTransport() {
+  const { SettingsFrame, HeadersFrame, DataFrame, kClientMagic, kFakeResponseHeaders } = http2utils;
+  let pending = Buffer.alloc(0);
+  let prefaceSeen = false;
+  const transport = new Duplex({
+    read() {},
+    write(chunk, encoding, callback) {
+      pending = Buffer.concat([pending, chunk]);
+      if (!prefaceSeen && pending.length >= kClientMagic.length) {
+        prefaceSeen = true;
+        pending = pending.subarray(kClientMagic.length);
+      }
+      while (prefaceSeen && pending.length >= 9) {
+        const length = pending.readUIntBE(0, 3);
+        if (pending.length < 9 + length) break;
+        const type = pending[3];
+        const streamId = pending.readUInt32BE(5);
+        pending = pending.subarray(9 + length);
+        transport.sentFrameTypes.push(type);
+        if (type === 1) {
+          const response = [
+            new HeadersFrame(streamId, kFakeResponseHeaders, 0, true).data,
+            new DataFrame(streamId, Buffer.from("partial")).data,
+          ];
+          setImmediate(() => transport.push(Buffer.concat(response)));
+        }
+      }
+      callback();
+    },
+  });
+  transport.sentFrameTypes = [];
+  // The peer's SETTINGS, and its ACK of the client's.
+  transport.push(Buffer.concat([new SettingsFrame().data, new SettingsFrame(true).data]));
+  return transport;
+}
+
 // node's closeSession() gives ERR_HTTP2_STREAM_CANCEL to pending requests only. An open request gets
 // the session's error, if there is one, and the session's code. The expected values are what node
 // v26.3.0 reports for the same request. Serial on purpose: run together, each case waits for the
@@ -2582,6 +2620,31 @@ describe("http2 client session.destroy() closes an open request like node", () =
     }
   });
 
+  // node's requestOnConnect. (On a transport that is already connected node has no pending request.)
+  it("close() from the connect callback rejects a request made before the connect and does not send it", async () => {
+    const transport = respondingTransport();
+    const client = http2.connect("http://localhost:1", { createConnection: () => transport }, () => client.close());
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      const ending = recordEnding(req);
+      // A request that goes out behind the GOAWAY gets the response of the peer.
+      const outcome = await Promise.race([
+        new Promise(resolve => client.once("close", () => resolve("session closed"))),
+        new Promise(resolve => req.once("response", () => resolve("response"))),
+      ]);
+      expect({ outcome, ...ending, sentHeaders: transport.sentFrameTypes.includes(1) }).toEqual({
+        outcome: "session closed",
+        error: "ERR_HTTP2_GOAWAY_SESSION",
+        events: ["error", "close"],
+        sentHeaders: false,
+      });
+    } finally {
+      client.destroy();
+      transport.destroy();
+    }
+  });
+
   it("with the code of a GOAWAY that the session received", async () => {
     const result = await closeOpenRequest((client, req, serverStream) => {
       // The listener runs before the session destroys itself with ERR_HTTP2_SESSION_ERROR.
@@ -2649,42 +2712,8 @@ describe("http2 client session.destroy() closes an open request like node", () =
 // get the error, as in node. (Behind a GOAWAY node gives them nothing: a cut response looks complete.)
 describe.concurrent("http2 client session gives a transport error to its open requests", () => {
   const { NGHTTP2_NO_ERROR, NGHTTP2_INTERNAL_ERROR, NGHTTP2_CANCEL } = http2.constants;
-  const { SettingsFrame, HeadersFrame, DataFrame, GoAwayFrame, kClientMagic, kFakeResponseHeaders } = http2utils;
+  const { GoAwayFrame } = http2utils;
   const econnreset = () => Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" });
-
-  // A JS transport whose peer answers the HEADERS of a request with response HEADERS and one DATA frame.
-  function respondingTransport() {
-    let pending = Buffer.alloc(0);
-    let prefaceSeen = false;
-    const transport = new Duplex({
-      read() {},
-      write(chunk, encoding, callback) {
-        pending = Buffer.concat([pending, chunk]);
-        if (!prefaceSeen && pending.length >= kClientMagic.length) {
-          prefaceSeen = true;
-          pending = pending.subarray(kClientMagic.length);
-        }
-        while (prefaceSeen && pending.length >= 9) {
-          const length = pending.readUIntBE(0, 3);
-          if (pending.length < 9 + length) break;
-          const type = pending[3];
-          const streamId = pending.readUInt32BE(5);
-          pending = pending.subarray(9 + length);
-          if (type === 1) {
-            const response = [
-              new HeadersFrame(streamId, kFakeResponseHeaders, 0, true).data,
-              new DataFrame(streamId, Buffer.from("partial")).data,
-            ];
-            setImmediate(() => transport.push(Buffer.concat(response)));
-          }
-        }
-        callback();
-      },
-    });
-    // The peer's SETTINGS, and its ACK of the client's.
-    transport.push(Buffer.concat([new SettingsFrame().data, new SettingsFrame(true).data]));
-    return transport;
-  }
 
   // Opens a request, waits until its response is in progress, runs fail(client, transport, req) and
   // reports how the request ended and the 'error' events of the session, once both have closed.

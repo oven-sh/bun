@@ -2033,8 +2033,7 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
-  // The session resumed a request that nobody was reading so that it can finish. From then on
-  // readableFlowing does not say that user code consumed the request.
+  // The session, not user code, put this unread request into flowing mode (streamEnd).
   AutoResumed = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
@@ -2420,7 +2419,7 @@ class Http2Stream extends Duplex {
       if (ObjectKeys(headers).length === 0) {
         session[bunHTTP2Native]?.noTrailers(this.#id);
       } else if (session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames) === false) {
-        // The block is over the send limit and no frame was sent. node submits trailers one setImmediate after sendTrailers(), and nghttp2 refuses them when the session next sends.
+        // Over the send limit, nothing was sent. node submits trailers one setImmediate later, and nghttp2 refuses them then.
         setImmediate(onRefusedTrailers, session, this);
       }
     } catch (error) {
@@ -6611,19 +6610,20 @@ function closeAfterFrameError(session: ServerHttp2Session, stream: ServerHttp2St
   stream.close(code);
   session.close();
 }
-// A trailer block that nghttp2 refused. node's finishSendTrailers() submits nothing for a stream that user code closed meanwhile, so nothing is reported then: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1987-L2003
+// node's finishSendTrailers() and onFrameError for a trailer block that nghttp2 refuses: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1987-L2003
 function onRefusedTrailers(session: ServerHttp2Session | ClientHttp2Session, stream: Http2Stream) {
+  // node submits no trailers for a stream that was closed meanwhile.
   if (stream.destroyed || stream.closed) return;
   stream.emit("frameError", kFrameTypeHeaders, constants.NGHTTP2_FRAME_SIZE_ERROR);
-  // The stream is still open on the wire, so node's onFrameError closes it and the session. kMaybeDestroy has closed a server request that nobody read with NO_ERROR by then, so close(FRAME_SIZE_ERROR) only reaches a stream that was read.
   if (!stream.destroyed && !stream.closed) {
+    // kMaybeDestroy closes an unread server request with NO_ERROR before onFrameError's close(code) runs.
     const unread = stream instanceof ServerHttp2Stream && isUnreadRequest(stream);
-    // Reset here, not through close(): node's RST_STREAM leaves before the GOAWAY.
+    // Not through close(): node's RST_STREAM leaves before the GOAWAY.
     session[bunHTTP2Native]?.rstStream(stream.id, unread ? NGHTTP2_NO_ERROR : constants.NGHTTP2_FRAME_SIZE_ERROR);
   }
   session.close();
 }
-// node's kMaybeDestroy test for a request that user code never tried to read. The session resumes such a request itself once it has ended, so a flowing request with no consumer counts too.
+// node's kMaybeDestroy test: user code never tried to read the request.
 function isUnreadRequest(stream: ServerHttp2Stream) {
   if (stream.readableDidRead) return false;
   const flowing = stream.readableFlowing;

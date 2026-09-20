@@ -5819,7 +5819,7 @@ impl H2FrameParser {
 
         // Trailers are a HEADERS frame, so nghttp2 counts the priority bytes for them too: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
         if this.over_send_limit(&staged, StreamPriority::BYTE_SIZE) {
-            // nghttp2 drops the block and leaves the stream open. `false` tells sendTrailers() to report 'frameError' and to close the stream like node's onFrameError.
+            // nghttp2 drops the block and the stream stays open: `false` makes sendTrailers() run node's onFrameError.
             return Ok(JSValue::FALSE);
         }
 
@@ -5836,7 +5836,7 @@ impl H2FrameParser {
                     );
                 }
                 Err(_) => {
-                    // Only a raised limit gets here, with a field that the encoder cannot emit. The stream fails at once, with the events of a refused block.
+                    // Only a raised limit gets here: a field that the encoder cannot emit.
                     let identifier = stream.get_identifier();
                     identifier.ensure_still_alive();
                     this.dispatch_with_2_extra(

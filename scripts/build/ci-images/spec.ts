@@ -556,9 +556,10 @@ function bun(image: Image): Tool {
 
 /**
  * Bun's build of ninja (oven-sh/ninja), in a directory of its own that is not
- * on PATH: the `ninja` the build runs is still the machine's own. The release
- * publishes each zip's sha256 in its bun-ninja.json, and the Linux binary is
- * static, so every distro gets the same one. Nothing reads it yet.
+ * on PATH: the build driver runs it from here (ninja-release.ts), and `ninja`
+ * on PATH is still the machine's own. The release publishes each zip's sha256
+ * in its bun-ninja.json, and the Linux binary is static, so every distro gets
+ * the same one.
  */
 function bunNinja(image: Image): Tool {
   const platform = `${image.os}-${image.arch}` as const;

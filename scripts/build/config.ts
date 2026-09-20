@@ -190,7 +190,11 @@ export interface Config {
   buildDir: string;
   /** Generated code output, e.g. buildDir/codegen/. */
   codegenDir: string;
-  /** Persistent cache for dep tarballs and builds. */
+  /**
+   * Persistent cache for dep tarballs and builds: `--cacheDir`, else
+   * `$BUN_BUILD_CACHE_DIR`, else the default (see `sharedCacheDir`; CI keeps
+   * it inside the build directory).
+   */
   cacheDir: string;
   /** Vendored dependencies (gitignored). */
   vendorDir: string;
@@ -236,6 +240,8 @@ export interface Config {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV`. Captured once; feeds workarounds.ts. */
   rustLlvmVersion: string | undefined;
+  /** rustc's bundled LLVM major is ahead of clang's: rustc's bitcode/objects need rustc's own LLVM tools (rust-lld, llvm-nm) to be read. */
+  rustLlvmNewer: boolean;
   strip: string;
   /** llvm-nm, for `DirectBuild.forbidUndefined`; undefined skips those checks. */
   nm: string | undefined;
@@ -275,8 +281,17 @@ export interface Config {
    * would otherwise pick up that worktree's pin).
    */
   rustToolchain: string | undefined;
-  /** Explicit rustc for cargo to drive (BUN_TOOLCHAIN_RUST); undefined = cargo's own resolution (rustup proxy). */
+  /**
+   * The rustc every Rust unit is compiled with: `<override>/bin/rustc` under BUN_TOOLCHAIN_RUST, else
+   * the pinned toolchain's real binary (`<sysroot>/bin/rustc`, not the rustup proxy — a couple hundred
+   * invocations each paying the proxy's manifest lookup add up). Also handed to cargo (planning, the
+   * Windows shim) as RUSTC so both agree. undefined when no Rust toolchain was found.
+   */
   rustc: string | undefined;
+  /** `rustc --print sysroot`; rustdoc and the std sources (`-Zbuild-std`) live under it. */
+  rustSysroot: string | undefined;
+  /** The host triple rustc reports (`x86_64-unknown-linux-gnu`, …): the platform of build scripts and proc-macros. */
+  rustHostTriple: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
   /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
@@ -444,6 +459,10 @@ export interface Toolchain {
   rustLld: string | undefined;
   /** Parsed `LLVM version:` from `rustc -vV` (X.Y.Z). */
   rustLlvmVersion: string | undefined;
+  /** `rustc --print sysroot` for the pinned toolchain. */
+  rustSysroot: string | undefined;
+  /** `host:` from `rustc -vV`. */
+  rustHostTriple: string | undefined;
   strip: string;
   /**
    * llvm-strip. On Linux hosts GNU strip is the default (`strip` above) but
@@ -715,6 +734,20 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
  * This is where all the "X defaults to Y unless Z" chains get resolved into
  * concrete values. After this runs, everything downstream sees plain booleans.
  */
+/**
+ * The machine-shared build cache: `$BUN_BUILD_CACHE_DIR`, else
+ * `$BUN_INSTALL/build-cache` (`~/.bun/build-cache`). A relative value is
+ * anchored to the repo root (not process.cwd()) so the ninja regen rule —
+ * which runs from buildDir — resolves the same path. Like $BUN_INSTALL, the
+ * variable is read on every configure: set it in the environment of every
+ * build of a build directory, not for one invocation.
+ */
+export function sharedCacheDir(cwd: string): string {
+  if (process.env.BUN_BUILD_CACHE_DIR) return resolve(cwd, process.env.BUN_BUILD_CACHE_DIR);
+  const bunInstall = process.env.BUN_INSTALL ? resolve(cwd, process.env.BUN_INSTALL) : join(homedir(), ".bun");
+  return resolve(bunInstall, "build-cache");
+}
+
 export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
   const host = detectHost();
 
@@ -923,20 +956,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : resolve(cwd, partial.buildDir)
       : resolve(cwd, "build", defaultBuildDirName);
   const codegenDir = resolve(buildDir, "codegen");
-  // Local builds share $BUN_INSTALL/build-cache across checkouts and profiles
-  // so ccache/tarballs/webkit reuse one another's work. CI stays per-build
-  // so runners remain hermetic and `rm -rf build/` is a full reset.
-  // Relative BUN_INSTALL is anchored to repo root (not process.cwd()) so the
-  // ninja regen rule — which runs from buildDir — resolves the same path.
-  const bunInstall = process.env.BUN_INSTALL ? resolve(cwd, process.env.BUN_INSTALL) : join(homedir(), ".bun");
+  // Local builds share one cache across checkouts and profiles so
+  // ccache/tarballs/webkit reuse one another's work. CI stays per-build so
+  // runners remain hermetic and `rm -rf build/` is a full reset — unless
+  // $BUN_BUILD_CACHE_DIR says where the cache is, which holds everywhere.
   const cacheDir =
     partial.cacheDir !== undefined
       ? isAbsolute(partial.cacheDir)
         ? partial.cacheDir
         : resolve(cwd, partial.cacheDir)
-      : ci
+      : ci && !process.env.BUN_BUILD_CACHE_DIR
         ? resolve(buildDir, "cache")
-        : resolve(bunInstall, "build-cache");
+        : sharedCacheDir(cwd);
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───
@@ -1238,6 +1269,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     ld: ld64StripSwap?.ld ?? ld,
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
+    rustLlvmNewer,
     // Cross strips: linux-gnu uses <triple>-strip (GNU, handles -R .eh_frame
     // fully; host strip rejects foreign-arch ELF); other cross targets use
     // llvm-strip.
@@ -1264,8 +1296,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     rustupHome: toolchain.rustupHome,
     rustToolchain: toolchainOverride.rust !== undefined ? undefined : readRustToolchainChannel(cwd),
     rustc:
-      toolchainOverride.rust !== undefined ? join(toolchainOverride.rust, "bin", `rustc${host.exeSuffix}`) : undefined,
-    // Cargo-driven links (the bun_shim_impl.exe edge, any future target
+      toolchainOverride.rust !== undefined
+        ? join(toolchainOverride.rust, "bin", `rustc${host.exeSuffix}`)
+        : toolchain.rustSysroot !== undefined
+          ? join(toolchain.rustSysroot, "bin", `rustc${host.exeSuffix}`)
+          : undefined,
+    rustSysroot: toolchain.rustSysroot,
+    rustHostTriple: toolchain.rustHostTriple,
+    // rustc-driven links (the .bin/ shim's executable, any future target
     // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
     // lld-link wrapper `ld` may have been swapped to above: rustc treats a
     // linker living in its own sysroot's gcc-ld/ as the bundled rust-lld and

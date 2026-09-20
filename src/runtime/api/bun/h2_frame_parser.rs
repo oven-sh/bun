@@ -3682,7 +3682,10 @@ impl H2FrameParser {
             let pending = self.rewrite_tail.with_mut(std::mem::take);
             let feed = {
                 let mut guard = self.engine.borrow_mut();
-                guard.as_mut().unwrap().receive(self, &pending)
+                let engine = guard.as_mut().unwrap();
+                // A read() that re-entered a dispatch above is a later read than that batch.
+                engine.goaway_sent = self.goaway_sent.get();
+                engine.receive(self, &pending)
             };
             if feed.fatal {
                 self.rewrite_tail.with_mut(|t| t.clear());

@@ -680,6 +680,8 @@ class RawH2Server {
   private buf: Buffer = Buffer.alloc(0);
   private sawPreface = false;
   frames: Frame[] = [];
+  /** Runs for each inbound frame, inside the socket's 'data' handler. */
+  onFrame: ((f: Frame) => void) | null = null;
   private waiters: Array<{ pred: (f: Frame) => boolean; resolve: (f: Frame) => void }> = [];
 
   private constructor(server: net.Server | null) {
@@ -731,6 +733,7 @@ class RawH2Server {
       };
       this.buf = this.buf.subarray(9 + length);
       this.frames.push(frame);
+      this.onFrame?.(frame);
       const idx = this.waiters.findIndex(w => w.pred(frame));
       if (idx !== -1) this.waiters.splice(idx, 1)[0].resolve(frame);
     }
@@ -2124,6 +2127,26 @@ describe("PUSH_PROMISE after the client sent GOAWAY (RFC 9113 §6.8)", () => {
     expect(await peer.response).toEqual({ status: 200, xPushed: undefined, rstCode: 0 });
     expect(peer.pushed.map(stream => stream.id)).toEqual([]);
     await peer.sessionClosed;
+    expect(peer.sessionErrors).toEqual([]);
+  });
+
+  // Over a duplexPair the peer's reply to the GOAWAY can reach the parser inside the listener,
+  // when a later call there flushes the GOAWAY. That reply is a later read than the GOAWAY.
+  test("goaway() from a 'response' listener discards a PUSH_PROMISE that answers the GOAWAY", async () => {
+    using peer = await connectedClient("duplexPair");
+    peer.raw.onFrame = f => {
+      if (f.type !== FrameType.GOAWAY) return;
+      peer.raw.socket!.write(
+        Buffer.concat([pushPromise(2, 0x4), encodeFrame(FrameType.DATA, 0x1 /* END_STREAM */, 1, Buffer.from("body"))]),
+      );
+    };
+    peer.req.once("response", () => {
+      peer.client.goaway();
+      peer.client.settings({ enablePush: true });
+    });
+    peer.raw.socket!.write(encodeFrame(FrameType.HEADERS, 0x4, 1, STATUS_200));
+    expect(await peer.response).toEqual({ status: 200, xPushed: undefined, rstCode: 0 });
+    expect(peer.pushed.map(stream => stream.id)).toEqual([]);
     expect(peer.sessionErrors).toEqual([]);
   });
 

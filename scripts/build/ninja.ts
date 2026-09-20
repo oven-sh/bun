@@ -25,6 +25,9 @@ import { writeIfChanged } from "./fs.ts";
  *
  * The table cannot drift from the rules: `Ninja.rule()` checks a rule's text against its entry, and
  * `Ninja.build()` that an edge binds everything its rule's text uses.
+ *
+ * These are the build's own names. The names ninja itself gives a meaning (`reservedBindings`) are not variables:
+ * they are the fields of `Rule`, and of a build statement where a value per edge makes sense.
  */
 export const ruleVars = {
   // bun.ts
@@ -55,9 +58,9 @@ export const ruleVars = {
   // configure.ts
   regen: [],
   // rust/emit.ts
-  rust_build_script: ["manifest", "crate", "depfile"],
+  rust_build_script: ["manifest", "crate"],
   rust_plan: ["planinput", "plan"],
-  rust_rustc: ["manifest", "crate", "what", "depfile"],
+  rust_rustc: ["manifest", "crate", "what"],
   // shims.ts
   host_tool_cc: [],
   shim_crt_decompress: [],
@@ -74,6 +77,22 @@ export const ruleVars = {
   dep_prebuild: ["name", "cwd", "cmd"],
   dep_subst: ["pairs"],
 } as const satisfies Record<string, readonly string[]>;
+
+/** ninja's `Rule::IsReservedBinding` (src/eval_env.cc; `early_output_prefix` is oven-sh/ninja's). */
+const reservedBindings = [
+  "command",
+  "depfile",
+  "dyndep",
+  "description",
+  "deps",
+  "generator",
+  "pool",
+  "restat",
+  "rspfile",
+  "rspfile_content",
+  "msvc_deps_prefix",
+  "early_output_prefix",
+];
 
 export type RuleName = keyof typeof ruleVars;
 type DeclaredVar<R extends RuleName> = (typeof ruleVars)[R][number];
@@ -141,6 +160,8 @@ interface BuildNodeBase {
   validations?: string[];
   /** Job pool override (overrides rule's pool). */
   pool?: PoolName;
+  /** This edge's depfile, for a rule whose depfile is not a function of `$out` (the rule sets `deps`). */
+  depfile?: string;
   /**
    * oven-sh/ninja's `early_output_prefix` binding: the command may announce an output as complete before it exits
    * by printing this prefix and the output's name (rust/emit.ts). A ninja without the feature ignores it.
@@ -262,6 +283,11 @@ export class Ninja {
     this.ruleNames.add(name);
 
     const declared: readonly string[] = ruleVars[name];
+    for (const v of declared) {
+      assert(!reservedBindings.includes(v.replace(/\?$/, "")), `ruleVars.${name} lists "${v}", a name ninja reserves`, {
+        hint: "A reserved binding is a field of the rule or of the build statement, not a variable.",
+      });
+    }
     const used = variablesIn(spec.command, spec.description, spec.depfile, spec.rspfile, spec.rspfile_content);
     for (const v of used) {
       assert(
@@ -402,6 +428,9 @@ export class Ninja {
     }
     for (const [k, v] of Object.entries(vars)) {
       this.lines.push(`  ${k} = ${ninjaEscapeVarValue(k, v)}`);
+    }
+    if (node.depfile !== undefined) {
+      this.lines.push(`  depfile = ${ninjaEscapeVarValue("depfile", node.depfile)}`);
     }
     if (node.earlyOutputPrefix !== undefined) {
       this.lines.push(`  early_output_prefix = ${node.earlyOutputPrefix}`);

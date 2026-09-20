@@ -2474,7 +2474,8 @@ describe("http2 client session.destroy() closes an open request like node", () =
   } = http2.constants;
 
   // One server for every case. It hands each stream to the case that asked for that path. It answers
-  // with headers and a first DATA frame and leaves the response open. A "/silent" path gets no answer.
+  // with headers and a first DATA frame and leaves the response open. A "/silent" path gets no answer,
+  // a "/end" path gets a complete response.
   let server;
   let paths = 0;
   const serverStreams = new Map();
@@ -2486,6 +2487,7 @@ describe("http2 client session.destroy() closes an open request like node", () =
       const path = headers[":path"];
       if (path.startsWith("/silent")) return serverStreams.get(path)?.(stream);
       stream.respond({ ":status": 200 });
+      if (path.startsWith("/end")) return stream.end("done");
       stream.write("partial", () => serverStreams.get(path)?.(stream));
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -2642,6 +2644,32 @@ describe("http2 client session.destroy() closes an open request like node", () =
     } finally {
       client.destroy();
       transport.destroy();
+    }
+  });
+
+  // Like node, the request from the callback goes out first, with id 1. node's nghttp2 then refuses
+  // it (REFUSED_STREAM), because close() submits the GOAWAY in the same tick. Bun has written its
+  // HEADERS by then, so that request finishes, with or without an earlier request on the session.
+  it("close() from the connect callback rejects only the request made before the connect", async () => {
+    let own;
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`, () => {
+      const req = client.request({ ":path": "/end-own" });
+      own = { ending: recordEnding(req), pending: req.pending, id: req.id };
+      req.resume();
+      client.close();
+    });
+    client.on("error", () => {});
+    try {
+      const early = client.request({ ":path": "/end-early" });
+      const earlyEnding = recordEnding(early);
+      early.resume();
+      await new Promise(resolve => client.once("close", resolve));
+      expect({ early: earlyEnding, own }).toEqual({
+        early: { error: "ERR_HTTP2_GOAWAY_SESSION", events: ["error", "close"] },
+        own: { ending: { error: undefined, events: ["end", "close"] }, pending: false, id: 1 },
+      });
+    } finally {
+      client.destroy();
     }
   });
 

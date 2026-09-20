@@ -5386,11 +5386,17 @@ class ClientHttp2Session extends Http2Session {
     }
     process.nextTick(emitConnectNT, this, socket);
     this.#parser.flush();
-    if (this.#closed) this.#rejectRequestsOfClosedSession();
+    if (this.#closed) {
+      // close() was called while the socket was still connecting: requests made in the meantime
+      // never reached the peer, so node rejects them with ERR_HTTP2_GOAWAY_SESSION once the
+      // connect completes and then lets the session finish closing.
+      this.#rejectPendingRequests();
+      this.#parser?.forEachStream(streamRejectedByGoawaySession);
+      this.destroy();
+    }
   }
 
-  // node's requestOnConnect: after close(), queued requests get ERR_HTTP2_GOAWAY_SESSION and the session closes.
-  #rejectRequestsOfClosedSession() {
+  #rejectPendingRequests() {
     const pendingRequests = this.#pendingRequests;
     this.#pendingRequests = null;
     if (pendingRequests !== null) {
@@ -5398,8 +5404,6 @@ class ClientHttp2Session extends Http2Session {
         streamRejectedByGoawaySession(pendingRequests[i].req);
       }
     }
-    this.#parser?.forEachStream(streamRejectedByGoawaySession);
-    this.destroy();
   }
 
   #onClose() {
@@ -6201,7 +6205,8 @@ class ClientHttp2Session extends Http2Session {
       const maxConcurrentStreams = this.#remoteSettings?.maxConcurrentStreams;
       if (
         !this.#connected ||
-        (this.#pendingRequests !== null && this.#pendingRequests.length > 0) ||
+        // Like node, a request made after the connect goes out ahead of the ones that wait for the 'connect' flush.
+        (this.#pendingRequests !== null && this.#pendingRequests.length > 0 && !this.#flushOnConnect) ||
         (typeof maxConcurrentStreams === "number" && this.#activeRequestCount >= maxConcurrentStreams)
       ) {
         const req = new ClientHttp2Stream(undefined, this, headers);
@@ -6287,9 +6292,10 @@ class ClientHttp2Session extends Http2Session {
 
   #flushPendingRequestsOnConnect() {
     this.#flushOnConnect = false;
-    // A 'connect' listener that ran before this one can close() the session.
-    if (this.#closed) return this.#rejectRequestsOfClosedSession();
-    this.#flushPendingRequests();
+    if (!this.#closed) return this.#flushPendingRequests();
+    // A 'connect' listener that ran before this one called close(): node's requestOnConnect rejects the queue.
+    this.#rejectPendingRequests();
+    if (this.#connections === 0) this.destroy();
   }
   // Submits requests queued behind the peer's SETTINGS_MAX_CONCURRENT_STREAMS limit while slots
   // are available, in the order they were made.

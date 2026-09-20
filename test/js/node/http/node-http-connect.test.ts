@@ -290,19 +290,16 @@ describe("HTTP server CONNECT", () => {
           await Bun.sleep(10);
         }
       },
-      // Resolves with the byte count once `expected` bytes arrived, or with
-      // whatever arrived before the deadline so the assertion shows the count.
+      // Resolves with the byte count once `expected` bytes arrived.
       async readAll(expected: number) {
         let received = 0;
+        const done = Promise.withResolvers<number>();
         socket.on("data", (data: Buffer) => {
           received += data.length;
+          if (received >= expected) done.resolve(received);
         });
         socket.resume();
-        const deadline = Date.now() + 4_000;
-        while (received < expected && Date.now() < deadline) {
-          await Promise.race([Bun.sleep(20), failed]);
-        }
-        return received;
+        return Promise.race([done.promise, failed]);
       },
       [Symbol.asyncDispose]: async () => {
         client.destroy();
@@ -312,12 +309,14 @@ describe("HTTP server CONNECT", () => {
     };
   }
 
-  test.concurrent.each([
+  const tunnelMatrix = [
     ["connect", "http"],
     ["upgrade", "http"],
     ["connect", "https"],
     ["upgrade", "https"],
-  ] as const)(
+  ] as const;
+
+  test.each(tunnelMatrix)(
     "a paused %s socket stops reading the %s connection instead of buffering everything",
     async (event, protocol) => {
       const totalBytes = 64 * 1024 * 1024;
@@ -347,10 +346,7 @@ describe("HTTP server CONNECT", () => {
   // allowHalfOpen: the server's FIN ends only its writable side. Bytes the
   // client sent before it (still in the kernel while reads are stopped) and
   // after it must still reach the socket, like Node.
-  test.concurrent.each([
-    ["connect", "http"],
-    ["upgrade", "https"],
-  ] as const)("a %s socket keeps reading the %s connection after socket.end()", async (event, protocol) => {
+  test.each(tunnelMatrix)("a %s socket keeps reading the %s connection after socket.end()", async (event, protocol) => {
     const beforeBytes = 8 * 1024 * 1024;
     const chunk = Buffer.alloc(1024 * 1024, "x");
     await using tunnel = await openTunnel(event, protocol);

@@ -609,6 +609,30 @@ pub fn write(fd: Fd, buf: &[u8]) -> Maybe<usize> {
     write_at(fd, buf, None)
 }
 
+/// Whether `fd` is a synchronous file object: [`read`] and [`write`] on it
+/// return when the transfer is done. On one opened with
+/// `FILE_FLAG_OVERLAPPED` they do not. `false` when the query fails.
+///
+/// The query takes a synchronous file object's lock, which I/O another thread
+/// or process has in flight on it holds, as the read or write would.
+pub fn is_synchronous(fd: Fd) -> bool {
+    const FILE_SYNCHRONOUS_IO_ALERT: u32 = 0x0000_0010;
+    let mut mode: u32 = 0;
+    let mut io: win32::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    // SAFETY: FFI; the class writes one `ULONG` into `mode`.
+    let status = unsafe {
+        win32::ntdll::NtQueryInformationFile(
+            fd.native(),
+            &mut io,
+            ptr::from_mut(&mut mode).cast(),
+            core::mem::size_of::<u32>() as u32,
+            win32::FILE_INFORMATION_CLASS::FileModeInformation,
+        )
+    };
+    status == win32::NTSTATUS::SUCCESS
+        && mode & (FILE_SYNCHRONOUS_IO_ALERT | win32::FILE_SYNCHRONOUS_IO_NONALERT) != 0
+}
+
 /// The `OVERLAPPED` of a synchronous `ReadFile`/`WriteFile` at `off`.
 fn overlapped_at(off: u64) -> win32::OVERLAPPED {
     win32::OVERLAPPED {

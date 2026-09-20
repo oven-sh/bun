@@ -4367,8 +4367,8 @@ pub(crate) fn write_file_internal(
     }
 
     // If you're doing Bun.write(), try to go fast by writing short input on the main thread.
-    // This is a heuristic, but it's a good one. Not on Windows.
-    #[cfg(not(windows))]
+    // This is a heuristic, but it's a good one. It is also what keeps writes that are not awaited
+    // in the order they were made: the ones that go to the work pool have no order among them.
     {
         let mut needs_async = false;
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
@@ -4830,7 +4830,17 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
 
 const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
+/// How the fast path opens a path. POSIX does not truncate on open: the file is
+/// cut to what was written afterwards, which is cheaper there. A Windows open
+/// that does not truncate also opens a directory, and the write is what fails;
+/// truncating on open refuses it, like the write that goes to the work pool.
 #[cfg(not(windows))]
+const FAST_WRITE_OPEN_FLAGS: i32 = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
+#[cfg(windows)]
+const FAST_WRITE_OPEN_FLAGS: i32 = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+/// Whether a path the fast path opened is cut to what was written afterwards.
+const FAST_WRITE_TRUNCATES_AFTER: bool = cfg!(not(windows));
+
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
@@ -4838,14 +4848,19 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
+        // A `write` on a handle opened for overlapped I/O returns before the
+        // transfer is done.
+        #[cfg(windows)]
+        if !bun_sys::windows::fs::is_synchronous(pathlike.fd()) {
+            *needs_async = true;
+            return JSValue::ZERO;
+        }
         pathlike.fd()
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
         match bun_sys::open(
             pathlike.path().slice_z_as_written(&mut file_path),
-            // we deliberately don't use O_TRUNC here
-            // it's a perf optimization
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
+            FAST_WRITE_OPEN_FLAGS,
             WRITE_PERMISSIONS,
         ) {
             bun_sys::Result::Ok(result) => result,
@@ -4869,7 +4884,11 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
     // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
-    let truncate = core::cell::Cell::new(NEEDS_OPEN || str.is_empty());
+    let truncate = core::cell::Cell::new(if NEEDS_OPEN {
+        FAST_WRITE_TRUNCATES_AFTER
+    } else {
+        str.is_empty()
+    });
     let written = core::cell::Cell::new(0usize);
 
     // we only truncate if it's a path
@@ -4912,7 +4931,6 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written.get() as f64))
 }
 
-#[cfg(not(windows))]
 fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
@@ -4920,13 +4938,19 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
+        // A `write` on a handle opened for overlapped I/O returns before the
+        // transfer is done.
+        #[cfg(windows)]
+        if !bun_sys::windows::fs::is_synchronous(pathlike.fd()) {
+            *needs_async = true;
+            return JSValue::ZERO;
+        }
         pathlike.fd()
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
-        let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
         match bun_sys::open(
             pathlike.path().slice_z_as_written(&mut file_path),
-            flags,
+            FAST_WRITE_OPEN_FLAGS,
             WRITE_PERMISSIONS,
         ) {
             bun_sys::Result::Ok(result) => result,
@@ -4944,7 +4968,11 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    let truncate = NEEDS_OPEN || bytes.is_empty();
+    let truncate = if NEEDS_OPEN {
+        FAST_WRITE_TRUNCATES_AFTER
+    } else {
+        bytes.is_empty()
+    };
     let mut written: usize = 0;
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 

@@ -982,7 +982,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       fs.chmodSync(dest, 0o444);
       try {
         expect(await rejectionOf(Bun.write(dest, "", { createPath: false }))).toEqual(
-          systemError("EPERM", "truncate", dest),
+          systemError("EPERM", "open", dest),
         );
         expect(fs.readFileSync(dest, "utf8")).toBe("dest");
       } finally {
@@ -1806,4 +1806,63 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+});
+
+// Short writes are made on the calling thread, so writes that are not awaited reach the file
+// descriptor in the order they were made. On Windows every write was its own job on the work pool,
+// which has no order: the characters came out scrambled, or reversed.
+describe("Bun.write() calls that are not awaited keep their order", () => {
+  const line = "write ordering 0123456789 abcdefghijklmnopqrstuvwxyz";
+  const fixture = `
+    const line = ${JSON.stringify(line)} + "\\n";
+    for (let round = 0; round < 20; round++) for (const ch of line) Bun.write(Bun.stdout, ch);
+  `;
+
+  it("to a pipe", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: (line + "\n").repeat(20), stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("to a terminal", async () => {
+    let output = "";
+    const ended = Promise.withResolvers();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      terminal: {
+        cols: 200,
+        rows: 50,
+        data(_terminal, chunk) {
+          output += Buffer.from(chunk).toString();
+        },
+        exit() {
+          ended.resolve();
+        },
+      },
+    });
+    expect(await proc.exited).toBe(0);
+    proc.terminal.close();
+    await ended.promise;
+    const lines = Bun.stripANSI(output)
+      .split(/\r?\n/)
+      .map(l => l.trim())
+      .filter(l => l.length > 0);
+    expect(lines).toEqual(Array(20).fill(line));
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/13477: on Windows this rejected with the error of the
+// truncation an empty write asks for, which a pipe and a console refuse.
+it('Bun.write(Bun.stdout, "") resolves with 0', async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `console.log("wrote", await Bun.write(Bun.stdout, ""));`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "wrote 0\n", stderr: "" });
+  expect(exitCode).toBe(0);
 });

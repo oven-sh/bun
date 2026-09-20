@@ -9,6 +9,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, globSync, mkdirSync, utimesSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { isBuildkite } from "../buildkite.ts";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
 import { generateCargoConfig } from "./cargo-config.ts";
@@ -160,7 +161,10 @@ function configureInputs(cwd: string): string[] {
     .map(f => resolve(buildDir, f));
   const deps = globSync("deps/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
-  return [...scripts, ...deps, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
+  // Versions the build uses (LLVM, Node.js, the sysroots) are written here.
+  const pins = resolve(buildDir, "ci-images", "spec.ts");
+
+  return [...scripts, ...deps, pins, resolve(cwd, "scripts", "glob-sources.ts"), resolve(cwd, "package.json")].sort();
 }
 
 /**
@@ -283,7 +287,9 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   const cfg = resolveConfig(partial, toolchain);
 
   validateBunConfig(cfg);
-  if (cfg.ci) {
+  // Not cfg.ci or cfg.buildkite: those are what a ci-* profile asks for, and a
+  // developer can build one (`bun run build:ci`) on a machine that is no image.
+  if (isBuildkite) {
     checkImageTools(toolchain);
   }
 

@@ -28,6 +28,19 @@ test("the workflows install the Bun the CI images install", () => {
   expect(versions.filter(version => !version.endsWith(`: ${pins.bun.version}`))).toEqual([]);
 });
 
+test("the workflows that pin a nightly pin the one the CI images install", () => {
+  const workflows = join(root, ".github/workflows");
+  const nightlies = readdirSync(workflows)
+    .filter(name => name.endsWith(".yml"))
+    .flatMap(name =>
+      [...readFileSync(join(workflows, name), "utf8").matchAll(/^\s*RUSTUP_TOOLCHAIN: (nightly-\S+)/gm)].map(
+        match => `${name}: ${match[1]}`,
+      ),
+    );
+  expect(nightlies.length).toBeGreaterThan(0);
+  expect(nightlies.filter(nightly => !nightly.endsWith(`: ${pins.rust.channel}`))).toEqual([]);
+});
+
 test("the format workflow uses the LLVM the CI images install", () => {
   const workflow = readFileSync(join(root, ".github/workflows/format.yml"), "utf8");
   expect(workflow).toContain(`LLVM_VERSION: "${pins.llvm.version}"`);

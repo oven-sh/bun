@@ -248,6 +248,9 @@ const WRITE_FLUSHED_WITHOUT_CALLBACK: u32 = 0x10;
 const HPACK_ENTRY_OVERHEAD: usize = 32;
 // nghttp2's default send limit (https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_frame.h#L58). Equal to LSHPACK_MAX_HEADER_SIZE in c-bindings.cpp, the largest field the encoder emits.
 const NGHTTP2_MAX_HEADERSLEN: usize = 65536;
+// pushPromise() return value: the block is over the send limit and was not sent. Mirrored in
+// src/js/node/http2.ts (kPushPromiseOverSendLimit).
+const PUSH_PROMISE_OVER_SEND_LIMIT: f64 = -2.0;
 // Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
 const MAX_CUSTOM_SETTINGS: usize = 10;
 
@@ -2035,6 +2038,16 @@ impl HeaderList {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
+    /// Whether nghttp2 would refuse the staged block. `frame_bytes` is what the frame adds to the
+    /// bound: the priority fields for HEADERS, nothing for PUSH_PROMISE.
+    fn over_send_limit(&self, staged: &HeaderList, frame_bytes: usize) -> bool {
+        match self.max_send_header_block_length.get() {
+            // Unset: bun refuses only a block its encoder cannot emit. nghttp2's default refuses it too.
+            0 => staged.has_field_over(NGHTTP2_MAX_HEADERSLEN),
+            limit => staged.deflate_bound() + frame_bytes > limit as usize,
+        }
+    }
+
     /// Encodes a single header into the ArrayList, growing if needed.
     /// Returns the number of bytes written, or error on failure.
     ///
@@ -6117,7 +6130,8 @@ impl H2FrameParser {
         };
 
         let mut name_buffer = [0u8; 4096];
-        let mut encoded_headers: Vec<u8> = Vec::new();
+        // The send limit is checked on the whole block before the encoder sees it.
+        let mut staged = HeaderList::default();
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
@@ -6182,7 +6196,7 @@ impl H2FrameParser {
                         None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
                     }
                 };
-                let mut encode_value = |item: JSValue| -> JsResult<Option<JSValue>> {
+                let mut stage_value = |item: JSValue| -> JsResult<()> {
                     let value_view = item.to_js_string_view(global_object)?;
                     let value_bytes = header_value_bytes(&value_view);
                     let value = value_bytes.as_ref();
@@ -6203,21 +6217,11 @@ impl H2FrameParser {
                         BStr::new(validated_name),
                         BStr::new(value)
                     );
-                    if this
-                        .encode_header_into_list(
-                            &mut encoded_headers,
-                            validated_name,
-                            value,
-                            never_index,
-                        )
-                        .is_err()
-                    {
-                        // Same as the request/respond encode failures: nghttp2 fails the whole
-                        // session, and node never surfaces this through the pushStream callback.
-                        this.schedule_header_compression_session_error();
-                        return Ok(Some(JSValue::js_number(-1.0)));
-                    }
-                    Ok(None)
+                    staged
+                        .push(validated_name, value, never_index)
+                        .map_err(|_| {
+                            global_object.throw(format_args!("Failed to allocate header buffer"))
+                        })
                 };
                 if js_value.js_type().is_array() {
                     let mut value_iter = js_value.array_iterator(global_object)?;
@@ -6247,9 +6251,7 @@ impl H2FrameParser {
                                 )
                                 .throw());
                         }
-                        if let Some(ret) = encode_value(item)? {
-                            return Ok(ret);
-                        }
+                        stage_value(item)?;
                     }
                 } else {
                     if let Some(idx) = this.single_value_index_checked(validated_name) {
@@ -6266,10 +6268,34 @@ impl H2FrameParser {
                         }
                         single_value_headers[idx] = true;
                     }
-                    if let Some(ret) = encode_value(js_value)? {
-                        return Ok(ret);
-                    }
+                    stage_value(js_value)?;
                 }
+            }
+        }
+
+        // nghttp2 refuses the PUSH_PROMISE before it deflates it, then closes the promised stream.
+        // The peer never saw that id, so no RST_STREAM goes out for it.
+        // https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2190-L2195
+        if this.over_send_limit(&staged, 0) {
+            if let Some(promised_ptr) = this.streams.get().get(&promised_id).copied() {
+                let mut promised = this.enter_stream_dispatch(promised_ptr);
+                promised.state = StreamState::CLOSED;
+                promised.rst_code = ErrorCode::INTERNAL_ERROR.0;
+                promised.free_resources::<false>(this);
+            }
+            return Ok(JSValue::js_number(PUSH_PROMISE_OVER_SEND_LIMIT));
+        }
+
+        let mut encoded_headers: Vec<u8> = Vec::new();
+        for (name, value, never_index) in staged.iter() {
+            if this
+                .encode_header_into_list(&mut encoded_headers, name, value, never_index)
+                .is_err()
+            {
+                // Same as the request/respond encode failures: nghttp2 fails the whole
+                // session, and node never surfaces this through the pushStream callback.
+                this.schedule_header_compression_session_error();
+                return Ok(JSValue::js_number(-1.0));
             }
         }
 
@@ -7101,13 +7127,8 @@ impl H2FrameParser {
             flags |= HeadersFrameFlags::PRIORITY as u8;
         }
 
-        let over_send_limit = match this.max_send_header_block_length.get() {
-            // Unset: bun refuses only a block its encoder cannot emit. nghttp2's default refuses it too.
-            0 => staged.has_field_over(NGHTTP2_MAX_HEADERSLEN),
-            // Like nghttp2, priority bytes always counted: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
-            limit => staged.deflate_bound() + StreamPriority::BYTE_SIZE > limit as usize,
-        };
-        if over_send_limit {
+        // Like nghttp2, priority bytes always counted: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
+        if this.over_send_limit(&staged, StreamPriority::BYTE_SIZE) {
             if this.is_server.get() {
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();

@@ -1523,6 +1523,257 @@ describe("a response header field over the send limit (RFC 9113 §8.1)", () => {
   });
 });
 
+describe("a PUSH_PROMISE over the send limit (RFC 9113 §8.4)", () => {
+  // Verified against node v26.3.0. nghttp2 refuses the block before it deflates it, so only the
+  // push fails: 'frameError' on the parent, the reserved stream closes with INTERNAL_ERROR and
+  // never shows on the wire, the parent's response still goes out, and the session closes with
+  // GOAWAY NO_ERROR once its streams are done. The limit is the one respond() uses.
+  const big = (size: number) => Buffer.alloc(size, "A").toString();
+  const smallFields = Object.fromEntries(Array.from({ length: 700 }, (_, i) => [`x-h${i}`, big(100)]));
+
+  function describeFrame(f: Frame): string {
+    const word = (offset: number) => f.payload.readUInt32BE(offset) & 0x7fffffff;
+    if (f.type === FrameType.RST_STREAM) return `${f.streamId} RST_STREAM ${word(0)}`;
+    if (f.type === FrameType.GOAWAY) return `0 GOAWAY ${word(4)} last=${word(0)}`;
+    if (f.type === FrameType.PUSH_PROMISE) return `${f.streamId} PUSH_PROMISE ${word(0)}`;
+    const type = Object.keys(FrameType).find(k => FrameType[k as keyof typeof FrameType] === f.type);
+    return `${f.streamId} ${type}${f.flags & 0x1 ? " END_STREAM" : ""}`;
+  }
+  const streamFrames = (c: RawH2) =>
+    c.frames
+      .filter(f => f.type !== FrameType.SETTINGS && f.type !== FrameType.WINDOW_UPDATE && f.type !== FrameType.PING)
+      .map(describeFrame);
+  const endOfStream = (id: number) => (f: Frame) =>
+    f.streamId === id && f.type === FrameType.DATA && (f.flags & 0x1) !== 0;
+
+  // The handler pushes, then answers the parent in the same tick. The callback answers the push,
+  // at once or from a microtask (an async callback that awaits a settled promise).
+  async function pushWith(
+    fields: http2.OutgoingHttpHeaders,
+    {
+      options = {},
+      refused = true,
+      answerFromMicrotask = false,
+    }: { options?: http2.ServerOptions; refused?: boolean; answerFromMicrotask?: boolean } = {},
+  ) {
+    const parent: string[] = [];
+    const push: string[] = [];
+    const sessionErrors: string[] = [];
+    const parentClosed = Promise.withResolvers<void>();
+    const pushClosed = Promise.withResolvers<void>();
+    const sessionClosed = Promise.withResolvers<void>();
+    const srv = http2.createServer(options);
+    srv.on("sessionError", (e: NodeJS.ErrnoException) => sessionErrors.push(`${e.code}`));
+    srv.on("session", session => session.on("close", () => sessionClosed.resolve()));
+    srv.on("stream", stream => {
+      stream.on("error", (e: NodeJS.ErrnoException) => parent.push(`error ${e.code}`));
+      stream.on("frameError", (type, code) => parent.push(`frameError ${type} ${code}`));
+      stream.on("close", () => {
+        parent.push(`close ${stream.rstCode}`);
+        parentClosed.resolve();
+      });
+      stream.pushStream({ ":path": "/pushed", ...fields }, (err: NodeJS.ErrnoException | null, pushed) => {
+        push.push(`callback ${err?.code ?? null} id=${pushed?.id}`);
+        if (err) return pushClosed.reject(err);
+        pushed.on("error", (e: NodeJS.ErrnoException) => push.push(`error ${e.code}: ${e.message}`));
+        pushed.on("close", () => {
+          push.push(`close ${pushed.rstCode}`);
+          pushClosed.resolve();
+        });
+        const answer = () => {
+          pushed.respond({ ":status": 200 });
+          pushed.end("pushed body");
+          push.push("respond() and end() returned");
+        };
+        if (answerFromMicrotask) Promise.resolve().then(answer).catch(pushClosed.reject);
+        else answer();
+      });
+      stream.respond({ ":status": 200 });
+      stream.end("x");
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      const settled = refused
+        ? [c.waitForGoaway(), pushClosed.promise, sessionClosed.promise]
+        : [c.waitFor(endOfStream(2))];
+      await Promise.all([c.waitFor(endOfStream(1)), parentClosed.promise, ...settled]);
+      return { wire: streamFrames(c), parent, push, sessionErrors };
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  }
+
+  const onlyThePushFails = {
+    wire: ["1 HEADERS", "1 DATA END_STREAM", `0 GOAWAY ${ErrorCode.NO_ERROR} last=1`],
+    parent: [`frameError ${FrameType.PUSH_PROMISE} ${ErrorCode.FRAME_SIZE_ERROR}`, `close ${ErrorCode.NO_ERROR}`],
+    push: [
+      "callback null id=2",
+      "respond() and end() returned",
+      "error ERR_HTTP2_STREAM_ERROR: Stream closed with error code NGHTTP2_INTERNAL_ERROR",
+      `close ${ErrorCode.INTERNAL_ERROR}`,
+    ],
+    sessionErrors: [],
+  };
+
+  // The block is :method GET, :path /pushed, :scheme http, :authority localhost and x-big. Its
+  // nghttp2 bound is 12 + 12 * 5 + 57 + the value length: 65407 puts it at exactly 65536.
+  // "x-big" is 5 bytes: 65531 puts name plus value at 65536, the largest field bun encodes.
+  test.each<[string, http2.OutgoingHttpHeaders, http2.ServerOptions]>([
+    ["one field over 64 KiB", { "x-big": big(90_000) }, {}],
+    ["a field of 65537 bytes", { "x-big": big(65_532) }, {}],
+    ["a block over a user-set limit", { "x-big": big(400) }, { maxSendHeaderBlockLength: 300 }],
+    ["a block one byte over a user-set limit", { "x-big": big(65_408) }, { maxSendHeaderBlockLength: 65_536 }],
+    ["a block of small fields over a user-set limit", smallFields, { maxSendHeaderBlockLength: 65_536 }],
+  ])("%s fails only the push", async (_, fields, options) => {
+    expect(await pushWith(fields, { options })).toEqual(onlyThePushFails);
+  });
+
+  test.each<[string, http2.OutgoingHttpHeaders, http2.ServerOptions]>([
+    ["a field of exactly 65536 bytes", { "x-big": big(65_531) }, {}],
+    ["a block at exactly a user-set limit", { "x-big": big(65_407) }, { maxSendHeaderBlockLength: 65_536 }],
+    ["a block that a lower limit refuses", { "x-big": big(400) }, { maxSendHeaderBlockLength: 1000 }],
+    ["a block of small fields over 64 KiB with the option unset (node refuses it)", smallFields, {}],
+  ])("%s is pushed", async (_, fields, options) => {
+    const { wire, parent, sessionErrors } = await pushWith(fields, { options, refused: false });
+    expect({ wire: wire.filter(f => !f.includes("CONTINUATION")).sort(), parent, sessionErrors }).toEqual({
+      wire: ["1 DATA END_STREAM", "1 HEADERS", "1 PUSH_PROMISE 2", "2 DATA END_STREAM", "2 HEADERS"],
+      parent: [`close ${ErrorCode.NO_ERROR}`],
+      sessionErrors: [],
+    });
+  });
+
+  test("the reserved stream stays usable for the rest of the tick", async () => {
+    const outcome = await pushWith({ "x-big": big(90_000) }, { answerFromMicrotask: true });
+    expect(outcome).toEqual(onlyThePushFails);
+  });
+
+  test("an unanswered parent is reset and a stream in flight still completes", async () => {
+    const requestFor = (path: string) =>
+      Buffer.concat([
+        Buffer.from([0x82, 0x86, 0x04]),
+        hpackLiteral(path),
+        Buffer.from([0x01]),
+        hpackLiteral("localhost"),
+      ]);
+    let inFlight!: http2.ServerHttp2Stream;
+    const parent: string[] = [];
+    const parentClosed = Promise.withResolvers<void>();
+    const sessionClosed = Promise.withResolvers<void>();
+    const srv = http2.createServer();
+    srv.on("session", session => session.on("close", () => sessionClosed.resolve()));
+    srv.on("stream", (stream, headers) => {
+      if (headers[":path"] === "/in-flight") {
+        inFlight = stream;
+        stream.respond({ ":status": 200 });
+        stream.write("part1");
+        return;
+      }
+      stream.on("error", (e: NodeJS.ErrnoException) => parent.push(`error ${e.code}: ${e.message}`));
+      stream.on("frameError", (type, code) => parent.push(`frameError ${type} ${code}`));
+      stream.on("close", () => {
+        parent.push(`close ${stream.rstCode}`);
+        parentClosed.resolve();
+      });
+      stream.pushStream({ ":path": "/pushed", "x-big": big(90_000) }, (err, pushed) => pushed?.on("error", () => {}));
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestFor("/in-flight"));
+      await c.waitFor(f => f.streamId === 1 && f.type === FrameType.DATA);
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestFor("/"));
+      await Promise.all([c.waitForGoaway(), parentClosed.promise]);
+      inFlight.end("part2");
+      await Promise.all([c.waitFor(endOfStream(1)), sessionClosed.promise]);
+      const wire = streamFrames(c);
+      expect({
+        parent,
+        inFlight: wire.filter(f => f.startsWith("1 ")),
+        rest: wire.filter(f => !f.startsWith("1 ")).sort(),
+      }).toEqual({
+        parent: [
+          `frameError ${FrameType.PUSH_PROMISE} ${ErrorCode.FRAME_SIZE_ERROR}`,
+          "error ERR_HTTP2_STREAM_ERROR: Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR",
+          `close ${ErrorCode.FRAME_SIZE_ERROR}`,
+        ],
+        inFlight: ["1 HEADERS", "1 DATA", "1 DATA END_STREAM"],
+        rest: [`0 GOAWAY ${ErrorCode.NO_ERROR} last=3`, `3 RST_STREAM ${ErrorCode.FRAME_SIZE_ERROR}`],
+      });
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  // "x-shared" is in the refused block and in both responses. A real client only decodes them if
+  // the refused block never reached the HPACK encoder.
+  test("a node:http2 client decodes the responses sent after the refused push", async () => {
+    const srv = http2.createServer();
+    let inFlight!: http2.ServerHttp2Stream;
+    srv.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers[":path"] === "/in-flight") {
+        inFlight = stream;
+        return;
+      }
+      stream.on("close", () => {
+        inFlight.respond({ ":status": 200, "x-shared": "same-value" });
+        inFlight.end("in-flight body");
+      });
+      stream.pushStream({ ":path": "/pushed", "x-shared": "same-value", "x-big": big(90_000) }, (err, pushed) =>
+        pushed?.on("error", () => {}),
+      );
+      stream.respond({ ":status": 200, "x-shared": "same-value" });
+      stream.end("parent body");
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`);
+    try {
+      const pushes: number[] = [];
+      client.on("stream", pushed => pushes.push(pushed.id!));
+      const goaways: { code: number; lastStreamID: number }[] = [];
+      client.on("goaway", (code, lastStreamID) => goaways.push({ code, lastStreamID }));
+      const clientClosed = Promise.withResolvers<void>();
+      client.on("error", clientClosed.reject);
+      client.on("close", () => clientClosed.resolve());
+      const run = (path: string) => {
+        const result = { status: 0, shared: undefined as unknown, body: "" };
+        const { promise, resolve, reject } = Promise.withResolvers<typeof result>();
+        const req = client.request({ ":path": path });
+        req.setEncoding("utf8");
+        req.on("response", h => Object.assign(result, { status: h[":status"], shared: h["x-shared"] }));
+        req.on("data", chunk => (result.body += chunk));
+        req.on("error", reject);
+        req.on("close", () => resolve(result));
+        req.end();
+        return promise;
+      };
+      const [inFlightResponse, parentResponse] = await Promise.all([run("/in-flight"), run("/"), clientClosed.promise]);
+      expect({ inFlightResponse, parentResponse, pushes, goaways }).toEqual({
+        inFlightResponse: { status: 200, shared: "same-value", body: "in-flight body" },
+        parentResponse: { status: 200, shared: "same-value", body: "parent body" },
+        pushes: [],
+        goaways: [{ code: ErrorCode.NO_ERROR, lastStreamID: 3 }],
+      });
+    } finally {
+      client.destroy();
+      srv.close();
+    }
+  });
+});
+
 // A stream nothing references any more can still survive a bounded number of collections: JSC scans
 // the machine stack conservatively and honors interior pointers, so a stale word left in a native
 // frame (seen on x64 as cell+0x84 in the microtask-drain frames; near-deterministic on aarch64) pins

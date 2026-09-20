@@ -38,6 +38,7 @@ uint32_t CpuProfilerImpl::start(WTF::String&& title, bool recordSamples)
     m_sessions.append(Session { id, WTF::move(title), nowMicroseconds(), recordSamples });
 
     if (m_sessions.size() == 1) {
+#if ENABLE(SAMPLING_PROFILER)
         auto& vm = m_isolate->vm();
         auto stopwatch = WTF::Stopwatch::create();
         stopwatch->start();
@@ -45,6 +46,7 @@ uint32_t CpuProfilerImpl::start(WTF::String&& title, bool recordSamples)
         sampler.setTimingInterval(WTF::Seconds::fromMicroseconds(m_samplingIntervalUs));
         sampler.noticeCurrentThreadAsJSCExecutionThread();
         sampler.start();
+#endif
     }
 
     return id;
@@ -64,6 +66,20 @@ const CpuProfilerImpl::Session* CpuProfilerImpl::sessionWithTitle(const WTF::Str
 // the V8 CpuProfileNode/CpuProfile object model instead.
 static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t startTime, bool recordSamples)
 {
+#if !ENABLE(SAMPLING_PROFILER)
+    // No sampling profiler on this build (CLoop): hand back an empty tree with
+    // just the root so callers keep working.
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(recordSamples);
+    auto root = makeUnique<CpuProfileNodeImpl>();
+    root->id = 1;
+    root->functionName = "(root)";
+    root->scriptResourceName = "";
+    profile.m_root = root.get();
+    profile.m_nodes.append(WTF::move(root));
+    profile.m_startTime = startTime;
+    profile.m_endTime = nowMicroseconds();
+#else
     JSC::SamplingProfiler* sampler = vm.samplingProfiler();
 
     auto makeRoot = [&]() -> CpuProfileNodeImpl* {
@@ -273,6 +289,7 @@ static void buildProfileTree(JSC::VM& vm, CpuProfileImpl& profile, int64_t start
     }
 
     profile.m_endTime = lastTimestamp > startTime ? lastTimestamp : nowMicroseconds();
+#endif
 }
 
 CpuProfileImpl* CpuProfilerImpl::stop(uint32_t id)
@@ -296,11 +313,13 @@ CpuProfileImpl* CpuProfilerImpl::stop(uint32_t id)
     buildProfileTree(vm, *profile, session.startTime, session.recordSamples);
 
     if (m_sessions.isEmpty()) {
+#if ENABLE(SAMPLING_PROFILER)
         if (JSC::SamplingProfiler* sampler = vm.samplingProfiler()) {
             WTF::Locker locker { sampler->getLock() };
             sampler->pause();
             sampler->clearData();
         }
+#endif
     }
 
     return profile;
@@ -467,11 +486,13 @@ void CpuProfiler::Dispose()
 {
     auto* impl = toImpl(this);
     if (!impl->m_sessions.isEmpty()) {
+#if ENABLE(SAMPLING_PROFILER)
         if (JSC::SamplingProfiler* sampler = impl->m_isolate->vm().samplingProfiler()) {
             WTF::Locker locker { sampler->getLock() };
             sampler->pause();
             sampler->clearData();
         }
+#endif
     }
     delete impl;
 }

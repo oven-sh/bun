@@ -51,7 +51,7 @@ export function rustTarget(cfg: Config): string {
 
 /** `rustTarget()` on the bare target platform; `abi` is linux-only. */
 export function rustTriple(os: OS, arch: Arch, abi: Abi | undefined): string {
-  const rustArch = arch === "x64" ? "x86_64" : "aarch64";
+  const rustArch = arch === "x64" ? "x86_64" : arch === "riscv64" ? "riscv64gc" : "aarch64";
   if (os === "darwin") return `${rustArch}-apple-darwin`;
   if (os === "windows") return `${rustArch}-pc-windows-msvc`;
   if (os === "freebsd") return `${rustArch}-unknown-freebsd`;
@@ -152,6 +152,10 @@ function rustCpuTargetFlags(cfg: Config): string[] {
       rustflags.push(`-Ztune-cpu=${value}`);
     } else if (kind === "cpu" || cfg.x64) {
       rustflags.push(`-Ctarget-cpu=${value}`);
+    } else if (cfg.arch === "riscv64") {
+      assert(value === "rv64gc", `rustCpuTargetFlags() only knows how to spell -march=rv64gc, not -march=${value}`);
+      rustflags.push("-Ctarget-cpu=generic-rv64");
+      rustflags.push("-Ctarget-feature=+m,+a,+f,+d,+c");
     } else {
       const [level, ...extensions] = value.split("+");
       assert(level === "armv8-a", `rustCpuTargetFlags() only knows how to spell -march=armv8-a, not -march=${value}`);

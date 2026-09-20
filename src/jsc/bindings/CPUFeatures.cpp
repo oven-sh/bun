@@ -129,12 +129,54 @@ static uint8_t aarch64_cpu_features()
 
 #endif
 
+#if CPU(RISCV64)
+
+#if OS(LINUX)
+#include <sys/auxv.h>
+#endif
+
+enum class RISCV64CPUFeature : uint8_t {
+    none = 0,
+    m = 1,
+    a = 2,
+    f = 3,
+    d = 4,
+    c = 5,
+    v = 6,
+};
+
+static uint8_t riscv64_cpu_features()
+{
+    uint8_t features = 0;
+#if OS(LINUX)
+    unsigned long hwcaps = getauxval(AT_HWCAP);
+    const auto bit = [&](char letter) { return hwcaps & (1UL << (letter - 'a')); };
+    if (bit('m'))
+        features |= 1 << static_cast<uint8_t>(RISCV64CPUFeature::m);
+    if (bit('a'))
+        features |= 1 << static_cast<uint8_t>(RISCV64CPUFeature::a);
+    if (bit('f'))
+        features |= 1 << static_cast<uint8_t>(RISCV64CPUFeature::f);
+    if (bit('d'))
+        features |= 1 << static_cast<uint8_t>(RISCV64CPUFeature::d);
+    if (bit('c'))
+        features |= 1 << static_cast<uint8_t>(RISCV64CPUFeature::c);
+    if (bit('v'))
+        features |= 1 << static_cast<uint8_t>(RISCV64CPUFeature::v);
+#endif
+    return features;
+}
+
+#endif
+
 extern "C" uint8_t bun_cpu_features()
 {
 #if CPU(X86_64)
     return x86_cpu_features();
 #elif CPU(ARM64)
     return aarch64_cpu_features();
+#elif CPU(RISCV64)
+    return riscv64_cpu_features();
 #else
 #error "Unknown architecture"
 #endif

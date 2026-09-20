@@ -44,7 +44,23 @@ bitflags::bitflags! {
     }
 }
 
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(target_arch = "riscv64")]
+bitflags::bitflags! {
+    #[repr(transparent)]
+    #[derive(Copy, Clone)]
+    pub struct Flags: u8 {
+        const NONE = 1 << 0;
+        const M    = 1 << 1;
+        const A    = 1 << 2;
+        const F    = 1 << 3;
+        const D    = 1 << 4;
+        const C    = 1 << 5;
+        const V    = 1 << 6;
+        // bit 7 = padding
+    }
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")))]
 compile_error!("CPUFeatures: unsupported target architecture");
 
 // Per-arch const table of flag names, skipping "none" and padding bits.
@@ -65,6 +81,16 @@ const NAMED_FLAGS: &[(&str, Flags)] = &[
     ("crc32", Flags::CRC32),
     ("atomics", Flags::ATOMICS),
     ("sve", Flags::SVE),
+];
+
+#[cfg(target_arch = "riscv64")]
+const NAMED_FLAGS: &[(&str, Flags)] = &[
+    ("m", Flags::M),
+    ("a", Flags::A),
+    ("f", Flags::F),
+    ("d", Flags::D),
+    ("c", Flags::C),
+    ("v", Flags::V),
 ];
 
 impl fmt::Display for CPUFeatures {

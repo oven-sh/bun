@@ -275,6 +275,9 @@ export const webkit: Dependency = {
     if (cfg.freebsd && cfg.crossTarget !== undefined) {
       optFlags.push(`--target=${cfg.crossTarget}`, `--sysroot=${cfg.sysroot!}`);
     }
+    if (cfg.linux && cfg.arch === "riscv64" && cfg.crossTarget !== undefined) {
+      optFlags.push(`--target=${cfg.crossTarget}`, `--sysroot=${cfg.sysroot!}`);
+    }
     const optFlagStr = optFlags.join(" ");
     let cxxOptFlagStr = optFlagStr;
     if (cfg.abi === "android") {
@@ -312,6 +315,16 @@ export const webkit: Dependency = {
         ? {
             CMAKE_SYSTEM_NAME: "FreeBSD",
             CMAKE_SYSTEM_PROCESSOR: cfg.arm64 ? "aarch64" : "x86_64",
+            CMAKE_SYSROOT: cfg.sysroot!,
+            CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
+            CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
+          }
+        : {}),
+      ...(cfg.linux && cfg.arch === "riscv64" && cfg.crossTarget !== undefined
+        ? {
+            CMAKE_SYSTEM_NAME: "Linux",
+            CMAKE_SYSTEM_PROCESSOR: "riscv64",
             CMAKE_SYSROOT: cfg.sysroot!,
             CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
             CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",

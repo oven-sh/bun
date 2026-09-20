@@ -3132,6 +3132,24 @@ function afterOpen(options, headers, err, fd) {
   fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
 }
 
+// The options checks that respondWithFile() and respondWithFD() share. Node runs them before
+// it looks at the headers. Returns a copy.
+function validateFileResponseOptions(options) {
+  assertIsObject(options, "options");
+  options = { ...options };
+  if (options.offset !== undefined && typeof options.offset !== "number") {
+    throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
+  }
+  if (options.length !== undefined && typeof options.length !== "number") {
+    throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
+  }
+  if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
+    throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
+  }
+  return options;
+}
+hideFromStack(validateFileResponseOptions);
+
 // Node's Http2Stream[kMaybeDestroy] server branch (lib/internal/http2/core.js): once the
 // response has finished, a server stream with no pending trailers whose request body was
 // never consumed (no read()/'data'/pipe - readableDidRead + readableFlowing) is closed
@@ -3318,17 +3336,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
-    assertIsObject(options, "options");
-    options = { ...options };
-    if (options.offset !== undefined && typeof options.offset !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
-    }
-    if (options.length !== undefined && typeof options.length !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
-    }
-    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
-      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
-    }
+    options = validateFileResponseOptions(options);
 
     // node's message names Array, yet only respond() accepts the raw-array form.
     assertIsObject(headers, "headers", ["Object", "Array"]);
@@ -3369,17 +3377,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
-    assertIsObject(options, "options");
-    options = { ...options };
-    if (options.offset !== undefined && typeof options.offset !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
-    }
-    if (options.length !== undefined && typeof options.length !== "number") {
-      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
-    }
-    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
-      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
-    }
+    options = validateFileResponseOptions(options);
 
     // node's message names Array, yet only respond() accepts the raw-array form.
     assertIsObject(headers, "headers", ["Object", "Array"]);

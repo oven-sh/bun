@@ -56,6 +56,20 @@ import { expectType } from "./utilities";
       rejectUnauthorized: true,
     },
   });
+
+  // tls.serverName and tls.checkServerIdentity, as in fetch()
+  const options = {
+    tls: {
+      serverName: "dev.local",
+      checkServerIdentity(hostname, cert) {
+        expectType<string>(hostname);
+        expectType<string>(cert.fingerprint256);
+        expectType<Buffer>(cert.raw);
+        return hostname === "dev.local" ? undefined : new Error("pin mismatch");
+      },
+    },
+  } satisfies Bun.WebSocketOptions;
+  options.tls.checkServerIdentity("dev.local", {} as import("node:tls").PeerCertificate);
 }
 
 // Assignability test

@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { tls as tlsCerts } from "harness";
-import { createHash } from "node:crypto";
+import { createHash, X509Certificate } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import tls from "node:tls";
 import { clientEvents, startRecordingProxy } from "./proxy-test-utils";
@@ -81,6 +81,7 @@ function openSession(ws: WebSocket) {
 }
 
 const opened = [{ code: 1000, reason: "", wasClean: true }];
+const expectedFingerprint256 = new X509Certificate(tlsCerts.cert).fingerprint256;
 const tlsFailed = (url: string) => [
   { error: `WebSocket connection to '${url}' failed: TLS handshake failed` },
   { code: 1015, reason: "TLS handshake failed", wasClean: false },
@@ -126,12 +127,18 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
   test("is called with the hostname and the peer certificate", async () => {
     using server = startSniServer();
     const url = `wss://localhost:${await server.port}/`;
-    const calls: { hostname: string; subject: string; altnames: string }[] = [];
+    const calls: { hostname: string; subject: string; altnames: string; fingerprint256: string; raw: boolean }[] = [];
     const ws = new WebSocket(url, {
       tls: {
         ca: tlsCerts.cert,
         checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
-          calls.push({ hostname, subject: cert.subject.CN, altnames: cert.subjectaltname });
+          calls.push({
+            hostname,
+            subject: cert.subject.CN,
+            altnames: cert.subjectaltname,
+            fingerprint256: cert.fingerprint256,
+            raw: Buffer.isBuffer(cert.raw),
+          });
           return undefined;
         },
       },
@@ -142,6 +149,8 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
         hostname: "localhost",
         subject: "server-bun",
         altnames: "DNS:localhost, IP Address:127.0.0.1, IP Address:0:0:0:0:0:0:0:1",
+        fingerprint256: expectedFingerprint256,
+        raw: true,
       },
     ]);
   });

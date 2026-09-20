@@ -4626,7 +4626,6 @@ class ServerHttp2Session extends Http2Session {
     // still throw ERR_INVALID_ARG_TYPE — spreading ({ ...null }) would hide
     // these from the type guard in validateSettings.
     validateSettings(settings);
-    // node validates the callback after the settings, and only a truthy one:
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1559-L1564
     if (callback) validateFunction(callback, "callback");
     // RFC 9113 §6.5.2: a server MUST NOT advertise SETTINGS_ENABLE_PUSH != 0.
@@ -5556,7 +5555,6 @@ class ClientHttp2Session extends Http2Session {
     // node treats an omitted/undefined settings object as an empty update.
     if (settings === undefined) settings = {} as Settings;
     validateSettings(settings);
-    // node validates the callback after the settings, and only a truthy one:
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1559-L1564
     if (callback) validateFunction(callback, "callback");
     // node: when more SETTINGS are submitted than maxOutstandingSettings allows un-ACKed, the
@@ -6493,7 +6491,6 @@ class Http2Server extends net.Server {
   }
 
   setTimeout(ms, callback) {
-    // node assigns the timeout before it validates the callback:
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3502-L3509
     this.timeout = ms;
     if (callback !== undefined) {
@@ -6627,7 +6624,6 @@ class Http2SecureServer extends tls.Server {
     return super.emit(event, ...args);
   }
   setTimeout(ms, callback) {
-    // node assigns the timeout before it validates the callback:
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3460-L3467
     this.timeout = ms;
     if (callback !== undefined) {

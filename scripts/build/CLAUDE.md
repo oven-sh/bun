@@ -87,12 +87,14 @@ Edge dependency types:
 ## Iterating on the build system
 
 ```sh
-bun scripts/build.ts --configure-only       # regenerate build.ninja, don't run ninja
+bun scripts/build.ts --configure-only       # regenerate build.ninja, don't run ninja; prints the ninja to run
 bunx tsc --noEmit -p scripts/build/tsconfig.json   # typecheck
 grep "yourtarget\|yourrule" build/debug/build.ninja  # inspect generated output
-ninja -C build/debug -t query <target>      # why does <target> rebuild?
-ninja -C build/debug -t deps <target>       # what headers does foo.o depend on?
-ninja -C build/debug <target>               # build a specific target (e.g. tinycc, bun-rust)
+bun run build --target=<target>             # build a specific target (e.g. tinycc, bun-rust)
+# $NINJA below is the path `--configure-only` prints (`run: <ninja> -C …`): the build pins its own ninja
+# (ninja-release.ts), and another version run in the same directory starts its build log over → full rebuild.
+$NINJA -C build/debug -t query <target>     # why does <target> rebuild?
+$NINJA -C build/debug -t deps <target>      # what headers does foo.o depend on?
 ```
 
 The generated `build.ninja` is the ground truth. If an edge isn't doing what you expect, read it there first.
@@ -112,7 +114,7 @@ The generated `build.ninja` is the ground truth. If an edge isn't doing what you
 
 Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `bun bd test --asan=off foo.ts` sends `--asan=off` to bun-debug. Use `--` when a runtime flag collides with a build flag: `bun bd -- --target=browser script.ts`.
 
-**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only), `configure-<name>` (cmake deps). Also `bun`, `check`, `bun-rust`. List all: `ninja -C build/debug -t targets`.
+**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only), `configure-<name>` (cmake deps). Also `bun`, `check`, `bun-rust`. List all: `$NINJA -C build/debug -t targets`.
 
 ## Common tasks
 

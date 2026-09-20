@@ -32,6 +32,8 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     ld64Lld: undefined,
     rustLld: undefined,
     rustLlvmVersion: "22.1.4",
+    rustSysroot: undefined,
+    rustHostTriple: undefined,
     strip: "/fake/llvm/bin/llvm-strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",

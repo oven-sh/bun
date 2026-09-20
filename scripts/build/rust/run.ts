@@ -30,13 +30,18 @@ import { writeIfChanged } from "../fs.ts";
 import { type BuildScriptOutput, envify } from "./cargo-env.ts";
 import type { RustcUnitManifest, UnitManifest } from "./units.ts";
 
-const [mode, manifestPath] = process.argv.slice(2);
-if (!mode || !manifestPath) usage("usage: run.ts rustc|build-script <unit.json>");
-const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as UnitManifest;
+// Guarded so the tests can import the pieces below without running a unit.
+if (process.argv[1] === import.meta.filename) main();
 
-if (mode === "build-script" && manifest.kind === "build-script-run") runBuildScript(manifest);
-else if (mode === "rustc" && manifest.kind !== "build-script-run") runRustc(manifest);
-else usage(`mode ${mode} does not apply to ${manifest.crateName} (${manifest.kind})`);
+function main(): void {
+  const [mode, manifestPath] = process.argv.slice(2);
+  if (!mode || !manifestPath) usage("usage: run.ts rustc|build-script <unit.json>");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as UnitManifest;
+
+  if (mode === "build-script" && manifest.kind === "build-script-run") runBuildScript(manifest);
+  else if (mode === "rustc" && manifest.kind !== "build-script-run") runRustc(manifest);
+  else usage(`mode ${mode} does not apply to ${manifest.crateName} (${manifest.kind})`);
+}
 
 /**
  * Write to this process's stdout (1) or stderr (2) synchronously. ninja reads both through one pipe, and this
@@ -102,7 +107,7 @@ function readScriptOutput(path: string): BuildScriptOutput {
  * so whoever links needs them all); add_custom_flags adds, from the own script only, `-l` (lib targets),
  * `-C link-arg`, `--cfg`, `--check-cfg` and the `rustc-env` pairs.
  */
-function rustcInvocation(unit: RustcUnitManifest): { argv: string[]; env: Record<string, string> } {
+export function rustcInvocation(unit: RustcUnitManifest): { argv: string[]; env: Record<string, string> } {
   const args = [...unit.args];
   const own = unit.buildScriptOutput !== undefined ? readScriptOutput(unit.buildScriptOutput) : undefined;
   for (const s of own?.linkSearch ?? []) args.push("-L", s);
@@ -251,7 +256,7 @@ function stampOutput(path: string): void {
  * workspace sources — while ninja reads depfile paths relative to the build directory, so everything is made
  * absolute. Spaces are `\ `-escaped on both sides (Makefile syntax).
  */
-function writeDepfile(unit: RustcUnitManifest): void {
+export function writeDepfile(unit: RustcUnitManifest): void {
   if (!existsSync(unit.depInfo)) throw new Error(`rustc did not write ${unit.depInfo}`);
   const abs = (p: string) => (isAbsolute(p) ? p : resolve(unit.cwd, p.replace(/\\ /g, " ")).replace(/ /g, "\\ "));
   const lines: string[] = [];
@@ -372,7 +377,7 @@ function runBuildScript(unit: Extract<UnitManifest, { kind: "build-script-run" }
  * error there — reported as warnings here), `cargo:KEY=VALUE` the old one, under which unknown keys are metadata for
  * dependents (`cargo:root=…`, `cargo:include=…` from -sys crates) and `error` is not a directive.
  */
-function parseBuildScriptOutput(stdout: string): BuildScriptOutput {
+export function parseBuildScriptOutput(stdout: string): BuildScriptOutput {
   const out: BuildScriptOutput = {
     linkLibs: [],
     linkSearch: [],

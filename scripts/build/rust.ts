@@ -720,6 +720,10 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     "no rustc found for the pinned toolchain",
   );
   const { cargo, rustc } = cfg;
+  // cargo ran every rustc through the configured wrapper (sccache, …). These edges run rustc themselves, and
+  // depend on its JSON artifact notifications, which a wrapper need not forward: it is not used. Say so once.
+  const wrapper = process.env.RUSTC_WRAPPER || process.env.CARGO_BUILD_RUSTC_WRAPPER;
+  if (wrapper) process.stderr.write(`note: RUSTC_WRAPPER (${wrapper}) is not used: the build runs rustc directly\n`);
 
   n.comment("─── Rust ───");
   n.blank();

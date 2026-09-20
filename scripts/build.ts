@@ -135,7 +135,10 @@ async function main(): Promise<void> {
         if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
       }
       const held = read();
-      const [pid, startTime] = held.split(" ");
+      // "<pid> <start time>": the start time can contain spaces (`ps -o lstart=`), so split at the first one only.
+      const space = held.indexOf(" ");
+      const pid = held.slice(0, space);
+      const startTime = held.slice(space + 1);
       if (held !== "" && processAlive(Number(pid)) && processStartTime(Number(pid)) === startTime) {
         if (!announced) process.stderr.write(`waiting for another build in ${buildDir} to finish (pid ${pid})…\n`);
         announced = true;

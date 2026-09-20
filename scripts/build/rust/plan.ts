@@ -149,6 +149,11 @@ export interface RustPlan {
   packages: Record<string, MetadataPackage>;
   /** By package id, for path packages that have a `[lints]` table (cargo passes lint flags only to local packages). */
   lints: Record<string, ManifestLints>;
+  /**
+   * By profile name, for every profile in the unit graph: the built-in profile it descends from through `inherits`,
+   * as cargo reports it to build scripts (`PROFILE`). `dev`/`test` are "debug", `release`/`bench` "release".
+   */
+  profileRoots: Record<string, "debug" | "release">;
   /** Package ids whose manifest enables `cargo-features = ["public-dependency"]` (the std crates): their non-public deps are passed as `--extern priv:…`. */
   publicDependency: string[];
   workspaceRoot: string;
@@ -157,7 +162,7 @@ export interface RustPlan {
   target: RustcTargetInfo;
 }
 
-export const PLAN_VERSION = 2;
+export const PLAN_VERSION = 3;
 
 /** `dir`: the graph's directory under the build directory — `rust/` for bun_runtime, `rust-shim/` for the Windows shim. */
 export function planPath(dir: string): string {
@@ -403,6 +408,21 @@ if (process.argv[1] === import.meta.filename) {
     if (l !== undefined) lints[u.pkg_id] = l;
   }
 
+  // 4. Which built-in profile each planned profile descends from: `[profile.<name>] inherits` in the workspace root
+  //    manifest (the only place cargo reads profiles from besides its config).
+  const profiles = (parseToml(readFileSync(join(meta.workspace_root, "Cargo.toml"), "utf8")).profile ??
+    {}) as TomlTable;
+  const profileRoot = (name: string): "debug" | "release" => {
+    if (name === "dev" || name === "test") return "debug";
+    if (name === "release" || name === "bench") return "release";
+    const inherits = (profiles[name] as TomlTable | undefined)?.inherits;
+    if (typeof inherits !== "string") throw new Error(`profile ${name}: no \`inherits\` in the workspace manifest`);
+    return profileRoot(inherits);
+  };
+  const profileRoots = Object.fromEntries(
+    [...new Set(unitGraph.units.map(u => u.profile.name))].map(n => [n, profileRoot(n)]),
+  );
+
   const plan: RustPlan = {
     version: PLAN_VERSION,
     plannedWith: input,
@@ -416,6 +436,7 @@ if (process.argv[1] === import.meta.filename) {
     unitGraph,
     packages: Object.fromEntries(Object.entries(packages).filter(([id]) => seen.has(id))),
     lints,
+    profileRoots,
     publicDependency,
     workspaceRoot: meta.workspace_root,
     host: targetInfo(rustc, host, [], sysroot),

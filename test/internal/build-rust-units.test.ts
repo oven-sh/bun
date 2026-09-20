@@ -345,6 +345,7 @@ describe("buildRustGraph + unitManifest", () => {
     },
     packages: { [registry.id]: registry, [local.id]: local },
     lints: {},
+    profileRoots: { shim: "release" },
     publicDependency: [],
     workspaceRoot: "/ws",
     host: info(triple),

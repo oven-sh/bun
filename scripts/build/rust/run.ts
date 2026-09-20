@@ -358,14 +358,11 @@ function runBuildScript(unit: Extract<UnitManifest, { kind: "build-script-run" }
         : [];
   const deps: string[] = [];
   const walk = (p: string): void => {
-    let st;
-    try {
-      st = statSync(p);
-    } catch {
-      return; // cargo: a missing rerun-if-changed path means "rerun when it appears" — nothing to watch yet
-    }
+    // A path that does not exist is listed too: cargo reruns the script on every build until it appears, and so
+    // does ninja for a depfile input that is missing (output.json is restat'd, so nothing downstream rebuilds).
     deps.push(p);
-    if (st.isDirectory()) for (const e of readdirSync(p)) walk(join(p, e));
+    const st = statSync(p, { throwIfNoEntry: false });
+    if (st?.isDirectory()) for (const e of readdirSync(p)) walk(join(p, e));
   };
   for (const root of roots) walk(root);
   writeFileSync(unit.depfile, `${unit.output}: ${deps.map(d => d.replace(/ /g, "\\ ")).join(" ")}\n`);

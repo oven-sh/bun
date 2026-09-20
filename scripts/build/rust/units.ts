@@ -573,7 +573,7 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
 }
 
 function buildScriptRunManifest(ctx: ManifestContext, unit: RustUnit): BuildScriptRunManifest {
-  const { cfg, graph } = ctx;
+  const { graph } = ctx;
   const plan = graph.plan;
   const isHost = unit.platform === "host";
   const compiled = unit.deps.find(d => d.unit.kind === "build-script");
@@ -593,8 +593,9 @@ function buildScriptRunManifest(ctx: ManifestContext, unit: RustUnit): BuildScri
     HOST: plan.rustc.host,
     OPT_LEVEL: p.opt_level,
     DEBUG: String(debuginfoArg(p.debuginfo) !== undefined),
-    // cargo: the profile *root* — every custom profile inherits from dev or release.
-    PROFILE: cfg.debug ? "debug" : "release",
+    // cargo: the profile *root* — every custom profile inherits from dev or release. The unit's own, not bun's:
+    // the Windows shim is planned with a release-rooted profile whatever bun is built as.
+    PROFILE: plan.profileRoots[p.name]!,
     RUSTC: plan.rustc.path,
     RUSTDOC: ctx.rustdoc,
     // What the library will be compiled with (target units only get rustflags); RUSTFLAGS itself is removed by cargo.

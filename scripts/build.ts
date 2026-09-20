@@ -20,8 +20,8 @@
  *   anything else                   → runtime
  */
 
-import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { join } from "node:path";
 import {
@@ -43,8 +43,8 @@ import {
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build/config.ts";
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
+import { type BuildDirLock, lockBuildDir } from "./build/build-lock.ts";
 import { BuildError } from "./build/error.ts";
-import { processAlive, processStartTime } from "./build/proc.ts";
 import { STREAM_FD } from "./build/stream.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 import { isCI, printEnvironment, startGroup } from "./buildkite.ts";
@@ -104,71 +104,16 @@ async function main(): Promise<void> {
   // found"). Scrub them for Windows cross builds — they are host-targeted by
   // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and
   // every other target keep the environment as provisioned.
-  // One build at a time per build directory: configure and ninja both rewrite .ninja_log, and two ninjas would
-  // delete and rewrite each other's crate outputs (cargo's target-dir lock used to serialize the Rust half). A
-  // second `bun bd` waits for the first. Held from before configure until ninja returns — not while the built
-  // binary runs (`bun bd test …`), nor by ninja's own regen replay, which runs under the outer build's lock.
-  //
-  // The lock is a file holding "<pid> <start time of that process>" (node has no portable advisory file lock).
-  // A holder whose pid is gone, or alive with a different start time (the pid was reused), is stale. A stale lock
-  // is taken away by renaming it to a name of our own, which exactly one contender can do.
-  let releaseBuildDir: (() => void) | undefined;
-  const lockBuildDir = (buildDir: string): void => {
-    if (releaseBuildDir !== undefined) return;
-    mkdirSync(buildDir, { recursive: true });
-    const lock = join(buildDir, "build.lock");
-    const mine = `${process.pid} ${processStartTime(process.pid)}`;
-    const sleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-    const read = (): string => {
-      try {
-        return readFileSync(lock, "utf8");
-      } catch {
-        return "";
-      }
-    };
-    let announced = false;
-    for (;;) {
-      try {
-        writeFileSync(lock, mine, { flag: "wx" });
-        break;
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      }
-      const held = read();
-      // "<pid> <start time>": the start time can contain spaces (`ps -o lstart=`), so split at the first one only.
-      const space = held.indexOf(" ");
-      const pid = held.slice(0, space);
-      const startTime = held.slice(space + 1);
-      if (held !== "" && processAlive(Number(pid)) && processStartTime(Number(pid)) === startTime) {
-        if (!announced) process.stderr.write(`waiting for another build in ${buildDir} to finish (pid ${pid})…\n`);
-        announced = true;
-        sleep(500);
-        continue;
-      }
-      // Stale (or mid-write by a contender that just created it: empty for an instant — look again first).
-      if (held === "") {
-        sleep(20);
-        if (read() === "") rmSync(lock, { force: true });
-        continue;
-      }
-      const taken = `${lock}.${process.pid}.stale`;
-      try {
-        renameSync(lock, taken);
-        if (readFileSync(taken, "utf8") !== held)
-          renameSync(taken, lock); // someone re-took it in between: give it back
-        else rmSync(taken, { force: true });
-      } catch {
-        // another contender renamed it first
-      }
-    }
-    releaseBuildDir = () => {
-      if (read() === mine) rmSync(lock, { force: true });
-    };
-    process.on("exit", () => releaseBuildDir?.());
+  // One build at a time per build directory (build-lock.ts). Held from before configure until ninja returns — not
+  // while the built binary runs (`bun bd test …`), nor by ninja's own regen replay, which runs under the outer
+  // build's lock.
+  let buildDirLock: BuildDirLock | undefined;
+  const takeBuildDirLock = (buildDir: string): void => {
+    buildDirLock ??= lockBuildDir(buildDir);
   };
   const unlockBuildDir = (): void => {
-    releaseBuildDir?.();
-    releaseBuildDir = undefined;
+    buildDirLock?.release();
+    buildDirLock = undefined;
   };
   const ninjaEnv = (cfg: { windows: boolean; buildDir: string; host: { os: string } }, env: Record<string, string>) => {
     const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
@@ -192,7 +137,7 @@ async function main(): Promise<void> {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
     const result = (await startGroup("Configure", () =>
-      configure(input, args.configFile !== undefined, lockBuildDir),
+      configure(input, args.configFile !== undefined, takeBuildDirLock),
     )) as ConfigureResult;
     if (args.configureOnly) return;
 
@@ -277,7 +222,7 @@ async function main(): Promise<void> {
     }
   } else {
     // Local: configure, then spawn ninja.
-    const result = await configure(input, args.configFile !== undefined, lockBuildDir);
+    const result = await configure(input, args.configFile !== undefined, takeBuildDirLock);
 
     // Quiet one-liner when configure was a no-op — the full banner only
     // prints when build.ninja changed. Timing matters: a regression here
@@ -333,13 +278,32 @@ async function main(): Promise<void> {
     if (!quiet && interactive) {
       stdio[STREAM_FD] = 2;
     }
-    const ninja = spawnSync(result.ninja, ninjaArgv(result.cfg), {
-      stdio,
-      env: ninjaEnv(result.cfg, result.env),
-      // cargo's compile output (now part of the ninja graph via emitRust) can
-      // be tens of MB on a cold build; the default 1 MB maxBuffer ENOBUFSes.
-      maxBuffer: 1024 * 1024 * 1024,
+    // Not spawnSync: the lock names the ninja as soon as it has a pid, so that a ninja which outlives this process
+    // (the driver killed alone) still holds the build directory.
+    // Ctrl-C reaches ninja and this process alike. ninja winds its jobs down before it exits; wait for that, as a
+    // blocking spawn did, instead of returning the terminal while it is still printing.
+    const waitForNinja = (): void => {};
+    process.on("SIGINT", waitForNinja);
+    const ninja = await new Promise<{
+      error: Error | undefined;
+      status: number | null;
+      signal: NodeJS.Signals | null;
+      stdout: Buffer;
+      stderr: Buffer;
+    }>(done => {
+      const child = spawn(result.ninja, ninjaArgv(result.cfg), { stdio, env: ninjaEnv(result.cfg, result.env) });
+      const out: Buffer[] = [];
+      const err: Buffer[] = [];
+      child.stdout?.on("data", (chunk: Buffer) => out.push(chunk));
+      child.stderr?.on("data", (chunk: Buffer) => err.push(chunk));
+      const finish = (error: Error | undefined, status: number | null, signal: NodeJS.Signals | null) =>
+        done({ error, status, signal, stdout: Buffer.concat(out), stderr: Buffer.concat(err) });
+      child.on("error", error => finish(error, null, null));
+      // 'close', not 'exit': everything ninja wrote has been read by then.
+      child.on("close", (status, signal) => finish(undefined, status, signal));
+      if (child.pid !== undefined) buildDirLock?.addHolder(child.pid);
     });
+    process.off("SIGINT", waitForNinja);
     unlockBuildDir(); // the binary we may exec next (`bun bd test …`) must not keep other builds waiting
     if (ninja.error) {
       process.stderr.write(`Failed to exec ninja: ${ninja.error.message}\nIs ninja in your PATH?\n`);

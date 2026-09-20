@@ -5352,9 +5352,7 @@ impl H2FrameParser {
                         length: u32::try_from(payload_size).expect("int cast"),
                     };
                     if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME || end_stream {
-                        // Single-frame payload: the cork coalesces it with neighbors. The last
-                        // frame of a multi-frame body takes this path too, so its END_STREAM
-                        // stays corked for a pushStream() later in the tick.
+                        // The cork coalesces it with neighbors; a body's last frame is corked too.
                         if payload.len() > MAX_PAYLOAD_SIZE_WITHOUT_FRAME {
                             self.flush_batch_buffer();
                         }

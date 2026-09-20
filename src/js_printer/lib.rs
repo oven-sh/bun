@@ -3324,10 +3324,7 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
-                    if self.options.module_type == bundle_opts::Format::Esm
-                        && self.options.target != bun_ast::Target::Node
-                    {
-                        // Node.js doesn't support import.meta.main
+                    if self.options.module_type == bundle_opts::Format::Esm {
                         // Most of the time, leave it in there
                         if data.inverted {
                             self.add_source_mapping(expr.loc);

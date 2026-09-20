@@ -6146,24 +6146,79 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }),
             };
         }
-        // Node.js does not have import.meta.main, so we end up lowering
-        // this to `require.main === module`, but with the ESM format,
-        // both `require` and `module` are not present, so the code
-        // generation we need is:
-        //
-        //     import { createRequire } from "node:module";
-        //     var __require = createRequire(import.meta.url);
-        //     var import_meta_main = __require.main === __require.module;
-        //
-        // The printer can handle this for us, but we need to reference
-        // a handle to the `__require` function.
         if self.options.lower_import_meta_main_for_node_js {
-            self.record_usage_of_runtime_require();
+            return self.lower_import_meta_main_for_node_js(inverted, loc);
         }
         Expr {
             loc,
             data: js_ast::ExprData::EImportMetaMain(E::ImportMetaMain { inverted }),
         }
+    }
+
+    fn lower_import_meta_main_for_node_js(&mut self, inverted: bool, loc: bun_ast::Loc) -> Expr {
+        // Outside of the CommonJS format the printer writes `require` as
+        // `__require`, so we need to reference a handle to that function.
+        self.record_usage_of_runtime_require();
+
+        if self.options.output_format != options::Format::Esm {
+            // The printer writes this as `require.main == module`.
+            return Expr {
+                loc,
+                data: js_ast::ExprData::EImportMetaMain(E::ImportMetaMain { inverted }),
+            };
+        }
+
+        // Node.js has import.meta.main since v22.18.0 and v24.2.0. Before that,
+        // the closest thing is `require.main === module`, but with the ESM
+        // format, both `require` and `module` are not present, and
+        // `require.main` is undefined when the entry point is an ES module.
+        // So that form is only the fallback, and the code generation we need is:
+        //
+        //     import { createRequire } from "node:module";
+        //     var __require = createRequire(import.meta.url);
+        //     var import_meta_main = import.meta.main ?? __require.main == __require.module;
+        let require_module = self.new_expr(
+            E::Dot {
+                target: self.value_for_require(loc),
+                name: b"module".into(),
+                name_loc: loc,
+                ..Default::default()
+            },
+            loc,
+        );
+        let require_main_is_module = self.new_expr(
+            E::Binary {
+                op: js_ast::op::Code::BinLooseEq,
+                left: Expr {
+                    loc,
+                    data: js_ast::ExprData::ERequireMain,
+                },
+                right: require_module,
+            },
+            loc,
+        );
+        let value = self.new_expr(
+            E::Binary {
+                op: js_ast::op::Code::BinNullishCoalescing,
+                left: Expr {
+                    loc,
+                    data: js_ast::ExprData::EImportMetaMain(E::ImportMetaMain { inverted: false }),
+                },
+                right: require_main_is_module,
+            },
+            loc,
+        );
+        if !inverted {
+            return value;
+        }
+        self.new_expr(
+            E::Unary {
+                op: js_ast::op::Code::UnNot,
+                value,
+                flags: E::UnaryFlags::default(),
+            },
+            loc,
+        )
     }
 
     pub(crate) fn keep_expr_symbol_name(&mut self, _value: Expr, _name: &[u8]) -> Expr {

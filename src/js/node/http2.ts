@@ -3212,7 +3212,9 @@ class ServerHttp2Stream extends Http2Stream {
     // pushAllowed first. Here a pushed stream is `closed` as soon as its last DATA frame settles
     // (see _final), a point where node still throws ERR_HTTP2_NESTED_PUSH, so this check leads.
     if ((this.id & 1) === 0) {
-      throw $ERR_HTTP2_NESTED_PUSH();
+      const err = new Error("A push stream cannot initiate another push stream.");
+      err.code = "ERR_HTTP2_NESTED_PUSH";
+      throw err;
     }
     if (!this.pushAllowed) {
       throw $ERR_HTTP2_PUSH_DISABLED();

@@ -4778,15 +4778,18 @@ it("http2 pushStream throws ERR_HTTP2_PUSH_DISABLED before it validates its argu
   }
 });
 
-it("http2 pushStream throws ERR_HTTP2_NESTED_PUSH on a pushed stream before it validates its arguments", async () => {
-  let thrown;
+it("http2 pushStream validates callback after the nested-push check and before options", async () => {
+  let onRequestStream;
+  let onPushedStream;
   const blocks = await pushedHeaderBlocks(stream => {
+    // The request stream can push, so the argument checks decide: callback comes before options.
+    onRequestStream = thrownError(() => stream.pushStream({}, "x", 1));
     stream.pushStream({ ":path": "/pushed" }, (err, push) => {
       if (err) {
         stream.destroy(err);
         return;
       }
-      thrown = {
+      onPushedStream = {
         "bad callback": thrownError(() => push.pushStream({}, {}, 1)),
         "no callback": thrownError(() => push.pushStream({})),
         "bad options": thrownError(() => push.pushStream({}, "x", () => {})),
@@ -4795,41 +4798,31 @@ it("http2 pushStream throws ERR_HTTP2_NESTED_PUSH on a pushed stream before it v
       push.respond({ ":status": 200 });
       push.end("pushed");
       // node still reports the nested push here, not a closed stream.
-      thrown["after end()"] = thrownError(() => push.pushStream({}, () => {}));
+      onPushedStream["after end()"] = thrownError(() => push.pushStream({}, () => {}));
       stream.respond({ ":status": 200 });
       stream.end();
     });
   });
 
+  expect(onRequestStream).toEqual({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: 'The "callback" argument must be of type function. Received type number (1)',
+  });
   const nestedPushError = {
     name: "Error",
     code: "ERR_HTTP2_NESTED_PUSH",
     message: "A push stream cannot initiate another push stream.",
   };
-  expect(thrown).toEqual({
+  expect(onPushedStream).toEqual({
     "bad callback": nestedPushError,
     "no callback": nestedPushError,
     "bad options": nestedPushError,
     "bad headers": nestedPushError,
     "after end()": nestedPushError,
   });
+  // Only the valid call reserved a stream.
   expect(blocks.map(({ id, path }) => ({ id, path }))).toEqual([{ id: 2, path: "/pushed" }]);
-});
-
-it("http2 pushStream validates callback before options", async () => {
-  let thrown;
-  const blocks = await pushedHeaderBlocks(stream => {
-    thrown = thrownError(() => stream.pushStream({}, "x", 1));
-    stream.respond({ ":status": 200 });
-    stream.end();
-  });
-
-  expect(thrown).toEqual({
-    name: "TypeError",
-    code: "ERR_INVALID_ARG_TYPE",
-    message: 'The "callback" argument must be of type function. Received type number (1)',
-  });
-  expect(blocks).toEqual([]);
 });
 
 it("http2 pushStream sends each element of a single-value header when strictSingleValueFields is off", async () => {

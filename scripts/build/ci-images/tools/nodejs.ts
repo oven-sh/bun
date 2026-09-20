@@ -20,6 +20,18 @@ export function nodejs(image: Image, pin: { version: string; nodeGypInstallVersi
       },
     };
   }
+  if (image.os === "darwin") {
+    return {
+      name: "nodejs",
+      script: "macos/nodejs.sh",
+      variables: {
+        NODEJS_VERSION: version,
+        NODEJS_URL: `https://nodejs.org/dist/v${version}/node-v${version}-darwin-${arch}.tar.gz`,
+        NODEJS_HEADERS_URL: headersUrl,
+        NODE_GYP_INSTALL_VERSION: pin.nodeGypInstallVersion,
+      },
+    };
+  }
   // nodejs.org only ships glibc builds.
   const url =
     image.abi === "musl"

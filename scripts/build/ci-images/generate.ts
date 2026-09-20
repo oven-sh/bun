@@ -16,6 +16,9 @@
  * `IMAGE_NAME` in the environment. The name is an argument because it is the
  * hash of this directory, which cannot contain it.
  *
+ * A macOS machine is not baked by CI. scripts/darwin-ci generates its
+ * directory and runs `sh bootstrap.sh` as the machine's admin user.
+ *
  * `bun run ci:images [key...]` writes the directories and prints the names.
  */
 
@@ -26,7 +29,7 @@ import { linuxAgentPaths, windowsAgentHome } from "../../agent.ts";
 import { BuildError } from "../error.ts";
 import { type Image, type Tool, imageKey } from "./image.ts";
 import { renderPackerTemplate } from "./packer.ts";
-import { images, pins, tools } from "./spec.ts";
+import { images, macosMachines, pins, tools } from "./spec.ts";
 
 const here = import.meta.dirname;
 const repoRoot = resolve(here, "../../..");
@@ -65,6 +68,17 @@ const sh: Shell = {
   shellVariables: new Set(["PATH", "HOME", "TMPDIR", "DEBIAN_FRONTEND"]),
   header: ["#!/bin/sh", "set -eu"],
   assign: (name, value) => `${name}='${value.replace(/'/g, `'\\''`)}'`,
+};
+
+const macosSh: Shell = {
+  scriptName: "bootstrap.sh",
+  library: "lib/macos.sh",
+  variables: {},
+  runtime: [`[ "$(id -u)" != 0 ] || fail "run this as the machine's admin user: Homebrew refuses to run as root"`],
+  runtimeVariables: [],
+  shellVariables: new Set(["PATH", "HOME", "TMPDIR"]),
+  header: ["#!/bin/sh", "set -eu"],
+  assign: sh.assign,
 };
 
 const powershell: Shell = {
@@ -154,7 +168,7 @@ export type GeneratedImage = {
 export function generateImage(image: Image, outputRoot: string): GeneratedImage {
   const key = imageKey(image);
   const directory = join(outputRoot, key);
-  const shell = image.os === "windows" ? powershell : sh;
+  const shell = { linux: sh, windows: powershell, darwin: macosSh }[image.os];
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   const described = tools(image).map(({ name, variables }) => ({ name, variables }));
@@ -173,7 +187,7 @@ export function generateImage(image: Image, outputRoot: string): GeneratedImage 
 
 if (import.meta.main) {
   const wanted = process.argv.slice(2);
-  const known = new Map(images.map(image => [imageKey(image), image]));
+  const known = new Map([...images, ...macosMachines].map(image => [imageKey(image), image]));
   for (const key of wanted) {
     if (!known.has(key)) {
       throw new BuildError(`No image named ${key}`, { hint: `Images: ${[...known.keys()].join(", ")}` });

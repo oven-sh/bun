@@ -13,8 +13,7 @@ Bun reports a Node.js version for compatibility with the Node.js ecosystem. This
 ## Files That Always Need Updates
 
 ### 1. The CI image spec
-- `scripts/build/ci-images/spec.ts` - Update `pins.nodejs.version`. The build system's `NODEJS_VERSION` imports it, and the CI images that change are rebaked by the next build.
-- `scripts/bootstrap.sh` - Update the Node.js version it installs: the macOS test machines are still set up with it (`scripts/darwin-ci`).
+- `scripts/build/ci-images/spec.ts` - Update `pins.nodejs.version`. The build system's `NODEJS_VERSION` imports it, and the CI images that change are rebaked by the next build. The macOS test machines get it the next time `scripts/darwin-ci` bakes them.
 
 ### 2. CMake Configuration
 - `cmake/Options.cmake`

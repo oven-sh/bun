@@ -7,11 +7,12 @@
  * and the next CI build bakes the images whose names do not exist yet.
  */
 
-import type { Image, LinuxImage, Tool, WindowsImage } from "./image.ts";
+import type { BakedImage, Image, LinuxImage, MacosImage, Tool, WindowsImage } from "./image.ts";
 import { age } from "./tools/age.ts";
 import { agentService } from "./tools/agent-service.ts";
 import { agentUser } from "./tools/agent-user.ts";
 import { androidNdk } from "./tools/android-ndk.ts";
+import { brew, brewPackages } from "./tools/brew.ts";
 import { buildkiteAgent } from "./tools/buildkite-agent.ts";
 import { bun } from "./tools/bun.ts";
 import { ccache } from "./tools/ccache.ts";
@@ -115,7 +116,7 @@ const debianOwner = "136693071363";
 const ubuntuOwner = "099720109477";
 const alpineOwner = "538276064493";
 
-export const images: readonly Image[] = [
+export const images: readonly BakedImage[] = [
   // The image every Bun target is compiled on.
   {
     os: "linux",
@@ -322,6 +323,34 @@ export function windowsTools(image: WindowsImage): readonly Tool[] {
   ];
 }
 
+/**
+ * The macOS test machines. CI does not bake them: scripts/darwin-ci runs the
+ * generated script in the Tart guest image it builds, or on a bare host.
+ */
+export const macosMachines: readonly MacosImage[] = [
+  { os: "darwin", arch: "aarch64" },
+  { os: "darwin", arch: "x64" },
+];
+
+export function macosTools(image: MacosImage): readonly Tool[] {
+  return [
+    brew(image),
+    brewPackages(["cmake", "ninja", "nasm", "pkg-config", "golang", "ccache"]),
+    nodejs(image, pins.nodejs),
+    bun(image, pins.bun),
+    curlH3(image, pins.curlH3),
+    llvm(image, pins.llvm),
+    rust(image, pins.rust),
+  ];
+}
+
 export function tools(image: Image): readonly Tool[] {
-  return image.os === "windows" ? windowsTools(image) : linuxTools(image);
+  switch (image.os) {
+    case "linux":
+      return linuxTools(image);
+    case "windows":
+      return windowsTools(image);
+    case "darwin":
+      return macosTools(image);
+  }
 }

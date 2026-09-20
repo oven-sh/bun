@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
 import { output, run } from "../scripts/agent.ts";
 import { type GeneratedImage, generateImage } from "../scripts/build/ci-images/generate.ts";
-import { type Image, imageKey } from "../scripts/build/ci-images/image.ts";
+import { type BakedImage, imageKey } from "../scripts/build/ci-images/image.ts";
 import { images } from "../scripts/build/ci-images/spec.ts";
 import {
   getBuildMetadata,
@@ -415,7 +415,7 @@ function getPlatformLabel(platform: Omit<Platform, "arch"> & { arch: string }): 
  * Cross-compiled targets (Android, FreeBSD, macOS-cross) build on a Linux
  * image, whose bake installs their sysroots: no separate image is baked.
  */
-function getImage(platform: Platform): Image {
+function getImage(platform: Platform): BakedImage {
   const { os, arch, distro, release, abi, crossCompile } = platform;
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
   const image = images.find(
@@ -465,8 +465,8 @@ function getImageLabel(platform: Platform): string {
  * directory is written under build/ci-images/, and its name is the hash of
  * that directory.
  */
-const generatedImages = new Map<Image, GeneratedImage>();
-function getGeneratedImage(platform: Platform): { image: Image; generated: GeneratedImage } {
+const generatedImages = new Map<BakedImage, GeneratedImage>();
+function getGeneratedImage(platform: Platform): { image: BakedImage; generated: GeneratedImage } {
   const image = getImage(platform);
   let generated = generatedImages.get(image);
   if (!generated) {

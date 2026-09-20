@@ -1,9 +1,10 @@
 import type { Image, Tool } from "../image.ts";
+import { brewPrefix } from "./brew.ts";
 
 /**
  * clang, lld and the LLVM tools. Scoop installs the exact release on Windows.
- * Neither apt.llvm.org nor Alpine can be asked for a patch release, only for a
- * major; scripts/build/tools.ts is what decides whether the compiler it finds
+ * Neither apt.llvm.org, Alpine nor Homebrew can be asked for a patch release,
+ * only for a major; scripts/build/tools.ts is what decides whether the compiler it finds
  * is close enough to the pin.
  */
 export function llvm(image: Image, pin: { version: string }): Tool {
@@ -15,6 +16,9 @@ export function llvm(image: Image, pin: { version: string }): Tool {
     };
   }
   const variables = { LLVM_MAJOR: pin.version.split(".")[0]! };
+  if (image.os === "darwin") {
+    return { name: "llvm", script: "macos/llvm.sh", variables: { ...variables, BREW_PREFIX: brewPrefix(image) } };
+  }
   if (image.distro === "alpine") {
     return { name: "llvm", script: "linux/llvm.apk.sh", variables };
   }

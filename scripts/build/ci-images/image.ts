@@ -49,12 +49,28 @@ export type WindowsImage = {
   bakeVmSize: string;
 };
 
-export type Image = LinuxImage | WindowsImage;
+/** An image CI bakes, names by its hash and starts machines from. */
+export type BakedImage = LinuxImage | WindowsImage;
 
-/** `linux-x64-13-debian`, `linux-aarch64-323-alpine-musl`, `windows-x64-2019`: the part of an image's name before its hash. */
+/**
+ * A macOS machine. CI does not bake or name one: scripts/darwin-ci sets a
+ * machine up (a Tart guest image, or a bare host) by running the script that
+ * is generated for it.
+ */
+export type MacosImage = {
+  os: "darwin";
+  arch: Arch;
+};
+
+export type Image = BakedImage | MacosImage;
+
+/** `linux-x64-13-debian`, `linux-aarch64-323-alpine-musl`, `windows-x64-2019`, `darwin-aarch64`: the part of an image's name before its hash. */
 export function imageKey(image: Image): string {
   if (image.os === "windows") {
     return `windows-${image.arch}-${image.release}`;
+  }
+  if (image.os === "darwin") {
+    return `darwin-${image.arch}`;
   }
   const release = image.release.replace(/\./g, "");
   const abi = image.abi === "musl" ? "-musl" : "";

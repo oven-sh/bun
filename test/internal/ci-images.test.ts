@@ -7,12 +7,12 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { generateImage, hashDirectory } from "../../scripts/build/ci-images/generate.ts";
 import { imageKey } from "../../scripts/build/ci-images/image.ts";
-import { images, tools } from "../../scripts/build/ci-images/spec.ts";
+import { images, macosMachines, tools } from "../../scripts/build/ci-images/spec.ts";
 
 test("every image of the spec generates, with its tools in the spec's order", () => {
   using dir = tempDir("ci-images", {});
   const names = new Set<string>();
-  for (const image of images) {
+  for (const image of [...images, ...macosMachines]) {
     const { key, name, directory } = generateImage(image, String(dir));
     expect(key).toBe(imageKey(image));
     expect(name).toMatch(new RegExp(`^${key}-[0-9a-f]{16}$`));
@@ -23,9 +23,9 @@ test("every image of the spec generates, with its tools in the spec's order", ()
     expect(banners).toEqual(tools(image).map(tool => tool.name));
 
     const described = JSON.parse(readFileSync(join(directory, "image.json"), "utf8"));
-    expect(described.base).toEqual(image.base);
+    expect(described.base).toEqual("base" in image ? image.base : undefined);
   }
-  expect(names.size).toBe(images.length);
+  expect(names.size).toBe(images.length + macosMachines.length);
 });
 
 test("an image's name is the hash of its bake directory", () => {

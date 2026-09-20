@@ -403,12 +403,9 @@ impl ShellSubprocess {
         }
     }
 
-    /// Tear down a subprocess whose stdin writer `start()` failed (the
-    /// stdout/stderr readers report a failed start through `on_reader_error`
-    /// and never reach here). Marks the not-yet-started pipe readers as
-    /// errored so PipeReader.deinit's done-assert passes, drops the exit
-    /// handler so a later onProcessExit doesn't touch the freed Subprocess,
-    /// then deinits.
+    /// Tear down a subprocess whose stdin writer `start()` failed. The
+    /// stdout/stderr readers have not started yet: mark them errored, drop
+    /// the exit handler, then free the subprocess.
     fn abort_after_failed_start(this: *mut Self) {
         // SAFETY: `this` was created via `heap::alloc` in `spawn` and is
         // uniquely owned here; reclaim and tear down.
@@ -426,11 +423,8 @@ impl ShellSubprocess {
                 // other borrow live. Accesses scoped to this statement.
                 unsafe {
                     if matches!((*p).state, PipeReaderState::Pending) {
-                        // The reader owns the spawned `uv::Pipe` from
-                        // `create()` on; hand it to `uv_close` now (no
-                        // `on_reader_done`) so the drop below sees a closed
-                        // source. POSIX readers take their fd in `start()`,
-                        // so `PipeReader::drop` closes it there.
+                        // Close the never-started `uv::Pipe` without
+                        // `on_reader_done`; POSIX closes the fd in `drop`.
                         #[cfg(windows)]
                         (*p).reader.deinit();
                         (*p).state = PipeReaderState::Err(None);
@@ -446,8 +440,7 @@ impl ShellSubprocess {
     /// shutdown); a no-op after a normal close. Readers stop without firing
     /// `on_reader_done`, queued capture chunks are cancelled (the `IOWriter`
     /// queue holds a raw pointer into the freed `PipeReader`), a pending
-    /// buffer-stdin writer is closed. POSIX-only: the Windows finalizer
-    /// leaks a mid-flight `Cmd` instead (see `Interpreter::finalize`).
+    /// buffer-stdin writer is closed. POSIX-only.
     ///
     /// # Safety
     /// `this` must be the live `heap::alloc`'d subprocess with no outstanding
@@ -882,9 +875,7 @@ impl ShellSubprocess {
             return Err(ShellErr::Sys(sys_err));
         }
 
-        // A reader whose start fails reports it through `on_reader_error`
-        // from inside the call (the Cmd records the errno, the slot is
-        // detached) and the spawn carries on; see `PipeReader::start`.
+        // A failed reader start is reported through `on_reader_error`.
         // SAFETY: `subprocess` is live; the slot is passed raw because the
         // reader can complete synchronously and overwrite it via `on_close_io`.
         unsafe {
@@ -1782,15 +1773,10 @@ impl PipeReader {
         }
     }
 
-    /// Start reading. A failure to register the pipe with the event loop is
-    /// reported through `on_reader_error`, not returned: the Cmd records the
-    /// errno as the command's exit code and the slot is detached, while the
-    /// spawn carries on with the sibling pipe and the child's exit.
-    ///
-    /// Takes `*mut Self` (not `&mut self`): the error dispatch re-enters this
-    /// same allocation through the `Readable::Pipe` `Arc` (`detach` clears
-    /// `process`, `close_io` drops the slot's ref), so no `&mut PipeReader`
-    /// may be live across it. Every access below is scoped to one statement.
+    /// Start reading. A failed start is reported through `on_reader_error`
+    /// (the Cmd records the errno as the exit code), not returned. Raw `this`
+    /// because that dispatch re-enters this allocation through the
+    /// `Readable::Pipe` `Arc`; no `&mut PipeReader` may be live across it.
     ///
     /// # Safety
     /// `this` must point into a live `Arc<PipeReader>` that the caller keeps
@@ -1810,12 +1796,9 @@ impl PipeReader {
             // SAFETY: caller contract; the `&mut reader` ends when the call
             // returns, before any dispatch.
             if let bun_sys::Result::Err(err) = unsafe { (*this).reader.start_with_current_pipe() } {
-                // `uv_read_start` failed, so nothing will ever read this
-                // pipe. Release the handle (no `on_reader_done`), then run
-                // the read-error path. Returning `Err` instead made the
-                // spawn abort and leak the subprocess with its exit handler
-                // armed; the killed child's exit then resolved a `CmdHandle`
-                // whose node was already freed.
+                // Close the pipe without `on_reader_done`, then report like
+                // a read error. Returning `Err` leaked the subprocess with
+                // its exit handler armed (#43604).
                 // SAFETY: as above.
                 unsafe { (*this).reader.deinit() };
                 // SAFETY: caller contract; nothing touches `this` afterwards.
@@ -1825,18 +1808,13 @@ impl PipeReader {
 
         // `reader` owns the fd from here; `Drop` closes an un-started one.
         // `PosixBufferedReader::start` always returns `Ok` and reports a
-        // poll-registration failure through `on_reader_error` from inside the
-        // call, so the reader may already be errored/torn down afterwards;
-        // same guard as `SubprocessPipeReader::start`.
+        // poll-registration failure through `on_reader_error`.
         #[cfg(not(windows))]
         {
-            // SAFETY: caller contract; the `&mut reader` is scoped to the
-            // call. The dispatch inside reaches the parent through the raw
-            // pointer registered in `create`, not through this borrow.
+            // SAFETY: caller contract; the `&mut reader` is scoped to the call.
             let fd = unsafe { (*this).stdio_result.take() }.unwrap();
             let _ = unsafe { (*this).reader.start(fd, true) };
-            // SAFETY: caller contract; the keepalive `Arc` means `this` is
-            // still live even if the reader errored.
+            // SAFETY: caller contract; the keepalive keeps `this` live.
             if matches!(unsafe { &(*this).state }, PipeReaderState::Err(_)) {
                 return;
             }

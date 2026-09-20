@@ -15,7 +15,6 @@
  * of the edge, so a flag change rebuilds exactly the units it touches.
  */
 
-import { mkdirSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import type { Config } from "../config.ts";
 import { writeIfChanged } from "../fs.ts";
@@ -23,14 +22,38 @@ import type { Ninja } from "../ninja.ts";
 import { quote } from "../shell.ts";
 import { streamPath } from "../stream.ts";
 import { type PlanInput, planInputPath, planPath } from "./plan.ts";
-import { type ManifestContext, externDeps, externPath, transitiveLinkInputs, unitManifest } from "./units.ts";
+import { assert } from "../error.ts";
+import {
+  type ManifestContext,
+  externDeps,
+  externPath,
+  isRootKind,
+  transitiveLinkInputs,
+  unitManifest,
+} from "./units.ts";
 
 const here = import.meta.dirname;
 const runScript = resolve(here, "run.ts");
 const planScript = resolve(here, "plan.ts");
-/** What each build-time entry point loads: an edit to any of these reruns its edges (the convention for every build-time script in this system). */
-const runScriptDeps = [runScript, resolve(here, "cargo-env.ts"), resolve(here, "..", "fs.ts")];
-const planScriptDeps = [planScript, resolve(here, "toml.ts"), resolve(here, "..", "fs.ts")];
+/**
+ * The scripts whose edit reruns an edge. A rustc edge names run.ts alone: what run.ts imports (fs.ts, cargo-env.ts,
+ * error.ts) it uses for build scripts and for reporting, not for what rustc writes, and fs.ts is shared by the whole
+ * build system — an edit to it must not recompile every crate (fetch edges name only fetch-cli.ts for the same
+ * reason). Build-script runs and the planner rerun in moments, so they name everything they load.
+ */
+const rustcScriptDeps = [runScript];
+const buildScriptRunDeps = [
+  runScript,
+  resolve(here, "cargo-env.ts"),
+  resolve(here, "..", "fs.ts"),
+  resolve(here, "..", "error.ts"),
+];
+const planScriptDeps = [
+  planScript,
+  resolve(here, "toml.ts"),
+  resolve(here, "..", "fs.ts"),
+  resolve(here, "..", "error.ts"),
+];
 
 export function registerRustUnitRules(n: Ninja, cfg: Config): void {
   const hostWin = cfg.host.os === "windows";
@@ -82,7 +105,6 @@ export function emitRustPlan(n: Ninja, cfg: Config, dir: string, p: RustPlanEdge
   const hostWin = cfg.host.os === "windows";
   const out = planPath(dir);
   const input = planInputPath(dir);
-  mkdirSync(dir, { recursive: true });
   writeIfChanged(input, JSON.stringify(p.input, null, 2) + "\n");
   n.build({
     outputs: [out],
@@ -109,13 +131,21 @@ export interface RustEdgeInputs {
   implicitInputs: Record<string, string[]>;
   /** Fetch stamps of vendored crates: order-only for everything (the plan already required them). */
   vendorStamps: string[];
+  /** Validations of the root's edge: built whenever the root is, without being an input of anything. */
+  rootValidations: string[];
 }
 
 /** Emit every unit's edges of one graph and write the unit manifests. */
 export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeInputs): void {
   const { cfg, graph } = ctx;
   const hostWin = cfg.host.os === "windows";
-  mkdirSync(resolve(graph.dir, "units"), { recursive: true });
+  for (const name of Object.keys(inputs.implicitInputs)) {
+    assert(
+      graph.units.some(u => u.pkg.name === name),
+      `rust edges: implicit inputs are given for package ${name}, which is not in the graph`,
+      { hint: "The package that reads the file was renamed or no longer builds here; update the caller (rust.ts)." },
+    );
+  }
 
   for (const unit of graph.units) {
     const manifest = unitManifest(ctx, unit);
@@ -127,7 +157,7 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
       depfile: manifest.depfile, // a ninja `depfile =` binding, read as a path (never part of a command): no shell quoting
       what: "",
     };
-    // What rebuilds this unit: the artifacts it names with --extern (metadata rlibs for a library, full rlibs and
+    // What rebuilds this unit: the artifacts it names with --extern (`.rmeta`s for a library, `.rlib`s and
     // dylibs for a link), the build-script outputs run.ts reads for it, its manifest, the driver scripts; sources and
     // `include!`d files come from the depfile.
     const externs = externDeps(unit).map(d => externPath(unit, d.unit));
@@ -139,7 +169,7 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
             ...manifest.depBuildScriptOutputs,
           ];
     const packageInputs = inputs.implicitInputs[unit.pkg.name] ?? [];
-    const common = [...scriptOutputs, ...runScriptDeps, ...packageInputs];
+    const common = [...scriptOutputs, ...rustcScriptDeps, ...packageInputs];
     const orderOnly = [...inputs.vendorStamps, ...(unit.isLocal ? inputs.localOrderOnly : [])];
 
     switch (manifest.kind) {
@@ -166,15 +196,16 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
       case "bin": {
         // These link, so beyond the direct `--extern`ed rlibs they read every transitive rlib through `-L`
         // (cargo: a linking unit gets Artifact::All edges to all of them). A direct dependency's rlib being done
-        // says nothing about *its* dependencies' rlibs: it was compiled against their metadata rlibs.
+        // says nothing about *its* dependencies' rlibs: it was compiled against their `.rmeta`s.
         const all = transitiveLinkInputs(unit).map(u => u.output);
-        const what = manifest.kind === "staticlib" || manifest.kind === "bin" ? `→ ${basename(unit.output)}` : "";
+        const what = isRootKind(manifest.kind) ? `→ ${basename(unit.output)}` : "";
         n.build({
           outputs: [unit.output, ...(manifest.binDestination !== undefined ? [manifest.binDestination] : [])],
           rule: "rust_rustc",
           inputs: [],
           implicitInputs: [...new Set([...externs, ...all, unit.manifestPath, ...common])],
           orderOnlyInputs: orderOnly,
+          ...(unit === graph.root && inputs.rootValidations.length > 0 ? { validations: inputs.rootValidations } : {}),
           vars: { ...vars, what },
         });
         break;
@@ -188,7 +219,7 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
             manifest.script.program,
             ...manifest.script.linksDeps.map(d => d.output),
             unit.manifestPath,
-            ...runScriptDeps,
+            ...buildScriptRunDeps,
             ...packageInputs,
           ],
           orderOnlyInputs: orderOnly,

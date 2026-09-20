@@ -115,7 +115,7 @@ async function main(): Promise<void> {
     buildDirLock?.release();
     buildDirLock = undefined;
   };
-  const ninjaEnv = (cfg: { windows: boolean; buildDir: string; host: { os: string } }, env: Record<string, string>) => {
+  const ninjaEnv = (cfg: { windows: boolean; host: { os: string } }, env: Record<string, string>) => {
     const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
     if (cfg.windows && cfg.host.os !== "windows") {
       for (const name of ["CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "OBJC_INCLUDE_PATH"]) {
@@ -147,8 +147,8 @@ async function main(): Promise<void> {
     }
 
     // The order file is a link input, so it must land before the linking ninja
-    // pass. In rust-and-link mode it runs between cargo and the build-cpp
-    // poll (whose sleep loop yields cleanly) so it doesn't stall cargo.
+    // pass. In rust-and-link mode it runs between the Rust build and the build-cpp
+    // poll (whose sleep loop yields cleanly) so it doesn't stall the Rust build.
     const orderCtx = orderFileContext();
     const runInherit = () =>
       (orderFileEligible(result.cfg, orderCtx) && !shouldGenerateOrderFile(result.cfg, orderCtx)
@@ -167,7 +167,7 @@ async function main(): Promise<void> {
         env: ninjaEnv(result.cfg, result.env),
       });
 
-    // rust-and-link: build libbun_runtime.a first so cargo overlaps with the
+    // rust-and-link: build libbun_runtime.a first so the Rust build overlaps with the
     // sibling build-cpp job, THEN poll for build-cpp's outcome + download
     // its archive, THEN link. link-only skips straight to the full build
     // (its artifacts were downloaded above).
@@ -258,10 +258,10 @@ async function main(): Promise<void> {
       }
       return;
     }
-    // FD 3 sideband — only when interactive. stream.ts (wrapping deps +
-    // cargo) writes live output there, bypassing ninja's per-job buffering.
+    // FD 3 sideband — only when interactive. stream.ts (wrapping deps and
+    // the cargo plan) writes live output there, bypassing ninja's per-job buffering.
     // A human watching a terminal wants to see cmake configure spew and
-    // cargo build progress in real time. A log file (CI) doesn't —
+    // cargo's download progress in real time. A log file (CI) doesn't —
     // that live output is noise (hundreds of `-- Looking for header.h`
     // lines from cmake). When FD 3 isn't set up, stream.ts falls back to
     // stdout which ninja buffers per-job: deps stay quiet until they

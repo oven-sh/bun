@@ -97,7 +97,7 @@ export interface RustGraph {
   units: RustUnit[];
   /** What the graph was planned for: the `bun_runtime` staticlib, or the Windows shim's `bin`. */
   root: RustUnit;
-  /** The graph's own directory under the build directory (`rust/`, `rust-shim/`): plan, unit manifests, artifacts. */
+  /** The graph's own directory under the build directory (`rust/`, `rust/shim/`): plan, unit manifests, artifacts. */
   dir: string;
   hostDeps: string;
   targetDeps: string;
@@ -108,7 +108,8 @@ export interface RustGraph {
 // Graph construction
 // ───────────────────────────────────────────────────────────────────────────
 
-export function buildRustGraph(plan: RustPlan, targetRustflags: string[], dir: string): RustGraph {
+export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
+  const targetRustflags = plan.plannedWith.rustflags;
   const platDir = (platform: string) => join(dir, platform);
   const g = plan.unitGraph;
   assert(g.roots.length === 1, `rust plan: expected one root unit, got ${g.roots.length}`);
@@ -341,6 +342,8 @@ export interface RustcUnitManifest extends ManifestCommon {
   args: string[];
   /** lib units: the `.rmeta` the same rustc produces ahead of `output`. */
   rmeta: string | undefined;
+  /** lib units: the name ninja knows the `.rmeta` by (its path from the build directory), which is what an early-output announcement has to say. */
+  rmetaNinjaName: string | undefined;
   /** bin units: where run.ts copies `output` once rustc has linked it (a second output of the edge). */
   binDestination: string | undefined;
   /** Which of the build script's `rustc-link-arg*` directives apply to this target (cargo `LinkArgTarget`). */
@@ -401,9 +404,7 @@ function packageEnv(pkg: MetadataPackage, cargo: string): Record<string, string>
 export interface ManifestContext {
   cfg: Config;
   graph: RustGraph;
-  /** rust.ts's flag list (formerly CARGO_ENCODED_RUSTFLAGS): appended to every *target* unit, and handed to build scripts as CARGO_ENCODED_RUSTFLAGS. */
-  targetRustflags: string[];
-  /** Environment every rustc and build script runs under (CC/CXX/AR, BUN_CODEGEN_DIR, RUSTUP_*, …) — formerly the cargo process's env. */
+  /** Environment every rustc and build script runs under (CC/CXX/AR, BUN_CODEGEN_DIR, RUSTUP_*, …). */
   baseEnv: Record<string, string>;
   /** `-C linker=` per platform. */
   linker: { host: string | undefined; target: string };
@@ -447,11 +448,9 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   const src = cwd === plan.workspaceRoot && inWorkspace ? relative(plan.workspaceRoot, unit.srcPath) : unit.srcPath;
 
   args.push("--crate-name", unit.crateName, `--edition=${unit.edition}`, src);
-  // Libraries report the moment their `.rmeta` is written through rustc's JSON stream, which run.ts turns into
-  // ninja's early-output announcement (and renders the diagnostics); the rest print human diagnostics themselves.
-  if (unit.kind === "lib")
-    args.push("--error-format=json", "--json=diagnostic-rendered-ansi,artifacts,future-incompat");
-  else args.push("--error-format=human", "--color=always");
+  // cargo's own choice for every unit: run.ts renders the diagnostics, and a library's metadata artifact message is
+  // what it turns into ninja's early-output announcement.
+  args.push("--error-format=json", "--json=diagnostic-rendered-ansi,artifacts,future-incompat");
   for (const t of unit.crateTypes) args.push("--crate-type", t);
   // cargo: dep-info,metadata,link for rlib-only libs (pipelining), dep-info,link for everything that links.
   args.push(
@@ -474,7 +473,8 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
       args.push("-C", `split-debuginfo=${p.split_debuginfo}`);
   }
   // [lints] (local packages only), then `--check-cfg` from `unexpected_cfgs.check-cfg`.
-  const lints: ManifestLints | undefined = plan.lints[unit.pkg.id];
+  const lintSet = plan.lints[unit.pkg.id];
+  const lints: ManifestLints | undefined = lintSet === undefined ? undefined : plan.lintSets[lintSet];
   if (local && lints !== undefined) {
     args.push(...lints.flags);
     for (const c of lints.checkCfg) args.push("--check-cfg", c);
@@ -533,7 +533,9 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   if (externOpts) args.push("-Z", "unstable-options");
   if (!local) args.push("--cap-lints", "allow");
   // RUSTFLAGS position: after everything cargo generates, before build-script cfgs (run.ts appends those).
-  if (!isHost) args.push(...ctx.targetRustflags);
+  // The plan's rustflags (rust.ts's list): appended to every *target* unit, and handed to build scripts as
+  // CARGO_ENCODED_RUSTFLAGS.
+  if (!isHost) args.push(...plan.plannedWith.rustflags);
   // The depfile must name what rustc read: `-Zbinary-dep-depinfo` adds every rlib/rmeta/dylib it loaded
   // (transitive crates found through -L, the sysroot std for host units, proc-macro dylibs).
   args.push("-Z", "binary-dep-depinfo");
@@ -558,6 +560,7 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
     env,
     output: unit.output,
     rmeta: unit.rmeta,
+    rmetaNinjaName: unit.rmeta === undefined ? undefined : relative(cfg.buildDir, unit.rmeta),
     binDestination: unit.kind === "bin" ? ctx.binDestination : undefined,
     linkArgSelectors: unit.kind === "bin" ? ["all", "bins", `bin=${unit.targetName}`] : ["all"],
     depInfo: unit.depInfo,
@@ -599,7 +602,7 @@ function buildScriptRunManifest(ctx: ManifestContext, unit: RustUnit): BuildScri
     RUSTC: plan.rustc.path,
     RUSTDOC: ctx.rustdoc,
     // What the library will be compiled with (target units only get rustflags); RUSTFLAGS itself is removed by cargo.
-    CARGO_ENCODED_RUSTFLAGS: isHost ? "" : ctx.targetRustflags.join("\x1f"),
+    CARGO_ENCODED_RUSTFLAGS: isHost ? "" : plan.plannedWith.rustflags.join("\x1f"),
   };
   const linker = isHost ? ctx.linker.host : ctx.linker.target;
   if (linker !== undefined) env.RUSTC_LINKER = linker;
@@ -623,15 +626,11 @@ function buildScriptRunManifest(ctx: ManifestContext, unit: RustUnit): BuildScri
 
   const trackedEnv: Record<string, string> = {};
   if (existsSync(unit.output)) {
-    try {
-      const last = JSON.parse(readFileSync(unit.output, "utf8")) as { rerunIfEnvChanged?: string[] };
-      // Variables the unit's own env sets are already part of this manifest; unset ones are recorded by their absence.
-      for (const name of last.rerunIfEnvChanged ?? []) {
-        const value = process.env[name];
-        if (!(name in env) && value !== undefined) trackedEnv[name] = value;
-      }
-    } catch {
-      // unreadable output.json: the script reruns anyway (its output is this edge's restat'd product)
+    const last = JSON.parse(readFileSync(unit.output, "utf8")) as { rerunIfEnvChanged?: string[] };
+    // Variables the unit's own env sets are already part of this manifest; unset ones are recorded by their absence.
+    for (const name of last.rerunIfEnvChanged ?? []) {
+      const value = process.env[name];
+      if (!(name in env) && value !== undefined) trackedEnv[name] = value;
     }
   }
   const linksDeps = unit.deps

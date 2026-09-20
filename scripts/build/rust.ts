@@ -37,11 +37,12 @@
  */
 
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeCpuTargetFlags } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
+import { envify } from "./rust/cargo-env.ts";
 import { emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
 import { type PlanInput, planEnv, planPath, readPlan } from "./rust/plan.ts";
 import { buildRustGraph } from "./rust/units.ts";
@@ -176,7 +177,7 @@ function rustCpuTargetFlags(cfg: Config): string[] {
  * `include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/bun-shim-impl.exe"))`, beside the other generated files the
  * crates include. It is the shim graph's `bin` under its target's name (run.ts copies it there, as cargo would).
  */
-function windowsShimPath(cfg: Config): string {
+export function windowsShimPath(cfg: Config): string {
   return resolve(cfg.codegenDir, "bun-shim-impl.exe");
 }
 
@@ -184,7 +185,7 @@ function windowsShimPath(cfg: Config): string {
 // Paths
 // ───────────────────────────────────────────────────────────────────────────
 
-/** cargo's `--target-dir`, `<buildDir>/rust-target`: only planning still runs cargo, and `rust:timings`. */
+/** cargo's `--target-dir`, `<buildDir>/rust-target`: only planning runs cargo, and `rust:timings`. */
 function rustTargetDir(cfg: Config): string {
   return resolve(cfg.buildDir, "rust-target");
 }
@@ -242,6 +243,8 @@ export interface RustBuildInputs {
    * not inputs of anything here: per-crate rustc edges track their sources through dep-info.
    */
   rustSources: string[];
+  /** Checks of the Windows shim's executable (bun.ts): validations of the edge that links it. Empty off Windows. */
+  shimValidations: string[];
   /**
    * Fetch stamps for vendored Rust crates the workspace consumes as path dependencies (lol-html, rust-argon2).
    * Inputs of the plan edge — cargo cannot load the workspace before their manifests exist, and a commit bump
@@ -262,7 +265,7 @@ export interface CargoInvocation {
   args: string[];
   /** The environment `cargo build` runs under (planning, `rust:timings`): `unitEnv` plus what configures cargo itself — profile overrides, `CARGO_ENCODED_RUSTFLAGS`, the target linker, terminal colour. */
   env: Record<string, string>;
-  /** The environment every rustc and build script runs under — what cargo's children inherited from it: toolchain forwarding (CARGO_HOME, RUSTUP_*), CC/CXX/AR for cc-rs, BUN_CODEGEN_DIR, cross-compile SDK variables. */
+  /** The environment every rustc and build script runs under — what cargo's children inherit from it: toolchain forwarding (CARGO_HOME, RUSTUP_*), CC/CXX/AR for cc-rs, BUN_CODEGEN_DIR, cross-compile SDK variables. */
   unitEnv: Record<string, string>;
   /** The target rustflags (what `CARGO_ENCODED_RUSTFLAGS` joins): appended to every target unit's rustc command. */
   rustflags: string[];
@@ -551,7 +554,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   }
 
   // ─── Environment ───
-  // What every rustc and build script sees (cargo's children inherited cargo's environment).
+  // What every rustc and build script sees (cargo's children inherit cargo's environment).
   const unitEnv: Record<string, string> = {
     // `include!(concat!(env!("BUN_CODEGEN_DIR"), "/generated_*.rs"))` and `include_bytes!` in
     // `bun_js_parser`/`bun_runtime` resolve against this. `bun_core::build_options` is also `include!()`'d from
@@ -602,7 +605,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   const env: Record<string, string> = {
     ...unitEnv,
     CARGO_TERM_COLOR: "always",
-    [`CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`]: linker,
+    [`CARGO_TARGET_${envify(triple)}_LINKER`]: linker,
   };
   if (cfg.crossLangLto) {
     // Every crossLangLto platform links ThinLTO, so leave each crate's per-CGU
@@ -717,11 +720,16 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   });
   assert(
     cfg.rustc !== undefined && cfg.rustSysroot !== undefined && cfg.rustHostTriple !== undefined,
-    "no rustc found for the pinned toolchain",
+    "could not ask rustc for its sysroot and host triple",
+    {
+      hint:
+        "What rustc (or the rustup proxy) printed is above. The toolchain rust-toolchain.toml pins has to be " +
+        "installed (`rustup toolchain install` in the repository), or BUN_TOOLCHAIN_RUST has to name a toolchain directory.",
+    },
   );
-  const { cargo, rustc } = cfg;
-  // cargo ran every rustc through the configured wrapper (sccache, …). These edges run rustc themselves, and
-  // depend on its JSON artifact notifications, which a wrapper need not forward: it is not used. Say so once.
+  const { cargo, rustc, rustSysroot, rustHostTriple } = cfg;
+  // cargo runs rustc through RUSTC_WRAPPER (sccache, …). These edges run rustc directly and rely on its JSON
+  // artifact notifications, which a wrapper need not forward, so it is not used. Say so once.
   const wrapper = process.env.RUSTC_WRAPPER || process.env.CARGO_BUILD_RUSTC_WRAPPER;
   if (wrapper) process.stderr.write(`note: RUSTC_WRAPPER (${wrapper}) is not used: the build runs rustc directly\n`);
 
@@ -738,23 +746,26 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // (plan.input.json). The vendored crates also have to be on disk: cargo refuses to load the workspace manifest if
   // any path dependency's `Cargo.toml` is missing.
   const manifests = inputs.rustSources.filter(p => p.endsWith("Cargo.toml") || p.endsWith("Cargo.lock"));
+  const manifestDirs = new Set(manifests.map(p => dirname(p)));
+  const buildScripts = inputs.rustSources
+    .filter(p => basename(p) === "build.rs" && manifestDirs.has(dirname(p)))
+    .map(p => relative(cfg.cwd, p))
+    .sort();
   const planEdgeInputs = [cargo, rustc, ...manifests, resolve(cfg.cwd, "rust-toolchain.toml"), ...inputs.vendorStamps];
   const planned = (dir: string, what: { args: string[]; env: Record<string, string>; rustflags: string[] }) => {
     const input: PlanInput = {
       cwd: cfg.cwd,
       cargo,
       rustc,
+      host: rustHostTriple,
+      sysroot: rustSysroot,
       triple,
       rustflags: what.rustflags,
+      buildScripts,
       args: what.args,
       env: planEnv(what.env),
     };
-    return {
-      dir,
-      rustflags: what.rustflags,
-      file: emitRustPlan(n, cfg, dir, { input, inputs: planEdgeInputs }),
-      plan: readPlan(dir, input),
-    };
+    return { dir, file: emitRustPlan(n, cfg, dir, { input, inputs: planEdgeInputs }), plan: readPlan(dir, input) };
   };
   const runtime = planned(rustGraphDir(cfg), { args, env, rustflags });
   const shim = cfg.windows
@@ -771,7 +782,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     n.blank();
     return [lib];
   }
-  const toolchainBin = (tool: string) => join(cfg.rustSysroot!, "bin", `${tool}${cfg.host.exeSuffix}`);
+  const toolchainBin = (tool: string) => join(rustSysroot, "bin", `${tool}${cfg.host.exeSuffix}`);
   const context = {
     cfg,
     baseEnv: unitEnv,
@@ -786,7 +797,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   // (bun_windows_sys, bun_opaque and the shim itself) include nothing generated, so they wait for no codegen.
   const packageInputs: Record<string, string[]> = {};
   if (shim?.plan !== undefined) {
-    const graph = buildRustGraph(shim.plan, shim.rustflags, shim.dir);
+    const graph = buildRustGraph(shim.plan, shim.dir);
     assert(
       graph.root.kind === "bin",
       `shim plan root ${graph.root.crateName} is a ${graph.root.kind}, expected the bin`,
@@ -794,19 +805,29 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     const exe = windowsShimPath(cfg);
     emitRustUnits(
       n,
-      { ...context, graph, targetRustflags: shim.rustflags, binDestination: exe },
-      { localOrderOnly: [], implicitInputs: {}, vendorStamps: inputs.vendorStamps },
+      { ...context, graph, binDestination: exe },
+      {
+        localOrderOnly: [],
+        implicitInputs: {},
+        vendorStamps: inputs.vendorStamps,
+        rootValidations: inputs.shimValidations,
+      },
     );
     n.phony("bun-shim", [exe]);
     packageInputs.bun_install = [exe];
   }
 
-  const graph = buildRustGraph(runtime.plan, runtime.rustflags, runtime.dir);
+  const graph = buildRustGraph(runtime.plan, runtime.dir);
   assert(graph.root.output === lib, `rust plan root writes ${graph.root.output}, expected ${lib}`);
   emitRustUnits(
     n,
-    { ...context, graph, targetRustflags: runtime.rustflags },
-    { localOrderOnly: ["rust-codegen-ready"], implicitInputs: packageInputs, vendorStamps: inputs.vendorStamps },
+    { ...context, graph },
+    {
+      localOrderOnly: ["rust-codegen-ready"],
+      implicitInputs: packageInputs,
+      vendorStamps: inputs.vendorStamps,
+      rootValidations: [],
+    },
   );
   n.phony("bun-rust", [lib]);
   n.blank();
@@ -816,9 +837,9 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
 /**
  * `-C linker` for host units (build scripts, proc-macros). Under cargo the `[target.<triple>]` linker setting
  * applies to host units too whenever the host *is* the target triple (the common, non-cross case), so those
- * builds keep one linker for everything; when cross-compiling, host units get what the generated
- * `.cargo/config.toml` (cargo-config.ts) names for the host: the discovered host C++ driver, or on a Windows
- * host the MSVC-style linker.
+ * builds keep one linker for everything; when cross-compiling, host units get the discovered host C++ driver, or
+ * on a Windows host the MSVC-style linker. (The generated `.cargo/config.toml`, cargo-config.ts, names the same
+ * for the gnu and darwin hosts that build bun; it has no entry for a Windows host.)
  */
 function hostLinker(cfg: Config, targetTriple: string, targetLinker: string): string | undefined {
   if (cfg.rustHostTriple === targetTriple) return targetLinker;

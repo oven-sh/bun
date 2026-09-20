@@ -781,16 +781,17 @@ export function findRustLld(os: OS): {
   // timeout: without rustup there is no pre-flight and this proxy invocation
   // may still be the one that auto-installs the channel.
   const env = channel !== undefined ? { ...process.env, RUSTUP_TOOLCHAIN: channel } : process.env;
+  // stderr to the terminal: when the proxy cannot provide the toolchain, what it says is the explanation.
   const sysroot = spawnSync(rustc, ["--print", "sysroot"], {
     encoding: "utf8",
     timeout: 300_000,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "inherit"],
     env,
   }).stdout?.trim();
   const vv = spawnSync(rustc, ["-vV"], {
     encoding: "utf8",
     timeout: 30_000,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "inherit"],
     env,
   }).stdout;
   if (!sysroot || !vv) return none;

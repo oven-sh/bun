@@ -5,10 +5,10 @@
  *
  * Cargo stays the planner (feature resolution, profile inheritance and
  * overrides, `-Zbuild-std` unit injection, host/target split, build-script
- * ordering); ninja becomes the executor. Nothing here re-implements cargo's
+ * ordering); ninja is the executor. Nothing here re-implements cargo's
  * resolver: `cargo build … -Zunstable-options --unit-graph` prints the final
- * unit DAG cargo would execute for exactly the arguments `rust.ts` would have
- * run `cargo build` with, and `cargo metadata` supplies the per-package facts
+ * unit DAG cargo would execute for exactly the `cargo build` arguments `rust.ts`
+ * computes, and `cargo metadata` supplies the per-package facts
  * (`CARGO_PKG_*`, `links`, declared features, manifest paths) the unit graph
  * refers to by package id. `rustc --print` supplies the target facts cargo
  * would probe (cfg values as seen by build scripts, artifact file naming).
@@ -22,8 +22,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { BuildError } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
 import { parseToml, type TomlTable, type TomlValue } from "./toml.ts";
 
@@ -130,9 +131,17 @@ export interface PlanInput {
   cwd: string;
   cargo: string;
   rustc: string;
+  /** rustc's host triple and sysroot, as configure probed them (tools.ts) */
+  host: string;
+  sysroot: string;
   triple: string;
   /** rust.ts's target rustflags (the `rustc --print cfg` probe applies them, as cargo does) */
   rustflags: string[];
+  /**
+   * The workspace's `build.rs` files, relative to `cwd`. cargo discovers a build script by the file being there,
+   * so one appearing or disappearing changes the unit graph without any manifest changing.
+   */
+  buildScripts: string[];
   /** `cargo build` argv after `build` */
   args: string[];
   /** the subset of the cargo environment that shapes the plan (`planEnv`) */
@@ -147,8 +156,10 @@ export interface RustPlan {
   unitGraph: UnitGraph;
   /** By package id: every package the unit graph mentions, workspace + registry + (with -Zbuild-std) the std workspace. */
   packages: Record<string, MetadataPackage>;
-  /** By package id, for path packages that have a `[lints]` table (cargo passes lint flags only to local packages). */
-  lints: Record<string, ManifestLints>;
+  /** The distinct `[lints]` tables of the graph's path packages (most share the workspace's). */
+  lintSets: ManifestLints[];
+  /** By package id, for path packages that have a `[lints]` table (cargo passes lint flags only to local packages): an index into `lintSets`. */
+  lints: Record<string, number>;
   /**
    * By profile name, for every profile in the unit graph: the built-in profile it descends from through `inherits`,
    * as cargo reports it to build scripts (`PROFILE`). `dev`/`test` are "debug", `release`/`bench` "release".
@@ -158,13 +169,13 @@ export interface RustPlan {
   publicDependency: string[];
   workspaceRoot: string;
   host: RustcTargetInfo;
-  /** Absent when host == target and no `--target` was planned (never the case for bun today: rust.ts always passes --target). */
+  /** The `--target` platform (rust.ts always passes `--target`). */
   target: RustcTargetInfo;
 }
 
-export const PLAN_VERSION = 3;
+export const PLAN_VERSION = 4;
 
-/** `dir`: the graph's directory under the build directory — `rust/` for bun_runtime, `rust-shim/` for the Windows shim. */
+/** `dir`: the graph's directory under the build directory — `rust/` for bun_runtime, `rust/shim/` for the Windows shim. */
 export function planPath(dir: string): string {
   return join(dir, "plan.json");
 }
@@ -182,23 +193,8 @@ export function planInputPath(dir: string): string {
 export function readPlan(dir: string, input: PlanInput): RustPlan | undefined {
   const path = planPath(dir);
   if (!existsSync(path)) return undefined;
-  let plan: RustPlan | undefined;
-  try {
-    plan = JSON.parse(readFileSync(path, "utf8")) as RustPlan;
-  } catch {
-    plan = undefined; // truncated or otherwise unreadable (disk full, …)
-  }
-  if (
-    plan !== undefined &&
-    plan.version === PLAN_VERSION &&
-    JSON.stringify(plan.plannedWith) === JSON.stringify(input)
-  ) {
-    return plan;
-  }
-  // Not a plan for this configuration. The plan edge reruns because its input file changed; removing the stale
-  // plan as well means nothing (a lost .ninja_log, a hand-run ninja) can mistake it for current.
-  rmSync(path, { force: true });
-  return undefined;
+  const plan = JSON.parse(readFileSync(path, "utf8")) as RustPlan;
+  return plan.version === PLAN_VERSION && JSON.stringify(plan.plannedWith) === JSON.stringify(input) ? plan : undefined;
 }
 
 /** The subset of the cargo environment that shapes the plan (recorded in it, compared by `readPlan`). */
@@ -225,10 +221,10 @@ function run(
     stdio: ["ignore", "pipe", opts.inheritStderr ? "inherit" : "pipe"],
     env: { ...process.env, ...opts.env },
   });
-  if (r.error) throw r.error;
+  if (r.error) throw new BuildError(`failed to run ${cmd}`, { cause: r.error });
   if (r.status !== 0) {
     if (!opts.inheritStderr) process.stderr.write(r.stderr ?? "");
-    throw new Error(`${cmd} ${args.slice(0, 4).join(" ")} … exited with ${r.status ?? r.signal}`);
+    throw new BuildError(`${cmd} ${args.slice(0, 4).join(" ")} … exited with ${r.status ?? r.signal}`);
   }
   return r.stdout;
 }
@@ -256,7 +252,7 @@ function targetInfo(rustc: string, triple: string, rustflags: string[], sysroot:
       .map(l => l.trim());
   const out = probe(crateTypes, ["--print=sysroot", "--print=split-debuginfo", "--print=cfg"]);
   const sysrootAt = out.indexOf(sysroot);
-  if (sysrootAt < 0) throw new Error(`rustc --print probe for ${triple}: no sysroot line in\n${out.join("\n")}`);
+  if (sysrootAt < 0) throw new BuildError(`rustc --print probe for ${triple}: no sysroot line in\n${out.join("\n")}`);
   const split = (line: string): [string, string] => line.split("___") as [string, string];
   let names = out.slice(0, sysrootAt);
   // One artifact per crate type on every target bun builds for; where a type yields several (dylib + import
@@ -288,7 +284,7 @@ function workspaceManifestOf(manifest: TomlTable, manifestPath: string): TomlTab
       if (m.workspace !== undefined) return m;
     }
     if (dirname(dir) === dir)
-      throw new Error(`${manifestPath}: lints.workspace = true but no workspace manifest found above it`);
+      throw new BuildError(`${manifestPath}: lints.workspace = true but no workspace manifest found above it`);
   }
 }
 
@@ -315,7 +311,7 @@ function manifestLints(manifest: TomlTable, manifestPath: string): ManifestLints
       const conf: { level?: TomlValue; priority?: TomlValue; "check-cfg"?: TomlValue } =
         typeof spec === "string" ? { level: spec } : (spec as TomlTable);
       if (typeof conf.level !== "string" || !["allow", "warn", "deny", "forbid"].includes(conf.level)) {
-        throw new Error(`${manifestPath}: lint ${tool}.${lint} has no valid level`);
+        throw new BuildError(`${manifestPath}: lint ${tool}.${lint} has no valid level`);
       }
       lints.push({
         priority: typeof conf.priority === "number" ? conf.priority : 0,
@@ -332,6 +328,16 @@ function manifestLints(manifest: TomlTable, manifestPath: string): ManifestLints
 }
 
 if (process.argv[1] === import.meta.filename) {
+  try {
+    main();
+  } catch (e) {
+    if (!(e instanceof BuildError)) throw e;
+    process.stderr.write(e.format());
+    process.exit(1);
+  }
+}
+
+function main(): void {
   const [inputArg, outArg] = process.argv.slice(2);
   if (!inputArg || !outArg) {
     process.stderr.write("usage: plan.ts <plan.input.json> <plan.json>\n");
@@ -342,19 +348,15 @@ if (process.argv[1] === import.meta.filename) {
   const input = JSON.parse(readFileSync(resolve(inputArg), "utf8")) as PlanInput;
   process.chdir(input.cwd);
   for (const [k, v] of Object.entries(input.env)) process.env[k] = v;
-  const { cargo, rustc, triple, rustflags, args: cargoArgs } = input;
-
+  const { cargo, rustc, host, sysroot, triple, rustflags, args: cargoArgs } = input;
   const vV = run(rustc, ["-vV"]);
-  const host = /^host:\s*(\S+)/m.exec(vV)?.[1];
-  if (host === undefined) throw new Error(`rustc -vV did not report a host triple:\n${vV}`);
-  const sysroot = run(rustc, ["--print=sysroot"]).trim();
 
-  // 1. The unit graph, for exactly the build cargo would have run. Downloads any missing registry crates as a side
+  // 1. The unit graph, for exactly the build cargo would run. Downloads any missing registry crates as a side
   //    effect, like the build would — stderr (cargo's progress) goes to the terminal.
   const unitGraph = JSON.parse(
     run(cargo, ["build", ...cargoArgs, "-Zunstable-options", "--unit-graph"], { inheritStderr: true }),
   ) as UnitGraph;
-  if (unitGraph.version !== 1) throw new Error(`cargo --unit-graph version ${unitGraph.version}, expected 1`);
+  if (unitGraph.version !== 1) throw new BuildError(`cargo --unit-graph version ${unitGraph.version}, expected 1`);
 
   // 2. Package facts: the workspace's metadata, plus the std workspace's when -Zbuild-std put std units in the graph.
   //    --filter-platform keeps cargo from resolving (and downloading) crates that only other targets use.
@@ -366,7 +368,27 @@ if (process.argv[1] === import.meta.filename) {
     packages: MetadataPackage[];
     workspace_root: string;
   };
-  for (const p of meta.packages) packages[p.id] = p;
+  // Only what is read (the `MetadataPackage` fields): dependency lists, test targets and `[package.metadata]` would
+  // otherwise make an edit to any of them a new plan, and a reconfigure, for nothing.
+  const facts = (p: MetadataPackage): MetadataPackage => ({
+    id: p.id,
+    name: p.name,
+    version: p.version,
+    manifest_path: p.manifest_path,
+    links: p.links,
+    authors: p.authors,
+    description: p.description,
+    homepage: p.homepage,
+    repository: p.repository,
+    license: p.license,
+    license_file: p.license_file,
+    readme: p.readme,
+    rust_version: p.rust_version,
+    edition: p.edition,
+    features: p.features,
+    source: p.source,
+  });
+  for (const p of meta.packages) packages[p.id] = facts(p);
   if (unitGraph.units.some(u => u.is_std)) {
     const stdManifest = join(sysroot, "lib", "rustlib", "src", "rust", "library", "Cargo.toml");
     // RUSTC_BOOTSTRAP: the std manifests use nightly cargo features; cargo's own build-std resolve sets the same.
@@ -383,16 +405,18 @@ if (process.argv[1] === import.meta.filename) {
         },
       ),
     ) as { packages: MetadataPackage[] };
-    for (const p of stdMeta.packages) packages[p.id] ??= p;
+    for (const p of stdMeta.packages) packages[p.id] ??= facts(p);
   }
   for (const u of unitGraph.units) {
     if (packages[u.pkg_id] === undefined)
-      throw new Error(`unit graph references ${u.pkg_id}, which cargo metadata did not report`);
+      throw new BuildError(`unit graph references ${u.pkg_id}, which cargo metadata did not report`);
   }
 
   // 3. Manifest facts cargo's JSON does not export: [lints] (local packages only — cargo passes lint flags to
   //    path, non-std packages) and the public-dependency cargo feature (std crates).
-  const lints: Record<string, ManifestLints> = {};
+  const lintSets: ManifestLints[] = [];
+  const lintSetIndex = new Map<string, number>();
+  const lints: Record<string, number> = {};
   const publicDependency: string[] = [];
   const seen = new Set<string>();
   for (const u of unitGraph.units) {
@@ -405,7 +429,10 @@ if (process.argv[1] === import.meta.filename) {
       publicDependency.push(u.pkg_id);
     if (u.is_std) continue;
     const l = manifestLints(manifest, pkg.manifest_path);
-    if (l !== undefined) lints[u.pkg_id] = l;
+    if (l === undefined) continue;
+    const key = JSON.stringify(l);
+    if (!lintSetIndex.has(key)) lintSetIndex.set(key, lintSets.push(l) - 1);
+    lints[u.pkg_id] = lintSetIndex.get(key)!;
   }
 
   // 4. Which built-in profile each planned profile descends from: `[profile.<name>] inherits` in the workspace root
@@ -416,7 +443,8 @@ if (process.argv[1] === import.meta.filename) {
     if (name === "dev" || name === "test") return "debug";
     if (name === "release" || name === "bench") return "release";
     const inherits = (profiles[name] as TomlTable | undefined)?.inherits;
-    if (typeof inherits !== "string") throw new Error(`profile ${name}: no \`inherits\` in the workspace manifest`);
+    if (typeof inherits !== "string")
+      throw new BuildError(`profile ${name}: no \`inherits\` in the workspace manifest`);
     return profileRoot(inherits);
   };
   const profileRoots = Object.fromEntries(
@@ -435,6 +463,7 @@ if (process.argv[1] === import.meta.filename) {
     },
     unitGraph,
     packages: Object.fromEntries(Object.entries(packages).filter(([id]) => seen.has(id))),
+    lintSets,
     lints,
     profileRoots,
     publicDependency,

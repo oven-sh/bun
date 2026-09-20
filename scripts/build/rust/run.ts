@@ -5,7 +5,7 @@
  *   run.ts build-script <unit.json>   run a compiled build script, record its `cargo:` directives
  *
  * `<unit.json>` is the `UnitManifest` configure wrote (units.ts): argv, env, cwd, outputs. This process lives
- * exactly as long as the rustc (or build script) it runs. What it adds around the command is what cargo did around
+ * exactly as long as the rustc (or build script) it runs. What it adds around the command is what cargo does around
  * it: build-script-derived flags and environment, the dynamic-library search path, rustc's dep-info rewritten
  * into a ninja depfile, and output mtimes ninja can rely on.
  */
@@ -25,13 +25,22 @@ import {
   writeSync,
 } from "node:fs";
 import { availableParallelism, constants as osConstants } from "node:os";
-import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { BuildError } from "../error.ts";
 import { writeIfChanged } from "../fs.ts";
 import { type BuildScriptOutput, envify } from "./cargo-env.ts";
 import type { RustcUnitManifest, UnitManifest } from "./units.ts";
 
 // Guarded so the tests can import the pieces below without running a unit.
-if (process.argv[1] === import.meta.filename) main();
+if (process.argv[1] === import.meta.filename) {
+  try {
+    main();
+  } catch (e) {
+    if (!(e instanceof BuildError)) throw e;
+    emit(2, e.format());
+    process.exit(1);
+  }
+}
 
 function main(): void {
   const [mode, manifestPath] = process.argv.slice(2);
@@ -142,8 +151,6 @@ function spawnableArgv(unit: RustcUnitManifest, argv: string[]): string[] {
 // ───────────────────────────────────────────────────────────────────────────
 
 function runRustc(unit: RustcUnitManifest): void {
-  // ninja runs commands in the build directory and knows outputs by their path relative to it.
-  const buildDir = process.cwd();
   for (const o of [unit.output, unit.rmeta]) {
     if (o === undefined) continue;
     mkdirSync(dirname(o), { recursive: true });
@@ -168,22 +175,10 @@ function runRustc(unit: RustcUnitManifest): void {
     process.exit(status);
   };
 
-  if (unit.rmeta === undefined) {
-    const r = spawnSync(unit.rustc, spawnableArgv(unit, argv), {
-      cwd: unit.cwd,
-      env,
-      stdio: "inherit",
-      windowsHide: true,
-    });
-    if (r.error) throw r.error;
-    finish(exitStatus(r.status, r.signal));
-  }
-
-  // A library: rustc reports on stderr, as JSON lines, its diagnostics and the moment each artifact is written.
-  // A ninja that releases outputs early says so by exporting the edge's `early_output_prefix`; any other ninja
-  // leaves the variable unset, and nothing is announced.
+  // rustc reports on stderr, as JSON lines, its diagnostics and the moment each artifact is written; only a library
+  // writes a metadata artifact. A ninja that releases outputs early says so by exporting the edge's
+  // `early_output_prefix`; any other ninja leaves the variable unset, and nothing is announced.
   const earlyOutputPrefix = process.env.NINJA_EARLY_OUTPUT_PREFIX || undefined;
-  const rmeta = unit.rmeta!;
   const child = spawn(unit.rustc, spawnableArgv(unit, argv), {
     cwd: unit.cwd,
     env,
@@ -198,11 +193,11 @@ function runRustc(unit: RustcUnitManifest): void {
     while ((newline = pending.indexOf("\n")) >= 0) {
       const line = pending.slice(0, newline);
       pending = pending.slice(newline + 1);
-      if (!renderRustcMessage(line)) continue;
+      if (!renderRustcMessage(line) || unit.rmeta === undefined) continue;
       // The .rmeta is complete: give it a current mtime (see stampOutput) and tell ninja, which starts the
       // dependents now instead of when this process exits.
-      stampOutput(rmeta);
-      if (earlyOutputPrefix !== undefined) emit(1, `${earlyOutputPrefix}${relative(buildDir, rmeta)}\n`);
+      stampOutput(unit.rmeta);
+      if (earlyOutputPrefix !== undefined) emit(1, `${earlyOutputPrefix}${unit.rmetaNinjaName}\n`);
     }
   });
   child.on("error", e => {
@@ -257,7 +252,7 @@ function stampOutput(path: string): void {
  * absolute. Spaces are `\ `-escaped on both sides (Makefile syntax).
  */
 export function writeDepfile(unit: RustcUnitManifest): void {
-  if (!existsSync(unit.depInfo)) throw new Error(`rustc did not write ${unit.depInfo}`);
+  if (!existsSync(unit.depInfo)) throw new BuildError(`rustc did not write ${unit.depInfo}`);
   const abs = (p: string) => (isAbsolute(p) ? p : resolve(unit.cwd, p.replace(/\\ /g, " ")).replace(/ /g, "\\ "));
   const lines: string[] = [];
   let sawRule = false;
@@ -275,7 +270,7 @@ export function writeDepfile(unit: RustcUnitManifest): void {
     }
   }
   // Without that rule ninja would record no dependencies at all and never rebuild the crate on a source edit.
-  if (!sawRule) throw new Error(`${unit.depInfo} has no rule for ${unit.output}`);
+  if (!sawRule) throw new BuildError(`${unit.depInfo} has no rule for ${unit.output}`);
   writeFileSync(unit.depfile, lines.join("\n") + "\n");
 }
 

@@ -94,7 +94,6 @@ function configure(buildDir: string): Configured {
   const o: CodegenOutputs = {
     all: [],
     rustInputs: [],
-    rustOrderOnly: [],
     cppSources: [],
     cppHeaders: [],
     cppAll: [],

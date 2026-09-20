@@ -15,6 +15,7 @@ import { parseBuildScriptOutput, rustcInvocation, writeDepfile } from "../../scr
 import { parseToml } from "../../scripts/build/rust/toml.ts";
 import {
   type ManifestContext,
+  type RustUnit,
   type RustcUnitManifest,
   buildRustGraph,
   unitManifest,
@@ -152,6 +153,7 @@ function manifestIn(dir: string, over: Partial<RustcUnitManifest>): RustcUnitMan
     env: {},
     output: join(dir, "deps", "libdemo-0123.rlib"),
     rmeta: join(dir, "deps", "libdemo-0123.rmeta"),
+    rmetaNinjaName: join("deps", "libdemo-0123.rmeta"),
     binDestination: undefined,
     linkArgSelectors: ["all"],
     depInfo: join(dir, "deps", "demo-0123.d"),
@@ -246,6 +248,7 @@ describe("rustcInvocation", () => {
       manifestIn(String(dir), {
         kind: "bin",
         rmeta: undefined,
+        rmetaNinjaName: undefined,
         linkArgSelectors: ["all", "bins", "bin=my-bin"],
         buildScriptOutput: join(String(dir), "own.json"),
       }),
@@ -325,9 +328,20 @@ describe("buildRustGraph + unitManifest", () => {
     } as RustPlan["target"]["fileNames"],
     splitDebuginfo: [],
   });
-  const plan: RustPlan = {
-    version: 2,
-    plannedWith: { cwd: "/ws", cargo: "cargo", rustc: "rustc", triple, rustflags: [], args: [], env: {} },
+  const planWith = (rustflags: string[]): RustPlan => ({
+    version: 4,
+    plannedWith: {
+      cwd: "/ws",
+      cargo: "cargo",
+      rustc: "rustc",
+      host: triple,
+      sysroot: "/toolchain",
+      triple,
+      rustflags,
+      buildScripts: [],
+      args: [],
+      env: {},
+    },
     rustc: {
       path: "/toolchain/bin/rustc",
       version: "1.99.0-nightly",
@@ -344,17 +358,17 @@ describe("buildRustGraph + unitManifest", () => {
       roots: [1],
     },
     packages: { [registry.id]: registry, [local.id]: local },
+    lintSets: [],
     lints: {},
     profileRoots: { shim: "release" },
     publicDependency: [],
     workspaceRoot: "/ws",
     host: info(triple),
     target: info(triple),
-  };
-  const context = (graph: ReturnType<typeof buildRustGraph>, rustflags: string[]): ManifestContext => ({
-    cfg: { ci: false, debug: false, host: { os: "windows" } } as Config,
+  });
+  const context = (graph: ReturnType<typeof buildRustGraph>): ManifestContext => ({
+    cfg: { ci: false, debug: false, buildDir: "/build", host: { os: "windows" } } as Config,
     graph,
-    targetRustflags: rustflags,
     baseEnv: { BUN_CODEGEN_DIR: "/build/codegen" },
     linker: { host: "link.exe", target: "link.exe" },
     cargo: "cargo",
@@ -362,42 +376,70 @@ describe("buildRustGraph + unitManifest", () => {
     binDestination: "/build/codegen/my-bin.exe",
   });
 
+  // The whole command line, in order: cargo's position for each group of flags is part of what is reproduced
+  // (the target rustflags come after everything cargo generates).
+  const targetDir = join("/build/rust/shim", triple);
+  const searchPaths = [
+    "-L",
+    `dependency=${join(targetDir, "deps")}`,
+    "-L",
+    `dependency=${join("/build/rust/shim", "host", "deps")}`,
+  ];
+  const diagnostics = ["--error-format=json", "--json=diagnostic-rendered-ansi,artifacts,future-incompat"];
+  const checkCfg = ["--check-cfg", "cfg(docsrs,test)", "--check-cfg", "cfg(feature, values())"];
+  const BIN_ARGS = (bin: RustUnit, dep: RustUnit) => [
+    ...["--crate-name", "my_bin", "--edition=2024", join("src", "my-bin", "main.rs")],
+    ...diagnostics,
+    ...["--crate-type", "bin", `--emit=dep-info=${join(targetDir, "my_bin.d")},link`],
+    ...["-C", "opt-level=z", "-C", "panic=abort", "-C", "lto", "-C", "codegen-units=1"],
+    ...checkCfg,
+    ...["-C", `metadata=${bin.symbolHash}`, "--out-dir", targetDir, "--target", triple],
+    ...["-C", "linker=link.exe", "-C", "strip=symbols"],
+    ...searchPaths,
+    // A link reads object code: the dependency's rlib, not its metadata.
+    ...["--extern", `dep_a=${dep.output}`],
+    ...["-Cpanic=immediate-abort", "-Z", "binary-dep-depinfo"],
+  ];
+  const DEP_ARGS = (dep: RustUnit) => [
+    ...["--crate-name", "dep_a", "--edition=2024", "/cargo/registry/dep-a/src/lib.rs"],
+    ...diagnostics,
+    ...["--crate-type", "lib", `--emit=dep-info=${join(targetDir, "deps", `dep_a-${dep.hash}.d`)},metadata,link`],
+    ...["-C", "opt-level=z", "-C", "panic=abort", "-C", "linker-plugin-lto", "-C", "codegen-units=1"],
+    ...checkCfg,
+    ...["-C", `metadata=${dep.symbolHash}`, "-C", `extra-filename=-${dep.hash}`],
+    ...["--out-dir", join(targetDir, "deps"), "--target", triple],
+    ...["-C", "linker=link.exe", "-C", "strip=symbols"],
+    ...searchPaths,
+    ...["--cap-lints", "allow", "-Cpanic=immediate-abort", "-Z", "binary-dep-depinfo"],
+  ];
+
   test("a bin root is named after its crate, runs the LTO, links the rlibs, and is copied under its target's name", () => {
-    const graph = buildRustGraph(plan, ["-Cpanic=immediate-abort"], "/build/rust/shim");
+    const graph = buildRustGraph(planWith(["-Cpanic=immediate-abort"]), "/build/rust/shim");
     const [dep, bin] = graph.units;
     expect(graph.root).toBe(bin);
     expect(bin.kind).toBe("bin");
     expect(bin.output).toBe(join("/build/rust/shim", triple, "my_bin.exe"));
     expect(dep.output).toBe(join("/build/rust/shim", triple, "deps", `libdep_a-${dep.hash}.rlib`));
 
-    const m = unitManifest(context(graph, ["-Cpanic=immediate-abort"]), bin) as RustcUnitManifest;
+    const m = unitManifest(context(graph), bin) as RustcUnitManifest;
     expect(m.kind).toBe("bin");
     expect(m.binDestination).toBe("/build/codegen/my-bin.exe");
+    expect(m.rmetaNinjaName).toBeUndefined();
     expect(m.linkArgSelectors).toEqual(["all", "bins", "bin=my-bin"]);
     expect(m.env.CARGO_BIN_NAME).toBe("my-bin");
     expect(m.env.CARGO_PRIMARY_PACKAGE).toBe("1");
-    const flags = m.args.join(" ");
-    expect(flags).toContain("--crate-name my_bin");
-    expect(flags).toContain("--crate-type bin");
-    expect(flags).toContain("-C lto");
-    expect(flags).toContain("-C linker=link.exe");
-    expect(flags).toContain("-Cpanic=immediate-abort");
-    expect(flags).not.toContain("extra-filename");
-    // A link reads object code: the dependency's rlib, not its metadata.
-    expect(flags).toContain(`--extern dep_a=${dep.output}`);
+    expect(m.args).toEqual(BIN_ARGS(bin, dep));
 
-    const depManifest = unitManifest(context(graph, ["-Cpanic=immediate-abort"]), dep) as RustcUnitManifest;
+    const depManifest = unitManifest(context(graph), dep) as RustcUnitManifest;
     expect(depManifest.binDestination).toBeUndefined();
+    expect(depManifest.rmetaNinjaName).toBe(join("rust/shim", triple, "deps", `libdep_a-${dep.hash}.rmeta`));
     expect(depManifest.linkArgSelectors).toEqual(["all"]);
-    const depFlags = depManifest.args.join(" ");
-    expect(depFlags).toContain("-C linker-plugin-lto");
-    expect(depFlags).toContain(`-C extra-filename=-${dep.hash}`);
-    expect(depFlags).toContain("--cap-lints allow");
+    expect(depManifest.args).toEqual(DEP_ARGS(dep));
   });
 
   test("target rustflags change where an artifact is written but not how its symbols are mangled", () => {
-    const plain = buildRustGraph(plan, [], "/build/rust/shim").units[0];
-    const flagged = buildRustGraph(plan, ["-Ctarget-cpu=native"], "/build/rust/shim").units[0];
+    const plain = buildRustGraph(planWith([]), "/build/rust/shim").units[0];
+    const flagged = buildRustGraph(planWith(["-Ctarget-cpu=native"]), "/build/rust/shim").units[0];
     expect(flagged.hash).not.toBe(plain.hash);
     expect(flagged.symbolHash).toBe(plain.symbolHash);
   });

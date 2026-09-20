@@ -12,6 +12,7 @@
  * when it asks for the next token. The scanner looks only at the character under its cursor.
  */
 
+import { BuildError } from "../error.ts";
 export type TomlValue = string | number | boolean | TomlValue[] | TomlTable;
 export interface TomlTable {
   [key: string]: TomlValue;
@@ -22,7 +23,7 @@ export function parseToml(src: string, file = "<toml>"): TomlTable {
 }
 
 function fail(file: string, line: number, msg: string): never {
-  throw new Error(`${file}:${line}: ${msg}`);
+  throw new BuildError(`${file}:${line}: ${msg}`, { file });
 }
 
 // ───────────────────────────────────────────────────────────────────────────

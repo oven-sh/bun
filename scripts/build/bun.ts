@@ -29,7 +29,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
-import { binaryExpectations } from "./binary-expectations.ts";
+import { binaryExpectations, shimExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
@@ -41,7 +41,7 @@ import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
-import { emitRust, rustLibPath } from "./rust.ts";
+import { emitRust, rustLibPath, windowsShimPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
@@ -211,9 +211,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
     depsByName.set(rustArgon2.name, rustArgon2Dep);
     rustObjects = emitRust(n, cfg, {
-      codegenOrderOnly: [...codegen.rustInputs, ...codegen.rustOrderOnly],
+      codegenOrderOnly: codegen.rustInputs,
       rustSources: sources.rust,
       vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
+      shimValidations: emitShimVerify(n, cfg),
     });
   }
 
@@ -585,9 +586,10 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const codegen = emitCodegen(n, cfg, sources);
 
   const rustObjects = emitRust(n, cfg, {
-    codegenOrderOnly: [...codegen.rustInputs, ...codegen.rustOrderOnly],
+    codegenOrderOnly: codegen.rustInputs,
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
+    shimValidations: emitShimVerify(n, cfg),
   });
 
   n.phony("bun", rustObjects);
@@ -700,9 +702,10 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const codegen = emitCodegen(n, cfg, sources);
 
   const rustObjects = emitRust(n, cfg, {
-    codegenOrderOnly: [...codegen.rustInputs, ...codegen.rustOrderOnly],
+    codegenOrderOnly: codegen.rustInputs,
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
+    shimValidations: emitShimVerify(n, cfg),
   });
 
   // ─── C++ archive + dep libs (downloaded, not built) ───
@@ -895,6 +898,33 @@ function emitBinaryVerify(
     // Same reason as emitSmokeTest: never run while strip is mid-write when
     // the wrapper runtime is <buildDir>/bun itself.
     ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
+    vars: { spec: q(spec) },
+  });
+  return [stamp];
+}
+
+/**
+ * The same scan for the Windows `.bin/` shim, against `shimExpectations()`. Returns the stamp, which the shim's
+ * rustc edge names as a validation: whenever the shim is relinked, it is checked.
+ */
+function emitShimVerify(n: Ninja, cfg: Config): string[] {
+  const tools = binaryVerifyTools(cfg);
+  if (!cfg.windows || tools === undefined) return [];
+  const name = "bun-shim-impl";
+  const exe = windowsShimPath(cfg);
+  const stamp = resolve(cfg.buildDir, `${name}.binary-verified`);
+  const spec = resolve(cfg.buildDir, `${name}.verify.json`);
+  writeIfChanged(spec, JSON.stringify({ name, exe, tools, expect: shimExpectations() }, null, 2) + "\n");
+  const q = (p: string) => quote(p, cfg.windows);
+  n.rule("shim_verify", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${name} --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} binary $spec`,
+    description: `check ${name} imports, size, hardening`,
+  });
+  n.build({
+    outputs: [stamp],
+    rule: "shim_verify",
+    inputs: [exe],
+    implicitInputs: [spec, verifyBinaryPath, resolve(import.meta.dirname, "binary-expectations.ts")],
     vars: { spec: q(spec) },
   });
   return [stamp];

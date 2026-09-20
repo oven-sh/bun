@@ -1419,6 +1419,17 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     expect(leaked).toBe(0);
   });
 
+  it("records the failed spawn code on exitCode before close", async () => {
+    const child = spawn("/nonexistent-binary-xyz");
+    child.on("error", () => {});
+    const closeCode = await new Promise<number>(resolve => {
+      child.once("close", resolve);
+    });
+
+    expect(closeCode).toBeLessThan(0);
+    expect(child.exitCode).toBe(closeCode);
+  });
+
   it.concurrent("spawn with nonexistent cwd", async () => {
     const leaked = await failN(signal =>
       spawn(bunExe(), ["-e", "1"], { signal, cwd: "/nonexistent-dir-xyz", env: bunEnv }),

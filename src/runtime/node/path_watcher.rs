@@ -1765,10 +1765,6 @@ mod windows_impl {
         /// initialized.
         buffer: [core::mem::MaybeUninit<u8>; BUFFER_SIZE],
         dir: HANDLE,
-        /// A second, synchronous handle to the same directory, for name
-        /// lookups: a query on `dir` would complete through the port. Opened by
-        /// the first lookup. Guarded by `manager.mutex`.
-        query_dir: core::cell::Cell<HANDLE>,
         /// Null once the owner detached. Guarded by `manager.mutex`.
         watcher: *mut PathWatcher,
         /// A request was issued whose completion the reader thread has not
@@ -1965,8 +1961,6 @@ mod windows_impl {
                 unsafe {
                     core::ptr::addr_of_mut!((*p).overlapped).write(bun_core::ffi::zeroed());
                     core::ptr::addr_of_mut!((*p).dir).write(dir);
-                    core::ptr::addr_of_mut!((*p).query_dir)
-                        .write(core::cell::Cell::new(w::INVALID_HANDLE_VALUE));
                     core::ptr::addr_of_mut!((*p).watcher).write(watcher);
                     core::ptr::addr_of_mut!((*p).pending).write(false);
                     core::ptr::addr_of_mut!((*p).recursive).write(watcher.recursive);
@@ -2001,7 +1995,6 @@ mod windows_impl {
                     // thread frees it when it dequeues that completion.
                     w::CloseHandle((*request).dir);
                     (*request).dir = w::INVALID_HANDLE_VALUE;
-                    (*request).close_query_dir();
                 } else {
                     DirRequest::destroy(request);
                 }
@@ -2240,15 +2233,6 @@ mod windows_impl {
                 // SAFETY: `dir` is the live handle this request owns.
                 unsafe { w::CloseHandle(this.dir) };
             }
-            this.close_query_dir();
-        }
-
-        fn close_query_dir(&self) {
-            let query_dir = self.query_dir.replace(w::INVALID_HANDLE_VALUE);
-            if query_dir != w::INVALID_HANDLE_VALUE {
-                // SAFETY: the handle `long_name` opened; nothing else has it.
-                unsafe { w::CloseHandle(query_dir) };
-            }
         }
 
         /// Reader thread, `manager.mutex` held, the owner still attached.
@@ -2284,7 +2268,6 @@ mod windows_impl {
                         w::CloseHandle((*this).dir);
                         (*this).dir = w::INVALID_HANDLE_VALUE;
                     }
-                    request.close_query_dir();
                     // The next `watch()` of this path has to start a new one.
                     if let Some(manager) = watcher.manager {
                         manager.unlink_watcher_locked(core::ptr::from_ref(watcher).cast_mut());
@@ -2417,21 +2400,20 @@ mod windows_impl {
                 .filter(|(_, component)| is_short_shaped(component))
                 .last()?
                 .0;
-            if self.query_dir.get() == w::INVALID_HANDLE_VALUE {
-                if self.dir == w::INVALID_HANDLE_VALUE {
-                    return None;
-                }
-                self.query_dir.set(open_for_queries(self.dir, &[])?);
+            if self.dir == w::INVALID_HANDLE_VALUE {
+                return None;
             }
-            let mut parent = self.query_dir.get();
-            // A directory below the watched one, open for this walk only.
-            let mut opened: HANDLE = w::INVALID_HANDLE_VALUE;
+            // Every directory of the walk is opened for it and asked about one
+            // name: a file system may keep the first name a handle was asked
+            // about and answer every later query with it. `dir` itself is not
+            // asked: a query on it would complete through the port.
+            let mut directory: HANDLE = open_for_queries(self.dir, &[])?;
             let mut entry: NameEntry = [0; 80];
             let mut len = 0usize;
             let mut resolved_all = true;
             for (index, component) in name.split(|&unit| is_separator(unit)).enumerate() {
                 let long: &[u16] = if index <= last_lookup && is_short_shaped(component) {
-                    match query_long_name(parent, component, &mut entry) {
+                    match query_long_name(directory, component, &mut entry) {
                         Some(long) => long,
                         None => {
                             resolved_all = false;
@@ -2452,22 +2434,17 @@ mod windows_impl {
                 long_buf[len + separator..len + separator + long.len()].copy_from_slice(long);
                 len += separator + long.len();
                 if index < last_lookup {
-                    let Some(child) = open_for_queries(parent, component) else {
+                    let Some(child) = open_for_queries(directory, component) else {
                         resolved_all = false;
                         break;
                     };
-                    if opened != w::INVALID_HANDLE_VALUE {
-                        // SAFETY: opened by this walk.
-                        unsafe { w::CloseHandle(opened) };
-                    }
-                    opened = child;
-                    parent = child;
+                    // SAFETY: opened by this walk.
+                    unsafe { w::CloseHandle(directory) };
+                    directory = child;
                 }
             }
-            if opened != w::INVALID_HANDLE_VALUE {
-                // SAFETY: opened by this walk.
-                unsafe { w::CloseHandle(opened) };
-            }
+            // SAFETY: opened by this walk.
+            unsafe { w::CloseHandle(directory) };
             resolved_all.then_some(&long_buf[..len])
         }
     }

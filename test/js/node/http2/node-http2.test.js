@@ -6254,9 +6254,9 @@ it("an oversized respond() over a JS Duplex transport still puts RST_STREAM and 
 });
 
 describe("sendTrailers() over maxSendHeaderBlockLength", () => {
-  // Verified against node v26.3.0: the stream gets 'frameError' (HEADERS, FRAME_SIZE_ERROR) and no
-  // trailer block goes out. The stream is still open on the wire, so node's onFrameError closes
-  // it, and the session closes with GOAWAY NO_ERROR.
+  // Verified against node v26.3.0: the stream gets 'frameError' (HEADERS, FRAME_SIZE_ERROR) after
+  // 'finish', and no trailer block goes out. The stream is still open on the wire, so node's
+  // onFrameError closes it, and the session closes with GOAWAY NO_ERROR.
   async function refuseTrailers(handleRequest, expected) {
     const server = http2.createServer({ maxSendHeaderBlockLength: 100 });
     let client;
@@ -6264,6 +6264,7 @@ describe("sendTrailers() over maxSendHeaderBlockLength", () => {
       const serverEvents = [];
       const serverStreamClosed = Promise.withResolvers();
       server.on("stream", stream => {
+        stream.on("finish", () => serverEvents.push("finish"));
         stream.on("error", e => serverEvents.push(`error ${e.code} ${e.message}`));
         stream.on("frameError", (type, code) => serverEvents.push(`frameError type=${type} code=${code}`));
         stream.on("close", () => serverStreamClosed.resolve(stream.rstCode));
@@ -6307,7 +6308,7 @@ describe("sendTrailers() over maxSendHeaderBlockLength", () => {
       request: { trailers: false, ended: true, error: undefined, rstCode: http2.constants.NGHTTP2_NO_ERROR },
       serverRstCode: http2.constants.NGHTTP2_NO_ERROR,
       // frame type 1 is HEADERS
-      serverEvents: ["frameError type=1 code=6"],
+      serverEvents: ["finish", "frameError type=1 code=6"],
     });
   });
 
@@ -6316,8 +6317,65 @@ describe("sendTrailers() over maxSendHeaderBlockLength", () => {
     await refuseTrailers(stream => stream.resume(), {
       request: { trailers: false, ended: false, error, rstCode: http2.constants.NGHTTP2_FRAME_SIZE_ERROR },
       serverRstCode: http2.constants.NGHTTP2_FRAME_SIZE_ERROR,
-      serverEvents: ["frameError type=1 code=6", `error ERR_HTTP2_STREAM_ERROR ${error}`],
+      serverEvents: ["finish", "frameError type=1 code=6", `error ERR_HTTP2_STREAM_ERROR ${error}`],
     });
+  });
+
+  it("reports nothing and keeps the session when user code closes the stream in the same tick", async () => {
+    // Verified against node v26.3.0: node submits trailers one setImmediate after sendTrailers(),
+    // and not at all for a stream that was closed meanwhile. There is no 'frameError' and no
+    // GOAWAY, so the next request on the session is served.
+    const server = http2.createServer({ maxSendHeaderBlockLength: 100 });
+    let client;
+    try {
+      const serverEvents = [];
+      const refusedClosed = Promise.withResolvers();
+      server.on("stream", (stream, headers) => {
+        if (headers[":path"] === "/next") {
+          stream.respond({ ":status": 200 });
+          stream.end("next");
+          return;
+        }
+        stream.on("error", e => serverEvents.push(`error ${e.code}`));
+        stream.on("frameError", (type, code) => serverEvents.push(`frameError type=${type} code=${code}`));
+        stream.on("close", () => refusedClosed.resolve(stream.rstCode));
+        stream.respond({ ":status": 200 }, { waitForTrailers: true });
+        stream.on("wantTrailers", () => {
+          stream.sendTrailers({ "x-big": Buffer.alloc(300, "b").toString() });
+          stream.close();
+        });
+        stream.end("body");
+      });
+      const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+      client = http2.connect(`http://localhost:${port}`);
+      client.on("error", () => {});
+      const goaways = [];
+      client.on("goaway", code => goaways.push(code));
+      const get = path =>
+        new Promise(resolve => {
+          const req = client.request({ ":path": path });
+          const result = { body: "", trailers: false, error: undefined };
+          req.setEncoding("utf8");
+          req.on("trailers", () => (result.trailers = true));
+          req.on("data", chunk => (result.body += chunk));
+          req.on("error", e => (result.error = e.message));
+          req.on("close", () => resolve({ ...result, rstCode: req.rstCode }));
+          req.end();
+        });
+
+      const [refused, serverRstCode] = await Promise.all([get("/refused"), refusedClosed.promise]);
+      const next = await get("/next");
+      expect({ refused, serverRstCode, serverEvents, next, goaways }).toEqual({
+        refused: { body: "body", trailers: false, error: undefined, rstCode: 0 },
+        serverRstCode: 0,
+        serverEvents: [],
+        next: { body: "next", trailers: false, error: undefined, rstCode: 0 },
+        goaways: [],
+      });
+    } finally {
+      client?.destroy();
+      server.close();
+    }
   });
 
   it("resets a client request with FRAME_SIZE_ERROR and closes the client session", async () => {

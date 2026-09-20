@@ -1914,6 +1914,46 @@ describe.concurrent("a trailer block over the send limit (RFC 9113 §8.1)", () =
       server.close();
     }
   });
+
+  test("a stream that user code closes in the tick of the refused sendTrailers() sends no GOAWAY", async () => {
+    // node submits trailers one setImmediate after sendTrailers(), and not at all for a stream
+    // that was closed meanwhile. The session stays open: only the close() of user code shows.
+    const server = http2.createServer({ maxSendHeaderBlockLength: 100 });
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.on("wantTrailers", () => {
+        stream.sendTrailers({ "x-big": big(300) });
+        stream.close();
+      });
+      stream.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.streamId === 1 && f.type === FrameType.RST_STREAM);
+      // The PING ACK follows every frame that the refusal could have produced.
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8, 1));
+      await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      const frames = c.frames
+        .filter(f => f.type !== FrameType.SETTINGS && f.type !== FrameType.WINDOW_UPDATE)
+        .map(f => ({ type: f.type, streamId: f.streamId }));
+      expect(frames).toEqual([
+        { type: FrameType.HEADERS, streamId: 1 },
+        { type: FrameType.DATA, streamId: 1 },
+        { type: FrameType.RST_STREAM, streamId: 1 },
+        { type: FrameType.PING, streamId: 0 },
+      ]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
 });
 
 // A stream nothing references any more can still survive a bounded number of collections: JSC scans

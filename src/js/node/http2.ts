@@ -2420,9 +2420,8 @@ class Http2Stream extends Duplex {
       if (ObjectKeys(headers).length === 0) {
         session[bunHTTP2Native]?.noTrailers(this.#id);
       } else if (session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames) === false) {
-        // The block is over the send limit and no frame was sent. nghttp2 refuses it when the session next sends, so node reports it after sendTrailers() has returned.
-        process.nextTick(emitFrameErrorEventNT, this, kFrameTypeHeaders, constants.NGHTTP2_FRAME_SIZE_ERROR);
-        setImmediate(closeAfterRefusedTrailers, session, this);
+        // The block is over the send limit and no frame was sent. node submits trailers one setImmediate after sendTrailers(), and nghttp2 refuses them when the session next sends.
+        setImmediate(onRefusedTrailers, session, this);
       }
     } catch (error) {
       this.#sentTrailers = undefined;
@@ -6612,8 +6611,11 @@ function closeAfterFrameError(session: ServerHttp2Session, stream: ServerHttp2St
   stream.close(code);
   session.close();
 }
-// node's onFrameError for a trailer block that nghttp2 refused: the stream is still open on the wire. finishSendTrailers() has run kMaybeDestroy by then, which closes a server request that nobody read with NO_ERROR, so close(FRAME_SIZE_ERROR) only reaches a stream that was read: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1987-L2003
-function closeAfterRefusedTrailers(session: ServerHttp2Session | ClientHttp2Session, stream: Http2Stream) {
+// A trailer block that nghttp2 refused. node's finishSendTrailers() submits nothing for a stream that user code closed meanwhile, so nothing is reported then: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1987-L2003
+function onRefusedTrailers(session: ServerHttp2Session | ClientHttp2Session, stream: Http2Stream) {
+  if (stream.destroyed || stream.closed) return;
+  stream.emit("frameError", kFrameTypeHeaders, constants.NGHTTP2_FRAME_SIZE_ERROR);
+  // The stream is still open on the wire, so node's onFrameError closes it and the session. kMaybeDestroy has closed a server request that nobody read with NO_ERROR by then, so close(FRAME_SIZE_ERROR) only reaches a stream that was read.
   if (!stream.destroyed && !stream.closed) {
     const unread = stream instanceof ServerHttp2Stream && isUnreadRequest(stream);
     // Reset here, not through close(): node's RST_STREAM leaves before the GOAWAY.

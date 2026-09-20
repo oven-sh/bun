@@ -90,21 +90,26 @@ describe("http2.connect reports a rejected options.settings where Node.js does",
       console.log("connect() returned");
     });
   `;
-  for (const [runtime, exe, skip] of [
-    // A debug build needs several seconds to load node:http2 in a child, most of the default timeout.
-    ["Bun", bunExe(), isDebug],
-    ["Node.js", nodeExe(), !nodeExe()],
+  // A debug build needs several seconds to load node:http2 in a child, more than the default timeout.
+  const childTimeout = isDebug ? 60_000 : undefined;
+  for (const [runtime, exe] of [
+    ["Bun", bunExe()],
+    ["Node.js", nodeExe()],
   ] as const) {
-    it.skipIf(skip)(`with no 'error' listener the error is an uncaught exception (${runtime})`, async () => {
-      await using proc = Bun.spawn({
-        cmd: [exe!, "-e", noErrorListener],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "inherit",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("connect() returned\nuncaughtException ERR_HTTP2_INVALID_SETTING_VALUE\n");
-      expect(exitCode).toBe(0);
-    });
+    it.skipIf(!exe)(
+      `with no 'error' listener the error is an uncaught exception (${runtime})`,
+      async () => {
+        await using proc = Bun.spawn({
+          cmd: [exe!, "-e", noErrorListener],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect(stdout).toBe("connect() returned\nuncaughtException ERR_HTTP2_INVALID_SETTING_VALUE\n");
+        expect(exitCode).toBe(0);
+      },
+      childTimeout,
+    );
   }
 });

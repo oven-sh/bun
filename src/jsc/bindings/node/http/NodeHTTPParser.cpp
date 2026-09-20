@@ -101,6 +101,9 @@ void HTTPParser::init(llhttp_type_t type, uint64_t maxHttpHeaderSize, uint32_t l
     if (lenientFlags & kLenientSpacesAfterChunkSize) {
         llhttp_set_lenient_spaces_after_chunk_size(&m_parserData, 1);
     }
+    if (lenientFlags & kLenientHeaderValueRelaxed) {
+        llhttp_set_lenient_header_value_relaxed(&m_parserData, 1);
+    }
 
     m_headerNread = 0;
     m_url.reset();

@@ -1197,8 +1197,9 @@ class Http2ServerResponse extends Stream {
     }
     const stream = this[kStream];
     if (stream.headersSent || this[kState].closed) return false;
+    if (headers != null) validateObject(headers, "headers");
     stream.additionalHeaders({
-      ...(headers || {}),
+      ...headers,
       [HTTP2_HEADER_STATUS]: statusCode,
     });
     return true;

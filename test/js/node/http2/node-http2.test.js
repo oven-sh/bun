@@ -5033,8 +5033,10 @@ describe.concurrent("http2 headers and options arguments are checked like node's
   const nonObjects = [
     [null, "null"],
     [0, "type number (0)"],
+    [5, "type number (5)"],
     ["", "type string ('')"],
     [false, "type boolean (false)"],
+    [true, "type boolean (true)"],
     [Symbol("s"), "type symbol (Symbol(s))"],
     [function f() {}, "function f"],
   ];
@@ -5091,6 +5093,9 @@ describe.concurrent("http2 headers and options arguments are checked like node's
       expect({
         "request(headers)": errorsOf(nonObjects, value => client.request(value)),
         "request({}, options)": errorsOf(nonObjectsAndArray, value => client.request({}, value)),
+        // Without the check this call ends the session with error code 9: the native HEADERS
+        // writer rejects the value after it HPACK-encoded the header block.
+        'request({ ":method": "POST" }, 5)': errorOf(() => client.request({ ":method": "POST" }, 5)).message,
         // node checks the headers first: their type, then their content, and then the options.
         "request(null, null)": errorOf(() => client.request(null, null)).message,
         'request({ ":foo": "x" }, null)': errorOf(() => client.request({ ":foo": "x" }, null)).code,
@@ -5102,6 +5107,7 @@ describe.concurrent("http2 headers and options arguments are checked like node's
       }).toEqual({
         "request(headers)": invalidArgTypes(nonObjects, "headers", arrayOrObject),
         "request({}, options)": invalidArgTypes(nonObjectsAndArray, "options", ofTypeObject),
+        'request({ ":method": "POST" }, 5)': invalidArgType("options", ofTypeObject, "type number (5)").message,
         "request(null, null)": invalidArgType("headers", arrayOrObject, "null").message,
         'request({ ":foo": "x" }, null)': "ERR_HTTP2_INVALID_PSEUDOHEADER",
         'request({ "bad name": "x" }, 5)': "ERR_INVALID_HTTP_TOKEN",
@@ -5109,7 +5115,7 @@ describe.concurrent("http2 headers and options arguments are checked like node's
         'request([":foo", "x"], "str")': "ERR_HTTP2_INVALID_PSEUDOHEADER",
       });
 
-      // No rejected call took a stream id: the first real request is stream 1.
+      // No rejected call took a stream id or hurt the session: the first real request is stream 1.
       const req = client.request({ ":path": "/" });
       expect(await responseOf(req)).toMatchObject({ headers: { ":status": 200 }, body: "ok" });
       expect(req.id).toBe(1);
@@ -5173,7 +5179,12 @@ describe.concurrent("http2 headers and options arguments are checked like node's
     const pushCallback = mock();
     const errors = Promise.withResolvers();
     const server = http2.createServer();
-    server.on("stream", stream => {
+    server.on("stream", (stream, headers) => {
+      if (headers[":path"] === "/sibling") {
+        stream.respond({ ":status": 200 });
+        stream.end("sibling");
+        return;
+      }
       errors.resolve({
         "respond(headers)": errorsOf(nonObjects, value => stream.respond(value)),
         "respond({}, options)": errorsOf(nonObjectsAndArray, value => stream.respond({}, value)),
@@ -5224,6 +5235,9 @@ describe.concurrent("http2 headers and options arguments are checked like node's
       const response = responseOf(client.request({ ":path": "/" }));
       // A request that fails before the server sees it must not leave `errors` pending.
       response.catch(errors.reject);
+      // Without the options check, respond({}, true) makes this stream and the session fail.
+      const sibling = responseOf(client.request({ ":path": "/sibling" }));
+      sibling.catch(errors.reject);
       const badOffset = {
         name: "TypeError",
         code: "ERR_INVALID_ARG_VALUE",
@@ -5243,6 +5257,7 @@ describe.concurrent("http2 headers and options arguments are checked like node's
         "null headers and a bad options.offset": [badOffset, badOffset],
       });
       expect(await response).toMatchObject({ headers: { ":status": 200, "x-after": "yes" }, body: "ok" });
+      expect(await sibling).toMatchObject({ headers: { ":status": 200 }, body: "sibling" });
       expect(pushCallback).not.toHaveBeenCalled();
       expect(pushed).toEqual([{ id: 2, path: "/pushed" }]);
       await pushClosed.promise;
@@ -5279,6 +5294,42 @@ describe.concurrent("http2 headers and options arguments are checked like node's
       req.resume();
       expect(await errors.promise).toEqual(invalidArgTypes(nonObjectsAndArray, "headers", ofTypeObject));
       expect(await trailers).toMatchObject({ "x-trailer": "sent" });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("res.writeInformation() checks its headers like node, which lets null through", async () => {
+    const rejected = nonObjectsAndArray.filter(([value]) => value !== null);
+    const results = Promise.withResolvers();
+    const server = http2.createServer((req, res) => {
+      results.resolve({
+        rejected: errorsOf(rejected, value => res.writeInformation(103, value)),
+        accepted: [null, undefined, { "x-info": "yes" }].map(value => res.writeInformation(103, value)),
+      });
+      res.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`http://localhost:${server.address().port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      const informational = [];
+      req.on("headers", headers => informational.push({ status: headers[":status"], info: headers["x-info"] }));
+      const response = responseOf(req);
+      response.catch(results.reject);
+      expect(await results.promise).toEqual({
+        rejected: invalidArgTypes(rejected, "headers", ofTypeObject),
+        accepted: [true, true, true],
+      });
+      expect(await response).toMatchObject({ headers: { ":status": 200 }, body: "ok" });
+      // Only the accepted calls sent a 1xx block.
+      expect(informational).toEqual([
+        { status: 103, info: undefined },
+        { status: 103, info: undefined },
+        { status: 103, info: "yes" },
+      ]);
     } finally {
       client.destroy();
       server.close();

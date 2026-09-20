@@ -1,5 +1,5 @@
 /**
- * `<buildDir>/toolchain.stamp`: which compiler, assembler, archiver and linker
+ * `<buildDir>/toolchain-identity.txt`: which compiler, assembler, archiver and linker
  * this build directory's artifacts come from. Every edge that runs one of them
  * names this file as an input, so replacing a tool rebuilds what it produced.
  *
@@ -15,7 +15,7 @@
  * A tool is identified by the file it resolves to, its size and its mtime: no
  * process to spawn, and a toolchain rebuilt in place under the same version
  * string counts as replaced too. Written with `writeIfChanged`, so an
- * unchanged toolchain keeps the stamp's mtime and rebuilds nothing.
+ * unchanged toolchain keeps the file's mtime and rebuilds nothing.
  */
 
 import { realpathSync, statSync } from "node:fs";
@@ -23,12 +23,12 @@ import { resolve } from "node:path";
 import type { Config } from "./config.ts";
 import { writeIfChanged } from "./fs.ts";
 
-export function toolchainStampPath(cfg: Config): string {
-  return resolve(cfg.buildDir, "toolchain.stamp");
+export function toolchainIdentityPath(cfg: Config): string {
+  return resolve(cfg.buildDir, "toolchain-identity.txt");
 }
 
-/** Write the stamp; returns its path. Called by configure, before ninja runs. */
-export function writeToolchainStamp(cfg: Config): string {
+/** Write the file; returns its path. Called by configure, before ninja runs. */
+export function writeToolchainIdentity(cfg: Config): string {
   const tools: [name: string, path: string | undefined][] = [
     ["cc", cfg.cc],
     ["cxx", cfg.cxx],
@@ -44,7 +44,7 @@ export function writeToolchainStamp(cfg: Config): string {
     const { size, mtimeMs } = statSync(file);
     return [`${name} ${file} ${size} ${Math.trunc(mtimeMs)}`];
   });
-  const path = toolchainStampPath(cfg);
+  const path = toolchainIdentityPath(cfg);
   writeIfChanged(path, lines.join("\n") + "\n");
   return path;
 }

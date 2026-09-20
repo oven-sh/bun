@@ -790,3 +790,74 @@ export function printEnvironment(): void {
     });
   }
 }
+
+/**
+ * A string that YAML, unquoted, reads as a number, a boolean or null. An AWS
+ * account id is one: "099720109477" became the number 99720109477, and the
+ * agent tag lost its zero. So is a release like "3.20", which is 3.2.
+ */
+const yamlReadsAsSomethingElse =
+  /^(|~|null|true|false|yes|no|on|off|[-+]?(\d[\d_]*)?(\.\d*)?(e[-+]?\d+)?|0x[\da-f]+|0o[0-7]+|[-+]?\.(inf|nan))$/i;
+
+/** The pipeline, as the YAML `buildkite-agent pipeline upload` reads. */
+export function toYaml(obj: object, indent = 0): string {
+  const spaces = " ".repeat(indent);
+  let result = "";
+  const entries: [string, unknown][] = Object.entries(obj);
+  for (const [key, value] of entries) {
+    if (value === undefined) {
+      continue;
+    }
+    if (value === null) {
+      result += `${spaces}${key}: null\n`;
+      continue;
+    }
+    if (Array.isArray(value)) {
+      result += `${spaces}${key}:\n`;
+      value.forEach((item: unknown) => {
+        if (typeof item === "object" && item !== null) {
+          result += `${spaces}- \n${toYaml(item, indent + 2)
+            .split("\n")
+            .map(line => `${spaces}  ${line}`)
+            .join("\n")}\n`;
+        } else {
+          result += `${spaces}- ${item}\n`;
+        }
+      });
+      continue;
+    }
+    if (typeof value === "object") {
+      result += `${spaces}${key}:\n${toYaml(value, indent + 2)}`;
+      continue;
+    }
+    if (
+      typeof value === "string" &&
+      (yamlReadsAsSomethingElse.test(value) ||
+        value.includes(":") ||
+        value.includes("#") ||
+        value.includes("'") ||
+        value.includes('"') ||
+        value.includes("\\") ||
+        value.includes("\n") ||
+        value.includes("*") ||
+        value.includes("&") ||
+        value.includes("!") ||
+        value.includes("|") ||
+        value.includes(">") ||
+        value.includes("%") ||
+        value.includes("@") ||
+        value.includes("`") ||
+        value.includes("{") ||
+        value.includes("}") ||
+        value.includes("[") ||
+        value.includes("]") ||
+        value.includes(",") ||
+        value.includes(";"))
+    ) {
+      result += `${spaces}${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
+      continue;
+    }
+    result += `${spaces}${key}: ${value}\n`;
+  }
+  return result;
+}

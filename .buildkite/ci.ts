@@ -38,6 +38,7 @@ import {
   isPullRequest,
   parseGitUrl,
   startGroup,
+  toYaml,
   uploadArtifact,
 } from "../scripts/buildkite.ts";
 import { type ImageState, getImageState } from "../scripts/ci-image.ts";
@@ -142,67 +143,6 @@ async function getCanaryRevision(): Promise<number> {
 
 function getGithubApiUrl(): URL {
   return new URL(process.env.GITHUB_API_URL || "https://api.github.com");
-}
-
-function toYaml(obj: object, indent = 0): string {
-  const spaces = " ".repeat(indent);
-  let result = "";
-  const entries: [string, unknown][] = Object.entries(obj);
-  for (const [key, value] of entries) {
-    if (value === undefined) {
-      continue;
-    }
-    if (value === null) {
-      result += `${spaces}${key}: null\n`;
-      continue;
-    }
-    if (Array.isArray(value)) {
-      result += `${spaces}${key}:\n`;
-      value.forEach((item: unknown) => {
-        if (typeof item === "object" && item !== null) {
-          result += `${spaces}- \n${toYaml(item, indent + 2)
-            .split("\n")
-            .map(line => `${spaces}  ${line}`)
-            .join("\n")}\n`;
-        } else {
-          result += `${spaces}- ${item}\n`;
-        }
-      });
-      continue;
-    }
-    if (typeof value === "object") {
-      result += `${spaces}${key}:\n${toYaml(value, indent + 2)}`;
-      continue;
-    }
-    if (
-      typeof value === "string" &&
-      (value.includes(":") ||
-        value.includes("#") ||
-        value.includes("'") ||
-        value.includes('"') ||
-        value.includes("\\") ||
-        value.includes("\n") ||
-        value.includes("*") ||
-        value.includes("&") ||
-        value.includes("!") ||
-        value.includes("|") ||
-        value.includes(">") ||
-        value.includes("%") ||
-        value.includes("@") ||
-        value.includes("`") ||
-        value.includes("{") ||
-        value.includes("}") ||
-        value.includes("[") ||
-        value.includes("]") ||
-        value.includes(",") ||
-        value.includes(";"))
-    ) {
-      result += `${spaces}${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
-      continue;
-    }
-    result += `${spaces}${key}: ${value}\n`;
-  }
-  return result;
 }
 
 type Emoji = keyof typeof emojiMap;

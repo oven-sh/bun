@@ -439,6 +439,36 @@ macro_rules! bufs {
 // (the resolver mutex is one of the two documented guards for the entries singleton).
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
+/// Moves when a specifier that resolved before can resolve to something else: a directory
+/// cache entry is dropped, the working directory changes, `require.extensions` changes.
+/// What a caller remembers of a resolution holds while this does not move. One for the
+/// process: every resolver shares the directory cache, and the watcher thread drops
+/// entries from it.
+pub mod resolution_epoch {
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    /// On a cache line of its own: every resolution reads it, and it is seldom written.
+    #[repr(align(64))]
+    struct Epoch(AtomicU32);
+
+    static EPOCH: Epoch = Epoch(AtomicU32::new(0));
+
+    /// Read this before the resolver runs, not after: what it answers while an entry is
+    /// being dropped must not pass for an answer from after the drop.
+    #[inline]
+    pub fn get() -> u32 {
+        EPOCH.0.load(Ordering::SeqCst)
+    }
+
+    /// Call this after the change, not before. Out of line: the callers are on the
+    /// resolver's hot path, and this is not.
+    #[cold]
+    #[inline(never)]
+    pub fn bump() {
+        EPOCH.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
 // `BoundedArray` has no const constructor; init lazily under
 // `BIN_FOLDERS_LOADED`.
@@ -2418,6 +2448,9 @@ impl<'a> Resolver<'a> {
         Self::assert_valid_cache_key(path);
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
+        if first_bust || second_bust {
+            resolution_epoch::bump();
+        }
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} = {}, {}",
@@ -3420,6 +3453,9 @@ impl<'a> Resolver<'a> {
                     ),
                 )
                 .expect("unreachable");
+            if in_place.is_some() {
+                resolution_epoch::bump();
+            }
         }
 
         // We must initialize it as empty so that the result index is correct.
@@ -4678,6 +4714,9 @@ impl<'a> Resolver<'a> {
                         unsafe { &mut *dir_entries_ptr },
                     ),
                 )?;
+                if in_place.is_some() {
+                    resolution_epoch::bump();
+                }
             }
 
             // We must initialize it as empty so that the result index is correct.

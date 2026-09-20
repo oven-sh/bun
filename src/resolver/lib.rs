@@ -52,6 +52,7 @@ pub use tsconfig_json::TSConfigJSON;
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{
     AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
+    resolution_epoch,
 };
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
@@ -1335,6 +1336,9 @@ pub mod fs {
             // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
             // leaked Box; exclusively owned here under `entries_mutex`.
             unsafe { *entries_ptr = entries };
+            if in_place.is_some() {
+                crate::resolution_epoch::bump();
+            }
             let result = EntriesOption::Entries(
                 // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
                 unsafe { &mut *entries_ptr },
@@ -1633,6 +1637,7 @@ pub mod fs {
                             unsafe { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.
                             unsafe { *e_ptr = new_entry };
+                            crate::resolution_epoch::bump();
                         }
                         Err(err) => {
                             // SAFETY: see above.

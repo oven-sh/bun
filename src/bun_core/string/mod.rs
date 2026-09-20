@@ -206,6 +206,12 @@ impl String {
         unsafe { &*self.value.wtf_string_impl }
     }
 
+    /// The `WTF::StringImpl` of a WTF-backed string.
+    #[inline]
+    pub fn as_wtf_impl(&self) -> Option<&WTFStringImplStruct> {
+        (self.tag == Tag::WTFStringImpl).then(|| self.as_wtf())
+    }
+
     /// Borrow `s` (no copy, no refcount). Caller must keep `s` alive for the
     /// String's lifetime.
     #[inline]

@@ -292,6 +292,8 @@ pub struct VirtualMachine {
     pub rare_data: Option<Box<RareData>>,
     pub proxy_env_storage: crate::rare_data::ProxyEnvStorage,
     pub(crate) resolved_path_dups: Vec<Box<[u8]>>,
+    /// Made by the first resolution it can hold.
+    pub(crate) resolution_memo: Option<Box<crate::resolution_memo::ResolutionMemo>>,
     pub pending_internal_promise: Option<*mut JSInternalPromise>,
     pub pending_internal_promise_is_protected: bool,
     pub pending_internal_promise_reported_at: u32,
@@ -5148,6 +5150,13 @@ impl VirtualMachine {
         Ok(())
     }
 
+    /// `bun:internal-for-testing`: how many resolutions this VM answered from its memo.
+    pub fn resolution_memo_hits(&self) -> u64 {
+        self.resolution_memo
+            .as_deref()
+            .map_or(0, crate::resolution_memo::ResolutionMemo::hits)
+    }
+
     /// Module-resolution core: resolves `specifier` relative to `source`, with
     /// path-length checks when `IS_A_FILE_PATH`. `Ok(Err(value))` is a
     /// resolution failure to be thrown/rejected with `value`.
@@ -5203,6 +5212,25 @@ impl VirtualMachine {
                         bun_core::String::from_bytes(hardcoded.path.as_bytes())
                     },
                 ));
+            }
+        }
+
+        // What the resolver answered for this pair before, while nothing that answer depends on
+        // has changed. Not when something besides the two strings can shape the answer: an
+        // onResolve plugin, `options.paths`, the package manager, macro mode.
+        let memo_kind = crate::resolution_memo::Kind::new(mode.is_esm(), IS_A_FILE_PATH);
+        let memo_epoch = bun_resolver::resolution_epoch::get();
+        let can_use_memo = jsc_vm.plugin_runner.is_none()
+            && !jsc_vm.macro_mode
+            && jsc_vm.transpiler.resolver.custom_dir_paths.is_none()
+            && jsc_vm.transpiler.resolver.package_manager.is_none();
+        if can_use_memo {
+            if let Some(path) = jsc_vm
+                .resolution_memo
+                .as_deref_mut()
+                .and_then(|memo| memo.get(specifier, source, memo_kind, memo_epoch))
+            {
+                return Ok(Ok(path));
             }
         }
 
@@ -5353,11 +5381,50 @@ impl VirtualMachine {
             )?));
         }
 
+        if can_use_memo {
+            jsc_vm.remember_resolution(
+                specifier,
+                source,
+                memo_kind,
+                memo_epoch,
+                &result,
+                normalize_source(source_utf8.slice()),
+            );
+        }
+
         if let Some(query) = query_string {
             *query = bun_core::String::clone_utf8(result.query_string);
         }
 
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
+    }
+
+    /// Out of line, to keep `resolve_maybe_needs_trailing_slash` small: most resolutions leave
+    /// no more than a tag here.
+    #[cold]
+    #[inline(never)]
+    fn remember_resolution(
+        &mut self,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
+        kind: crate::resolution_memo::Kind,
+        epoch: u32,
+        result: &ResolveFunctionResult,
+        source_path: &[u8],
+    ) {
+        // Only what the resolver found, and only from an absolute source: any other source
+        // resolves against the working directory. Not with a `?query`, so that a hit does not
+        // have to carry one. Not once the resolver made the package manager.
+        if result.result.is_none()
+            || !result.query_string.is_empty()
+            || !bun_paths::is_absolute(source_path)
+            || self.transpiler.resolver.package_manager.is_some()
+        {
+            return;
+        }
+        self.resolution_memo
+            .get_or_insert_with(Default::default)
+            .put(specifier, source, kind, epoch, result.path);
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
@@ -5417,6 +5484,7 @@ impl VirtualMachine {
         unsafe { self.transpiler.deinit() };
 
         drop(core::mem::take(&mut self.resolved_path_dups));
+        drop(self.resolution_memo.take());
         drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();
@@ -5628,6 +5696,7 @@ impl VirtualMachine {
                 unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..len + 1]) };
         }
         bun_core::set_top_level_dir(fs.top_level_dir);
+        bun_resolver::resolution_epoch::bump();
         Ok(())
     }
 

@@ -161,6 +161,7 @@ pub mod js_type;
 pub mod js_value;
 #[path = "rare_data.rs"]
 pub mod rare_data;
+pub mod resolution_memo;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "Strong.rs"]

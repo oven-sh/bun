@@ -1521,47 +1521,57 @@ it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup 
 // the lowest free fd, so with the slot free it returns the slot itself, and the
 // open + dup2 + close sequence closed it again.
 describe.if(isLinux)("a stdio slot that is closed in the parent", () => {
-  for (const fd of [0, 1, 2]) {
-    for (const mode of ["ignore", "inherit", "Bun.file"]) {
-      it.concurrent(`fd ${fd} with ${mode} is open in the child`, async () => {
-        let value = JSON.stringify(mode);
-        let expected = "/dev/null";
-        if (mode === "Bun.file") {
-          expected = join(realpathSync(tmp), `closed-slot-${fd}.txt`);
-          writeFileSync(expected, "");
-          value = `Bun.file(${JSON.stringify(expected)})`;
-        }
-        // The slot has to stay free until the spawn, so no "pipe": its socketpair
-        // would take the slot. The child is not bun, because bun reopens closed
-        // stdio as /dev/null at startup.
-        const fixture = `
-          import { closeSync, readlinkSync } from "node:fs";
-          closeSync(${fd});
-          const stdio = ["inherit", "inherit", "inherit"];
-          stdio[${fd}] = ${value};
-          const child = Bun.spawn({ cmd: ["sleep", "1000"], stdio });
-          let target;
-          try {
-            target = readlinkSync("/proc/" + child.pid + "/fd/${fd}");
-          } catch (e) {
-            target = e.code;
-          }
-          child.kill();
-          await child.exited;
-          // Print to a slot that is still open.
-          (${fd} === 1 ? console.error : console.log)(target);
-        `;
-        await using proc = spawn({
-          cmd: [bunExe(), "-e", fixture],
-          env: bunEnv,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(fd === 1 ? stderr : stdout).toBe(expected + "\n");
-        expect(exitCode).toBe(0);
-      });
-    }
+  // In a fresh bun: closes `fd`, spawns a child with `stdio`, and reports what the
+  // child has at `fd`. The child is not bun, because bun reopens closed stdio as
+  // /dev/null at startup.
+  async function childTarget(fd: number, stdio: string) {
+    const fixture = `
+      import { closeSync, readlinkSync } from "node:fs";
+      closeSync(${fd});
+      const child = Bun.spawn({ cmd: ["sleep", "1000"], stdio: ${stdio} });
+      let target;
+      try {
+        target = readlinkSync("/proc/" + child.pid + "/fd/${fd}");
+      } catch (e) {
+        target = e.code;
+      }
+      child.kill();
+      await child.exited;
+      // Print to a slot that is still open.
+      (${fd} === 1 ? console.error : console.log)("target: " + target);
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Match the line: a sanitizer build can add its own warnings to stderr.
+    const target = (fd === 1 ? stderr : stdout).match(/^target: (.*)$/m)?.[1];
+    return { target: target ?? stdout + stderr, exitCode };
   }
+
+  describe.each([0, 1, 2])("fd %d", fd => {
+    it.concurrent.each(["ignore", "inherit", "Bun.file"])("with %s is open in the child", async mode => {
+      // No "pipe": its socketpair would take the free slot before the spawn.
+      const stdio = [`"inherit"`, `"inherit"`, `"inherit"`];
+      let expected = "/dev/null";
+      if (mode === "Bun.file") {
+        expected = join(realpathSync(tmp), `closed-slot-${fd}.txt`);
+        writeFileSync(expected, "");
+        stdio[fd] = `Bun.file(${JSON.stringify(expected)})`;
+      } else {
+        stdio[fd] = JSON.stringify(mode);
+      }
+      expect(await childTarget(fd, `[${stdio.join(", ")}]`)).toEqual({ target: expected, exitCode: 0 });
+    });
+  });
+
+  // The child's end of the stdin socketpair takes the free fd 1 in the parent. The
+  // child closes it after the dup2 onto fd 0, so fd 1 is free when it opens /dev/null.
+  it.concurrent("fd 1 with ignore next to a pipe is open in the child", async () => {
+    expect(await childTarget(1, `["pipe", "ignore", "inherit"]`)).toEqual({ target: "/dev/null", exitCode: 0 });
+  });
 });
 
 // Bun.file(fd).stream() (like the shell's stdio and cwd handles) works on a

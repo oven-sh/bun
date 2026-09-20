@@ -389,9 +389,7 @@ extern "C" ssize_t posix_spawn_bun(
                     return childFailed();
                 }
 
-                // open() returns the lowest free fd, which is the target itself
-                // when the target is closed. dup2(fd, fd) does nothing, so the
-                // close() below would close the target.
+                // open() lands on the target itself when that slot is free.
                 if (opened != action.fds[0]) {
                     if (dup2(opened, action.fds[0]) == -1) {
                         close(opened);

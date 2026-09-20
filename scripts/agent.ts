@@ -67,14 +67,19 @@ export function output(command: Command, options: { cwd?: string | undefined } =
 /**
  * Runs `command` on this process's stdio, and throws unless it exits with 0.
  * While it runs, a signal named in `forward` goes to the command instead of
- * ending this process.
+ * ending this process, and however the command ends after that is not an
+ * error: it was asked to.
  */
 export async function run(command: Command, options: { cwd?: string; forward?: NodeJS.Signals[] } = {}): Promise<void> {
   const [file, ...args] = command;
   const { forward = [], ...spawnOptions } = options;
   const child = spawn(file, args, { ...spawnOptions, stdio: "inherit" });
+  let asked = false;
   const forwarded = forward.map(signal => {
-    const listener = () => child.kill(signal);
+    const listener = () => {
+      asked = true;
+      child.kill(signal);
+    };
     process.on(signal, listener);
     return () => process.off(signal, listener);
   });
@@ -82,6 +87,9 @@ export async function run(command: Command, options: { cwd?: string; forward?: N
     child.on("error", cause => reject(new Error(`Command failed to start: ${describeCommand(command)}`, { cause })));
     child.on("close", (code, signal) => resolve([code, signal]));
   }).finally(() => forwarded.forEach(stop => stop()));
+  if (asked) {
+    return;
+  }
   if (signal) {
     throw new Error(`Command killed with ${signal}: ${describeCommand(command)}`);
   }
@@ -922,10 +930,12 @@ async function install(queueOption: string | undefined): Promise<void> {
 
     // The nightly wipe of the checkouts and the temp directories, and a reboot.
     // Neither may happen under a job, so the script first stops the service:
-    // `start` passes the SIGTERM on, the agent finishes the job it runs and
-    // exits 0, and KeepAlive above leaves the service down until the reboot.
-    // A job that outlasts the wait keeps its checkout, and the reboot ends it
-    // as a lost agent, which .buildkite/ci.ts retries.
+    // `start` passes the SIGTERM on, the agent finishes the job it runs, and
+    // `start` exits 0, so KeepAlive above leaves the service down until the
+    // reboot. A job that outlasts the wait keeps its checkout, and the reboot
+    // ends it as a lost agent, which .buildkite/ci.ts retries. The reboot ends
+    // the script too: if it gets past the last sleep there was none, and the
+    // host gets its agent back.
     const cleanupPlistPath = "/Library/LaunchDaemons/com.buildkite.cleanup.plist";
     const cleanupLogPath = join(logsPath, "cleanup.log");
     const cleanupScript = `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
@@ -941,7 +951,10 @@ else
   echo "$(date): the agent exited after $waited seconds, wiping"
   rm -rf "${homePath}/builds" /tmp/* /var/tmp/*
 fi
-shutdown -r now || reboot || launchctl kickstart system/buildkite-agent`;
+shutdown -r now || reboot
+sleep 600
+echo "$(date): still up 600 seconds after asking for the reboot, starting the agent"
+launchctl kickstart system/buildkite-agent`;
     const cleanupPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -967,10 +980,18 @@ shutdown -r now || reboot || launchctl kickstart system/buildkite-agent`;
     await run(["chown", "-R", `${runAsUser}:staff`, cfgPath, homePath, cachePath, logsPath]);
 
     // Best-effort: replace any previously-loaded service. bootout fails if
-    // not loaded, which is fine.
-    for (const p of [plistPath, cleanupPlistPath]) {
-      await run(["launchctl", "bootout", "system", p]).catch(() => {});
-      await run(["launchctl", "bootstrap", "system", p]);
+    // not loaded, which is fine. It also returns before a service that is still
+    // stopping is gone (the agent now stops gracefully), and bootstrap fails
+    // with EIO until it is. launchd kills what outlasts the service's exit timeout.
+    for (const [label, path] of [
+      ["buildkite-agent", plistPath],
+      ["com.buildkite.cleanup", cleanupPlistPath],
+    ] as const) {
+      await run(["launchctl", "bootout", "system", path]).catch(() => {});
+      for (let i = 0; i < 60 && output(["launchctl", "print", `system/${label}`]) !== undefined; i++) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      await run(["launchctl", "bootstrap", "system", path]);
     }
     return;
   }
@@ -1117,8 +1138,9 @@ async function start(): Promise<void> {
 
   // launchd and systemd stop the service with a SIGTERM to this process, and
   // the agent has to get it: its answer to a first SIGTERM is to take no new
-  // job, finish the one it runs and exit 0. The macOS nightly cleanup waits
-  // for that exit.
+  // job and to exit once the one it runs is done, which the macOS nightly
+  // cleanup waits for. However the agent ends after that, run() returns and
+  // this process exits 0, so launchd does not start the service again.
   await run(
     [
       command,

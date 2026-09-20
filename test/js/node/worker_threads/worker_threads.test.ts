@@ -1980,7 +1980,8 @@ test("workerData is not unwrapped for a non-node globalThis.Worker", async () =>
 
 // node:worker_threads passes its Worker instance as a hidden third argument to the
 // native constructor. A user's own third argument must not select the node kind:
-// the worker keeps the Web Worker globals and delivers through them.
+// the process 'worker' event receives the Web Worker, not that argument, and the
+// worker keeps the Web Worker globals.
 test("a 3-argument globalThis.Worker is still a Web Worker", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -1989,9 +1990,11 @@ test("a 3-argument globalThis.Worker is still a Web Worker", async () => {
       `const src = 'const { parentPort, isMainThread } = require("worker_threads");' +
          'self.onmessage = e => self.postMessage({ echo: e.data, postMessage: typeof postMessage, parentPort: parentPort === null, isMainThread });';
        const url = URL.createObjectURL(new Blob([src]));
+       let workerEvent;
+       process.once("worker", x => { workerEvent = x === w ? "web worker" : x; });
        const w = new globalThis.Worker(url, {}, { not: "a node worker" });
        w.onerror = e => { console.error(e.message || e); process.exit(1); };
-       w.onmessage = e => { console.log(JSON.stringify(e.data)); w.terminate(); };
+       w.onmessage = e => { console.log(JSON.stringify({ ...e.data, workerEvent })); w.terminate(); };
        w.postMessage("ping");`,
     ],
     env: bunEnv,
@@ -1999,7 +2002,7 @@ test("a 3-argument globalThis.Worker is still a Web Worker", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: JSON.parse(stdout), stderr, exitCode }).toEqual({
-    out: { echo: "ping", postMessage: "function", parentPort: false, isMainThread: false },
+    out: { echo: "ping", postMessage: "function", parentPort: false, isMainThread: false, workerEvent: "web worker" },
     stderr: "",
     exitCode: 0,
   });

@@ -530,7 +530,7 @@ namespace SpawnOptions {
     onExit?(
       subprocess: Subprocess,
       exitCode: number | null,
-      signalCode: number | null,
+      signalCode: NodeJS.Signals | number | null,
       error?: ErrorLike,
     ): void | Promise<void>;
     ipc?(message: any, subprocess: Subprocess): void;
@@ -580,7 +580,7 @@ interface Subprocess extends AsyncDisposable {
   readonly pid: number;
   readonly exited: Promise<number>;
   readonly exitCode: number | null;
-  readonly signalCode: NodeJS.Signals | null;
+  readonly signalCode: NodeJS.Signals | number | null;
   readonly killed: boolean;
 
   kill(exitCode?: number | NodeJS.Signals): void;
@@ -598,7 +598,7 @@ interface SyncSubprocess {
   exitCode: number;
   success: boolean;
   resourceUsage: ResourceUsage;
-  signalCode?: string;
+  signalCode?: NodeJS.Signals | number;
   exitedDueToTimeout?: true;
   pid: number;
 }

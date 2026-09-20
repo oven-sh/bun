@@ -3132,8 +3132,6 @@ function afterOpen(options, headers, err, fd) {
   fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
 }
 
-// The options checks that respondWithFile() and respondWithFD() share. Node runs them before
-// it looks at the headers. Returns a copy.
 function validateFileResponseOptions(options) {
   assertIsObject(options, "options");
   options = { ...options };

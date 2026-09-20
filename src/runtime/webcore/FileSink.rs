@@ -930,6 +930,21 @@ impl FileSink {
                 return sys::Result::Err(err);
             }
         };
+        // A flush settles when what was written before it has been written out.
+        // `to_result` reports an in-flight Windows write as accepted, which is
+        // right for a `write()` and would let this return with the bytes still
+        // on their way; `on_write` settles the pending promise.
+        if cfg!(windows) && matches!(rc, WriteResult::Pending(_)) {
+            if !self.must_be_kept_alive_until_eof.get() {
+                self.must_be_kept_alive_until_eof.set(true);
+                self.ref_();
+            }
+            self.pending.with_mut(|p| {
+                p.consumed += flushed;
+                p.result = streams::Writable::Owned(p.consumed);
+            });
+            return sys::Result::Ok(streams::Writable::Pending(self.pending.as_ptr()).to_js(cx));
+        }
         // A flush takes no new chunk from the caller; a pending one reports the
         // bytes it pushed out. It only reaches here when no write is pending.
         match self.to_result(rc, flushed) {

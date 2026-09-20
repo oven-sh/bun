@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 
@@ -462,6 +463,22 @@ if (isWindows) {
         syscall: "open",
       }),
     );
+  });
+
+  // A Windows write to a file completes through the event loop; a flush() that returned while it
+  // was in flight let a read of the file miss what had been written.
+  it("flush() settles once the bytes written before it are in the file", async () => {
+    using dir = tempDir("filesink-flush-readable", {});
+    const missed: number[] = [];
+    for (let i = 0; i < 100; i++) {
+      const file = join(String(dir), `f${i}.txt`);
+      const writer = Bun.file(file).writer();
+      await writer.write(`line ${i}\n`);
+      await writer.flush();
+      if (readFileSync(file, "utf8") !== `line ${i}\n`) missed.push(i);
+      await writer.end();
+    }
+    expect(missed).toEqual([]);
   });
 
   // fs.openSync gives a synchronous pipe end, which is written from a helper thread. In PIPE_NOWAIT

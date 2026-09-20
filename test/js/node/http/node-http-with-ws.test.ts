@@ -409,17 +409,17 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
     });
   });
 
-  test("no 'data' listener runs inside handleUpgrade() for bytes that were buffered during a pause", async () => {
-    const { status, afterHead, readerWaitedBeforeUpgrade, duringUpgrade } = await upgradeBeforeTheBodyIsComplete(
-      "upgrade",
-      body.slice(0, 5),
-      "paused, resumed in the upgrade tick",
-    );
-    // A listener that closed the socket there left a closed WebSocket in wsServer.clients.
-    expect({ status, afterHead, readerWaitedBeforeUpgrade, duringUpgrade }).toEqual({
+  // This reader called read() before the pause, so nothing calls _read() again: resume() has to bring
+  // the bytes. They come after handleUpgrade() returned. A 'data' listener that closed the socket inside
+  // it left a closed WebSocket in wsServer.clients.
+  test("a reader that paused and resumes in the upgrade tick gets the buffered bytes", async () => {
+    const sent = body.slice(0, 5);
+    expect(await upgradeBeforeTheBodyIsComplete("upgrade", sent, "paused, resumed in the upgrade tick")).toEqual({
       ...upgraded,
       readerWaitedBeforeUpgrade: true,
       duringUpgrade: ["connection"],
+      events: ["connection", "data:" + sent, "end", "close"],
+      complete: true,
     });
   });
 });

@@ -1412,6 +1412,12 @@ impl NodeHTTPResponse {
         // still let the deferred onEnd fire and release the fd.
         self.resume_socket();
         let flags = self.flags.get();
+        if flags.contains(Flags::UPGRADED) {
+            // The WebSocket reads the socket now. Bytes from a pause still belong to the request.
+            return Ok(self
+                .drain_buffered_request_body_from_pause(global_object)?
+                .unwrap_or(JSValue::FALSE));
+        }
         let Some(raw) = self.raw_response.get() else {
             return Ok(JSValue::FALSE);
         };

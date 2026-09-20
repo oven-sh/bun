@@ -31,6 +31,7 @@ struct Entry {
 #[derive(Default)]
 struct Way {
     entry: Option<Entry>,
+    /// The low half of the epoch. `ResolutionMemo::epoch_high` is the other half.
     epoch: u32,
     /// Compared before the strings of `entry`: those are most likely not in the CPU cache.
     tag: u16,
@@ -52,6 +53,8 @@ const BUCKET_BITS: u32 = 10;
 
 pub struct ResolutionMemo {
     buckets: Box<[Bucket]>,
+    /// The high half of the epoch of every entry.
+    epoch_high: u32,
     /// For `bun:internal-for-testing`.
     hits: u64,
 }
@@ -62,6 +65,7 @@ impl Default for ResolutionMemo {
             buckets: core::iter::repeat_with(Bucket::default)
                 .take(1 << BUCKET_BITS)
                 .collect(),
+            epoch_high: 0,
             hits: 0,
         }
     }
@@ -72,15 +76,27 @@ impl ResolutionMemo {
         self.hits
     }
 
+    /// An entry keeps half of its epoch. Once the other half moves, after 2^32 changes, an
+    /// old entry could pass for a new one, so none is kept.
+    fn low_half(&mut self, epoch: u64) -> u32 {
+        let high = (epoch >> 32) as u32;
+        if high != self.epoch_high {
+            self.buckets.fill_with(Bucket::default);
+            self.epoch_high = high;
+        }
+        epoch as u32
+    }
+
     /// The resolved path. `None` when either string is not WTF-backed: the key is the two impls.
     pub fn get(
         &mut self,
         specifier: &String,
         source: &String,
         kind: Kind,
-        epoch: u32,
+        epoch: u64,
     ) -> Option<String> {
         let (specifier, source) = (specifier.as_wtf_impl()?, source.as_wtf_impl()?);
+        let epoch = self.low_half(epoch);
         let (index, tag) = slot(specifier, source, kind);
         let Bucket(ways) = &mut self.buckets[index];
         let way = ways
@@ -100,20 +116,22 @@ impl ResolutionMemo {
         specifier: &String,
         source: &String,
         kind: Kind,
-        epoch: u32,
+        epoch: u64,
         path: &[u8],
     ) {
         let (Some(specifier), Some(source)) = (specifier.as_wtf_impl(), source.as_wtf_impl())
         else {
             return;
         };
+        let epoch = self.low_half(epoch);
         let (index, tag) = slot(specifier, source, kind);
         let Bucket(ways) = &mut self.buckets[index];
         // Most pairs resolve once, while the program loads, and one that does not come back
         // would only push out one that does. So the first resolution leaves a tag, and the
         // next one of the same pair makes the entry. A program that cycles through more
         // pairs than the table holds then does not keep replacing entries it cannot reuse.
-        let missed = tag as u8;
+        // Never 0, which is what a bucket starts with.
+        let missed = (tag as u8).max(1);
         if ways.iter().all(|way| way.missed != missed) {
             ways[1].missed = ways[0].missed;
             ways[0].missed = missed;

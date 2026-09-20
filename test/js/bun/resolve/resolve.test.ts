@@ -1970,47 +1970,49 @@ describe.concurrent("a repeated resolution", () => {
           for (let i = 0; i < 5; i++) fn();
           return resolutionMemoHits() - before;
         };
+        // A pair gets its entry the second time the resolver answers it: 3 of 5. It is the first
+        // time when its tag is the same as that of a pair the same bucket saw before: 4 of 5.
+        const repeats = fn => [3, 4].includes(hits(fn));
         (async () => {
           const out = {
-            require: hits(() => require("./child.cjs")),
+            require: repeats(() => require("./child.cjs")),
             // The same pair as require(): the answer is already there.
             requireResolve: hits(() => require.resolve("./child.cjs")),
-            bare: hits(() => require("pkg")),
-            resolveSync: hits(() => Bun.resolveSync("./child.cjs", __dirname)),
+            bare: repeats(() => require("pkg")),
+            resolveSync: repeats(() => Bun.resolveSync("./child.cjs", __dirname)),
             builtin: hits(() => require("node:fs")),
             withPaths: hits(() => require.resolve("pkg", { paths: [__dirname] })),
             withQuery: hits(() => require.resolve("./child.cjs?query")),
           };
           const before = resolutionMemoHits();
           for (let i = 0; i < 5; i++) await import("./child.cjs");
-          out.import = resolutionMemoHits() - before;
+          out.import = [3, 4].includes(resolutionMemoHits() - before);
 
           const resolveFilename = Module._resolveFilename;
           Module._resolveFilename = function (...args) { return resolveFilename.apply(this, args); };
-          out.hooked = hits(() => require("./hooked.cjs"));
+          out.hooked = repeats(() => require("./hooked.cjs"));
           Module._resolveFilename = resolveFilename;
 
           // Each failed lookup makes the resolver read the directory again, which empties the memo.
           out.missing = hits(() => { try { require.resolve("./missing.cjs"); } catch {} });
-          out.afterMissing = hits(() => require.resolve("./after.cjs"));
+          out.afterMissing = repeats(() => require.resolve("./after.cjs"));
           console.log(JSON.stringify(out));
         })();
       `,
     });
     expect(stderr).toBe("");
-    // A pair gets its entry the second time the resolver answers it.
     expect(JSON.parse(stdout)).toEqual({
-      require: 3,
+      require: true,
       requireResolve: 5,
-      bare: 3,
-      resolveSync: 3,
+      bare: true,
+      resolveSync: true,
       builtin: 0,
       withPaths: 0,
       withQuery: 0,
-      import: 3,
-      hooked: 3,
+      import: true,
+      hooked: true,
       missing: 0,
-      afterMissing: 3,
+      afterMissing: true,
     });
     expect(exitCode).toBe(0);
   });
@@ -2096,6 +2098,38 @@ describe.concurrent("a repeated resolution", () => {
     const js = ["x.js", "x.js"];
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual([json, json, json, true, js, js]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not find a module once Bun.build() found its directory gone", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "lib/x.js": `module.exports = 1;`,
+        "entry.js": `import x from "./lib/x.js"; export default x;`,
+        "main.mjs": `
+          import { rmSync } from "node:fs";
+          import { createRequire } from "node:module";
+          import { basename, join } from "node:path";
+          const require = createRequire(import.meta.url);
+          const where = () => {
+            try {
+              return basename(require.resolve("./lib/x.js"));
+            } catch (error) {
+              return error.code;
+            }
+          };
+          const out = [where(), where(), where()];
+          rmSync(join(import.meta.dir, "lib"), { recursive: true });
+          out.push(where());
+          const { success } = await Bun.build({ entrypoints: [join(import.meta.dir, "entry.js")], throw: false });
+          out.push(success, where(), where());
+          console.log(JSON.stringify(out));
+        `,
+      },
+      ["main.mjs"],
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["x.js", "x.js", "x.js", "x.js", false, "MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]);
     expect(exitCode).toBe(0);
   });
 

@@ -445,18 +445,18 @@ static RESOLVER_MUTEX: Mutex = Mutex::new();
 /// process: every resolver shares the directory cache, and the watcher thread drops
 /// entries from it.
 pub mod resolution_epoch {
-    use core::sync::atomic::{AtomicU32, Ordering};
+    use core::sync::atomic::{AtomicU64, Ordering};
 
     /// On a cache line of its own: every resolution reads it, and it is seldom written.
     #[repr(align(64))]
-    struct Epoch(AtomicU32);
+    struct Epoch(AtomicU64);
 
-    static EPOCH: Epoch = Epoch(AtomicU32::new(0));
+    static EPOCH: Epoch = Epoch(AtomicU64::new(0));
 
     /// Read this before the resolver runs, not after: what it answers while an entry is
     /// being dropped must not pass for an answer from after the drop.
     #[inline]
-    pub fn get() -> u32 {
+    pub fn get() -> u64 {
         EPOCH.0.load(Ordering::SeqCst)
     }
 
@@ -3428,6 +3428,7 @@ impl<'a> Resolver<'a> {
                 Some(p) => {
                     // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
                     unsafe { *p = new_entry };
+                    resolution_epoch::bump();
                     p
                 }
                 None => bun_core::heap::into_raw(Box::new(new_entry)),
@@ -3453,9 +3454,6 @@ impl<'a> Resolver<'a> {
                     ),
                 )
                 .expect("unreachable");
-            if in_place.is_some() {
-                resolution_epoch::bump();
-            }
         }
 
         // We must initialize it as empty so that the result index is correct.
@@ -4690,6 +4688,7 @@ impl<'a> Resolver<'a> {
                     Some(p) => {
                         // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
                         unsafe { *p = new_entry };
+                        resolution_epoch::bump();
                         p
                     }
                     None => bun_core::heap::into_raw(Box::new(new_entry)),
@@ -4714,9 +4713,6 @@ impl<'a> Resolver<'a> {
                         unsafe { &mut *dir_entries_ptr },
                     ),
                 )?;
-                if in_place.is_some() {
-                    resolution_epoch::bump();
-                }
             }
 
             // We must initialize it as empty so that the result index is correct.

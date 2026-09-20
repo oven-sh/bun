@@ -5408,15 +5408,17 @@ impl VirtualMachine {
         specifier: &bun_core::String,
         source: &bun_core::String,
         kind: crate::resolution_memo::Kind,
-        epoch: u32,
+        epoch: u64,
         result: &ResolveFunctionResult,
         source_path: &[u8],
     ) {
         // Only what the resolver found, and only from an absolute source: any other source
         // resolves against the working directory. Not with a `?query`, so that a hit does not
-        // have to carry one. Not once the resolver made the package manager.
+        // have to carry one. Not more than a path, which leaves out a long `data:` URL. Not once
+        // the resolver made the package manager.
         if result.result.is_none()
             || !result.query_string.is_empty()
+            || result.path.len() > bun_paths::MAX_PATH_BYTES
             || !bun_paths::is_absolute(source_path)
             || self.transpiler.resolver.package_manager.is_some()
         {

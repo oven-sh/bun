@@ -1267,6 +1267,10 @@ pub mod fs {
                 }
             }
 
+            // From here on a cached listing is read again, or found unreadable: on every way out.
+            let _bump_epoch =
+                in_place.map(|_| scopeguard::guard((), |()| crate::resolution_epoch::bump()));
+
             let had_handle = maybe_handle.is_some();
             let handle: Fd = match maybe_handle {
                 Some(h) => h,
@@ -1336,9 +1340,6 @@ pub mod fs {
             // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
             // leaked Box; exclusively owned here under `entries_mutex`.
             unsafe { *entries_ptr = entries };
-            if in_place.is_some() {
-                crate::resolution_epoch::bump();
-            }
             let result = EntriesOption::Entries(
                 // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
                 unsafe { &mut *entries_ptr },
@@ -1613,6 +1614,8 @@ pub mod fs {
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                 if existing.generation < generation {
+                    // The cached listing is read again, or found unreadable: on every way out.
+                    let _bump_epoch = scopeguard::guard((), |()| crate::resolution_epoch::bump());
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
@@ -1637,7 +1640,6 @@ pub mod fs {
                             unsafe { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.
                             unsafe { *e_ptr = new_entry };
-                            crate::resolution_epoch::bump();
                         }
                         Err(err) => {
                             // SAFETY: see above.

@@ -571,7 +571,7 @@ describe("socket timeout and an Upgrade request with a body", () => {
     ],
     [
       "reads nothing and one read fills the request buffer and ends the body",
-      { writes: [chunkedHead, chunkedBody], server: { highWaterMark: 1024 }, listener: () => {} },
+      { writes: [chunkedHead + chunkedBody], server: { highWaterMark: 1024 }, listener: () => {} },
     ],
     // Bun reads nothing more once its side is shut down. The client keeps its side open.
     ["ends its side of the socket", { listener: (_req, stream) => void stream.end("bye"), clientReceives: "bye" }],
@@ -587,23 +587,65 @@ describe("socket timeout and an Upgrade request with a body", () => {
       // Runs after the server's own 'timeout' listener, when that one is still there.
       const socket = req.socket;
       socket.on("timeout", () => onTimeout(socket.destroyed));
+      // A close before the timeout fails the test too. It must not hang it.
+      socket.on("close", () => onTimeout(true));
       await flow.listener(req, stream);
       onUpgrade(stream);
     });
     const port = await listen(server);
     const client = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
     client.on("error", () => {});
+    const expected = flow.clientReceives ?? "still open";
+    const { promise: receivedAll, resolve: onReceivedAll, reject: onClientClose } = Promise.withResolvers<void>();
+    receivedAll.catch(() => {});
     let received = "";
-    client.on("data", chunk => (received += chunk));
+    client.on("data", chunk => {
+      received += chunk;
+      if (received.length >= expected.length) onReceivedAll();
+    });
+    client.on("close", () => onClientClose(new Error(`the client socket closed after ${JSON.stringify(received)}`)));
     try {
       client.write(beforeUpgrade);
       const stream = await upgraded;
       if (afterUpgrade) client.write(afterUpgrade);
       expect(await timedOut).toBe(false);
-      const expected = flow.clientReceives ?? "still open";
+      // Only the flow that ends the socket has sent its text already.
+      expect(stream.writable).toBe(flow.clientReceives === undefined);
       if (stream.writable) stream.write(expected);
-      while (received.length < expected.length) await once(client, "data");
+      await receivedAll;
       expect(received).toBe(expected);
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  test("the release after the body leaves a parser alone that the 'upgrade' listener put on the socket", async () => {
+    const server = http.createServer();
+    type Parser = { freed: boolean; free(): void };
+    const { promise: upgraded, resolve: onUpgrade } = Promise.withResolvers<[http.IncomingMessage, Parser]>();
+    server.on("upgrade", (req, stream) => {
+      stream.on("error", () => {});
+      // http.request({ createConnection: () => socket }) puts its HTTPParser there.
+      const parser: Parser = { freed: false, free: () => void (parser.freed = true) };
+      (req.socket as net.Socket & { parser: unknown }).parser = parser;
+      onUpgrade([req, parser]);
+    });
+    const port = await listen(server);
+    const client = net.connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    try {
+      client.write(partialRequest);
+      const [req, parser] = await upgraded;
+      client.write(restOfBody);
+      while (!req.complete) await new Promise(resolve => setImmediate(resolve));
+      const socket = req.socket as net.Socket & { parser: unknown };
+      expect({
+        kept: socket.parser === parser,
+        freed: parser.freed,
+        timeoutListeners: socket.listenerCount("timeout"),
+      }).toEqual({ kept: true, freed: false, timeoutListeners: 0 });
     } finally {
       client.destroy();
       server.closeAllConnections();

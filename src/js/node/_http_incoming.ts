@@ -19,6 +19,7 @@ const {
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
   finishUpgradeHandoff,
+  kFinishUpgradeHandoff,
   onDataIncomingMessage,
   kAbortController,
 } = require("internal/http");
@@ -92,6 +93,7 @@ function IncomingMessage(socket) {
   this[kTrailersCount] = 0;
   this.rawTrailers = [];
   this[kAbortController] = null;
+  this[kFinishUpgradeHandoff] = undefined;
 
   if (socket === kHandle) {
     // Native server fast-path: (kHandle, url, method, headers, rawHeaders, handle, hasBody, socket)

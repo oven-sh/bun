@@ -981,7 +981,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // in shouldUpgradeCallback, which already stopped reads of the connection.
           // (isPaused() is also true for a 'readable' listener, which stops none.)
           if (hasBody && !http_req._readableState.paused && !socket._readableState.paused) {
-            http_req[kFinishUpgradeHandoff] = releaseSocketForHandoff.bind(undefined, socket, http_req);
+            http_req[kFinishUpgradeHandoff] = releaseSocketForHandoff.bind(undefined, socket, http_req, socket.parser);
           } else {
             // Node frees the parser before emitting 'upgrade' (socket.parser === null there).
             releaseSocketForHandoff(socket, http_req);
@@ -1350,9 +1350,11 @@ function detachSocketListenersForHandoff(socket) {
 // message is complete. While the body of an Upgrade request still arrives, the
 // socket inactivity timeout emits 'timeout' on the request and the server, or
 // destroys the socket.
-function releaseSocketForHandoff(socket, req) {
+function releaseSocketForHandoff(socket, req, parser?) {
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
-  releaseServerParserShim(socket, req);
+  // Deferred: the 'upgrade' listener had the socket in between, and an http
+  // client request over that socket puts its own parser there.
+  if (parser === undefined || socket.parser === parser) releaseServerParserShim(socket, req);
 }
 function resolveHandoffPromise(promise) {
   $resolvePromise(promise, undefined);

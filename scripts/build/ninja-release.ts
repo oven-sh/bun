@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { locations, pins } from "./ci-images/spec.ts";
 import type { Config } from "./config.ts";
 import { downloadWithRetry, extractZip } from "./download.ts";
+import { describeError } from "./error.ts";
 import { formatElapsed, nameColor } from "./tty.ts";
 
 const release = pins.bunNinja;
@@ -83,12 +84,11 @@ export async function ensureNinja(cfg: Config): Promise<string> {
     say(`fetching ${url}`);
     await mkdir(scratch, { recursive: true });
     const zip = join(scratch, archive);
-    // Two tries, not the dependency downloads' ten: failing here costs only the pipelining, and an offline
-    // machine should not wait through a long backoff at the start of every build.
-    await Promise.race([
-      downloadWithRetry(url, zip, "ninja", { attempts: 2, backoffMs: () => 1000 }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("timed out after 30 s")), 30_000).unref()),
-    ]);
+    // One try, given up after ten seconds, not the dependency downloads' ten tries: failing costs only the
+    // pipelining, the next configure tries again, and a machine that cannot reach the release must not wait long
+    // at the start of every build. (One try also means download.ts has nothing to log: its retry lines go to
+    // stdout, which is the built program's.)
+    await downloadWithRetry(url, zip, "ninja", { attempts: 1, backoffMs: () => 0 }, AbortSignal.timeout(10_000));
     const actual = createHash("sha256")
       .update(await readFile(zip))
       .digest("hex");
@@ -107,7 +107,7 @@ export async function ensureNinja(cfg: Config): Promise<string> {
     return path;
   } catch (e) {
     say(
-      `could not fetch ${release.tag} (${(e as Error).message}); building with the ninja on PATH, without Rust pipelining`,
+      `could not fetch ${release.tag} (${describeError(e)}); building with the ninja on PATH, without Rust pipelining`,
     );
     return "ninja";
   } finally {

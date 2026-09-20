@@ -3,7 +3,7 @@
 // things at the same time. One entry per kind of callback; add one when adding an API that calls back.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunExe, tempDir } from "harness";
+import { bunExe, tempDir, tls as tlsCerts } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
@@ -156,6 +156,14 @@ const dir = String(
             ws.addEventListener("message", () => { seen("message"); ws.close(); });
             ws.addEventListener("close", () => { seen("close"); resolve(); });
           }),
+        webSocketCheckServerIdentity: (seen, env) =>
+          new Promise(resolve => {
+            const ws = new WebSocket("wss://localhost:" + env.httpsPort + "/ws", {
+              tls: { ca: env.ca, checkServerIdentity() { seen("checkServerIdentity"); } },
+            });
+            ws.onopen = () => ws.close();
+            ws.onclose = resolve;
+          }),
         bunServe: async seen => {
           const closed = defer();
           const server = Bun.serve({
@@ -274,7 +282,14 @@ const dir = String(
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 let hostHttp: Bun.Server;
+let hostHttps: Bun.Server;
 beforeAll(() => {
+  hostHttps = Bun.serve({
+    port: 0,
+    tls: tlsCerts,
+    fetch: (request, server) => (server.upgrade(request) ? undefined : new Response("no", { status: 400 })),
+    websocket: { message() {} },
+  });
   hostHttp = Bun.serve({
     port: 0,
     fetch(request, server) {
@@ -297,7 +312,10 @@ beforeAll(() => {
     websocket: { message: (ws, message) => void ws.send(message) },
   });
 });
-afterAll(() => hostHttp.stop(true));
+afterAll(() => {
+  hostHttp.stop(true);
+  hostHttps.stop(true);
+});
 
 test("every callback of several graphs and the host, all running at once, finds its own graph's context", async () => {
   const storage = new AsyncLocalStorage<string>();
@@ -325,7 +343,13 @@ test("every callback of several graphs and the host, all running at once, finds 
     runners.flatMap(({ tag, graph, app }) =>
       names.map(name => {
         const seen = (event: string) => record(name + ": " + event, tag);
-        const env: Record<string, unknown> = { tag, httpPort: hostHttp.port, bun: bunExe() };
+        const env: Record<string, unknown> = {
+          tag,
+          httpPort: hostHttp.port,
+          httpsPort: hostHttps.port,
+          ca: tlsCerts.cert,
+          bun: bunExe(),
+        };
         if (name === "hostTarget") {
           const labels = [`host listener (dispatched from ${tag})`, `host abort listener (aborted from ${tag})`];
           hostListenerLabels.push(...labels);

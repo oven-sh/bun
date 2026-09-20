@@ -298,6 +298,35 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     expect(await server.receivedInTotal()).toBe("");
   });
 
+  test("runs in the Bun.ModuleGraph that opened the WebSocket, so a throw goes to its onError", async () => {
+    using server = startSniServer();
+    const url = `wss://localhost:${await server.port}/`;
+    const errors: unknown[] = [];
+    const graph = new Bun.ModuleGraph({ onError: (error, kind) => errors.push([kind, (error as Error).message]) });
+    try {
+      let current: unknown;
+      const events = await graph.run(() => {
+        const ws = new WebSocket(url, {
+          tls: {
+            ca: tlsCerts.cert,
+            checkServerIdentity() {
+              current = Bun.ModuleGraph.current;
+              throw new Error("PIN-REJECT");
+            },
+          },
+        });
+        return openSession(ws);
+      });
+      expect({ events, errors, ranInGraph: current === graph }).toEqual({
+        events: tlsFailed(url),
+        errors: [["uncaughtException", "PIN-REJECT"]],
+        ranInGraph: true,
+      });
+    } finally {
+      graph.dispose();
+    }
+  });
+
   test("may close the WebSocket from inside the callback", async () => {
     using server = startSniServer();
     const url = `wss://localhost:${await server.port}/`;

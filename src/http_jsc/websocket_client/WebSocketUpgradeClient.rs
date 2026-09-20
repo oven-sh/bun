@@ -124,6 +124,8 @@ pub struct HTTPClient<const SSL: bool> {
     /// SNI and certificate verification name: `tls.serverName`, else the
     /// dialed host. Empty when unset.
     hostname: JsCell<ZBox>,
+    /// The context of the script that made the WebSocket. `checkServerIdentity` runs in it.
+    context: bun_jsc::ContextId,
     poll_ref: JsCell<KeepAlive>,
     state: Cell<State>,
     subprotocols: JsCell<StringSet>,
@@ -388,6 +390,7 @@ where
             headers_buf: JsCell::new([picohttp::Header::ZERO; 128]),
             body: JsCell::new(Vec::new()),
             hostname: JsCell::new(ZBox::default()),
+            context: websocket.context().id(),
             poll_ref: JsCell::new(poll_ref),
             state: Cell::new(State::Initializing),
             proxy: JsCell::new(proxy_state),
@@ -682,6 +685,7 @@ where
                 || (!hostname.is_empty() && boringssl::check_server_identity(ssl, hostname));
         };
         let vm = VirtualMachineRef::get();
+        let _context = vm.enter_context(this.context);
         let event_loop = vm.event_loop_mut();
         event_loop.enter();
         let verdict = match call_check_server_identity(vm.global(), callback, ssl, hostname) {
@@ -1868,7 +1872,7 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     result
 }
 
-/// `Ok(false)` if the callback returns an Error or the certificate is unreadable.
+/// `Ok(true)` only if the callback ran and did not return an Error.
 fn call_check_server_identity(
     global: &JSGlobalObject,
     callback: JSValue,
@@ -1884,6 +1888,12 @@ fn call_check_server_identity(
     let verdict = callback.call(global, JSValue::UNDEFINED, &[js_hostname, js_cert])?;
     js_hostname.ensure_still_alive();
     js_cert.ensure_still_alive();
+    // Once script may not run (a stopping VM, a disposed ModuleGraph) `call` is a silent
+    // no-op that returns `undefined`, which is also how the callback approves.
+    let vm = global.bun_vm();
+    if !vm.script_allowed() || global.vm().execution_forbidden() || vm.calls_nobody() {
+        return Ok(false);
+    }
     // > On success, returns <undefined>. Any non-error value passes.
     Ok(!verdict.is_any_error())
 }

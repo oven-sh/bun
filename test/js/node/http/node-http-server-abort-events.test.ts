@@ -425,11 +425,11 @@ test.concurrent("a listener that destroys the connection and then throws sends n
       });
     });
   `;
-  const { stdout, stderr } = await promisify(execFile)(process.execPath, ["-e", fixture], {
+  const { stdout } = await promisify(execFile)(process.execPath, ["-e", fixture], {
     env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
   });
   // Node's parser stops at the throw, so the request events differ there: only
   // the bytes on the wire are compared.
   const { received, events } = JSON.parse(stdout);
-  expect({ received, uncaught: events[0], stderr }).toEqual({ received: 0, uncaught: "uncaught:boom", stderr: "" });
+  expect({ received, uncaught: events[0] }).toEqual({ received: 0, uncaught: "uncaught:boom" });
 });

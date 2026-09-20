@@ -6,5 +6,3 @@ if systemctl list-unit-files apport.service | grep -q apport; then
   systemctl disable apport.service
 fi
 apt-get install --yes --no-install-recommends gdb
-
-gdb --version | head -n1

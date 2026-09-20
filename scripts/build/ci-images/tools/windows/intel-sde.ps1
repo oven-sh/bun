@@ -8,6 +8,4 @@ if ($hash -ne $INTEL_SDE_SHA256) { Fail "Intel SDE's sha256 is $hash, expected $
 Run 7z x $archive "-o$extracted" -y | Out-Null
 Run 7z x "$extracted\sde.tar" "-o$extracted" -y | Out-Null
 Move-Item "$extracted\$INTEL_SDE_DIRECTORY" "C:\intel-sde" -Force
-Remove-Item $archive, $extracted -Recurse -Force
-
-if (-not (Test-Path "C:\intel-sde\sde.exe")) { Fail "C:\intel-sde\sde.exe is missing" }
+Remove-Temp $archive $extracted

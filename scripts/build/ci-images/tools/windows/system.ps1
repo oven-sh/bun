@@ -17,10 +17,10 @@ if (Test-Path $threatProtection) {
 }
 
 # Search indexing, Windows Update, telemetry, WAP push, the compatibility
-# assistant and Superfetch. A Windows edition that lacks one has nothing to stop.
+# assistant and Superfetch, off from the image's first boot. A Windows edition
+# that lacks one has nothing to disable.
 foreach ($service in $DISABLED_SERVICES.Split(" ")) {
   if (Get-Service $service -ErrorAction SilentlyContinue) {
-    Stop-Service $service -Force
     Set-Service $service -StartupType Disabled
   }
 }

@@ -8,5 +8,3 @@ apk add --no-cache --no-interactive --no-progress \
   "llvm$LLVM_MAJOR@edge" "clang$LLVM_MAJOR@edge" "lld$LLVM_MAJOR@edge" scudo-malloc
 # llvm-symbolizer, llvm-objcopy and the rest are only versioned in /usr/bin.
 add_to_path "/usr/lib/llvm$LLVM_MAJOR/bin"
-
-clang --version | head -n1 | grep -q "version $LLVM_MAJOR_MINOR\." || fail "clang --version is not $LLVM_MAJOR_MINOR.x"

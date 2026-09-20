@@ -10,7 +10,7 @@ export function cmake(image: LinuxImage, pin: { version: string }): Tool {
   return {
     name: "cmake",
     script: "linux/cmake.sh",
-    variables: { CMAKE_URL: url, CMAKE_VERSION: pin.version },
+    variables: { CMAKE_URL: url },
     urls: [url],
   };
 }

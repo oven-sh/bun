@@ -96,11 +96,20 @@ function renderTool(tool: Tool, shell: Shell): string {
     ...Object.keys(shell.variables),
     ...shell.runtimeVariables,
   ]);
-  for (const [, name] of script.matchAll(/\$\{?([A-Z][A-Z0-9_]*)\b/g)) {
-    if (!provided.has(name!) && !shell.shellVariables.has(name!)) {
-      throw new BuildError(`tools/${tool.script} reads $${name}, which the "${tool.name}" tool does not provide`, {
+  const read = new Set([...script.matchAll(/\$\{?([A-Z][A-Z0-9_]*)\b/g)].map(([, name]) => name!));
+  for (const name of read) {
+    if (!provided.has(name) && !shell.shellVariables.has(name)) {
+      throw new BuildError(`tools/${tool.script} reads ${name}, which the "${tool.name}" tool does not provide`, {
         file,
         hint: `Provided: ${[...provided].join(", ")}`,
+      });
+    }
+  }
+  // And the other way: a value the script never reads says something about the image that is not true.
+  for (const name of Object.keys(tool.variables)) {
+    if (!read.has(name)) {
+      throw new BuildError(`The "${tool.name}" tool provides $${name}, which tools/${tool.script} never reads`, {
+        file,
       });
     }
   }

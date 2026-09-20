@@ -24,6 +24,13 @@ function Download([string]$Url, [string]$File) {
   }
 }
 
+# Remove-Temp <path>...
+# Deletes downloads and scratch directories. One that cannot be deleted yet
+# (Defender is still scanning an installer that just ran) is not a failure.
+function Remove-Temp {
+  Remove-Item $args -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 # Runs a native command and fails when it does; PowerShell does not by itself.
 function Run {
   $command, $arguments = $args
@@ -51,7 +58,14 @@ function Set-Env([string]$Name, [string]$Value) {
 # Scoop reports a failed install on stdout and exits 0; the package's
 # directory is what says whether it worked. <package> may be name@version.
 function Install-Scoop-Package([string]$Package) {
-  scoop install $Package
+  # Scoop is PowerShell running in this session, and its manifests' cleanup
+  # steps write errors that are not failures (7zip on ARM64 cannot delete its
+  # own 7zr.exe; llvm on ARM64 has no Uninstall.exe to remove). Under "Stop"
+  # each of those would end the bake. Whether the install worked is what the
+  # check below decides.
+  $ErrorActionPreference = "SilentlyContinue"
+  scoop install $Package *>&1 | ForEach-Object { "$_" } | Write-Host
+  $ErrorActionPreference = "Stop"
   Refresh-Path
   $name = $Package.Split("@")[0]
   if (-not (Test-Path "C:\Scoop\apps\$name\current")) {

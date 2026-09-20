@@ -12,7 +12,7 @@ export function curlH3(image: Image, pin: { version: string }): Tool {
   return {
     name: "curl-h3",
     script: image.os === "windows" ? "windows/curl-h3.ps1" : "linux/curl-h3.sh",
-    variables: { CURL_H3_URL: url, CURL_H3_VERSION: pin.version },
+    variables: { CURL_H3_URL: url },
     urls: [url],
   };
 }

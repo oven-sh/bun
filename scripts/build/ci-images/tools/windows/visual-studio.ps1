@@ -6,4 +6,4 @@ $arguments = "--passive --norestart --wait --force --locale en-US --add Microsof
 $process = Start-Process $installer -ArgumentList $arguments -Wait -PassThru -NoNewWindow
 # 3010: installed, and a restart is needed. The bake restarts before it ends.
 if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) { Fail "the Visual Studio installer exited with code $($process.ExitCode)" }
-Remove-Item $installer
+Remove-Temp $installer

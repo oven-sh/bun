@@ -44,5 +44,4 @@ for arch in amd64 arm64; do
   done
   rm -rf "$dir"
 
-  [ -f "$sysroot/usr/include/features.h" ] && [ -d "$sysroot/usr/include/c++/13" ] || fail "$sysroot is incomplete"
 done

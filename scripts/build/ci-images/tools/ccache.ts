@@ -7,7 +7,7 @@ export function ccache(image: WindowsImage, pin: { version: string }): Tool {
   return {
     name: "ccache",
     script: "windows/ccache.ps1",
-    variables: { CCACHE_URL: url, CCACHE_DIRECTORY: directory, CCACHE_VERSION: pin.version },
+    variables: { CCACHE_URL: url, CCACHE_DIRECTORY: directory },
     urls: [url],
   };
 }

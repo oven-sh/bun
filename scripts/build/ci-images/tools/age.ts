@@ -7,7 +7,7 @@ export function age(image: LinuxImage, pin: { version: string; sha256: { x64: st
   return {
     name: "age",
     script: "linux/age.sh",
-    variables: { AGE_URL: url, AGE_SHA256: pin.sha256[image.arch], AGE_VERSION: pin.version },
+    variables: { AGE_URL: url, AGE_SHA256: pin.sha256[image.arch] },
     urls: [url],
   };
 }

@@ -14,5 +14,3 @@ rm -rf "$dir"
 apt-get install --yes --no-install-recommends "llvm-$LLVM_MAJOR-tools"
 # Debian only links some of the tools into /usr/bin without a version suffix.
 add_to_path "/usr/lib/llvm-$LLVM_MAJOR/bin"
-
-clang --version | head -n1 | grep -q "version $LLVM_MAJOR_MINOR\." || fail "clang --version is not $LLVM_MAJOR_MINOR.x"

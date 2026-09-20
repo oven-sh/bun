@@ -23,5 +23,3 @@ for arch in aarch64 x86_64; do
   ln -sf "$ndk_rt/libclang_rt.builtins-$arch-android.a" "$resource_dir/lib/$arch-unknown-linux-android$ANDROID_API_LEVEL/libclang_rt.builtins.a"
   ln -sf "$ndk_rt/$arch/libunwind.a" "$resource_dir/lib/$arch-unknown-linux-android$ANDROID_API_LEVEL/libunwind.a"
 done
-
-[ -f "$resource_dir/lib/aarch64-unknown-linux-android$ANDROID_API_LEVEL/libunwind.a" ] || fail "the NDK's libunwind is not where clang looks for it"

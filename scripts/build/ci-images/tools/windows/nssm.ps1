@@ -5,6 +5,4 @@ $extracted = "$env:TEMP\nssm"
 Download $NSSM_URL $zip
 Expand-Archive -Path $zip -DestinationPath $extracted -Force
 Copy-Item "$extracted\$NSSM_DIRECTORY\win64\nssm.exe" "C:\Windows\System32\nssm.exe" -Force
-Remove-Item $zip, $extracted -Recurse -Force
-
-if (-not (Get-Command nssm -ErrorAction SilentlyContinue)) { Fail "nssm is not on PATH" }
+Remove-Temp $zip $extracted

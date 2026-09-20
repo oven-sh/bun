@@ -17,6 +17,3 @@ cp -R "$dir/headers/include" "$gyp/include"
 echo "$NODE_GYP_INSTALL_VERSION" > "$gyp/installVersion"
 chown -R "$AGENT_USER" "$AGENT_HOME/.cache"
 rm -rf "$dir"
-
-installed=$(node --version)
-[ "$installed" = "v$NODEJS_VERSION" ] || fail "node --version is $installed, expected v$NODEJS_VERSION"

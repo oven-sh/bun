@@ -10,7 +10,7 @@ export function buildkiteAgent(image: Image, pin: { version: string }): Tool {
   return {
     name: "buildkite-agent",
     script: image.os === "windows" ? "windows/buildkite-agent.ps1" : "linux/buildkite-agent.sh",
-    variables: { BUILDKITE_AGENT_URL: url, BUILDKITE_AGENT_VERSION: pin.version },
+    variables: { BUILDKITE_AGENT_URL: url },
     urls: [url],
   };
 }

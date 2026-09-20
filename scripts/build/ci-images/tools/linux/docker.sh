@@ -4,5 +4,3 @@ sh "$dir/get-docker.sh"
 rm -rf "$dir"
 systemctl enable docker
 usermod -aG docker "$AGENT_USER"
-
-docker --version

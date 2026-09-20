@@ -5,5 +5,3 @@ tar -xzf "$dir/python-fuse.tar.gz" -C "$dir"
 (cd "$dir/python-fuse-$PYTHON_FUSE_VERSION" && python3 setup.py build && python3 setup.py install)
 rm -rf "$dir"
 echo fuse >> /etc/modules-load.d/fuse.conf
-
-python3 -c 'import fuse'

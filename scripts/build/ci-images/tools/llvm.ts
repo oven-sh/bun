@@ -3,7 +3,8 @@ import type { Image, Tool } from "../image.ts";
 /**
  * clang, lld and the LLVM tools. Scoop installs the exact release on Windows.
  * Neither apt.llvm.org nor Alpine can be asked for a patch release, only for a
- * major, so there the bake checks that what arrived is the pinned major.minor.
+ * major; scripts/build/tools.ts is what decides whether the compiler it finds
+ * is close enough to the pin.
  */
 export function llvm(image: Image, pin: { version: string }): Tool {
   if (image.os === "windows") {
@@ -14,8 +15,7 @@ export function llvm(image: Image, pin: { version: string }): Tool {
       urls: [],
     };
   }
-  const [major, minor] = pin.version.split(".");
-  const variables = { LLVM_MAJOR: major!, LLVM_MAJOR_MINOR: `${major}.${minor}` };
+  const variables = { LLVM_MAJOR: pin.version.split(".")[0]! };
   if (image.distro === "alpine") {
     return { name: "llvm", script: "linux/llvm.apk.sh", variables, urls: [] };
   }

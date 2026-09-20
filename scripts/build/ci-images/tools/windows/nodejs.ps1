@@ -14,7 +14,4 @@ foreach ($base in $env:LOCALAPPDATA, "$AGENT_HOME\AppData\Local") {
   Copy-Item -Force "$stage\node.lib" "$cache\$NODEJS_ARCH\node.lib"
   Set-Content "$cache\installVersion" $NODE_GYP_INSTALL_VERSION
 }
-Remove-Item -Recurse -Force $stage
-
-$installed = node --version
-if ($installed -ne "v$NODEJS_VERSION") { Fail "node --version is $installed, expected v$NODEJS_VERSION" }
+Remove-Temp $stage

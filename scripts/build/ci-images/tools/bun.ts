@@ -9,7 +9,7 @@ export function bun(image: Image, pin: { version: string }): Tool {
   return {
     name: "bun",
     script: image.os === "windows" ? "windows/bun.ps1" : "linux/bun.sh",
-    variables: { BUN_VERSION: pin.version, BUN_URL: url, BUN_TRIPLET: triplet },
+    variables: { BUN_URL: url, BUN_TRIPLET: triplet },
     urls: [url],
   };
 }

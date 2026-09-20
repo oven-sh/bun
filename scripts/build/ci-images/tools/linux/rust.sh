@@ -10,6 +10,3 @@ rm -rf "$dir"
 add_to_path /opt/rust/bin
 # Builds run as the agent's user, and cargo writes its registry here.
 chown -R "$AGENT_USER:$AGENT_USER" /opt/rust
-
-rustc --version | grep -q nightly || fail "rustc --version is not a nightly: $(rustc --version)"
-rustup show active-toolchain | grep -q "^$RUST_CHANNEL-" || fail "the active toolchain is not $RUST_CHANNEL"

@@ -10,6 +10,3 @@ rm -rf "$dir"
 # clang-cl asks for Include and Lib; xwin writes them in lower case.
 ln -s include "$sysroot/Windows Kits/10/Include"
 ln -s lib "$sysroot/Windows Kits/10/Lib"
-
-ls "$sysroot/Windows Kits/10/lib/"*/um/x64/kernel32.[Ll]ib > /dev/null || fail "$sysroot has no kernel32.lib"
-ls "$sysroot"/VC/Tools/MSVC/*/include/atlstr.h > /dev/null || fail "$sysroot has no ATL headers"

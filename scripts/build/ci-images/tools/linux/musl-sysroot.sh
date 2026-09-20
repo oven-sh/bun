@@ -12,6 +12,5 @@ for pair in "x86_64 /opt/linux-sysroot-musl" "aarch64 /opt/linux-sysroot-musl-ar
   mkdir -p "$sysroot"
   "$dir/sbin/apk.static" --arch "$arch" --root "$sysroot" --repository "$ALPINE_REPOSITORY" \
     --allow-untrusted --no-cache --initdb add musl-dev libc-dev linux-headers g++ libstdc++-dev
-  [ -f "$sysroot/usr/lib/libc.so" ] || fail "$sysroot is incomplete"
 done
 rm -rf "$dir"

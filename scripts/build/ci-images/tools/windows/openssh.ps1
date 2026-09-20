@@ -5,7 +5,7 @@ Download $OPENSSH_URL $zip
 Expand-Archive -Path $zip -DestinationPath $extracted -Force
 New-Item -Path $destination -ItemType Directory -Force | Out-Null
 Get-ChildItem -Path (Get-ChildItem -Path $extracted -Directory | Select-Object -First 1).FullName -Recurse | Move-Item -Destination $destination -Force
-Remove-Item $zip, $extracted -Recurse -Force
+Remove-Temp $zip $extracted
 & "$destination\install-sshd.ps1"
 & "$destination\FixHostFilePermissions.ps1" -Confirm:$false
 Set-Service -Name sshd -StartupType Automatic

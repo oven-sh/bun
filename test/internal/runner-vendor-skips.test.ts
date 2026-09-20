@@ -58,7 +58,7 @@ describe("getVendorTestArgs", () => {
 
   test("the pattern matches every test name that contains none of the skipped ones", () => {
     const [flag, pattern, ...rest] = getVendorTestArgs(skipTests, "response\\stream.test.ts");
-    expect({ flag, rest }).toEqual({ flag: "--test-name-pattern", rest: [] });
+    expect({ flag, rest }).toEqual({ flag: "--test-name-pattern", rest: ["--pass-with-no-tests"] });
     const selects = (name: string) => new RegExp(pattern!).test(name);
     expect({
       skipped: selects("Stream stop stream on canceled request"),
@@ -69,7 +69,7 @@ describe("getVendorTestArgs", () => {
     }).toEqual({ skipped: false, escaped: false, fromTheOtherGlob: false, unescapedWouldMatch: true, other: true });
   });
 
-  test("bun test runs the file without the skipped tests", async () => {
+  async function runStreamFixture(skipped: string[]) {
     using dir = tempDir("runner-vendor-skips", {
       "stream.test.ts": `
         import { describe, expect, it } from "bun:test";
@@ -80,19 +80,31 @@ describe("getVendorTestArgs", () => {
         });
       `,
     });
+    const args = getVendorTestArgs({ "stream.test.ts": { tests: skipped, reason: "reason" } }, "stream.test.ts");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", ...getVendorTestArgs(skipTests, "response/stream.test.ts"), "stream.test.ts"],
+      cmd: [bunExe(), "test", ...args, "stream.test.ts"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  test.concurrent("bun test runs the file without the skipped tests", async () => {
+    const { stderr, exitCode } = await runStreamFixture(["stop stream on canceled request", "a+b (c)"]);
     expect(stderr.match(/^ *\d+ (?:pass|fail|filtered out)$/gm)?.map(line => line.trim())).toEqual([
       "1 pass",
       "2 filtered out",
       "0 fail",
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a file with no test left passes, as a skipped file does", async () => {
+    const { stderr, exitCode } = await runStreamFixture(["Stream"]);
+    expect(stderr).toContain("matched 0 tests");
     expect(exitCode).toBe(0);
   });
 });
@@ -105,10 +117,13 @@ test("each { tests } skip in test/vendor.json names at least one test and gives 
       expect({ [glob]: skip }).toEqual({
         [glob]: { tests: expect.arrayContaining([expect.any(String)]), reason: expect.any(String) },
       });
+      // bun test matches the names joined by a space, so a name copied from the reporter
+      // ("Stream > stop stream") never matches and the skip does nothing.
+      expect({ [glob]: skip.tests.filter(name => name.includes(" > ")) }).toEqual({ [glob]: [] });
       // The file still runs, and its arguments carry the skip.
       const path = glob.replaceAll("*", "/");
-      expect({ [glob]: [isVendorTestSkipped(skipTests, path), getVendorTestArgs(skipTests, path).length] }).toEqual({
-        [glob]: [false, 2],
+      expect({ [glob]: [isVendorTestSkipped(skipTests, path), getVendorTestArgs(skipTests, path)[0]] }).toEqual({
+        [glob]: [false, "--test-name-pattern"],
       });
     }
   }

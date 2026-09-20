@@ -2607,12 +2607,12 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
           throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
         }
 
-        const isTest = (path: string) => isJavaScriptTest(path) && !isVendorTestSkipped(skipTests, path);
+        const isTest = (path: string) =>
+          (testExtensions ? testExtensions.some(ext => path.endsWith(`.${ext}`)) : isJavaScriptTest(path)) &&
+          !isVendorTestSkipped(skipTests, path);
 
         const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
-          .filter(filename =>
-            testExtensions ? testExtensions.some(ext => filename.endsWith(`.${ext}`)) : isTest(filename),
-          )
+          .filter(isTest)
           .map(filename => join(testPathPrefix, filename))
           .filter(
             filename =>

@@ -124,8 +124,7 @@ enum BlockDisposition {
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
-    /// The block would open a stream of the peer after a GOAWAY this side sent: dropped with no
-    /// answer (RFC 9113 §6.8, nghttp2's NGHTTP2_ERR_IGN_HEADER_BLOCK).
+    /// The block would open a stream after a GOAWAY this side sent: nothing is sent (§6.8).
     Ignored,
 }
 
@@ -300,10 +299,7 @@ pub struct Connection {
     preface_received: usize,
     pub last_stream_id: u32,
     pub going_away: bool,
-    /// The embedder wrote a GOAWAY before this `receive` batch, so the peer opens no stream from
-    /// now on (nghttp2's session_allow_incoming_new_stream). The embedder sets it between
-    /// batches: nghttp2 raises NGHTTP2_GOAWAY_SENT when it serializes the frame, and node does
-    /// that after the read in which `goaway()` ran.
+    /// The embedder wrote a GOAWAY before this read (nghttp2's NGHTTP2_GOAWAY_SENT, set per read).
     pub goaway_sent: bool,
 }
 
@@ -940,10 +936,7 @@ impl Connection {
             return true;
         }
         let refused = is_new && self.is_server && !sink.can_open_stream();
-        // A client that sent GOAWAY discards every later PUSH_PROMISE (handle_push_promise), so
-        // the pushed response arrives on an even id that holds no reservation. It opens no
-        // stream either. nghttp2 fails the session here instead, because it leaves the discarded
-        // id idle. RFC 9113 §6.8 lets the sender of a GOAWAY discard these frames.
+        // The response to a dropped PUSH_PROMISE opens no stream (§6.8). nghttp2 ends the session.
         let ignored =
             is_new && !self.is_server && hdr.stream_id.is_multiple_of(2) && self.goaway_sent;
         let mut disposition = if refused {
@@ -1723,9 +1716,7 @@ impl Connection {
             payload[off + 3],
         ]) & 0x7fff_ffff;
         off += 4;
-        // nghttp2 (nghttp2_session_on_push_promise_received): "We just discard PUSH_PROMISE after
-        // GOAWAY was sent". It checks this before it validates the promised id, reserves nothing,
-        // sends nothing, and still decodes the block.
+        // nghttp2: "We just discard PUSH_PROMISE after GOAWAY was sent", before it checks the id.
         let ignored = self.goaway_sent;
         // §5.1.1 / §8.4: server-initiated streams use even ids, never 0, and
         // cannot be reused.

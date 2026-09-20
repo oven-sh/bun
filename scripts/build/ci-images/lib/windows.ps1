@@ -66,6 +66,13 @@ function Install-Scoop-Package([string]$Package) {
   $ErrorActionPreference = "SilentlyContinue"
   scoop install $Package *>&1 | ForEach-Object { "$_" } | Write-Host
   $ErrorActionPreference = "Stop"
+  # Scoop puts an app's directories (node, clang, python have no shim) on the
+  # PATH of the user who installs it. The agent's jobs run as another account,
+  # so they go on the machine's PATH.
+  $machine = [Environment]::GetEnvironmentVariable("Path", "Machine").Split(";")
+  foreach ($directory in [Environment]::GetEnvironmentVariable("Path", "User").Split(";")) {
+    if ($directory -like "C:\Scoop\*" -and $machine -notcontains $directory) { Add-To-Path $directory }
+  }
   Refresh-Path
   $name = $Package.Split("@")[0]
   if (-not (Test-Path "C:\Scoop\apps\$name\current")) {

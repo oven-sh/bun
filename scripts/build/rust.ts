@@ -81,7 +81,7 @@ export function rustTriple(os: OS, arch: Arch, abi: Abi | undefined): string {
  * uses `dev`. RelWithDebInfo / MinSizeRel collapse to `release` — cargo's stock release already keeps debuginfo
  * (`debug = 1` is the workspace default), and we don't ship a `MinSizeRel` Rust path yet.
  */
-export function cargoProfile(cfg: Config): string {
+function cargoProfile(cfg: Config): string {
   return cfg.buildType === "Debug" ? "dev" : "release";
 }
 
@@ -185,7 +185,7 @@ export function windowsShimPath(cfg: Config): string {
 // Paths
 // ───────────────────────────────────────────────────────────────────────────
 
-/** cargo's `--target-dir`, `<buildDir>/rust-target`: only planning runs cargo, and `rust:timings`. */
+/** cargo's `--target-dir`, `<buildDir>/rust-target`. Only planning runs cargo, and that writes nothing there. */
 function rustTargetDir(cfg: Config): string {
   return resolve(cfg.buildDir, "rust-target");
 }
@@ -253,17 +253,11 @@ export interface RustBuildInputs {
   vendorStamps: string[];
 }
 
-/**
- * The exact `cargo build` invocation the Rust step uses.
- *
- * Extracted so tooling (`scripts/rust-timings.ts`) can run cargo with the same
- * args/rustflags/env that `emitRust()` puts into the ninja edge, without
- * re-deriving any of it. `emitRust()` is the only build-graph caller.
- */
+/** The `cargo build` invocation the Rust step plans with (`cargo build <args> --unit-graph`), and what it implies for every unit. */
 export interface CargoInvocation {
   /** `cargo build <args>` — everything after `build`. */
   args: string[];
-  /** The environment `cargo build` runs under (planning, `rust:timings`): `unitEnv` plus what configures cargo itself — profile overrides, `CARGO_ENCODED_RUSTFLAGS`, the target linker, terminal colour. */
+  /** The environment `cargo build` runs under (planning): `unitEnv` plus what configures cargo itself — profile overrides, `CARGO_ENCODED_RUSTFLAGS`, the target linker, terminal colour. */
   env: Record<string, string>;
   /** The environment every rustc and build script runs under — what cargo's children inherit from it: toolchain forwarding (CARGO_HOME, RUSTUP_*), CC/CXX/AR for cc-rs, BUN_CODEGEN_DIR, cross-compile SDK variables. */
   unitEnv: Record<string, string>;

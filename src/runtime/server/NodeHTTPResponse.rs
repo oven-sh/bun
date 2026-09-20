@@ -1522,7 +1522,7 @@ impl NodeHTTPResponse {
         if chunk.is_empty() {
             return JSValue::UNDEFINED;
         }
-        // TODO: emit an 'error' event instead of reporting an uncaught exception.
+        // No 'error' event carries this failure, so it is reported as an uncaught exception.
         match jsc::ArrayBuffer::create_buffer(global_this, chunk) {
             Ok(b) => b,
             Err(err) => {

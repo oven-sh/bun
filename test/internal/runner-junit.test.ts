@@ -4,10 +4,11 @@
  * failed (to re-run them alone), what to print per file and what to put in the flaky
  * annotation. parseJunitFileSuites() in scripts/buildkite.ts is that parsing step.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import * as os from "node:os";
 import { join } from "node:path";
-import { parseJunitFileSuites } from "../../scripts/buildkite.ts";
+import { getUser, parseJunitFileSuites } from "../../scripts/buildkite.ts";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
 
@@ -155,4 +156,29 @@ test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit
     },
   });
   expect(exitCode).toBe(1);
+});
+
+// The runner sets USER and HOME of every `bun test` it spawns from getUser(). It used to call
+// os.userInfo() per test file, and on a macOS agent whose host had begun to shut down that call threw
+// `uv_os_get_passwd returned ENOENT`, which ended the shard with exit 1 under the name of the next test.
+test("getUser() looks the user up once", () => {
+  const real = { ...os };
+  let calls = 0;
+  mock.module("node:os", () => ({
+    ...real,
+    userInfo: () => {
+      if (++calls > 1) {
+        throw new Error("A system error occurred: uv_os_get_passwd returned ENOENT (no such file or directory)");
+      }
+      return real.userInfo();
+    },
+  }));
+  try {
+    const user = getUser();
+    expect(user).toEqual(real.userInfo());
+    expect(getUser()).toBe(user);
+    expect(calls).toBe(1);
+  } finally {
+    mock.module("node:os", () => real);
+  }
 });

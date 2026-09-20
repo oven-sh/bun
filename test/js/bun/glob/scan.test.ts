@@ -876,12 +876,25 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
   expect([...new Bun.Glob(sandwich).scanSync({ cwd: dir })]).toEqual([hit]);
 });
 
+// On Windows, creating a symlink needs a privilege that not every account has.
+const canCreateDirSymlink = (() => {
+  using probe = tempDir("glob-scan-symlink-probe", { "target/x": "" });
+  try {
+    fs.symlinkSync("target", path.join(String(probe), "link"), "dir");
+    return true;
+  } catch (err: any) {
+    if (err.code === "EPERM" || err.code === "EACCES") return false;
+    throw err;
+  }
+})();
+const testWithDirSymlink = test.skipIf(!canCreateDirSymlink);
+
 // scan() keeps the cwd string it is given verbatim, but child paths pushed for
 // symlink work items are joined and normalized. The entry-name offset stored on
 // those work items must be derived from the normalized joined path, not from the
 // raw cwd, otherwise a cwd with redundant trailing separators plus a short-named
 // symlink makes the offset exceed the path length.
-test("scan handles a cwd with redundant trailing separators when following symlinks", async () => {
+testWithDirSymlink("scan handles a cwd with redundant trailing separators when following symlinks", async () => {
   using dir = tempDir("glob-scan-symlink-raw-cwd", {
     "haystack/regular.txt": "regular",
     "haystack/target/inner.txt": "inner",
@@ -889,12 +902,7 @@ test("scan handles a cwd with redundant trailing separators when following symli
 
   // Short-named symlink to a directory: after normalization the joined child
   // path is shorter than the raw cwd string passed to scan() below.
-  try {
-    fs.symlinkSync("target", path.join(String(dir), "haystack", "L"), "dir");
-  } catch (err: any) {
-    if (err.code === "EPERM" || err.code === "EACCES") return;
-    throw err;
-  }
+  fs.symlinkSync("target", path.join(String(dir), "haystack", "L"), "dir");
 
   // cwd with redundant trailing separators, passed through to scan() as-is.
   const rawCwd = path.join(String(dir), "haystack") + path.sep.repeat(4);
@@ -992,17 +1000,6 @@ describe("explicit dotfile segments match without dot:true", () => {
 // symlinked directories. A segment that names the symlink literally is an
 // explicit path the user wrote; it should resolve regardless, matching
 // fast-glob and bash.
-const canCreateDirSymlink = (() => {
-  using probe = tempDir("glob-scan-symlink-probe", { "target/x": "" });
-  try {
-    fs.symlinkSync("target", path.join(String(probe), "link"), "dir");
-    return true;
-  } catch (err: any) {
-    if (err.code === "EPERM" || err.code === "EACCES") return false;
-    throw err;
-  }
-})();
-
 describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked directory", () => {
   const norm = (a: string[]) => a.map(p => p.replaceAll("\\", "/")).sort();
 

@@ -3103,9 +3103,7 @@ impl H2FrameParser {
         let mut end_streams: Vec<(u32, u16)> = Vec::new();
         let mut pos = 0usize;
         while pos < tail.len() {
-            let Some(raw) = tail.get(pos..pos + FrameHeader::BYTE_SIZE) else {
-                return None;
-            };
+            let raw = tail.get(pos..pos + FrameHeader::BYTE_SIZE)?;
             let header = FrameHeader::decode(raw.try_into().expect("frame header size"));
             if header.type_ != FrameType::HTTP_FRAME_DATA as u8 {
                 return None;

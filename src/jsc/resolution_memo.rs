@@ -1,11 +1,4 @@
-//! What the resolver answered for a `(specifier, source)` pair, remembered for one VM.
-//!
-//! The resolver keeps what it read from disk, so it answers a repeated resolution from memory,
-//! but each time through two UTF-8 copies, its mutex and a walk of its caches. An entry here is
-//! that answer. It holds while `bun_resolver::resolution_epoch` does not move, so a hit is what
-//! the resolver would answer. The table has a fixed size: a new entry replaces the less
-//! recently used of the two in its bucket, and a pair gets an entry only when it comes back.
-//! Both cost a later resolution, never a wrong answer.
+//! A bounded per-VM memo of resolver answers, valid while `bun_resolver::resolution_epoch` stands.
 
 use core::ptr;
 
@@ -36,8 +29,7 @@ struct Way {
     /// Compared before the strings of `entry`: those are most likely not in the CPU cache.
     tag: u16,
     kind: Kind,
-    /// Not about `entry`. The two of a bucket are tags of the pairs that were last resolved
-    /// without an entry. They are here so that a resolution reads one cache line of the table.
+    /// Not about `entry`: a tag of a pair last resolved without one, here to share the cache line.
     missed: u8,
 }
 
@@ -76,8 +68,7 @@ impl ResolutionMemo {
         self.hits
     }
 
-    /// An entry keeps half of its epoch. Once the other half moves, after 2^32 changes, an
-    /// old entry could pass for a new one, so none is kept.
+    /// Entries keep the low half of their epoch, so none outlives a change of the high half.
     fn low_half(&mut self, epoch: u64) -> u32 {
         let high = (epoch >> 32) as u32;
         if high != self.epoch_high {
@@ -126,12 +117,8 @@ impl ResolutionMemo {
         let epoch = self.low_half(epoch);
         let (index, tag) = slot(specifier, source, kind);
         let Bucket(ways) = &mut self.buckets[index];
-        // Most pairs resolve once, while the program loads, and one that does not come back
-        // would only push out one that does. So the first resolution leaves a tag, and the
-        // next one of the same pair makes the entry. A program that cycles through more
-        // pairs than the table holds then does not keep replacing entries it cannot reuse.
-        // Never 0, which is what a bucket starts with.
-        let missed = (tag as u8).max(1);
+        // An entry starts at the second resolution of a pair, so a one-off evicts nothing.
+        let missed = (tag as u8).max(1); // 0: the bucket saw nothing yet
         if ways.iter().all(|way| way.missed != missed) {
             ways[1].missed = ways[0].missed;
             ways[0].missed = missed;
@@ -183,8 +170,7 @@ fn swap_entries(ways: &mut [Way; 2]) {
     core::mem::swap(&mut a.kind, &mut b.kind);
 }
 
-/// The same impl, or the same characters in the same width. The same characters in another
-/// width do not match, which only costs a resolution.
+/// The same characters in the other width do not match, which only costs a resolution.
 #[inline]
 fn same_string(a: &WTFStringImplStruct, b: &WTFStringImplStruct) -> bool {
     ptr::eq(a, b) || (a.is_8bit() == b.is_8bit() && a.byte_slice() == b.byte_slice())

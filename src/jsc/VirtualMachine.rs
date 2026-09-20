@@ -5215,9 +5215,7 @@ impl VirtualMachine {
             }
         }
 
-        // What the resolver answered for this pair before, while nothing that answer depends on
-        // has changed. Not when something besides the two strings can shape the answer: an
-        // onResolve plugin, `options.paths`, the package manager, macro mode.
+        // Not when something besides the two strings shapes the answer.
         let memo_kind = crate::resolution_memo::Kind::new(mode.is_esm(), IS_A_FILE_PATH);
         let memo_epoch = bun_resolver::resolution_epoch::get();
         let can_use_memo = jsc_vm.plugin_runner.is_none()
@@ -5399,8 +5397,7 @@ impl VirtualMachine {
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
 
-    /// Out of line, to keep `resolve_maybe_needs_trailing_slash` small: most resolutions leave
-    /// no more than a tag here.
+    /// Out of line: most resolutions only leave a tag here.
     #[cold]
     #[inline(never)]
     fn remember_resolution(
@@ -5412,14 +5409,13 @@ impl VirtualMachine {
         result: &ResolveFunctionResult,
         source_path: &[u8],
     ) {
-        // Only what the resolver found, and only from an absolute source: any other source
-        // resolves against the working directory. Not with a `?query`, so that a hit does not
-        // have to carry one. Not more than a path, which leaves out a long `data:` URL. Not once
-        // the resolver made the package manager.
-        if result.result.is_none()
+        let found_by_resolver = result.result.is_some();
+        let is_long_data_url = result.path.len() > bun_paths::MAX_PATH_BYTES;
+        let resolves_against_cwd = !bun_paths::is_absolute(source_path);
+        if !found_by_resolver
             || !result.query_string.is_empty()
-            || result.path.len() > bun_paths::MAX_PATH_BYTES
-            || !bun_paths::is_absolute(source_path)
+            || is_long_data_url
+            || resolves_against_cwd
             || self.transpiler.resolver.package_manager.is_some()
         {
             return;

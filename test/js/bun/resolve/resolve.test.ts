@@ -1943,9 +1943,7 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
   });
 });
 
-// The VM remembers what the resolver answered for a (specifier, source) pair, and forgets all of it
-// when something that answer depends on changes. Apart from the first test, these hold with or
-// without that memo: they are here because a stale answer from it would fail them.
+// Only the first test needs the VM's memo of resolver answers. A stale answer from it fails the others.
 describe.concurrent("a repeated resolution", () => {
   async function run(files: Record<string, string>, cmd = ["main.cjs"]) {
     using dir = tempDir("repeated-resolution", files);
@@ -1970,8 +1968,7 @@ describe.concurrent("a repeated resolution", () => {
           for (let i = 0; i < 5; i++) fn();
           return resolutionMemoHits() - before;
         };
-        // A pair gets its entry the second time the resolver answers it: 3 of 5. It is the first
-        // time when its tag is the same as that of a pair the same bucket saw before: 4 of 5.
+        // 3 of 5: an entry starts at the second resolution. 4 when a pair seen before has the same tag.
         const repeats = fn => [3, 4].includes(hits(fn));
         (async () => {
           const out = {

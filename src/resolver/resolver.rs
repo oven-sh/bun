@@ -439,11 +439,7 @@ macro_rules! bufs {
 // (the resolver mutex is one of the two documented guards for the entries singleton).
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
-/// Moves when a specifier that resolved before can resolve to something else: a directory
-/// cache entry is dropped, the working directory changes, `require.extensions` changes.
-/// What a caller remembers of a resolution holds while this does not move. One for the
-/// process: every resolver shares the directory cache, and the watcher thread drops
-/// entries from it.
+/// Moves when a past resolution can come out differently. One per process, like the directory cache.
 pub mod resolution_epoch {
     use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -453,15 +449,13 @@ pub mod resolution_epoch {
 
     static EPOCH: Epoch = Epoch(AtomicU64::new(0));
 
-    /// Read this before the resolver runs, not after: what it answers while an entry is
-    /// being dropped must not pass for an answer from after the drop.
+    /// Read before the resolver runs, so an answer from during a change carries the old epoch.
     #[inline]
     pub fn get() -> u64 {
         EPOCH.0.load(Ordering::SeqCst)
     }
 
-    /// Call this after the change, not before. Out of line: the callers are on the
-    /// resolver's hot path, and this is not.
+    /// Call after the change. Cold: its callers are on the resolver's hot path.
     #[cold]
     #[inline(never)]
     pub fn bump() {

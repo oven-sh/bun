@@ -1,7 +1,7 @@
 /**
  * Build-time driver for one Rust unit. ninja runs
  *
- *   run.ts rustc        <unit.json>   compile: a library, a proc-macro, a build script, the staticlib
+ *   run.ts rustc        <unit.json>   compile: a library, a proc-macro, a build script, the staticlib or bin root
  *   run.ts build-script <unit.json>   run a compiled build script, record its `cargo:` directives
  *
  * `<unit.json>` is the `UnitManifest` configure wrote (units.ts): argv, env, cwd, outputs. This process lives
@@ -13,6 +13,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -108,7 +109,9 @@ function rustcInvocation(unit: RustcUnitManifest): { argv: string[]; env: Record
   for (const dep of unit.depBuildScriptOutputs) for (const s of readScriptOutput(dep).linkSearch) args.push("-L", s);
   if (own !== undefined) {
     if (unit.kind !== "build-script") for (const l of own.linkLibs) args.push("-l", l);
-    for (const [selector, arg] of own.linkArgs) if (selector === "all") args.push("-C", `link-arg=${arg}`);
+    for (const [selector, arg] of own.linkArgs) {
+      if (unit.linkArgSelectors.includes(selector)) args.push("-C", `link-arg=${arg}`);
+    }
     for (const c of own.cfgs) args.push("--cfg", c);
     for (const c of own.checkCfgs) args.push("--check-cfg", c);
   }
@@ -149,6 +152,12 @@ function runRustc(unit: RustcUnitManifest): void {
   const finish = (status: number): never => {
     if (status === 0) {
       stampOutput(unit.output);
+      // A bin is also wanted under its target's name, where its user looks for it (cargo "uplifts" it the same way).
+      if (unit.binDestination !== undefined) {
+        mkdirSync(dirname(unit.binDestination), { recursive: true });
+        copyFileSync(unit.output, unit.binDestination);
+        stampOutput(unit.binDestination);
+      }
       writeDepfile(unit);
     }
     process.exit(status);

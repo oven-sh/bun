@@ -49,7 +49,7 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
   // codegen, esbuild, bun_install + codegen/stamps dir stamps
   registerCodegenRules(n, cfg);
 
-  // rust_plan, rust_rustc, rust_build_script, rust_shim
+  // rust_plan, rust_rustc, rust_build_script
   registerRustRules(n, cfg);
 
   // host_tool_cc (darwin cross), shim_crt_decompress (musl + rust-lld)

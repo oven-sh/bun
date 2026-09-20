@@ -125,7 +125,7 @@ export interface ManifestLints {
   checkCfg: string[];
 }
 
-/** What configure asks the planner for: `rust/plan.input.json`, the plan edge's input (rust/emit.ts). */
+/** What configure asks the planner for: `<graph dir>/plan.input.json`, the plan edge's input (rust/emit.ts). */
 export interface PlanInput {
   cwd: string;
   cargo: string;
@@ -159,22 +159,23 @@ export interface RustPlan {
 
 export const PLAN_VERSION = 2;
 
-export function planPath(buildDir: string): string {
-  return join(buildDir, "rust", "plan.json");
+/** `dir`: the graph's directory under the build directory — `rust/` for bun_runtime, `rust-shim/` for the Windows shim. */
+export function planPath(dir: string): string {
+  return join(dir, "plan.json");
 }
 
-export function planInputPath(buildDir: string): string {
-  return join(buildDir, "rust", "plan.input.json");
+export function planInputPath(dir: string): string {
+  return join(dir, "plan.input.json");
 }
 
 /**
- * The plan for this build directory, or undefined when there is none to build from: before the plan edge has run
+ * The plan in this graph directory, or undefined when there is none to build from: before the plan edge has run
  * (first configure of a fresh tree), or when the one on disk was made by an older generator or for different cargo
  * arguments (profile/ASAN/LTO toggles change the graph). In every such case configure emits just the plan edge,
  * ninja runs it, and the reconfigure it triggers picks the fresh plan up.
  */
-export function readPlan(buildDir: string, input: PlanInput): RustPlan | undefined {
-  const path = planPath(buildDir);
+export function readPlan(dir: string, input: PlanInput): RustPlan | undefined {
+  const path = planPath(dir);
   if (!existsSync(path)) return undefined;
   let plan: RustPlan | undefined;
   try {

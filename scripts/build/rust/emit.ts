@@ -8,6 +8,7 @@
  *   build-script      rust_rustc → build_script_build-<hash>
  *   build-script-run  rust_build_script → output.json (restat)
  *   staticlib (root)  rust_rustc → libbun_runtime.a
+ *   bin (root)        rust_rustc → <crate>.exe + its copy under the target's name (the Windows shim)
  *
  * Every edge's command is `run.ts <mode> <unit.json>`; the unit manifest
  * (argv/env/cwd) is written at configure with writeIfChanged and is an input
@@ -15,7 +16,7 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import type { Config } from "../config.ts";
 import { writeIfChanged } from "../fs.ts";
 import type { Ninja } from "../ninja.ts";
@@ -73,15 +74,15 @@ export interface RustPlanEdgeInputs {
 }
 
 /**
- * The edge producing `<buildDir>/rust/plan.json`. What to plan (cargo args/env, rustc, triple, rustflags) goes into
- * `rust/plan.input.json` at configure — writeIfChanged, an input of the edge, so a changed argument re-plans.
- * Returns the plan's path (an input of build.ninja's regen edge).
+ * The edge producing `<dir>/plan.json` for one graph (`dir`: its directory under the build directory). What to plan
+ * (cargo args/env, rustc, triple, rustflags) goes into `<dir>/plan.input.json` at configure — writeIfChanged, an
+ * input of the edge, so a changed argument re-plans. Returns the plan's path (an input of build.ninja's regen edge).
  */
-export function emitRustPlan(n: Ninja, cfg: Config, p: RustPlanEdgeInputs): string {
+export function emitRustPlan(n: Ninja, cfg: Config, dir: string, p: RustPlanEdgeInputs): string {
   const hostWin = cfg.host.os === "windows";
-  const out = planPath(cfg.buildDir);
-  const input = planInputPath(cfg.buildDir);
-  mkdirSync(join(cfg.buildDir, "rust"), { recursive: true });
+  const out = planPath(dir);
+  const input = planInputPath(dir);
+  mkdirSync(dir, { recursive: true });
   writeIfChanged(input, JSON.stringify(p.input, null, 2) + "\n");
   n.build({
     outputs: [out],
@@ -95,28 +96,26 @@ export function emitRustPlan(n: Ninja, cfg: Config, p: RustPlanEdgeInputs): stri
 
 export interface RustEdgeInputs {
   /**
-   * What must exist before a workspace crate compiles: generated `.rs` files the crates `include!` and the codegen
-   * phony. Order-only, through one `rust-codegen-ready` phony: rustc's dep-info names every `include!`d file, so from
-   * the second build on exactly the crate that includes a changed file rebuilds.
+   * What must exist before a workspace crate of this graph compiles (the `rust-codegen-ready` phony: generated
+   * `.rs` files the crates `include!`). Order-only: rustc's dep-info names every `include!`d file, so from the
+   * second build on exactly the crate that includes a changed file rebuilds.
    */
-  codegenOrderOnly: string[];
+  localOrderOnly: string[];
   /**
-   * Stamps of edges whose real product reaches a crate as an undeclared side effect, by the crate that reads it
-   * (the Windows shim: bun_install `include_bytes!` the copied .exe, of which only the stamp is a declared
-   * output). Implicit inputs of that crate: ninja stats the .exe before the edge producing it runs, so the
-   * crate's dep-info entry alone would lag one build behind.
+   * Build products a package reads that another edge makes, by package name (the Windows shim's executable, which
+   * bun_install `include_bytes!`). Implicit inputs of every edge of the package, its build script's run included:
+   * the dep-info entry alone would let the first build compile the crate before the file exists.
    */
   implicitInputs: Record<string, string[]>;
   /** Fetch stamps of vendored crates: order-only for everything (the plan already required them). */
   vendorStamps: string[];
 }
 
-/** Emit every unit's edges and write the unit manifests. Returns the root staticlib path. */
-export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeInputs): string {
+/** Emit every unit's edges of one graph and write the unit manifests. */
+export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeInputs): void {
   const { cfg, graph } = ctx;
   const hostWin = cfg.host.os === "windows";
-  mkdirSync(join(graph.dir, "units"), { recursive: true });
-  n.phony("rust-codegen-ready", inputs.codegenOrderOnly);
+  mkdirSync(resolve(graph.dir, "units"), { recursive: true });
 
   for (const unit of graph.units) {
     const manifest = unitManifest(ctx, unit);
@@ -139,8 +138,9 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
             ...(manifest.buildScriptOutput !== undefined ? [manifest.buildScriptOutput] : []),
             ...manifest.depBuildScriptOutputs,
           ];
-    const common = [...scriptOutputs, ...runScriptDeps, ...(inputs.implicitInputs[unit.crateName] ?? [])];
-    const orderOnly = [...inputs.vendorStamps, ...(unit.isLocal ? ["rust-codegen-ready"] : [])];
+    const packageInputs = inputs.implicitInputs[unit.pkg.name] ?? [];
+    const common = [...scriptOutputs, ...runScriptDeps, ...packageInputs];
+    const orderOnly = [...inputs.vendorStamps, ...(unit.isLocal ? inputs.localOrderOnly : [])];
 
     switch (manifest.kind) {
       case "lib":
@@ -162,14 +162,15 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
         break;
       case "proc-macro":
       case "build-script":
-      case "staticlib": {
+      case "staticlib":
+      case "bin": {
         // These link, so beyond the direct `--extern`ed rlibs they read every transitive rlib through `-L`
         // (cargo: a linking unit gets Artifact::All edges to all of them). A direct dependency's rlib being done
         // says nothing about *its* dependencies' rlibs: it was compiled against their metadata rlibs.
         const all = transitiveLinkInputs(unit).map(u => u.output);
-        const what = manifest.kind === "staticlib" ? `→ ${cfg.libPrefix}${unit.crateName}${cfg.libSuffix}` : "";
+        const what = manifest.kind === "staticlib" || manifest.kind === "bin" ? `→ ${basename(unit.output)}` : "";
         n.build({
-          outputs: [unit.output],
+          outputs: [unit.output, ...(manifest.binDestination !== undefined ? [manifest.binDestination] : [])],
           rule: "rust_rustc",
           inputs: [],
           implicitInputs: [...new Set([...externs, ...all, unit.manifestPath, ...common])],
@@ -188,6 +189,7 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
             ...manifest.script.linksDeps.map(d => d.output),
             unit.manifestPath,
             ...runScriptDeps,
+            ...packageInputs,
           ],
           orderOnlyInputs: orderOnly,
           vars,
@@ -195,7 +197,4 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
         break;
     }
   }
-
-  n.phony("bun-rust", [graph.root.output]);
-  return graph.root.output;
 }

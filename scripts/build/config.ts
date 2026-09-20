@@ -1303,7 +1303,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : undefined,
     rustSysroot: toolchain.rustSysroot,
     rustHostTriple: toolchain.rustHostTriple,
-    // Cargo-driven links (the bun_shim_impl.exe edge, any future target
+    // rustc-driven links (the .bin/ shim's executable, any future target
     // cdylib) must keep using a real lld-link/link.exe, not the gcc-ld/
     // lld-link wrapper `ld` may have been swapped to above: rustc treats a
     // linker living in its own sysroot's gcc-ld/ as the bundled rust-lld and

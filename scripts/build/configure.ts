@@ -31,7 +31,7 @@ import { ensureNinja, ninjaIfPresent } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
-import { planPath } from "./rust/plan.ts";
+import { rustPlanFiles } from "./rust.ts";
 import { quote } from "./shell.ts";
 import {
   checkImageTools,
@@ -237,14 +237,14 @@ function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
     outputs: [resolve(cfg.buildDir, "build.ninja")],
     rule: "regen",
     inputs: [configFile],
-    // rust/plan.json: the per-crate Rust edges are generated from it (rust.ts), so a changed plan — new
-    // lockfile, manifest, toolchain — must reconfigure. It is a build output; when it is dirty ninja builds
-    // it first, reruns this edge, and restarts with the new manifest.
-    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? [planPath(cfg.buildDir)] : [])],
+    // The Rust plans: the per-crate edges are generated from them (rust.ts), so a changed plan — new lockfile,
+    // manifest, toolchain — must reconfigure. They are build outputs; when one is dirty ninja builds it first,
+    // reruns this edge, and restarts with the new manifest.
+    implicitInputs: [...configureInputs(cfg.cwd), ...(buildsRust(cfg) ? rustPlanFiles(cfg) : [])],
   });
 }
 
-/** Whether this graph compiles bun's Rust crates (and therefore has the `rust/plan.json` edge emitRust registers). */
+/** Whether this graph compiles bun's Rust crates (and therefore has the plan edges emitRust registers). */
 function buildsRust(cfg: Config): boolean {
   return cfg.mode !== "cpp-only" && cfg.mode !== "link-only";
 }

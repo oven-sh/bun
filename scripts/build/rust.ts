@@ -18,6 +18,10 @@
  * toolchain changes) and `build.ninja` depends on it: the first configure of a fresh tree emits only
  * that edge, ninja runs it and reconfigures, and from then on the graph is per crate.
  *
+ * A Windows target has a second graph of the same kind, `rust/shim/`: the `.bin/` launcher
+ * (`src/install/windows-shim`), planned with its own profile, flags and `-Zbuild-std`, whose root is a
+ * `bin`. Its executable lands in the codegen directory, where `bun_install` embeds it from.
+ *
  * ## Why an `.a` and not a single `.o`
  *
  * A single `.o` would need either full LTO (`-C lto=fat --emit=obj`, which
@@ -32,17 +36,15 @@
  * the dynamic-list / NAPI surface (no inbound static ref) are retained too.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeCpuTargetFlags } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
-import { type PlanInput, planEnv, readPlan } from "./rust/plan.ts";
+import { type PlanInput, planEnv, planPath, readPlan } from "./rust/plan.ts";
 import { buildRustGraph } from "./rust/units.ts";
-import { quote, quoteArgs } from "./shell.ts";
-import { streamPath } from "./stream.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Target / profile mapping
@@ -170,24 +172,38 @@ function rustCpuTargetFlags(cfg: Config): string[] {
 }
 
 /**
- * Absolute source-tree path the Windows .bin/ shim PE is copied to, where
- * `bun_install`'s `include_bytes!("bun_shim_impl.exe")` reads it from. The
- * build product lands in `rust-target/<triple>/shim/`; it's copied here so
- * the embed path is a fixed relative-to-source string (no env-var plumbing).
- * Git-ignored; `src/install/build.rs` creates a 0-byte placeholder for bare
- * `cargo check` so the embed never sees ENOENT.
+ * The Windows .bin/ shim PE as `bun_install` embeds it:
+ * `include_bytes!(concat!(env!("BUN_CODEGEN_DIR"), "/bun-shim-impl.exe"))`, beside the other generated files the
+ * crates include. It is the shim graph's `bin` under its target's name (run.ts copies it there, as cargo would).
  */
-function windowsShimDestPath(cfg: Config): string {
-  return resolve(cfg.cwd, "src", "install", "windows-shim", "bun_shim_impl.exe");
+function windowsShimPath(cfg: Config): string {
+  return resolve(cfg.codegenDir, "bun-shim-impl.exe");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // Paths
 // ───────────────────────────────────────────────────────────────────────────
 
-/** cargo's `--target-dir`, `<buildDir>/rust-target`: only planning and the Windows shim build still run cargo. */
+/** cargo's `--target-dir`, `<buildDir>/rust-target`: only planning still runs cargo, and `rust:timings`. */
 function rustTargetDir(cfg: Config): string {
   return resolve(cfg.buildDir, "rust-target");
+}
+
+/**
+ * Each planned graph has a directory of its own under `<buildDir>/rust`: its plan, unit manifests and artifacts.
+ * bun_runtime's is that directory itself; the Windows shim's is `rust/shim`.
+ */
+function rustGraphDir(cfg: Config): string {
+  return resolve(cfg.buildDir, "rust");
+}
+
+function shimGraphDir(cfg: Config): string {
+  return resolve(cfg.buildDir, "rust", "shim");
+}
+
+/** The plans build.ninja is generated from: inputs of the regen edge (configure.ts). */
+export function rustPlanFiles(cfg: Config): string[] {
+  return [planPath(rustGraphDir(cfg)), ...(cfg.windows ? [planPath(shimGraphDir(cfg))] : [])];
 }
 
 /** Absolute path to `libbun_runtime.a` (or `bun_runtime.lib` on Windows): the staticlib root's output, `<buildDir>/rust/<triple>/` (rust/units.ts). */
@@ -200,50 +216,8 @@ export function rustLibPath(cfg: Config): string {
 // ───────────────────────────────────────────────────────────────────────────
 
 export function registerRustRules(n: Ninja, cfg: Config): void {
-  const hostWin = cfg.host.os === "windows";
-  const q = (p: string) => quote(p, hostWin);
-
   if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
-  const stream = `${cfg.jsRuntime} ${q(streamPath)} rust`;
   registerRustUnitRules(n, cfg);
-
-  // Windows .bin/ shim PE: cargo build → copy into the source tree for
-  // `include_bytes!`. One rule does both; cargo's own output path and the
-  // source-tree copy are undeclared side effects (see below for what $out is).
-  //
-  // Copy is *content-conditional* (`fc /b` / `cmp -s` returns 0 iff bytes
-  // match): any `.rs` edit re-invokes this rule (it shares `rustSources`
-  // with the main build), cargo no-ops, and a blind copy would still bump
-  // the destination's mtime → `bun_install`'s `include_bytes!` dep-info sees
-  // a change → spurious recompile of `bun_install` + downstream on every
-  // build. Skipping the copy when bytes match keeps its mtime stable.
-  //
-  // The declared output ($out) is a per-build-dir stamp, NOT the source-tree
-  // exe: the exe path is shared by every windows arch/profile (the
-  // `include_bytes!` path is fixed), so if it were the output, building x64
-  // then arm64 in sibling build dirs would leave the arm64 dir believing the
-  // (x64) exe is up to date and embed the wrong-arch shim. With the stamp as
-  // output and the shared exe as an implicit *input*, a sibling build dir
-  // overwriting the exe makes this dir's stamp stale → the shim is rebuilt
-  // for the right arch on the next build here.
-  //
-  // Registered for windows *targets* only; the shell dialect follows the
-  // HOST (cmd.exe natively, sh when cross-compiling from linux/macOS).
-  if (cfg.windows) {
-    n.rule("rust_shim", {
-      command: hostWin
-        ? `cmd /c "${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
-          `( ( fc /b $shim_src $shim_dest >nul 2>&1 && if not exist $out type nul > $out ) || ` +
-          `( copy /Y /B $shim_src $shim_dest >nul && type nul > $out ) )"`
-        : `${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
-          `if cmp -s $shim_src $shim_dest 2>/dev/null; then test -e $out || touch $out; else cp $shim_src $shim_dest && touch $out; fi`,
-      description: "cargo bun_shim_impl → $shim_dest",
-      pool: "console",
-      // The edge reruns on any .rs change (cargo decides what that means for the shim); the stamp moves only when
-      // the exe was replaced, so with restat the crate that embeds it rebuilds only then.
-      restat: true,
-    });
-  }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -264,8 +238,8 @@ export interface RustBuildInputs {
   codegenOrderOnly: string[];
   /**
    * All `*.rs` source files + workspace `Cargo.toml`/`Cargo.lock` (globbed at configure time). The manifests
-   * and lockfile are inputs of the plan edge (they are what changes the crate graph); the `.rs` list only feeds
-   * the Windows shim's cargo edge (per-crate rustc edges track their sources through dep-info).
+   * and lockfile are inputs of the plan edges (they are what changes the crate graph); the `.rs` files are
+   * not inputs of anything here: per-crate rustc edges track their sources through dep-info.
    */
   rustSources: string[];
   /**
@@ -667,187 +641,170 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
 }
 
 /**
- * Emit the Rust step: the Windows shim, the plan edge, and — once a plan exists — one edge per unit. Returns the
- * output staticlib path as a one-element array so the link step can spread it alongside the C++ object list.
+ * What cargo is asked to plan for the Windows .bin/ shim: `src/install/windows-shim` as a freestanding release PE,
+ * which `bun_install` embeds. Without it `bun install` would write empty `.exe`s into `node_modules/.bin/`.
+ *
+ * Always `--profile shim` (workspace `[profile.shim]`: panic=abort, opt-level=z, lto, codegen-units=1, strip)
+ * regardless of bun's own profile — a debug bun should still write release shims (matches Zig's unconditional
+ * `.ReleaseFast`).
+ *
+ * `-Zbuild-std=core,compiler_builtins` rebuilds the sysroot for the freestanding `#![no_std]` crate so LTO can
+ * inline across `core`. Nightly + `rust-src` are guaranteed by `rust-toolchain.toml`.
+ *
+ * None of the main build's rustflags: the shim has its own panic strategy (abort) so `-Zsanitizer=address` (which
+ * assumes unwind) and `-Clinker-plugin-lto` (the PE is final-linked by rustc, not deferred to bun's lld link) don't
+ * apply, and `-Cforce-frame-pointers` / `-Ctarget-cpu` cost size we don't want. A freestanding flag set instead:
+ *   - `-Cpanic=immediate-abort` — every panic call (incl. the core::fmt-carrying assert/unreachable/unwrap, slice
+ *                                 indexing) compiles to a bare trap with no `Arguments` payload; that machinery
+ *                                 is otherwise the bulk of `.text`.
+ *   - `/ENTRY:shim_main`        — bypass the CRT (`mainCRTStartup`) entirely; the launcher reads argv from
+ *                                 TEB→PEB itself.
+ *   - `/SUBSYSTEM:CONSOLE`      — link.exe can't infer subsystem without a recognised entry symbol.
+ *   - `/NODEFAULTLIB`           — don't pull msvcrt/vcruntime/ucrt; the only imports are kernel32 + ntdll (named
+ *                                 via `#[link]` on the externs).
+ *   - `/Brepro`                 — the link time and the PDB signature in the PE headers come from the contents
+ *                                 instead of the clock, so the same inputs give the same bytes: bun_install
+ *                                 embeds this file, and a relink must not look like a change.
+ *
+ * (`-Cforce-unwind-tables=no` would drop `.pdata`, but the `*-windows-msvc` target spec sets
+ * `requires_uwtable: true` so rustc rejects it. The section is ~3 KiB; not worth a custom target JSON.)
+ */
+function shimCargoInvocation(
+  cfg: Config,
+  main: { env: Record<string, string>; targetDir: string; triple: string },
+): { args: string[]; env: Record<string, string>; rustflags: string[] } {
+  const args = [
+    "-p",
+    "bun_shim_impl",
+    "--bin",
+    "bun-shim-impl",
+    "--features",
+    "shim_standalone",
+    "--target-dir",
+    main.targetDir,
+    "--target",
+    main.triple,
+    "--profile",
+    "shim",
+    "--locked",
+    "-Zbuild-std=core,compiler_builtins",
+    "-Zbuild-std-features=compiler-builtins-mem",
+  ];
+  const rustflags = [
+    "-Zunstable-options",
+    "-Cpanic=immediate-abort",
+    "-Clink-arg=/ENTRY:shim_main",
+    "-Clink-arg=/SUBSYSTEM:CONSOLE",
+    "-Clink-arg=/NODEFAULTLIB",
+    "-Clink-arg=/Brepro",
+    "-Clink-arg=kernel32.lib",
+    "-Clink-arg=ntdll.lib",
+    // Cross-compiling from a unix host: this is the only rustc-driven link of a *target* artifact, and the linker
+    // is lld-link (no MSVC install), so point it at the xwin splat for the kernel32/ntdll import libs.
+    ...(cfg.winsysroot !== undefined ? [`-Clink-arg=/winsysroot:${cfg.winsysroot}`] : []),
+  ];
+  return { args, env: { ...main.env, CARGO_ENCODED_RUSTFLAGS: rustflags.join("\x1f") }, rustflags };
+}
+
+/**
+ * Emit the Rust step: for bun_runtime — and on Windows targets the .bin/ shim — a plan edge and, once the plans
+ * exist, one edge per unit. Returns the output staticlib path as a one-element array so the link step can spread it
+ * alongside the C++ object list.
  */
 export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
   assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
     hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
   });
-
-  n.comment("─── Rust ───");
-  n.blank();
-
-  const hostWin = cfg.host.os === "windows";
-  const lib = rustLibPath(cfg);
-  const { args, env, unitEnv, rustflags, linker, targetDir, triple } = cargoBuildInvocation(cfg);
-
-  // ─── Windows .bin/ shim PE ───
-  // Builds `src/install/windows-shim/bun_shim_impl.rs` as a freestanding release PE and wires the artifact into `include_bytes!`. Without this step `include_bytes!` embeds the
-  // 0-byte placeholder and `bun install` writes empty `.exe`s into
-  // `node_modules/.bin/`.
-  //
-  // Its stamp is an implicit input of the workspace crate edges (emit.ts) so the real PE is on disk — and current —
-  // when `bun_install` compiles. Same env as the main build (toolchain forwarding, CARGO_HOME) but no codegen dep:
-  // the shim crate's graph is bun_core/bun_sys/bun_string only.
-  const shimInputs: string[] = [];
-  if (cfg.windows) {
-    const shimDest = windowsShimDestPath(cfg);
-    // Always `--profile shim` (workspace `[profile.shim]`: panic=abort,
-    // opt-level=z, lto, codegen-units=1, strip) regardless of bun's own
-    // profile — a debug bun should still write release shims (matches Zig's
-    // unconditional `.ReleaseFast`).
-    //
-    // `-Zbuild-std=core,compiler_builtins` rebuilds the sysroot for the
-    // freestanding `#![no_std]` crate so LTO can inline across `core`;
-    // `panic_immediate_abort` makes every `panic!`/`unreachable!`/`assert!`
-    // (incl. those buried in `core::fmt`, slice indexing, `Option::unwrap`)
-    // compile to a bare `ud2`/`brk` with no `core::fmt::Arguments` payload —
-    // that machinery is otherwise the bulk of `.text`. Nightly + `rust-src`
-    // are guaranteed by `rust-toolchain.toml`.
-    const shimArgs: string[] = [
-      "-p",
-      "bun_shim_impl",
-      "--bin",
-      "bun_shim_impl",
-      "--features",
-      "shim_standalone",
-      "--target-dir",
-      targetDir,
-      "--target",
-      triple,
-      "--profile",
-      "shim",
-      "--locked",
-      "-Zbuild-std=core,compiler_builtins",
-      "-Zbuild-std-features=compiler-builtins-mem",
-    ];
-    const shimSrc = resolve(targetDir, triple, "shim", "bun_shim_impl.exe");
-    // Same env minus the main build's CARGO_ENCODED_RUSTFLAGS — the shim has
-    // its own panic strategy (abort) so `-Zsanitizer=address` (which assumes
-    // unwind) and `-Clinker-plugin-lto` (the PE is final-linked here, not
-    // deferred to bun's lld link) don't apply, and `-Cforce-frame-pointers` /
-    // `-Ctarget-cpu` cost size we don't want. Replace with a freestanding
-    // flag set:
-    //   - `/ENTRY:shim_main`      — bypass the CRT (`mainCRTStartup`) entirely;
-    //                               the launcher reads argv from TEB→PEB itself.
-    //   - `/SUBSYSTEM:CONSOLE`    — link.exe can't infer subsystem without a
-    //                               recognised entry symbol.
-    //   - `/NODEFAULTLIB`         — don't pull msvcrt/vcruntime/ucrt; the only
-    //                               imports are kernel32 + ntdll (named via
-    //                               `#[link]` on the externs).
-    //
-    // (`-Cforce-unwind-tables=no` would drop `.pdata`, but the
-    // `*-windows-msvc` target spec sets `requires_uwtable: true` so rustc
-    // rejects it. The section is ~3 KiB; not worth a custom target JSON.)
-    const { CARGO_ENCODED_RUSTFLAGS: _, ...shimEnv } = env;
-    shimEnv.CARGO_ENCODED_RUSTFLAGS = [
-      // `panic = "immediate-abort"` is the new (nightly ≥ 2025-12) spelling of
-      // the old `-Zbuild-std-features=panic_immediate_abort`: every panic call
-      // (incl. core::fmt-carrying assert/unreachable/unwrap) compiles to a
-      // bare trap with no `Arguments` payload.
-      "-Zunstable-options",
-      "-Cpanic=immediate-abort",
-      "-Clink-arg=/ENTRY:shim_main",
-      "-Clink-arg=/SUBSYSTEM:CONSOLE",
-      "-Clink-arg=/NODEFAULTLIB",
-      "-Clink-arg=kernel32.lib",
-      "-Clink-arg=ntdll.lib",
-      // Cross-compiling from a unix host: this is the only cargo-driven link
-      // of a *target* artifact, and the linker is lld-link (no MSVC install),
-      // so point it at the xwin splat for the kernel32/ntdll import libs.
-      ...(cfg.winsysroot !== undefined ? [`-Clink-arg=/winsysroot:${cfg.winsysroot}`] : []),
-    ].join("\x1f");
-    // Declared output = per-build-dir stamp; the shared source-tree exe is an
-    // implicit INPUT (see the rust_shim rule comment for why). The exe must
-    // exist before ninja evaluates the graph — pre-create an empty
-    // placeholder the same way `src/install/build.rs` does for bare
-    // `cargo check`, so a fresh checkout doesn't error on a missing input.
-    if (!existsSync(shimDest)) {
-      mkdirSync(dirname(shimDest), { recursive: true });
-      writeFileSync(shimDest, "");
-    }
-    const shimStamp = resolve(targetDir, triple, "shim", "bun_shim_impl.stamp");
-    n.build({
-      outputs: [shimStamp],
-      rule: "rust_shim",
-      inputs: [],
-      // Same staleness signal as the main build (any .rs / Cargo.toml change
-      // re-invokes; cargo's own fingerprinting decides what actually
-      // recompiles). vendorStamps order the lol-html fetch first — the shim
-      // crate doesn't depend on lol-html, but cargo refuses to load the
-      // workspace manifest if any path-dep's `Cargo.toml` is missing.
-      // shimDest: rebuilt when a sibling build dir (other arch/profile)
-      // overwrote the shared exe.
-      implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.vendorStamps, shimDest],
-      vars: {
-        cwd: cfg.cwd,
-        args: quoteArgs(shimArgs, hostWin),
-        shim_src: quote(shimSrc, hostWin),
-        shim_dest: quote(shimDest, hostWin),
-        env: Object.entries(shimEnv)
-          .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
-          .join(" "),
-      },
-    });
-    n.phony("bun-shim", [shimStamp]);
-    shimInputs.push(shimStamp);
-  }
-
-  // ─── Plan ───
-  // cargo resolves the unit graph for exactly `args`/`env`; rerun when the lockfile, any workspace manifest (from
-  // the source glob), the toolchain pin, or a vendored path dependency's pinned commit (its fetch stamp — those
-  // manifests live under vendor/, outside the glob) changes, or when what is asked for does (plan.input.json).
   assert(
     cfg.rustc !== undefined && cfg.rustSysroot !== undefined && cfg.rustHostTriple !== undefined,
     "no rustc found for the pinned toolchain",
   );
+  const { cargo, rustc } = cfg;
+
+  n.comment("─── Rust ───");
+  n.blank();
+
+  const lib = rustLibPath(cfg);
+  const { args, env, unitEnv, rustflags, linker, targetDir, triple } = cargoBuildInvocation(cfg);
+
+  // ─── Plans ───
+  // cargo resolves a unit graph for exactly the arguments and environment it is given; rerun when the lockfile, any
+  // workspace manifest (from the source glob), the toolchain pin, or a vendored path dependency's pinned commit (its
+  // fetch stamp — those manifests live under vendor/, outside the glob) changes, or when what is asked for does
+  // (plan.input.json). The vendored crates also have to be on disk: cargo refuses to load the workspace manifest if
+  // any path dependency's `Cargo.toml` is missing.
   const manifests = inputs.rustSources.filter(p => p.endsWith("Cargo.toml") || p.endsWith("Cargo.lock"));
-  const planInput: PlanInput = {
-    cwd: cfg.cwd,
-    cargo: cfg.cargo,
-    rustc: cfg.rustc,
-    triple,
-    rustflags,
-    args,
-    env: planEnv(env),
+  const planEdgeInputs = [cargo, rustc, ...manifests, resolve(cfg.cwd, "rust-toolchain.toml"), ...inputs.vendorStamps];
+  const planned = (dir: string, what: { args: string[]; env: Record<string, string>; rustflags: string[] }) => {
+    const input: PlanInput = {
+      cwd: cfg.cwd,
+      cargo,
+      rustc,
+      triple,
+      rustflags: what.rustflags,
+      args: what.args,
+      env: planEnv(what.env),
+    };
+    return {
+      dir,
+      rustflags: what.rustflags,
+      file: emitRustPlan(n, cfg, dir, { input, inputs: planEdgeInputs }),
+      plan: readPlan(dir, input),
+    };
   };
-  const planFile = emitRustPlan(n, cfg, {
-    input: planInput,
-    inputs: [cfg.cargo, cfg.rustc, ...manifests, resolve(cfg.cwd, "rust-toolchain.toml"), ...inputs.vendorStamps],
-  });
-  n.phony("rust-plan", [planFile]);
+  const runtime = planned(rustGraphDir(cfg), { args, env, rustflags });
+  const shim = cfg.windows
+    ? planned(shimGraphDir(cfg), shimCargoInvocation(cfg, { env, targetDir, triple }))
+    : undefined;
+  const planFiles = [runtime.file, ...(shim !== undefined ? [shim.file] : [])];
+  n.phony("rust-plan", planFiles);
 
   // ─── Units ───
-  // On a fresh tree there is no plan yet: build.ninja depends on plan.json (configure.ts), so ninja produces it,
-  // reconfigures, and restarts with the per-crate graph. Until then `bun-rust` builds just the plan.
-  const plan = readPlan(cfg.buildDir, planInput);
-  if (plan === undefined) {
-    n.phony("bun-rust", [planFile]);
+  // On a fresh tree there is no plan yet: build.ninja depends on the plans (configure.ts), so ninja produces them,
+  // reconfigures, and restarts with the per-crate graph. Until then `bun-rust` builds just the plans.
+  if (runtime.plan === undefined || (shim !== undefined && shim.plan === undefined)) {
+    n.phony("bun-rust", planFiles);
     n.blank();
     return [lib];
   }
-  const graph = buildRustGraph(cfg, plan, rustflags);
-  assert(graph.root.output === lib, `rust plan root writes ${graph.root.output}, expected ${lib}`);
   const toolchainBin = (tool: string) => join(cfg.rustSysroot!, "bin", `${tool}${cfg.host.exeSuffix}`);
+  const context = {
+    cfg,
+    baseEnv: unitEnv,
+    linker: { host: hostLinker(cfg, triple, linker), target: linker },
+    // cargo exports CARGO as the toolchain's own binary, not the rustup proxy that found it.
+    cargo: existsSync(toolchainBin("cargo")) ? toolchainBin("cargo") : cargo,
+    rustdoc: toolchainBin("rustdoc"),
+  };
+  n.phony("rust-codegen-ready", inputs.codegenOrderOnly);
+
+  // The shim first: bun_install embeds its executable, so every edge of that package waits for it. Its crates
+  // (bun_windows_sys, bun_opaque and the shim itself) include nothing generated, so they wait for no codegen.
+  const packageInputs: Record<string, string[]> = {};
+  if (shim?.plan !== undefined) {
+    const graph = buildRustGraph(shim.plan, shim.rustflags, shim.dir);
+    assert(
+      graph.root.kind === "bin",
+      `shim plan root ${graph.root.crateName} is a ${graph.root.kind}, expected the bin`,
+    );
+    const exe = windowsShimPath(cfg);
+    emitRustUnits(
+      n,
+      { ...context, graph, targetRustflags: shim.rustflags, binDestination: exe },
+      { localOrderOnly: [], implicitInputs: {}, vendorStamps: inputs.vendorStamps },
+    );
+    n.phony("bun-shim", [exe]);
+    packageInputs.bun_install = [exe];
+  }
+
+  const graph = buildRustGraph(runtime.plan, runtime.rustflags, runtime.dir);
+  assert(graph.root.output === lib, `rust plan root writes ${graph.root.output}, expected ${lib}`);
   emitRustUnits(
     n,
-    {
-      cfg,
-      graph,
-      targetRustflags: rustflags,
-      baseEnv: unitEnv,
-      linker: { host: hostLinker(cfg, triple, linker), target: linker },
-      // cargo exports CARGO as the toolchain's own binary, not the rustup proxy that found it.
-      cargo: existsSync(toolchainBin("cargo")) ? toolchainBin("cargo") : cfg.cargo,
-      rustdoc: toolchainBin("rustdoc"),
-    },
-    {
-      codegenOrderOnly: inputs.codegenOrderOnly,
-      implicitInputs: { bun_install: shimInputs },
-      vendorStamps: inputs.vendorStamps,
-    },
+    { ...context, graph, targetRustflags: runtime.rustflags },
+    { localOrderOnly: ["rust-codegen-ready"], implicitInputs: packageInputs, vendorStamps: inputs.vendorStamps },
   );
+  n.phony("bun-rust", [lib]);
   n.blank();
   return [lib];
 }

@@ -163,6 +163,14 @@ describe.concurrent("request handlers run to completion before the callbacks the
   });
 });
 
+const upgradeRequest =
+  "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+  "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+// A frame masked with a zero key. 0x81 is a whole text message, 0x01 and 0x80 are the first and
+// the last fragment of one, 0x89 is a ping.
+const frame = (first: number, payload: string) =>
+  Buffer.concat([Buffer.from([first, 0x80 | payload.length, 0, 0, 0, 0]), Buffer.from(payload)]);
+
 // node:http stops reading a connection while response bytes are unsent, and parks the requests it
 // already received until they drain (flood prevention). A WebSocket upgrade takes the socket out
 // of HTTP with that pause still on. Only HTTP lifted it, so the WebSocket never read a frame.
@@ -170,13 +178,6 @@ describe.concurrent.each(["http", "https"])(
   "a WebSocket upgrade on an %s connection with unsent response bytes",
   scheme => {
     const get = (path: string) => `GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`;
-    const upgradeRequest =
-      "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
-      "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
-    // A frame masked with a zero key. 0x81 is a whole text message, 0x01 and 0x80 are the first
-    // and the last fragment of one.
-    const frame = (first: number, payload: string) =>
-      Buffer.concat([Buffer.from([first, 0x80 | payload.length, 0, 0, 0, 0]), Buffer.from(payload)]);
 
     // Sends `pipelined` in one write and `afterSwitch` once the 101 is in. Resolves with the message
     // that the WebSocket server received.
@@ -250,13 +251,6 @@ describe.concurrent.each(["http", "https"])(
 // request then ran the HTTP read machinery over the WebSocket's own state: it cleared the
 // length of the buffered fragment, so the message lost everything before the last fragment.
 test("resuming an earlier request after a WebSocket upgrade leaves the WebSocket alone", async () => {
-  // Masked with a zero key. 0x01 is the first fragment, 0x80 the last, 0x89 a ping.
-  const frame = (first: number, payload: string) =>
-    Buffer.concat([Buffer.from([first, 0x80 | payload.length, 0, 0, 0, 0]), Buffer.from(payload)]);
-  const upgradeRequest =
-    "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
-    "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
-
   const message = Promise.withResolvers<string>();
   const pinged = Promise.withResolvers<void>();
   const answered = Promise.withResolvers<void>();

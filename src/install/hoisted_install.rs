@@ -121,7 +121,7 @@ pub(crate) fn install_hoisted_packages(
 
     {
         let buffers = &this.lockfile.buffers;
-        pruned_workspaces::exit_if_install_links_missing(
+        pruned_workspaces::report_links_to_pruned_workspaces(
             this,
             &this.lockfile,
             &mut buffers

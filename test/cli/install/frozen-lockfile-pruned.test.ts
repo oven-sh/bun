@@ -100,7 +100,8 @@ const survivorError = (dependent: string, ws = "other") =>
   `workspace "${dependent}" depends on workspace "${ws}" (packages/${ws}), which is listed in bun.lock but not on disk`;
 const rootSurvivorError =
   'the root package depends on workspace "other" (packages/other), which is listed in bun.lock but not on disk';
-const survivorNote = "note: a pruned checkout must keep every workspace that its remaining workspaces depend on";
+const survivorNote =
+  "note: a pruned checkout must keep the package.json of each workspace that an installed package depends on";
 
 // peer-deps-fixed@1.0.0 (peer) and one-range-dep@1.0.0 (dependency) ask for no-deps@^1.0.0. The workspace packages/no-deps
 // (1.5.0) satisfies it, so bun.lock binds that edge to the workspace. The workspace's own a-dep shows whether it was installed.
@@ -112,6 +113,8 @@ const workspaceLinkedTree = (appDependencies: Record<string, string>): Tree => (
   },
 });
 const noDepsPrunedNote = 'note: skipped 1 workspace listed in bun.lock but not on disk: "no-deps"\n';
+const noLinkNote = (dependent: string) =>
+  `note: package "${dependent}" is installed without its link to workspace "no-deps" (packages/no-deps)\n`;
 
 const catalogTree: Tree = {
   root: { name: "mono", workspaces: { packages: ["packages/*"], catalog: { "a-dep": "1.0.1", "left-pad": "1.0.0" } } },
@@ -683,7 +686,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
       const { stderr } = await frozen(packageDir, linker, 0);
 
-      expect(stderr).toBe(noDepsPrunedNote);
+      expect(stderr).toBe(noDepsPrunedNote + noLinkNote("peer-deps-fixed@1.0.0"));
       expect(await lockText(packageDir)).toBe(full);
       await expectNoLink(packageDir);
     });
@@ -696,7 +699,7 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
       const { stderr } = await frozen(packageDir, linker, 0, ["install", "--frozen-lockfile", "--ignore-scripts"]);
 
-      expect(stderr).toBe(noDepsPrunedNote);
+      expect(stderr).toBe(noDepsPrunedNote + noLinkNote("peer-deps-fixed@1.0.0"));
       expect(await lockText(packageDir)).toBe(full);
       await expectNoLink(packageDir);
     });
@@ -726,7 +729,9 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
     const { stderr } = await frozen(packageDir, linker, 0);
 
-    expect(stderr).toBe(noDepsPrunedNote);
+    expect(stderr).toStartWith(noDepsPrunedNote + 'note: package "opt@');
+    expect(stderr).toEndWith('" is installed without its link to workspace "no-deps" (packages/no-deps)\n');
+    expect(stderr.split("\n")).toHaveLength(3);
     expect(await lockText(packageDir)).toBe(full);
     expect(await placedNames(packageDir, linker)).toEqual(
       linker === "hoisted" ? ["app", "opt"] : [expect.stringMatching(/^opt@/)],
@@ -784,7 +789,8 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
     const { stderr } = await frozen(packageDir, linker, 0);
 
-    expect(stderr).toBe(noDepsPrunedNote);
+    // The isolated linker links the parent's copy for this peer on a full checkout too, so it leaves nothing out.
+    expect(stderr).toBe(noDepsPrunedNote + (linker === "hoisted" ? noLinkNote("peer-deps-fixed@1.0.0") : ""));
     expect(await lockText(packageDir)).toBe(full);
     const placed = await placedNames(packageDir, linker);
     expect(placed).toEqual(

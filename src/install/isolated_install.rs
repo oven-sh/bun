@@ -1173,15 +1173,15 @@ pub(crate) fn install_isolated_packages(
         timings,
     )?;
 
-    lockfile::pruned_workspaces::exit_if_install_links_missing(
+    lockfile::pruned_workspaces::report_links_to_pruned_workspaces(
         &*manager,
         &*lockfile,
         &mut store
             .nodes
-            .items_dep_id()
+            .items_dependencies()
             .iter()
-            .copied()
-            .zip(store.nodes.items_pkg_id().iter().copied()),
+            .flatten()
+            .map(|ids| (ids.dep_id, ids.pkg_id)),
     );
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {

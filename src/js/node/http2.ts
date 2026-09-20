@@ -389,11 +389,9 @@ let priorityDeprecationWarned = false;
 let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
-// Marks a stream whose opening frame (PUSH_PROMISE, request HEADERS) never reached the wire. The
-// peer considers its id idle, so no frame may be sent on it. Its native entry can be gone.
+// The stream's opening frame (PUSH_PROMISE, request HEADERS) never reached the wire: the peer considers the id idle, so no frame may follow.
 const kNeverAnnounced = Symbol("neverAnnounced");
-// native pushPromise() result (mirrors PUSH_PROMISE_OVER_SEND_LIMIT in h2_frame_parser.rs): the
-// block is over the send limit and was not sent.
+// pushPromise() result for a block over the send limit that was not sent (PUSH_PROMISE_OVER_SEND_LIMIT in h2_frame_parser.rs).
 const kPushPromiseOverSendLimit = -2;
 const kFrameTypePushPromise = 0x5;
 const kReceivedGoaway = Symbol("receivedGoaway");
@@ -3310,8 +3308,7 @@ class ServerHttp2Stream extends Http2Stream {
       process.nextTick(callback, null, pushedStream, headers);
       return;
     }
-    // The encoder never saw a block over the send limit, so only the push fails. nghttp2 refuses
-    // it when the session next sends: until then node treats the push like one that was sent.
+    // Only the push fails. nghttp2 refuses it when the session next sends, so until then node treats it like a push that was sent.
     const overSendLimit = pushResult === kPushPromiseOverSendLimit;
     if (overSendLimit && pushedStream) {
       pushedStream[kNeverAnnounced] = true;
@@ -6608,8 +6605,7 @@ function closeAfterFrameError(session: ServerHttp2Session, stream: ServerHttp2St
   stream.close(code);
   session.close();
 }
-// nghttp2 closes the promised stream of a PUSH_PROMISE it did not send with INTERNAL_ERROR.
-// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2897-L2904
+// nghttp2 closes the promised stream of an unsent PUSH_PROMISE with INTERNAL_ERROR: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2897-L2904
 function failUnannouncedPush(pushedStream: ServerHttp2Stream) {
   if (pushedStream.destroyed) return;
   // A stream that user code closed keeps its code: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L602-L603

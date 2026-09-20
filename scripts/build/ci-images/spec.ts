@@ -1411,6 +1411,7 @@ function visualStudio(): Tool {
     identity: observed(
       run(
         "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe",
+        "-all",
         "-latest",
         "-property",
         "installationVersion",
@@ -1987,8 +1988,9 @@ export const writeFile =
   c => {
     const p = renderValue(path, c);
     if (isPowerShell(c)) {
+      // ascii: Windows PowerShell 5.1's UTF8 writes a byte-order mark, which breaks a reader that parses the file (node-gyp's installVersion).
       return [
-        `Set-Content -Path ${p} -Encoding UTF8 -Value @(`,
+        `Set-Content -Path ${p} -Encoding ascii -Value @(`,
         ...indent(lines.map((l, i) => `${renderValue(l, c)}${i < lines.length - 1 ? "," : ""}`)),
         ")",
       ];
@@ -2117,7 +2119,7 @@ export const aptInstall =
   (names: readonly string[], options: { update?: boolean } = {}): Step =>
   () => [
     ...(options.update ? ["apt-get update --yes"] : []),
-    `DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ${names.join(" ")}`,
+    `apt-get install --yes --no-install-recommends ${names.join(" ")}`,
   ];
 
 export const apkAdd =
@@ -2662,6 +2664,8 @@ function renderBootstrap(image: Image): string {
         `REPO_DIR=$(cd "$1" && pwd)`,
         `IMAGE_NAME=$2`,
         `mkdir -p "$BAKE_DIR/observed"`,
+        // Nobody is there to answer a package's questions: not ours, and not those of the installers that call apt (LLVM's, Docker's, Chrome's .deb).
+        ...(image.distro === "alpine" ? [] : ["export DEBIAN_FRONTEND=noninteractive"]),
         "",
         ...sections,
       ].join("\n");

@@ -27,7 +27,7 @@ import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
-import { ninjaIfFetched } from "./ninja-release.ts";
+import { ninjaIfPresent } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
@@ -409,7 +409,7 @@ export async function configure(
     const now = new Date();
     utimesSync(ninjaPath, now, now);
     if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
-      spawnSync(ninjaIfFetched(cfg), ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
+      spawnSync(ninjaIfPresent(cfg), ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
     }
   }
   mark("restat");

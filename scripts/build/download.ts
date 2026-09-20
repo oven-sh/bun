@@ -67,7 +67,7 @@ const tarExe =
 
 /**
  * Read-only prefetch cache baked into CI images by `scripts/prefetch-deps.ts`
- * (run from bootstrap.{sh,ps1} at image-bake time). When set, downloads check
+ * (run by the prefetch tools of ci-images/spec.ts at image-bake time). When set, downloads check
  * here first and copy on hit instead of hitting the network.
  *
  * Layout:

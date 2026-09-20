@@ -1010,7 +1010,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         const dlArch = arch === "x64" ? "amd64" : "arm64";
         const sysrootPath = locations.freebsdSysroot[arch];
         throw new BuildError("--os=freebsd requires a FreeBSD sysroot when cross-compiling", {
-          hint: `Set FREEBSD_SYSROOT or pass --freebsd-sysroot=<path>. Create one with: mkdir -p ${sysrootPath} && curl -L https://download.freebsd.org/releases/${dlArch}/${freebsdVersion}-RELEASE/base.txz | tar -C ${sysrootPath} -xJf - ./usr/include ./usr/lib ./lib`,
+          hint: `Set FREEBSD_SYSROOT or pass --freebsd-sysroot=<path>. Create one with: mkdir -p ${sysrootPath} && curl -L ${pins.freebsd.baseUrl}/${dlArch}/${freebsdVersion}-RELEASE/base.txz | tar -C ${sysrootPath} -xJf - ./usr/include ./usr/lib ./lib`,
         });
       }
       const llvmArch = arch === "x64" ? "x86_64" : "aarch64";

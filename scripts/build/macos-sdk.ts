@@ -185,7 +185,7 @@ export async function ensureMacosSdk(cfg: {
           hint:
             `Apple's software-update catalog is a rolling window; if Command Line Tools ` +
             `${MACOS_SDK_CLT_RELEASE} is no longer served, run \`bun ${relativeXmac()} list\` and bump ` +
-            `MACOS_SDK_VERSION / MACOS_SDK_CLT_RELEASE in scripts/build/macos-sdk.ts. ` +
+            `pins.macosSdk in scripts/build/ci-images/spec.ts. ` +
             `Extraction also needs \`xz\` on PATH (apt install xz-utils).`,
         },
       );

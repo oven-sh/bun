@@ -1587,7 +1587,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
   }
 
   // BUILDKITE_MESSAGE is the commit subject line only — option tags like
-  // [publish images] must appear in the subject, not the commit body.
+  // [skip tests] must appear in the subject, not the commit body.
   const commitMessage = getCommitMessage();
   if (commitMessage === undefined) {
     throw new Error("Failed to read the commit message");

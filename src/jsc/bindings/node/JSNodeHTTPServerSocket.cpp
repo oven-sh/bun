@@ -15,6 +15,7 @@
 #include <bun-uws/src/App.h>
 
 extern "C" void Bun__NodeHTTPResponse_setClosed(void* zigResponse);
+extern "C" void Bun__NodeHTTPResponse_onReadParsed(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
 extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
@@ -535,6 +536,26 @@ extern "C" void Bun__NodeHTTP__onReadsPaused(int ssl, us_socket_t* socket)
     }
 }
 
+template<bool SSL>
+static bool notifyWhenNodeHttpReadParsed(us_socket_t* socket)
+{
+    if (!uWS::HttpContext<SSL>::getSocketContextDataS(socket)->isParsing(socket)) {
+        return false;
+    }
+    auto* d = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    d->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
+    return true;
+}
+
+// False when no read of this socket is being parsed: its body state is already exact.
+extern "C" bool Bun__NodeHTTP__notifyWhenReadParsed(int ssl, us_socket_t* socket)
+{
+    if (!socket || us_socket_is_closed(socket)) {
+        return false;
+    }
+    return ssl ? notifyWhenNodeHttpReadParsed<true>(socket) : notifyWhenNodeHttpReadParsed<false>(socket);
+}
+
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, us_socket_t* socket)
 {
     if (ssl) {
@@ -866,6 +887,20 @@ extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl
         return JSValue::encode(getNodeHTTPServerSocket<true>(socket));
     }
     return JSValue::encode(getNodeHTTPServerSocket<false>(socket));
+}
+
+extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
+{
+    if (us_socket_is_closed(socket)) {
+        return;
+    }
+    auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
+    if (!serverSocket) {
+        return;
+    }
+    if (auto* res = serverSocket->currentResponseObject.get(); res != nullptr && res->m_ctx != nullptr) {
+        Bun__NodeHTTPResponse_onReadParsed(res->m_ctx);
+    }
 }
 
 // Returns the JSNodeHTTPServerSocket already attached to this raw socket, or

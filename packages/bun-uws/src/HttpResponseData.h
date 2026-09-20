@@ -165,6 +165,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
          * word (resetResponseState) - these have to survive that. */
+        /* node:http: call Bun__NodeHTTP__onReadParsed once the read being parsed is consumed. */
+        HTTP_NODE_NOTIFY_READ_PARSED = 1 << 19,
+
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
             | HTTP_NODE_PEER_ENDED,

@@ -37,6 +37,7 @@
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
 
 namespace uWS {
 
@@ -665,6 +666,16 @@ private:
                     httpResponseData->inStream = nullptr;
                 }
             }
+            if constexpr (IsNodeHttp) {
+                /* The kind check: upgrade() from the body handler turns the ext into a WebSocketData. */
+                if (switchToTunnelAfterThisChunk && us_socket_kind((struct us_socket_t *) user) == socketKind()) {
+                    /* The response cannot resume reads in tunnel mode: lift the pause the body left. */
+                    Bun__NodeHTTP__onReadsResumable(SSL, (struct us_socket_t *) user);
+                    if (us_socket_is_closed((struct us_socket_t *) user)) {
+                        return nullptr;
+                    }
+                }
+            }
             return user;
         });
 
@@ -712,6 +723,13 @@ private:
         if (returnedData != nullptr) {
             /* We don't want open sockets to keep the event loop alive between HTTP requests */
             us_socket_unref((us_socket_t *) returnedData);
+
+            if constexpr (IsNodeHttp) {
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED) {
+                    httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_NOTIFY_READ_PARSED;
+                    Bun__NodeHTTP__onReadParsed(SSL, (us_socket_t *) returnedData);
+                }
+            }
 
             /* node:http compat: a partial request head was left in the fallback
              * buffer by this read (either fresh bytes on an idle connection or a

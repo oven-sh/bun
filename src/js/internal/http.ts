@@ -29,6 +29,7 @@ const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
 const isTlsSymbol = Symbol("is_tls");
 const kHandle = Symbol("handle");
+const kOnReadParsed = Symbol("kOnReadParsed");
 const kRealListen = Symbol("kRealListen");
 const noBodySymbol = Symbol("noBody");
 const optionsSymbol = Symbol("options");
@@ -58,6 +59,7 @@ export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
   timeout = 2,
+  readParsed = 3,
 }
 export const enum NodeHTTPIncomingRequestType {
   FetchRequest,
@@ -165,6 +167,15 @@ function emitEOFIncomingMessage(self) {
 }
 
 function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPResponseAbortEvent) {
+  if (aborted === NodeHTTPResponseAbortEvent.readParsed) {
+    const socket = this.socket;
+    const onReadParsed = socket?.[kOnReadParsed];
+    if (onReadParsed) {
+      socket[kOnReadParsed] = undefined;
+      onReadParsed(socket);
+    }
+    return;
+  }
   if (aborted === NodeHTTPResponseAbortEvent.abort) {
     // The request is aborted from the socket's #onClose (like Node.js's
     // socketOnClose → abortIncoming), which the native close path always
@@ -536,6 +547,7 @@ export {
   kAbortController,
   kCloseCallback,
   kHandle,
+  kOnReadParsed,
   kInternalSocketData,
   kNeedDrain,
   kOutHeaders,

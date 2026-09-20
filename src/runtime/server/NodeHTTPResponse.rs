@@ -189,6 +189,9 @@ unsafe extern "C" {
     // onReadsResumable replays what was parked, in order, before resuming reads.
     safe fn Bun__NodeHTTP__onReadsPaused(ssl: core::ffi::c_int, socket: *mut c_void);
     safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
+    // False when no read of this socket is being parsed.
+    safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
+    -> bool;
 
     // Moves the connection's captured node:http request-trailer section out. `*out` points into
     // a C++ thread-local valid until the next call on this thread; caller copies immediately.
@@ -1211,6 +1214,8 @@ pub(crate) enum AbortEvent {
     None = 0,
     Abort = 1,
     Timeout = 2,
+    /// The socket read that `notifyWhenReadParsed` was called in is consumed.
+    ReadParsed = 3,
 }
 
 impl NodeHTTPResponse {
@@ -1289,6 +1294,35 @@ impl NodeHTTPResponse {
     pub(crate) fn on_abort(&self, js_value: JSValue) {
         scoped_log!(NodeHTTPResponse, "onAbort");
         self.handle_abort_or_timeout::<{ AbortEvent::Abort }>(js_value);
+    }
+
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_onReadParsed", no_catch)]
+    pub(crate) fn on_read_parsed(&self) {
+        let armed = self.armed_this_value.get();
+        let this_value = if armed.is_empty() {
+            self.get_this_value()
+        } else {
+            armed
+        };
+        self.on_data_or_aborted(&[], false, AbortEvent::ReadParsed, this_value);
+    }
+
+    pub(crate) fn notify_when_read_parsed(
+        &self,
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let flags = self.flags.get();
+        let Some(raw) = self.raw_response.get() else {
+            return Ok(JSValue::FALSE);
+        };
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
+            return Ok(JSValue::FALSE);
+        }
+        Ok(JSValue::from(Bun__NodeHTTP__notifyWhenReadParsed(
+            any_response_is_ssl(&raw) as core::ffi::c_int,
+            raw.socket().cast(),
+        )))
     }
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]

@@ -4951,6 +4951,127 @@ it("http2 option range error messages use the options. prefix", () => {
   }
 });
 
+// node checks the session options in connect(), createServer(), createSecureServer() and
+// performServerHandshake() before it creates anything. An https connect() also runs the server
+// checks, because node builds the tls.connect() options with the server's initializeTLSOptions().
+// The fixture prints how each call ends. The expected text is the output of node v26.3.0.
+const optionChecksFixture = path.join(import.meta.dir, "http2-option-checks.fixture.js");
+const optionChecksExpected = `{ strictSingleValueFields: "yes" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    every entry point
+{ strictSingleValueFields: 0 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type number (0)
+    every entry point
+{ strictSingleValueFields: null }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received null
+    every entry point
+{ strictSingleValueFields: false }
+  no throw
+    every entry point
+{ strictSingleValueFields: undefined }
+  no throw
+    every entry point
+{ maxSessionInvalidFrames: -1 }
+  no throw
+    connect(http), connect(createConnection)
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: 2 ** 32 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received 4294967296
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: "1" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.maxSessionInvalidFrames" property must be of type number. Received type string ('1')
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionRejectedStreams: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionRejectedStreams" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ unknownProtocolTimeout: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: 2 ** 32 - 1, maxSessionRejectedStreams: 2 ** 32 - 1, unknownProtocolTimeout: 0 }
+  no throw
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: 1 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received type number (1)
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: null }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received null
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: [] }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received an instance of Array
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: function () {} }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received function settings
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ remoteCustomSettings: "x", strictSingleValueFields: "yes" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.remoteCustomSettings" property must be an instance of Array. Received type string ('x')
+    every entry point
+{ remoteCustomSettings: [11 ids], maxSessionInvalidFrames: -1 }
+  Error [ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS]: Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS
+    every entry point
+{ settings: 1, maxSessionInvalidFrames: -1 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received type number (1)
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: -1, maxSessionRejectedStreams: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionRejectedStreams: -1, unknownProtocolTimeout: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionRejectedStreams" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ unknownProtocolTimeout: -1, strictSingleValueFields: "yes" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    connect(http), connect(https), connect(createConnection)
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    createServer, createSecureServer, performServerHandshake
+other calls
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    connect("not a url", { strictSingleValueFields: "yes" })
+  TypeError [ERR_INVALID_ARG_TYPE]: The "authority" argument must be of type string or an instance of URL or Object. Received function authority
+    connect(function authority() {})
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect({ hostname, port }, { protocol: "https:", maxSessionInvalidFrames: -1 }), connect({ hostname, port }, { maxSessionInvalidFrames: -1 })
+  no throw
+    connect({ hostname, port }, { protocol: "http:", maxSessionInvalidFrames: -1 })
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options" argument must be of type object. Received an instance of Array
+    createSecureServer([])
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options" argument must be of type object. Received function options
+    performServerHandshake(duplex, function options() {})
+  true
+    options.strictSingleValueFields that createConnection() receives
+  rejects with TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    promisify(connect)(http url, { strictSingleValueFields: "yes" })
+  rejects with RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    promisify(connect)(https url, { maxSessionInvalidFrames: -1 })
+`;
+// An older node has no strictSingleValueFields option, and the macOS CI hosts can have one.
+const optionChecksNode = (() => {
+  const node = nodeExe();
+  if (!node) return null;
+  const { stdout } = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+  return parseInt(stdout.toString(), 10) >= 26 ? node : null;
+})();
+
+for (const [name, runtime] of [
+  ["bun", bunExe()],
+  ["node", optionChecksNode],
+]) {
+  it.skipIf(!runtime)(
+    `http2 entry points check their options like node v26 (${name})`,
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [runtime, optionChecksFixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: optionChecksExpected, stderr: "", exitCode: 0 });
+    },
+    // A debug build needs 3 to 5 s to start and load node:http2. Every other build keeps the default.
+    isDebug ? 15_000 : undefined,
+  );
+}
+
 it("getPackedSettings caps initialWindowSize at 2**31-1", () => {
   // The cap itself is valid.
   http2.getPackedSettings({ initialWindowSize: 2 ** 31 - 1 });

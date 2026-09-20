@@ -2030,6 +2030,19 @@ test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target d
   expect(runs).toEqual(runs.map(() => ({ stdout: "OK", stderr: "", exitCode: 0 })));
 });
 
+// The last component of `file` as `GetShortPathNameW` gives it: its 8.3 alias, or the name itself on a
+// volume that makes none.
+function shortNameOf(file: string): string {
+  const { GetShortPathNameW } = dlopen("kernel32.dll", {
+    GetShortPathNameW: { args: ["ptr", "ptr", "u32"], returns: "u32" },
+  }).symbols;
+  const wide = Buffer.from(file + "\0", "utf16le");
+  const out = Buffer.alloc(2 * 1024);
+  const length = GetShortPathNameW(ptr(wide), ptr(out), out.length / 2);
+  if (length === 0) throw new Error("GetShortPathNameW failed for " + file);
+  return path.basename(out.toString("utf16le", 0, length * 2));
+}
+
 // A change made through a file's 8.3 alias is recorded under the alias; the event reports the long
 // name. A change made through the long name is reported as it is.
 test.skipIf(!isWindows)("fs.watch reports the long name for a change made through an 8.3 alias", async () => {
@@ -2037,14 +2050,7 @@ test.skipIf(!isWindows)("fs.watch reports the long name for a change made throug
   const root = String(dir);
   const longName = "a rather long file name.txt";
 
-  const { GetShortPathNameW } = dlopen("kernel32.dll", {
-    GetShortPathNameW: { args: ["ptr", "ptr", "u32"], returns: "u32" },
-  }).symbols;
-  const wide = Buffer.from(path.join(root, longName) + "\0", "utf16le");
-  const out = Buffer.alloc(2 * 1024);
-  const length = GetShortPathNameW(ptr(wide), ptr(out), out.length / 2);
-  expect(length).toBeGreaterThan(0);
-  const alias = path.basename(out.toString("utf16le", 0, length * 2));
+  const alias = shortNameOf(path.join(root, longName));
   // A volume can have 8.3 name creation switched off; then there is no alias to go through.
   const names = alias === longName ? ["short.txt"] : [alias, "short.txt"];
 
@@ -2063,3 +2069,33 @@ test.skipIf(!isWindows)("fs.watch reports the long name for a change made throug
   }
   expect(seen.sort()).toEqual((alias === longName ? ["short.txt"] : [longName, "short.txt"]).sort());
 });
+
+// The alias of every component is resolved in the directory it is in, which is reached from the
+// watched directory itself: the path the watch was started with stops naming it once it is renamed.
+test.skipIf(!isWindows)(
+  "fs.watch resolves 8.3 aliases below the watched directory after that directory is renamed",
+  async () => {
+    const longDir = "a rather long directory name";
+    const longFile = "another quite long name.txt";
+    using dir = tempDir("fs-watch-short-nested", { [`watched/${longDir}/${longFile}`]: "x" });
+    const watched = path.join(String(dir), "watched");
+    const dirAlias = shortNameOf(path.join(watched, longDir));
+    const fileAlias = shortNameOf(path.join(watched, longDir, longFile));
+    // A volume can have 8.3 name creation switched off; then there is no alias to go through.
+    const viaAliases = dirAlias !== longDir && fileAlias !== longFile;
+
+    const seen = Promise.withResolvers<string>();
+    const watcher = fs.watch(watched, { recursive: true }, (_event, filename) => {
+      if (filename && String(filename).toLowerCase().endsWith(".txt")) seen.resolve(String(filename));
+    });
+    watcher.on("error", seen.reject);
+    try {
+      const moved = path.join(String(dir), "moved");
+      fs.renameSync(watched, moved);
+      fs.appendFileSync(path.join(moved, viaAliases ? dirAlias : longDir, viaAliases ? fileAlias : longFile), "y");
+      expect(await seen.promise).toBe(`${longDir}\\${longFile}`);
+    } finally {
+      watcher.close();
+    }
+  },
+);

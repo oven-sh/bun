@@ -1742,7 +1742,6 @@ mod windows_impl {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        fn GetLongPathNameW(short_path: *const u16, long_path: *mut u16, len: DWORD) -> DWORD;
         fn GetFileInformationByHandleEx(
             file: HANDLE,
             class: u32,
@@ -1766,6 +1765,10 @@ mod windows_impl {
         /// initialized.
         buffer: [core::mem::MaybeUninit<u8>; BUFFER_SIZE],
         dir: HANDLE,
+        /// A second, synchronous handle to the same directory, for name
+        /// lookups: a query on `dir` would complete through the port. Opened by
+        /// the first lookup. Guarded by `manager.mutex`.
+        query_dir: core::cell::Cell<HANDLE>,
         /// Null once the owner detached. Guarded by `manager.mutex`.
         watcher: *mut PathWatcher,
         /// A request was issued whose completion the reader thread has not
@@ -1962,6 +1965,8 @@ mod windows_impl {
                 unsafe {
                     core::ptr::addr_of_mut!((*p).overlapped).write(bun_core::ffi::zeroed());
                     core::ptr::addr_of_mut!((*p).dir).write(dir);
+                    core::ptr::addr_of_mut!((*p).query_dir)
+                        .write(core::cell::Cell::new(w::INVALID_HANDLE_VALUE));
                     core::ptr::addr_of_mut!((*p).watcher).write(watcher);
                     core::ptr::addr_of_mut!((*p).pending).write(false);
                     core::ptr::addr_of_mut!((*p).recursive).write(watcher.recursive);
@@ -1996,6 +2001,7 @@ mod windows_impl {
                     // thread frees it when it dequeues that completion.
                     w::CloseHandle((*request).dir);
                     (*request).dir = w::INVALID_HANDLE_VALUE;
+                    (*request).close_query_dir();
                 } else {
                     DirRequest::destroy(request);
                 }
@@ -2007,7 +2013,6 @@ mod windows_impl {
             let port = manager.port();
             let mut name_buf = path::path_buffer_pool::get();
             let mut long_buf = path::w_path_buffer_pool::get();
-            let mut full_buf = path::w_path_buffer_pool::get();
 
             while manager.running.load(Ordering::Acquire) {
                 let mut bytes: DWORD = 0;
@@ -2063,7 +2068,6 @@ mod windows_impl {
                         error,
                         &mut name_buf,
                         &mut long_buf[..],
-                        &mut full_buf[..],
                     );
                     watcher.flush();
                 }
@@ -2072,19 +2076,124 @@ mod windows_impl {
         }
     }
 
-    /// Whether a component of `name` has the shape of an 8.3 name: at most
-    /// eight characters, then at most one dot with at most three after it.
-    /// Only such a component can be a short alias of a longer name.
+    /// Whether `component` has the shape of an 8.3 name: at most eight
+    /// characters, then at most one dot with at most three after it. Only such
+    /// a component can be a short alias of a longer name.
+    fn is_short_shaped(component: &[u16]) -> bool {
+        let mut parts = component.split(|&unit| unit == u16::from(b'.'));
+        let base = parts.next().unwrap_or(&[]);
+        let extension = parts.next();
+        parts.next().is_none()
+            && (1..=8).contains(&base.len())
+            && extension.is_none_or(|extension| extension.len() <= 3)
+    }
+
     fn may_hold_short_name(name: &[u16]) -> bool {
-        name.split(|&unit| unit == u16::from(b'\\') || unit == u16::from(b'/'))
-            .any(|component| {
-                let mut parts = component.split(|&unit| unit == u16::from(b'.'));
-                let base = parts.next().unwrap_or(&[]);
-                let extension = parts.next();
-                parts.next().is_none()
-                    && (1..=8).contains(&base.len())
-                    && extension.is_none_or(|extension| extension.len() <= 3)
-            })
+        name.split(|&unit| is_separator(unit)).any(is_short_shaped)
+    }
+
+    /// `FileNamesInformation`: an entry's name and nothing else.
+    const FILE_NAMES_INFORMATION_CLASS: w::FILE_INFORMATION_CLASS = w::FILE_INFORMATION_CLASS(12);
+    const OBJ_CASE_INSENSITIVE: u32 = 0x40;
+
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    struct FILE_NAMES_INFORMATION {
+        NextEntryOffset: u32,
+        FileIndex: u32,
+        FileNameLength: u32,
+        FileName: [u16; 1],
+    }
+
+    /// Room for one `FILE_NAMES_INFORMATION` with a 255-character name.
+    type NameEntry = [u64; 80];
+
+    fn unicode_string(name: &[u16]) -> Option<w::UNICODE_STRING> {
+        let bytes = u16::try_from(name.len() * 2).ok()?;
+        Some(w::UNICODE_STRING {
+            Length: bytes,
+            MaximumLength: bytes,
+            Buffer: name.as_ptr().cast_mut(),
+        })
+    }
+
+    /// A synchronous handle to the directory `name` of `parent`, for
+    /// [`query_long_name`]. An empty `name` is `parent` itself, which need not be
+    /// synchronous.
+    fn open_for_queries(parent: HANDLE, name: &[u16]) -> Option<HANDLE> {
+        let mut object_name = unicode_string(name)?;
+        let mut attributes = w::OBJECT_ATTRIBUTES {
+            Length: core::mem::size_of::<w::OBJECT_ATTRIBUTES>() as u32,
+            RootDirectory: parent,
+            ObjectName: &mut object_name,
+            Attributes: OBJ_CASE_INSENSITIVE,
+            SecurityDescriptor: core::ptr::null_mut(),
+            SecurityQualityOfService: core::ptr::null_mut(),
+        };
+        let mut handle: HANDLE = w::INVALID_HANDLE_VALUE;
+        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+        // SAFETY: every pointer is to a live local; `parent` is an open directory.
+        let status = unsafe {
+            w::ntdll::NtCreateFile(
+                &mut handle,
+                w::FILE_LIST_DIRECTORY | w::SYNCHRONIZE,
+                &mut attributes,
+                &mut io,
+                core::ptr::null_mut(),
+                0,
+                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                w::FILE_OPEN,
+                w::FILE_DIRECTORY_FILE
+                    | w::FILE_SYNCHRONOUS_IO_NONALERT
+                    | w::FILE_OPEN_FOR_BACKUP_INTENT,
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+        (status == w::NTSTATUS::SUCCESS).then_some(handle)
+    }
+
+    /// The long name of the entry of `parent` that `component` names. A name
+    /// without wildcards matches the one entry that has it as its long or its
+    /// short name, whatever the case.
+    fn query_long_name<'a>(
+        parent: HANDLE,
+        component: &[u16],
+        entry: &'a mut NameEntry,
+    ) -> Option<&'a [u16]> {
+        let mut pattern = unicode_string(component)?;
+        let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+        // SAFETY: `parent` is a synchronous directory handle; `entry` is writable
+        // for its size and 8-byte aligned; the other pointers are to live locals.
+        let status = unsafe {
+            w::ntdll::NtQueryDirectoryFile(
+                parent,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                &mut io,
+                entry.as_mut_ptr().cast(),
+                core::mem::size_of::<NameEntry>() as u32,
+                FILE_NAMES_INFORMATION_CLASS,
+                1,
+                &mut pattern,
+                1,
+            )
+        };
+        if status != w::NTSTATUS::SUCCESS {
+            return None;
+        }
+        let info = entry.as_ptr().cast::<FILE_NAMES_INFORMATION>();
+        // SAFETY: the call filled one entry; its name follows the header inside `entry`.
+        unsafe {
+            let units = (*info).FileNameLength as usize / 2;
+            let name = core::ptr::addr_of!((*info).FileName).cast::<u16>();
+            let offset = core::mem::offset_of!(FILE_NAMES_INFORMATION, FileName);
+            if offset + units * 2 > core::mem::size_of::<NameEntry>() {
+                return None;
+            }
+            Some(core::slice::from_raw_parts(name, units))
+        }
     }
 
     impl DirRequest {
@@ -2131,6 +2240,15 @@ mod windows_impl {
                 // SAFETY: `dir` is the live handle this request owns.
                 unsafe { w::CloseHandle(this.dir) };
             }
+            this.close_query_dir();
+        }
+
+        fn close_query_dir(&self) {
+            let query_dir = self.query_dir.replace(w::INVALID_HANDLE_VALUE);
+            if query_dir != w::INVALID_HANDLE_VALUE {
+                // SAFETY: the handle `long_name` opened; nothing else has it.
+                unsafe { w::CloseHandle(query_dir) };
+            }
         }
 
         /// Reader thread, `manager.mutex` held, the owner still attached.
@@ -2144,14 +2262,11 @@ mod windows_impl {
             error: Option<w::Win32Error>,
             name_buf: &mut path::PathBuffer,
             long_buf: &mut [u16],
-            full_buf: &mut [u16],
         ) {
             // SAFETY: caller contract; the kernel is done with `buffer`.
             let request = unsafe { &*this };
             match error {
-                None if bytes > 0 => {
-                    request.emit_records(watcher, bytes, name_buf, long_buf, full_buf)
-                }
+                None if bytes > 0 => request.emit_records(watcher, bytes, name_buf, long_buf),
                 // More changed than `buffer` holds.
                 None => watcher.emit_overflow(),
                 Some(error) => {
@@ -2169,6 +2284,7 @@ mod windows_impl {
                         w::CloseHandle((*this).dir);
                         (*this).dir = w::INVALID_HANDLE_VALUE;
                     }
+                    request.close_query_dir();
                     // The next `watch()` of this path has to start a new one.
                     if let Some(manager) = watcher.manager {
                         manager.unlink_watcher_locked(core::ptr::from_ref(watcher).cast_mut());
@@ -2211,7 +2327,6 @@ mod windows_impl {
             bytes: usize,
             name_buf: &mut path::PathBuffer,
             long_buf: &mut [u16],
-            full_buf: &mut [u16],
         ) {
             let name_offset = core::mem::offset_of!(w::FILE_NOTIFY_INFORMATION, FileName);
             let mut offset: usize = 0;
@@ -2264,8 +2379,7 @@ mod windows_impl {
                                 .is_some_and(|short| eql_ignore_case(name, short)))
                         .then_some(&file_name.long[..]),
                         // A record can carry an 8.3 alias. For a name that may
-                        // still exist, report its long form like libuv. Asking
-                        // costs a directory lookup per component, and while
+                        // still exist, report its long form like libuv. While
                         // this thread is busy the changes pile up in the 4 KiB
                         // the system keeps for the directory, so it only asks
                         // about a name that can be an alias.
@@ -2273,7 +2387,7 @@ mod windows_impl {
                             && action != w::FILE_ACTION_RENAMED_OLD_NAME
                             && may_hold_short_name(name) =>
                         {
-                            Some(self.long_name(name, long_buf, full_buf).unwrap_or(name))
+                            Some(self.long_name(name, long_buf).unwrap_or(name))
                         }
                         None => Some(name),
                     };
@@ -2292,39 +2406,69 @@ mod windows_impl {
         }
 
         /// `name` (relative to the watched directory) with every component in
-        /// its long form, or `None` when the path no longer resolves.
-        fn long_name<'a>(
-            &self,
-            name: &[u16],
-            long_buf: &'a mut [u16],
-            full_buf: &mut [u16],
-        ) -> Option<&'a [u16]> {
-            let dir_len = self.dir_path.len();
-            let full_len = dir_len + 1 + name.len();
-            if full_len + 1 > full_buf.len() {
-                return None;
+        /// its long form, or `None` when the path no longer resolves. Only a
+        /// component that can be an alias is looked up, in its own directory,
+        /// which is reached from the watched one by handle: neither the path to
+        /// the watched directory nor what it is called now matters.
+        fn long_name<'a>(&self, name: &[u16], long_buf: &'a mut [u16]) -> Option<&'a [u16]> {
+            let last_lookup = name
+                .split(|&unit| is_separator(unit))
+                .enumerate()
+                .filter(|(_, component)| is_short_shaped(component))
+                .last()?
+                .0;
+            if self.query_dir.get() == w::INVALID_HANDLE_VALUE {
+                if self.dir == w::INVALID_HANDLE_VALUE {
+                    return None;
+                }
+                self.query_dir.set(open_for_queries(self.dir, &[])?);
             }
-            full_buf[..dir_len].copy_from_slice(&self.dir_path);
-            full_buf[dir_len] = u16::from(b'\\');
-            full_buf[dir_len + 1..full_len].copy_from_slice(name);
-            full_buf[full_len] = 0;
-            // SAFETY: `full_buf` is NUL-terminated; `long_buf` is writable for its length.
-            let long_len = unsafe {
-                GetLongPathNameW(
-                    full_buf.as_ptr(),
-                    long_buf.as_mut_ptr(),
-                    long_buf.len() as DWORD,
-                )
-            } as usize;
-            if long_len == 0 || long_len >= long_buf.len() {
-                return None;
+            let mut parent = self.query_dir.get();
+            // A directory below the watched one, open for this walk only.
+            let mut opened: HANDLE = w::INVALID_HANDLE_VALUE;
+            let mut entry: NameEntry = [0; 80];
+            let mut len = 0usize;
+            let mut resolved_all = true;
+            for (index, component) in name.split(|&unit| is_separator(unit)).enumerate() {
+                let long: &[u16] = if index <= last_lookup && is_short_shaped(component) {
+                    match query_long_name(parent, component, &mut entry) {
+                        Some(long) => long,
+                        None => {
+                            resolved_all = false;
+                            break;
+                        }
+                    }
+                } else {
+                    component
+                };
+                let separator = usize::from(index > 0);
+                if len + separator + long.len() > long_buf.len() {
+                    resolved_all = false;
+                    break;
+                }
+                if index > 0 {
+                    long_buf[len] = u16::from(b'\\');
+                }
+                long_buf[len + separator..len + separator + long.len()].copy_from_slice(long);
+                len += separator + long.len();
+                if index < last_lookup {
+                    let Some(child) = open_for_queries(parent, component) else {
+                        resolved_all = false;
+                        break;
+                    };
+                    if opened != w::INVALID_HANDLE_VALUE {
+                        // SAFETY: opened by this walk.
+                        unsafe { w::CloseHandle(opened) };
+                    }
+                    opened = child;
+                    parent = child;
+                }
             }
-            // The directory part keeps its length: `dir_path` is already long-form.
-            let long = &long_buf[..long_len];
-            if long.len() <= dir_len + 1 || !eql_ignore_case(&long[..dir_len], &self.dir_path) {
-                return None;
+            if opened != w::INVALID_HANDLE_VALUE {
+                // SAFETY: opened by this walk.
+                unsafe { w::CloseHandle(opened) };
             }
-            Some(&long[dir_len + 1..])
+            resolved_all.then_some(&long_buf[..len])
         }
     }
 }

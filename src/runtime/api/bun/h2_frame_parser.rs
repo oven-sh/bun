@@ -1128,6 +1128,8 @@ pub struct H2FrameParser {
     /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
     /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
     last_peer_stream_id: Cell<u32>,
+    /// `send_go_away` has written a GOAWAY. `rewrite_read` copies it to the engine.
+    goaway_sent: Cell<bool>,
     is_server: Cell<bool>,
     /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
     left_exception: Cell<bool>,
@@ -2202,6 +2204,7 @@ impl H2FrameParser {
             BStr::new(debug_data),
             emit_error
         );
+        self.goaway_sent.set(true);
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 8];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
@@ -3566,6 +3569,7 @@ impl H2FrameParser {
             engine.max_header_list_pairs = self.max_header_list_pairs.get();
             engine.max_settings = self.max_settings.get();
             engine.max_invalid_frames = self.max_session_invalid_frames.get();
+            engine.goaway_sent = self.goaway_sent.get();
             // Outbound-ACK-flood counter: only reset when the transport actually
             // drained (nghttp2 decrements per-send). Resetting per receive() lets
             // a peer that never reads keep it under the limit forever.
@@ -7465,6 +7469,7 @@ impl H2FrameParser {
             strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
             last_peer_stream_id: Cell::new(0),
+            goaway_sent: Cell::new(false),
             is_server: Cell::new(false),
             left_exception: Cell::new(false),
             write_buffer: JsCell::new(Vec::<u8>::default()),

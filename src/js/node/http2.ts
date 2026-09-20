@@ -4983,6 +4983,12 @@ class ClientHttp2Session extends Http2Session {
         self.#parser?.rstStream(pushId, constants.NGHTTP2_CANCEL);
         return;
       }
+      if (self.#closeCalled) {
+        // close() ran earlier in this read, so the engine has not seen the GOAWAY yet. node refuses
+        // the stream in JS too: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L373-L381
+        self.#parser?.rstStream(pushId, constants.NGHTTP2_REFUSED_STREAM);
+        return;
+      }
       self.#reservedStreamsCount++;
       // PUSH_PROMISE: surface the server-pushed stream (with its REQUEST headers) on the session
       // 'stream' event; its eventual response HEADERS will fire 'push' on the pushed stream.

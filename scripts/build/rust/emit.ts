@@ -62,18 +62,17 @@ export function registerRustUnitRules(n: Ninja, cfg: Config): void {
   // deep, so runtime startup is on the critical path (bun: ~20 ms, node: ~80 ms).
   const run = `${q(cfg.bun)} ${q(runScript)}`;
 
-  // Depfiles: run.ts rewrites rustc's dep-info (all emitted artifacts as targets, `# env-dep` comments)
-  // into `$depfile` with just this edge's outputs. deps=gcc moves it into .ninja_deps.
+  // Depfiles: run.ts rewrites rustc's dep-info (all emitted artifacts as targets, `# env-dep` comments) into the
+  // edge's depfile with just this edge's outputs. deps=gcc moves it into .ninja_deps. The depfile is named per edge
+  // (it is not derived from $out), so it is a binding of each build statement, not of the rule.
   n.rule("rust_rustc", {
     command: `${run} rustc $manifest`,
     description: "rustc $crate $what",
-    depfile: "$depfile",
     deps: "gcc",
   });
   n.rule("rust_build_script", {
     command: `${run} build-script $manifest`,
     description: "build.rs $crate",
-    depfile: "$depfile",
     deps: "gcc",
     // output.json is rewritten only when the directives change, so an unchanged rerun rebuilds nothing downstream.
     restat: true,
@@ -151,12 +150,8 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
     const manifest = unitManifest(ctx, unit);
     writeIfChanged(unit.manifestPath, JSON.stringify(manifest, null, 1) + "\n");
 
-    const vars = {
-      manifest: quote(unit.manifestPath, hostWin),
-      crate: unit.crateName,
-      depfile: manifest.depfile, // a ninja `depfile =` binding, read as a path (never part of a command): no shell quoting
-      what: "",
-    };
+    const vars = { manifest: quote(unit.manifestPath, hostWin), crate: unit.crateName };
+    const depfile = manifest.depfile; // read by ninja as a path, never part of a command: no shell quoting
     // What rebuilds this unit: the artifacts it names with --extern (`.rmeta`s for a library, `.rlib`s and
     // dylibs for a link), the build-script outputs run.ts reads for it, its manifest, the driver scripts; sources and
     // `include!`d files come from the depfile.
@@ -187,7 +182,9 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
           inputs: [],
           implicitInputs: [...externs, unit.manifestPath, ...common],
           orderOnlyInputs: orderOnly,
-          vars: { ...vars, early_output_prefix: "@ninja-early-output@" },
+          vars: { ...vars, what: "" },
+          depfile,
+          earlyOutputPrefix: "@ninja-early-output@",
         });
         break;
       case "proc-macro":
@@ -208,6 +205,7 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
           orderOnlyInputs: orderOnly,
           ...(unit === graph.root && inputs.rootValidations.length > 0 ? { validations: inputs.rootValidations } : {}),
           vars: { ...vars, what },
+          depfile,
         });
         break;
       }
@@ -225,6 +223,7 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
           ],
           orderOnlyInputs: orderOnly,
           vars,
+          depfile,
         });
         break;
     }

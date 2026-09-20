@@ -32,7 +32,7 @@ use bun_core::strings;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
-use bun_jsc::{JSGlobalObject, JSValue, VirtualMachineRef};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachineRef};
 use bun_picohttp as picohttp;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 
@@ -684,7 +684,14 @@ where
         let vm = VirtualMachineRef::get();
         let event_loop = vm.event_loop_mut();
         event_loop.enter();
-        let verdict = call_check_server_identity(vm.global(), callback, ssl, hostname);
+        let verdict = match call_check_server_identity(vm.global(), callback, ssl, hostname) {
+            Ok(approved) => approved,
+            Err(err) => {
+                // A throw rejects the peer and is reported like any uncaught exception.
+                let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+                false
+            }
+        };
         event_loop.exit();
         verdict || !enforce
     }
@@ -1861,43 +1868,24 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
     result
 }
 
-/// `false` if the callback returns an Error or throws (the exception is
-/// consumed; the user sees the 1015 close), or the certificate is unreadable.
+/// `Ok(false)` if the callback returns an Error or the certificate is unreadable.
 fn call_check_server_identity(
     global: &JSGlobalObject,
     callback: JSValue,
     ssl: &mut boringssl::c::SSL,
     hostname: &[u8],
-) -> bool {
+) -> JsResult<bool> {
     let Some(cert) = ssl.peer_leaf_certificate() else {
-        return false;
+        return Ok(false);
     };
     let js_cert =
-        match bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global)) {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = global.take_exception(e);
-                return false;
-            }
-        };
-    let js_hostname = match bun_jsc::bun_string_jsc::create_utf8_for_js(global, hostname) {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = global.take_exception(e);
-            return false;
-        }
-    };
-    let verdict = match callback.call(global, JSValue::UNDEFINED, &[js_hostname, js_cert]) {
-        // > On success, returns <undefined>. Any non-error value passes.
-        Ok(v) => !v.is_any_error(),
-        Err(e) => {
-            let _ = global.take_exception(e);
-            false
-        }
-    };
+        bun_jsc::from_js_host_call(global, || Bun__X509__toJSLegacyEncoding(cert, global))?;
+    let js_hostname = bun_jsc::bun_string_jsc::create_utf8_for_js(global, hostname)?;
+    let verdict = callback.call(global, JSValue::UNDEFINED, &[js_hostname, js_cert])?;
     js_hostname.ensure_still_alive();
     js_cert.ensure_still_alive();
-    verdict
+    // > On success, returns <undefined>. Any non-error value passes.
+    Ok(!verdict.is_any_error())
 }
 
 // Also declared in `bun_runtime::api::bun::x509`, which is above this crate.

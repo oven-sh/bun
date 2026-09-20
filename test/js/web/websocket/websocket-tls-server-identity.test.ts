@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, tls as tlsCerts } from "harness";
+import { bunEnv, bunExe, nodeExe, tls as tlsCerts } from "harness";
 import { createHash, X509Certificate } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import tls from "node:tls";
@@ -94,6 +94,7 @@ function startSniServer() {
 // renegotiation and sends a text frame. It runs in real node because a
 // BoringSSL server cannot renegotiate. It waits for the client's first frame,
 // so the connected client, not the upgrade client, owns the socket by then.
+const node = nodeExe();
 const renegotiatingServer = `
   const tls = require("tls");
   const crypto = require("crypto");
@@ -249,18 +250,51 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
     expect(await server.receivedInTotal()).toBe("");
   });
 
-  test("rejects the connection when it throws", async () => {
+  // The client runs in a child process: the exception it throws is reported as
+  // uncaught, which would fail this test run.
+  test("rejects the connection when it throws, and reports the exception", async () => {
     using server = startSniServer();
     const url = `wss://localhost:${await server.port}/`;
-    const ws = new WebSocket(url, {
-      tls: {
-        ca: tlsCerts.cert,
-        checkServerIdentity() {
-          throw new Error("PIN-REJECT");
-        },
-      },
+    await using client = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const events = [];
+          process.on("uncaughtException", error => events.push("uncaught: " + error.message));
+          const ws = new WebSocket(process.env.WS_URL, {
+            tls: {
+              ca: process.env.WS_CA,
+              checkServerIdentity() {
+                throw new Error("PIN-REJECT");
+              },
+            },
+          });
+          ws.onopen = () => {
+            events.push("open");
+            ws.close();
+          };
+          ws.onerror = event => events.push("error: " + event.message);
+          ws.onclose = event => {
+            events.push("close " + event.code);
+            console.log(JSON.stringify(events));
+          };
+        `,
+      ],
+      env: { ...bunEnv, WS_URL: url, WS_CA: tlsCerts.cert },
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    expect(await openSession(ws)).toEqual(tlsFailed(url));
+    const [stdout, stderr, exitCode] = await Promise.all([client.stdout.text(), client.stderr.text(), client.exited]);
+    expect({ stderr, events: JSON.parse(stdout || "null") }).toEqual({
+      stderr: "",
+      events: [
+        "uncaught: PIN-REJECT",
+        `error: WebSocket connection to '${url}' failed: TLS handshake failed`,
+        "close 1015",
+      ],
+    });
+    expect(exitCode).toBe(0);
     expect(await server.receivedInTotal()).toBe("");
   });
 
@@ -405,12 +439,12 @@ describe.concurrent("WebSocket tls.checkServerIdentity", () => {
 
   // On a renegotiation BoringSSL requires the same certificate, so the verdict
   // of the callback still holds and the callback does not run again.
-  test.each([
+  (node ? test : test.skip).each([
     ["a name the certificate does not have", { serverName: "evil.test" }, "evil.test"],
     ["an IP URL, which has no SNI", {}, "127.0.0.1"],
   ] as const)("a certificate it approved survives a TLS 1.2 renegotiation: %s", async (_label, names, hostname) => {
     await using server = Bun.spawn({
-      cmd: ["node", "-e", renegotiatingServer],
+      cmd: [node!, "-e", renegotiatingServer],
       stdout: "pipe",
       stderr: "inherit",
       stdin: "ignore",

@@ -444,6 +444,60 @@ interface CliArgs {
  *
  * Boolean overrides accept: on/off, true/false, yes/no, 1/0.
  */
+/** How a `--<field>=<value>` is read, which the field's type decides. */
+type CliValueKind<T> = [T] extends [boolean] ? "boolean" : [T] extends [number] ? "number" : "string";
+
+/**
+ * Every `PartialConfig` field is a `--<field>` flag. The mapped type makes this list complete and correct by
+ * construction: a field added to `PartialConfig` without an entry here, or listed with the wrong kind, does not
+ * compile.
+ */
+const configFlags: { [K in keyof Required<PartialConfig>]: CliValueKind<NonNullable<PartialConfig[K]>> } = {
+  os: "string",
+  arch: "string",
+  abi: "string",
+  buildType: "string",
+  mode: "string",
+  lto: "boolean",
+  pgoGenerate: "string",
+  pgoUse: "string",
+  asan: "boolean",
+  assertions: "boolean",
+  logs: "boolean",
+  baseline: "boolean",
+  canary: "boolean",
+  staticSqlite: "boolean",
+  staticLibatomic: "boolean",
+  tinycc: "boolean",
+  valgrind: "boolean",
+  fuzzilli: "boolean",
+  socketFaultInjection: "boolean",
+  unifiedSources: "boolean",
+  archiveDeps: "boolean",
+  timeTrace: "boolean",
+  ci: "boolean",
+  buildkite: "boolean",
+  webkit: "string",
+  localDeps: "string",
+  packageManager: "string",
+  buildDir: "string",
+  cacheDir: "string",
+  androidNdk: "string",
+  androidApiLevel: "number",
+  freebsdSysroot: "string",
+  freebsdVersion: "string",
+  linuxSysroot: "string",
+  macosSdk: "string",
+  osxDeploymentTarget: "string",
+  winsysroot: "string",
+  nodejsVersion: "string",
+  nodejsAbiVersion: "string",
+  nodejsV8Version: "string",
+  webkitVersion: "string",
+};
+const configFlagKind = (key: string): "boolean" | "number" | "string" | undefined =>
+  Object.hasOwn(configFlags, key) ? configFlags[key as keyof typeof configFlags] : undefined;
+
 /** `ninja -d list` */
 const ninjaDebugModes = new Set(["stats", "explain", "keepdepfile", "keeprsp", "nostatcache", "list"]);
 
@@ -458,53 +512,6 @@ function parseArgs(argv: string[]): CliArgs {
   let quiet = false;
   let configFile: string | undefined;
   let inExec = false;
-
-  // PartialConfig fields that are BOOLEANS. Used for value coercion.
-  // Not exhaustive — add as needed. Unknown --<field> is rejected so you
-  // notice typos.
-  const boolFields = new Set([
-    "lto",
-    "asan",
-    "assertions",
-    "logs",
-    "baseline",
-    "canary",
-    "staticSqlite",
-    "staticLibatomic",
-    "tinycc",
-    "valgrind",
-    "fuzzilli",
-    "socketFaultInjection",
-    "unifiedSources",
-    "archiveDeps",
-    "timeTrace",
-    "ci",
-    "buildkite",
-  ]);
-  // PartialConfig fields that are STRINGS.
-  const stringFields = new Set([
-    "os",
-    "arch",
-    "abi",
-    "buildType",
-    "mode",
-    "webkit",
-    "localDeps",
-    "packageManager",
-    "buildDir",
-    "cacheDir",
-    "nodejsVersion",
-    "nodejsAbiVersion",
-    "webkitVersion",
-    "pgoGenerate",
-    "pgoUse",
-    "androidNdk",
-    "macosSdk",
-    "osxDeploymentTarget",
-    "winsysroot",
-    "linuxSysroot",
-    "freebsdSysroot",
-  ]);
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -567,8 +574,8 @@ function parseArgs(argv: string[]): CliArgs {
     }
     const rawKey = eq[1]!;
     const key = rawKey.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
-    const isOurs =
-      key === "profile" || key === "target" || key === "configFile" || boolFields.has(key) || stringFields.has(key);
+    const kind = configFlagKind(key);
+    const isOurs = key === "profile" || key === "target" || key === "configFile" || kind !== undefined;
 
     let value = eq[2];
     if (value === undefined) {
@@ -596,18 +603,24 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (key === "profile") {
       profile = value;
-    } else if (boolFields.has(key)) {
-      (overrides as Record<string, boolean>)[key] = parseBool(value);
-    } else if (stringFields.has(key)) {
-      (overrides as Record<string, string>)[key] = value;
-    } else {
+    } else if (kind === undefined) {
       throw new BuildError(`Unknown config field: --${rawKey}`, {
-        hint: `Known fields: profile, target, ${[...boolFields, ...stringFields].sort().join(", ")}`,
+        hint: `Known fields: profile, target, ${Object.keys(configFlags).sort().join(", ")}`,
       });
+    } else {
+      // The value's type follows `kind`, which `configFlags` ties to the field's declared type.
+      (overrides as Record<string, boolean | number | string>)[key] =
+        kind === "boolean" ? parseBool(value) : kind === "number" ? parseInteger(rawKey, value) : value;
     }
   }
 
   return { profile, overrides, ninjaTargets, ninjaArgs, ninjaTool, execArgs, configureOnly, quiet, configFile };
+}
+
+function parseInteger(flag: string, v: string): number {
+  const n = Number(v);
+  if (!Number.isInteger(n)) throw new BuildError(`--${flag} takes an integer, got: ${v}`);
+  return n;
 }
 
 function parseBool(v: string): boolean {

@@ -5,6 +5,7 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { $ } from "bun";
+import { dlopen, ptr } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, closeSync, mkdirSync, openSync, readFileSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
@@ -4194,4 +4195,29 @@ test.skipIf(!isWindows)("starting builtins on a stdin that another reader is par
   const bytes = JSON.parse(output.slice(output.indexOf("{")));
   expect(bytes).toEqual({ fileBytes: 20 * "file".length, stdinBytes: 1000 });
   expect(await proc.exited).toBe(0);
+});
+
+// Whatever runs after a command can open, move or delete the file the command was redirected to: the
+// shell's handle is closed by the time the command settles. An open that shares nothing fails with a
+// sharing violation while any other handle to the file exists.
+test.skipIf(!isWindows)("a redirect target is closed when the command that wrote it settles", async () => {
+  const { CreateFileW, CloseHandle } = dlopen("kernel32.dll", {
+    CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "i64" },
+    CloseHandle: { args: ["i64"], returns: "i32" },
+  }).symbols;
+  const GENERIC_READ = 0x80000000;
+  const OPEN_EXISTING = 3;
+  using dir = tempDir("shell-redirect-closed", {});
+  const stillOpen: string[] = [];
+  for (let i = 0; i < 50; i++) {
+    // The same file again and a new one: a truncating open and a creating open.
+    for (const name of ["same.txt", `file-${i}.txt`]) {
+      await $`echo line ${i} > ${name}`.cwd(String(dir)).quiet();
+      const wide = Buffer.from(join(String(dir), name) + "\0", "utf16le");
+      const handle = CreateFileW(ptr(wide), GENERIC_READ, 0, null, OPEN_EXISTING, 0, null);
+      if (handle === -1n || handle === -1) stillOpen.push(name);
+      else CloseHandle(handle);
+    }
+  }
+  expect(stillOpen).toEqual([]);
 });

@@ -551,22 +551,16 @@ export const ANDROID_API_LEVEL_DEFAULT = pins.androidNdk.apiLevel;
 export const FREEBSD_VERSION_DEFAULT = pins.freebsd.version;
 
 /**
- * Locate a FreeBSD sysroot (extracted base.txz). Checks env var then
- * well-known install paths. The sysroot is arch-specific (different
- * crt/libc for amd64 vs arm64), so when cross-compiling for arm64 we
- * look for the `-arm64` variant first. Returns undefined if none found.
+ * Locate a FreeBSD sysroot (extracted base.txz). Checks env var then the
+ * path CI's build image puts it at. The sysroot is arch-specific (different
+ * crt/libc for amd64 vs arm64). Returns undefined if none found.
  */
 export function detectFreebsdSysroot(arch: Arch): string | undefined {
+  const looksValid = (p: string) => existsSync(join(p, "usr", "include", "sys", "param.h"));
   const env = process.env.FREEBSD_SYSROOT;
-  if (env && existsSync(join(env, "usr", "include", "sys", "param.h"))) return env;
-  const candidates =
-    arch === "aarch64"
-      ? [locations.freebsdSysroot.aarch64, locations.freebsdSysroot.x64]
-      : [locations.freebsdSysroot.x64, "/opt/freebsd-sysroot-amd64"];
-  for (const p of candidates) {
-    if (existsSync(join(p, "usr", "include", "sys", "param.h"))) return p;
-  }
-  return undefined;
+  if (env && looksValid(env)) return env;
+  const candidate = locations.freebsdSysroot[arch];
+  return looksValid(candidate) ? candidate : undefined;
 }
 
 /**

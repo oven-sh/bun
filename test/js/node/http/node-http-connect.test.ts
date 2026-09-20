@@ -446,6 +446,75 @@ describe("HTTP server CONNECT", () => {
     expect(requestUrls).toEqual([]);
   });
 
+  // Node v26.3.0: the request of a 'connect' event has no body, whatever framing the
+  // CONNECT declares. It ends with no data and the socket gets each tunnel byte once.
+  // The parser enters tunnel mode at the request line only for an authority-form target.
+  describe.each([
+    ["example.com:80", "Content-Length: 5"],
+    ["example.com:80", "Transfer-Encoding: chunked"],
+    ["/x", "Content-Length: 5"],
+    ["/x", "Transfer-Encoding: chunked"],
+  ])("CONNECT %s with %s", (target, framing) => {
+    test.each([
+      ["a flowing", false],
+      ["a paused", true],
+    ])("should deliver the tunnel bytes to %s connect socket and none to the request", async (_, paused) => {
+      await using proxyServer = http.createServer();
+      const payload = "hello tunnel";
+
+      const { promise, resolve, reject } = Promise.withResolvers<{ request: string; tunneled: string }>();
+      let tunnelClosed = false;
+      proxyServer.on("connect", async (req, socket, head) => {
+        try {
+          socket.on("error", reject);
+          socket.once("close", () => (tunnelClosed = true));
+          if (paused) socket.pause();
+          socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+          // Paused: every tunnel byte arrives before anything reads the request or the socket.
+          // The deadline is below the default test timeout, so a stalled tunnel reports its byte count.
+          const deadline = Date.now() + 4000;
+          while (paused && socket.readableLength < payload.length) {
+            if (tunnelClosed) {
+              throw new Error(`tunnel closed with ${socket.readableLength} of ${payload.length} bytes buffered`);
+            }
+            if (Date.now() > deadline) {
+              throw new Error(`only ${socket.readableLength} of ${payload.length} bytes buffered in the paused socket`);
+            }
+            await new Promise(tick => setImmediate(tick));
+          }
+
+          const requestChunks: Buffer[] = [];
+          const tunnelChunks: Buffer[] = [head];
+          req.on("data", chunk => requestChunks.push(chunk));
+          socket.on("data", chunk => tunnelChunks.push(chunk));
+          socket.on("end", () => socket.end());
+          if (paused) socket.resume();
+          await Promise.all([once(req, "end"), once(socket, "end")]);
+          resolve({
+            request: Buffer.concat(requestChunks).toString(),
+            tunneled: Buffer.concat(tunnelChunks).toString(),
+          });
+        } catch (err) {
+          // The server's dispose waits for this socket, and a timeout would hide the error.
+          socket.destroy();
+          reject(err);
+        }
+      });
+
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+        client.write(`CONNECT ${target} HTTP/1.1\r\nHost: example.com:80\r\n${framing}\r\n\r\n`);
+      });
+      client.on("error", reject);
+      client.once("close", () => (tunnelClosed = true));
+      client.once("data", () => client.end(payload));
+
+      expect(await promise).toEqual({ request: "", tunneled: payload });
+    });
+  });
+
   // Node v26.3.0: HPE_INVALID_CONTENT_LENGTH — Transfer-Encoding + Content-Length is
   // rejected with a 400 before the 'connect' event is dispatched.
   test("should reject a CONNECT request carrying both Transfer-Encoding and Content-Length with a 400", async () => {

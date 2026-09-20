@@ -55,7 +55,6 @@ const {
   setServerAppFlags,
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
-  noBodySymbol,
   kOutHeaders,
   onDataIncomingMessage,
   validateMsecs,
@@ -222,9 +221,8 @@ function releaseServerParserShim(socket, req?) {
 function onNodeHTTPServerSocketTimeout() {
   const req = this[kRequest];
   // Like Node.js's socketOnTimeout: the request only sees 'timeout' while its
-  // message is still being received. A body-less request was fully received
-  // when it was dispatched, even if its (empty) stream was never consumed.
-  const reqTimeout = req && !req.complete && !req[noBodySymbol] && req.emit("timeout", this);
+  // message is still being received.
+  const reqTimeout = req && !req.complete && req.emit("timeout", this);
   const res = this._httpMessage;
   const resTimeout = res && res.emit("timeout", this);
   const serverTimeout = this.server.emit("timeout", this);
@@ -845,7 +843,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // the socket (which emits 'pause' on it) once the buffer fills.
         if (hasBody) {
           handle.ondata = onDataIncomingMessage.bind(http_req);
-          handle.hasCustomOnData = false;
         }
         drainMicrotasks();
 
@@ -1036,6 +1033,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             server.emit("request", http_req, http_res);
           }
         }
+
+        // Like Node.js's parserOnMessageComplete: llhttp completes a message
+        // without a body as soon as the listener returns, read or not. EOF
+        // itself stays lazy (IncomingMessage.prototype._read).
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L143-L163
+        if (!hasBody) http_req.complete = true;
 
         socket.cork();
 
@@ -2409,6 +2412,11 @@ function stopServerResponsePerf(this: any) {
 // arm keep-alive) runs first because onResponseFinishHandleSocket's guards
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish() {
+  const req = this.req;
+  // Node's resOnFinish: dump a body that nobody consumed or resumed.
+  if (req && !req._consuming && !req._readableState?.resumeScheduled) {
+    req._dump();
+  }
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
@@ -3283,10 +3291,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
   this._header = " ";
-  const req = this.req;
-  if (!req._consuming && !req?._readableState?.resumeScheduled) {
-    req._dump();
-  }
   // The socket is NOT detached here: like Node.js, res.socket stays assigned
   // until the response 'finish' machinery runs (the dispatcher detaches it
   // right after a synchronously-finished handler returns, or via its 'finish'

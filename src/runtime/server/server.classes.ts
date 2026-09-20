@@ -214,10 +214,6 @@ export default [
         setter: "setOnAbort",
         this: true,
       },
-      hasCustomOnData: {
-        getter: "getHasCustomOnData",
-        setter: "setHasCustomOnData",
-      },
       upgraded: {
         getter: "getUpgraded",
       },

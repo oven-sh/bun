@@ -69,7 +69,10 @@ export const enum NodeHTTPIncomingRequestType {
 export const enum NodeHTTPBodyReadState {
   none,
   pending = 1 << 1,
+  /** The last chunk arrived, or a WebSocket took the connection. */
   done = 1 << 2,
+  /** The connection closed before the last chunk. */
+  aborted = 1 << 3,
 }
 
 // Must be kept in sync with NodeHTTPResponse.Flags

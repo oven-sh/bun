@@ -1561,11 +1561,15 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
         ?.filter(Boolean);
 
     // The answers to the options step, as Buildkite stored them. The values of
-    // "build-profiles" are that field's options; it has a default, so it is set.
-    const buildProfiles = parseArray(options["build-profiles"]) as Profile[] | undefined;
-    if (buildProfiles === undefined) {
-      throw new Error("The options step has no build-profiles");
-    }
+    // "build-profiles" are that field's options. They are only needed for the
+    // platforms that were picked.
+    const getBuildProfiles = (): Profile[] => {
+      const buildProfiles = parseArray(options["build-profiles"]) as Profile[] | undefined;
+      if (buildProfiles === undefined) {
+        throw new Error("Platforms were picked in the options step, but it has no build-profiles");
+      }
+      return buildProfiles;
+    };
     const buildPlatformKeys = parseArray(options["build-platforms"]);
     const testPlatformKeys = parseArray(options["test-platforms"]);
     return {
@@ -1578,12 +1582,12 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
       testFiles: parseArray(options["test-files"]),
       buildPlatforms: buildPlatformKeys?.length
         ? buildPlatformKeys.flatMap(key =>
-            buildProfiles.map(profile => ({ ...getSelectedPlatform(buildPlatformsMap, key), profile })),
+            getBuildProfiles().map(profile => ({ ...getSelectedPlatform(buildPlatformsMap, key), profile })),
           )
         : Array.from(buildPlatformsMap.values()),
       testPlatforms: testPlatformKeys?.length
         ? testPlatformKeys.flatMap(key =>
-            buildProfiles.map(profile => ({ ...getSelectedPlatform(testPlatformsMap, key), profile })),
+            getBuildProfiles().map(profile => ({ ...getSelectedPlatform(testPlatformsMap, key), profile })),
           )
         : Array.from(testPlatformsMap.values()),
       dryRun: parseBoolean(options["dry-run"]),

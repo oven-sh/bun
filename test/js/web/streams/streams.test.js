@@ -4118,7 +4118,9 @@ describe("direct stream contract", () => {
       // Read before `dir` is disposed at the end of this scope.
       return await Bun.file(file).text();
     },
-    "Bun.spawn({ stdin: s })": async s => {
+    // `child` receives how the echo child ended. A throw in here becomes observe()'s result, and the error
+    // shapes do not compare that result.
+    "Bun.spawn({ stdin: s })": async (s, child) => {
       await using proc = Bun.spawn({
         // The echo uses Bun.stdin and Bun.stdout. process.stdin loads node:stream, which costs a debug build
         // about 1s for each child, and every shape spawns one.
@@ -4126,10 +4128,10 @@ describe("direct stream contract", () => {
         env: bunEnv,
         stdin: s,
         stdout: "pipe",
-        stderr: "inherit",
+        stderr: "pipe",
       });
-      const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      if (exitCode !== 0) throw new Error(`the echo child exited with code ${exitCode}`);
+      const [out, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      Object.assign(child, { stderr, exitCode, signalCode: proc.signalCode });
       return out;
     },
   };
@@ -4139,7 +4141,10 @@ describe("direct stream contract", () => {
     const shape = directShapes[shapeName];
     const cells = Object.keys(consumers).filter(name => !(shape.oneShotOnly && directReaderConsumers.has(name)));
     test.concurrent.each(cells)("%s", async consumerName => {
-      const got = await directObserve(shape, consumers[consumerName]);
+      const child = {};
+      const got = await directObserve(shape, s => consumers[consumerName](s, child));
+      // Bun.spawn() throws when pull() throws in the same call. That cell has no child.
+      if ("exitCode" in child) expect(child).toEqual({ stderr: "", exitCode: 0, signalCode: null });
       if ("error" in shape.expect && cannotSurfaceErrors.has(consumerName)) {
         expect({ pulls: got.pulls, cancels: got.cancels }).toEqual({ pulls: 1, cancels: 0 });
         return;

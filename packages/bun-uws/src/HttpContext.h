@@ -658,6 +658,11 @@ private:
                 /* We might respond in the handler, so do not change timeout after this */
                 httpResponseData->inStream(static_cast<HttpResponse<SSL>*>(user), data.data(), data.length(), fin, httpResponseData->userData);
 
+                /* The body handler upgraded this socket (ws.handleUpgrade in req 'end'): upgrade() destroyed httpResponseData, so stop here. */
+                if (httpContextData->upgradedWebSocket) {
+                    return nullptr;
+                }
+
                 /* Was the socket closed? */
                 if (us_socket_is_closed((struct us_socket_t *) user)) {
                     return nullptr;
@@ -675,8 +680,7 @@ private:
                 }
             }
             if constexpr (IsNodeHttp) {
-                /* The kind check: upgrade() from the body handler turns the ext into a WebSocketData. */
-                if (switchToTunnelAfterThisChunk && us_socket_kind((struct us_socket_t *) user) == socketKind()) {
+                if (switchToTunnelAfterThisChunk) {
                     /* The response cannot resume reads in tunnel mode: lift the pause the body left. */
                     Bun__NodeHTTP__onReadsResumable(SSL, (struct us_socket_t *) user);
                     if (us_socket_is_closed((struct us_socket_t *) user)) {

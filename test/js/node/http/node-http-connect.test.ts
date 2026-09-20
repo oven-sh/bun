@@ -34,6 +34,18 @@ function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, ad
   return promise;
 }
 
+// Writes a request head in two parts that reach the server's parser in two reads. A partial
+// head emits nothing on the server, so a whole request on a second connection is the barrier:
+// the server has read `first` by the time it has answered and closed that connection.
+async function writeInTwoReads(client: net.Socket, address: AddressInfo, first: string, second: string) {
+  client.write(first);
+  const barrier = net.connect(address.port, address.address);
+  barrier.resume();
+  barrier.end("GET /barrier HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+  await once(barrier, "close");
+  client.write(second);
+}
+
 const BIG_DATA = Buffer.alloc(1024 * 1024 * 64, "bun").toString();
 describe("HTTP server CONNECT", () => {
   test("should handle backpressure", async () => {
@@ -889,6 +901,178 @@ describe("HTTP server CONNECT", () => {
     expect(response).toContain("400 Bad Request");
     expect(connectEvents).toBe(0);
     expect(requestUrls).toEqual([]);
+  });
+
+  // A connection is a tunnel once its CONNECT is dispatched, not before. Until then the bytes are
+  // HTTP. The request line and the header block can reach the parser in separate reads (a client
+  // that writes them separately, or a network that splits the segment), and the head can time
+  // out, end early, or fail a check. Every expectation below is Node v26.3.0's.
+  describe("before the CONNECT is dispatched", () => {
+    test("should emit 'connect' when the header block arrives in a later read", async () => {
+      await using proxyServer = http.createServer((req, res) => res.end());
+      const { promise: connected, resolve: resolveConnected } = Promise.withResolvers<object>();
+      proxyServer.on("connect", (req, socket, head) => {
+        resolveConnected({ url: req.url, host: req.headers.host, head: head.toString() });
+        socket.end("HTTP/1.1 200 Connection established\r\n\r\n");
+      });
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const { promise: clientReceived, resolve, reject } = Promise.withResolvers<string>();
+      const received: string[] = [];
+      const client = net.connect(proxyAddress.port, proxyAddress.address);
+      client.on("data", data => received.push(data.toString()));
+      client.on("error", reject);
+      client.on("close", () => resolve(received.join("")));
+      await once(client, "connect");
+      await writeInTwoReads(
+        client,
+        proxyAddress,
+        "CONNECT example.com:80 HTTP/1.1\r\nHost: exam",
+        "ple.com:80\r\n\r\ntunneled",
+      );
+
+      expect(await connected).toEqual({ url: "example.com:80", host: "example.com:80", head: "tunneled" });
+      expect(await clientReceived).toBe("HTTP/1.1 200 Connection established\r\n\r\n");
+    });
+
+    test("should emit 'connect' when a split CONNECT follows a request on the same connection", async () => {
+      await using proxyServer = http.createServer((req, res) => res.end("first"));
+      const { promise: connected, resolve: resolveConnected } = Promise.withResolvers<object>();
+      proxyServer.on("connect", (req, socket, head) => {
+        resolveConnected({ url: req.url, host: req.headers.host, head: head.toString() });
+        socket.end("HTTP/1.1 200 Connection established\r\n\r\n");
+      });
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const { promise: firstAnswered, resolve: resolveFirstAnswered } = Promise.withResolvers<void>();
+      const { promise: clientReceived, resolve, reject } = Promise.withResolvers<string>();
+      let received = "";
+      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+        // The response to the GET leaves after the server has parsed this whole read.
+        client.write("GET /first HTTP/1.1\r\nHost: example.com\r\n\r\nCONNECT example.com:80 HTTP/1.1\r\nHost: exam");
+      });
+      client.on("data", data => {
+        received += data;
+        if (received.endsWith("first")) resolveFirstAnswered();
+      });
+      client.on("error", reject);
+      client.on("close", () => resolve(received));
+      await firstAnswered;
+      client.write("ple.com:80\r\n\r\ntunneled");
+
+      expect(await connected).toEqual({ url: "example.com:80", host: "example.com:80", head: "tunneled" });
+      expect(await clientReceived).toEndWith("firstHTTP/1.1 200 Connection established\r\n\r\n");
+    });
+
+    test("should close a split CONNECT when nothing listens for 'connect'", async () => {
+      const requestUrls: string[] = [];
+      await using proxyServer = http.createServer((req, res) => {
+        requestUrls.push(req.url ?? "");
+        res.end();
+      });
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const { promise: clientReceived, resolve } = Promise.withResolvers<string>();
+      const received: string[] = [];
+      const client = net.connect(proxyAddress.port, proxyAddress.address);
+      client.on("data", data => received.push(data.toString()));
+      client.on("error", () => {});
+      client.on("close", () => resolve(received.join("")));
+      await once(client, "connect");
+      await writeInTwoReads(
+        client,
+        proxyAddress,
+        "CONNECT example.com:80 HTTP/1.1\r\nHost: exam",
+        "ple.com:80\r\n\r\n",
+      );
+
+      expect(await clientReceived).toBe("");
+      expect(requestUrls).toEqual(["/barrier"]);
+    });
+
+    test("should apply headersTimeout while the header block is incomplete", async () => {
+      await using proxyServer = http.createServer({ headersTimeout: 100, connectionsCheckingInterval: 25 });
+      let connectEvents = 0;
+      proxyServer.on("connect", (req, socket) => {
+        connectEvents++;
+        socket.end();
+      });
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const { promise: clientReceived, resolve, reject } = Promise.withResolvers<string>();
+      const received: string[] = [];
+      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+        client.write("CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nX-Slow: ");
+      });
+      client.on("data", data => received.push(data.toString()));
+      client.on("error", reject);
+      client.on("close", () => resolve(received.join("")));
+
+      expect(await clientReceived).toBe("HTTP/1.1 408 Request Timeout\r\nConnection: close\r\n\r\n");
+      expect(connectEvents).toBe(0);
+    });
+
+    test("should report HPE_INVALID_EOF_STATE when the client ends inside the header block", async () => {
+      await using proxyServer = http.createServer();
+      let connectEvents = 0;
+      proxyServer.on("connect", (req, socket) => {
+        connectEvents++;
+        socket.end();
+      });
+      const clientErrors: string[] = [];
+      proxyServer.on("clientError", (err: NodeJS.ErrnoException, socket) => {
+        clientErrors.push(err.code ?? "");
+        socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+      });
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const { promise: clientReceived, resolve, reject } = Promise.withResolvers<string>();
+      const received: string[] = [];
+      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+        client.end("CONNECT example.com:80 HTTP/1.1\r\nHost: exam");
+      });
+      client.on("data", data => received.push(data.toString()));
+      client.on("error", reject);
+      client.on("close", () => resolve(received.join("")));
+
+      expect(await clientReceived).toBe("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+      expect({ clientErrors, connectEvents }).toEqual({ clientErrors: ["HPE_INVALID_EOF_STATE"], connectEvents: 0 });
+    });
+
+    test("should close on the client's FIN after a complete head that failed a framing check", async () => {
+      await using proxyServer = http.createServer();
+      let connectEvents = 0;
+      proxyServer.on("connect", (req, socket) => {
+        connectEvents++;
+        socket.end();
+      });
+      // This listener leaves the socket alone, so the server itself has to answer the FIN.
+      const { promise: clientError, resolve: resolveClientError } = Promise.withResolvers<string | undefined>();
+      proxyServer.on("clientError", (err: NodeJS.ErrnoException) => resolveClientError(err.code));
+      await once(proxyServer.listen(0, "127.0.0.1"), "listening");
+      const proxyAddress = proxyServer.address() as AddressInfo;
+
+      const { promise: clientReceived, resolve, reject } = Promise.withResolvers<string>();
+      const received: string[] = [];
+      const client = net.connect(proxyAddress.port, proxyAddress.address, () => {
+        client.write(
+          "CONNECT example.com:80 HTTP/1.1\r\nHost: example.com:80\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n",
+        );
+      });
+      client.on("data", data => received.push(data.toString()));
+      client.on("error", reject);
+      client.on("close", () => resolve(received.join("")));
+
+      expect(await clientError).toBe("HPE_UNEXPECTED_CONTENT_LENGTH");
+      client.end();
+      expect(await clientReceived).toBe("");
+      expect(connectEvents).toBe(0);
+    });
   });
 
   test("should handle malformed CONNECT requests", async () => {

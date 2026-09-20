@@ -293,36 +293,68 @@ struct HttpResponseData;
         /* RFC 9112 9.6: "close" is a case-insensitive token in the Connection list. */
         bool hasConnectionClose()
         {
+            return hasConnectionToken("close");
+        }
+
+        /* llhttp 9.4.2's Connection grammar for one field (Node 26): `lowerToken` is a whole item of the list, SP and HTAB around an item are skipped, and a control byte ends the list. */
+        static bool fieldHasToken(const Header &field, std::string_view lowerToken)
+        {
+            /* getHeaders() trimmed the value in place: the whitespace it dropped still follows it, up to the CR. */
+            const char *p = field.value.data(), *end = p + field.value.length();
+            while (p < end) {
+                while (p < end && (*p == ' ' || *p == '\t')) {
+                    p++;
+                }
+                if ((size_t) (end - p) >= lowerToken.length() && !strncasecmp(p, lowerToken.data(), lowerToken.length())) {
+                    const char *after = p + lowerToken.length();
+                    while (*after == ' ' || *after == '\t') {
+                        after++;
+                    }
+                    if (*after == ',' || *after == '\r') {
+                        return true;
+                    }
+                }
+                for (; p < end && *p != ','; p++) {
+                    if (((unsigned char) *p < ' ' && *p != '\t') || *p == 0x7f) {
+                        return false;
+                    }
+                }
+                if (p < end) {
+                    p++;
+                }
+            }
+            return false;
+        }
+
+        bool hasConnectionToken(std::string_view lowerToken)
+        {
             if (!bf.mightHave("connection")) {
                 return false;
             }
             for (Header *h = headers; (++h)->key.length();) {
-                if (h->key.length() != 10 || strncasecmp(h->key.data(), "connection", 10)) {
-                    continue;
-                }
-                const auto value = h->value;
-                size_t pos = 0;
-                while (pos < value.length()) {
-                    while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
-                        pos++;
-                    }
-                    size_t tokenStart = pos;
-                    while (pos < value.length() && value[pos] != ',') {
-                        pos++;
-                    }
-                    size_t tokenEnd = pos;
-                    while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
-                        tokenEnd--;
-                    }
-                    if (tokenEnd - tokenStart == 5 && !strncasecmp(value.data() + tokenStart, "close", 5)) {
-                        return true;
-                    }
-                    if (pos < value.length()) {
-                        pos++;
-                    }
+                if (h->key.length() == 10 && !strncasecmp(h->key.data(), "connection", 10) && fieldHasToken(*h, lowerToken)) {
+                    return true;
                 }
             }
             return false;
+        }
+
+        /* llhttp's `upgrade` flag for a request that is not a CONNECT: an "upgrade" item in Connection or Proxy-Connection, and an Upgrade field with a non-empty value. */
+        bool isUpgradeRequest()
+        {
+            if (!bf.mightHave("upgrade") || !(bf.mightHave("connection") || bf.mightHave("proxy-connection"))) {
+                return false;
+            }
+            bool hasUpgradeValue = false, hasConnectionUpgrade = false;
+            for (Header *h = headers; (++h)->key.length();) {
+                if (h->key.length() == 7 && !strncasecmp(h->key.data(), "upgrade", 7)) {
+                    hasUpgradeValue = hasUpgradeValue || h->value.length();
+                } else if ((h->key.length() == 10 && !strncasecmp(h->key.data(), "connection", 10))
+                    || (h->key.length() == 16 && !strncasecmp(h->key.data(), "proxy-connection", 16))) {
+                    hasConnectionUpgrade = hasConnectionUpgrade || fieldHasToken(*h, "upgrade");
+                }
+            }
+            return hasUpgradeValue && hasConnectionUpgrade;
         }
 
         struct TransferEncoding {
@@ -952,7 +984,7 @@ struct HttpResponseData;
         }
 
         /* The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, bool &isAncientHTTP, bool &isConnectRequestLine, bool useStrictMethodValidation, bool useInsecureHTTPParser, uint64_t maxHeaderSize) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
 
             /* It is critical for fallback buffering logic that we only return with success
@@ -986,12 +1018,9 @@ struct HttpResponseData;
             /* Written unconditionally (not just on true): ancientHttp is per-request and
              * the caller re-enters this function for each pipelined request in the same
              * recv buffer without clearing it, so a stale true from a prior HTTP/1.0
-             * request would mis-classify a following HTTP/1.1 request. isConnectRequest
-             * below is deliberately latched (tunnel mode persists across the loop). */
+             * request would mis-classify a following HTTP/1.1 request. */
             isAncientHTTP = requestLineResult.isAncientHTTP;
-            if(requestLineResult.isConnect) {
-                isConnectRequest = true;
-            }
+            isConnectRequestLine = requestLineResult.isConnect;
             /* Mirror llhttp's TrackHeader: accumulate URL + name + value lengths only (llhttp
              * never charges method/separators/CRLF) and fail at maxHeaderSize. The fallback
              * buffer keeps its own raw bound (maxBufferedHeaderSize). github.com/nodejs/llhttp */
@@ -1193,7 +1222,8 @@ struct HttpResponseData;
                 }
                 return HttpParserResult::success(consumedTotal + length, user);
             }
-            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
+            bool isConnectRequestLine = false;
+            auto result = getHeaders(data, data + length, req->headers, req->ancientHttp, isConnectRequestLine, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
             if(result.isError()) {
                 return result;
             }
@@ -1283,6 +1313,15 @@ struct HttpResponseData;
             bool deferredTransferEncodingError = IsNodeHttp && transferEncoding.has
                 && !transferEncoding.invalid && !transferEncoding.chunked && !contentLengthStringLen;
 
+            /* llhttp__after_headers_complete returns its upgrade verdict before that check: a
+             * CONNECT or an upgrade with no chunked coding and no Content-Length ends at its
+             * head, whether or not the server accepts it. The header is treated as absent.
+             * https://github.com/nodejs/llhttp/blob/v9.4.1/src/native/http.c#L41-L50 */
+            if (deferredTransferEncodingError && (req->getCaseSensitiveMethod() == "CONNECT" || req->isUpgradeRequest())) [[unlikely]] {
+                transferEncoding = {};
+                deferredTransferEncodingError = false;
+            }
+
             /* llhttp LENIENT_TRANSFER_ENCODING (kLenientAll / "insecure", never "relaxed")
              * accepts chunked with another value after it. It does not relax the TE+CL
              * conflict, so only the coding-shape verdict is cleared; conflicts below still reject. */
@@ -1311,7 +1350,7 @@ struct HttpResponseData;
              * post-completion check, so on doubly-invalid input the framing error wins (Node
              * reports e.g. HPE_INVALID_TRANSFER_ENCODING for such requests). */
             if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
-                && !isConnectRequest && !req->getHeader("upgrade").data()) {
+                && !isConnectRequestLine && !req->getHeader("upgrade").data()) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 
@@ -1342,6 +1381,10 @@ struct HttpResponseData;
             req->hasTransferEncoding = transferEncoding.has;
             /* Read before the handler runs: an upgrade destroys this parser. */
             const bool hasBody = transferEncoding.has || (contentLengthStringLen && remainingStreamingBytes);
+            /* Tunnel mode starts only for a CONNECT that is dispatched: a request line whose headers are still to come must not leave a tunnel with no socket. */
+            if (isConnectRequestLine) {
+                isConnectRequest = true;
+            }
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken. What follows the head
@@ -1429,16 +1472,20 @@ struct HttpResponseData;
             } else if (contentLengthStringLen) {
                 if constexpr (!ConsumeMinimally) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
-                    void *returnedUser = dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
+                    bool fin = emittable == remainingStreamingBytes;
+                    /* Account for the chunk before the handler runs, like the chunked
+                     * branch does. An upgrade from the handler destroys the
+                     * HttpResponseData this parser lives in, so nothing of it may be
+                     * touched after the call. */
                     remainingStreamingBytes -= emittable;
-
-                    data += emittable;
-                    length -= emittable;
                     consumedTotal += emittable;
-
+                    void *returnedUser = dataHandler(user, std::string_view(data, emittable), fin);
                     if (returnedUser != user) {
                         return HttpParserResult::success(consumedTotal, returnedUser);
                     }
+
+                    data += emittable;
+                    length -= emittable;
                 }
             } else {
                 /* If we came here without a body; emit an empty data chunk to signal no data */
@@ -1513,21 +1560,24 @@ public:
 
                 // this is exactly the same as below!
                 // todo: refactor this
+                /* The parser state is updated before the handler runs: an upgrade
+                 * from the handler destroys the HttpResponseData this parser lives
+                 * in, so nothing of it may be touched after the call. */
                 if (remainingStreamingBytes >= length) {
-                    void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == length);
+                    bool fin = remainingStreamingBytes == length;
                     remainingStreamingBytes -= length;
+                    void *returnedUser = dataHandler(user, std::string_view(data, length), fin);
                     return HttpParserResult::success(0, returnedUser);
                 } else {
-                    void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
-
-                    data += (unsigned int) remainingStreamingBytes;
-                    length -= (unsigned int) remainingStreamingBytes;
-
+                    unsigned int emittable = (unsigned int) remainingStreamingBytes;
                     remainingStreamingBytes = 0;
-
+                    void *returnedUser = dataHandler(user, std::string_view(data, emittable), true);
                     if (returnedUser != user) {
                         return HttpParserResult::success(0, returnedUser);
                     }
+
+                    data += emittable;
+                    length -= emittable;
                 }
             }
 
@@ -1602,20 +1652,20 @@ public:
                     } else {
                         // this is exactly the same as above!
                         if (remainingStreamingBytes >= (unsigned int) length) {
-                            void *returnedUser = dataHandler(user, std::string_view(data, length), remainingStreamingBytes == (unsigned int) length);
+                            bool fin = remainingStreamingBytes == (unsigned int) length;
                             remainingStreamingBytes -= length;
+                            void *returnedUser = dataHandler(user, std::string_view(data, length), fin);
                             return HttpParserResult::success(0, returnedUser);
                         } else {
-                            void *returnedUser = dataHandler(user, std::string_view(data, remainingStreamingBytes), true);
-
-                            data += (unsigned int) remainingStreamingBytes;
-                            length -= (unsigned int) remainingStreamingBytes;
-
+                            unsigned int emittable = (unsigned int) remainingStreamingBytes;
                             remainingStreamingBytes = 0;
-
+                            void *returnedUser = dataHandler(user, std::string_view(data, emittable), true);
                             if (returnedUser != user) {
                                 return HttpParserResult::success(0, returnedUser);
                             }
+
+                            data += emittable;
+                            length -= emittable;
                         }
                     }
                 }

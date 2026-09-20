@@ -3476,6 +3476,110 @@ it("req.upgrade reflects the upgrade dispatch decision like Node.js", async () =
   }
 });
 
+it("'upgrade' fires only when llhttp would flag the request as an upgrade", async () => {
+  // Node takes the upgrade bit from llhttp (F_UPGRADE && F_CONNECTION_UPGRADE):
+  // the Upgrade value must be non-empty and "upgrade" must be a whole item of
+  // the Connection list (OWS around the item ignored, llhttp >= 9.4.2, in Node
+  // since the 9.4.2 bump; 9.4.1 rejected a HTAB after the item). The other
+  // rows are verified against Node v26.3.0.
+  const cases: [string, string, "upgrade" | "request"][] = [
+    ["Connection: Upgrade\r\nUpgrade: x\r\n", "control", "upgrade"],
+    ["Connection: keep-alive, Upgrade \r\nUpgrade: x\r\n", "list item with SP after it", "upgrade"],
+    ["Connection:\tupgrade\r\nUpgrade: x\r\n", "HTAB before the item", "upgrade"],
+    ["Connection: Upgrade\t, close\r\nUpgrade: x\r\n", "HTAB after the item", "upgrade"],
+    ["Connection: Upgrade\r\nUpgrade:\r\n", "empty Upgrade value", "request"],
+    ["Connection: Upgrade\r\nUpgrade: \t\r\n", "whitespace-only Upgrade value", "request"],
+    ["Connection: upgrade-x\r\nUpgrade: x\r\n", "upgrade-x is one token", "request"],
+    ["Connection: foo upgrade\r\nUpgrade: x\r\n", "no comma between the tokens", "request"],
+    ["Connection: foo,upgrade-x,x-upgrade\r\nUpgrade: x\r\n", "no whole item in the list", "request"],
+  ];
+  const results: Record<string, string> = {};
+  const expected: Record<string, string> = {};
+  const server = createServer((req, res) => {
+    res.end(`request (req.upgrade=${req.upgrade})`);
+  });
+  server.on("upgrade", (req, socket) => {
+    socket.end(
+      `HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\nupgrade (req.upgrade=${req.upgrade})`,
+    );
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    for (const [headers, name, verdict] of cases) {
+      expected[name] = verdict === "upgrade" ? "upgrade (req.upgrade=true)" : "request (req.upgrade=false)";
+      const client = connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      client.write(`GET / HTTP/1.1\r\nHost: x\r\n${headers}Connection: close\r\n\r\n`);
+      const chunks: Buffer[] = [];
+      client.on("data", chunk => chunks.push(chunk));
+      await once(client, "close");
+      const body = Buffer.concat(chunks).toString();
+      results[name] = body.slice(body.indexOf("\r\n\r\n") + 4);
+    }
+    expect(results).toEqual(expected);
+  } finally {
+    server.close();
+  }
+});
+
+it("Connection: close closes the connection only as a whole list item like llhttp", async () => {
+  // Same grammar as the upgrade bit (F_CONNECTION_CLOSE): "close-x" and
+  // "foo close" keep the connection alive. Verified against Node v26.3.0.
+  const cases: [string, string, "close" | "keep-alive"][] = [
+    ["Connection: close\r\n", "control", "close"],
+    ["Connection: keep-alive, close\r\n", "list item", "close"],
+    ["Connection: close-x\r\n", "close-x is one token", "keep-alive"],
+    ["Connection: foo close\r\n", "no comma between the tokens", "keep-alive"],
+    ["Connection: x-close,close-x\r\n", "no whole item in the list", "keep-alive"],
+  ];
+  const results: Record<string, string> = {};
+  const expected: Record<string, string> = {};
+  const server = createServer((req, res) => {
+    res.end("ok");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    for (const [headers, name, verdict] of cases) {
+      expected[name] = verdict;
+      const client = connect(port, "127.0.0.1");
+      client.write(`GET / HTTP/1.1\r\nHost: x\r\n${headers}\r\n`);
+      let received = "";
+      let waiter = Promise.withResolvers<void>();
+      client.on("data", chunk => {
+        received += chunk.toString();
+        if (received.endsWith("ok")) waiter.resolve();
+      });
+      // A close or error before the body ends fails the case with what was received.
+      client.on("error", err =>
+        waiter.reject(new Error(`${name}: ${err.message}; received ${JSON.stringify(received)}`)),
+      );
+      client.on("close", () => waiter.reject(new Error(`${name}: closed; received ${JSON.stringify(received)}`)));
+      await waiter.promise;
+      const connection = /^connection: (.*)$/im.exec(received)?.[1];
+      if (connection === "close") {
+        // The server closes after the response.
+        await once(client, "close");
+        results[name] = "close";
+      } else {
+        // The server keeps the connection open: a second request gets a response.
+        received = "";
+        waiter = Promise.withResolvers<void>();
+        client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        await waiter.promise;
+        await once(client, "close");
+        results[name] = connection ?? "(no Connection header)";
+      }
+    }
+    expect(results).toEqual(expected);
+  } finally {
+    server.close();
+  }
+});
+
 it("standalone ServerResponse end() honors rejectNonStandardBodyWrites for no-body responses", async () => {
   // Mirrors the write() fix: the original chunk must reach write_()'s
   // !_hasBody handling so the reject option throws like Node.js.

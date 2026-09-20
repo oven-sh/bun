@@ -2010,8 +2010,10 @@ it("http2 session.settings() checks settings before callback and ignores a falsy
 });
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L3502-L3509
-it("http2 server.setTimeout() assigns the timeout before it validates the callback", () => {
-  for (const server of [http2.createServer(), http2.createSecureServer({})]) {
+it.each(["createServer", "createSecureServer"])(
+  "http2 %s().setTimeout() assigns the timeout before it validates the callback",
+  factory => {
+    const server = http2[factory]({});
     expect(() => server.setTimeout(123, 1)).toThrow(
       expect.objectContaining({
         name: "TypeError",
@@ -2021,8 +2023,8 @@ it("http2 server.setTimeout() assigns the timeout before it validates the callba
     );
     expect(server.timeout).toBe(123);
     expect(server.listenerCount("timeout")).toBe(0);
-  }
-});
+  },
+);
 
 it("http2 session.goaway() sends custom data", async done => {
   const { mustCall } = createCallCheckCtx(done);

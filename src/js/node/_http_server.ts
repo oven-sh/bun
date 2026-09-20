@@ -1561,7 +1561,7 @@ function getNodeHTTPServerSocket() {
     [kBytesWritten] = 0;
     [kHandle];
     [kUpgradeIncoming] = undefined;
-    [kEndAfterResponse] = false;
+    [kOnReadParsed] = undefined;
     server: Server;
     _httpMessage;
     _secureEstablished = false;

@@ -33,6 +33,7 @@ import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { rustPlanFiles } from "./rust.ts";
 import { quote } from "./shell.ts";
+import { writeToolchainStamp } from "./toolchain-stamp.ts";
 import {
   checkImageTools,
   findBun,
@@ -42,7 +43,6 @@ import {
   findSystemTool,
   resolveLlvmToolchain,
 } from "./tools.ts";
-import { writeToolchainStamp } from "./toolchain-stamp.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 

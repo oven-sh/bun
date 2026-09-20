@@ -14,8 +14,8 @@ import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
-import { toolchainStampPath } from "./toolchain-stamp.ts";
 import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
+import { toolchainStampPath } from "./toolchain-stamp.ts";
 
 // ---------------------------------------------------------------------------
 // Rule registration — call once per Ninja instance

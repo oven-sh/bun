@@ -7,7 +7,7 @@
  */
 import { expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
-import { mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 import { ar, cc } from "../../scripts/build/compile.ts";

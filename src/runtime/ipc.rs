@@ -1765,7 +1765,7 @@ impl SendQueue {
         let this = unsafe { &*this };
         let chunk = match event {
             ReadEvent::Data(chunk) => chunk,
-            ReadEvent::Eof => {
+            ReadEvent::Eof | ReadEvent::EndOfWrite => {
                 log!("SendQueue#onPipeRead EOF");
                 return this.close_socket_next_tick(true);
             }

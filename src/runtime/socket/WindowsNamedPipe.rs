@@ -25,6 +25,36 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
+/// How long a byte-type pipe is still read after [`shutdown`], with nothing
+/// arriving, before it is closed: libuv's `eof_timeout` (`src/win/pipe.c`),
+/// which is what `socket.end()` does to a named pipe in Node.
+///
+/// A named pipe has one state for both directions, so the other end cannot be
+/// told that writing is over while this end stays open to read: all it can see
+/// is this end closing, and nothing says whether it will write again. This is
+/// the only case without an event to wait for. See [`EndOfWrite`].
+///
+/// [`shutdown`]: WindowsNamedPipe::shutdown
+const END_OF_WRITE_IDLE_MS: i64 = 50;
+
+/// How far `shutdown()` of a plain (non-TLS) pipe has come.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum EndOfWrite {
+    /// `shutdown` has not been called.
+    Open,
+    /// Queued writes are still being written.
+    Writing,
+    /// Waiting to hear that the other end has read everything.
+    Flushing,
+    /// A message-type pipe: the other end has been sent the zero-length
+    /// message that means the end of writing. It closes when it is done.
+    Told,
+    /// A byte-type pipe, or a HANDLE that cannot be asked whether the other
+    /// end has read everything: closed once nothing has arrived for
+    /// [`END_OF_WRITE_IDLE_MS`].
+    Idle,
+}
+
 pub type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
@@ -53,9 +83,18 @@ pub struct WindowsNamedPipe {
     pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
     pub(crate) current_timeout: Cell<u32>,
     pub(crate) flags: Cell<Flags>,
+
+    pub(crate) end_of_write: Cell<EndOfWrite>,
+    /// Armed in [`EndOfWrite::Idle`] while the pipe is being read.
+    pub(crate) end_of_write_timer: JsCell<EventLoopTimer>,
+    /// The other end sent its end-of-write message.
+    pub(crate) peer_ended_writing: Cell<bool>,
 }
 
-bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop_timer);
+bun_event_loop::impl_timer_owner!(WindowsNamedPipe;
+    from_timer_ptr => event_loop_timer,
+    from_end_of_write_timer_ptr => end_of_write_timer,
+);
 
 bitflags::bitflags! {
     #[repr(transparent)]
@@ -166,6 +205,7 @@ impl WindowsNamedPipe {
         match event {
             ReadEvent::Data(data) => this.on_read(data),
             ReadEvent::Eof => this.on_read_end(),
+            ReadEvent::EndOfWrite => this.on_peer_end_of_write(),
             ReadEvent::Err(err) => this.on_read_error(err),
         }
     }
@@ -175,6 +215,7 @@ impl WindowsNamedPipe {
         let _keep_alive = self.keep_alive();
 
         self.reset_timeout();
+        self.arm_end_of_write_timer();
 
         if self.with_wrapper(|w| w.receive_data(data)).is_none() {
             (self.handlers.on_data)(self.handlers.ctx, data);
@@ -194,7 +235,8 @@ impl WindowsNamedPipe {
         );
 
         match status {
-            WriteStatus::Pending | WriteStatus::Drained => {}
+            WriteStatus::Pending => {}
+            WriteStatus::Drained => self.continue_end_of_write(),
             WriteStatus::EndOfFile => {
                 // we send FIN so we close after this
                 self.close_writer();
@@ -232,6 +274,123 @@ impl WindowsNamedPipe {
         // we received FIN but we dont allow half-closed connections right now
         (self.handlers.on_end)(self.handlers.ctx);
         self.close_writer();
+    }
+
+    /// The other end of a message-type pipe has finished writing and is still
+    /// open. The owner hears `on_end`; the pipe stays open to write to, and is
+    /// closed once this end has finished writing too.
+    fn on_peer_end_of_write(&self) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onPeerEndOfWrite");
+        let _keep_alive = self.keep_alive();
+        self.peer_ended_writing.set(true);
+        (self.handlers.on_end)(self.handlers.ctx);
+        if self.end_of_write.get() == EndOfWrite::Told {
+            self.close_writer();
+        }
+    }
+
+    /// `shutdown` of a plain pipe, once the connection is up.
+    fn begin_end_of_write(&self) {
+        if self.end_of_write.get() != EndOfWrite::Open {
+            return;
+        }
+        self.end_of_write.set(EndOfWrite::Writing);
+        self.continue_end_of_write();
+    }
+
+    /// Queued writes are done: ask to hear when the other end has read them.
+    fn continue_end_of_write(&self) {
+        if self.end_of_write.get() != EndOfWrite::Writing || self.writer.get().has_pending_data() {
+            return;
+        }
+        let this: *mut Self = self.root_ptr();
+        match self.with_pipe(|pipe| pipe.flush_peer(this, Self::on_peer_flushed)) {
+            Some(Ok(())) => self.end_of_write.set(EndOfWrite::Flushing),
+            Some(Err(_)) => {
+                self.end_of_write.set(EndOfWrite::Idle);
+                self.arm_end_of_write_timer();
+            }
+            None => {}
+        }
+    }
+
+    /// # Safety
+    /// `this` is the live pipe that called `flush_peer`.
+    unsafe fn on_peer_flushed(this: *mut Self, flushed: bun_sys::Result<()>) {
+        // SAFETY: fn contract.
+        let this = unsafe { &*this };
+        if this.end_of_write.get() != EndOfWrite::Flushing || this.flags.get().is_closed() {
+            return;
+        }
+        let _keep_alive = this.keep_alive();
+        if this.peer_ended_writing.get() {
+            // Both directions are done.
+            this.end_of_write.set(EndOfWrite::Told);
+            this.close_writer();
+            return;
+        }
+        if flushed.is_ok() && this.with_pipe(|pipe| pipe.is_message_type()) == Some(true) {
+            this.end_of_write.set(EndOfWrite::Told);
+            let root: *mut Self = this.root_ptr();
+            let _ = this.with_pipe(|pipe| pipe.write_end_marker(root, Self::on_end_marker_written));
+            return;
+        }
+        this.end_of_write.set(EndOfWrite::Idle);
+        this.arm_end_of_write_timer();
+    }
+
+    /// # Safety
+    /// None: `_this` is not used, because the write may end after the pipe's
+    /// owner is gone.
+    unsafe fn on_end_marker_written(_this: *mut Self, _written: bun_sys::Result<usize>) {}
+
+    /// (Re)start the idle timer of [`EndOfWrite::Idle`]. It runs only while
+    /// the pipe is being read: a paused pipe is not closed under its owner.
+    fn arm_end_of_write_timer(&self) {
+        if self.end_of_write.get() != EndOfWrite::Idle {
+            return;
+        }
+        self.cancel_end_of_write_timer();
+        if self.with_pipe(|pipe| pipe.is_reading()) != Some(true) {
+            return;
+        }
+        let next = bun_core::Timespec::ms_from_now(
+            bun_core::TimespecMockMode::ForceRealTime,
+            END_OF_WRITE_IDLE_MS,
+        );
+        self.end_of_write_timer.with_mut(|t| {
+            t.next = crate::timer::ElTimespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            };
+        });
+        crate::jsc_hooks::timer_all_mut().insert(self.end_of_write_timer.as_ptr());
+    }
+
+    fn cancel_end_of_write_timer(&self) {
+        if self.end_of_write_timer.get().state == EventLoopTimerState::ACTIVE {
+            crate::jsc_hooks::timer_all_mut().remove(self.end_of_write_timer.as_ptr());
+        }
+    }
+
+    /// Nothing arrived for [`END_OF_WRITE_IDLE_MS`]: close, which is the only
+    /// end of stream the other end of a byte-type pipe can see. The owner
+    /// hears `on_end` first, as it does when the other end closes.
+    pub(crate) fn on_end_of_write_idle(&self) {
+        bun_output::scoped_log!(WindowsNamedPipe, "onEndOfWriteIdle");
+        self.end_of_write_timer.with_mut(|t| {
+            t.state = EventLoopTimerState::FIRED;
+            t.heap = Default::default();
+        });
+        if self.end_of_write.get() != EndOfWrite::Idle || self.flags.get().is_closed() {
+            return;
+        }
+        // A read that finished in the kernel is delivered next: data re-arms
+        // this, the end of the stream or an error closes.
+        if self.with_pipe(|pipe| pipe.read_awaits_delivery()) == Some(true) {
+            return;
+        }
+        self.on_read_end();
     }
 
     fn on_read_error(&self, err: bun_sys::Error) {
@@ -382,13 +541,16 @@ impl WindowsNamedPipe {
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__resume_stream")]
     pub fn resume_stream(&self) -> bool {
-        matches!(self.read_start(), Some(Ok(())))
+        let resumed = matches!(self.read_start(), Some(Ok(())));
+        self.arm_end_of_write_timer();
+        resumed
     }
 
     /// A read the kernel already has is left to finish; what it produces is
     /// delivered after `resume_stream`.
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__pause_stream")]
     pub fn pause_stream(&self) -> bool {
+        self.cancel_end_of_write_timer();
         self.with_pipe(Pipe::read_stop).is_some()
     }
 
@@ -437,6 +599,11 @@ impl WindowsNamedPipe {
             )),
             current_timeout: Cell::new(0),
             flags: Cell::new(Flags::DISCONNECTED), // disconnected: bool = true is the only non-false default
+            end_of_write: Cell::new(EndOfWrite::Open),
+            end_of_write_timer: JsCell::new(EventLoopTimer::init_paused(
+                EventLoopTimerTag::WindowsNamedPipeEndOfWrite,
+            )),
+            peer_ended_writing: Cell::new(false),
         }
     }
 
@@ -676,12 +843,13 @@ impl WindowsNamedPipe {
             let _ = w.shutdown(false);
         });
         if handled.is_none() {
-            // Plain (non-TLS) named pipe: half-close the write side so the peer
-            // observes EOF. Without this, Socket.prototype.end() over a Windows
-            // named pipe (endNT → shutdown()) never signals the peer, and an
-            // allowHalfOpen peer waiting on 'end' hangs. `writer.end()` is
-            // idempotent and mirrors `close`'s unconditional writer teardown.
-            self.with_writer(|w| w.end());
+            if self.flags.get().disconnected() {
+                // Not connected yet: what is queued is written and the pipe
+                // closed once it is.
+                self.with_writer(|w| w.end());
+            } else {
+                self.begin_end_of_write();
+            }
         }
     }
 
@@ -700,7 +868,9 @@ impl WindowsNamedPipe {
             return wrapper.is_shutdown();
         }
 
-        self.flags.get().disconnected() || self.writer.get().is_done
+        self.flags.get().disconnected()
+            || self.writer.get().is_done
+            || self.end_of_write.get() != EndOfWrite::Open
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__is_closed", no_catch)]
@@ -748,8 +918,9 @@ impl WindowsNamedPipe {
     /// Free internal resources, it can be called multiple times.
     fn release_resources(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "deinit");
-        // clear the timer
+        // clear the timers
         self.set_timeout(0);
+        self.cancel_end_of_write_timer();
         // A TLS close_notify gets here (`ssl_on_close`) with the pipe still
         // open. `close`, not `close_without_reporting`: a write still in
         // flight has to report back for the writer to release the ref it took
@@ -770,6 +941,7 @@ impl Drop for WindowsNamedPipe {
         // Everything else was released by `on_close`, or never existed: the
         // owner's last ref goes away either there or before a pipe was opened.
         self.set_timeout(0);
+        self.cancel_end_of_write_timer();
     }
 }
 

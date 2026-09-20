@@ -1322,7 +1322,7 @@ impl BufferedReader {
                 }
             }
             // SAFETY: as above.
-            ReadEvent::Eof => unsafe { (*this).on_read(0, ReadState::Eof) },
+            ReadEvent::Eof | ReadEvent::EndOfWrite => unsafe { (*this).on_read(0, ReadState::Eof) },
             // A file read withdrawn by `pause()` before it ran; the reader may have resumed since.
             ReadEvent::Err(err) if is_file && err.get_errno() == sys::E::ECANCELED => {
                 // SAFETY: as above; nothing of `*this` is touched after `on_error`.

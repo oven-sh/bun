@@ -870,7 +870,7 @@ impl ChromeProcess {
                 scoped_log!(Chrome, "read {} bytes", bytes.len());
                 PipeEvent::Data(Box::from(bytes.as_slice())).post(generation);
             }
-            ReadEvent::Eof => {
+            ReadEvent::Eof | ReadEvent::EndOfWrite => {
                 scoped_log!(Chrome, "reply pipe closed");
                 PipeEvent::Closed.post(generation);
             }

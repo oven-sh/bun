@@ -153,6 +153,101 @@ it.skipIf(!isWindows)("a write to a pipe whose other end is gone is an error bef
   ]);
 });
 
+it.skipIf(!isWindows)("a reply to the last write before end() on a named pipe is received", async () => {
+  const name = `\\\\.\\pipe\\bun-test-${randomUUID()}`;
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const server = createServer(socket => {
+    socket.on("data", data => socket.write("reply to " + data));
+    socket.on("error", () => {});
+  });
+  server.listen(name, () => {
+    const client = connect(name, () => {
+      client.write("the last write");
+      client.end();
+    });
+    client.on("data", data => events.push("data:" + data));
+    client.on("end", () => events.push("end"));
+    client.on("error", err => events.push("error:" + (err as any).code));
+    client.on("close", () => server.close(() => resolve()));
+  });
+  await promise;
+  expect(events).toEqual(["data:reply to the last write", "end"]);
+});
+
+/** Runs node-net-message-pipe-fixture.ts and resolves once its pipe exists. */
+async function messagePipeServer(scenario: "reply-after-end" | "end-first") {
+  const name = `\\\\.\\pipe\\bun-test-${randomUUID()}`;
+  const proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-net-message-pipe-fixture.ts"), name, scenario],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  while (!output.includes("listening\n")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("the pipe server exited before it listened: " + output);
+    output += decoder.decode(value, { stream: true });
+  }
+  return {
+    name,
+    /** Every line the server printed, once it has exited. */
+    async lines() {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+      }
+      await proc.exited;
+      return output.trim().split("\n");
+    },
+  };
+}
+
+it.skipIf(!isWindows)(
+  "end() on a message-type named pipe tells the server and keeps reading until the server closes",
+  async () => {
+    const server = await messagePipeServer("reply-after-end");
+    const events: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const client = connect(server.name, () => {
+      client.write("request");
+      client.end();
+    });
+    client.on("data", data => events.push("data:" + data));
+    client.on("end", () => events.push("end"));
+    client.on("error", err => events.push("error:" + (err as any).code));
+    client.on("close", () => resolve());
+    await promise;
+    expect({ client: events, server: await server.lines() }).toEqual({
+      client: ["data:late reply", "end"],
+      server: ["listening", "data:request", "end-of-write", "wrote:true"],
+    });
+  },
+);
+
+it.skipIf(!isWindows)("a zero-length message on a message-type named pipe is the server's end of writing", async () => {
+  const server = await messagePipeServer("end-first");
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const client = connect({ path: server.name, allowHalfOpen: true });
+  client.on("data", data => events.push("data:" + data));
+  client.on("end", () => {
+    events.push("end");
+    client.end("written after end");
+  });
+  client.on("error", err => events.push("error:" + (err as any).code));
+  client.on("close", () => resolve());
+  await promise;
+  expect({ client: events, server: await server.lines() }).toEqual({
+    client: ["data:hello", "end"],
+    server: ["listening", "data:written after end", "closed"],
+  });
+});
+
 describe("net.Socket read", () => {
   var unix_servers = 0;
   for (let [message, label] of [

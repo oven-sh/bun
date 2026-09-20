@@ -134,6 +134,11 @@ pub enum ReadEvent<'a> {
     Data(&'a mut Vec<u8>),
     /// The write side is gone. Reading has stopped.
     Eof,
+    /// The other end has finished writing and is still open: on a
+    /// message-type pipe it sent the zero-length message that says so (what
+    /// [`write_end_marker`](Pipe::write_end_marker) sends). Reading has
+    /// stopped; the pipe can still be written to.
+    EndOfWrite,
     /// Reading has stopped.
     Err(sys::Error),
 }
@@ -165,6 +170,10 @@ bitflags::bitflags! {
         const SILENT         = 1 << 7;
         /// `handle` is this pipe's own duplicate of a standard handle.
         const DUPLICATED     = 1 << 8;
+        /// `MESSAGE_TYPE` has been looked up.
+        const TYPE_KNOWN     = 1 << 9;
+        /// The pipe was created as a message-type pipe.
+        const MESSAGE_TYPE   = 1 << 10;
     }
 }
 
@@ -203,6 +212,8 @@ struct Inner {
     chunked_write: *mut WriteOp,
     /// A finished write kept for the next one.
     spare_write: *mut WriteOp,
+    /// The [`Pipe::flush_peer`] request that is out.
+    flush_op: *mut FlushOp,
     write_lane: Lane,
     /// Buffers of writes that outlived the owner who lent them.
     adopted: Vec<Vec<u8>>,
@@ -309,6 +320,7 @@ enum Outcome {
     None,
     Data,
     Eof,
+    EndOfWrite,
     Err(sys::Error),
 }
 
@@ -533,6 +545,7 @@ impl Pipe {
             writes_in_flight: 0,
             chunked_write: ptr::null_mut(),
             spare_write: ptr::null_mut(),
+            flush_op: ptr::null_mut(),
             write_lane: Lane::NONE,
             adopted: Vec::new(),
             lent_back: None,
@@ -946,6 +959,111 @@ impl Pipe {
     }
 
     /// The process on the other end of a named pipe.
+    /// Whether the pipe was created as a message-type pipe, where a
+    /// zero-length write reaches the other end as a read of no bytes. On a
+    /// byte-type pipe such a write is dropped.
+    pub fn is_message_type(&self) -> bool {
+        // SAFETY: `inner` is live while the owner's `Pipe` is.
+        unsafe { Inner::is_message_type(self.raw()) }
+    }
+
+    /// Hear, once, when the other end has read everything written so far
+    /// (`Ok`), or that it closed first (`Err`). Only for a HANDLE Bun created:
+    /// the request would block the calling thread on any other, which gets
+    /// `ENOTSUP`. Closing or dropping the pipe cancels it without a call.
+    pub fn flush_peer<T>(
+        &mut self,
+        ctx: *mut T,
+        on_flushed: unsafe fn(*mut T, sys::Result<()>),
+    ) -> sys::Result<()> {
+        let this = self.raw();
+        // SAFETY: `inner` is live while the owner's `Pipe` is. The OVERLAPPED
+        // lives in the op, which is freed only from its own completion.
+        unsafe {
+            if (*this).gone() {
+                return Err(sys::Error::from_code(E::EBADF, Tag::fsync));
+            }
+            if (*this).mode != Mode::Owned {
+                return Err(sys::Error::from_code(E::ENOTSUP, Tag::fsync));
+            }
+            if !(*this).flush_op.is_null() {
+                return Err(sys::Error::from_code(E::EBUSY, Tag::fsync));
+            }
+            let op = bun_core::heap::into_raw(Box::new(FlushOp {
+                op: Op::new(FlushOp::complete),
+                pipe: this,
+                callback: Callback::new(ctx, on_flushed),
+            }));
+            // The OVERLAPPED's first two fields are the IO_STATUS_BLOCK; its
+            // address is what the port hands back.
+            let overlapped = &raw mut (*op).op.overlapped;
+            let status = NtFsControlFile(
+                (*this).handle,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                overlapped.cast(),
+                overlapped.cast(),
+                FSCTL_PIPE_FLUSH,
+                ptr::null_mut(),
+                0,
+                ptr::null_mut(),
+                0,
+            );
+            // A call that fails outright queues no packet.
+            if status.0 >= 0xC000_0000 {
+                drop(bun_core::heap::take(op));
+                return Err(sys::Error::from_win32(
+                    Win32Error::from_ntstatus(status),
+                    Tag::fsync,
+                ));
+            }
+            super::op_submitted((*this).link.loop_);
+            (*this).pending += 1;
+            (*this).flush_op = op;
+            Ok(())
+        }
+    }
+
+    /// Tell the other end of a message-type pipe that nothing more will be
+    /// written, with the pipe left open: a zero-length message, which a
+    /// reader sees as a read of no bytes. Readers that know the convention
+    /// (.NET streams, go-winio, WCF) take it as the end of the stream. It has
+    /// to follow a completed [`flush_peer`](Self::flush_peer): written behind
+    /// unread bytes, a byte-mode reader gets it merged into them.
+    pub fn write_end_marker<T>(
+        &mut self,
+        ctx: *mut T,
+        on_write: unsafe fn(*mut T, WriteResult),
+    ) -> sys::Result<()> {
+        // SAFETY: a write of no bytes reads nothing through its pointer.
+        unsafe {
+            Inner::write(
+                self.raw(),
+                ptr::NonNull::<u8>::dangling().as_ptr(),
+                0,
+                Vec::new(),
+                Some(Callback::new(ctx, on_write)),
+                Refusal::Posted,
+            )
+        }
+    }
+
+    /// Whether a read has finished in the kernel and its packet is still on
+    /// its way to the loop.
+    pub fn read_awaits_delivery(&self) -> bool {
+        const STATUS_PENDING: usize = 0x103;
+        // SAFETY: `inner` is live while the owner's `Pipe` is; `read_op` is
+        // owned by it while non-null.
+        unsafe {
+            let this = self.raw();
+            let read = (*this).read_op;
+            !read.is_null()
+                && (*this).mode == Mode::Owned
+                && (*read).state == ReadState::InFlight
+                && (*read).op.overlapped.Internal != STATUS_PENDING
+        }
+    }
+
     pub fn peer_pid(&self) -> Option<u32> {
         let handle = self.handle();
         let mut pid: u32 = 0;
@@ -1029,6 +1147,35 @@ fn completed(op: &Op, posted: Posted) -> (Win32Error, usize) {
 impl Inner {
     fn has_writes(&self) -> bool {
         self.writes_in_flight > 0 || !self.write_head.is_null()
+    }
+
+    /// # Safety
+    /// `this` is live.
+    unsafe fn is_message_type(this: *mut Inner) -> bool {
+        /// `FILE_PIPE_LOCAL_INFORMATION`, whose first field is the pipe's type.
+        const FILE_PIPE_LOCAL_INFORMATION_CLASS: win::FILE_INFORMATION_CLASS =
+            win::FILE_INFORMATION_CLASS(24);
+        const FILE_PIPE_MESSAGE_TYPE: u32 = 1;
+        // SAFETY: caller contract; the out-parameters are live locals of the
+        // class's size (ten `ULONG`s).
+        unsafe {
+            if !(*this).flags.contains(Flags::TYPE_KNOWN) {
+                let mut info = [0u32; 10];
+                let mut iosb: win::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+                let status = win::NtQueryInformationFile(
+                    (*this).handle,
+                    &raw mut iosb,
+                    info.as_mut_ptr().cast(),
+                    size_of::<[u32; 10]>() as u32,
+                    FILE_PIPE_LOCAL_INFORMATION_CLASS,
+                );
+                (*this).flags.insert(Flags::TYPE_KNOWN);
+                if status == win::NTSTATUS::SUCCESS && info[0] == FILE_PIPE_MESSAGE_TYPE {
+                    (*this).flags.insert(Flags::MESSAGE_TYPE);
+                }
+            }
+            (*this).flags.contains(Flags::MESSAGE_TYPE)
+        }
     }
 
     #[inline]
@@ -1778,6 +1925,9 @@ impl Inner {
                 }
             }
 
+            if !(*this).flush_op.is_null() {
+                win::CancelIoEx(handle, (&raw mut (*(*this).flush_op).op).cast());
+            }
             if (*this).mode == Mode::Owned && (*this).writes_in_flight > 0 {
                 // Everything this process has out on a HANDLE it owns is this
                 // pipe's, and the read was dealt with above.
@@ -1970,6 +2120,11 @@ impl ReadOp {
                     (*pipe).flags.insert(Flags::READ_ENDED);
                     reader.invoke(ReadEvent::Eof);
                 }
+                Outcome::EndOfWrite => {
+                    (*pipe).flags.remove(Flags::READING);
+                    (*pipe).flags.insert(Flags::READ_ENDED);
+                    reader.invoke(ReadEvent::EndOfWrite);
+                }
                 Outcome::Err(err) => {
                     (*pipe).flags.remove(Flags::READING);
                     (*pipe).flags.insert(Flags::READ_ENDED);
@@ -2047,6 +2202,12 @@ impl ReadOp {
             }
             Self::drop_taken(this);
             if err == Win32Error::SUCCESS {
+                // A read that asked for bytes and completed with none took a
+                // zero-length message, which only a message-type pipe delivers.
+                let pipe = (*this).pipe;
+                if bytes == 0 && (*pipe).mode == Mode::Owned && Inner::is_message_type(pipe) {
+                    return Outcome::EndOfWrite;
+                }
                 return Outcome::Data;
             }
             if is_eof(err) {
@@ -2954,6 +3115,48 @@ struct ConnectOp {
 
 /// How long a connecting client waits for a busy server to offer an instance.
 const CONNECT_BUSY_WAIT_MS: i64 = 30_000;
+
+/// `FSCTL_PIPE_FLUSH` (`ntifs.h`): what `FlushFileBuffers` sends to a pipe.
+/// It completes when the other end has read what was written before it.
+const FSCTL_PIPE_FLUSH: u32 = 0x0011_8040;
+
+/// One [`Pipe::flush_peer`] request.
+#[repr(C)]
+struct FlushOp {
+    op: Op,
+    pipe: *mut Inner,
+    callback: Callback<sys::Result<()>>,
+}
+
+impl FlushOp {
+    unsafe extern "C" fn complete(loop_: *mut Loop, op: *mut Op, _entry: *mut OverlappedEntry) {
+        let this = op.cast::<FlushOp>();
+        // SAFETY: `op` is the first field of the `FlushOp` this packet was
+        // submitted for; the packet is what kept it allocated.
+        unsafe {
+            super::op_dequeued(loop_);
+            let this = bun_core::heap::take(this);
+            let pipe = this.pipe;
+            (*pipe).pending -= 1;
+            (*pipe).flush_op = ptr::null_mut();
+            let (err, _) = completed(&this.op, None);
+            if !(*pipe).gone() {
+                (*pipe).pins += 1;
+                this.callback.invoke(if err == Win32Error::SUCCESS {
+                    Ok(())
+                } else {
+                    Err(sys::Error::from_win32(err, Tag::fsync))
+                });
+                (*pipe).pins -= 1;
+            }
+            if (*pipe).gone() {
+                Inner::maybe_finish(pipe);
+                return;
+            }
+            Inner::update_keep_alive(pipe);
+        }
+    }
+}
 
 /// `FSCTL_PIPE_WAIT` (`ntifs.h`): what `WaitNamedPipeW` sends to the pipe
 /// device. `DeviceIoControl` cannot issue it: it takes the FSCTL path only for

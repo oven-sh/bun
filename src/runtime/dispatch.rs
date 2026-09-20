@@ -1038,6 +1038,22 @@ pub(crate) unsafe fn __bun_fire_timer(
                 Ok(())
             }
         }
+        EventLoopTimerTag::WindowsNamedPipeEndOfWrite => {
+            #[cfg(windows)]
+            {
+                let container = owner!(WindowsNamedPipe, end_of_write_timer);
+                // SAFETY: per fn contract.
+                unsafe { (*container).on_end_of_write_idle() };
+                Ok(())
+            }
+            #[cfg(not(windows))]
+            {
+                if cfg!(debug_assertions) {
+                    unreachable!("WindowsNamedPipe timer on non-Windows");
+                }
+                Ok(())
+            }
+        }
         EventLoopTimerTag::PostgresSQLConnectionTimeout => {
             // SAFETY: §Dispatch — tag set together with the container at
             // construction; `t` is the connection's `timer` field.

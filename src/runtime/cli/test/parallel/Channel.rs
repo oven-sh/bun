@@ -315,7 +315,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             ReadEvent::Data(bytes) => self_.ingest(bytes.as_slice()),
             // The peer closed its end (or the pipe broke): detach first so it
             // reads as a close, like the POSIX on_close path.
-            ReadEvent::Eof | ReadEvent::Err(_) => {
+            ReadEvent::Eof | ReadEvent::EndOfWrite | ReadEvent::Err(_) => {
                 self_.backend.pipe.set(None);
                 self_.mark_done();
             }

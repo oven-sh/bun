@@ -10,6 +10,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { locations, pins } from "./ci-images/spec.ts";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
@@ -539,7 +540,7 @@ export function detectLinuxAbi(): Abi {
  * release with the bionic syscall wrappers we rely on without raw-syscall
  * fallbacks. Covers ~96% of active devices as of 2026.
  */
-export const ANDROID_API_LEVEL_DEFAULT = 28;
+export const ANDROID_API_LEVEL_DEFAULT = pins.androidNdk.apiLevel;
 
 /**
  * FreeBSD release we target. 14.x is the current production series; 14.3
@@ -547,50 +548,44 @@ export const ANDROID_API_LEVEL_DEFAULT = 28;
  * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
  * compat within a major).
  */
-export const FREEBSD_VERSION_DEFAULT = "14.3";
+export const FREEBSD_VERSION_DEFAULT = pins.freebsd.version;
 
 /**
- * Locate a FreeBSD sysroot (extracted base.txz). Checks env var then
- * well-known install paths. The sysroot is arch-specific (different
- * crt/libc for amd64 vs arm64), so when cross-compiling for arm64 we
- * look for the `-arm64` variant first. Returns undefined if none found.
+ * Locate a FreeBSD sysroot (extracted base.txz). Checks env var then the
+ * path CI's build image puts it at. The sysroot is arch-specific (different
+ * crt/libc for amd64 vs arm64). Returns undefined if none found.
  */
 export function detectFreebsdSysroot(arch: Arch): string | undefined {
+  const looksValid = (p: string) => existsSync(join(p, "usr", "include", "sys", "param.h"));
   const env = process.env.FREEBSD_SYSROOT;
-  if (env && existsSync(join(env, "usr", "include", "sys", "param.h"))) return env;
-  const candidates =
-    arch === "aarch64"
-      ? ["/opt/freebsd-sysroot-arm64", "/opt/freebsd-sysroot"]
-      : ["/opt/freebsd-sysroot", "/opt/freebsd-sysroot-amd64"];
-  for (const p of candidates) {
-    if (existsSync(join(p, "usr", "include", "sys", "param.h"))) return p;
-  }
-  return undefined;
+  if (env && looksValid(env)) return env;
+  const candidate = locations.freebsdSysroot[arch];
+  return looksValid(candidate) ? candidate : undefined;
 }
 
 /**
  * Locate the linux-gnu sysroot: ubuntu:20.04 (glibc 2.31) + gcc-13 libstdc++,
  * matching the WebKit prebuilt's build environment. Arch-specific. See
- * install_linux_glibc_sysroot() in scripts/bootstrap.sh.
+ * the `glibcSysroot` tool of ci-images/spec.ts.
  */
 export function detectLinuxGlibcSysroot(arch: Arch): string | undefined {
   const looksValid = (p: string) => existsSync(join(p, "usr", "include", "c++", "13"));
   const env = process.env.LINUX_GLIBC_SYSROOT;
   if (env && looksValid(env)) return env;
-  const candidate = arch === "aarch64" ? "/opt/linux-sysroot-glibc-arm64" : "/opt/linux-sysroot-glibc";
+  const candidate = locations.glibcSysroot[arch];
   return looksValid(candidate) ? candidate : undefined;
 }
 
 /**
  * Locate a linux-musl sysroot — alpine rootfs with musl + modern libstdc++;
- * see install_linux_musl_sysroot() in scripts/bootstrap.sh. Checks env var then
+ * see the `muslSysroot` tool of ci-images/spec.ts. Checks env var then
  * well-known install paths. Arch-specific. Returns undefined if none found.
  */
 export function detectLinuxMuslSysroot(arch: Arch): string | undefined {
   const looksValid = (p: string) => existsSync(join(p, "usr", "lib", "libc.so"));
   const env = process.env.LINUX_MUSL_SYSROOT;
   if (env && looksValid(env)) return env;
-  const candidate = arch === "aarch64" ? "/opt/linux-sysroot-musl-arm64" : "/opt/linux-sysroot-musl";
+  const candidate = locations.muslSysroot[arch];
   return looksValid(candidate) ? candidate : undefined;
 }
 
@@ -608,7 +603,7 @@ export function detectWindowsSysroot(): string | undefined {
     existsSync(join(p, "Windows Kits", "10", "Include")) || existsSync(join(p, "Windows Kits", "10", "include"));
   const env = process.env.WINDOWS_SYSROOT;
   if (env && looksValid(env)) return env;
-  for (const p of ["/opt/winsysroot", "/opt/xwin"]) {
+  for (const p of [locations.windowsSysroot, "/opt/xwin"]) {
     if (looksValid(p)) return p;
   }
   return undefined;
@@ -624,7 +619,7 @@ export function detectAndroidNdk(): string | undefined {
     const p = process.env[v];
     if (p && existsSync(join(p, "toolchains"))) return p;
   }
-  for (const p of ["/opt/android-ndk", "/usr/local/android-ndk"]) {
+  for (const p of [locations.androidNdk, "/usr/local/android-ndk"]) {
     if (existsSync(join(p, "toolchains"))) return p;
   }
   // Android Studio's sdkmanager puts NDKs under $ANDROID_HOME/ndk/<version>.
@@ -663,7 +658,7 @@ function ndkHostTag(host: Host): string {
  * setup for NDK cross-builds (Chromium does the same).
  *
  * Idempotent. Warns with a sudo hint if the resource dir isn't writable
- * (CI build images create the symlinks as root in bootstrap.sh).
+ * (CI's build image creates the symlinks as root: the `androidNdk` tool of ci-images/spec.ts).
  */
 function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: string): void {
   const resourceDir = execSync(`"${cc}" -print-resource-dir`, { encoding: "utf8" }).trim();
@@ -701,8 +696,8 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
-    // Don't throw — rust-only mode doesn't need these, and on CI bootstrap.sh
-    // creates them as root during image build. The actual link step will fail
+    // Don't throw — rust-only mode doesn't need these, and on CI the image's
+    // bake creates them as root. The actual link step will fail
     // loudly later if they're genuinely missing where needed.
     const lnCmds = Object.entries(links)
       .map(([dst, src]) => `sudo ln -sf "${src}" "${dst}"`)
@@ -1007,9 +1002,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : detectFreebsdSysroot(arch);
       if (sysroot === undefined) {
         const dlArch = arch === "x64" ? "amd64" : "arm64";
-        const sysrootPath = arch === "x64" ? "/opt/freebsd-sysroot" : "/opt/freebsd-sysroot-arm64";
+        const sysrootPath = locations.freebsdSysroot[arch];
         throw new BuildError("--os=freebsd requires a FreeBSD sysroot when cross-compiling", {
-          hint: `Set FREEBSD_SYSROOT or pass --freebsd-sysroot=<path>. Create one with: mkdir -p ${sysrootPath} && curl -L https://download.freebsd.org/releases/${dlArch}/${freebsdVersion}-RELEASE/base.txz | tar -C ${sysrootPath} -xJf - ./usr/include ./usr/lib ./lib`,
+          hint: `Set FREEBSD_SYSROOT or pass --freebsd-sysroot=<path>. Create one with: mkdir -p ${sysrootPath} && curl -L ${pins.freebsd.baseUrl}/${dlArch}/${freebsdVersion}-RELEASE/base.txz | tar -C ${sysrootPath} -xJf - ./usr/include ./usr/lib ./lib`,
         });
       }
       const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
@@ -1034,9 +1029,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       if (sysroot !== undefined || isCross) {
         crossTarget = `${llvmArch}-alpine-linux-musl`;
         if (sysroot === undefined) {
-          const p = arch === "aarch64" ? "/opt/linux-sysroot-musl-arm64" : "/opt/linux-sysroot-musl";
+          const p = locations.muslSysroot[arch];
           throw new BuildError(`--os=linux --arch=${arch} --abi=musl requires a musl sysroot when cross-compiling`, {
-            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see install_linux_musl_sysroot() in scripts/bootstrap.sh).`,
+            hint: `Set LINUX_MUSL_SYSROOT or provision ${p} (see the muslSysroot tool of scripts/build/ci-images/spec.ts).`,
           });
         }
       }
@@ -1050,9 +1045,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       if (sysroot !== undefined || isCross) {
         crossTarget = `${llvmArch}-linux-gnu`;
         if (sysroot === undefined) {
-          const p = arch === "aarch64" ? "/opt/linux-sysroot-glibc-arm64" : "/opt/linux-sysroot-glibc";
+          const p = locations.glibcSysroot[arch];
           throw new BuildError(`--os=linux --arch=${arch} --abi=gnu cross-compile requires a glibc sysroot`, {
-            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see install_linux_glibc_sysroot() in scripts/bootstrap.sh).`,
+            hint: `Set LINUX_GLIBC_SYSROOT or provision ${p} (see the glibcSysroot tool of scripts/build/ci-images/spec.ts).`,
           });
         }
       }
@@ -1086,8 +1081,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           hint:
             "Set WINDOWS_SYSROOT or pass --winsysroot=<path>. Create one with xwin (https://github.com/Jake-Shadle/xwin):\n" +
             "  cargo install xwin  (or download a release binary)\n" +
-            // Keep the pinned versions in sync with WINDOWS_SDK_VERSION / MSVC_CRT_VERSION in winsysroot.ts.
-            "  xwin --accept-license --arch x86_64,aarch64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot",
+            `  xwin --accept-license --arch x86_64,aarch64 --sdk-version ${pins.windowsSysroot.sdk} --crt-version ${pins.windowsSysroot.crt} --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output ${locations.windowsSysroot}`,
         });
       }
     }

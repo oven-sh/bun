@@ -279,11 +279,8 @@ async function main(): Promise<void> {
       stdio[STREAM_FD] = 2;
     }
     // Not spawnSync: the lock names the ninja as soon as it has a pid, so that a ninja which outlives this process
-    // (the driver killed alone) still holds the build directory.
-    // Ctrl-C reaches ninja and this process alike. ninja winds its jobs down before it exits; wait for that, as a
-    // blocking spawn did, instead of returning the terminal while it is still printing.
-    const waitForNinja = (): void => {};
-    process.on("SIGINT", waitForNinja);
+    // still holds the build directory. That includes Ctrl-C: it kills this process at once (no handler, so the
+    // shell sees the signal), while ninja winds its jobs down for a moment longer.
     const ninja = await new Promise<{
       error: Error | undefined;
       status: number | null;
@@ -303,10 +300,13 @@ async function main(): Promise<void> {
       child.on("close", (status, signal) => finish(undefined, status, signal));
       if (child.pid !== undefined) buildDirLock?.addHolder(child.pid);
     });
-    process.off("SIGINT", waitForNinja);
     unlockBuildDir(); // the binary we may exec next (`bun bd test …`) must not keep other builds waiting
     if (ninja.error) {
-      process.stderr.write(`Failed to exec ninja: ${ninja.error.message}\nIs ninja in your PATH?\n`);
+      const hint =
+        result.ninja === "ninja"
+          ? "Is ninja in your PATH?"
+          : "That is the ninja release the build pins. If the file is damaged, delete its directory and the next build fetches it again.";
+      process.stderr.write(`Failed to exec ${result.ninja}: ${ninja.error.message}\n${hint}\n`);
       process.exit(127);
     }
     if (ninja.signal) {

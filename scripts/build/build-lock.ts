@@ -9,10 +9,14 @@
  * that fails if the name exists (written under a private name, then hard-linked), so exactly one contender gets
  * it. No name is reused, moved or emptied, which is what makes a stale lock safe to pass: nothing a contender
  * does can take a live lock away from its holder.
+ *
+ * A filesystem without hard links (exFAT, some shared folders) cannot do that step. There the build runs
+ * unlocked, and says so.
  */
 
 import { linkSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { describeError } from "./error.ts";
 import { processAlive, processStartTime } from "./proc.ts";
 
 const PREFIX = "build.lock.";
@@ -28,6 +32,9 @@ export interface BuildDirLock {
 function holderLine(pid: number): string {
   return `${pid} ${processStartTime(pid)}`;
 }
+
+/** This process's line. Asked for once: on Windows and macOS the start time costs a process spawn, and a waiting build tries again twice a second. */
+let ownHolderLine: string | undefined;
 
 /** The lock numbers present, ascending. */
 function numbers(buildDir: string): number[] {
@@ -64,13 +71,16 @@ export function tryLockBuildDir(buildDir: string): BuildDirLock | undefined {
 
   const mine = join(buildDir, PREFIX + (highest + 1));
   const scratch = join(buildDir, `${PREFIX}${process.pid}.tmp`);
-  const holders = [holderLine(process.pid)];
+  const holders = [(ownHolderLine ??= holderLine(process.pid))];
   writeFileSync(scratch, holders.join("\n"));
   try {
     linkSync(scratch, mine);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "EEXIST") return undefined; // another contender got this number
-    throw e;
+    process.stderr.write(
+      `warning: cannot lock ${buildDir} (${describeError(e)}); building without a lock, so run one build of this directory at a time\n`,
+    );
+    return { addHolder() {}, release() {} };
   } finally {
     rmSync(scratch, { force: true });
   }

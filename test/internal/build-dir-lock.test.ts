@@ -5,7 +5,7 @@
  * live lock away by creating a lower number.
  */
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -14,84 +14,107 @@ import { processStartTime } from "../../scripts/build/proc.ts";
 
 const lockFiles = (dir: string) => readdirSync(dir).filter(f => f.startsWith("build.lock."));
 const thisProcess = `${process.pid} ${processStartTime(process.pid)}`;
+// On Windows a process's start time costs a PowerShell start, most of a second each. The tests below ask for a
+// few; the contention test would ask for hundreds, one after another, and does not run there.
+const timeout = isWindows ? 30_000 : 5_000;
 
-test("one holder at a time; a released lock passes to the next number", () => {
-  using dir = tempDir("build-lock", {});
-  const first = tryLockBuildDir(String(dir));
-  expect(first).toBeDefined();
-  expect(readFileSync(join(String(dir), "build.lock.1"), "utf8")).toBe(thisProcess);
-  expect(tryLockBuildDir(String(dir))).toBeUndefined();
+test(
+  "one holder at a time; a released lock passes to the next number",
+  () => {
+    using dir = tempDir("build-lock", {});
+    const first = tryLockBuildDir(String(dir));
+    expect(first).toBeDefined();
+    expect(readFileSync(join(String(dir), "build.lock.1"), "utf8")).toBe(thisProcess);
+    expect(tryLockBuildDir(String(dir))).toBeUndefined();
 
-  first!.release();
-  expect(readFileSync(join(String(dir), "build.lock.1"), "utf8")).toBe("released");
-  const second = tryLockBuildDir(String(dir));
-  expect(second).toBeDefined();
-  expect(lockFiles(String(dir))).toEqual(["build.lock.2"]);
-  second!.release();
-});
+    first!.release();
+    expect(readFileSync(join(String(dir), "build.lock.1"), "utf8")).toBe("released");
+    const second = tryLockBuildDir(String(dir));
+    expect(second).toBeDefined();
+    expect(lockFiles(String(dir))).toEqual(["build.lock.2"]);
+    second!.release();
+  },
+  timeout,
+);
 
-test("a lock whose holder is gone is passed on, and one whose pid was reused is too", () => {
-  using dir = tempDir("build-lock-stale", {});
-  // A pid that cannot be running, and this process's pid with another process's start time.
-  writeFileSync(join(String(dir), "build.lock.7"), `4194999 Thu Jan  1 00:00:00 1970`);
-  const afterDead = tryLockBuildDir(String(dir));
-  expect(afterDead).toBeDefined();
-  expect(lockFiles(String(dir))).toEqual(["build.lock.8"]);
-  afterDead!.release();
+test(
+  "a lock whose holder is gone is passed on, and one whose pid was reused is too",
+  () => {
+    using dir = tempDir("build-lock-stale", {});
+    // A pid that cannot be running, and this process's pid with another process's start time.
+    writeFileSync(join(String(dir), "build.lock.7"), `4194999 Thu Jan  1 00:00:00 1970`);
+    const afterDead = tryLockBuildDir(String(dir));
+    expect(afterDead).toBeDefined();
+    expect(lockFiles(String(dir))).toEqual(["build.lock.8"]);
+    afterDead!.release();
 
-  writeFileSync(join(String(dir), "build.lock.9"), `${process.pid} not-this-process's-start-time`);
-  const afterReused = tryLockBuildDir(String(dir));
-  expect(afterReused).toBeDefined();
-  expect(lockFiles(String(dir))).toEqual(["build.lock.10"]);
-  afterReused!.release();
-});
+    writeFileSync(join(String(dir), "build.lock.9"), `${process.pid} not-this-process's-start-time`);
+    const afterReused = tryLockBuildDir(String(dir));
+    expect(afterReused).toBeDefined();
+    expect(lockFiles(String(dir))).toEqual(["build.lock.10"]);
+    afterReused!.release();
+  },
+  timeout,
+);
 
-test("a process the holder added keeps the lock held after the holder itself is gone", async () => {
-  using dir = tempDir("build-lock-child", {});
-  // Stands in for ninja: alive until its stdin closes.
-  await using child = Bun.spawn({
-    cmd: [bunExe(), "-e", "process.stdin.on('data', () => {}); process.stdin.on('end', () => process.exit(0));"],
-    env: bunEnv,
-    stdin: "pipe",
-    stdout: "ignore",
-    stderr: "inherit",
-  });
-  // The lock as a driver that died without releasing leaves it: itself (dead) and the process it added.
-  writeFileSync(
-    join(String(dir), "build.lock.3"),
-    [`4194999 Thu Jan  1 00:00:00 1970`, `${child.pid} ${processStartTime(child.pid)}`].join("\n"),
-  );
-  expect(tryLockBuildDir(String(dir))).toBeUndefined();
+test(
+  "a process the holder added keeps the lock held after the holder itself is gone",
+  async () => {
+    using dir = tempDir("build-lock-child", {});
+    // Stands in for ninja: alive until its stdin closes.
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdin.on('data', () => {}); process.stdin.on('end', () => process.exit(0));"],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    // The lock as a driver that died without releasing leaves it: itself (dead) and the process it added.
+    writeFileSync(
+      join(String(dir), "build.lock.3"),
+      [`4194999 Thu Jan  1 00:00:00 1970`, `${child.pid} ${processStartTime(child.pid)}`].join("\n"),
+    );
+    expect(tryLockBuildDir(String(dir))).toBeUndefined();
 
-  child.stdin.end();
-  expect(await child.exited).toBe(0);
-  const next = tryLockBuildDir(String(dir));
-  expect(next).toBeDefined();
-  expect(lockFiles(String(dir))).toEqual(["build.lock.4"]);
-  next!.release();
-});
+    child.stdin.end();
+    expect(await child.exited).toBe(0);
+    const next = tryLockBuildDir(String(dir));
+    expect(next).toBeDefined();
+    expect(lockFiles(String(dir))).toEqual(["build.lock.4"]);
+    next!.release();
+  },
+  timeout,
+);
 
-test("addHolder records the process next to the driver", () => {
-  using dir = tempDir("build-lock-add", {});
-  const lock = tryLockBuildDir(String(dir))!;
-  lock.addHolder(process.ppid);
-  expect(readFileSync(join(String(dir), "build.lock.1"), "utf8")).toBe(
-    [thisProcess, `${process.ppid} ${processStartTime(process.ppid)}`].join("\n"),
-  );
-  lock.release();
-});
+test(
+  "addHolder records the process next to the driver",
+  () => {
+    using dir = tempDir("build-lock-add", {});
+    const lock = tryLockBuildDir(String(dir))!;
+    lock.addHolder(process.ppid);
+    expect(readFileSync(join(String(dir), "build.lock.1"), "utf8")).toBe(
+      [thisProcess, `${process.ppid} ${processStartTime(process.ppid)}`].join("\n"),
+    );
+    lock.release();
+  },
+  timeout,
+);
 
-test("a number below the current lock is not a lock", () => {
-  using dir = tempDir("build-lock-late", {});
-  // The current lock is number 5, held by this process; a contender that listed the directory when 3 was the
-  // highest creates 4 afterwards. Only the highest number counts, so the live lock stands.
-  writeFileSync(join(String(dir), "build.lock.5"), thisProcess);
-  writeFileSync(join(String(dir), "build.lock.4"), `4194999 Thu Jan  1 00:00:00 1970`);
-  expect(tryLockBuildDir(String(dir))).toBeUndefined();
-  expect(readFileSync(join(String(dir), "build.lock.5"), "utf8")).toBe(thisProcess);
-});
+test(
+  "a number below the current lock is not a lock",
+  () => {
+    using dir = tempDir("build-lock-late", {});
+    // The current lock is number 5, held by this process; a contender that listed the directory when 3 was the
+    // highest creates 4 afterwards. Only the highest number counts, so the live lock stands.
+    writeFileSync(join(String(dir), "build.lock.5"), thisProcess);
+    writeFileSync(join(String(dir), "build.lock.4"), `4194999 Thu Jan  1 00:00:00 1970`);
+    expect(tryLockBuildDir(String(dir))).toBeUndefined();
+    expect(readFileSync(join(String(dir), "build.lock.5"), "utf8")).toBe(thisProcess);
+  },
+  timeout,
+);
 
-test("contending processes are never inside the lock together", async () => {
+test.skipIf(isWindows)("contending processes are never inside the lock together", async () => {
   using dir = tempDir("build-lock-contend", {
     "contender.ts": `
       import { mkdirSync, rmdirSync } from "node:fs";

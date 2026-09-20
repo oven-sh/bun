@@ -5285,13 +5285,7 @@ class ClientHttp2Session extends Http2Session {
       self.#parser?.forEachStream(rejectStreamAboveGoawayLastId.bind(null, lastStreamId));
       // Requests still queued behind the concurrency limit never got a stream id; they can never
       // be submitted on this session, so reject them the same way.
-      const pendingRequests = self.#pendingRequests;
-      self.#pendingRequests = null;
-      if (pendingRequests !== null) {
-        for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
-        }
-      }
+      self.#rejectPendingRequests();
       // A GOAWAY carrying an error code is a session error: the session and every open stream
       // error with ERR_HTTP2_SESSION_ERROR; like Node, our own goaway goes out with
       // NGHTTP2_NO_ERROR since this side had no error. A graceful GOAWAY (NO_ERROR) begins a
@@ -5391,7 +5385,6 @@ class ClientHttp2Session extends Http2Session {
       // never reached the peer, so node rejects them with ERR_HTTP2_GOAWAY_SESSION once the
       // connect completes and then lets the session finish closing.
       this.#rejectPendingRequests();
-      this.#parser?.forEachStream(streamRejectedByGoawaySession);
       this.destroy();
     }
   }

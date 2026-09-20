@@ -623,12 +623,10 @@ impl NodeHTTPResponse {
         // post-upgrade — it would read freed header views.
         self.upgrade_context.with_mut(|c| c.reset());
 
-        // Bytes that were buffered during a pause stay for the next `_read()`, which drains them and
-        // ends the request. Pushing them here would run 'data' listeners before the caller has the
-        // WebSocket.
-        if ended_unfinished_body && self.buffered_request_body_data_during_pause.get().len() == 0 {
-            // The request's stream has to see the body end. `ondata` runs JS that can abort the
-            // request or close the socket, so it runs last.
+        let buffered_bytes_wait_for_read =
+            self.buffered_request_body_data_during_pause.get().len() > 0;
+        if ended_unfinished_body && !buffered_bytes_wait_for_read {
+            // The last step: `ondata` runs JS that can abort the request or close the socket.
             scoped_log!(NodeHTTPResponse, "upgrade: end the unfinished body");
             let _guard = self.ref_guard();
             self.call_on_data(self.armed_this_value.get(), b"", true, AbortEvent::None);

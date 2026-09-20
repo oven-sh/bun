@@ -1927,7 +1927,11 @@ const prefixed =
       : `${oneLine(step, c)} | sed ${renderValue(`s/^/${prefix.replace(/[\\/&]/g, "\\$&")}/`, c)}`,
   ];
 
-/** The lines the command prints, in an order that does not depend on the machine's locale. */
+/**
+ * The lines the command prints, in an order that is the same for every bake of
+ * an image: byte order in sh whatever the locale, and in PowerShell the order of
+ * the session's culture, which comes from the image's pinned base.
+ */
 const sorted =
   (step: Step): Step =>
   c => [`${oneLine(step, c)} | ${isPowerShell(c) ? "Sort-Object" : "LC_ALL=C sort"}`];

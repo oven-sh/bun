@@ -149,7 +149,7 @@ async function buildWindowsImage(arch: Arch, imageDefName: string): Promise<void
 
   // Packer's azure-arm builder cleans up its temp pkr* resources on SIGINT/SIGTERM, but only
   // if the signal actually reaches the packer process and it is given time to finish the Azure
-  // deletes. spawnSafe() does not forward signals, so a Buildkite cancel would orphan the whole
+  // deletes. run() does not forward signals, so a Buildkite cancel would orphan the whole
   // VM/NIC/IP/disk/vnet/NSG/keyvault stack in the build RG. Spawn directly and forward.
   const child = spawn(packerBin, packerArgs, {
     stdio: "inherit",
@@ -237,7 +237,8 @@ function describeImages(filters: string[]): AwsImage[] {
     },
   );
   if (error || status !== 0) {
-    throw new Error(`aws ec2 describe-images failed: ${stderr.trim()}`, { cause: error });
+    // stderr is undefined when aws could not be started; `error` says why.
+    throw new Error(`aws ec2 describe-images failed: ${stderr?.trim() ?? error?.message}`, { cause: error });
   }
   const { Images } = JSON.parse(stdout) as { Images: AwsImage[] };
   return Images;

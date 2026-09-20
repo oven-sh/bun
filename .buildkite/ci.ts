@@ -1331,7 +1331,6 @@ interface PipelineOptions {
   skipTests?: OptionFlag;
   skipSizeCheck?: OptionFlag;
   forceBuilds?: OptionFlag;
-  forceTests?: OptionFlag;
   buildImages?: OptionFlag;
   signWindows?: OptionFlag;
   publishImages?: OptionFlag;
@@ -1397,14 +1396,6 @@ function getOptionsStep(): BlockStep {
         key: "force-builds",
         select: "Do you want to force run the build?",
         hint: "If true, the build will run even if no source files have changed",
-        required: false,
-        default: "false",
-        options: booleanOptions,
-      },
-      {
-        key: "force-tests",
-        select: "Do you want to force run the tests?",
-        hint: "If true, the tests will run even if no test files have changed",
         required: false,
         default: "false",
         options: booleanOptions,
@@ -1582,7 +1573,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
       skipBuilds: parseBoolean(options["skip-builds"]),
       forceBuilds: parseBoolean(options["force-builds"]),
       skipTests: parseBoolean(options["skip-tests"]),
-      forceTests: parseBoolean(options["force-tests"]),
       buildImages: parseBoolean(options["build-images"]),
       publishImages: parseBoolean(options["publish-images"]),
       testFiles: parseArray(options["test-files"]),
@@ -1937,8 +1927,8 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
   const testStepKeys: string[] = [];
   {
-    const { skipTests, forceTests, testFiles } = options;
-    if (!skipTests || forceTests) {
+    const { skipTests, testFiles } = options;
+    if (!skipTests) {
       steps.push(
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });

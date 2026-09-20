@@ -774,10 +774,6 @@ export function mustGenerateOrderFile(cfg: Config, ctx: OrderFileContext, inheri
   return orderFileEligible(cfg, ctx) && canTraceOrderFile(cfg) && !inherited;
 }
 
-/**
- * The unauthenticated Buildkite lookups candidateBuilds() makes. Passed in, like
- * OrderFileContext, so the walk runs offline in a test.
- */
 /** The fields of a build's public JSON (`<pipeline>/builds/<n>.json`) that are read here. */
 interface BuildJson {
   id?: string;
@@ -785,6 +781,10 @@ interface BuildJson {
   branch_name?: string;
 }
 
+/**
+ * The unauthenticated Buildkite lookups candidateBuilds() makes. Passed in, like
+ * OrderFileContext, so the walk runs offline in a test.
+ */
 export interface BuildLookups {
   /** A build's public JSON, or undefined when it cannot be read. */
   build(url: string): Promise<BuildJson | undefined>;

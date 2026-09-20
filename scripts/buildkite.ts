@@ -47,7 +47,7 @@ export function getSecret(name: string, options?: SecretOptions & { required?: t
 
 export function getSecret(name: string, options: SecretOptions): string | undefined;
 
-export function getSecret(name: string, options: SecretOptions = { required: true }): string | undefined {
+export function getSecret(name: string, { required = true }: SecretOptions = {}): string | undefined {
   const value = process.env[name];
   if (value) {
     return value;
@@ -73,7 +73,7 @@ export function getSecret(name: string, options: SecretOptions = { required: tru
     return secret;
   }
 
-  return options.required ? getEnv(name) : undefined;
+  return required ? getEnv(name) : undefined;
 }
 
 export function parseGitUrl(url: string | URL): URL | undefined {
@@ -422,19 +422,22 @@ export async function getLastSuccessfulBuild(): Promise<BuildkiteBuild | undefin
   return undefined;
 }
 
-/**
- * `filename` is the absolute path to the file to upload.
- */
 /** The fields of GitHub's "list pull request files" response that are read here. */
 interface GithubPullRequestFile {
   filename: string;
   status: string;
 }
 
-/** The files of the pull request this Buildkite build is for, and the ones among them that it adds. */
+/**
+ * The files of the pull request this Buildkite build is for, and the ones
+ * among them that it adds; none when the build is not for a pull request.
+ */
 export async function getPullRequestFiles(): Promise<{ allFiles: string[]; newFiles: string[] }> {
   const allFiles: string[] = [];
   const newFiles: string[] = [];
+  if (!isPullRequest()) {
+    return { allFiles, newFiles };
+  }
   const perPage = 50;
   const pullRequest = process.env.BUILDKITE_PULL_REQUEST;
   for (let page = 1; page <= 10; page++) {
@@ -461,6 +464,9 @@ export async function getPullRequestFiles(): Promise<{ allFiles: string[]; newFi
   return { allFiles, newFiles };
 }
 
+/**
+ * `filename` is the absolute path to the file to upload.
+ */
 export async function uploadArtifact(filename: string): Promise<void> {
   if (isBuildkite) {
     await run(["buildkite-agent", "artifact", "upload", basename(filename)], { cwd: dirname(filename) });

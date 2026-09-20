@@ -2102,13 +2102,11 @@ fn parse_build_command_options(
     let css_target_args = args.options(b"--css-target");
     if !css_target_args.is_empty() {
         let mut browsers = bun_css::Browsers::default();
-        let mut entry_count: usize = 0;
         for val in css_target_args {
+            // `split` yields at least one piece, and an empty piece is an
+            // invalid target, so a blank value errors here too.
             for entry in strings::split(val, b",") {
                 let entry = strings::trim(entry, b" \t");
-                if entry.is_empty() {
-                    continue;
-                }
                 if browsers.merge_esbuild_target(entry).is_err() {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r>: Invalid --css-target \"{}\". Expected a browser version like \"chrome100\" or \"safari16.4\", or an ES version like \"es2020\"",
@@ -2116,14 +2114,7 @@ fn parse_build_command_options(
                     );
                     Global::exit(1);
                 }
-                entry_count += 1;
             }
-        }
-        if entry_count == 0 {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: --css-target needs at least one target, for example \"chrome100\""
-            );
-            Global::exit(1);
         }
         ctx.bundler_options.css_target = Some(browsers);
     }

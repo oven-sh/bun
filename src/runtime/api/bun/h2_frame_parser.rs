@@ -1334,8 +1334,7 @@ pub struct Stream {
     // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
     // replenishing the stream's receive window until reading resumes, backpressuring the peer.
     reading_paused: bool,
-    // nghttp2's NGHTTP2_STREAM_CLOSING: this side sent the stream's RST_STREAM, or JS reports
-    // (setStreamClosing) that node has submitted it by now while ours leaves later.
+    // nghttp2's NGHTTP2_STREAM_CLOSING: node has submitted this stream's RST_STREAM by now.
     closing: bool,
 
     // when we have backpressure we queue the data e round robin the Streams
@@ -5465,10 +5464,7 @@ impl H2FrameParser {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// setStreamClosing(streamId, heldBackInRead): records that node has submitted the stream's
-    /// RST_STREAM at this point. Only a bit, like setStreamReading, so it is callable from inside a
-    /// dispatch. node holds a close(NGHTTP2_CANCEL) back while it is inside a read
-    /// (Http2Stream::SubmitRstStream), so `heldBackInRead` skips the mark there.
+    /// setStreamClosing(streamId, heldBackInRead): node holds a close(NGHTTP2_CANCEL) back inside a read.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn set_stream_closing(
         this: &Self,

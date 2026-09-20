@@ -172,9 +172,7 @@ pub trait Sink {
     fn can_open_stream(&self) -> bool {
         true
     }
-    /// Whether the embedder takes a push promised on `parent_id`. `false` once it has submitted
-    /// that stream's RST_STREAM (nghttp2's NGHTTP2_STREAM_CLOSING): the promised stream gets
-    /// RST_STREAM(CANCEL) and its block is decoded for HPACK-table sync only.
+    /// `false` when `parent_id` is nghttp2's CLOSING: a push promised on it gets RST_STREAM(CANCEL).
     fn can_accept_push(&self, _parent_id: u32) -> bool {
         true
     }
@@ -1736,8 +1734,7 @@ impl Connection {
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
         }
-        // nghttp2_session_on_push_promise_received decides on receipt of the frame, not of the
-        // block, so a CONTINUATION that arrives later does not change the answer.
+        // Like nghttp2, decide when the frame arrives: a later CONTINUATION does not change it.
         let cancelled = !sink.can_accept_push(hdr.stream_id);
         if cancelled {
             self.send_rst_stream(sink, promised, ErrorCode::Cancel);

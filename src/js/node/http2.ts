@@ -2641,8 +2641,7 @@ class Http2Stream extends Duplex {
       // the deferred rstStream would be a guaranteed no-op host call per request.
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
-      // node's _destroy submits the RST_STREAM only when close() had not run, and its
-      // handle.destroy() flushes a close(NGHTTP2_CANCEL) that node held back.
+      // node: _destroy() skips closeStream() after close(), but flushes a held-back close(NGHTTP2_CANCEL).
       if (!closedBefore || rstCode === NGHTTP2_CANCEL) session[bunHTTP2Native]?.setStreamClosing(this.#id, false);
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }

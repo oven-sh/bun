@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from "bun:test";
 import { once } from "node:events";
-import { Agent, createServer, request, type IncomingMessage, type Server } from "node:http";
+import { Agent, createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { connect } from "node:net";
 
@@ -457,6 +457,38 @@ describe("request whose whole body is in the segment that paused the connection"
       await client.receive(`/held:${BODY_HEAD.length + BODY_TAIL.length};`);
       client.socket.write(half);
       await client.receive(`/streamed:${2 * half.length};`);
+      await disconnectAndClose(client.socket, server);
+    } finally {
+      server.closeAllConnections();
+      if (server.listening) server.close();
+    }
+  });
+
+  // Node's parserOnMessageComplete: readStart() undoes the readStop() that the
+  // last chunk itself caused, so the next request is read while this one is
+  // still unread and unanswered.
+  it("resumes the connection at once when the last chunk is the one that filled the buffer", async () => {
+    const { promise: first, resolve: gotFirst } = Promise.withResolvers<ServerResponse>();
+    const { promise: second, resolve: gotSecond } = Promise.withResolvers<void>();
+    const paused: string[] = [];
+    const server = createServer({ highWaterMark: 1024 }, (req, res) => {
+      if (req.url === "/first") {
+        req.socket.on("pause", () => paused.push(req.url!));
+        return gotFirst(res);
+      }
+      gotSecond();
+      res.end("bravo");
+    });
+    try {
+      const client = await connectTo(server);
+      client.socket.write(`POST /first HTTP/1.1\r\nHost: a\r\nContent-Length: ${BODY_HEAD.length}\r\n\r\n${BODY_HEAD}`);
+      const res = await first;
+      client.socket.write("GET /second HTTP/1.1\r\nHost: a\r\n\r\n");
+      await second;
+      expect(paused).toEqual(["/first"]);
+      res.end("alpha");
+      await client.receive("alpha");
+      await client.receive("bravo");
       await disconnectAndClose(client.socket, server);
     } finally {
       server.closeAllConnections();

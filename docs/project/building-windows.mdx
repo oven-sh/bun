@@ -159,7 +159,7 @@ ln -s include "/opt/winsysroot/Windows Kits/10/Include"
 ln -s lib "/opt/winsysroot/Windows Kits/10/Lib"
 ```
 
-The build looks for the sysroot at `/opt/winsysroot` (or `/opt/xwin`) automatically. If the sysroot is elsewhere, set `WINDOWS_SYSROOT=<path>` or pass `--winsysroot=<path>`. A user-writable path also lets configure manage the aliases for you. Configure validates the splat at the start of every cross build. CI agents bake the same splat into their images (`.buildkite/Dockerfile`, `scripts/bootstrap.sh`); when an agent doesn't have one, the build fetches it into its cache dir at configure time.
+The build looks for the sysroot at `/opt/winsysroot` (or `/opt/xwin`) automatically. If the sysroot is elsewhere, set `WINDOWS_SYSROOT=<path>` or pass `--winsysroot=<path>`. A user-writable path also lets configure manage the aliases for you. Configure validates the splat at the start of every cross build. CI agents bake the same splat into their images (`scripts/bootstrap.sh`); when an agent doesn't have one, the build fetches it into its cache dir at configure time.
 
 ### Building
 

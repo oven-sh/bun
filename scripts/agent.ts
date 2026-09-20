@@ -718,9 +718,25 @@ interface AgentPaths {
   cfgPath?: string;
 }
 
+/** The user CI's jobs run as on Linux; the image's bake creates it. */
+export const agentUser = "buildkite-agent";
+
+/**
+ * The agent's directories on a Linux image. The image's bake
+ * (scripts/build/ci-images/spec.ts) creates them, owned by the agent's user.
+ */
+export const linuxAgentPaths = {
+  homePath: "/var/lib/buildkite-agent",
+  cachePath: "/var/cache/buildkite-agent",
+  logsPath: "/var/log/buildkite-agent",
+} as const;
+
+/** The agent's directory on a Windows image; the image's bootstrap installs buildkite-agent and its hooks there. */
+export const windowsAgentHome = "C:\\buildkite-agent";
+
 function getAgentPaths(): AgentPaths {
   if (isWindows) {
-    const homePath = "C:\\buildkite-agent";
+    const homePath = windowsAgentHome;
     const logsPath = join(homePath, "logs");
     return {
       homePath,
@@ -741,11 +757,9 @@ function getAgentPaths(): AgentPaths {
       cfgPath: join(library, "Preferences", "buildkite-agent.cfg"),
     };
   } else {
-    const logsPath = "/var/log/buildkite-agent";
+    const { logsPath } = linuxAgentPaths;
     return {
-      homePath: "/var/lib/buildkite-agent",
-      cachePath: "/var/cache/buildkite-agent",
-      logsPath,
+      ...linuxAgentPaths,
       agentLogPath: join(logsPath, "buildkite-agent.log"),
       pidPath: join(logsPath, "buildkite-agent.pid"),
     };
@@ -766,7 +780,7 @@ async function install(queueOption: string | undefined): Promise<void> {
   // The service is of no use without it.
   requireCommand("buildkite-agent");
   const { homePath, cachePath, logsPath, agentLogPath, pidPath, cfgPath } = getAgentPaths();
-  const username = "buildkite-agent";
+  const username = agentUser;
   const command = process.execPath;
 
   // Checked before anything is written, so a Mac that cannot be given a

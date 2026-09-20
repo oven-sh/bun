@@ -1236,20 +1236,7 @@ function recordImage(image: BakedImage): Tool {
   const packageList = scratch("packages");
   const queryPackages: Step[] =
     image.os === "windows"
-      ? [
-          toFile(
-            pipe(
-              // `run`, so that scoop's exit code is checked after the statement.
-              run("scoop", "export"),
-              // Scoop prints its JSON as several lines; ConvertFrom-Json is given them as one string.
-              cmdlet("Out-String"),
-              cmdlet("ConvertFrom-Json"),
-              cmdlet("Select-Object", { ExpandProperty: "apps" }),
-              cmdlet("ForEach-Object", {}, expression(`{ "$($_.Name) $($_.Version)" }`)),
-            ),
-            packageList,
-          ),
-        ]
+      ? [toFile(scoopApps(), packageList)]
       : image.distro === "alpine"
         ? [
             toFile(run("apk", "list", "--installed"), scratch("apk-list")),
@@ -2295,6 +2282,18 @@ const apkAdd =
 const brewInstall =
   (names: readonly string[], options: { formula?: boolean } = {}): Step =>
   () => [`brew install --quiet ${options.formula ? "--formula " : ""}${names.join(" ")}`];
+
+/** Scoop's installed apps, a "name version" line each. */
+const scoopApps = (): Step =>
+  pipe(
+    // `run`, so that scoop's exit code is checked after the statement.
+    run("scoop", "export"),
+    // Scoop prints its JSON as several lines; ConvertFrom-Json is given them as one string.
+    cmdlet("Out-String"),
+    cmdlet("ConvertFrom-Json"),
+    cmdlet("Select-Object", { ExpandProperty: "apps" }),
+    cmdlet("ForEach-Object", {}, expression(`{ "$($_.Name) $($_.Version)" }`)),
+  );
 
 /**
  * `name` or `name@version`. Scoop is PowerShell running in this session, and

@@ -462,6 +462,9 @@ static void replayNodeHttpPausedSpill(us_socket_t* socket)
 template<bool SSL>
 static void onNodeHttpReadsResumable(us_socket_t* socket)
 {
+    if (!uWS::HttpContext<SSL>::ownsSocket(socket)) {
+        return;
+    }
     auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
     if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
         /* Flood prevention owns the pause: outgoing backpressure holds everything (incidental
@@ -518,6 +521,9 @@ static void onNodeHttpReadsResumable(us_socket_t* socket)
 template<bool SSL>
 static void onNodeHttpReadsPaused(us_socket_t* socket)
 {
+    if (!uWS::HttpContext<SSL>::ownsSocket(socket)) {
+        return;
+    }
     auto* d = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
     d->nodeHttpParkAtNextBoundary = true;
     d->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;

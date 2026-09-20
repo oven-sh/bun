@@ -244,3 +244,76 @@ describe.concurrent.each(["http", "https"])(
     });
   },
 );
+
+// A request that is still readable keeps the native handle of its connection, and the handle
+// outlives a WebSocket upgrade by a later request on that connection. Resuming the earlier
+// request then ran the HTTP read machinery over the WebSocket's own state: it cleared the
+// length of the buffered fragment, so the message lost everything before the last fragment.
+test("resuming an earlier request after a WebSocket upgrade leaves the WebSocket alone", async () => {
+  // Masked with a zero key. 0x01 is the first fragment, 0x80 the last, 0x89 a ping.
+  const frame = (first: number, payload: string) =>
+    Buffer.concat([Buffer.from([first, 0x80 | payload.length, 0, 0, 0, 0]), Buffer.from(payload)]);
+  // The Upgrade request carries a body. The connection switches to tunnel mode only when that
+  // body ends, so the earlier request's resume() is not held back by the tunnel state.
+  const upgradeRequest =
+    "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+    "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nContent-Length: 5\r\n\r\nhello";
+
+  const message = Promise.withResolvers<string>();
+  const pinged = Promise.withResolvers<void>();
+  const answered = Promise.withResolvers<void>();
+  const switched = Promise.withResolvers<void>();
+  for (const { promise } of [message, pinged, answered, switched]) promise.catch(() => {});
+
+  let earlier!: http.IncomingMessage;
+  await using server = http.createServer((req, res) => {
+    if (req.method === "POST") {
+      earlier = req;
+      // A consumed and paused request is not dumped when the response ends, so it stays
+      // readable and keeps its handle.
+      req.on("data", () => {});
+      req.pause();
+    }
+    res.end("ok");
+  });
+  const wss = new WebSocketServer({ server });
+  wss.on("connection", ws => {
+    ws.on("ping", () => pinged.resolve());
+    ws.on("message", data => message.resolve(String(data)));
+    ws.on("close", code => message.reject(new Error(`the WebSocket closed with ${code}`)));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  try {
+    const fail = (error: Error) => {
+      for (const { reject } of [message, pinged, answered, switched]) reject(error);
+    };
+    client.on("error", fail);
+    client.on("close", () => fail(new Error("the connection closed before the server received the message")));
+    let seen = Buffer.alloc(0);
+    client.on("data", chunk => {
+      seen = Buffer.concat([seen, chunk]);
+      if (seen.includes("ok")) answered.resolve();
+      const status = seen.indexOf("HTTP/1.1 101 ");
+      if (status !== -1 && seen.includes("\r\n\r\n", status)) switched.resolve();
+    });
+    await once(client, "connect");
+    client.write("POST /earlier HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello");
+    await answered.promise;
+    client.write(upgradeRequest);
+    await switched.promise;
+
+    // The ping follows the fragment in the same read, so the server has buffered the fragment
+    // by the time it answers.
+    client.write(Buffer.concat([frame(0x01, "hel"), frame(0x89, "p")]));
+    await pinged.promise;
+    earlier.resume();
+    client.write(frame(0x80, "lo"));
+    expect(await message.promise).toBe("hello");
+  } finally {
+    client.destroy();
+    for (const ws of wss.clients) ws.terminate();
+    wss.close();
+  }
+});

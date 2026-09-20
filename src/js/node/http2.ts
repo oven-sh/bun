@@ -3688,6 +3688,9 @@ function scheduleSettingsAckGraceNT(session) {
 function destroyIfNotDestroyedNT(target) {
   if (!target.destroyed) target.destroy();
 }
+function rethrowUncaught(err) {
+  throw err;
+}
 function scheduleDestroyIfNotDestroyed(target) {
   if (!target.destroyed) {
     setImmediate(destroyIfNotDestroyedNT, target);
@@ -4918,6 +4921,15 @@ function streamRejectedByGoawaySession(stream: Http2Stream) {
     stream.destroy(err);
   }
 }
+// A request that was destroyed while it waited for the connect stays in the queue until the flush.
+function hasLivePendingRequest(pendingRequests: Array<{ req: ClientHttp2Stream }> | null) {
+  if (pendingRequests !== null) {
+    for (let i = 0; i < pendingRequests.length; i++) {
+      if (!pendingRequests[i].req.destroyed) return true;
+    }
+  }
+  return false;
+}
 class ClientHttp2Session extends Http2Session {
   /// close indicates that the session is shutting down (close() or destroy() was called)
   #closed: boolean = false;
@@ -5641,11 +5653,26 @@ class ClientHttp2Session extends Http2Session {
       this.#authority = needsBrackets ? `[${authorityHost}]:${port}` : `${authorityHost}:${port}`;
     }
 
+    // An options.settings that validation rejected while the socket was still connecting.
+    let settingsRejected = false;
+    let settingsError;
     function onConnect() {
       // The parser's construction re-enters JS and can drain the tick queue, so a
       // connect that fires from that drain arrives before the constructor finished.
       if (this.#parser === undefined) {
         process.nextTick(onConnect.bind(this));
+        return;
+      }
+      // node's close() destroys an idle session at once. close() here only schedules the destroy.
+      const destroyedInNode = this.destroyed || (this.#closed && !hasLivePendingRequest(this.#pendingRequests));
+      if (settingsRejected && !destroyedInNode) {
+        // Not socket.destroy(error) as in node: #onError drops a socket error once close() was called.
+        try {
+          this.destroy(settingsError);
+        } catch (e) {
+          // No 'error' listener. A throw from a socket callback goes to the socket's 'error', which is ignored now.
+          process.nextTick(rethrowUncaught, e);
+        }
         return;
       }
       try {
@@ -5673,6 +5700,8 @@ class ClientHttp2Session extends Http2Session {
         connectOnNextTick = true;
       }
     } else {
+      // node's initializeTLSOptions rejects a non-object options.settings before the socket exists.
+      if (protocol === "https:") assertIsObject(options.settings, "options.settings");
       socket = connectWithProtocol(
         protocol,
         options
@@ -5695,10 +5724,21 @@ class ClientHttp2Session extends Http2Session {
     const nativeSocket = socket._handle;
     this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
 
-    if (options?.settings !== undefined) {
-      validateSettings(options.settings);
+    // node reads options.settings at the connect event (setupHandle) and ignores a non-object value.
+    let settings = typeof options.settings === "object" ? options.settings : undefined;
+    if (settings !== undefined) {
+      try {
+        validateSettings(settings);
+      } catch (e) {
+        // node sets an already connected socket up inline, so its connect() throws here too.
+        if (connectOnNextTick) throw e;
+        settingsRejected = true;
+        settingsError = e;
+        settings = undefined;
+      }
     }
-    const nativeSettings = { ...options, ...options?.settings };
+    // The parser validates again, and its throw leaves connect(): give it `settings`, never options.settings.
+    const nativeSettings = { ...options, ...settings };
     this.#localSettings = initialLocalSettings(nativeSettings);
     // #onConnect attaches the native socket; frames written before that (the preface) queue.
     this.#parser = new H2FrameParser({

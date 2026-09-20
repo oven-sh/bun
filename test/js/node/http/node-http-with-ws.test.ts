@@ -201,8 +201,13 @@ describe.concurrent.each(["http", "https"])(
       const client =
         scheme === "https" ? tls.connect({ port, host: "127.0.0.1", ca: options.cert }) : connect(port, "127.0.0.1");
       try {
-        client.on("error", switched.reject);
-        client.on("close", () => switched.reject(new Error("the connection closed before the 101")));
+        // A connection that ends early ends both waits, the second one also after the 101.
+        const fail = (error: Error) => {
+          switched.reject(error);
+          message.reject(error);
+        };
+        client.on("error", fail);
+        client.on("close", () => fail(new Error("the connection closed before the server received the message")));
         // The 101 is the last thing the server sends, so it is at the end of what the client has.
         let tail = Buffer.alloc(0);
         client.on("data", chunk => {

@@ -443,7 +443,9 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 
 /* us_socket_defer_error_until_read: returns nonzero when the peer's reset is to stay in the kernel for now. */
 static int us_internal_socket_defers_error(struct us_socket_t *s, struct us_loop_t *loop) {
+    (void) loop;
 #ifdef LIBUS_USE_LIBUV
+    (void) s;
     return 0;
 #else
     if (!s->defer_error_until_read || s->flags.last_write_failed || s->flags.low_prio_state == 1 ||

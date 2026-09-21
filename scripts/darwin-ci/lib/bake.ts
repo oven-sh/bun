@@ -45,9 +45,12 @@ export async function bake({ base, ref }: BakeOptions): Promise<void> {
   );
   if (status !== 0) fail(`bake failed in guest; ${image} untouched, ${staging} left running at ${ip} for inspection`);
 
+  // the ssh session usually drops as the guest powers off, so its exit status says nothing; the guest exiting does
   await g.run("sync; sudo shutdown -h now");
   log("waiting for guest to power off");
-  await Promise.race([vm.exited, Bun.sleep(180_000)]);
+  const poweredOff = await Promise.race([vm.exited.then(() => true), Bun.sleep(180_000).then(() => false)]);
+  if (!poweredOff)
+    fail(`${staging} did not power off within 180s; ${image} untouched, ${staging} left running at ${ip}`);
   await tart.stop(staging);
 
   await promote(staging, image);

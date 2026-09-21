@@ -1,4 +1,7 @@
 import type { Subprocess } from "bun";
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { config } from "./config";
 import { poll, portOpen, probe, run, runInheritOrThrow, sleep, spawn, succeeds } from "./shell";
 
@@ -6,7 +9,10 @@ const bin = config.tart.bin;
 // lockf(1) holds a flock(2) on this file for as long as its child runs, and the kernel drops the lock when the child
 // exits. The child is a `cat` reading our pipe, so the lock ends when we close the pipe or when this process dies:
 // a crashed or killed job cannot leave a stale lock, and there is no pid to go stale or be reused after a reboot.
-const imageLock = "/tmp/tart-image.flock";
+// Not in /tmp: macOS's daily clean-tmps deletes files untouched for 3 days, lockf never touches this one, and a
+// waiter that opens a new file at the path gets a second lock while the first holder still has the old inode.
+// ~/.tart belongs to the CI user, who runs both the hooks and bake.
+const imageLock = join(homedir(), ".tart", "image.flock");
 
 export const tart = {
   pull: (image: string) => runInheritOrThrow([bin, "pull", image]),
@@ -50,6 +56,7 @@ export const tart = {
 
   // concurrent clones of one image race, and so does swapping the image out under a clone
   async withImageLock<T>(fn: () => Promise<T>): Promise<T> {
+    mkdirSync(join(homedir(), ".tart"), { recursive: true });
     const holder = Bun.spawn(["/usr/bin/lockf", "-k", imageLock, "/bin/sh", "-c", "echo locked; exec cat >/dev/null"], {
       stdin: "pipe",
       stdout: "pipe",

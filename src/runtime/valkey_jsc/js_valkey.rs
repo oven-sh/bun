@@ -40,7 +40,7 @@ type Socket = uws::AnySocket;
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
-pub struct SubscriptionCtx {
+pub(crate) struct SubscriptionCtx {
     pub(crate) is_subscriber: bool,
     pub(crate) original_enable_offline_queue: bool,
     pub(crate) original_enable_auto_pipelining: bool,
@@ -49,7 +49,7 @@ pub struct SubscriptionCtx {
 /// The generate-classes.ts output emits a
 /// `js_RedisClient` module with snake-case `*_set_cached`/`*_get_cached`
 /// free-fns plus `to_js`/`from_js`. Re-exported here as `Js`.
-pub use crate::generated_classes::js_RedisClient as Js;
+pub(crate) use crate::generated_classes::js_RedisClient as Js;
 
 impl SubscriptionCtx {
     pub(crate) fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
@@ -305,7 +305,7 @@ impl JSValkeyClient {
 // — see `connect()` below).
 #[repr(C)]
 #[derive(bun_ptr::RefCounted)]
-pub struct JSValkeyClient {
+pub(crate) struct JSValkeyClient {
     pub(crate) client: JsCell<valkey::ValkeyClient>,
     pub(crate) global_object: GlobalRef,
     pub this_value: JsCell<JsRef>,
@@ -333,7 +333,7 @@ pub struct JSValkeyClient {
 /// [`disarm`]: Self::disarm
 /// [`take_fire_ref`]: Self::take_fire_ref
 #[repr(C)]
-pub struct RefCountedTimer {
+pub(crate) struct RefCountedTimer {
     // Must be first (offset 0): `dispatch.rs` recovers `*mut JSValkeyClient`
     // from the fired `*const EventLoopTimer` via `offset_of!(.., timer)`.
     event_loop_timer: JsCell<Timer::EventLoopTimer>,
@@ -1049,11 +1049,15 @@ impl JSValkeyClient {
     //
     // Both continue the `Bun.ModuleGraph` whose script set them, whoever's turn of the loop the
     // connection's events arrive in (and nothing, outside a graph).
-    pub fn get_on_connect(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_connect(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         Js::onconnect_get_cached(this_value)
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
-    pub fn set_on_connect(
+    pub(crate) fn set_on_connect(
         _this: &Self,
         this_value: JSValue,
         global: &JSGlobalObject,
@@ -1065,11 +1069,15 @@ impl JSValkeyClient {
             value.with_graph_context_if_needed(global),
         );
     }
-    pub fn get_on_close(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_on_close(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         Js::onclose_get_cached(this_value)
             .map_or(JSValue::UNDEFINED, JSValue::without_async_context)
     }
-    pub fn set_on_close(
+    pub(crate) fn set_on_close(
         _this: &Self,
         this_value: JSValue,
         global: &JSGlobalObject,
@@ -1455,7 +1463,7 @@ impl JSValkeyClient {
         self.enqueue_deferred_close(DeferredClose::Socket);
     }
 
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         self.stop_timers();
         self.this_value.with_mut(|t| t.finalize());
         self.client_mut().flags.finalized = true;
@@ -1717,7 +1725,7 @@ impl JSValkeyClient {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// uWS socket-event handler for the Valkey client (kind = `.valkey[_tls]`).
-pub struct SocketHandler<const SSL: bool>;
+pub(crate) struct SocketHandler<const SSL: bool>;
 
 // Inherent associated types are unstable in Rust, so use a module-level alias
 // and refer to it as `SocketType<SSL>` inside the impl.
@@ -1853,7 +1861,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         fn(&JSValkeyClient, SocketType<SSL>, i32, uws::us_bun_verify_error_t) -> JsResult<()>,
     > = if SSL { Some(Self::on_handshake) } else { None };
 
-    pub fn on_close(
+    pub(crate) fn on_close(
         this: &JSValkeyClient,
         _socket: SocketType<SSL>,
         _code: i32,

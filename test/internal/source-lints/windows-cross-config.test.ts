@@ -32,6 +32,8 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     ld64Lld: undefined,
     rustLld: undefined,
     rustLlvmVersion: "22.1.4",
+    rustSysroot: undefined,
+    rustHostTriple: undefined,
     strip: "/fake/llvm/bin/llvm-strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
@@ -144,7 +146,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
       mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }),
     );
     expect(cfg.ld).toBe(join(String(dir), "gcc-ld", "lld-link"));
-    // Cargo-driven links (bun_shim_impl.exe) must NOT follow the swap: rustc
+    // rustc-driven links (the .bin/ shim's executable) must NOT follow the swap: rustc
     // treats a linker inside its own gcc-ld/ as rust-lld and prepends
     // `-flavor link`, which breaks the wrapper. They keep the host lld-link.
     expect(cfg.msvcLinker).toBe("/fake/llvm/bin/lld-link");

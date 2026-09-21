@@ -23,7 +23,7 @@ use bun_standalone_graph::StandaloneModuleGraph;
 // with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
 use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_slice};
 
-pub mod js_bundler {
+pub(crate) mod js_bundler {
     use super::*;
     use bun_core::Utf8Bytes;
 
@@ -46,7 +46,7 @@ pub mod js_bundler {
     /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
     /// bundler thread can read it without depending on `bun_runtime`. Only
     /// the JS-aware `from_js` constructor lives here.
-    pub use bun_bundler::bundle_v2::api::JSBundler::FileMap;
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::FileMap;
 
     /// Parse the `files` option from JavaScript.
     /// Expected format: `Record<string, string | Blob | File | TypedArray | ArrayBuffer>`.
@@ -104,7 +104,7 @@ pub mod js_bundler {
         Ok(this)
     }
 
-    pub struct Config {
+    pub(crate) struct Config {
         pub(crate) target: Target,
         pub(crate) entry_points: StringSet,
         pub(crate) react_fast_refresh: bool,
@@ -229,7 +229,7 @@ pub mod js_bundler {
         }
     }
 
-    pub struct CompileOptions {
+    pub(crate) struct CompileOptions {
         pub(crate) compile_target: CompileTarget,
         pub(crate) exec_argv: OwnedString,
         pub(crate) executable_path: OwnedString,
@@ -475,7 +475,7 @@ pub mod js_bundler {
     }
 
     impl Config {
-        pub fn from_js(
+        pub(crate) fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             plugins: &mut Option<*mut Plugin>,
@@ -1383,7 +1383,7 @@ pub mod js_bundler {
     /// Output path templates for entry points, chunks, and assets. Each
     /// `PathTemplate.data` is owned (`Box<[u8]>`), so no separate backing
     /// string per template is needed.
-    pub struct Names {
+    pub(crate) struct Names {
         pub(crate) entry_point: options::PathTemplate,
         pub(crate) chunk: options::PathTemplate,
         pub(crate) asset: options::PathTemplate,
@@ -1400,7 +1400,7 @@ pub mod js_bundler {
     }
 
     #[derive(Default)]
-    pub struct Minify {
+    pub(crate) struct Minify {
         pub(crate) whitespace: bool,
         pub(crate) identifiers: bool,
         pub(crate) syntax: bool,
@@ -1473,7 +1473,7 @@ pub mod js_bundler {
     // `bun_event_loop` types and the `Plugin` opaque, neither of which is a T6
     // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
     // C-ABI exports) live here.
-    pub use bun_bundler::bundle_v2::api::JSBundler::{
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::{
         Load, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
     };
 
@@ -1684,7 +1684,7 @@ pub mod js_bundler {
     /// Opaque FFI handle for the C++ `JSBundlerPlugin`. The opaque type and
     /// `has_any_matches` (the one method `bun_bundler` needs) live in the
     /// lower-tier crate; JSC-aware methods are added here via `PluginJscExt`.
-    pub use bun_bundler::bundle_v2::api::JSBundler::Plugin;
+    pub(crate) use bun_bundler::bundle_v2::api::JSBundler::Plugin;
 
     // `Plugin` is an `opaque_ffi!` handle (`repr(C)` + `UnsafeCell` marker), so
     // `&mut Plugin`/`&Plugin` are ABI-identical to non-null pointers and the
@@ -1727,7 +1727,7 @@ pub mod js_bundler {
     /// JSC-aware methods on the C++ `JSBundlerPlugin` opaque. The opaque type
     /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
     /// added as an extension trait rather than an inherent `impl`.
-    pub trait PluginJscExt {
+    pub(crate) trait PluginJscExt {
         fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> *mut Plugin;
         fn run_on_end_callbacks(
             &mut self,
@@ -1953,7 +1953,7 @@ pub mod js_bundler {
     }
 }
 
-pub use js_bundler as JSBundler;
+pub(crate) use js_bundler as JSBundler;
 
 /// `bun:internal-for-testing`: bundler `Worker`s (one per pool thread a build ran on) not yet torn down.
 #[bun_jsc::host_fn]
@@ -1968,14 +1968,14 @@ pub(crate) fn js_worker_live_count(
 }
 
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
-pub use js_bundler::Plugin;
+pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;
 
 /// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
 /// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper
 /// (`m_sourcemap` WriteBarrier from `cache: true`), not here.
 #[bun_jsc::JsClass(no_constructor)]
-pub struct BuildArtifact {
+pub(crate) struct BuildArtifact {
     pub(crate) blob: Blob,
     pub(crate) loader: bun_ast::Loader,
     pub path: Box<[u8]>,
@@ -1986,7 +1986,7 @@ pub struct BuildArtifact {
 /// `BuildArtifact.kind` — what role an output file plays. Single canonical
 /// definition lives in `bun_bundler::options` (it backs
 /// `OutputFile.output_kind`).
-pub use bun_bundler::options::OutputKind;
+pub(crate) use bun_bundler::options::OutputKind;
 
 /// `JSValue::as(Blob)` BuildArtifact fallback — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.

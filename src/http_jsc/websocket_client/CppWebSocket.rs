@@ -46,6 +46,7 @@ unsafe extern "C" {
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<OwnedSslCtx>,
+        verified_hostname: FfiSlice<'_>,
     );
     #[allow(improper_ctypes)]
     safe fn WebSocket__didConnectWithTunnel(
@@ -161,10 +162,18 @@ impl CppWebSocket {
         buffered_data: Option<Box<InitialData>>,
         deflate_params: Option<&websocket_deflate::Params>,
         secure: Option<OwnedSslCtx>,
+        verified_hostname: &[u8],
     ) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        WebSocket__didConnect(self, socket, buffered_data, deflate_params, secure);
+        WebSocket__didConnect(
+            self,
+            socket,
+            buffered_data,
+            deflate_params,
+            secure,
+            verified_hostname.into(),
+        );
         event_loop.exit();
     }
 

@@ -109,7 +109,7 @@ function assertNoNulInValue(key, value) {
  * header validation.
  * @returns {[string, number]}
  */
-function buildNgHeaderString(arrayOrMap, validatePseudoHeaderValue, strictSingleValueFields) {
+function buildNgHeaderString(arrayOrMap, validatePseudoHeaderValue, strictSingleValueFields?: boolean) {
   let headers = "";
   let pseudoHeaders = "";
   let count = 0;

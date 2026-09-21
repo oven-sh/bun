@@ -1,4 +1,3 @@
-// @bun
 // Used to generate a features.json file after building Bun.
 
 import { crash_handler } from "bun:internal-for-testing";

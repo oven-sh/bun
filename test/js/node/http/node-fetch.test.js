@@ -310,6 +310,16 @@ test.each([
   }).toEqual({ json: expected, bodyThenJson: expected, cloneJson: expected });
 });
 
+test("node-fetch Response accepts an old-style Stream body", async () => {
+  const legacy = new stream.Stream();
+  const response = new Response(legacy);
+  const text = response.text();
+  legacy.emit("data", Buffer.from("hello "));
+  legacy.emit("data", Buffer.from("world"));
+  legacy.emit("end");
+  expect(await text).toBe("hello world");
+});
+
 test("node-fetch json() resolves null for a body that is the JSON text null", async () => {
   using server = Bun.serve({ port: 0, fetch: () => new Response("null") });
   expect(await (await fetch2(server.url)).json()).toBeNull();

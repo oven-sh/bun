@@ -557,8 +557,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   var error;
   try {
-    // node rejects a batch file where it would spawn the process: after the options are validated, and with the
-    // result of any other process that never ran.
+    // node rejects a batch file where it would spawn the process, after it validates the options.
     if (options.windowsBatchFileError) {
       throw new SystemError(
         `spawnSync ${options.file} EINVAL`,

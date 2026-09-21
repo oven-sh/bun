@@ -6,6 +6,9 @@ pub enum Error {
     MacroNotFound,
     #[error("MacroLoadError")]
     MacroLoadError,
+    /// The macro module's top-level await has nothing left that could settle it.
+    #[error("MacroLoadStalled")]
+    MacroLoadStalled,
     #[error("MacroFailed")]
     MacroFailed,
     #[error("JSError")]
@@ -31,6 +34,7 @@ impl Error {
             Self::ModuleNotFound => "ModuleNotFound",
             Self::MacroNotFound => "MacroNotFound",
             Self::MacroLoadError => "MacroLoadError",
+            Self::MacroLoadStalled => "MacroLoadStalled",
             Self::MacroFailed => "MacroFailed",
             Self::JSError => "JSError",
             Self::Alloc(_) => "OutOfMemory",

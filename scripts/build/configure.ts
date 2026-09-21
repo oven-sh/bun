@@ -33,7 +33,7 @@ import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
-import { ensureNinja, ninjaIfPresent } from "./ninja-release.ts";
+import { ensureNinja } from "./ninja-release.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
@@ -326,8 +326,7 @@ export function codegenConfigOf(input: ConfigureInput): CodegenConfig {
 async function writeManifest(
   n: Ninja,
   cfg: Pick<Config, "buildDir">,
-  ninja: string,
-  fromNinja: boolean,
+  ninja: string | undefined,
   mark: (label: string) => void,
 ): Promise<{ changed: boolean; ninjaPath: string }> {
   const changed = await n.write();
@@ -342,7 +341,7 @@ async function writeManifest(
   // Having just configured, the manifest is current as of now: stamp it and
   // let `-t restat` record that. (Not when ninja is the one running us — it
   // records its own edge — and nothing to record into in a fresh dir.)
-  if (!fromNinja) {
+  if (ninja !== undefined) {
     const now = new Date();
     utimesSync(ninjaPath, now, now);
     if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
@@ -354,10 +353,10 @@ async function writeManifest(
 }
 
 /** What configureCodegen() returns: configure()'s result without the native half. */
-export interface CodegenConfigureResult {
+export interface CodegenConfigureResult<N extends string | undefined = string> {
   cfg: CodegenConfig;
   /** The ninja to run the build with (ninja-release.ts): a path, or `ninja` for the one on PATH. */
-  ninja: string;
+  ninja: N;
   /** Wall-clock ms for the configure pass. */
   elapsed: number;
 }
@@ -368,7 +367,19 @@ export interface CodegenConfigureResult {
  * `.cargo/config.toml` and fetches no SDK or sysroot. It has a build directory of its own (`build/debug-codegen`);
  * the type declarations go to `cfg.typesDir`, which every build directory shares.
  */
-export async function configureCodegen(input: ConfigureInput, fromNinja = false): Promise<CodegenConfigureResult> {
+export function configureCodegen(input: ConfigureInput): Promise<CodegenConfigureResult> {
+  return generateCodegen(input, ensureNinja);
+}
+
+/** reconfigure() for `mode: "codegen"`: the `regen` replay, which resolves no ninja. */
+export async function reconfigureCodegen(input: ConfigureInput): Promise<void> {
+  await generateCodegen(input, async () => undefined);
+}
+
+async function generateCodegen<N extends string | undefined>(
+  input: ConfigureInput,
+  resolveNinja: (cfg: CodegenConfig) => Promise<N>,
+): Promise<CodegenConfigureResult<N>> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
@@ -378,7 +389,7 @@ export async function configureCodegen(input: ConfigureInput, fromNinja = false)
   const cfg = codegenConfigOf(input);
   mark("resolveCodegenConfig");
 
-  const ninja = fromNinja ? ninjaIfPresent(cfg) : await ensureNinja(cfg);
+  const ninja = await resolveNinja(cfg);
   mark("ensureNinja");
 
   requirePerl();
@@ -395,7 +406,7 @@ export async function configureCodegen(input: ConfigureInput, fromNinja = false)
   emitGeneratorRule(n, cfg, input);
   n.default(["codegen"]);
 
-  await writeManifest(n, cfg, ninja, fromNinja, mark);
+  await writeManifest(n, cfg, ninja, mark);
   return { cfg, ninja, elapsed: Math.round(performance.now() - start) };
 }
 
@@ -408,12 +419,25 @@ function requirePerl(): void {
   }
 }
 
+/** build.ts configuring before it spawns ninja: resolves the ninja to spawn (ninja-release.ts). */
+export function configure(input: ConfigureInput): Promise<ConfigureResult> {
+  return generate(input, ensureNinja);
+}
+
 /**
- * `fromNinja`: this run is ninja's own `regen` edge replaying configure.json
- * (build.ts --config-file), as opposed to build.ts configuring before it
- * spawns ninja.
+ * ninja's own `regen` edge replaying configure.json (build.ts --config-file): rewrites build.ninja and what is
+ * written beside it. It runs inside the ninja that was chosen and starts none, so it does not look for one: asking
+ * whether the pinned ninja can run is a process spawned for an answer nobody reads, and on a machine that refuses
+ * to run it, a second refusal in the middle of the build.
  */
-export async function configure(input: ConfigureInput, fromNinja = false): Promise<ConfigureResult> {
+export async function reconfigure(input: ConfigureInput): Promise<void> {
+  await generate(input, async () => undefined);
+}
+
+async function generate<N extends string | undefined>(
+  input: ConfigureInput,
+  resolveNinja: (cfg: Config) => Promise<N>,
+): Promise<Omit<ConfigureResult, "ninja"> & { ninja: N }> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
@@ -439,9 +463,8 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
   mark("ensureMacosSdk");
 
   // The ninja itself, before anything here runs one (the restat below) so every
-  // ninja that touches this build directory is the same one. A regen replay is
-  // already inside the ninja that was chosen: it never fetches.
-  const ninja = fromNinja ? ninjaIfPresent(cfg) : await ensureNinja(cfg);
+  // ninja that touches this build directory is the same one.
+  const ninja = await resolveNinja(cfg);
   mark("ensureNinja");
 
   checkWorkarounds(cfg);
@@ -506,7 +529,7 @@ export async function configure(input: ConfigureInput, fromNinja = false): Promi
     n.default(targets);
   }
 
-  const { changed, ninjaPath } = await writeManifest(n, cfg, ninja, fromNinja, mark);
+  const { changed, ninjaPath } = await writeManifest(n, cfg, ninja, mark);
 
   // Pre-create all object file parent directories (ninja would create them
   // edge by edge; having the tree up front serves tools that read

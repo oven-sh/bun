@@ -116,6 +116,8 @@ export interface BinaryExpectations {
     rwxLoad: false;
     relro: boolean;
     bindNow: boolean;
+    /** A PT_TLS segment. Absent on Android: bun targets API 28, bionic has ELF TLS from 29, so every thread-local is emulated. */
+    tlsSegment: boolean;
   };
   pe?: {
     /** Exact set of IMAGE_DLL_CHARACTERISTICS_* names. */
@@ -422,6 +424,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           rwxLoad: false,
           relro: false,
           bindNow: false,
+          tlsSegment: !android,
         },
         debugInfo: { symtab: true, debugSections: true, compressed: true },
       };

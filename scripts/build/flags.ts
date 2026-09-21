@@ -974,6 +974,16 @@ export const linkerFlags: Flag[] = [
     desc: "Rust-only LTO in the link: rustc's level and MergeFunctions (lld)",
   },
   {
+    // rustc compiles Android's thread-locals as emulated TLS (its target spec: bionic has ELF TLS from API 29 and
+    // bun targets 28). That is an option of rustc's code generator, not something the bitcode carries, and here
+    // the linker generates the crates' code. Without it the Rust thread-locals become a PT_TLS segment and, on
+    // x86_64, calls to __tls_get_addr, which an API 28 device cannot load; the C/C++ side stays emulated, as clang
+    // does for this triple. clang's own spelling for an LTO link is -plugin-opt=-emulated-tls.
+    flag: "-Wl,-mllvm,-emulated-tls",
+    when: c => linkLtoIsRustOnly(c) && c.abi === "android",
+    desc: "Rust-only LTO in the link: emulated TLS, as rustc generates for Android",
+  },
+  {
     flag: ["/opt:lldlto=3", "/opt:lldltocgo=3", "/mllvm:-enable-merge-functions", "/mllvm:-mergefunc-use-aliases"],
     when: c => linkLtoIsRustOnly(c) && c.windows,
     desc: "Rust-only LTO in the link: rustc's level and MergeFunctions (lld-link)",

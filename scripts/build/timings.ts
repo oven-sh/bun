@@ -144,67 +144,99 @@ function describe(buildDir: string, manifest: Manifest, edge: ManifestEdge): str
 }
 
 /**
- * Split executions into the ninja processes that ran them. The log does not say: every ninja counts from its own
- * zero, and ninja rewrites the log in no particular order when it compacts it. What places an execution is its
- * stamp. When the stamp is the command's start, `stamp - start` is when its ninja started (the run's epoch), give or
- * take `STAMP_SLACK_MS`. Two ninjas on one build directory never overlap, so the next run's epoch is past every end of
- * this one: sorted by epoch, an execution belongs to the run before it exactly when its epoch falls before that run's
- * last end so far. When the stamp may be an output's mtime, all it says is that the epoch lies in
- * `[stamp - end, stamp - start]`; such an execution goes to the latest run whose epoch that allows, and the ones no
- * run allows (a ninja that only fetched, planned or reconfigured) are processes of their own.
+ * Split executions into the runs of ninja that made them. The log does not say: every ninja process counts from its
+ * own zero, and ninja rewrites the log in no particular order when it compacts it.
+ *
+ * What places an execution in a process is its stamp. When the stamp is the command's start, `stamp - start` is
+ * when its process started (its epoch), give or take `STAMP_SLACK_MS`. Two ninjas on one build directory never
+ * overlap, so the next process's epoch is past every end of this one: sorted by epoch, an execution belongs to the
+ * process before it exactly when its epoch falls before that process's last end so far. When the stamp may be an
+ * output's mtime, all it says is that the epoch lies in `[stamp - end, stamp - start]`; such an execution goes to the
+ * latest process whose epoch that allows, and the ones no process allows (a ninja that only fetched and planned) are
+ * processes of their own.
+ *
+ * The command that writes `build.ninja` is the exception: its stamp is not its own. Every configure stamps
+ * `build.ninja` and has ninja record that (`ninja -t restat`, configure.ts), so the entry's stamp is the last
+ * configure's, whenever the command ran. Its start and end are still its process's, and ninja starts it the moment
+ * its last input exists, so it belongs to the process in which a command that makes one of its inputs (`feeds`) ended
+ * right at its start. With no such process in the log it is in no run (`Build.last` still has how long it took).
+ *
+ * A process whose last command wrote `build.ninja` started over at once, counting from zero again: the process that
+ * begins where it ended is the same run, on the first one's clock.
  */
-function groupRuns(executions: Omit<Execution, "run">[]): Run[] {
-  type Open = Run & { latestEpochMs: number; lastEnd: number };
-  const runs: Open[] = [];
-  const add = (run: Open, x: Omit<Execution, "run">) => {
-    run.lastEnd = Math.max(run.lastEnd, x.end);
-    run.executions.push(Object.assign(x, { run }));
+function groupRuns(executions: Omit<Execution, "run">[], feeds: Set<ManifestEdge>): Run[] {
+  // A process's epoch is known to lie in [epochLo, epochHi]; `epochMs` is the estimate the run is dated by.
+  type Process = Run & { epochLo: number; epochHi: number; lastEnd: number };
+  const processes: Process[] = [];
+  const started = (epochLo: number, epochHi: number): Process => {
+    const p = { epochMs: epochHi, epochLo, epochHi, lastEnd: 0, executions: [], restarts: [] };
+    processes.push(p);
+    return p;
+  };
+  const add = (p: Process, x: Omit<Execution, "run">) => {
+    p.lastEnd = Math.max(p.lastEnd, x.end);
+    p.executions.push(Object.assign(x, { run: p }));
   };
   const epochOf = (x: Omit<Execution, "run">) => x.stampMs - x.start;
   const byEpoch = (a: Omit<Execution, "run">, b: Omit<Execution, "run">) => epochOf(a) - epochOf(b);
+  const placedByStamp = executions.filter(x => !x.writesManifest);
 
-  for (const x of executions.filter(x => x.stampIsStart).sort(byEpoch)) {
-    let run = runs.at(-1);
-    if (run === undefined || epochOf(x) >= run.epochMs + run.lastEnd) {
-      run = { epochMs: epochOf(x), latestEpochMs: epochOf(x), lastEnd: 0, executions: [], restarts: [] };
-      runs.push(run);
+  for (const x of placedByStamp.filter(x => x.stampIsStart).sort(byEpoch)) {
+    let p = processes.at(-1);
+    if (p === undefined || epochOf(x) >= p.epochLo + p.lastEnd) {
+      p = started(epochOf(x), epochOf(x));
+      p.epochMs = epochOf(x);
     }
-    run.latestEpochMs = epochOf(x);
-    add(run, x);
+    p.epochHi = epochOf(x);
+    add(p, x);
   }
 
-  const pinned = runs.length;
-  for (const x of executions.filter(x => !x.stampIsStart).sort(byEpoch)) {
-    const lo = x.stampMs - x.end - STAMP_SLACK_MS;
-    const hi = epochOf(x) + STAMP_SLACK_MS;
-    // Runs of commands that pin the epoch first; then the runs this loop started, the newest of which is the only
-    // one still open to an execution in epoch order.
-    let run = runs
+  const pinned = processes.length;
+  for (const x of placedByStamp.filter(x => !x.stampIsStart).sort(byEpoch)) {
+    const lo = x.stampMs - x.end;
+    const hi = epochOf(x);
+    // Processes with a command that pins the epoch first; then the ones this loop started, the newest of which is
+    // the only one still open to an execution in epoch order.
+    let p = processes
       .slice(0, pinned)
-      .filter(r => r.epochMs <= hi && r.latestEpochMs >= lo)
+      .filter(r => r.epochLo <= hi + STAMP_SLACK_MS && r.epochHi >= lo - STAMP_SLACK_MS)
       .at(-1);
-    if (run === undefined && runs.length > pinned && lo <= runs.at(-1)!.epochMs) run = runs.at(-1);
-    if (run === undefined) {
-      run = { epochMs: epochOf(x), latestEpochMs: epochOf(x), lastEnd: 0, executions: [], restarts: [] };
-      runs.push(run);
+    const open = processes.length > pinned ? processes.at(-1)! : undefined;
+    if (p === undefined && open !== undefined && lo - STAMP_SLACK_MS <= open.epochHi) {
+      p = open;
+      p.epochLo = Math.max(p.epochLo, lo);
     }
-    add(run, x);
+    add(p ?? started(lo, hi), x);
   }
-  runs.sort((a, b) => a.epochMs - b.epochMs);
+  processes.sort((a, b) => a.epochMs - b.epochMs);
 
-  // A process whose last command wrote `build.ninja` started over at once: the process that begins where it ended
-  // is the same run. (A process that only fetched and planned has no command that pins its epoch, so its epoch can
-  // be late by up to how long one of its commands took, and the next can seem to begin before it ended.)
-  const joined: Open[] = [];
-  for (const next of runs) {
-    const run = joined.at(-1);
+  for (const x of executions.filter(x => x.writesManifest)) {
+    const after = (p: Process) =>
+      p.executions.some(f => feeds.has(f.edge) && x.start >= f.end && x.start - f.end <= STAMP_SLACK_MS);
+    const p = processes.filter(after).at(-1);
+    // In no run: a process that is not among the runs.
+    if (p === undefined) Object.assign(x, { run: { epochMs: x.stampMs - x.end, executions: [x], restarts: [] } });
+    else add(p, x);
+  }
+
+  const runs: Process[] = [];
+  for (const next of processes) {
+    const run = runs.at(-1);
     const last = run?.executions.reduce((a, b) => (b.end > a.end ? b : a));
-    if (run === undefined || !last!.writesManifest || next.epochMs > run.epochMs + run.lastEnd + STAMP_SLACK_MS) {
-      joined.push(next);
+    const continues =
+      run !== undefined &&
+      last!.writesManifest &&
+      next.epochHi + STAMP_SLACK_MS >= run.epochLo + run.lastEnd &&
+      next.epochLo - STAMP_SLACK_MS <= run.epochHi + run.lastEnd;
+    if (!continues) {
+      runs.push(next);
       continue;
     }
     const restart = run.lastEnd;
     run.restarts.push(restart);
+    // The continuation's epoch is pinned by its compilers; the first process's was only bounded.
+    run.epochLo = Math.max(run.epochLo, next.epochLo - restart - STAMP_SLACK_MS);
+    run.epochHi = Math.min(run.epochHi, next.epochHi - restart + STAMP_SLACK_MS);
     for (const x of next.executions) {
       x.start += restart;
       x.end += restart;
@@ -212,8 +244,8 @@ function groupRuns(executions: Omit<Execution, "run">[]): Run[] {
     }
   }
 
-  for (const run of joined) run.executions.sort((a, b) => a.start - b.start || a.end - b.end);
-  return joined;
+  for (const run of runs) run.executions.sort((a, b) => a.start - b.start || a.end - b.end);
+  return runs;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -347,10 +379,25 @@ export function loadBuild(buildDir: string, windowsHost: boolean = process.platf
       selfReport: [],
     });
   }
-  const runs = groupRuns([...seen.values()]);
+  const manifestEdge = manifest.edges.find(e => manifest.rules.get(e.rule)?.generator === true);
+  // The edges that make an input of the manifest's edge, looking through phonies.
+  const feeds = new Set<ManifestEdge>();
+  const feeding = (edge: ManifestEdge): void => {
+    for (const input of [...edge.inputs, ...edge.implicitInputs, ...edge.orderOnlyInputs]) {
+      const from = producer.get(resolve(buildDir, input));
+      if (from === undefined || feeds.has(from)) continue;
+      feeds.add(from);
+      if (from.rule === "phony") feeding(from);
+    }
+  };
+  if (manifestEdge !== undefined) feeding(manifestEdge);
+  const executions = [...seen.values()];
+  const runs = groupRuns(executions, feeds);
 
   const last = new Map<ManifestEdge, Execution>();
   for (const run of runs) for (const x of run.executions) last.set(x.edge, x);
+  // The manifest's command is placed by where it ran, not by when: the log's own order says which was last.
+  for (const x of executions) if (x.writesManifest) last.set(x.edge, x as Execution);
   for (const x of last.values()) {
     readReleased(buildDir, x);
     x.selfReport = readSelfReport(buildDir, x.edge).filter(
@@ -358,8 +405,7 @@ export function loadBuild(buildDir: string, windowsHost: boolean = process.platf
       p => p.startMs >= x.stampMs - STAMP_SLACK_MS && p.endMs <= x.stampMs + duration(x) + STAMP_SLACK_MS,
     );
   }
-  const build: Build = { buildDir, manifest, runs, last, producer, manifestEdge: undefined, beforeManifest: new Set() };
-  build.manifestEdge = manifest.edges.find(e => manifest.rules.get(e.rule)?.generator === true);
+  const build: Build = { buildDir, manifest, runs, last, producer, manifestEdge, beforeManifest: new Set() };
   const upstream = (edge: ManifestEdge): void => {
     if (build.beforeManifest.has(edge)) return;
     build.beforeManifest.add(edge);
@@ -605,14 +651,19 @@ export function formatReport(build: Build, style: ReportStyle): string {
   const out: string[] = [];
   const executions = [...build.last.values()];
   const neverBuilt = build.manifest.edges.filter(e => e.rule !== "phony" && !build.last.has(e)).length;
-  const runsOfLast = new Set(executions.map(x => x.run));
+  const runsOfLast = new Set(executions.map(x => x.run).filter(run => build.runs.includes(run)));
 
   out.push(`${bold("build timings")}  ${relative(process.cwd(), build.buildDir) || "."}`);
   if (executions.length === 0) {
     out.push("  no edge of build.ninja is in the log yet");
     return out.join("\n") + "\n";
   }
-  const stamps = executions.map(x => x.stampMs);
+  const run = build.runs.at(-1);
+  if (run === undefined) {
+    out.push("  the log has only the command that writes build.ninja, which says nothing about when it ran");
+    return out.join("\n") + "\n";
+  }
+  const stamps = executions.filter(x => !x.writesManifest).map(x => x.stampMs);
   out.push(
     `  ${executions.length} edges, last built by ${runsOfLast.size} ${runsOfLast.size === 1 ? "run" : "runs"} of ninja` +
       ` between ${clock(Math.min(...stamps))} and ${clock(Math.max(...stamps))}` +
@@ -660,7 +711,6 @@ export function formatReport(build: Build, style: ReportStyle): string {
     );
   }
 
-  const run = build.runs.at(-1)!;
   const wallMs = Math.max(...run.executions.map(x => x.end));
   const sumMs = run.executions.reduce((sum, x) => sum + duration(x), 0);
   out.push(

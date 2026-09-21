@@ -317,20 +317,25 @@ describe("a build in which ninja started over", () => {
     await n.write();
 
     const ns = (ms: number) => BigInt(ms) * 1_000_000n;
-    writeFileSync(
-      join(dir, ".ninja_log"),
-      [
-        "# ninja log v7",
-        // The first process only fetched and reconfigured. Neither stamp is a start: both rules restat, so each is
-        // the mtime of what the command wrote.
-        `5\t105\t${ns(T0 + 100)}\t${relative(dir, stamp)}\tf00d`,
-        `110\t900\t${ns(T0 + 880)}\tbuild.ninja\tf00d`,
-        // The process it became started 3 ms after that one's last command ended.
-        `20\t520\t${ns(T0 + 903 + 20)}\tx.o\tf00d`,
-        "",
-      ].join("\n"),
-    );
+    const log = (reconfigure: { start: number; end: number }, xStartedAtMs: number) =>
+      writeFileSync(
+        join(dir, ".ninja_log"),
+        [
+          "# ninja log v7",
+          // The first process only fetched and reconfigured. The fetch's stamp is not its start: the rule restats, so
+          // it is the mtime of what the command wrote.
+          `5\t105\t${ns(T0 + 100)}\t${relative(dir, stamp)}\tf00d`,
+          // build.ninja's stamp is not the command's at all: every later configure stamps build.ninja and has
+          // ninja record it. This one is from a configure the next day.
+          `${reconfigure.start}\t${reconfigure.end}\t${ns(T1 + 86_400_000)}\tbuild.ninja\tf00d`,
+          `20\t520\t${ns(xStartedAtMs)}\tx.o\tf00d`,
+          "",
+        ].join("\n"),
+      );
 
+    // reconfigure started 5 ms after the fetch it reads ended, so it ran in the fetch's process, and the process
+    // that compiled x.o began 3 ms after it ended.
+    log({ start: 110, end: 900 }, T0 + 903 + 20);
     const b = loadBuild(dir, false);
     expect(b.runs.map(r => [r.restarts, r.executions.map(x => [x.label, x.start, x.end])])).toEqual([
       [
@@ -353,6 +358,21 @@ describe("a build in which ninja started over", () => {
       ["cc x.o", "reconfigure", 20],
     ]);
     expect(chartData(b).runs.map(r => r.restarts)).toEqual([[900]]);
+
+    // A reconfigure from some other process, which the log has nothing else of, and a build that began just after
+    // the configure that rewrote its stamp: it is in no run, and is not taken for the start of that build.
+    log({ start: 4000, end: 4700 }, T1 + 86_400_000 + 50 + 20);
+    const later = loadBuild(dir, false);
+    expect(later.runs.map(r => [r.restarts, r.executions.map(x => [x.label, x.start, x.end])])).toEqual([
+      [[], [["fetch dep", 5, 105]]],
+      [[], [["cc x.o", 20, 520]]],
+    ]);
+    // It still took what it took: a build of everything waits for it.
+    expect(criticalPath(later).steps.map(s => [s.execution.label, s.blocksNextForMs])).toEqual([
+      ["fetch dep", 100],
+      ["reconfigure", 700],
+      ["cc x.o", 500],
+    ]);
   });
 });
 

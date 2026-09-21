@@ -479,6 +479,34 @@ function beginCallbackStoreTests(container: { ready: Promise<void> }, url: () =>
     await expect(transaction).rejects.toBe(rollback);
     expect(seen).toBe("distributed");
   });
+
+  // The context of the begin() call can be a Bun.ModuleGraph that is disposed before the pool
+  // calls back. A disposed graph hears nothing, and its script could keep the connection for ever.
+  test("sql.begin() queued by a Bun.ModuleGraph that is disposed before its turn", async () => {
+    await container.ready;
+    using dir = tempDir("sql-begin-disposed-graph", { "app.mjs": "export const call = fn => fn();" });
+    await using sql = new SQL(url(), { max: 1 });
+    await sql.connect();
+    const graph = new Bun.ModuleGraph();
+    const app = await graph.import(path.join(String(dir), "app.mjs"));
+    const hold = Promise.withResolvers<void>();
+    const called = { ofTheGraph: false };
+    // The host holds the only connection, so the begin() of the graph's script is queued...
+    const holder = sql.begin(() => hold.promise);
+    graph.run(() =>
+      app.call(() => {
+        void sql.begin(async () => {
+          called.ofTheGraph = true;
+        });
+      }),
+    );
+    graph.dispose();
+    // ...and the next begin() of the host is queued behind it.
+    const next = sql.begin(async tx => (await tx`SELECT 1 AS x`)[0].x);
+    hold.resolve();
+    await holder;
+    expect({ next: await next, called }).toStrictEqual({ next: 1, called: { ofTheGraph: false } });
+  });
 }
 
 describeWithContainer("postgres: AsyncLocalStorage in a transaction", { image: "postgres_plain" }, container =>

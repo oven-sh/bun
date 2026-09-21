@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { tls } from "harness";
 import { once } from "node:events";
 import http from "node:http";
@@ -430,9 +430,10 @@ describe("node:http server timeout enforcement", () => {
   // never pause for longer than `gap`, a tenth of the timeout, but they take
   // longer than the timeout to finish a part of the message that the native
   // parser keeps to itself until it is whole. The pause between two writes is
-  // the stimulus here, not a wait for a condition.
-  const inactivityTimeout = 500;
-  const gap = 50;
+  // the stimulus here, not a wait for a condition. The timeout is long so that
+  // a stalled event loop does not turn into a real inactivity timeout.
+  const inactivityTimeout = 1000;
+  const gap = 100;
   const pad = Buffer.alloc(200, "p").toString();
   const chunkedHead = "POST /chunked HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n";
 
@@ -507,13 +508,6 @@ describe("node:http server timeout enforcement", () => {
   test.concurrent.each<SlowClient & { name: string; bodies: string[] }>([
     { name: "server.timeout, a request head", knob: "timeout", parts: headInPieces, bodies: ["/head got 800"] },
     {
-      name: "server.timeout, a request head over TLS",
-      knob: "timeout",
-      secure: true,
-      parts: headInPieces,
-      bodies: ["/head got 800"],
-    },
-    {
       name: "server.timeout, a chunk size line with an extension",
       knob: "timeout",
       parts: [chunkedHead, ...inPieces(`5;ext=${pad}\r\n`), "hello\r\n0\r\n\r\n"],
@@ -545,5 +539,35 @@ describe("node:http server timeout enforcement", () => {
     expect(quietAtTimeout).toHaveLength(1);
     // The timer runs on whole milliseconds, so it can fire a fraction early.
     expect(quietAtTimeout[0]).toBeGreaterThanOrEqual(inactivityTimeout - 5);
+  });
+
+  // Not concurrent with the others: a TLS handshake keeps the event loop busy.
+  test("bytes that arrive in pieces keep the connection active (server.timeout, a request head over TLS)", async () => {
+    const client: SlowClient = { knob: "timeout", secure: true, parts: headInPieces, lastBody: "/head got 800" };
+    expect(await sendSlowly(client)).toEqual({ bodies: ["/head got 800"], quietAtTimeout: [] });
+  });
+
+  test("fake timers fire server.timeout on their own clock, however recent the last read is", async () => {
+    jest.useFakeTimers();
+    const server = http.createServer(() => {});
+    server.timeout = 1000;
+    let timeouts = 0;
+    server.on("timeout", socket => {
+      timeouts++;
+      socket.destroy();
+    });
+    const client = net.connect(await listen(server), "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.on("connect", () => client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
+      await once(server, "request");
+      jest.advanceTimersByTime(1000);
+      expect(timeouts).toBe(1);
+    } finally {
+      jest.useRealTimers();
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
   });
 });

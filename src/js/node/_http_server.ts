@@ -1467,8 +1467,10 @@ function onSocketTimeoutTimerExpired(socket) {
   // trailers) reach no JS callback, so nothing called _unrefTimer() for them:
   // measure the timeout from the last read instead. setTimeout() re-arms the
   // timer at its full interval; moving _idleStart back moves the deadline.
+  // The handle measures on the real clock, so a timer that fake timers fired
+  // (they mark setTimeout with `clock`) keeps its deadline.
   const sinceLastRead = socket[kHandle]?.msSinceLastRead();
-  if (sinceLastRead < socket.timeout) {
+  if (sinceLastRead < socket.timeout && !("clock" in setTimeout)) {
     socket.setTimeout(socket.timeout);
     const timer = socket[kSocketTimeoutTimer];
     if (timer !== undefined) timer._idleStart -= sinceLastRead;

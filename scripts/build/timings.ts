@@ -1008,7 +1008,6 @@ text.dim { opacity: 0.25; }
 .join { stroke: var(--text); stroke-width: 1.5px; fill: none; pointer-events: none; }
 .join.forward { stroke-width: 1px; opacity: 0.6; }
 .join.hover { stroke-dasharray: 4 3; }
-.guide { stroke: var(--text-2); stroke-width: 1px; stroke-dasharray: 2 3; pointer-events: none; }
 .axisband { fill: var(--raised); pointer-events: none; }
 .span { stroke: var(--text); stroke-width: 2px; pointer-events: none; }
 svg text.at { fill: var(--text); font-weight: 600; pointer-events: none; }
@@ -1207,9 +1206,6 @@ const client = `
       // When the bar started and ended, on the time axis under it. Each time is written outside the span it bounds,
       // or, where the chart's edge leaves no room, both after it.
       var bar = run.bars[i], axis = height - AXIS, from = x(bar.start), to = x(bar.start) + barWidth(bar);
-      [from, to].forEach(function (at) {
-        el("line", { x1: at, x2: at, y1: y(bar) + h(bar), y2: axis, "class": "guide" }, hoverLayer);
-      });
       el("rect", { x: 0, y: axis, width: width, height: AXIS, "class": "axisband" }, hoverLayer);
       el("line", { x1: from, x2: to, y1: axis + 1, y2: axis + 1, "class": "span" }, hoverLayer);
       var room = ms(bar.start).length * CHAR + 6;

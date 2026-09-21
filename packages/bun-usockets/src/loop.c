@@ -596,6 +596,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) | LIBUS_SOCKET_WRITABLE);
                     #endif
                 }
+
+                /* `events` was masked with the poll's interest before the handler ran. If the handler
+                 * dropped the read interest (us_socket_pause), the read below must not run for this
+                 * event either: it would hand on_data bytes the caller asked to defer. */
+                if (!(us_poll_events(&s->p) & LIBUS_SOCKET_READABLE)) {
+                    events &= ~LIBUS_SOCKET_READABLE;
+                }
             }
 
             /* An error event (EPOLLERR, EV_EOF with the socket error in fflags, an AFD

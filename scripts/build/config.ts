@@ -38,9 +38,8 @@ export type PackageManager = "bun" | "npm";
  * rustflags; host determines shell syntax (cmd vs sh), quoting, and
  * tool executable suffixes.
  *
- * For all other modes (full, cpp-only, link-only), host == target
- * unless cfg.crossTarget is set (currently: Android), in which case
- * the C++ side is cross-compiled via clang's --target/--sysroot.
+ * host == target unless cfg.crossTarget is set, in which case the C++ side
+ * is cross-compiled via clang's --target/--sysroot.
  */
 export interface Host {
   os: OS;
@@ -84,8 +83,8 @@ export interface Config {
   arm64: boolean;
 
   /**
-   * What's running the build. Differs from os/arch/windows (target) in
-   * rust-only cross-compile. Use for: shell syntax in rule commands,
+   * What's running the build. Differs from os/arch/windows (target) in a
+   * cross-compile. Use for: shell syntax in rule commands,
    * quoteArgs(), tool executable suffixes. See Host type docs.
    */
   host: Host;
@@ -155,8 +154,8 @@ export interface Config {
   unifiedSources: boolean;
   /**
    * Archive each `direct` dep's objects into a per-dep .a (the old
-   * behaviour). Default off — dep .o files go straight into bun's link/
-   * cpp-only archive instead. Turn on to bisect duplicate-symbol issues:
+   * behaviour). Default off — dep .o files go straight into bun's link, or
+   * its archive in an archive-link build, instead. Turn on to bisect duplicate-symbol issues:
    * a .a only contributes members the linker actually pulls.
    */
   archiveDeps: boolean;
@@ -728,8 +727,7 @@ function linkNdkRuntimesIntoClang(cc: string, ndk: string, host: Host, triple: s
       if (!existsSync(dst)) symlinkSync(src, dst);
     }
   } catch (cause) {
-    // Don't throw — rust-only mode doesn't need these, and on CI the image's
-    // bake creates them as root. The actual link step will fail
+    // Don't throw — on CI the image's bake creates them as root. The actual link step will fail
     // loudly later if they're genuinely missing where needed.
     const lnCmds = Object.entries(links)
       .map(([dst, src]) => `sudo ln -sf "${src}" "${dst}"`)

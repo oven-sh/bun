@@ -471,7 +471,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
 function registerBkUploadRules(n: Ninja, cfg: Config): void {
   n.pool("bk_upload", 1);
-  // Paths are buildDir-relative so artifact names match downloadArtifacts(); `;` is the agent's path delimiter.
+  // Paths are buildDir-relative, which is what names the artifact; `;` is the agent's path delimiter.
   const win = cfg.host.os === "windows";
   n.rule("bk_upload", {
     command: win

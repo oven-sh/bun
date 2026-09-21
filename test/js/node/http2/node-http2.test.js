@@ -2685,8 +2685,6 @@ it("http2 client reports ECONNREFUSED for a refused connect, like Node.js", asyn
 // stat error and sends no headers (node's doSendFD/doSendFileFD). Only respondWithFD() without
 // statCheck sends the headers first and then fails with ERR_HTTP2_STREAM_ERROR. A stream that is
 // already destroyed when fstat completes gets nothing: respond() must not throw from the callback.
-// Node sends the headers at once on the no-statCheck path, so only that event differs between the
-// two runtimes for the last case.
 it("http2 respondWithFD/respondWithFile stat failure destroys the stream without headers, like Node.js", async () => {
   const fixture = path.join(import.meta.dir, "node-http2-respond-file-stat-error.fixture.mjs");
   // The server 'error' event and the client 'response' event are not ordered with each other,
@@ -2722,7 +2720,8 @@ it("http2 respondWithFD/respondWithFile stat failure destroys the stream without
       "server stream error: ERR_HTTP2_SEND_FILE",
     ],
     "respondWithFD(closed fd), statCheck, then destroy()": [],
-    "respondWithFD(closed fd), no statCheck, then destroy()": [],
+    // The headers went out synchronously, before the stream was destroyed.
+    "respondWithFD(closed fd), no statCheck, then destroy()": ["client 'response': 200"],
   };
 
   const bunRun = await run(bunExe());
@@ -2733,11 +2732,7 @@ it("http2 respondWithFD/respondWithFile stat failure destroys the stream without
   const node = nodeExe();
   if (node) {
     const nodeRun = await run(node);
-    expect(parse(nodeRun.stdout)).toEqual({
-      ...expected,
-      // node sends the headers synchronously in this path, before the stream is destroyed.
-      "respondWithFD(closed fd), no statCheck, then destroy()": ["client 'response': 200"],
-    });
+    expect(parse(nodeRun.stdout)).toEqual(expected);
     expect(nodeRun.exitCode).toBe(0);
   }
 });

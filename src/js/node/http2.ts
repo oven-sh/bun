@@ -3021,7 +3021,7 @@ function failFdResponseAsStreamError(this: Http2Stream, headers, options) {
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   const ownsFd = this[kOwnsFd] === true;
-  // node's doSendFileFD and doSendFD: a stat failure destroys the stream before any headers.
+  // node's doSendFileFD and doSendFD stat before the headers; respondWithFD() without statCheck sent them already.
   const statsBeforeHeaders = ownsFd || options.statCheck !== undefined;
   if (err) {
     if (ownsFd && err.code !== "EBADF") {
@@ -3083,7 +3083,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   // of response so check again for the HEADERS_SENT flag
   if (
     (typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false) ||
-    this.headersSent
+    (statsBeforeHeaders && this.headersSent)
   ) {
     if (this[kOwnsFd] === true) tryClose(fd);
     return;
@@ -3094,26 +3094,30 @@ function doSendFileFD(options, fd, headers, err, stat) {
       statOptions.length < 0
         ? stat.size - +statOptions.offset
         : Math.min(stat.size - +statOptions.offset, statOptions.length);
-    // remove content-length header
-    for (let i in headers) {
-      if (i?.toLowerCase() === HTTP2_HEADER_CONTENT_LENGTH) {
-        delete headers[i];
-      }
-    }
-    headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
-  try {
-    this.respond(headers, options);
-  } catch (err) {
-    // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
-    // for the file never reaches a read stream, so close it here before the stream is destroyed.
-    if (this[kOwnsFd] === true) tryClose(fd);
-    if (typeof onError === "function") {
-      onError(err);
-    } else {
-      this.destroy(err);
+  if (statsBeforeHeaders) {
+    if (stat.isFile()) {
+      // remove content-length header
+      for (let i in headers) {
+        if (i?.toLowerCase() === HTTP2_HEADER_CONTENT_LENGTH) {
+          delete headers[i];
+        }
+      }
+      headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
     }
-    return;
+    try {
+      this.respond(headers, options);
+    } catch (err) {
+      // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
+      // for the file never reaches a read stream, so close it here before the stream is destroyed.
+      if (this[kOwnsFd] === true) tryClose(fd);
+      if (typeof onError === "function") {
+        onError(err);
+      } else {
+        this.destroy(err);
+      }
+      return;
+    }
   }
 
   // The file is piped to the native stream directly below; its completion runs the regular
@@ -3483,6 +3487,7 @@ class ServerHttp2Stream extends Http2Stream {
       // node's processRespondWithFD runs synchronously when no statCheck is given: the
       // user-facing writable side is already closed by the time respondWithFD() returns, so a
       // stream.end() right after it is a no-op instead of ending the stream before the file.
+      this.respond(headers, options);
       closeWritableForFileResponse(this);
     }
     if (fd instanceof FileHandle) {

@@ -827,6 +827,117 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
 
     expect(decoded).toBe("hello world");
   });
+
+  test("gzip decodes concatenated members split across writes", async () => {
+    const first = zlib.gzipSync("hello ");
+    const concatenated = Buffer.concat([first, zlib.gzipSync("world")]);
+
+    // 0 splits at the member boundary, 1 inside the second member's two magic bytes.
+    for (const offset of [0, 1, 2, 3]) {
+      const ds = new DecompressionStream("gzip");
+      const writer = ds.writable.getWriter();
+      const read = new Response(ds.readable).text();
+      const split = first.length + offset;
+      await writer.write(concatenated.subarray(0, split));
+      await writer.write(concatenated.subarray(split));
+      await writer.close();
+      expect(await read).toBe("hello world");
+    }
+  });
+
+  test("gzip decodes a second member that follows a member larger than one step", async () => {
+    const large = Buffer.alloc(1024 * 1024, 0x41);
+    const concatenated = Buffer.concat([zlib.gzipSync(large), zlib.gzipSync("tail")]);
+
+    const decoded = Buffer.from(
+      await new Response(new Blob([concatenated]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer(),
+    );
+
+    expect(decoded.length).toBe(large.length + 4);
+    expect(decoded.subarray(large.length).toString()).toBe("tail");
+  });
+
+  // Every gzip member starts with the byte 0x1f (RFC 1952 section 2.3.1), so any other
+  // byte after the last member is trailing junk. zlib does not report it: it holds a
+  // single byte, with no error, until a second one arrives. Without close() the reader
+  // never heard about it (WPT compression/decompression-extra-input.any.js).
+  describe("gzip rejects bytes after the last member that do not start a member", () => {
+    const member = zlib.gzipSync("expected output");
+    const zero = Buffer.from([0]);
+
+    function incompressible(length: number) {
+      const bytes = Buffer.alloc(length);
+      for (let i = 0; i < length; i += 65536) crypto.getRandomValues(bytes.subarray(i, i + 65536));
+      return bytes;
+    }
+
+    const cases: [string, () => Buffer[]][] = [
+      ["a zero byte in the same chunk", () => [Buffer.concat([member, zero])]],
+      ["a zero byte in the next chunk", () => [member, zero]],
+      ["zero padding in the same chunk", () => [Buffer.concat([member, Buffer.alloc(8)])]],
+      ["zero padding in the next chunk", () => [member, Buffer.alloc(8)]],
+      ["a non-zero byte in the same chunk", () => [Buffer.concat([member, Buffer.from([0xde])])]],
+      ["two non-zero bytes in the next chunk", () => [member, Buffer.from([0xde, 0xad])]],
+      ["a zero byte after a second member", () => [Buffer.concat([member, member, zero])]],
+      [
+        "a zero byte after a member larger than one step",
+        () => [Buffer.concat([zlib.gzipSync(Buffer.alloc(1024 * 1024, 0x41)), zero])],
+      ],
+      [
+        "a zero byte in a >128 KiB chunk (thread-pool path)",
+        () => [Buffer.concat([zlib.gzipSync(incompressible(256 * 1024)), zero])],
+      ],
+    ];
+
+    // Not `expect(promise).rejects`: on a read that never settles it blocks past the test timeout.
+    const rejection = (promise: Promise<unknown>) =>
+      promise.then(
+        () => undefined,
+        error => error,
+      );
+
+    for (const close of [false, true]) {
+      test.each(cases)(`%s, ${close ? "then close()" : "no close()"}`, async (_, chunks) => {
+        const ds = new DecompressionStream("gzip");
+        const writer = ds.writable.getWriter();
+        const reader = ds.readable.getReader();
+        for (const chunk of chunks()) writer.write(chunk).catch(() => {});
+        if (close) writer.close().catch(() => {});
+
+        const drained = (async () => {
+          while (!(await reader.read()).done) {}
+        })();
+        const error = await rejection(drained);
+        expect(error).toBeInstanceOf(TypeError);
+        expect(error.code).toBe("ERR_TRAILING_JUNK_AFTER_STREAM_END");
+      });
+    }
+
+    test("junk in a later chunk does not take back the output already decoded", async () => {
+      const ds = new DecompressionStream("gzip");
+      const writer = ds.writable.getWriter();
+      const reader = ds.readable.getReader();
+      writer.write(member).catch(() => {});
+      writer.write(zero).catch(() => {});
+
+      const { value } = await reader.read();
+      expect(new TextDecoder().decode(value)).toBe("expected output");
+      const error = await rejection(reader.read());
+      expect(error).toBeInstanceOf(TypeError);
+      expect(error.code).toBe("ERR_TRAILING_JUNK_AFTER_STREAM_END");
+    });
+
+    // 0x1f alone can still become a member, so it is not junk: the stream is truncated.
+    test("a lone 0x1f is the start of a member that close() cuts short", async () => {
+      const withMagic = Buffer.concat([member, Buffer.from([0x1f])]);
+
+      const error = await rejection(
+        new Response(new Blob([withMagic]).stream().pipeThrough(new DecompressionStream("gzip"))).text(),
+      );
+      expect(error).toBeInstanceOf(TypeError);
+      expect(error.message).toBe("unexpected end of file");
+    });
+  });
 });
 
 // One input chunk can expand enormously (a few hundred bytes of brotli or zstd

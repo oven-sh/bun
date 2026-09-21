@@ -302,6 +302,9 @@ impl CompressionStreamCoder {
         }))
     }
 
+    /// First byte of every gzip member (RFC 1952 §2.3.1).
+    const GZIP_ID1: u8 = 0x1f;
+
     const ZSTD_MAGIC: [u8; 4] = 0xFD2F_B528u32.to_le_bytes();
     const ZSTD_MAGIC_SKIPPABLE: [u8; 3] = [0x2A, 0x4D, 0x18];
 
@@ -420,12 +423,17 @@ impl CompressionStreamCoder {
             }
             Backend::Inflate { state: s, gzip } => {
                 let gzip = *gzip;
-                if !continuing {
-                    // `self.ended` = "the last inflate returned StreamEnd" = "at
-                    // a member boundary". For gzip, a following chunk starts the
-                    // next member; for deflate/deflate-raw it is trailing junk.
-                    if self.ended && !input.is_empty() {
-                        if !gzip {
+                if !continuing && input.is_empty() && !finish {
+                    return Ok(Progress::Done);
+                }
+                let mut remaining = input;
+                loop {
+                    // Member boundary. zlib holds a lone junk byte with no error: reject it here.
+                    if self.ended {
+                        let Some(&first) = remaining.first() else {
+                            return Ok(Progress::Done);
+                        };
+                        if !gzip || first != Self::GZIP_ID1 {
                             return Err(CodecError::TrailingJunk);
                         }
                         // SAFETY: `s` is an initialized inflate stream.
@@ -434,12 +442,6 @@ impl CompressionStreamCoder {
                         }
                         self.ended = false;
                     }
-                    if input.is_empty() && (self.ended || !finish) {
-                        return Ok(Progress::Done);
-                    }
-                }
-                let mut remaining = input;
-                loop {
                     if out.len() >= cap {
                         return Ok(Progress::More {
                             consumed: input.len() - remaining.len(),
@@ -475,17 +477,6 @@ impl CompressionStreamCoder {
                         }
                         zlib::ReturnCode::StreamEnd => {
                             self.ended = true;
-                            if remaining.is_empty() {
-                                return Ok(Progress::Done);
-                            }
-                            if !gzip {
-                                return Err(CodecError::TrailingJunk);
-                            }
-                            // SAFETY: `s` is an initialized inflate stream.
-                            if unsafe { zlib::inflateReset(&raw mut **s) } != zlib::ReturnCode::Ok {
-                                return Err(CodecError::Message("inflate failed"));
-                            }
-                            self.ended = false;
                             continue;
                         }
                         zlib::ReturnCode::NeedDict => {

@@ -792,6 +792,25 @@ mod _async_tasks {
                     let off = (buf.len()).min(args.offset as usize);
                     let buf = &buf[off..];
                     let buf = &buf[..buf.len().min(args.length as usize)];
+                    if args.position.is_none()
+                        && let Some(result) = sys::windows::console::write(args.fd, buf)
+                    {
+                        // SAFETY: identity write — `R == ret::Write` for this `F`.
+                        unsafe {
+                            core::ptr::write(
+                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Write>,
+                                result.map(|n| ret::Write {
+                                    bytes_written: n as u64,
+                                }),
+                            )
+                        };
+                        let task_ptr: *mut Self = task;
+                        task.global_object()
+                            .bun_vm()
+                            .event_loop_mut()
+                            .enqueue_task(bun_jsc::Task::init(task_ptr));
+                        return task.promise.value();
+                    }
                     let bufs = [uv::uv_buf_t::init(buf)];
                     // SAFETY: see Read arm.
                     let rc = unsafe {
@@ -847,6 +866,31 @@ mod _async_tasks {
                             core::ptr::write(
                                 &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>,
                                 Ok(ret::Write { bytes_written: 0 }),
+                            )
+                        };
+                        let task_ptr: *mut Self = task;
+                        task.global_object()
+                            .bun_vm()
+                            .event_loop_mut()
+                            .enqueue_task(bun_jsc::Task::init(task_ptr));
+                        return task.promise.value();
+                    }
+                    // SAFETY: `PlatformIoVec` and `PlatformIoVecConst` are
+                    // layout-identical on Windows (asserted in bun_sys).
+                    let const_bufs = unsafe {
+                        &*(bufs.as_slice() as *const [sys::PlatformIoVec]
+                            as *const [sys::PlatformIoVecConst])
+                    };
+                    if args.position.is_none()
+                        && let Some(result) = sys::windows::console::writev(args.fd, const_bufs)
+                    {
+                        // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
+                        unsafe {
+                            core::ptr::write(
+                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>,
+                                result.map(|n| ret::Write {
+                                    bytes_written: n as u64,
+                                }),
                             )
                         };
                         let task_ptr: *mut Self = task;

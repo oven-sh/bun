@@ -24,6 +24,9 @@ mod kernel32 {
 
 /// UTF-16 units per `WriteConsoleW` call (libuv's cap).
 const CHUNK_UNITS: usize = 8192;
+/// Stack scratch for a small write. The crash handler writes from an
+/// overflowed stack, so the frame stays small and a big write goes to the heap.
+const STACK_UNITS: usize = 512;
 
 /// Incomplete UTF-8 sequence left by the previous write to stdout (0) or
 /// stderr (1), packed as `len | b0 << 8 | b1 << 16 | b2 << 24`.
@@ -109,25 +112,35 @@ fn write_chunk(fd: Fd, bytes: &[u8], utf16: &mut [u16]) -> Maybe<()> {
 /// before any byte was consumed, so the caller falls back to `WriteFile`.
 /// `Some(Ok(n))`: `n` bytes consumed, an incomplete trailing sequence is held
 /// in [`PENDING`] for the next write and counts as consumed.
-pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
+pub fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
     let slot = console_slot(fd)?;
     let pending = &PENDING[slot];
-    let mut utf16 = [0u16; CHUNK_UNITS];
+    let mut stack = [0u16; STACK_UNITS];
+    let mut heap: Vec<u16> = Vec::new();
+    let utf16: &mut [u16] = if buf.len() <= STACK_UNITS - 4 {
+        &mut stack
+    } else {
+        heap.resize(CHUNK_UNITS, 0);
+        &mut heap
+    };
 
     let mut consumed = 0usize;
     let mut head = [0u8; 4];
     let mut head_len = unpack(pending.swap(0, Ordering::Relaxed), &mut head);
     if head_len > 0 {
         let want = bun_core::strings::utf8_byte_sequence_length(head[0]) as usize;
-        let take = want.saturating_sub(head_len).min(buf.len());
-        head[head_len..head_len + take].copy_from_slice(&buf[..take]);
-        head_len += take;
-        consumed = take;
-        if head_len < want {
+        // Take continuation bytes only. Anything else means the held bytes
+        // were not a sequence after all, so they go out now (as U+FFFD).
+        while head_len < want && consumed < buf.len() && is_continuation(buf[consumed]) {
+            head[head_len] = buf[consumed];
+            head_len += 1;
+            consumed += 1;
+        }
+        if head_len < want && consumed == buf.len() {
             pending.store(pack(&head[..head_len]), Ordering::Relaxed);
             return Some(Ok(buf.len()));
         }
-        if let Err(err) = write_chunk(fd, &head[..head_len], &mut utf16) {
+        if let Err(err) = write_chunk(fd, &head[..head_len], utf16) {
             return Some(Err(err));
         }
     }
@@ -138,7 +151,7 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
 
     let mut off = 0usize;
     while off < body.len() {
-        let mut end = (off + CHUNK_UNITS).min(body.len());
+        let mut end = (off + utf16.len()).min(body.len());
         if end < body.len() {
             // Back up to a lead byte so the cut does not split a sequence.
             let floor = end - 3;
@@ -146,7 +159,7 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
                 end -= 1;
             }
         }
-        if let Err(err) = write_chunk(fd, &body[off..end], &mut utf16) {
+        if let Err(err) = write_chunk(fd, &body[off..end], utf16) {
             if consumed + off > 0 {
                 return Some(Ok(consumed + off));
             }
@@ -162,7 +175,7 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
 }
 
 /// [`write`] over a list of buffers.
-pub(crate) fn writev(fd: Fd, bufs: &[crate::PlatformIoVecConst]) -> Option<Maybe<usize>> {
+pub fn writev(fd: Fd, bufs: &[crate::PlatformIoVecConst]) -> Option<Maybe<usize>> {
     console_slot(fd)?;
     let mut total = 0usize;
     for buf in bufs {

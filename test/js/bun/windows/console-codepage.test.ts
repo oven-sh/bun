@@ -63,12 +63,26 @@ describe.skipIf(!isWindows)("Windows console codepage", () => {
       fs.writeSync(1, bytes.subarray(0, 1));
       fs.writeSync(1, bytes.subarray(1));
       fs.writeSync(1, "\\n");
+      // A byte that is not UTF-8 must not hold back the text after it.
+      fs.writeSync(1, Buffer.from([0x6c, 0x61, 0x74, 0x69, 0x6e, 0x3d, 0xe9]));
+      fs.writeSync(1, "|next\\n");
+      await Bun.write(Bun.stdout, "bunwrite=日本語\\n");
+      await new Promise((resolve, reject) =>
+        fs.write(1, "fswrite=日本語\\n", err => (err ? reject(err) : resolve())),
+      );
+      await new Promise((resolve, reject) =>
+        fs.writev(1, [Buffer.from("fswritev="), Buffer.from("日本語\\n")], err => (err ? reject(err) : resolve())),
+      );
     `);
     expect(output).toContain("log=日本語");
     expect(output).toContain("error=日本語");
     expect(output).toContain("stdout=日本語");
     expect(output).toContain("writeSync=日本語");
     expect(output).toContain("split=日");
+    expect(output).toContain("latin=\uFFFD|next");
+    expect(output).toContain("bunwrite=日本語");
+    expect(output).toContain("fswrite=日本語");
+    expect(output).toContain("fswritev=日本語");
     expect(exitCode).toBe(0);
   });
 

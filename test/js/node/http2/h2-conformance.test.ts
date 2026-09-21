@@ -790,10 +790,18 @@ function hpackLiteral(str: string): Buffer {
 }
 
 describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
-  test("DATA on a promised stream before its response HEADERS is refused, not delivered", async () => {
+  // RFC 9113 §5.1, reserved (remote): any frame other than HEADERS, RST_STREAM or PRIORITY is a
+  // connection error of type PROTOCOL_ERROR. nghttp2 does the same ("DATA: stream in reserved").
+  // With only part of its payload sent, the frame can reach the engine only as an incomplete
+  // frame, which the engine parses on a path of its own.
+  test.each([
+    ["a whole DATA frame", 11],
+    ["the head of a DATA frame", 10],
+  ])("%s on a promised stream before its response HEADERS is a connection error", async (_, bytesSent) => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
-    client.on("error", () => {});
+    const sessionError = Promise.withResolvers<NodeJS.ErrnoException>();
+    client.on("error", err => sessionError.resolve(err));
     const pushedData: Buffer[] = [];
     client.on("stream", pushed => {
       pushed.on("error", () => {});
@@ -802,6 +810,8 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     try {
       const req = client.request({ ":path": "/" });
       req.on("error", () => {});
+      const reqClosed = Promise.withResolvers<number>();
+      req.on("close", () => reqClosed.resolve(req.rstCode));
       await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
       raw.sendFrame(FrameType.SETTINGS, 0, 0); // server SETTINGS
       raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK the client's
@@ -811,14 +821,18 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
       promised.writeUInt32BE(2, 0);
       const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
       raw.sendFrame(FrameType.PUSH_PROMISE, 0x4 /* END_HEADERS */, 1, Buffer.concat([promised, block]));
-      // DATA on the promised stream while it is still reserved (remote) - §5.1 forbids this
-      // before the pushed response HEADERS.
-      raw.sendFrame(FrameType.DATA, 0, 2, Buffer.from("x"));
-      const rst = await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 2);
-      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.STREAM_CLOSED);
-      // The payload never reaches the pushed stream, and the connection survives.
-      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
-      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      // DATA on the promised stream while it is still reserved (remote), before the pushed
+      // response HEADERS.
+      const socketClosed = new Promise<void>(resolve => raw.socket!.once("close", () => resolve()));
+      raw.socket!.write(encodeFrame(FrameType.DATA, 0, 2, Buffer.from("xy")).subarray(0, bytesSent));
+      const goaway = await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
+      expect((await sessionError.promise).code).toBe("ERR_HTTP2_ERROR");
+      expect(await reqClosed.promise).toBe(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      // Once the client's socket is gone, every frame it wrote is in raw.frames. The reserved
+      // stream gets no RST_STREAM of its own, and its payload never reaches the pushed stream.
+      await socketClosed;
+      expect(raw.frames.filter(f => f.type === FrameType.RST_STREAM)).toEqual([]);
       expect(Buffer.concat(pushedData).length).toBe(0);
     } finally {
       client.destroy();
@@ -1845,27 +1859,16 @@ describe("RST_STREAM on a stream the native layer already closed", () => {
     return { closed: closed.promise };
   }
 
-  test.each([
-    [
-      "a malformed response block",
-      ErrorCode.PROTOCOL_ERROR,
-      (raw: RawH2Server) => raw.sendFrame(FrameType.HEADERS, END_HEADERS, 2, MALFORMED_RESPONSE),
-    ],
-    [
-      "DATA ahead of the response HEADERS",
-      ErrorCode.STREAM_CLOSED,
-      (raw: RawH2Server) => raw.sendFrame(FrameType.DATA, 0, 2, Buffer.from("x")),
-    ],
-  ])("a client resets a pushed stream once for %s", async (_, code, violate) => {
+  test("a client resets a pushed stream once for a malformed response block", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     try {
       const closed = pushedStreamClosed(client);
       await openRequest(raw, client);
       sendPushPromise(raw);
-      violate(raw);
-      expect(await closed).toBe(code);
-      expect(await resetsWritten(raw, 2)).toEqual([code]);
+      raw.sendFrame(FrameType.HEADERS, END_HEADERS, 2, MALFORMED_RESPONSE);
+      expect(await closed).toBe(ErrorCode.PROTOCOL_ERROR);
+      expect(await resetsWritten(raw, 2)).toEqual([ErrorCode.PROTOCOL_ERROR]);
     } finally {
       client.destroy();
       raw.close();

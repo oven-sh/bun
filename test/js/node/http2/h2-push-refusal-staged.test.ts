@@ -2,10 +2,11 @@ import { expect, test } from "bun:test";
 import http2 from "node:http2";
 import net from "node:net";
 
-// Staged twin of h2-conformance's "DATA on a promised stream before its
-// response HEADERS is refused, not delivered", which times out waiting for a
-// frame on the darwin agents. This variant tapes the client session's events
-// and every frame the raw server receives, and names the stage that stalled.
+// Staged twin of h2-conformance's "a whole DATA frame on a promised stream
+// before its response HEADERS is a connection error", which timed out waiting
+// for a frame on the darwin agents. This variant tapes the client session's
+// events and every frame the raw server receives, and names the stage that
+// stalled.
 function frame(len: number, type: number, flags: number, id: number, payload = Buffer.alloc(0)) {
   const h = Buffer.alloc(9);
   h.writeUIntBE(len, 0, 3);
@@ -25,7 +26,7 @@ const TYPE_NAME: Record<number, string> = {
   8: "WINDOW_UPDATE",
 };
 
-test("DATA on a reserved push stream is refused with RST(STREAM_CLOSED) (event-taped)", async () => {
+test("DATA on a reserved push stream is a connection error, GOAWAY(PROTOCOL_ERROR) (event-taped)", async () => {
   const tape: string[] = [];
   const t = (name: string) => tape.push(name);
   const frames: Array<{ type: number; flags: number; id: number; payload: Buffer }> = [];
@@ -102,10 +103,11 @@ test("DATA on a reserved push stream is refused with RST(STREAM_CLOSED) (event-t
     socket.write(frame(1, 0, 0, 2, Buffer.from("x")));
     t("sent-data-on-reserved");
 
-    const rst = await waitFor(f => f.type === 3 && f.id === 2, "RST on stream 2");
-    expect(rst.payload.readUInt32BE(0)).toBe(5 /* STREAM_CLOSED */);
-    socket.write(frame(8, 6, 0, 0, Buffer.alloc(8)));
-    await waitFor(f => f.type === 6 && (f.flags & 0x1) !== 0, "PING ACK");
+    // RFC 9113 §5.1, reserved (remote): a connection error of type PROTOCOL_ERROR, as in nghttp2.
+    const goaway = await waitFor(f => f.type === 7, "GOAWAY");
+    expect(goaway.payload.readUInt32BE(4)).toBe(1 /* PROTOCOL_ERROR */);
+    // A RST_STREAM written ahead of the GOAWAY would already be here.
+    expect(frames.filter(f => f.type === 3)).toEqual([]);
     expect(Buffer.concat(pushedData).length).toBe(0);
   } finally {
     client.destroy();

@@ -135,6 +135,9 @@ pub(crate) struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
+/// RFC 9113 §5.1: DATA on a reserved (remote) stream is a connection PROTOCOL_ERROR (nghttp2's reason text).
+const DATA_ON_RESERVED_STREAM: &[u8] = b"DATA: stream in reserved";
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
@@ -1377,6 +1380,10 @@ impl Connection {
                 discard = true;
             }
             Some(st) => {
+                if st.state == State::ReservedRemote {
+                    self.send_go_away(sink, ErrorCode::ProtocolError, DATA_ON_RESERVED_STREAM);
+                    return StreamedDataStart::Fatal;
+                }
                 if !stream::can_receive_data(st.state) {
                     self.send_rst_stream(sink, hdr.stream_id, ErrorCode::StreamClosed);
                     if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
@@ -1494,6 +1501,7 @@ impl Connection {
         // below don't alias the streams map.
         enum DataDecision {
             Rst(ErrorCode),
+            ReservedStream,
             FlowControlViolation,
             Deliver(u32),
         }
@@ -1513,7 +1521,9 @@ impl Connection {
             // §5.1: DATA for an unknown/closed stream is a STREAM_CLOSED error.
             None => DataDecision::Rst(ErrorCode::StreamClosed),
             Some(s) => {
-                if !stream::can_receive_data(s.state) {
+                if s.state == State::ReservedRemote {
+                    DataDecision::ReservedStream
+                } else if !stream::can_receive_data(s.state) {
                     DataDecision::Rst(ErrorCode::StreamClosed)
                 } else {
                     s.recv_window.on_data(consumed);
@@ -1535,6 +1545,10 @@ impl Connection {
                 // Surface the stream error (e.g. a peer protocol violation) to the embedder.
                 sink.on_stream_reset(hdr.stream_id, code.as_u32());
                 return false;
+            }
+            DataDecision::ReservedStream => {
+                self.send_go_away(sink, ErrorCode::ProtocolError, DATA_ON_RESERVED_STREAM);
+                return true;
             }
             DataDecision::FlowControlViolation => {
                 // nghttp2 (nghttp2_session_update_recv_stream_window_size): a stream flow-control

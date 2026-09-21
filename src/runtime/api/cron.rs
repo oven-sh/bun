@@ -1370,7 +1370,7 @@ impl Drop for CronRemoveJob {
 #[bun_jsc::JsClass(no_constructor)]
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
-pub struct CronJob {
+pub(crate) struct CronJob {
     ref_count: Cell<u32>,
     /// Set from the allocating `RefPtr` so `&self` host fns can reach the
     /// `ThisPtr`-taking paths that may release refs.
@@ -1419,7 +1419,7 @@ bun_jsc::impl_abort_handle_owner!(CronJob, abort_handle, |this, cause| {
     )
 });
 
-pub mod js {
+pub(crate) mod js {
     // `jsc.Codegen.JSCronJob` cached-slot accessors. The C++ side is emitted by
     // `src/codegen/generate-classes.ts` from `cron.classes.ts`; bind the extern
     // contract via the proc-macro so the symbol names line up.
@@ -1427,7 +1427,7 @@ pub mod js {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum ClearMode {
+pub(crate) enum ClearMode {
     Reload,
     Teardown,
 }
@@ -1591,7 +1591,7 @@ impl CronJob {
         }
     }
 
-    pub fn finalize(&self) {
+    pub(crate) fn finalize(&self) {
         self.this_value.with_mut(|v| v.finalize());
     }
 
@@ -1875,7 +1875,7 @@ impl CronJob {
 // C++ `promiseHandlerID` compares the handler passed to `JSValue::then` against
 // these symbols by address, so they must stay function exports.
 // HOST_EXPORT(Bun__CronJob__onPromiseResolve, jsc)
-pub fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     // The cell hands back the job's ref. None: the claim was taken back (the VM is going).
     let Some(job) = crate::api::native_promise_context::take::<CronJob>(args[args.len() - 1])
@@ -1894,7 +1894,7 @@ pub fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 }
 
 // HOST_EXPORT(Bun__CronJob__onPromiseReject, jsc)
-pub fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments();
     // As `on_promise_resolve`.
     let Some(job) = crate::api::native_promise_context::take::<CronJob>(args[args.len() - 1])

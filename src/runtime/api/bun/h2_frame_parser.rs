@@ -39,7 +39,7 @@ bun_output::declare_scope!(H2FrameParser, visible);
 // replace with the macro-derived modules once the .rs codegen backend lands.
 // ──────────────────────────────────────────────────────────────────────────
 #[allow(non_snake_case, non_camel_case_types)]
-pub mod JSH2FrameParser {
+pub(crate) mod JSH2FrameParser {
     use super::{JSGlobalObject, JSValue};
 
     // Per-slot `${snake}_get_cached` / `${snake}_set_cached` wrappers around the
@@ -81,7 +81,7 @@ pub mod JSH2FrameParser {
 
     /// Lazily fetch the JS constructor from `globalObject`.
     #[inline]
-    pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_constructor(global: &JSGlobalObject) -> JSValue {
         __get_constructor(global.as_mut_ptr())
     }
 }
@@ -264,7 +264,7 @@ const SETTING_BIT_ENABLE_CONNECT_PROTOCOL: u8 = 1 << 6;
 const MAX_SETTINGS_PAYLOAD_SIZE: usize = (7 + MAX_CUSTOM_SETTINGS) * 6;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum PaddingStrategy {
+pub(crate) enum PaddingStrategy {
     #[default]
     None,
     Aligned,
@@ -308,7 +308,7 @@ enum HeadersFrameFlags {
 // Open set of wire values → newtype over u32
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ErrorCode(u32);
+pub(crate) struct ErrorCode(u32);
 impl ErrorCode {
     const NO_ERROR: Self = Self(0x0);
     const INTERNAL_ERROR: Self = Self(0x2);
@@ -326,7 +326,7 @@ impl ErrorCode {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
-pub struct UInt31WithReserved(u32);
+pub(crate) struct UInt31WithReserved(u32);
 
 impl UInt31WithReserved {
     #[inline]
@@ -386,14 +386,14 @@ impl StreamPriority {
 // `length` is u24 on the wire; widened to u32 here (Rust has no u24). The 3-byte
 // big-endian encoding is handled explicitly in write()/decode().
 #[derive(Clone, Copy)]
-pub struct FrameHeader {
+pub(crate) struct FrameHeader {
     length: u32, // u24 on the wire
     type_: u8,
     flags: u8,
     stream_identifier: u32,
 }
 impl FrameHeader {
-    pub const BYTE_SIZE: usize = 9;
+    pub(crate) const BYTE_SIZE: usize = 9;
     #[inline]
     fn write(&self, writer: &mut impl WireWriter, frames_sent: &Cell<u64>) -> bool {
         frames_sent.set(frames_sent.get() + 1);
@@ -841,7 +841,7 @@ impl Handlers {
 
 /// snake_case alias for the codegen'd `$rust(h2_frame_parser.rs, H2FrameParserConstructor)`
 /// thunk in `generated_js2native.rs` (the generator snake-cases the export name).
-pub use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;
+pub(crate) use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;
 
 use bun_io::FixedBufferStream;
 
@@ -1037,7 +1037,7 @@ impl core::ops::DerefMut for GuardedStream<'_> {
 #[bun_jsc::JsClass]
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::release)]
-pub struct H2FrameParser {
+pub(crate) struct H2FrameParser {
     /// A session is closed from script (`detach_from_js`, when its socket closes). The script of a
     /// `Bun.ModuleGraph` that was disposed is told nothing, so the graph's context closes it.
     abort_handle: bun_jsc::AbortHandle,
@@ -1297,7 +1297,7 @@ impl StreamResumableIterator {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FlushState {
+pub(crate) enum FlushState {
     NoAction,
     Flushed,
     Backpressure,
@@ -1313,7 +1313,7 @@ enum StreamState {
     CLOSED = 7,
 }
 
-pub struct Stream {
+pub(crate) struct Stream {
     id: u32,
     state: StreamState,
     js_context: StrongOptional, // jsc.Strong.Optional
@@ -1442,7 +1442,7 @@ impl PendingFrame {
 // PendingFrame::deinit handled by Drop (Vec frees, Strong deinits)
 
 impl Stream {
-    pub fn get_padding(&self, frame_len: usize, max_len: usize) -> u8 {
+    pub(crate) fn get_padding(&self, frame_len: usize, max_len: usize) -> u8 {
         match self.padding_strategy {
             PaddingStrategy::None => 0,
             PaddingStrategy::Aligned => {
@@ -1460,7 +1460,11 @@ impl Stream {
         }
     }
 
-    pub fn flush_queue(&mut self, client: &H2FrameParser, written: &mut usize) -> FlushState {
+    pub(crate) fn flush_queue(
+        &mut self,
+        client: &H2FrameParser,
+        written: &mut usize,
+    ) -> FlushState {
         if !self.can_send_data() {
             // empty or cannot send data
             return FlushState::NoAction;
@@ -1674,7 +1678,7 @@ impl Stream {
         }
     }
 
-    pub fn queue_frame(
+    pub(crate) fn queue_frame(
         &mut self,
         client: &H2FrameParser,
         bytes: &[u8],
@@ -1816,7 +1820,7 @@ impl Stream {
             .set(client.queued_data_size.get() + bytes.len() as u64);
     }
 
-    pub fn init(
+    pub(crate) fn init(
         stream_identifier: u32,
         initial_window_size: u32,
         remote_window_size: u32,
@@ -1849,21 +1853,21 @@ impl Stream {
     /// - HALF_CLOSED_LOCAL: local sent END_STREAM, but can still receive from remote
     /// - HALF_CLOSED_REMOTE: remote sent END_STREAM, no more data to receive
     /// - CLOSED: stream is finished
-    pub fn can_receive_data(&self) -> bool {
+    pub(crate) fn can_receive_data(&self) -> bool {
         matches!(
             self.state,
             StreamState::IDLE | StreamState::OPEN | StreamState::HALF_CLOSED_LOCAL
         )
     }
 
-    pub fn can_send_data(&self) -> bool {
+    pub(crate) fn can_send_data(&self) -> bool {
         matches!(
             self.state,
             StreamState::IDLE | StreamState::OPEN | StreamState::HALF_CLOSED_REMOTE
         )
     }
 
-    pub fn set_context(&mut self, value: JSValue, global_object: &JSGlobalObject) {
+    pub(crate) fn set_context(&mut self, value: JSValue, global_object: &JSGlobalObject) {
         let old = core::mem::replace(
             &mut self.js_context,
             StrongOptional::create(value, global_object),
@@ -1871,13 +1875,13 @@ impl Stream {
         drop(old);
     }
 
-    pub fn get_identifier(&self) -> JSValue {
+    pub(crate) fn get_identifier(&self) -> JSValue {
         self.js_context
             .get()
             .unwrap_or_else(|| JSValue::js_number(self.id as f64))
     }
 
-    pub fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
+    pub(crate) fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
         // we need a stable pointer to know what signal points to what stream_id + parser
         let mut signal_ref = Box::new(SignalRef {
             signal: signal.ref_(),
@@ -1890,7 +1894,7 @@ impl Stream {
         self.signal = Some(signal_ref);
     }
 
-    pub fn detach_context(&mut self) {
+    pub(crate) fn detach_context(&mut self) {
         self.js_context.deinit();
     }
 
@@ -1929,7 +1933,7 @@ impl Stream {
     }
 
     /// this can be called multiple times
-    pub fn free_resources<const FINALIZING: bool>(&mut self, client: &H2FrameParser) {
+    pub(crate) fn free_resources<const FINALIZING: bool>(&mut self, client: &H2FrameParser) {
         // The rewrite engine only sees inbound traffic, so a completed request would leave
         // its engine entry as HalfClosedRemote and its legacy slot + Box behind forever —
         // one entry per request. Queue the id; the next rewrite_read batch evicts the engine

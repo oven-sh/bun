@@ -1146,13 +1146,6 @@ pub union ResolutionValue<I: VersionInt> {
     pub single_file_module: SemverString,
 }
 
-impl<I: VersionInt> Default for ResolutionValue<I> {
-    #[inline]
-    fn default() -> Self {
-        ResolutionValue { uninitialized: () }
-    }
-}
-
 /// Layout is `{ tag: u8, _pad: [7]u8, value: Value }` so the on-disk lockfile
 /// encoding stays byte-compatible.
 #[repr(C)]
@@ -1161,17 +1154,6 @@ pub struct Resolution {
     pub tag: ResolutionTag,
     pub _padding: [u8; 7],
     pub value: ResolutionValue<u64>,
-}
-
-impl Default for Resolution {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            tag: ResolutionTag::Uninitialized,
-            _padding: [0; 7],
-            value: ResolutionValue { uninitialized: () },
-        }
-    }
 }
 
 // ─── PreinstallState / Features / misc ────────────────────────────────────

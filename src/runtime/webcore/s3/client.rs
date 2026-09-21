@@ -12,25 +12,25 @@ use bun_ptr::RefPtr;
 
 // Re-exports (thin aliases)
 pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
-pub use crate::webcore::s3::multipart::MultiPartUpload;
-pub use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
-pub use bun_s3_signing::acl::ACL;
-pub use bun_s3_signing::storage_class::StorageClass;
+pub(crate) use crate::webcore::s3::multipart::MultiPartUpload;
+pub(crate) use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
+pub(crate) use bun_s3_signing::acl::ACL;
+pub(crate) use bun_s3_signing::storage_class::StorageClass;
 
-pub use bun_s3_signing::error as Error;
+pub(crate) use bun_s3_signing::error as Error;
 // `throw_sign_error` / `get_js_sign_error` live in `error_jsc.rs` (jsc-side
 // of the s3_signing error tables). The pure error module is `bun_s3_signing::error`;
 // the jsc helpers are mounted here as a child module of this umbrella
 // re-export hub.
 #[path = "error_jsc.rs"]
-pub mod error_jsc;
+pub(crate) mod error_jsc;
 pub(crate) use error_jsc::S3ErrorJsc;
 pub(crate) use error_jsc::get_js_sign_error;
 pub(crate) use error_jsc::s3_error_to_js;
 pub(crate) use error_jsc::throw_sign_error;
 
-pub use bun_s3_signing::credentials::S3Credentials;
-pub use bun_s3_signing::credentials::S3CredentialsWithOptions;
+pub(crate) use bun_s3_signing::credentials::S3Credentials;
+pub(crate) use bun_s3_signing::credentials::S3CredentialsWithOptions;
 use bun_s3_signing::credentials::encode_uri_component;
 
 pub(crate) use crate::webcore::s3::list_objects::S3ListObjectsOptions;
@@ -40,7 +40,7 @@ pub(crate) use crate::webcore::s3::simple_request::S3DownloadResult;
 pub(crate) use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 pub(crate) use crate::webcore::s3::simple_request::S3ListObjectsResult;
 pub(crate) use crate::webcore::s3::simple_request::S3StatResult;
-pub use crate::webcore::s3::simple_request::S3UploadResult;
+pub(crate) use crate::webcore::s3::simple_request::S3UploadResult;
 
 use crate::webcore::s3::simple_request as s3_simple_request;
 
@@ -49,7 +49,6 @@ use crate::webcore::ReadableStream;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
-use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{NetworkSink, NetworkSinkJSSink};
 use bun_collections::IntegerBitSet;
 use bun_io::KeepAlive;
@@ -560,7 +559,7 @@ pub(crate) fn writable_stream(
 // (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
 #[derive(bun_ptr::CellRefCounted)]
 #[repr(align(16))]
-pub struct S3UploadStreamWrapper {
+pub(crate) struct S3UploadStreamWrapper {
     pub(crate) ref_count: core::cell::Cell<u32>,
 
     pub sink: Option<NonNull<NetworkSink>>,
@@ -581,7 +580,7 @@ impl S3UploadStreamWrapper {
         if let Some(sink_ptr) = self.sink.take() {
             // SAFETY: allocated via `Box::leak` in `upload_stream`; consumed once here.
             let mut sink = unsafe { bun_core::heap::take(sink_ptr.as_ptr()) };
-            JSSink::<NetworkSink>::detach(&mut sink.source, &self.global);
+            sink.source.detach(&self.global);
             // releases NetworkSink's counted ref on the MultiPartUpload
             sink.finalize();
         }

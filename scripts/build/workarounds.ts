@@ -106,9 +106,7 @@ export const workarounds: Workaround[] = [
       // while rustc's LLVM major is ahead of clang's — when clang's ld.lld
       // (built with zlib) reads rustc's bitcode, rust-lld is never selected
       // and the compressed CRTs are a non-issue.
-      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
-      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
-      return clangMajor >= rustMajor;
+      return !cfg.rustLlvmNewer;
     },
     cleanup:
       `Delete needsMuslCrtDecompress(), MUSL_CRT_OBJECTS, the shim_crt_decompress rule, and the ` +

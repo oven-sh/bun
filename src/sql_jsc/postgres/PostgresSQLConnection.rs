@@ -487,7 +487,7 @@ impl PostgresSQLConnection {
             sni,
             true,  // is_client
             false, // request_cert (server-only)
-            false, // reject_unauthorized (server-only)
+            false, // reject_unauthorized (server-only; the client policy is set_inline_reject below)
             ext_size,
             ext_size,
         ) else {
@@ -505,6 +505,11 @@ impl PostgresSQLConnection {
         let sock = unsafe { &mut *new_socket };
         *sock.ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
             core::ptr::NonNull::new(self.as_ctx_ptr());
+        if self.tls_config.reject_unauthorized() != 0
+            && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
+        {
+            sock.set_inline_reject();
+        }
         self.socket.set(Socket::SocketTls(uws::SocketTLS {
             socket: uws::InternalSocket::Connected(new_socket),
         }));

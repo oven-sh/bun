@@ -94,6 +94,8 @@ bun run build --target=<target>             # build a specific target (e.g. tiny
 bun run build -n -d explain                 # what would rebuild, and why (dry run)
 bun run build -t query <target>             # <target>'s inputs and outputs
 bun run build -t deps <target>              # what headers does foo.o depend on?
+bun run build --timings                     # where the build's time went (see "Timings")
+bun run build --configure-only --timings    # the same report for the directory as it is, without building
 ```
 
 The generated `build.ninja` is the ground truth. If an edge isn't doing what you expect, read it there first.
@@ -106,7 +108,7 @@ The generated `build.ninja` is the ground truth. If an edge isn't doing what you
 | -------------------------------------------------- | ---------------------------------------------- |
 | `-j<N>`, `-k<N>`, `-l<N>`, `-v`, `-n`, `-d <mode>` | ninja                                          |
 | `-t <tool> [args…]`                                | the ninja tool, and nothing else (see below)   |
-| `--configure-only`, `--help`                       | build.ts                                       |
+| `--configure-only`, `--timings`, `--help`          | build.ts                                       |
 | `--<known-field>=<val>` or `--<known-field> <val>` | build.ts (profile/target/config overrides)     |
 | `--`                                               | ends parsing — rest to runtime unconditionally |
 | `--<unknown-field>=<val>`                          | **errors** (typo detection)                    |
@@ -196,7 +198,8 @@ CI's `build-bun` step uses `archive-link` (`ci-build` profile): the same graph, 
 | `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                                                                          |
 | `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing, `checkImageTools()`                                                                            |
 | `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                                                                      |
-| `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                                                                   |
+| `ninja.ts`                     | `Ninja` class — the build-file writer; `readManifest()`, which reads what it wrote back                                                                                 |
+| `timings.ts`                   | `--timings`: where a build directory's time went, from `.ninja_log`, `build.ninja` and output mtimes: the report, and `timings.html`, the same as a chart               |
 | `ninja-release.ts`             | `ensureNinja()`/`ninjaIfPresent()`: the oven-sh/ninja release pinned in `ci-images/spec.ts` — the CI image's copy, else fetched into the build cache, else PATH         |
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                                                                         |
 | `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                                                                 |
@@ -237,6 +240,20 @@ CI's `build-bun` step uses `archive-link` (`ci-build` profile): the same graph, 
 | `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                                                                |
 | `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                                                                              |
 | `shims/*.c`                    | Platform workaround sources                                                                                                                                             |
+
+## Timings
+
+`bun run build --timings` builds as usual, then reports where the time went (`timings.ts`) and writes `<buildDir>/timings.html`: each of the most recent builds as a Gantt chart with a lane per sort of command, the critical path outlined, and a strip of how many commands were running. Hovering a bar draws the chain of commands it waited on; clicking pins that and joins everything it held up. `--configure-only --timings` reports on the directory as it is, without building. Every CI build does the same: the report is the "Build timings" group of the step's log, and the chart is uploaded as `timings-<step key>.html`, which Buildkite serves as a page, linked from one folded "Build timings" annotation on the build page that lists every step's chart (`ci.ts` `publishTimings`). There an error in the report is printed and the build goes on; locally it fails the command. Nothing is measured for it and no second build runs: it reads what every build leaves behind.
+
+- `.ninja_log` — each command's start and end on its ninja's clock, and a file timestamp: the command's start on the wall clock, or, for a `restat`/`generator` rule that changed its output, that output's mtime (ninja `Builder::FinishCommand`). One `build.ts` can be several ninja processes (the `rust-and-link` mode builds the Rust first) and ninja compacts the log in no particular order, so processes are told apart by that timestamp, not by line order (`groupRuns`, which also says what cannot be told apart).
+- `build.ninja` — read back by `readManifest()` for each edge's rule, pool, inputs and outputs. An edge is named the way ninja prints it (the rule's `description`). No build statement names `build.ninja` as an input, but ninja brings it up to date before anything else, so the timings treat the edge that writes it as an input of every edge that is not upstream of it.
+- Output mtimes — a library crate's dependents start at its `.rmeta`, long before the edge ends. `rust/run.ts` stamps the `.rmeta` when rustc reports it (only for a ninja that releases outputs early), so `mtime − the log's start stamp` is how far into the command that was. Any edge with `early_output_prefix` is read this way.
+
+**ninja starts over by itself**, counting from zero again, when bringing `build.ninja` up to date rewrote it (every CI build: the Rust plan is new). A process that ended by writing `build.ninja` and the one that began where it ended are one run, on one clock. The `build.ninja` entry is the one whose timestamp is not its own: every configure stamps the file and has ninja record it (`-t restat`), so that command is placed by its start and end instead.
+
+**The report describes the build directory, not one invocation**: for every edge, the last time it ran. It reads the same after a build that had nothing to do, and it is all ninja keeps once it compacts the log. Totals per rule, the slowest edges and the critical path come from that. The critical path is computed (longest chain through the graph, each edge taking what it last took and starting when its inputs exist), so it does not depend on which run built what; it is what a build of everything takes with every core free. What exists only within one build — stretches with few commands running, how long commands were queued after their inputs existed (per pool) — is reported for the last build, the one build nothing can have overwritten part of. The page and the report use the same words for the same things: `total` is the last build's time, `queued` is how long a command sat ready before it started.
+
+**Why an edge is slow** is the compilers' to say, and costs a rebuild: `--time-trace=on` adds `-ftime-trace` to bun's C++ (a `.json` beside each `.o`) and `-Z time-passes` to every rustc (`run.ts` records the passes in `<output>.phases.json`; the flag is not a rustflag, so crates keep their hashes). The report shows the largest phases under each slow edge, and the chart shows them on hover.
 
 ## CI machine images (`ci-images/`)
 

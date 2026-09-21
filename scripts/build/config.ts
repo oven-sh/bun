@@ -158,7 +158,10 @@ export interface Config {
    * a .a only contributes members the linker actually pulls.
    */
   archiveDeps: boolean;
-  /** Emit clang -ftime-trace .json next to each .o for build profiling. */
+  /**
+   * The compilers report their own phases: clang writes `-ftime-trace` JSON next to each `.o`, rustc's
+   * `-Z time-passes` are recorded next to each crate (rust/run.ts). `--timings` reads both (timings.ts).
+   */
   timeTrace: boolean;
 
   // ─── Environment ───

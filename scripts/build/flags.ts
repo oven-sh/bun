@@ -1088,7 +1088,7 @@ export const linkerFlags: Flag[] = [
     // says where each input chunk was placed, which is what tells a function
     // apart from the labels the MSVC CRT leaves on data inside its code. They
     // ship in the profile zip beside the binary, for the trace-order step
-    // (.buildkite/ci.ts) and for verifyOrderFileApplied() in scripts/build/ci.ts.
+    // (.buildkite/ci.ts).
     flag: c => [`/lldmap:${slash(linkerMapPath(c))}`, `/map:${slash(symbolMapPath(c))}`],
     when: c => c.windows && writesLinkerMap(c),
     desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",
@@ -1223,12 +1223,9 @@ export const linkerFlags: Flag[] = [
   {
     // Mach-O counterpart to lld's --symbol-ordering-file below:
     // <buildDir>/linker.order lists the functions bun actually executes while
-    // starting up, and Apple's linker sorts them to the front of __text. The
-    // file is a build artifact, never committed: configure seeds an empty one
-    // so both link passes share one build.ninja — a release build regenerates
-    // it from its own pass-1 binary and reruns ninja, which relinks and
-    // nothing else. Unknown names are silently skipped, so a stale file only
-    // costs part of the win.
+    // starting up, and Apple's linker sorts them to the front of __text. Where
+    // the file comes from is the same as on linux (see that entry). Unknown
+    // names are silently skipped, so a stale file only costs part of the win.
     flag: c => `-Wl,-order_file,${orderFilePath(c)}`,
     when: c => c.darwin && usesOrderFile(c),
     desc: "Sort startup-hot functions to the front of __text (cuts resident binary pages)",
@@ -1432,10 +1429,10 @@ export const linkerFlags: Flag[] = [
     // Packing them together cuts that by a third for a same-size binary.
     //
     // The file is a build artifact, never committed: configure seeds an empty one
-    // (a no-op for lld) so this flag is unconditional and both link passes share
-    // one build.ninja — a release build regenerates it from its own pass-1 binary
-    // and reruns ninja, which relinks and nothing else. Symbols lld cannot find
-    // are skipped, so a stale file only costs part of the win.
+    // (a no-op for lld) so this flag is unconditional. No build traces its own
+    // binary: a CI build inherits the file an earlier build's trace-order step
+    // published (ci.ts "Symbol ordering file"), and links once. Symbols lld
+    // cannot find are skipped, so a stale file only costs part of the win.
     //
     // A local `bun run build:release` therefore links unordered until you run
     // `bun run orderfile` and build again.
@@ -1551,15 +1548,14 @@ function linkLtoIsRustOnly(c: Config): boolean {
  * Whether this target links with a symbol ordering file (lld
  * `--symbol-ordering-file` on linux, `-order_file` on darwin, which both Apple
  * ld and ld64.lld take, lld-link `/order` on windows). Only where the startup
- * win is worth a relink: release builds, not under a sanitizer — the tracer
+ * win is worth having: release builds, not under a sanitizer — the tracer
  * swaps `.text` out for a private copy, and nobody measures startup RSS on an
  * ASAN build anyway.
  *
- * This says where the order file is CONSUMED, not where it is produced. A
- * cross-compiled lane cannot trace its own binary (`canTraceOrderFile`), so it
- * inherits an earlier build's file instead and still links ordered; the
- * trace-order step in .buildkite/ci.ts produces that file on the target's test
- * fleet. Both windows targets work this way: their tracer is a debugger
+ * This says where the order file is CONSUMED, not where it is produced. Every
+ * build inherits an earlier build's file; the trace-order step in
+ * .buildkite/ci.ts produces that file on the target's test fleet, after the
+ * build. On windows the tracer is a debugger
  * (scripts/orderfile/functrace-windows.c), so it needs no preload mechanism,
  * and it plants INT3 or BRK depending on which architecture it is built for.
  *

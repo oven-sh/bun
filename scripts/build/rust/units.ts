@@ -342,7 +342,11 @@ export interface RustcUnitManifest extends ManifestCommon {
   buildScriptOutput: string | undefined;
   /** `output.json` of every transitive same-platform dependency with a build script: their `rustc-link-search` paths apply here too (cargo add_native_deps). */
   depBuildScriptOutputs: string[];
+  /** `--time-trace=on`: where run.ts records the passes rustc reports, as timings.ts's `Phase[]`. */
+  phases: string | undefined;
 }
+
+export const rustcPhasesPath = (output: string): string => `${output}.phases.json`;
 
 /** A build-script execution. */
 export interface BuildScriptRunManifest extends ManifestCommon {
@@ -533,6 +537,9 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   // The depfile must name what rustc read: `-Zbinary-dep-depinfo` adds every rlib/rmeta/dylib it loaded
   // (transitive crates found through -L, the sysroot std for host units, proc-macro dylibs).
   args.push("-Z", "binary-dep-depinfo");
+  // rustc reports each of its passes as the pass ends; run.ts records them for timings.ts. Not a rustflag: it changes
+  // nothing rustc writes, so the unit keeps its hash and its file names.
+  if (cfg.timeTrace) args.push("-Z", "time-passes", "-Z", "time-passes-format=json");
 
   const env: Record<string, string> = {
     ...ctx.baseEnv,
@@ -565,6 +572,7 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
     depBuildScriptOutputs: transitiveLinkInputs(unit, "same-platform")
       .map(d => d.buildScript?.output)
       .filter((o): o is string => o !== undefined),
+    phases: cfg.timeTrace ? rustcPhasesPath(unit.output) : undefined,
     libraryPath: libraryPath(ctx),
   };
 }

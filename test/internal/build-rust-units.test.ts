@@ -16,7 +16,7 @@ import {
   type RustPlan,
   type UnitGraphUnit,
 } from "../../scripts/build/rust/plan.ts";
-import { parseBuildScriptOutput, rustcInvocation, writeDepfile } from "../../scripts/build/rust/run.ts";
+import { parseBuildScriptOutput, rustcInvocation, timePass, writeDepfile } from "../../scripts/build/rust/run.ts";
 import { parseToml } from "../../scripts/build/rust/toml.ts";
 import {
   buildRustGraph,
@@ -166,6 +166,7 @@ function manifestIn(dir: string, over: Partial<RustcUnitManifest>): RustcUnitMan
     depfile: join(dir, "deps", "demo-0123.d.ninja"),
     buildScriptOutput: undefined,
     depBuildScriptOutputs: [],
+    phases: undefined,
     libraryPath: { variable: "LD_LIBRARY_PATH", prepend: [] },
     ...over,
   };
@@ -211,6 +212,20 @@ describe("writeDepfile", () => {
     const unit = manifestIn(root, {});
     writeFileSync(unit.depInfo, `${join(root, "deps", "libother.rlib")}: src/lib.rs\n`);
     expect(() => writeDepfile(unit)).toThrow(/has no rule for/);
+  });
+});
+
+describe("timePass", () => {
+  test("reads a `-Z time-passes` line as a phase that ends now, and leaves every other line alone", () => {
+    const before = Date.now();
+    const phase = timePass(`time: {"pass":"type_check_crate","time":1.5,"rss_start":1,"rss_end":2}`)!;
+    expect(phase.name).toBe("type_check_crate");
+    expect(phase.endMs).toBeGreaterThanOrEqual(before);
+    expect(phase.endMs - phase.startMs).toBe(1500);
+    // A diagnostic, an artifact notice, and rustc's text form of the same flag.
+    expect(timePass(`{"$message_type":"diagnostic","rendered":"warning: time: {"}`)).toBeUndefined();
+    expect(timePass(`{"$message_type":"artifact","emit":"metadata"}`)).toBeUndefined();
+    expect(timePass(`time:   0.001; rss:   46MB ->   49MB (   +2MB)\tparse_crate`)).toBeUndefined();
   });
 });
 
@@ -371,8 +386,8 @@ describe("buildRustGraph + unitManifest", () => {
     host: info(triple),
     target: info(triple),
   });
-  const context = (graph: ReturnType<typeof buildRustGraph>): ManifestContext => ({
-    cfg: { ci: false, debug: false, buildDir: "/build", host: { os: "windows" } } as Config,
+  const context = (graph: ReturnType<typeof buildRustGraph>, timeTrace = false): ManifestContext => ({
+    cfg: { ci: false, debug: false, buildDir: "/build", host: { os: "windows" }, timeTrace } as Config,
     graph,
     baseEnv: { BUN_CODEGEN_DIR: "/build/codegen" },
     linker: { host: "link.exe", target: "link.exe" },
@@ -510,6 +525,16 @@ describe("buildRustGraph + unitManifest", () => {
     expect(ltoFlags("thin", "lib")).toEqual(["linker-plugin-lto"]);
     expect(ltoFlags("off", "lib")).toEqual(["lto=off", "embed-bitcode=no"]);
     expect(ltoFlags("false", "lib")).toEqual(["embed-bitcode=no"]);
+  });
+
+  test("--time-trace=on has rustc report its passes, to a file beside the unit's output", () => {
+    const graph = buildRustGraph(planWith(["-Cpanic=immediate-abort"]), "/build/rust-target/shim");
+    const [dep] = graph.units;
+    expect((unitManifest(context(graph), dep) as RustcUnitManifest).phases).toBeUndefined();
+
+    const traced = unitManifest(context(graph, true), dep) as RustcUnitManifest;
+    expect(traced.args).toEqual([...DEP_ARGS(dep), "-Z", "time-passes", "-Z", "time-passes-format=json"]);
+    expect(traced.phases).toBe(`${dep.output}.phases.json`);
   });
 
   test("target rustflags change where an artifact is written but not how its symbols are mangled", () => {

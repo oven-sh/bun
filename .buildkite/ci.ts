@@ -811,13 +811,12 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
 }
 
 /**
- * Targets whose build lane cross-compiles (so `canTraceOrderFile()` is false)
- * but whose test fleet is native. A `-trace-order` step runs there, downloads
- * the cross-built `bun-profile`, traces it, and uploads the `.order` artifact
- * that the next build's `inheritOrderFile()` picks up. One build of lag.
- *
- * linux-aarch64 is absent because its build lane runs on the aarch64 host and
- * traces itself; `packageAndUpload()` is its sole publisher.
+ * The targets that link with a symbol ordering file (flags.ts `usesOrderFile`),
+ * and the test machine each is traced on. No build traces its own binary: a
+ * `-trace-order` step runs after the build on a machine of the target's own
+ * architecture, downloads the build's `bun-profile`, traces it, and uploads the
+ * `.order` artifact that later builds' `inheritOrderFile()` picks up: every
+ * build, of main or of a pull request, links against the most recent one.
  *
  * The `on` platforms are entries of `testPlatforms`, so the step runs on an
  * image that exists. The windows tracer is built on the test VM for whichever
@@ -827,23 +826,24 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
 const traceOrderTargets: { os: Os; arch: Arch; on: Platform }[] = [
   { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
   { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
+  { os: "linux", arch: "aarch64", on: { os: "linux", arch: "aarch64", distro: "debian", release: "13" } },
   { os: "windows", arch: "x64", on: { os: "windows", arch: "x64", release: "2019", tier: "oldest" } },
   { os: "windows", arch: "aarch64", on: { os: "windows", arch: "aarch64", release: "11", tier: "latest" } },
 ];
 
 /**
- * Trace the symbol order file for a cross-compiled target on a native-arch
- * host, so the next build's `inheritOrderFile()` has something to download.
+ * Trace the symbol order file for a target on a machine of its own
+ * architecture, so the next build's `inheritOrderFile()` has something to download.
  *
- * The build lane cross-compiles from the aarch64 `buildHostPlatform` and cannot
- * run the binary it linked. This step runs on the target-arch test fleet,
+ * Every target is linked on the aarch64 `buildHostPlatform`, which cannot run
+ * most of them. This step runs on the target-arch test fleet,
  * downloads that lane's unstripped `bun-profile`, runs it under `scripts/
  * orderfile/generate.ts` (the traced binary doubles as the interpreter), and
  * uploads the result.
  *
- * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
- * no consumer. Soft-fail: the order file is an optimization, and a broken
- * tracer must not fail a build.
+ * Main only: every build, of any branch or pull request, inherits from main's
+ * builds, so a trace anywhere else has no consumer. Soft-fail: the order file
+ * is an optimization, and a broken tracer must not fail a build.
  *
  * Windows agents run commands under cmd.exe (see getVerifyBaselineStep for the
  * `|| exit /b 1` convention). The generator compiles the tracer there, which
@@ -1814,17 +1814,15 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           );
         }
 
-        // Seed the symbol order file for a cross-compiled target on its native
-        // test fleet (see getTraceOrderStep). Always on main so the inheritance
-        // chain stays fed, and anywhere else on commit-message opt-in so a PR
-        // that changes the tracer can prove the step works before merge — the
-        // same `[generate symbol order]` tag ci.ts already honours. Release
-        // profile only — usesOrderFile() is false under a sanitizer anyway.
+        // Trace the symbol order file later builds inherit, on the target's own
+        // test fleet (see getTraceOrderStep). On main: that is where every
+        // build, of a pull request too, inherits from. Release profile only —
+        // usesOrderFile() is false under a sanitizer anyway.
         const traceOn = traceOrderTargets.find(
           t =>
             t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
         );
-        if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage() ?? ""))) {
+        if (traceOn && isMainBranch()) {
           const traceDeps = getImageDependsOn(traceOn.on, baking);
           steps.push(
             ...placeBinaryCheck(

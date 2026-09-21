@@ -69,7 +69,8 @@ impl SourceProvider for BakeSourceProvider {
         // The VM the provider was created in, not the calling thread's: a stack trace may be remapped from the collector
         // thread, which has no VM of its own (its end phase runs with the JS thread parked, so nothing here races it).
         // SAFETY: opaque FFI handle; the provider does not outlive its VM.
-        let global = unsafe { (*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>()).global };
+        let global =
+            unsafe { (*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>()).global };
         // SAFETY: `global` is that VM's live JSGlobalObject.
         if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
             return None;

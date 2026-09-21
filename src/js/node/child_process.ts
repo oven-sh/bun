@@ -535,14 +535,15 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       "EINVAL",
     );
     error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
+    // node: the process never ran, so `output` is null and `stdout` / `stderr` are undefined.
     return {
       signal: null,
       status: null,
-      output: [null, null, null],
+      output: null,
       pid: 0,
-      stdout: null,
-      stderr: null,
       error,
+      stdout: undefined,
+      stderr: undefined,
     };
   }
 

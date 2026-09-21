@@ -949,6 +949,29 @@ it("spawnSync(does-not-exist)", () => {
   });
 });
 
+// On Windows, a .bat or .cmd file without the `shell` option is rejected with EINVAL before anything is spawned.
+it.if(isWindows)("spawnSync(batch-file) reports the never-started result shape", () => {
+  const x = spawnSync("does-not-exist.cmd");
+  expect(x.error?.code).toEqual("EINVAL");
+  expect(x.error.path).toEqual("does-not-exist.cmd");
+  // The rest of the result is what node returns, the same as for a process that could not be spawned.
+  expect({
+    status: x.status,
+    signal: x.signal,
+    output: x.output,
+    pid: x.pid,
+    stdout: x.stdout,
+    stderr: x.stderr,
+  }).toEqual({
+    status: null,
+    signal: null,
+    output: null,
+    pid: 0,
+    stdout: undefined,
+    stderr: undefined,
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/32067
 // Darwin's posix_spawn file actions reject any fd number >= OPEN_MAX (10240)
 // with EBADF at registration time, before checking whether the fd is open.

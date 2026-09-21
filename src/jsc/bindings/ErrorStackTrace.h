@@ -212,8 +212,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSObject* callee);
 String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags);
 
-// V8's CallSiteInfo::GetTypeName: "Object" for a plain object, the class name for an instance.
-// Empty for a top-level call (no receiver, or the global object).
+// V8's CallSiteInfo::GetTypeName. Empty for a top-level call (no receiver, or the global object).
 String receiverTypeName(JSC::VM& vm, JSC::JSValue receiver);
 // V8's AppendMethodCall: how a method call frame is named from its type name and function name.
 String methodCallName(const String& typeName, const String& functionName);

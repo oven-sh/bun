@@ -572,8 +572,7 @@ String receiverTypeName(JSC::VM& vm, JSC::JSValue receiver)
             return name;
     }
 
-    // V8's JSReceiver::GetConstructorName. The receiver's own `constructor` is skipped, so that
-    // `B.prototype` is named after its prototype.
+    // V8's JSReceiver::GetConstructorName, which skips the receiver's own `constructor`.
     JSObject* current = object;
     while (true) {
         JSValue tag = ownDataProperty(current, vm.propertyNames->toStringTagSymbol.impl());

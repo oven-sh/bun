@@ -53,6 +53,7 @@ const NEHALEM_ALLOWED: &[CpuidFeature] = &[
     CpuidFeature::FXSR,  // FXSAVE/FXRSTOR
     CpuidFeature::SYSCALL,
     CpuidFeature::RDTSCP, // Nehalem has this (K8 introduced it, Intel added in Nehalem)
+    CpuidFeature::RDPMC,  // Pentium Pro; shows up as a data-in-text decode of LLInt opcode ids
     // LAHF/SAHF in 64-bit: iced doesn't tag these with a distinct feature
     // (they're just INTEL8086 or X64). If it ever does, we'd add it here.
     CpuidFeature::CMPXCHG16B, // Nehalem has it, required by x86-64-v2

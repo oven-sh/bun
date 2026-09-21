@@ -64,12 +64,23 @@ describe.skipIf(!isWindows)("Windows console codepage", () => {
       // A byte that is not UTF-8 must not hold back the text after it.
       process.stdout.write(Buffer.from([0x6c, 0x61, 0x74, 0x69, 0x6e, 0x3d, 0xe9]));
       process.stdout.write("|next\\n");
+      process.stderr.write("esplit=");
+      process.stderr.write(bytes.subarray(0, 2));
+      process.stderr.write(bytes.subarray(2));
+      process.stderr.write("\\n");
+      // Longer than one WriteConsoleW chunk, with the chunk cut inside a
+      // character.
+      process.stdout.write("big=x" + Buffer.alloc(1200, "日").toString() + "\\n");
     `);
     expect(output).toContain("log=日本語");
     expect(output).toContain("error=日本語");
     expect(output).toContain("stdout=日本語");
     expect(output).toContain("split=日");
     expect(output).toContain("latin=\uFFFD|next");
+    expect(output).toContain("esplit=日");
+    expect(output).toContain("big=x" + Buffer.alloc(150, "日").toString());
+    // A character cut between two chunks would render as two U+FFFD.
+    expect(output).not.toMatch(/\uFFFD[日\uFFFD]|日\uFFFD/);
     expect(exitCode).toBe(0);
   });
 

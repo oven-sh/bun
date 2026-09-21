@@ -1114,6 +1114,26 @@ function pythonFuse(): Tool {
   };
 }
 
+/**
+ * Alpine 3.23.6's dhcpcd (10.5.2) never returns from `dhcpcd --waitip`, which cloud-init waits on for its
+ * 300 second timeout at every boot. busybox's udhcpc is a DHCP client cloud-init supports, and it does not hang.
+ */
+function cloudInitDhcpClient(): Tool {
+  return {
+    name: "cloud-init-dhcp-client",
+    identity: configuration,
+    steps: [
+      run("which", "udhcpc"),
+      directory("/etc/cloud/cloud.cfg.d"),
+      writeFile("/etc/cloud/cloud.cfg.d/99-dhcp-client.cfg", [
+        "system_info:",
+        "  network:",
+        "    dhcp_client_priority: [udhcpc, dhcpcd]",
+      ]),
+    ],
+  };
+}
+
 /** Encrypts the core dumps a failed test uploads. */
 function age(image: LinuxImage): Tool {
   const { version, sha256 } = pins.age;
@@ -1587,6 +1607,7 @@ export function tools(image: Image): readonly Tool[] {
   return [
     packages(image),
     ulimits(image),
+    ...(apt ? [] : [cloudInitDhcpClient()]),
     agentAccount(),
     nodejs(image),
     bun(image),

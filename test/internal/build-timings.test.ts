@@ -23,9 +23,9 @@ import {
   lowParallelismWindows,
   parseNinjaLog,
   queueTimes,
-  waits,
   totalsByKind,
   traceEvents,
+  waits,
 } from "../../scripts/build/timings.ts";
 
 const T0 = Date.UTC(2026, 0, 2, 3, 4, 5);

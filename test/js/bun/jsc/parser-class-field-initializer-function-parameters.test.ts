@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// Fixed in oven-sh/WebKit#WEBKIT_PR. A class field initializer has two early errors: "ContainsArguments of Initializer
+// Fixed in oven-sh/WebKit#711. A class field initializer has two early errors: "ContainsArguments of Initializer
 // is true" and "Initializer Contains SuperCall is true". Both look into an arrow function and stop at any other
 // function, which has its own `arguments`. JavaScriptCore stopped only at the body of such a function, so `arguments`
 // and `super()` in its parameters were a SyntaxError. The text goes to `eval`, so that each case is parsed on its own.

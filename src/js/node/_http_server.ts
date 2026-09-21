@@ -553,6 +553,7 @@ Server.prototype.listen = function () {
   const server = this;
   let port, host;
   let socketPath;
+  let reusePort = false;
   let tls = this[tlsSymbol];
 
   // This logic must align with:
@@ -565,6 +566,7 @@ Server.prototype.listen = function () {
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;
+      reusePort = arg0.reusePort === true;
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -605,7 +607,7 @@ Server.prototype.listen = function () {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false);
+      server[kRealListen](tls, port, host, socketPath, reusePort);
       return this;
     }
 

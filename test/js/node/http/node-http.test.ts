@@ -198,6 +198,27 @@ describe("node:http", () => {
       });
     });
 
+    // Node rejects reusePort on Windows with ERR_FEATURE_UNAVAILABLE_ON_PLATFORM.
+    it.skipIf(process.platform === "win32")("listen({ reusePort: true }) lets two servers share a port", async () => {
+      const first = createServer((_req, res) => res.end("first"));
+      first.listen({ port: 0, host: "127.0.0.1", reusePort: true });
+      await once(first, "listening");
+      const { port } = first.address() as AddressInfo;
+
+      const second = createServer((_req, res) => res.end("second"));
+      const events: string[] = [];
+      second.on("error", (err: NodeJS.ErrnoException) => events.push("error:" + err.code));
+      second.on("listening", () => events.push("listening"));
+      second.listen({ port, host: "127.0.0.1", reusePort: true });
+      await Promise.race([once(second, "listening"), once(second, "error")]);
+
+      const secondPort = second.listening ? (second.address() as AddressInfo).port : null;
+      second.close();
+      first.close();
+      await once(first, "close");
+      expect({ events, secondPort }).toEqual({ events: ["listening"], secondPort: port });
+    });
+
     // vite's port auto-increment (#27406): the callback of the failed listen() belongs to the
     // server, not to that attempt, so the retry from the 'error' handler calls it.
     it("calls the listen() callback after a retry from the EADDRINUSE 'error' handler", async () => {

@@ -261,3 +261,67 @@ try {
     if (readEndOpen) closeSync(readEnd);
   }
 });
+
+// console.write(big, 123) throws for the argument that is not something to write, after the first one has become
+// the sink's pending write. That write's Promise was made inside the call and never reaches the caller, so when
+// the write later fails nobody can have handled it: it must not be reported as an unhandled rejection.
+//
+// stdout is a FIFO whose read end this test holds open and never reads, then closes.
+test.skipIf(isWindows)("console.write that throws for a later argument leaves no unhandled rejection", async () => {
+  using dir = tempDir("console-write-bad-argument", {});
+  const fifo = join(String(dir), "stdout.fifo");
+  mkfifo(fifo, 0o600);
+  const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  const writeEnd = openSync(fifo, constants.O_WRONLY);
+  let readEndOpen = true;
+  try {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+process.on("unhandledRejection", e => {
+  console.error("unhandledRejection " + e?.code);
+});
+try {
+  console.write(Buffer.alloc(4 * 1024 * 1024, "x").toString(), 123);
+  console.error("no throw");
+} catch (e) {
+  console.error("caught " + e.code);
+}
+console.error("READY");
+process.stdin.once("data", () => console.error("end"));
+`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: writeEnd,
+      stderr: "pipe",
+    });
+    closeSync(writeEnd);
+
+    const reader = proc.stderr.getReader();
+    const decoder = new TextDecoder();
+    let stderr = "";
+    while (!stderr.includes("READY")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+    closeSync(readEnd);
+    readEndOpen = false;
+    // The child's event loop sees the hang-up before it sees this byte on stdin.
+    proc.stdin.write("x");
+    await proc.stdin.end();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderr += decoder.decode(value, { stream: true });
+    }
+
+    expect(stderr).toBe("caught ERR_INVALID_ARG_TYPE\nREADY\nend\n");
+    expect(await proc.exited).toBe(0);
+  } finally {
+    if (readEndOpen) closeSync(readEnd);
+  }
+});

@@ -612,11 +612,27 @@ impl<T: JsSinkType> JSSink<T> {
         }
 
         let mut wrote: u64 = 0;
+        // An operation left pending by an earlier call: its Promise is that caller's.
+        let pending_before = this.sink.pending_operation().is_some();
         // The sink's pending operation, its Promise, and what that Promise resolves to as of the last write.
         let mut pending: Option<(*mut streams::WritablePending, JSValue, u64)> = None;
         // No argument is one `undefined` chunk, which write_value() rejects as write() does.
         for i in 0..frame.arguments_count().max(1) as usize {
-            let result = Self::write_value(this, global, frame.argument(i))?;
+            let result = match Self::write_value(this, global, frame.argument(i)) {
+                Ok(result) => result,
+                Err(thrown) => {
+                    // This argument is not something to write, and the call throws. An earlier one is already
+                    // the sink's pending operation, with a Promise made in this call that now never reaches
+                    // the caller. Nobody can handle its rejection, so it must not be reported as unhandled.
+                    if let (false, Some((_, promise, _))) = (pending_before, pending) {
+                        if let Some(promise) = promise.as_promise() {
+                            // SAFETY: `as_promise` returned this live JSPromise cell, which `promise` keeps alive.
+                            unsafe { (*promise).set_handled() };
+                        }
+                    }
+                    return Err(thrown);
+                }
+            };
             // A write can settle the pending operation on the spot: the reader made room, and this chunk went out
             // with everything buffered before it. Its Promise has resolved to `consumed`, which this call's total
             // carries on from as a count. Checked before `to_js` below, which arms the slot for the next operation.

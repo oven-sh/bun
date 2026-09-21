@@ -2299,6 +2299,13 @@ impl VirtualMachine {
             self.is_inside_deferred_task_queue.set(false);
         }
 
+        // The loop will not tick again, so its pre handler never commits the
+        // `publish()` batches and corked frames the last turn left behind.
+        // Write them out now, while the sockets are still open.
+        if self.script_allowed() && self.event_loop_handle.is_some() {
+            self.uws_loop_mut().flush_pending_writes();
+        }
+
         self.is_shutting_down = true;
 
         // Node's FreeEnvironment sets `is_stopping` before `RunCleanup`: the

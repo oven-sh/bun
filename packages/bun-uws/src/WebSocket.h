@@ -73,7 +73,22 @@ public:
             return nullptr;
         }
 
+        flushBeforeForcedClose();
         return us_socket_close((us_socket_t *) this, 0, nullptr);
+    }
+
+    /* Write out what publish() queued for this socket and what a handler
+     * corked, while the fd is still open. onClose runs after the fd is gone:
+     * freeSubscriber there cannot write, and the cork buffer is discarded. */
+    void flushBeforeForcedClose() {
+        if (us_socket_is_closed((us_socket_t *) this)) {
+            return;
+        }
+        WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
+        if (webSocketData->subscriber) {
+            getContextData()->topicTree->drain(webSocketData->subscriber);
+        }
+        Super::uncork();
     }
 
     enum SendStatus : int {

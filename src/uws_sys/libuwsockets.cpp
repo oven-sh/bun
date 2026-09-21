@@ -35,6 +35,10 @@ extern "C"
     loopData->updateDate();
   }
 
+  void uws_loop_flush_pending_writes(us_loop_t *loop) {
+    ((uWS::Loop *) loop)->flushPendingWrites();
+  }
+
   uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options)
   {
     uWS::SocketContextOptions socket_context_options;

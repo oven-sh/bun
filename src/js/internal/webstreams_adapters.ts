@@ -45,9 +45,8 @@ function tryTransferToNativeReadable(stream, options) {
 class ReadableFromWeb extends Readable {
   #reader;
   #closed;
+  // node-fetch, undici: a Response body that no read has opened. Until then text(), json(), ... can lock it for good.
   #stream;
-  // node-fetch, undici: `stream` is a Response body, which text(), json(), ... lock for good.
-  #responseBody;
 
   // No `signal`: an aborted one would run _destroy inside super(), before the private fields exist.
   constructor(options, stream) {
@@ -57,31 +56,25 @@ class ReadableFromWeb extends Readable {
       highWaterMark,
       encoding,
     });
-    this.#reader = undefined;
-    this.#stream = stream;
+    // Node takes the reader here and never releases it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/webstreams/adapters.js#L589
+    this.#reader = responseBody ? undefined : stream.getReader();
+    this.#stream = responseBody ? stream : undefined;
     this.#closed = false;
-    this.#responseBody = responseBody;
   }
 
   // Locked before this wrapper opened it: a body method has the contents, nothing to read or cancel.
   #takenByResponse(stream) {
-    return this.#responseBody && stream.locked;
+    return stream.locked;
   }
 
-  #handleDone(reader) {
-    reader.releaseLock();
+  #handleDone() {
     this.#reader = undefined;
     this.#closed = true;
     this.push(null);
   }
 
-  #handleError(reader, error) {
-    if (reader) {
-      this.#reader = undefined;
-      try {
-        reader.releaseLock();
-      } catch {}
-    }
+  #handleError(error) {
+    this.#reader = undefined;
     this.#closed = true;
     this.destroy(error);
   }
@@ -109,12 +102,12 @@ class ReadableFromWeb extends Readable {
       chunk => {
         if (this.#closed) return;
         if (chunk.done) {
-          this.#handleDone(reader);
+          this.#handleDone();
         } else {
           this.push(chunk.value);
         }
       },
-      error => this.#handleError(reader, error),
+      error => this.#handleError(error),
     );
   }
 

@@ -6,6 +6,16 @@ import http2 from "node:http2";
 import tls from "node:tls";
 import { TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 
+// Any 'error' on a tracked emitter rejects the awaited promise, so a failed connect or handshake
+// reports its cause instead of a timeout.
+function errorGuard(...emitters) {
+  const failure = Promise.withResolvers<never>();
+  const watch = emitter => emitter.on("error", failure.reject);
+  for (const emitter of emitters) watch(emitter);
+  const settled = <T>(promise: Promise<T>) => Promise.race([promise, failure.promise]);
+  return { watch, settled };
+}
+
 it("http2 pushStream() and ping() are refused after session.close(), like node", async () => {
   const out = {};
   const serverDone = Promise.withResolvers();
@@ -50,7 +60,6 @@ it("http2 pushStream() and ping() are refused after session.close(), like node",
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
   try {
-    client.on("error", () => {});
     const clientClosed = new Promise(resolve => client.once("close", resolve));
     client.on("stream", (pushed, headers) => {
       out.clientGotPush = headers[":path"];
@@ -58,11 +67,11 @@ it("http2 pushStream() and ping() are refused after session.close(), like node",
       pushed.resume();
     });
     const req = client.request({ ":path": "/" });
-    req.on("error", () => {});
+    const { settled } = errorGuard(client, req);
     req.resume();
-    await new Promise(resolve => req.once("close", resolve));
-    await serverDone.promise;
-    await clientClosed;
+    await settled(new Promise(resolve => req.once("close", resolve)));
+    await settled(serverDone.promise);
+    await settled(clientClosed);
   } finally {
     client.destroy();
     server.close();
@@ -92,13 +101,13 @@ it("http2 client ping() after session.close() is cancelled on the next tick, lik
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
   try {
-    client.on("error", () => {});
     const clientClosed = new Promise(resolve => client.once("close", resolve));
-    await new Promise(resolve => client.once("connect", resolve));
+    const { watch, settled } = errorGuard(client);
+    await settled(new Promise(resolve => client.once("connect", resolve)));
     const req = client.request({ ":path": "/" });
-    req.on("error", () => {});
+    watch(req);
     req.resume();
-    const stream = await serverStream.promise;
+    const stream = await settled(serverStream.promise);
 
     // The open request keeps the session alive, so close() marks it closed without destroying it.
     client.close();
@@ -114,11 +123,11 @@ it("http2 client ping() after session.close() is cancelled on the next tick, lik
     expect(pingReturn).toBeUndefined();
     // The callback runs on the next tick, never synchronously.
     expect(pingCallbackRan).toBe(false);
-    expect(await pingResult.promise).toEqual({ code: "ERR_HTTP2_PING_CANCEL", duration: undefined });
+    expect(await settled(pingResult.promise)).toEqual({ code: "ERR_HTTP2_PING_CANCEL", duration: undefined });
 
     stream.respond({ ":status": 200 });
     stream.end("ok");
-    await clientClosed;
+    await settled(clientClosed);
   } finally {
     client.destroy();
     server.close();
@@ -132,10 +141,10 @@ it("http2 client ping() during the TLS handshake is cancelled, like node", async
   const socket = tls.connect({ host: "127.0.0.1", port, ALPNProtocols: ["h2"], ...TLS_OPTIONS });
   const client = http2.connect(`https://127.0.0.1:${port}`, { createConnection: () => socket });
   try {
-    client.on("error", () => {});
+    const { settled } = errorGuard(client, socket);
     const connected = new Promise(resolve => client.once("connect", resolve));
     // Wait for the TCP connect. The TLS handshake is still in flight.
-    await new Promise(resolve => socket.once("connect", resolve));
+    await settled(new Promise(resolve => socket.once("connect", resolve)));
     expect(socket.connecting).toBe(false);
     expect(socket.secureConnecting).toBe(true);
     expect(client.connecting).toBe(true);
@@ -143,14 +152,14 @@ it("http2 client ping() during the TLS handshake is cancelled, like node", async
     const handshakePing = Promise.withResolvers();
     const handshakeReturn = client.ping(err => handshakePing.resolve(err?.code));
     expect(handshakeReturn).toBeUndefined();
-    expect(await handshakePing.promise).toBe("ERR_HTTP2_PING_CANCEL");
+    expect(await settled(handshakePing.promise)).toBe("ERR_HTTP2_PING_CANCEL");
 
-    await connected;
+    await settled(connected);
     expect(client.connecting).toBe(false);
     const connectedPing = Promise.withResolvers();
     const connectedReturn = client.ping((err, duration) => connectedPing.resolve(err ? err.code : typeof duration));
     expect(connectedReturn).toBe(true);
-    expect(await connectedPing.promise).toBe("number");
+    expect(await settled(connectedPing.promise)).toBe("number");
   } finally {
     client.destroy();
     server.close();

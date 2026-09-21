@@ -24,7 +24,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 - `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The default for the C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). Skips a sub-process configure entirely and lets LTO see across the dep boundary.
 - `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. For deps whose build is too entangled to list by hand. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
-- `cargo` — invoke cargo build (lolhtml, rust-argon2). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
+- `cargo` — (rule kept for out-of-workspace cargo deps; none today — lolhtml and rust-argon2 are path dependencies compiled as units of bun's own Rust graph).
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
 The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.
@@ -90,9 +90,10 @@ Edge dependency types:
 bun scripts/build.ts --configure-only       # regenerate build.ninja, don't run ninja
 bunx tsc --noEmit -p scripts/build/tsconfig.json   # typecheck
 grep "yourtarget\|yourrule" build/debug/build.ninja  # inspect generated output
-ninja -C build/debug -t query <target>      # why does <target> rebuild?
-ninja -C build/debug -t deps <target>       # what headers does foo.o depend on?
-ninja -C build/debug <target>               # build a specific target (e.g. tinycc, bun-rust)
+bun run build --target=<target>             # build a specific target (e.g. tinycc, bun-rust)
+bun run build -n -d explain                 # what would rebuild, and why (dry run)
+bun run build -t query <target>             # <target>'s inputs and outputs
+bun run build -t deps <target>              # what headers does foo.o depend on?
 ```
 
 The generated `build.ninja` is the ground truth. If an edge isn't doing what you expect, read it there first.
@@ -103,16 +104,19 @@ The generated `build.ninja` is the ground truth. If an edge isn't doing what you
 
 | Arg shape                                          | Goes to                                        |
 | -------------------------------------------------- | ---------------------------------------------- |
-| `-j<N>`, `-k<N>`, `-l<N>`, `-v`                    | ninja                                          |
+| `-j<N>`, `-k<N>`, `-l<N>`, `-v`, `-n`, `-d <mode>` | ninja                                          |
+| `-t <tool> [args…]`                                | the ninja tool, and nothing else (see below)   |
 | `--configure-only`, `--help`                       | build.ts                                       |
 | `--<known-field>=<val>` or `--<known-field> <val>` | build.ts (profile/target/config overrides)     |
 | `--`                                               | ends parsing — rest to runtime unconditionally |
 | `--<unknown-field>=<val>`                          | **errors** (typo detection)                    |
 | Anything else                                      | runtime, and everything after too              |
 
+Everything ninja does goes through build.ts, never a bare `ninja`: the build runs a pinned ninja (`ninja-release.ts`), and a different version in the same directory can start the build log over. `-t <tool>` (`query`, `deps`, `commands`, `targets`, …) runs that ninja's tool on the build directory as it is, without configuring or building, and everything after `-t` is the tool's.
+
 Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `bun bd test --asan=off foo.ts` sends `--asan=off` to bun-debug. Use `--` when a runtime flag collides with a build flag: `bun bd -- --target=browser script.ts`.
 
-**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only), `configure-<name>` (cmake deps). Also `bun`, `check`, `bun-rust`. List all: `ninja -C build/debug -t targets`.
+**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only), `configure-<name>` (cmake deps). Also `bun`, `check`, `bun-rust`. List all: `$NINJA -C build/debug -t targets`.
 
 ## Common tasks
 
@@ -130,7 +134,9 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 **Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Use the `codegen` rule: it runs the script with `cfg.jsRuntime`, so the script must run under node and bun. Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppHeaders` if it's a header. `emitCodegen()` builds `cppAll` from those groups at the end, so do not push to it).
 
-**Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. If it needs a CLI flag, `build.ts`'s arg parser already handles `--anyfield=value` generically.
+**Add a ninja rule** — add its name to `ruleVars` in `ninja.ts` with the `$variables` its text reads, and `n.rule()` it in the module's `registerXxxRules()`. `n.build({ rule, vars })` is typed by the table, and configure fails if the table and the rule's text disagree. Text that needs other variables on some platform is another rule (`pch` / `pch_msvc`). ninja's own bindings (`pool`, `depfile`, `early_output_prefix`) are fields of the build statement, not `vars`.
+
+**Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. Add its entry to `configFlags` in `build.ts`: every `PartialConfig` field is a `--<field>` flag, and tsc fails without one.
 
 **Add a profile** — one entry in `profiles.ts`. Copy `debug` or `release-asan`.
 
@@ -147,7 +153,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 1. `resolveToolchain()` — find clang/ar/lld/strip/cmake/cargo/bun/esbuild. Version-checked where it matters; paths stored on `Toolchain`.
 2. `resolveConfig(partial, toolchain)` — produce the flat `Config`. Detect host, derive all target booleans, compute paths, read package.json version + git sha.
 3. `validateBunConfig(cfg)` + `checkWorkarounds(cfg)` — fail early with clear errors.
-   - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the ninja cargo edge sets the linker via env); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
+   - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the rustc edges pass `-C linker` themselves); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.rs`/codegen-input globs.
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
 6. `emitBun(n, cfg, sources)` — assemble the build graph (see Phase 2).
@@ -160,21 +166,23 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 For `mode: "full"` (the normal case):
 
 1. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
-2. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_runtime` → `libbun_runtime.a` (after resolving its path deps, lolhtml and rust-argon2). Codegen and cargo are emitted before the deps on purpose. Scheduling: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order — so cargo ties with `cc → link` in full mode and wins on emission order, but in `archive-link` mode `cc → ar → link` outranks it and cargo would start only after every compile had been dispatched (~50s into a CI build). The `compile` pool in `compile.ts` (depth = core count, below ninja's default `-j` of cores+2) is what actually guarantees cargo a slot the moment it is ready.
+2. **Rust** — `emitRust(n, cfg, {...})` emits one rustc edge per crate → `libbun_runtime.a` (after resolving the vendored path deps, lolhtml and rust-argon2). cargo plans, ninja executes: the `rust_plan` edge runs `cargo build … --unit-graph` + `cargo metadata` for exactly the arguments `cargoBuildInvocation()` computes and writes `rust/plan.json`; `build.ninja` depends on that file, so a new plan (lockfile/manifest/toolchain change) reconfigures and ninja restarts. `rust/units.ts` turns each unit into a rustc argv/env (cargo's rules, transcribed and diffed against `cargo -vv`), written to `rust/units/<crate>-<hash>.json`; `rust/emit.ts` emits the edges; `rust/run.ts` executes them. Every edge is one process from start to exit, and a crate is one edge: one rustc with the `.rlib` and the `.rmeta` as outputs. Dependent libraries name only the `.rmeta`, which rustc writes long before it has generated code; the edge carries `early_output_prefix`, which asks ninja to release an output when the running command announces it. oven-sh/ninja (what the driver runs, see `ninja-release.ts`) exports the prefix to the command as `NINJA_EARLY_OUTPUT_PREFIX`, `rust/run.ts` prints it with the `.rmeta`'s path when rustc reports the file written, and dependents start while rustc goes on — cargo's pipelining. A stock ninja ignores the binding and releases both outputs at exit: the same graph, built correctly, without the overlap. Build scripts are a compile edge plus a `rust_build_script` run edge whose parsed directives (`output.json`, restat) feed the package's rustc edges. A Windows target has a second graph built the same way, under `rust/shim/`: the `.bin/` launcher (`src/install/windows-shim`), planned with `--profile shim` and `-Zbuild-std`, with a `bin` root that `run.ts` also writes to `<codegenDir>/bun-shim-impl.exe`, where `bun_install` embeds it from (every edge of that package waits for it). Codegen and Rust are emitted before the deps on purpose: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order.
 3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → configure → build (nested-cmake), or fetch → cargo, or fetch → direct cc+ar, or prebuilt download. Collects objects, lib paths, include dirs, outputs.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
 5. **PCH** — compile `root-pch.h` → PCH.
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
 7. **Link** — `emitShims(n, cfg)` for platform workaround dylibs, then `link(n, cfg, exeName, objects, {libs, flags})`.
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
-9. **Checks** — validations of the link edge (`ninja check` names them too), all static except the first: `<exe> --revision` (load-time failures; only when the host can run the target), `verify-binary.ts binary` (exported symbols vs the lists in src/, exact NEEDED/dylib/DLL set and glibc/FBSD symbol-version ceilings, forbidden imports, static-initializer allowlist, W^X / nx-stack / PIE / DllCharacteristics, debug-info shape — expectations in `binary-expectations.ts`), and `verify-binary.ts duplicates` (no symbol strongly defined by two link inputs). For ASan and debug builds the two scans run with `--warn-only` (`binaryChecksWarnOnly` in `bun.ts`): same report, the step passes; every other configuration fails on a finding.
+9. **Checks** — validations of the link edge (`ninja check` names them too), all static except the first: `<exe> --revision` (load-time failures; only when the host can run the target), `verify-binary.ts binary` (exported symbols vs the lists in src/, exact NEEDED/dylib/DLL set and glibc/FBSD symbol-version ceilings, forbidden imports, static-initializer allowlist, W^X / nx-stack / PIE / DllCharacteristics, debug-info shape — expectations in `binary-expectations.ts`), and `verify-binary.ts duplicates` (no symbol strongly defined by two link inputs). Only CI fails on a finding: local builds (`cfg.ci` unset), and ASan and debug builds in CI, run the two scans with `--warn-only` (`binaryChecksWarnOnly` in `bun.ts`) — same report, the step passes.
 
-Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (cargo + poll build-cpp + download archive → link). The pipeline's `build-bun` step uses `archive-link` (`ci-build` profile): the full graph on one agent, linking from the same archive `cpp-only` produces, with the archive, libbun_runtime.a and dep libs uploaded from ninja edges as soon as each exists.
+Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (Rust units + poll build-cpp + download archive → link). The pipeline's `build-bun` step uses `archive-link` (`ci-build` profile): the full graph on one agent, linking from the same archive `cpp-only` produces, with the archive, libbun_runtime.a and dep libs uploaded from ninja edges as soon as each exists.
 
 ### Phase 3 — Execute
 
 - **CI:** collapsible log groups, spawn ninja with `spawnWithAnnotations` (parses compiler errors into Buildkite annotations), upload/download artifacts.
-- **Local:** spawn ninja with FD 3 dup'd to stderr — `stream.ts`-wrapped commands write to FD 3, bypassing ninja's per-job output buffering so dep/cargo build progress streams live. If positionals given, exec the built binary with them.
+- **Which ninja:** `ensureNinja()` (`ninja-release.ts`), called by configure and returned as `ConfigureResult.ninja` — the oven-sh/ninja release pinned in `ci-images/spec.ts` (`pins.bunNinja`): the one a CI image has at `locations.bunNinja`, else fetched once into `cfg.cacheDir` (reported as `[ninja] fetching …` / `[ninja] extracted to …`) and checked against the pinned sha256; `ninja` from PATH if there is no release for the host, it can't be fetched, or the machine won't run it (`ninja --version` is tried on every configure: a machine can refuse programs it does not know). Configure fetches it, beside the macOS SDK and the Windows sysroot, because an edge can't: it is what runs the edges. A regen replay and the helper scripts use `ninjaIfPresent()` — the same binary, never a fetch: ninja versions disagree on the `.ninja_log` format and rewrite or delete a log they don't recognise, so everything that touches a build directory must be one ninja.
+- **One build per build directory at a time.** Nothing enforces it (ninja has no lock either). Two builds of the same directory at once can fail: a rustc edge deletes its crate's old `.rlib` before compiling, while the other build may be reading it.
+- **Local:** spawn ninja with FD 3 dup'd to stderr — `stream.ts`-wrapped commands (dep builds, the cargo plan edge) write to FD 3, bypassing ninja's per-job output buffering so their progress streams live; rustc edges are plain ninja commands. If positionals given, exec the built binary with them.
 
 ## Module inventory
 
@@ -184,15 +192,22 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                                                                                                      |
 | `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`                                                                                                    |
 | `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                                                                          |
-| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing                                                                                                 |
+| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing, `checkImageTools()`                                                                            |
 | `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                                                                      |
 | `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                                                                   |
+| `ninja-release.ts`             | `ensureNinja()`/`ninjaIfPresent()`: the oven-sh/ninja release pinned in `ci-images/spec.ts` — the CI image's copy, else fetched into the build cache, else PATH         |
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                                                                         |
 | `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                                                                 |
 | `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                                                                                                        |
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                                                                                                      |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                                                                                                                |
-| `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix                                                                                                 |
+| `rust.ts`                      | Rust step entry: target/rustflags/env (`cargoBuildInvocation()`), `emitRust()`, `rustLibPath()`, the Windows shim's plan, cross-compile matrix                          |
+| `rust/plan.ts`                 | `cargo --unit-graph` + `cargo metadata` + `rustc --print` → `rust-target/plan.json` (build-time CLI and the types configure reads)                                      |
+| `rust/units.ts`                | Plan → per-unit rustc argv/env/outputs (cargo's command-line rules), unit manifests                                                                                     |
+| `rust/emit.ts`                 | `rust_plan`/`rust_rustc`/`rust_build_script` rules and edges                                                                                                            |
+| `rust/run.ts`                  | Build-time driver for one unit: rustc with build-script-derived flags and a depfile, or the build-script protocol                                                       |
+| `rust/toml.ts`                 | TOML reader for the `[lints]` tables cargo's JSON doesn't export                                                                                                        |
+| `rust/cargo-env.ts`            | cargo conventions shared by configure and the build-time driver: build-script `output.json` shape, `envify`, dylib path variable                                        |
 | `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                                                                 |
 | `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                                                                                                                  |
 | `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                                                                                     |
@@ -212,12 +227,18 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                                                                 |
 | `verify-binary.ts`             | Build-time CLI: static scans of the linked executable (exports, dynamic deps, initializers, hardening, debug info) and the duplicate-definition scan of the link inputs |
 | `binary-expectations.ts`       | What each target's executable must look like for `verify-binary.ts`; serialized to `<exe>.verify.json` at configure                                                     |
+| `annotations.ts`               | Compiler output from a failed step, parsed into Buildkite annotations                                                                                                   |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                                                |
+| `ci-images/spec.ts`            | CI's machines in one file: images, version pins, locations, every tool, and the generator of the bake scripts; `bun run ci:images`                                      |
 | `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                                                                |
 | `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                                                                              |
 | `shims/*.c`                    | Platform workaround sources                                                                                                                                             |
+
+## CI machine images (`ci-images/`)
+
+What is on CI's build and test machines, and the generator of what bakes them. `ci-images/spec.ts` is also where the versions this build system uses are written (LLVM, Node.js, xwin and the Windows SDK, the macOS SDK, the Android API level, FreeBSD): `tools.ts`, `deps/nodejs-headers.ts`, `winsysroot.ts`, `macos-sdk.ts` and `config.ts` import them from `pins`, the sysroot and download-cache lookups import where things are from `locations`, and `spec.ts` is one of `build.ninja`'s inputs. `findLlvmTool()` accepts only the pinned LLVM release series on every machine, and on a Buildkite agent `checkImageTools()` compares `bun`, `cmake` and `node` with their pins exactly. How the images work and how to change them: `ci-images/CLAUDE.md`.
 
 ## Key types
 
@@ -246,18 +267,21 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 **cmd.exe quoting is partial.** `shell.ts` quote() handles spaces/special chars but NOT `%VAR%` expansion, `^` escape, `&|>` redirection. If an arg contains those, switch to powershell.
 
-**`rm -rf build/` doesn't clear the cache locally.** `cfg.cacheDir` is machine-shared at `$BUN_INSTALL/build-cache` for non-CI builds (ccache, tarballs, prebuilt WebKit). Everything there is content-addressed or version-stamped, so a stale entry can't be hit — don't reach for `bun run clean cache` as a debugging step. If a build misbehaves, the bug is in the inputs or the graph, not the cache; nuking it just costs you a cold rebuild. CI keeps `<buildDir>/cache` so `rm -rf build/` is still a full reset there.
+**A tool is named by path, so ninja cannot see it replaced.** An LLVM upgrade behind a stable path (scoop's `current`, a Homebrew `opt/` symlink) leaves every command line unchanged, and the new binary's packaged mtime is usually older than the objects, so naming the binary as an input does not help. Configure writes `<buildDir>/toolchain-identity/<tool>.txt` (`tools.ts` `writeToolIdentities`) with what `cc`, `cxx`, `hostCc`, `nasm` and `ld` report for `--version` (for an llvm.org build: the release and the exact commit, the same on every machine), and an edge takes the file of each tool it runs as an implicit input (`toolIdentityFile(cfg, tool)`): a replaced compiler recompiles, a replaced linker only relinks. The Rust units get the same from the rustc version and commit in their hash. A new edge that runs one of those tools should name its file too. Not covered: a toolchain rebuilt in place at the same version and commit (`bun run clean`), and nested cmake builds, whose own build directory keeps the old compiler's objects.
+
+**`rm -rf build/` doesn't clear the cache locally.** `cfg.cacheDir` is machine-shared at `$BUN_INSTALL/build-cache` for non-CI builds (ccache, tarballs, prebuilt WebKit); `$BUN_BUILD_CACHE_DIR` puts it somewhere else, in CI too (`--cacheDir` still wins for one build). Everything there is content-addressed or version-stamped, so a stale entry can't be hit — don't reach for `bun run clean cache` as a debugging step. If a build misbehaves, the bug is in the inputs or the graph, not the cache; nuking it just costs you a cold rebuild. CI keeps `<buildDir>/cache` so `rm -rf build/` is still a full reset there.
 
 ## Node compatibility
 
-The build system runs under Node 25+ (configure checks the version). CI installs Node 26 and invokes it via `process.execPath` in `.buildkite/ci.mjs`.
+The build system runs under Node 25+ (configure checks the version). CI images have Node 26, and the build steps `.buildkite/ci.ts` generates run `node scripts/build.ts` (literal `node`: the steps run on a different machine from the generator).
 
-`cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (stream.ts, fetch-cli.ts, the regen rule, the `codegen` rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. The subprocesses inherit whichever runtime started the build.
+`cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (stream.ts, fetch-cli.ts, `rust/plan.ts`, the regen rule, the `codegen` rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. The subprocesses inherit whichever runtime started the build.
 
-**Remaining `cfg.bun` usage (codegen only):** For a fully bun-optional build:
+**Remaining `cfg.bun` usage:** For a fully bun-optional build:
 
 - `cfg.packageManager` — `--package-manager=npm` runs the codegen installs with npm (`npm-ci.ts`). The default is bun.
 - Codegen scripts on the `codegen_bun` rule still need bun. Move a script to the `codegen` rule once it runs under node, and check that both runtimes write the same output.
+- `rust/run.ts` (every rustc and build-script edge) is launched with `cfg.bun` for its startup time: it starts once per edge along a crate chain ~30 deep (bun ~20 ms, node ~80 ms). Its code uses only `node:` modules, so launching it with `cfg.jsRuntime` is a one-line change in `rust/emit.ts`.
 - `cfg.esbuild` — already separate.
 
 With those done, `cfg.bun` disappears.

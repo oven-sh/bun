@@ -295,8 +295,6 @@ struct Http2Response {
     inline bool sendTerminatingChunk(bool closeConnection = false);
 
     bool hasResponded() { return !(data.state & Http2ResponseData::HTTP_RESPONSE_PENDING); }
-    uint64_t getWriteOffset() { return data.offset; }
-    void overrideWriteOffset(uint64_t o) { data.offset = o; }
     size_t getBufferedAmount() { return data.backpressure.length(); }
 
     inline Http2Response *pause();
@@ -304,18 +302,12 @@ struct Http2Response {
     /* The handler started consuming the body: widen this stream's window. */
     inline void growReceiveWindow();
     inline Http2Response *cork(MoveOnlyFunction<void()> &&fn);
-    void uncork() {}
-    bool isCorked() { return false; }
     /* RST_STREAM: the transport-level equivalent of dropping an
      * HTTP/1 socket mid-response. */
     /* RST_STREAM (unless already closed both ways) and retire. */
     inline void close(http2::ErrorCode code = http2::ERR_CANCEL);
-    void *getNativeHandle() { return this; }
-    void *getSocketData() { return data.socketData; }
-    bool isConnectRequest() { return false; }
     inline void setTimeout(uint8_t seconds);
     inline void resetTimeout();
-    void prepareForSendfile() {}
 
     Http2Response *onWritable(void *userData, Http2ResponseData::OnWritableCallback h) {
         data.writableUserData = userData; data.onWritable = h; return this;

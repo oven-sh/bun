@@ -6,10 +6,12 @@
  *   generated .cargo/config.toml gets entries for, so a platform CI builds
  *   that is missing from it is one whose cfg-gated code nothing checks before
  *   the CI build itself. Its source of truth is the build matrix in
- *   .buildkite/ci.mjs, which can't be imported (it generates the pipeline on
+ *   .buildkite/ci.ts, which can't be imported (it generates the pipeline on
  *   import), so it is read as text.
  * - The rustflags put the Rust half of the binary on the CPU baseline the C++
  *   half is compiled for (`cpuTargetFlags` in scripts/build/flags.ts).
+ * - Under ASAN, the Rust half and the C/C++ half (bun's sources and the deps)
+ *   both compile out the fake-stack instrumentation.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -24,6 +26,7 @@ import {
   type PartialConfig,
   type Toolchain,
 } from "../../../scripts/build/config.ts";
+import { computeDepFlags, computeFlags } from "../../../scripts/build/flags.ts";
 import {
   allRustTargets,
   cargoBuildInvocation,
@@ -48,6 +51,8 @@ const mockToolchain: Toolchain = {
   ld64Lld: "/fake/llvm/bin/ld64.lld",
   rustLld: undefined,
   rustLlvmVersion: "22.1.4",
+  rustSysroot: undefined,
+  rustHostTriple: undefined,
   strip: "/fake/bin/strip",
   llvmStrip: "/fake/llvm/bin/llvm-strip",
   nm: "/fake/llvm/bin/llvm-nm",
@@ -84,10 +89,10 @@ function withAbi(cfg: Config, abi: Abi): Config {
 }
 
 describe("allRustTargets", () => {
-  test("is exactly the set of triples .buildkite/ci.mjs builds", () => {
-    const ciScript = readFileSync(join(repoRoot, ".buildkite", "ci.mjs"), "utf8");
-    const matrix = /^const buildPlatforms = \[\n([\s\S]*?)^\];/m.exec(ciScript);
-    if (matrix === null) throw new Error("buildPlatforms not found in .buildkite/ci.mjs");
+  test("is exactly the set of triples .buildkite/ci.ts builds", () => {
+    const ciScript = readFileSync(join(repoRoot, ".buildkite", "ci.ts"), "utf8");
+    const matrix = /^const buildPlatforms: Platform\[\] = \[\n([\s\S]*?)^\];/m.exec(ciScript);
+    if (matrix === null) throw new Error("buildPlatforms not found in .buildkite/ci.ts");
 
     const entries =
       matrix[1]!
@@ -103,7 +108,7 @@ describe("allRustTargets", () => {
       const field = (name: string) => new RegExp(`\\b${name}: "([^"]+)"`).exec(entry)?.[1];
       const os = field("os") as OS;
       const arch = field("arch") as Arch;
-      // ci.mjs passes `--abi=gnu` to the linux builds that don't name an abi.
+      // ci.ts passes `--abi=gnu` to the linux builds that don't name an abi.
       const abi = os === "linux" ? ((field("abi") as Abi | undefined) ?? "gnu") : undefined;
       return rustTriple(os, arch, abi);
     });
@@ -222,5 +227,53 @@ describe("CPU baseline", () => {
     const linuxX64 = resolve({ os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" });
     expect(cpuFlags(linuxX64)).toEqual(["-Ctarget-cpu=nehalem"]);
     expect(cpuFlags(withAbi(linuxX64, "android"))).toEqual(["-Ctarget-cpu=nehalem"]);
+  });
+});
+
+describe("ASAN stack-use-after-return instrumentation", () => {
+  // JSC's conservative GC scan needs every frame on the machine stack, so an
+  // ASAN build runs with `detect_stack_use_after_return=0` and the fake-stack
+  // prologue that the default `runtime` mode emits is dead code. clang has a
+  // driver flag that leaves it out. rustc has none and takes the LLVM option
+  // behind that flag.
+  const clangFlag = "-fsanitize-address-use-after-return=never";
+  const rustFlag = "-Cllvm-args=-asan-use-after-return=never";
+  const linuxX64: PartialConfig = { os: "linux", arch: "x64", abi: "gnu", linuxSysroot: "/fake" };
+
+  /** Every C and C++ flag list a config produces: bun's own sources, then the deps. */
+  function compileFlagLists(cfg: Config): string[][] {
+    const bun = computeFlags(cfg);
+    const deps = computeDepFlags(cfg);
+    return [bun.cflags, bun.cxxflags, deps.cflags, deps.cxxflags];
+  }
+
+  function rustflags(cfg: Config): string[] {
+    return cargoBuildInvocation(cfg).env.CARGO_ENCODED_RUSTFLAGS!.split("\x1f");
+  }
+
+  test("an ASAN build compiles it out of the C/C++ half and the Rust half", () => {
+    for (const buildType of ["Debug", "Release"] as const) {
+      const cfg = resolve({ ...linuxX64, buildType, asan: true });
+      for (const flags of compileFlagLists(cfg)) {
+        expect(flags).toContain("-fsanitize=address");
+        expect(flags).toContain(clangFlag);
+      }
+      expect(rustflags(cfg)).toContain("-Zsanitizer=address");
+      expect(rustflags(cfg)).toContain(rustFlag);
+    }
+  });
+
+  // clang reports its flag as an unused argument when -fsanitize=address is
+  // absent, which -Werror turns into a failed compile.
+  test("a build without ASAN passes neither flag", () => {
+    for (const buildType of ["Debug", "Release"] as const) {
+      const cfg = resolve({ ...linuxX64, buildType, asan: false });
+      for (const flags of compileFlagLists(cfg)) {
+        expect(flags).not.toContain("-fsanitize=address");
+        expect(flags).not.toContain(clangFlag);
+      }
+      expect(rustflags(cfg)).not.toContain("-Zsanitizer=address");
+      expect(rustflags(cfg)).not.toContain(rustFlag);
+    }
   });
 });

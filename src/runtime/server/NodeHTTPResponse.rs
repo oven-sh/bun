@@ -287,6 +287,24 @@ fn err_throw<T>(global: &JSGlobalObject, code: ErrorCode, msg: &'static str) -> 
     Err(err_throw_cold(global, code, msg))
 }
 
+/// Same text as the `ERR_HTTP_CONTENT_LENGTH_MISMATCH` row of `simpleErrorMessages` in ErrorCode.cpp.
+#[cold]
+#[inline(never)]
+fn err_throw_content_length_mismatch(
+    global: &JSGlobalObject,
+    actual: usize,
+    expected: u64,
+) -> jsc::JsError {
+    global
+        .err(
+            ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
+            format_args!(
+                "Response body's content-length of {actual} byte(s) does not match the content-length of {expected} byte(s) set in header"
+            ),
+        )
+        .throw()
+}
+
 /// AnyResponse `is_ssl()` shim (upstream lacks this accessor).
 #[inline]
 fn any_response_is_ssl(r: &uws::AnyResponse) -> bool {
@@ -762,10 +780,6 @@ impl NodeHTTPResponse {
         // detach and
         self.upgrade_context
             .with_mut(|c| c.preserve_web_socket_headers_if_needed());
-    }
-
-    pub(crate) fn get_ended(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.flags.get().contains(Flags::ENDED))
     }
 
     pub(crate) fn get_finished(&self, _global: &JSGlobalObject) -> JSValue {
@@ -1263,6 +1277,7 @@ impl NodeHTTPResponse {
                 let event_loop = vm.event_loop_ref();
 
                 event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
                     on_aborted,
                     global_this,
                     js_this,
@@ -1665,6 +1680,7 @@ impl NodeHTTPResponse {
                 let bytes = self.get_bytes(global_this, chunk);
 
                 event_loop.run_callback(
+                    bun_event_loop::ContextId::NONE,
                     callback,
                     global_this,
                     JSValue::UNDEFINED,
@@ -1793,6 +1809,7 @@ impl NodeHTTPResponse {
         js::on_writable_set_cached(this_value, global_this, JSValue::ZERO);
 
         vm.event_loop_ref().run_callback(
+            bun_event_loop::ContextId::NONE,
             on_writable,
             global_this,
             JSValue::UNDEFINED,
@@ -1975,20 +1992,17 @@ impl NodeHTTPResponse {
         if let Some(content_length) = strict_content_length {
             let bytes_written = self.bytes_written.get() + bytes.len();
 
-            if IS_END {
-                if bytes_written as u64 != content_length {
-                    return err_throw(
-                        global_object,
-                        ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                        "Content-Length mismatch",
-                    );
-                }
-            } else if bytes_written as u64 > content_length {
-                return err_throw(
+            let mismatch = if IS_END {
+                bytes_written as u64 != content_length
+            } else {
+                bytes_written as u64 > content_length
+            };
+            if mismatch {
+                return Err(err_throw_content_length_mismatch(
                     global_object,
-                    ErrorCode::ERR_HTTP_CONTENT_LENGTH_MISMATCH,
-                    "Content-Length mismatch",
-                );
+                    bytes_written,
+                    content_length,
+                ));
             }
             self.bytes_written.set(bytes_written);
         } else {

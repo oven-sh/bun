@@ -3,7 +3,7 @@
  *
  * This is where all the phases come together:
  *   - emit codegen → generated .cpp/.h/.rs
- *   - emit cargo build → libbun_runtime.a
+ *   - emit the Rust crate graph → libbun_runtime.a
  *   - resolve all deps → lib paths + include dirs
  *   - build PCH from root-pch.h (implicit deps: WebKit libs + all codegen)
  *   - compile all C/C++ with the PCH
@@ -15,21 +15,21 @@
  * `cfg.mode` controls what we actually produce:
  *   - "full": everything (default, local dev)
  *   - "cpp-only": compile to libbun.a, skip rust/link (CI upstream)
- *   - "rust-only": codegen + cargo → libbun_runtime.a (CI upstream)
+ *   - "rust-only": codegen + Rust crates → libbun_runtime.a (CI upstream)
  *   - "link-only": link pre-built artifacts (CI downstream)
- *   - "rust-and-link": cargo + link; downloads cpp-only's archive (CI)
+ *   - "rust-and-link": Rust crates + link; downloads cpp-only's archive (CI)
  *   - "archive-link": full build on one agent, linked from the cpp-only-style archive; uploads it + libbun_runtime.a (CI)
  *
  * The split modes are for CI where C++ and Rust build in parallel on
  * separate machines. rust-and-link folds the rust + link steps onto one
- * agent (cargo runs while cpp-only is still compiling elsewhere; the
+ * agent (the Rust crates compile while cpp-only is still compiling elsewhere; the
  * cpp archive is polled for and downloaded before ninja links).
  */
 
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
-import { binaryExpectations } from "./binary-expectations.ts";
+import { binaryExpectations, shimExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { ar, cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
@@ -40,11 +40,11 @@ import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
-import type { BuildNode, Ninja } from "./ninja.ts";
-import { emitRust, rustLibPath } from "./rust.ts";
+import type { Ninja } from "./ninja.ts";
+import { emitRust, rustLibPath, windowsShimPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
-import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
+import { computeDepLibs, resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
 
@@ -185,15 +185,16 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   n.blank();
 
   // ─── Step 1: codegen + rust ───
-  // Emitted before the deps: ninja breaks scheduling ties by emission order, and cargo is the critical path (see the compile pool in compile.ts).
+  // Emitted before the deps: ninja breaks scheduling ties by emission order, and the Rust crate chain is the critical path (see the compile pool in compile.ts).
   const codegen = emitCodegen(n, cfg, sources);
-  const depsByName = new Map<string, ResolvedDep>();
+  const depsByName = new Map<DepName, ResolvedDep>();
 
-  // One cargo invocation produces a single staticlib that occupies the
+  // The Rust crates produce a single staticlib that occupies the
   // same slot in the link as the C++ archive. Rust `include!`s codegen
   // `.rs` outputs (written as side effects of the generate-classes /
   // bundle-modules / generate-jssink edges), so the codegen output set
-  // is forwarded as implicit inputs to order it first.
+  // is forwarded to order the workspace crates after it (order-only; the
+  // crates' dep-info then tracks exactly the files they read).
   //
   // cpp-only: skip rust entirely (runs on a separate CI machine).
   let rustObjects: string[] = [];
@@ -201,8 +202,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // lol-html is a direct path dep of `bun_runtime`/`bun_bundler`
     // (`lol_html = { path = "vendor/lolhtml" }` in the workspace Cargo.toml),
     // not built into a separate archive — cargo needs `vendor/lolhtml/` on
-    // disk before it resolves the manifest. The `.ref` stamp's content is
-    // the pinned commit, so a bump re-invokes cargo.
+    // disk before it can plan the crate graph. The `.ref` stamp's content is
+    // the pinned commit, so a bump re-plans.
     const lolhtmlDep = resolveDep(n, cfg, lolhtml, depsByName);
     assert(lolhtmlDep !== null, "lolhtml resolveDep returned null — should never be skipped");
     depsByName.set(lolhtml.name, lolhtmlDep);
@@ -210,10 +211,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     assert(rustArgon2Dep !== null, "rust-argon2 resolveDep returned null — should never be skipped");
     depsByName.set(rustArgon2.name, rustArgon2Dep);
     rustObjects = emitRust(n, cfg, {
-      codegenInputs: codegen.rustInputs,
-      codegenOrderOnly: codegen.rustOrderOnly,
+      codegenOrderOnly: codegen.rustInputs,
       rustSources: sources.rust,
       vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
+      shimValidations: emitShimVerify(n, cfg),
     });
   }
 
@@ -561,7 +562,7 @@ function emitBkUpload(n: Ninja, cfg: Config, stamp: string, files: string[], { g
  * Needs:
  *   - lolhtml FETCHED (path dep of `bun_runtime`/`bun_bundler`) — not built separately
  *   - codegen (Rust `include!`s/`include_bytes!`s the same generated set)
- *   - cargo build → libbun_runtime.a
+ *   - Rust crates → libbun_runtime.a
  *
  * Does NOT need: any C dep built, any cxx, PCH, link. ninja only pulls
  * what's depended on — lolhtml's configure/build rules are emitted but
@@ -585,10 +586,10 @@ function emitRustOnly(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const codegen = emitCodegen(n, cfg, sources);
 
   const rustObjects = emitRust(n, cfg, {
-    codegenInputs: codegen.rustInputs,
-    codegenOrderOnly: codegen.rustOrderOnly,
+    codegenOrderOnly: codegen.rustInputs,
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
+    shimValidations: emitShimVerify(n, cfg),
   });
 
   n.phony("bun", rustObjects);
@@ -701,10 +702,10 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const codegen = emitCodegen(n, cfg, sources);
 
   const rustObjects = emitRust(n, cfg, {
-    codegenInputs: codegen.rustInputs,
-    codegenOrderOnly: codegen.rustOrderOnly,
+    codegenOrderOnly: codegen.rustInputs,
     rustSources: sources.rust,
     vendorStamps: [...lolhtmlDep.outputs, ...rustArgon2Dep.outputs],
+    shimValidations: emitShimVerify(n, cfg),
   });
 
   // ─── C++ archive + dep libs (downloaded, not built) ───
@@ -856,13 +857,14 @@ const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");
  * expectations are serialized now; the scan runs as a validation of the link.
  */
 /**
- * ASan and debug builds run the static scans but only warn: the expectations
- * describe the binaries that ship, and these builds are for finding bugs with,
- * so a difference from them must not cost the binary. Every other
- * configuration, release builds in CI above all, fails on a finding.
+ * Only CI fails on a finding. Local builds (`cfg.ci` unset) run the static
+ * scans and print the same report as warnings, so a toolchain or distro
+ * difference on a dev machine never costs the binary. In CI, ASan and debug
+ * builds also only warn: the expectations describe the binaries that ship, and
+ * those builds are for finding bugs with.
  */
 export function binaryChecksWarnOnly(cfg: Config): boolean {
-  return cfg.asan || cfg.debug;
+  return !cfg.ci || cfg.asan || cfg.debug;
 }
 
 function emitBinaryVerify(
@@ -902,6 +904,33 @@ function emitBinaryVerify(
 }
 
 /**
+ * The same scan for the Windows `.bin/` shim, against `shimExpectations()`. Returns the stamp, which the shim's
+ * rustc edge names as a validation: whenever the shim is relinked, it is checked.
+ */
+function emitShimVerify(n: Ninja, cfg: Config): string[] {
+  const tools = binaryVerifyTools(cfg);
+  if (!cfg.windows || tools === undefined) return [];
+  const name = "bun-shim-impl";
+  const exe = windowsShimPath(cfg);
+  const stamp = resolve(cfg.buildDir, `${name}.binary-verified`);
+  const spec = resolve(cfg.buildDir, `${name}.verify.json`);
+  writeIfChanged(spec, JSON.stringify({ name, exe, tools, expect: shimExpectations() }, null, 2) + "\n");
+  const q = (p: string) => quote(p, cfg.windows);
+  n.rule("shim_verify", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${name} --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)}${binaryChecksWarnOnly(cfg) ? " --warn-only" : ""} binary $spec`,
+    description: `check ${name} imports, size, hardening`,
+  });
+  n.build({
+    outputs: [stamp],
+    rule: "shim_verify",
+    inputs: [exe],
+    implicitInputs: [spec, verifyBinaryPath, resolve(import.meta.dirname, "binary-expectations.ts")],
+    vars: { spec: q(spec) },
+  });
+  return [stamp];
+}
+
+/**
  * A symbol with two strong external definitions among the link inputs: the
  * linker takes one silently when the other is an archive member it never
  * loads. verify-binary.ts scans every object and archive on the link line;
@@ -918,16 +947,15 @@ function emitDuplicateSymbolCheck(
   if (stamp === undefined) return [];
   const report = resolve(cfg.buildDir, `${exeName}.duplicate-symbols.txt`);
   const q = (p: string) => quote(p, cfg.windows);
-  // While rustc's LLVM is ahead of clang's (the rust-lld swap in config.ts),
-  // libbun_runtime's bitcode is unreadable by clang's llvm-nm/objdump; use the
-  // ones rustup ships beside rust-lld (component llvm-tools). If they are
-  // missing the scan reports every unreadable input and fails, with a hint.
-  const rustLldInUse = cfg.rustLld !== undefined && dirname(cfg.ld) === dirname(cfg.rustLld);
-  const rustBin = rustLldInUse
-    ? basename(dirname(cfg.rustLld!)) === "gcc-ld"
-      ? dirname(dirname(cfg.rustLld!))
-      : dirname(cfg.rustLld!)
-    : undefined;
+  // While rustc's LLVM is ahead of clang's, libbun_runtime carries bitcode clang's llvm-nm/objdump can't
+  // read — whole bitcode objects under cross-language LTO, and even without it the `__LLVM,__bitcode`
+  // section rustc embeds in compiler_builtins on Mach-O. Use the tools rustup ships for rustc's LLVM
+  // (component llvm-tools, `<sysroot>/lib/rustlib/<host>/bin`); they read clang's older output too. If
+  // they are missing the scan reports every unreadable input and fails, with a hint.
+  const rustBin =
+    cfg.rustLlvmNewer && cfg.rustSysroot !== undefined && cfg.rustHostTriple !== undefined
+      ? join(cfg.rustSysroot, "lib", "rustlib", cfg.rustHostTriple, "bin")
+      : undefined;
   const rustTool = (name: string, fallback: string): string => {
     const p = rustBin !== undefined ? join(rustBin, name + cfg.host.exeSuffix) : undefined;
     return p !== undefined && existsSync(p) ? p : fallback;
@@ -1014,7 +1042,7 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
   // follows the HOST shell (cmd natively, cp when cross-compiling).
   if (cfg.windows) {
     // Copy as-is. /OPT:REF already applied at link.
-    n.rule("strip", {
+    n.rule("copy_exe", {
       command: cfg.host.os === "windows" ? `cmd /c "copy /Y $in $out"` : `cp $in $out`,
       description: "copy $out (windows: no strip)",
     });
@@ -1029,15 +1057,14 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
     });
   }
 
-  const node: BuildNode = {
-    outputs: [out],
-    rule: "strip",
-    inputs: [inputExe],
-    vars: cfg.windows ? {} : { stripflags: stripflags.join(" ") },
-  };
   const postlinkInputs = machoPostlinkImplicitInputs(cfg);
-  if (postlinkInputs.length > 0) node.implicitInputs = postlinkInputs;
-  n.build(node);
+  const node = {
+    outputs: [out],
+    inputs: [inputExe],
+    ...(postlinkInputs.length > 0 ? { implicitInputs: postlinkInputs } : {}),
+  };
+  if (cfg.windows) n.build({ ...node, rule: "copy_exe" });
+  else n.build({ ...node, rule: "strip", vars: { stripflags: stripflags.join(" ") } });
 
   return out;
 }
@@ -1303,7 +1330,8 @@ export function validateBunConfig(cfg: Config): void {
 
   // --local-deps names must match a dep — a typo would otherwise silently
   // build the pinned tarball while the banner claims `local:<typo>`.
-  const depsByName = new Map(allDeps.map(d => [d.name, d]));
+  // Keyed by string: these names are the user's.
+  const depsByName = new Map<string, Dependency>(allDeps.map(d => [d.name, d]));
   for (const [name, path] of Object.entries(cfg.localDeps)) {
     const dep = depsByName.get(name);
     assert(dep !== undefined, `--local-deps: unknown dep '${name}'`, {

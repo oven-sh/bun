@@ -1,7 +1,7 @@
 import { sleep } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import net from "node:net";
 import { Readable } from "node:stream";
@@ -415,10 +415,11 @@ test.concurrent(
 //
 // The callbacks are now armed before the stream is attached, so markDone()
 // disarming them is final and a stop() from inside pull() aborts the sink.
-// The remaining tests pin down what follows from markDone() being final: while
-// pull() is still parked after the response completed, nothing tells the
-// request when its socket goes away, so both a later stop() and the Request
-// based APIs have to cope with that on their own.
+// The remaining tests pin down what follows from markDone() being final:
+// nothing tells the request when its socket goes away once the response has
+// completed, so the request is released when the controller closes, also
+// while pull() is still parked, and a later stop() and the Request based APIs
+// find it gone.
 describe("direct stream whose pull() runs while its Response is being attached", () => {
   // Raw socket so the test decides when the connection goes away (it stays
   // open after the response until the test or server.stop(true) closes it).
@@ -440,14 +441,15 @@ describe("direct stream whose pull() runs while its Response is being attached",
     const responseBody = () => responded.promise;
   `;
 
-  // pull() parks after close(): the response completes inside the dispatch,
-  // the request itself stays pending until the gate opens. The microtask yield
-  // before close() is what keeps it pending: the Response is attached with
-  // pull() still in flight, so the request waits for pull() to settle. A
-  // close() before the first yield completes the request on the spot, the
-  // same as end().
+  // pull() parks after close(): the response completes inside the dispatch and
+  // the request is released with it, while pull() stays in flight until the
+  // gate opens. The microtask yield before close() attaches the Response with
+  // pull() still in flight, so the close is what tells the request, not
+  // pull() settling. A close() before the first yield completes the request on
+  // the spot, the same as end().
   const closeThenPark = `
     const gate = Promise.withResolvers();
+    const pulled = Promise.withResolvers();
     let request;
     const server = Bun.serve({
       port: 0,
@@ -464,6 +466,7 @@ describe("direct stream whose pull() runs while its Response is being attached",
               await Promise.resolve();
               controller.close();
               await gate.promise;
+              pulled.resolve();
             },
           }),
         );
@@ -487,48 +490,50 @@ describe("direct stream whose pull() runs while its Response is being attached",
       ${closeThenPark}
       ${client}
       const body = await responseBody();
-      gate.resolve();
-      // The parked pull() settles and the request is released; the keep-alive
+      const pendingWhileParked = server.pendingRequests;
+      // pull() settles after the request was released; the keep-alive
       // connection is still open.
-      while (server.pendingRequests > 0) await Bun.sleep(0);
+      gate.resolve();
+      await pulled.promise;
       server.stop(true);
       await closed;
-      console.log(JSON.stringify({ body, pendingRequests: server.pendingRequests }));
+      console.log(JSON.stringify({ body, pendingWhileParked, pendingRequests: server.pendingRequests }));
     `);
     expect(result).toEqual({
-      stdout: JSON.stringify({ body: "seed", pendingRequests: 0 }) + "\n",
+      stdout: JSON.stringify({ body: "seed", pendingWhileParked: 0, pendingRequests: 0 }) + "\n",
       stderr: "",
       exitCode: 0,
     });
   });
 
   // Companion to the above: once the response has completed, closing the
-  // connection no longer notifies the request, so a server.stop(true) issued
-  // while pull() is still parked must not keep the request (and so the stop()
-  // promise) pending forever once pull() settles.
-  test.concurrent("stop(true) after the response completed still releases the parked request", async () => {
+  // connection no longer notifies the request, so a request that waited for
+  // the parked pull() kept a server.stop(true) pending for as long as pull()
+  // did. The gate is shut while the stop is sampled: it must not wait for it.
+  test.concurrent("stop(true) after the response completed does not wait for the parked pull()", async () => {
     const result = await run(`
       ${closeThenPark}
       ${client}
       const body = await responseBody();
-      const stopped = server.stop(true);
-      await closed;
       const pendingWhileParked = server.pendingRequests;
+      let stopped = false;
+      server.stop(true).then(() => (stopped = true));
+      await closed;
+      console.log(JSON.stringify({ body, pendingWhileParked, stopped, pendingRequests: server.pendingRequests }));
+      // Only now: a stop that does wait for pull() can then finish and let the process exit.
       gate.resolve();
-      await stopped;
-      console.log(JSON.stringify({ body, pendingWhileParked, pendingRequests: server.pendingRequests }));
     `);
     expect(result).toEqual({
-      stdout: JSON.stringify({ body: "seed", pendingWhileParked: 1, pendingRequests: 0 }) + "\n",
+      stdout: JSON.stringify({ body: "seed", pendingWhileParked: 0, stopped: true, pendingRequests: 0 }) + "\n",
       stderr: "",
       exitCode: 0,
     });
   });
 
   // Same window, reached through the Request object: the client is gone and
-  // uSockets has freed the socket, but pull() still holds the request, so the
-  // APIs that look at its socket must treat it as gone instead of reading it
-  // (heap-use-after-free in us_get_remote_address_info <- requestIP).
+  // uSockets has freed the socket while pull() is still parked, so the APIs
+  // that look at the request's socket must treat it as gone instead of reading
+  // it (heap-use-after-free in us_get_remote_address_info <- requestIP).
   test.concurrent("requestIP()/timeout() after the response completed and the client left", async () => {
     const result = await run(`
       ${closeThenPark}
@@ -544,12 +549,12 @@ describe("direct stream whose pull() runs while its Response is being attached",
       server.timeout(request, 1);
       const pendingWhileParked = server.pendingRequests;
       gate.resolve();
-      while (server.pendingRequests > 0) await Bun.sleep(0);
+      await pulled.promise;
       server.stop(true);
       console.log(JSON.stringify({ body, probe, requestIP, pendingWhileParked }));
     `);
     expect(result).toEqual({
-      stdout: JSON.stringify({ body: "seed", probe: "probe", requestIP: null, pendingWhileParked: 1 }) + "\n",
+      stdout: JSON.stringify({ body: "seed", probe: "probe", requestIP: null, pendingWhileParked: 0 }) + "\n",
       stderr: "",
       exitCode: 0,
     });
@@ -642,6 +647,49 @@ describe("direct stream whose pull() runs while its Response is being attached",
     },
   );
 
+  // A pull() that returns with the stream still open hands the request a
+  // promise that settles when the controller closes. With a sync handler the
+  // stop below runs in the microtask drain that follows the attach, before the
+  // request has subscribed to that promise: the abort rejects it with nothing
+  // listening yet, which was reported as an unhandled rejection (exit code 1).
+  test.concurrent("server.stop(true) from a microtask of a sync pull() that left the stream open", async () => {
+    const result = await run(`
+      const events = [];
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        idleTimeout: 0,
+        fetch() {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              pull(controller) {
+                controller.write("seed");
+                queueMicrotask(() => {
+                  events.push("stop(true)");
+                  server.stop(true);
+                  events.push("stop(true) returned");
+                });
+              },
+              cancel() {
+                events.push("cancel()");
+              },
+            }),
+          );
+        },
+      });
+      ${client}
+      await closed;
+      await Bun.sleep(0);
+      console.log(JSON.stringify({ events, pendingRequests: server.pendingRequests }));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify({ events: ["stop(true)", "cancel()", "stop(true) returned"], pendingRequests: 0 }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // end() completes the response, so uWS has already dropped the abort
   // callback when the stop closes the socket: nothing aborts the request, and
   // it has to be released the way a completed response normally is. The
@@ -657,6 +705,202 @@ describe("direct stream whose pull() runs while its Response is being attached",
       });
     },
   );
+});
+
+// The request ends when the controller closes, not when pull() returns. It
+// used to wait for pull(): a pull() that kept running after its own
+// end()/close() kept the request counted for as long, so pendingRequests
+// climbed and a graceful stop() never resolved. A close from a later microtask
+// lands inside the microtask drain that follows the attach of a sync handler's
+// Response; one from a later task lands once the request waits on the stream.
+describe("a pull() that outlives its own end() does not hold the request", () => {
+  const never = () => new Promise<never>(() => {});
+  const later = () => new Promise<void>(r => setImmediate(r));
+  const finishers: Record<string, (c: any) => Promise<void>> = {
+    "end() from a later microtask": async c => (await Promise.resolve(), void c.end()),
+    "end() from a later task": async c => (await later(), void c.end()),
+    "close() from a later task": async c => (await later(), void c.close()),
+  };
+  const handlers: Record<string, (respond: () => Response) => () => Response | Promise<Response>> = {
+    "fetch()": respond => respond,
+    "async fetch()": respond => async () => (await later(), respond()),
+  };
+  const cells = Object.keys(finishers).flatMap(finisher => Object.keys(handlers).map(handler => [finisher, handler]));
+
+  test.concurrent.each(cells)("%s, %s", async (finisher, handler) => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: handlers[handler](
+        () =>
+          new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(c: any) {
+                c.write("streamed");
+                await finishers[finisher](c);
+                await never();
+              },
+            } as any),
+          ),
+      ),
+    });
+
+    const bodies: string[] = [];
+    for (let i = 0; i < 3; i++) bodies.push(await (await fetch(server.url)).text());
+    expect({ bodies, pendingRequests: server.pendingRequests }).toEqual({
+      bodies: ["streamed", "streamed", "streamed"],
+      pendingRequests: 0,
+    });
+    // A request that never ends keeps a graceful stop pending.
+    await server.stop();
+  });
+
+  // The late pull() finds its controller closed and its request gone.
+  test.concurrent("pull() that returns after the request was released", async () => {
+    const gate = Promise.withResolvers<void>();
+    const lateWrite = Promise.withResolvers<string>();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(c: any) {
+              c.write("streamed");
+              await later();
+              c.end();
+              await gate.promise;
+              try {
+                lateWrite.resolve(`returned ${c.write("late")}`);
+              } catch {
+                lateWrite.resolve("threw");
+              }
+            },
+          } as any),
+        ),
+    });
+
+    const body = await (await fetch(server.url)).text();
+    const pendingWhileParked = server.pendingRequests;
+    gate.resolve();
+    expect({ body, pendingWhileParked, lateWrite: await lateWrite.promise }).toEqual({
+      body: "streamed",
+      pendingWhileParked: 0,
+      lateWrite: "threw",
+    });
+    expect(await (await fetch(server.url)).text()).toBe("streamed");
+    await server.stop();
+  });
+
+  // close(error) fails the body: the request closes the connection as
+  // incomplete when it hears of it, which also used to wait for pull().
+  test.concurrent(
+    "close(error), then pull() never returns: the response fails and the request is released",
+    async () => {
+      await using server = Bun.serve({
+        port: 0,
+        development: false,
+        error: () => new Response("error()", { status: 500 }),
+        fetch: () =>
+          new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(c: any) {
+                c.write("partial");
+                await c.flush();
+                await later();
+                c.close(new Error("source failed"));
+                await never();
+              },
+            } as any),
+          ),
+      });
+
+      const failed = await fetch(server.url)
+        .then(res => res.text())
+        .then(
+          () => false,
+          () => true,
+        );
+      expect({ failed, pendingRequests: server.pendingRequests }).toEqual({ failed: true, pendingRequests: 0 });
+      await server.stop();
+    },
+  );
+
+  // One buffered write below the high water mark and an end() in the same
+  // tick make a single tryEnd() of the whole body. The client is not reading,
+  // so most of it stays unsent and end() parks on the drain. The request then
+  // waits for that drain, and only for it.
+  describe("end() parked on transport backpressure", () => {
+    const payload = Buffer.alloc(32 * 1024 * 1024, "x");
+
+    // Windows takes the first write of a response whole, whatever its size
+    // (250 MB to a client that is not reading), so one tryEnd() never parks.
+    test.skipIf(isWindows).each([
+      ["in the first tick of pull()", false],
+      ["from a later task", true],
+    ] as const)("%s", async (_when, fromLaterTask) => {
+      const ended = Promise.withResolvers<boolean>();
+      await using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        fetch: () =>
+          new Response(
+            new ReadableStream(
+              {
+                type: "direct",
+                async pull(c: any) {
+                  if (fromLaterTask) await later();
+                  c.write(payload);
+                  ended.resolve(c.end() instanceof Promise);
+                  await never();
+                },
+              } as any,
+              { highWaterMark: payload.length + 1 },
+            ),
+          ),
+      });
+
+      const socket = net.connect(server.port, "127.0.0.1");
+      const received = Promise.withResolvers<number>();
+      let head = "";
+      let bodyBytes = -1;
+      socket.on("error", received.reject);
+      socket.on("close", () => received.reject(new Error("closed before the whole body arrived")));
+      socket.on("data", chunk => {
+        if (bodyBytes < 0) {
+          head += chunk.toString("latin1");
+          const headEnd = head.indexOf("\r\n\r\n");
+          if (headEnd < 0) return;
+          bodyBytes = Buffer.byteLength(head, "latin1") - (headEnd + 4);
+        } else {
+          bodyBytes += chunk.length;
+        }
+        if (bodyBytes >= payload.length) received.resolve(bodyBytes);
+      });
+      socket.on("connect", () => {
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        // Stop reading so the response backs up into the server's socket.
+        socket.pause();
+      });
+      try {
+        const parked = await ended.promise;
+        const pendingWhileParked = server.pendingRequests;
+        socket.resume();
+        const length = await received.promise;
+        // The drain that completed the response and the release of its request share one event loop turn; the client sees the last bytes in a later one.
+        expect({ parked, pendingWhileParked, length, pendingRequests: server.pendingRequests }).toEqual({
+          parked: true,
+          pendingWhileParked: 1,
+          length: payload.length,
+          pendingRequests: 0,
+        });
+      } finally {
+        socket.destroy();
+      }
+      await server.stop();
+    });
+  });
 });
 
 // The HTTP/3 sibling must NOT take the ended_response short-circuit.

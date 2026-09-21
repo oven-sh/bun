@@ -245,11 +245,9 @@ pub(crate) enum PartState {
 }
 
 pub(crate) struct UploadPart {
-    /// Raw owned slice; backing allocation length is `allocated_size` (may exceed `data.len()`).
-    /// Freed via `free_allocated_slice`. Default is a static empty slice.
-    pub(crate) data: Cell<*const [u8]>,
+    /// The part's bytes, owned from `get_create_part` until `free_data`.
+    pub(crate) data: JsCell<Vec<u8>>,
     pub ctx: bun_ptr::BackRef<MultiPartUpload, bun_ptr::Mut>, // BACKREF (LIFETIMES.tsv)
-    pub(crate) allocated_size: Cell<usize>,
     pub(crate) state: Cell<PartState>,
     pub(crate) part_number: Cell<u16>, // max is 10,000
     pub(crate) retry: Cell<u8>,        // auto retry, decrement until 0 and fail after this
@@ -262,25 +260,16 @@ pub(crate) struct UploadPartResult {
 }
 
 impl UploadPart {
-    fn free_allocated_slice(&self) {
-        let allocated_size = self.allocated_size.get();
-        if allocated_size > 0 {
-            // SAFETY: `data.ptr` was allocated by the global allocator with capacity == allocated_size
-            // (either via `to_vec().into_boxed_slice()` where len==cap, or by taking ownership of
-            // StreamBuffer's backing allocation). Reconstruct and drop.
-            unsafe {
-                let ptr = (*self.data.get()).as_ptr().cast_mut();
-                drop(Vec::from_raw_parts(ptr, allocated_size, allocated_size));
-            }
-        }
-        self.data.set(std::ptr::from_ref::<[u8]>(b"" as &[u8]));
-        self.allocated_size.set(0);
+    /// Release the bytes. A part that has sent them does not need them again.
+    fn free_data(&self) {
+        self.data.set(Vec::new());
     }
 
+    /// The request `perform` hands these bytes to copies them, and can fail the upload before
+    /// it returns, which releases them. So this borrow ends with the statement that takes it.
     #[inline]
     fn data(&self) -> &[u8] {
-        // SAFETY: data is either a static empty slice or a live heap slice owned by this part
-        unsafe { &*self.data.get() }
+        self.data.get()
     }
 
     fn on_part_response(result: S3PartResult, this: *mut c_void) -> bun_jsc::JsResult<()> {
@@ -293,7 +282,7 @@ impl UploadPart {
 
         if this.state.get() == PartState::Canceled || ctx.state.get() == State::Finished {
             scoped_log!(S3MultiPartUpload, "onPartResponse {} canceled", part_number);
-            this.free_allocated_slice();
+            this.free_data();
             MultiPartUpload::deref_(ctx_ptr);
             return Ok(());
         }
@@ -311,7 +300,7 @@ impl UploadPart {
                 } else {
                     scoped_log!(S3MultiPartUpload, "onPartResponse {} failed", part_number);
                     this.state.set(PartState::NotAssigned);
-                    this.free_allocated_slice();
+                    this.free_data();
                     // The ctx deref must run after fail():
                     let r = ctx.fail(err);
                     MultiPartUpload::deref_(ctx_ptr);
@@ -321,7 +310,7 @@ impl UploadPart {
             S3PartResult::Etag(etag) => {
                 scoped_log!(S3MultiPartUpload, "onPartResponse {} success", part_number);
                 let sent = this.data().len();
-                this.free_allocated_slice();
+                this.free_data();
                 // we will need to order this
                 ctx.multipart_etags.with_mut(|etags| {
                     etags.push(UploadPartResult {
@@ -390,7 +379,7 @@ impl UploadPart {
 
         match state {
             PartState::Pending => {
-                self.free_allocated_slice();
+                self.free_data();
             }
             // if is not pending we will free later or is already freed
             _ => {}
@@ -401,7 +390,7 @@ impl UploadPart {
 impl Drop for MultiPartUpload {
     fn drop(&mut self) {
         scoped_log!(S3MultiPartUpload, "deinit");
-        // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
+        // queue: Box<[UploadPart]> — dropped automatically, with any `data` a part still owns
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
         let _ = self.vm;
@@ -479,12 +468,9 @@ impl MultiPartUpload {
     }
 
     /// This is the only place we allocate the queue or the parts, this is responsible for the flow of parts and the max allowed concurrency
-    fn get_create_part(
-        &self,
-        chunk: &[u8],
-        allocated_size: usize,
-        needs_clone: bool,
-    ) -> Option<&UploadPart> {
+    ///
+    /// `take_data` runs only when the queue has a slot: the part owns the bytes it returns.
+    fn get_create_part(&self, take_data: impl FnOnce() -> Vec<u8>) -> Option<&UploadPart> {
         let mut available = self.available.get();
         let Some(index) = available.find_first_set() else {
             // this means that the queue is full and we cannot flush it
@@ -507,8 +493,7 @@ impl MultiPartUpload {
             // zero set just in case
             for _ in 0..queue_size {
                 queue.push(UploadPart {
-                    data: Cell::new(std::ptr::from_ref::<[u8]>(b"" as &[u8])),
-                    allocated_size: Cell::new(0),
+                    data: JsCell::new(Vec::new()),
                     part_number: Cell::new(0),
                     ctx: self_ref,
                     index: Cell::new(0),
@@ -518,21 +503,12 @@ impl MultiPartUpload {
             }
             self.queue.set(Some(queue.into_boxed_slice()));
         }
-        let (data, allocated_len): (*const [u8], usize) = if needs_clone {
-            let owned = Box::<[u8]>::from(chunk);
-            let len = owned.len();
-            (bun_core::heap::into_raw(owned).cast_const(), len)
-        } else {
-            (std::ptr::from_ref::<[u8]>(chunk), allocated_size)
-        };
-
         let part_number = self.current_part_number.get();
         self.current_part_number.set(part_number + 1);
 
         let queue = self.queue.get().as_deref().expect("queue allocated above");
         let queue_item = &queue[index];
-        queue_item.data.set(data);
-        queue_item.allocated_size.set(allocated_len);
+        queue_item.data.set(take_data());
         queue_item.part_number.set(part_number);
         queue_item.index.set(index as u8); // @truncate
         queue_item.retry.set(self.options.get().retry);
@@ -888,13 +864,10 @@ impl MultiPartUpload {
         )
     }
 
-    fn enqueue_part(
-        &self,
-        chunk: &[u8],
-        allocated_size: usize,
-        needs_clone: bool,
-    ) -> bun_jsc::JsResult<bool> {
-        let Some(part) = self.get_create_part(chunk, allocated_size, needs_clone) else {
+    /// `Ok(false)`: the queue is full and `take_data` did not run. Otherwise a part owns the
+    /// bytes, also when starting its request failed.
+    fn enqueue_part(&self, take_data: impl FnOnce() -> Vec<u8>) -> bun_jsc::JsResult<bool> {
+        let Some(part) = self.get_create_part(take_data) else {
             return Ok(false);
         };
 
@@ -958,42 +931,26 @@ impl MultiPartUpload {
             }
             // if is one big chunk we can pass ownership and avoid dupe
             if self.buffered.get().cursor == 0 && self.buffered.get().size() == len {
-                let owned = self.buffered.replace(StreamBuffer::default());
-                // we need to know the allocated size to free the memory later
-                let allocated_size = owned.memory_cost();
-                let slice_len = owned.slice().len();
-
                 // we dont care about the result because we are sending everything
-                if self.enqueue_part(owned.slice(), allocated_size, false)? {
+                if self.enqueue_part(|| self.buffered.take().list)? {
                     scoped_log!(
                         S3MultiPartUpload,
                         "processMultiPart {} {} full buffer enqueued",
                         BStr::new(&self.path),
-                        slice_len
+                        len
                     );
-                    let _ = core::mem::ManuallyDrop::new(owned);
-                    return Ok(());
+                } else {
+                    scoped_log!(
+                        S3MultiPartUpload,
+                        "processMultiPart {} {} queue full",
+                        BStr::new(&self.path),
+                        len
+                    );
                 }
-                let appended = self.buffered.replace(owned);
-                if appended.is_not_empty() {
-                    self.buffered
-                        .with_mut(|b| b.write(appended.slice()).map(|_| ()))
-                        .unwrap_or(());
-                }
-                scoped_log!(
-                    S3MultiPartUpload,
-                    "processMultiPart {} {} queue full",
-                    BStr::new(&self.path),
-                    slice_len
-                );
-
                 return Ok(());
             }
 
-            let slice_ptr = std::ptr::from_ref::<[u8]>(&self.buffered.get().slice()[..len]);
-            // allocated size is the slice len because we dupe the buffer
-            // SAFETY: slice_ptr points at self.buffered's storage which is not mutated until after enqueue_part dupes it
-            if self.enqueue_part(unsafe { &*slice_ptr }, len, true)? {
+            if self.enqueue_part(|| self.buffered.get().slice()[..len].to_vec())? {
                 scoped_log!(
                     S3MultiPartUpload,
                     "processMultiPart {} {} slice enqueued",

@@ -1,15 +1,15 @@
-/// <reference types="../../build/debug/codegen/generated.d.ts" />
-/// <reference types="../../build/debug/codegen/ErrorCode.d.ts" />
-/// <reference types="../../build/debug/codegen/ZigGeneratedClasses.d.ts" />
-/// <reference types="../../build/debug/codegen/WebCoreJSBuiltins.d.ts" />
+/// <reference types="../../build/types/generated.d.ts" />
+/// <reference types="../../build/types/ErrorCode.d.ts" />
+/// <reference types="../../build/types/ZigGeneratedClasses.d.ts" />
+/// <reference types="../../build/types/WebCoreJSBuiltins.d.ts" />
 
 // Typedefs for JSC intrinsics. Instead of @, we use $
 type TODO = any;
 
 declare module "bun" {
   interface Socket {
-    $write(data: string | BufferSource, byteOffset?: number, byteLength?: number): number;
-    $end(): void;
+    $write(data: string | BufferSource, encoding?: string): boolean | number;
+    $end(data?: string | BufferSource, encoding?: string): boolean;
   }
 }
 
@@ -58,11 +58,28 @@ declare var $alwaysInline;
  * Overrides **
  */
 
-interface ReadableStream<R = any> extends _ReadableStream<R> {}
+interface ReadableStream<R = any> extends _ReadableStream<R> {
+  /** The native source behind a Bun-created stream: `undefined` when there is none, `-1` once it is detached. */
+  $bunNativePtr: TODO | undefined;
+}
 
 declare var ReadableStream: {
   prototype: ReadableStream;
-  new (): ReadableStream;
+  new (
+    underlyingSource: import("node:stream/web").UnderlyingByteSource,
+    strategy?: { highWaterMark?: number },
+  ): ReadableStream<Uint8Array>;
+  new <R = any>(
+    underlyingSource?: Omit<Bun.UnderlyingSource<R>, "type"> & { type?: "bytes" | undefined },
+    strategy?: QueuingStrategy<R>,
+  ): ReadableStream<R>;
+  new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+};
+
+// The public constructor only accepts a known `Bun.Encoding`; builtins pass arbitrary labels and catch the throw.
+declare var TextDecoder: {
+  prototype: TextDecoder;
+  new (label?: string, options?: { __proto__?: null; fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
 };
 
 interface Console {
@@ -131,6 +148,14 @@ declare function $rejectPromiseWithFirstResolvingFunctionCallCheck(promise: Prom
 
 declare function $loadEsmIntoCjs(...args: any[]): TODO;
 declare function $getProxyInternalField(): TODO;
+// Helper types for the `$isObject` / `$isCallable` / `$isArray` guards. Each guard has two overloads: a
+// generic one that narrows the argument's own type and rejects `any`, and a plain one for `any`. A single generic
+// predicate evaluates to `any` for an `any` argument, which TypeScript narrows to `never` in the false branch.
+type $NotAny<T> = 0 extends 1 & T ? never : unknown;
+/** Keeps the members of `T` that can be a `U`. */
+type $GuardNarrow<T, U> = T extends U ? T : U extends T ? U : never;
+type $AnyObject = Record<PropertyKey, any>;
+type $AnyCallable = ((...args: any[]) => any) & $AnyObject;
 /**
  * True for object-like `JSCell`s. That is, this is roughly equivalent to this
  * JS code:
@@ -144,10 +169,14 @@ declare function $getProxyInternalField(): TODO;
  * @see [JSCell.h](https://github.com/oven-sh/WebKit/blob/main/Source/JavaScriptCore/runtime/JSCell.h)
  * @see [JIT implementation](https://github.com/oven-sh/WebKit/blob/433f7598bf3537a295d0af5ffd83b9a307abec4e/Source/JavaScriptCore/jit/JITOpcodes.cpp#L311)
  */
-declare function $isObject(obj: unknown): obj is object;
-declare function $isArray<T>(obj: T): obj is Extract<T, any[]> | Extract<T, readonly any[]>;
-declare function $isArray(obj: unknown): obj is any[];
-declare function $isCallable(fn: unknown): fn is CallableFunction;
+declare function $isObject<T>(obj: T & $NotAny<T>): obj is $GuardNarrow<T, object> & $NotAny<T>;
+declare function $isObject(obj: any): obj is $AnyObject;
+declare function $isArray<T>(
+  obj: T & $NotAny<T>,
+): obj is ([Extract<T, readonly any[]>] extends [never] ? T & any[] : Extract<T, readonly any[]>) & $NotAny<T>;
+declare function $isArray(obj: any): obj is any[];
+declare function $isCallable<T>(fn: T & $NotAny<T>): fn is $GuardNarrow<T, CallableFunction> & $NotAny<T>;
+declare function $isCallable(fn: any): fn is $AnyCallable;
 declare function $isJSArray(obj: unknown): obj is any[];
 declare function $isProxyObject(obj: unknown): obj is Proxy;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;
@@ -202,7 +231,7 @@ declare const $processBindingConstants: {
   crypto: typeof import("crypto").constants;
   zlib: typeof import("zlib").constants;
 };
-declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined]>;
+declare const $asyncContext: InternalFieldObject<[import("./node/async_hooks").Frame | undefined]>;
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
 
@@ -385,9 +414,12 @@ interface Map {
   $get: Map["get"];
 }
 
+declare var $Array: ArrayConstructor;
 declare var $Buffer: {
+  byteLength: typeof Buffer.byteLength;
   new (array: Array): Buffer;
   new (arrayBuffer: ArrayBuffer, byteOffset?: number, length?: number): Buffer;
+  new (view: ArrayBufferView, byteOffset?: number, length?: number): Buffer;
   new (buffer: Buffer): Buffer;
   new (size: number): Buffer;
   new (string: string, encoding?: BufferEncoding): Buffer;
@@ -397,7 +429,7 @@ declare interface Error {
   code?: string;
 }
 
-declare function $makeAbortError(message?: string, options?: { cause: Error }): Error;
+declare function $makeAbortError(message?: string, options?: ErrorOptions): Error;
 
 /**
  * -- Error Codes with manual messages
@@ -405,6 +437,7 @@ declare function $makeAbortError(message?: string, options?: { cause: Error }): 
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedType: string, actualValue: any): TypeError;
 declare function $ERR_INVALID_ARG_TYPE(argName: string, expectedTypes: string[], actualValue: any): TypeError;
 declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;
+declare function $ERR_INVALID_ARG_VALUE_RangeError(name: string, value: any, reason?: string): RangeError;
 declare function $ERR_UNKNOWN_ENCODING(enc: string): TypeError;
 declare function $ERR_STREAM_DESTROYED(method: string): Error;
 declare function $ERR_METHOD_NOT_IMPLEMENTED(method: string): Error;
@@ -479,6 +512,7 @@ declare function $ERR_SCRIPT_EXECUTION_INTERRUPTED(): Error;
 declare function $ERR_MULTIPLE_CALLBACK(): Error;
 declare function $ERR_STREAM_PREMATURE_CLOSE(): Error;
 declare function $ERR_STREAM_NULL_VALUES(): TypeError;
+declare function $ERR_STREAM_ITER_MISSING_FLAG(): TypeError;
 declare function $ERR_STREAM_CANNOT_PIPE(): Error;
 declare function $ERR_STREAM_WRITE_AFTER_END(): Error;
 declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
@@ -489,6 +523,8 @@ declare function $ERR_SERVER_ALREADY_LISTEN(): Error;
 declare function $ERR_SOCKET_CLOSED(): Error;
 declare function $ERR_SOCKET_CLOSED_BEFORE_CONNECTION(): Error;
 declare function $ERR_TLS_RENEGOTIATION_DISABLED(): Error;
+declare function $ERR_TLS_RENEGOTIATION_UNSUPPORTED(): Error;
+declare function $ERR_TLS_INVALID_STATE(): Error;
 declare function $ERR_UNAVAILABLE_DURING_EXIT(): Error;
 declare function $ERR_TLS_CERT_ALTNAME_FORMAT(): SyntaxError;
 declare function $ERR_TLS_SNI_FROM_SERVER(): Error;
@@ -554,6 +590,10 @@ declare function $min(a: number, b: number): number;
 interface Map<K, V> {
   $get: typeof Map.prototype.get;
   $set: typeof Map.prototype.set;
+}
+
+interface Set<T> {
+  $forEach: Set<T>["forEach"];
 }
 
 interface ObjectConstructor {

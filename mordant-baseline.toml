@@ -146,7 +146,6 @@
 "generic_body_not_generic:src/runtime/cli/multi_run.rs" = 1
 "generic_body_not_generic:src/runtime/cli/pack_command.rs" = 1
 "generic_body_not_generic:src/runtime/cli/pm_diff_normalize.rs" = 1
-"generic_body_not_generic:src/runtime/cli/publish_command.rs" = 2
 "generic_body_not_generic:src/runtime/cli/test_command.rs" = 3
 "generic_body_not_generic:src/runtime/jsc_hooks.rs" = 1
 "generic_body_not_generic:src/runtime/node/assert/myers_diff.rs" = 1

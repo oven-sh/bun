@@ -6450,3 +6450,28 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+it("originSet is undefined on a destroyed TLS session that never read it", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, onListening);
+  await listening;
+  try {
+    const client = http2.connect(`https://localhost:${server.address().port}`, TLS_OPTIONS);
+    const { promise: connected, resolve: onConnect, reject } = Promise.withResolvers();
+    client.on("error", reject);
+    client.on("connect", onConnect);
+    await connected;
+    const { promise: closed, resolve: onClose } = Promise.withResolvers();
+    client.on("close", onClose);
+    client.destroy();
+    await closed;
+    expect({ encrypted: client.encrypted, destroyed: client.destroyed, originSet: client.originSet }).toEqual({
+      encrypted: true,
+      destroyed: true,
+      originSet: undefined,
+    });
+  } finally {
+    server.close();
+  }
+});

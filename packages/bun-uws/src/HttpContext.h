@@ -1007,6 +1007,11 @@ private:
         /* Paused by onData when it parked them; it pauses again if the replayed
          * dispatch leaves a response pending with more requests behind it. */
         reinterpret_cast<AsyncSocket<SSL> *>(s)->resume();
+        /* us_socket_resume closes a socket that the kernel does not take back,
+         * and the HTTP state goes with it. */
+        if (us_socket_is_closed(s)) {
+            return s;
+        }
         return replayParkedRequestBytes<false>(s);
     }
 

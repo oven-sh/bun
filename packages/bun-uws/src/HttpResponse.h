@@ -399,15 +399,9 @@ public:
          * rest of the read of an upgrade made during the dispatch
          * (HttpContext::onData). Taken here because the HTTP state that owns them is
          * destructed below, and before endUpgradeHandshake() so that markDone() does
-         * not arm a replay dispatch for them. Parking paused reads; the WebSocket
-         * needs them flowing, and us_socket_adopt keeps the flag. The resume re-arms
-         * writable too, so the WebSocket gets one drain callback with nothing to
-         * drain. */
+         * not arm a replay dispatch for them. */
         WTF::Vector<char> earlyFrames = std::exchange(responseData->parkedRequestBytes, {});
         size_t earlyFramesStart = std::exchange(responseData->parkedRequestBytesStart, 0);
-        if (!earlyFrames.isEmpty()) [[unlikely]] {
-            Super::resume();
-        }
 
         endUpgradeHandshake();
 
@@ -490,6 +484,15 @@ public:
         /* Emit open event and start the timeout */
         if (webSocketContextData->openHandler) {
             webSocketContextData->openHandler(webSocket);
+        }
+
+        if (!earlyFrames.isEmpty()) [[unlikely]] {
+            /* Parking paused reads, and us_socket_adopt keeps the flag. Resumed as a
+             * WebSocket and not before the adoption: us_socket_resume closes a socket
+             * that the kernel does not take back, which from here on is an ordinary
+             * WebSocket close. It re-arms writable too, so the WebSocket gets one
+             * drain callback with nothing to drain. */
+            us_socket_resume(usSocket);
         }
 
         if (!earlyFrames.isEmpty() && !us_socket_is_closed(usSocket) && !us_socket_is_shut_down(usSocket)) [[unlikely]] {

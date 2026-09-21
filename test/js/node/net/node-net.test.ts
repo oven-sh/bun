@@ -1788,8 +1788,10 @@ describe.concurrent("read-stopped socket whose peer resets behind unread data", 
         s.write("again", err => events.push("write " + (err ? err.code + " " + err.syscall : "ok"))),
       );
     `);
+    // send() on a reset socket: ECONNRESET on Linux, EPIPE on the BSDs (node reports the same).
+    const code = isLinux ? "ECONNRESET" : "EPIPE";
     expect(result).toEqual({
-      events: ["write ECONNRESET write", "error ECONNRESET write", "close true"],
+      events: [`write ${code} write`, `error ${code} write`, "close true"],
       received: 0,
       bytesRead: 0,
     });

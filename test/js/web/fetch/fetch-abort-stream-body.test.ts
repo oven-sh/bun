@@ -483,10 +483,15 @@ describe("aborting mid-body fails every reader of res.body with signal.reason", 
       try {
         const res = await fetch(proxy.url);
         const reader = res.body.getReader();
-        const first = await reader.read();
+        let first = 0;
+        while (first < 40) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          first += value.length;
+        }
         abort();
         await reader.read().catch(() => {});
-        seen = { status: res.status, first: first.value?.length ?? null };
+        seen = { status: res.status, first };
       } catch {
         seen = { rejected: true };
       }

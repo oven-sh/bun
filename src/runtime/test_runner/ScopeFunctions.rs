@@ -47,7 +47,7 @@ pub enum Mode {
     Test,
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. All three
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. All four
 // fields are written exactly once in `create_unbound` and never mutated again,
 // so no `Cell`/`JsCell` wrapping is needed — the type is read-only after
 // construction. `generic_if`/`generic_extend`/`fn_each`/`call_as_function` all
@@ -62,6 +62,8 @@ pub struct ScopeFunctions {
     /// WriteBarrier on the JS wrapper (see `values: ["each"]` in jest.classes.ts). This
     /// field is kept in sync with that slot via `js::each_set_cached` in `create_unbound`.
     pub(crate) each: JSValue,
+    /// `.extend()` registry (see BunTestFixtures.ts) or `.zero`; GC-rooted like `each`.
+    pub(crate) fixtures: JSValue,
 }
 
 impl ScopeFunctions {
@@ -126,8 +128,41 @@ impl ScopeFunctions {
         if !this.each.is_empty() {
             return Err(global.throw(format_args!("Cannot {} on {}", "each", this)));
         }
-        create_bound(global, this.mode, array, this.cfg, "each")
+        create_bound(global, this.mode, array, this.fixtures, this.cfg, "each")
     }
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn fn_extend(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let _g = group_log::begin();
+
+        if this.mode == Mode::Describe {
+            return Err(global.throw(format_args!("Cannot {} on {}", "call .extend()", this)));
+        }
+        let [new_fixtures] = frame.arguments_as_array::<1>();
+        let parent = if this.fixtures.is_empty() { JSValue::UNDEFINED } else { this.fixtures };
+        let merged = bun_jsc::cpp::Bun__TestFixtures__merge(global, parent, new_fixtures)?;
+        create_bound(global, this.mode, this.each, merged, this.cfg, "extend")
+    }
+
+    /// The `[run, teardown]` pair holds one run's fixture state, so this is called once per scheduled test.
+    fn wrap_with_fixtures(
+        &self,
+        global: &JSGlobalObject,
+        callback: JSValue,
+        rooted: &mut bun_jsc::MarkedArgumentBuffer,
+    ) -> JsResult<TestCallbacks> {
+        let pair = bun_jsc::cpp::Bun__TestFixtures__wrapCallback(global, self.fixtures, callback)?;
+        rooted.append(pair);
+        let run = pair.get_index(global, 0)?;
+        let teardown = pair.get_index(global, 1)?;
+        Ok(TestCallbacks { callback: Some(run), fixture_teardown: Some(teardown) })
+    }
+}
+
+/// The callback to schedule and, for `test.extend()` tests, the teardown entry that follows it.
+#[derive(Clone, Copy)]
+struct TestCallbacks {
+    callback: Option<JSValue>,
+    fixture_teardown: Option<JSValue>,
 }
 
 #[bun_jsc::host_fn]
@@ -160,10 +195,11 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         ParseArgumentsCfg { callback: callback_mode, kind: FunctionKind::TestOrDescribe },
     )?;
 
-    let callback_length: usize = if let Some(callback) = args.callback {
-        callback.get_length(global)? as usize
-    } else {
-        0
+    // An extended callback's extra parameter is the fixture context, not a done callback.
+    let uses_fixtures = this.mode == Mode::Test && !this.fixtures.is_empty() && args.callback.is_some();
+    let callback_length: usize = match args.callback {
+        Some(callback) if !uses_fixtures => callback.get_length(global)? as usize,
+        _ => 0,
     };
 
     if !this.each.is_empty() {
@@ -204,7 +240,11 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     None
                 };
 
-                let bound = if let Some(cb) = args.callback {
+                let callbacks = match args.callback {
+                    Some(cb) if uses_fixtures => this.wrap_with_fixtures(global, cb, rooted)?,
+                    other => TestCallbacks { callback: other, fixture_teardown: None },
+                };
+                let bound = if let Some(cb) = callbacks.callback {
                     Some(JSValueTestExt::bind(cb, global, item, &BunString::static_("cb"), 0.0, args_list.as_slice())?)
                 } else {
                     None
@@ -215,7 +255,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     &mut *bun_test_ptr,
                     global,
                     frame,
-                    bound,
+                    TestCallbacks { callback: bound, fixture_teardown: callbacks.fixture_teardown },
                     formatted_label.as_deref(),
                     &args.options,
                     callback_length.saturating_sub(args_list.len()),
@@ -226,16 +266,22 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             test_idx += 1;
         }
     } else {
-        this.enqueue_describe_or_test_callback(
-            bun_test_ptr,
-            global,
-            frame,
-            args.callback,
-            args.description.as_deref(),
-            &args.options,
-            callback_length,
-            line_no,
-        )?;
+        bun_jsc::MarkedArgumentBuffer::new(|rooted| -> JsResult<()> {
+            let callbacks = match args.callback {
+                Some(cb) if uses_fixtures => this.wrap_with_fixtures(global, cb, rooted)?,
+                other => TestCallbacks { callback: other, fixture_teardown: None },
+            };
+            this.enqueue_describe_or_test_callback(
+                &mut *bun_test_ptr,
+                global,
+                frame,
+                callbacks,
+                args.description.as_deref(),
+                &args.options,
+                callback_length,
+                line_no,
+            )
+        })?;
     }
 
     Ok(JSValue::UNDEFINED)
@@ -294,13 +340,15 @@ impl ScopeFunctions {
         bun_test: &mut BunTest,
         global: &JSGlobalObject,
         frame: &CallFrame,
-        callback: Option<JSValue>,
+        callbacks: TestCallbacks,
         description: Option<&[u8]>,
         options: &ParseArgumentsOptions,
         callback_length: usize,
         line_no: u32,
     ) -> JsResult<()> {
         let _g = group_log::begin();
+        let callback = callbacks.callback.map(|cb| cb.with_async_context_if_needed(global));
+        let fixture_teardown = callbacks.fixture_teardown.map(|cb| cb.with_async_context_if_needed(global));
 
         // only allow in collection phase
         match bun_test.phase {
@@ -421,6 +469,7 @@ impl ScopeFunctions {
                 let _ = bun_test.collection.active_scope_mut().append_test(
                     description,
                     if matches_filter { callback } else { None },
+                    if matches_filter { fixture_teardown } else { None },
                     bun_test::ExecutionEntryCfg {
                         has_done_parameter,
                         timeout: options.timeout,
@@ -454,7 +503,7 @@ impl ScopeFunctions {
         if cond != invert {
             self.generic_extend(global, conditional_cfg, name, fn_name)
         } else {
-            create_bound(global, self.mode, self.each, self.cfg, fn_name)
+            create_bound(global, self.mode, self.each, self.fixtures, self.cfg, fn_name)
         }
     }
 
@@ -476,7 +525,7 @@ impl ScopeFunctions {
         let Some(extended) = self.cfg.extend(cfg) else {
             return Err(global.throw(format_args!("Cannot {} on {}", bstr::BStr::new(name), self)));
         };
-        create_bound(global, self.mode, self.each, extended, fn_name)
+        create_bound(global, self.mode, self.each, self.fixtures, extended, fn_name)
     }
 }
 
@@ -630,7 +679,8 @@ pub(crate) fn parse_arguments(
     let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
         None
     } else if callback.is_function() {
-        Some(callback.with_async_context_if_needed(global))
+        // An AsyncContextFrame is not callable, so callers measure, bind and wrap the callback before attaching the context.
+        Some(callback)
     } else {
         let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
         return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
@@ -721,7 +771,7 @@ pub(crate) fn parse_arguments(
 // `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
 // the `.each(arr)` argument between construction and the trailing `("name", cb)` call.
 pub mod js {
-    bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each);
+    bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each, fixtures);
 }
 
 impl fmt::Display for ScopeFunctions {
@@ -741,6 +791,9 @@ impl fmt::Display for ScopeFunctions {
         if !self.each.is_empty() {
             write!(f, ".each()")?;
         }
+        if !self.fixtures.is_empty() {
+            write!(f, ".extend()")?;
+        }
         Ok(())
     }
 }
@@ -751,18 +804,19 @@ impl Drop for ScopeFunctions {
     }
 }
 
-fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
+fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, fixtures: JSValue, cfg: BaseScopeCfg) -> JSValue {
     let _g = group_log::begin();
 
     // `JsClass::to_js` boxes `self` and hands the raw pointer to the C++
     // wrapper (m_ctx); freed in `finalize`.
-    let value = ScopeFunctions { mode, cfg, each }.to_js(global);
+    let value = ScopeFunctions { mode, cfg, each, fixtures }.to_js(global);
     value.ensure_still_alive();
-    // Write into the C++ m_each WriteBarrier so GC visits it. The Rust `each` field
-    // lives in unmanaged memory that JSC never scans; without this the array can be
-    // collected between `.each(arr)` and the trailing `("name", cb)` call.
+    // The Rust fields are invisible to the GC; the C++ WriteBarriers keep the values alive.
     if !each.is_empty() {
         js::each_set_cached(value, global, each);
+    }
+    if !fixtures.is_empty() {
+        js::fixtures_set_cached(value, global, fixtures);
     }
     value
 }
@@ -791,12 +845,13 @@ pub(crate) fn create_bound(
     global: &JSGlobalObject,
     mode: Mode,
     each: JSValue,
+    fixtures: JSValue,
     cfg: BaseScopeCfg,
     name: &'static str,
 ) -> JsResult<JSValue> {
     let _g = group_log::begin();
 
-    let value = create_unbound(global, mode, each, cfg);
+    let value = create_unbound(global, mode, each, fixtures, cfg);
     bind(value, global, name)
 }
 

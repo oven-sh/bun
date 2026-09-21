@@ -199,6 +199,22 @@ impl ExecutionSequence {
         }
         ScopeMode::Normal
     }
+
+    /// The test's fixture teardown entry, if it is still linked after `after`.
+    fn fixture_teardown_after(&self, after: NonNull<ExecutionEntry>) -> Option<NonNull<ExecutionEntry>> {
+        // SAFETY: arena-owned entries, alive for the lifetime of BunTest which owns Execution
+        let teardown: *const ExecutionEntry = unsafe { self.test_entry?.as_ref() }.fixture_teardown.as_deref()?;
+        // SAFETY: see above
+        let mut cursor = unsafe { after.as_ref() }.next;
+        while let Some(entry) = cursor {
+            if core::ptr::eq(entry, teardown) {
+                return NonNull::new(entry);
+            }
+            // SAFETY: intrusive list nodes are valid while the sequence is live
+            cursor = unsafe { (*entry).next };
+        }
+        None
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr, strum::FromRepr)]
@@ -524,6 +540,10 @@ impl Execution {
                     Some(failure_skip_past) => nn(unsafe { (*failure_skip_past).next }),
                     None => None,
                 };
+                if sequence.active_entry.is_none() {
+                    // a failing afterEach must not skip the fixture teardown
+                    sequence.active_entry = sequence.fixture_teardown_after(entry_ptr);
+                }
             } else {
                 sequence.active_entry = nn(entry.next);
             }

@@ -109,12 +109,30 @@ pub mod kernel32 {
 /// https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard
 pub mod user32 {
     use super::{BOOL, DWORD, HANDLE, UINT};
-    use core::ffi::c_char;
+    use core::ffi::{c_char, c_int, c_void};
 
     pub const CF_UNICODETEXT: UINT = 13;
+    /// The parent of a message-only window.
+    pub const HWND_MESSAGE: HANDLE = -3isize as HANDLE;
 
     #[link(name = "user32")]
     unsafe extern "system" {
+        pub fn CreateWindowExA(
+            dwExStyle: DWORD,
+            lpClassName: *const c_char,
+            lpWindowName: *const c_char,
+            dwStyle: DWORD,
+            X: c_int,
+            Y: c_int,
+            nWidth: c_int,
+            nHeight: c_int,
+            hWndParent: HANDLE,
+            hMenu: HANDLE,
+            hInstance: HANDLE,
+            lpParam: *mut c_void,
+        ) -> HANDLE;
+        /// Only on the thread that created `hWnd`.
+        pub fn DestroyWindow(hWnd: HANDLE) -> BOOL;
         // safe: by-value arguments; failure is FALSE / NULL.
         pub safe fn OpenClipboard(hWndNewOwner: HANDLE) -> BOOL;
         pub safe fn GetClipboardData(uFormat: UINT) -> HANDLE;

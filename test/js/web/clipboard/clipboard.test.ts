@@ -1428,6 +1428,11 @@ interface Win32Clipboard {
   setRaw(entries: RawEntry[]): void;
   /** A copy of the HGLOBAL behind `format`, GlobalSize bytes long; null when absent. */
   getRaw(format: number): Buffer | null;
+  /**
+   * Holds the clipboard open across `fn` the way a console program does, with
+   * no window. `stillOpen` is whether it was still this opener's to close.
+   */
+  holdOpen<T>(fn: () => Promise<T>): Promise<{ result: T; stillOpen: boolean }>;
 }
 
 let win32: Win32Clipboard | null = null;
@@ -1451,11 +1456,14 @@ if (isWindows && systemClipboard) {
 
     // Clipboard listeners (history, rdpclip) hold the clipboard briefly after
     // every change; retry the way the backend does.
-    const withClipboardOpen = <T>(fn: () => T): T => {
+    const openClipboard = () => {
       for (let attempt = 0; user32.OpenClipboard(null) === 0; attempt++) {
         if (attempt === 50) throw new Error("OpenClipboard kept failing");
         Bun.sleepSync(2);
       }
+    };
+    const withClipboardOpen = <T>(fn: () => T): T => {
+      openClipboard();
       try {
         return fn();
       } finally {
@@ -1514,6 +1522,17 @@ if (isWindows && systemClipboard) {
           }
           return out;
         });
+      },
+      async holdOpen(fn) {
+        openClipboard();
+        let closed: number | undefined;
+        try {
+          const result = await fn();
+          closed = user32.CloseClipboard();
+          return { result, stillOpen: closed !== 0 };
+        } finally {
+          if (closed === undefined) user32.CloseClipboard();
+        }
       },
     };
   } catch (e) {
@@ -1929,6 +1948,28 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
     await navigator.clipboard.writeText("text again");
     expect(await readAll()).toEqual([{ types: ["text/plain"], "text/plain": "text again" }]);
     expect([raw().getRaw(CF_HTML), raw().getRaw(CF_PNG), raw().getRaw(CF_DIBV5)]).toEqual([null, null, null]);
+  });
+
+  // OpenClipboard refuses a second opener only when its window differs from
+  // the first one's, and no window does not differ from no window: the second
+  // opener takes the open clipboard over, and its CloseClipboard closes it for
+  // both. A console program opens the clipboard with no window. The backend
+  // must be refused while such a program holds the clipboard, not cut into
+  // what that program reads or writes.
+  test("a clipboard that a program with no window holds open is busy, not taken over", async () => {
+    raw().setRaw([{ format: CF_UNICODETEXT, bytes: utf16z("the holder's text") }]);
+    const held = await raw().holdOpen(async () => ({
+      writeText: await navigator.clipboard.writeText("cut in").then(
+        () => "resolved",
+        e => `${e.name}: ${e.message}`,
+      ),
+      image: Bun.Image.fromClipboard(),
+    }));
+    expect({ ...held, text: await navigator.clipboard.readText() }).toEqual({
+      result: { writeText: "NotAllowedError: The system clipboard is not available.", image: null },
+      stillOpen: true,
+      text: "the holder's text",
+    });
   });
 
   test("interoperates with clip.exe and Get-Clipboard", async () => {

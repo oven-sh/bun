@@ -345,11 +345,52 @@ pub(crate) mod win32 {
 
     use bun_sys::windows::{HANDLE, kernel32, user32};
 
-    /// `OpenClipboard(NULL)` does not exclude this process's other threads.
+    /// One clipboard span at a time in this process. A thread waits here for
+    /// another thread's span, which leaves `open`'s attempts for other programs.
     static TRANSACTION: bun_threading::Mutex = bun_threading::Mutex::new();
+
+    /// A message-only window to open the clipboard for. Windows turns a second
+    /// opener away only when its window differs from the first one's, and two
+    /// NULL windows do not differ: the second opener, in any process, takes the
+    /// open clipboard over, and its `CloseClipboard` closes it for both.
+    struct Window(HANDLE);
+
+    impl Window {
+        /// NULL when the window cannot be created.
+        fn create() -> Window {
+            use core::ptr::{null, null_mut};
+            // SAFETY: a system class, and no name, menu, instance or parameter.
+            Window(unsafe {
+                user32::CreateWindowExA(
+                    0,
+                    c"STATIC".as_ptr(),
+                    null(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    user32::HWND_MESSAGE,
+                    null_mut(),
+                    null_mut(),
+                    null_mut(),
+                )
+            })
+        }
+    }
+
+    impl Drop for Window {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: on the thread that created it, where `OpenedClipboard: !Send` keeps it.
+                unsafe { user32::DestroyWindow(self.0) };
+            }
+        }
+    }
 
     /// The clipboard, open on this thread until dropped.
     pub(crate) struct OpenedClipboard {
+        _window: Window,
         _not_send: PhantomData<*const ()>,
     }
 
@@ -358,9 +399,13 @@ pub(crate) mod win32 {
         pub(crate) fn open() -> Option<Self> {
             const ATTEMPTS: u32 = 5;
             TRANSACTION.lock();
+            let window = Window::create();
             for attempt in 1..=ATTEMPTS {
-                if let Some(clipboard) = Self::open_locked() {
-                    return Some(clipboard);
+                if user32::OpenClipboard(window.0) != 0 {
+                    return Some(OpenedClipboard {
+                        _window: window,
+                        _not_send: PhantomData,
+                    });
                 }
                 if attempt < ATTEMPTS {
                     kernel32::Sleep(5 * attempt);
@@ -375,17 +420,15 @@ pub(crate) mod win32 {
             if !TRANSACTION.try_lock() {
                 return None;
             }
-            let clipboard = Self::open_locked();
-            if clipboard.is_none() {
-                TRANSACTION.unlock();
+            let window = Window::create();
+            if user32::OpenClipboard(window.0) != 0 {
+                return Some(OpenedClipboard {
+                    _window: window,
+                    _not_send: PhantomData,
+                });
             }
-            clipboard
-        }
-
-        fn open_locked() -> Option<Self> {
-            (user32::OpenClipboard(core::ptr::null_mut()) != 0).then_some(OpenedClipboard {
-                _not_send: PhantomData,
-            })
+            TRANSACTION.unlock();
+            None
         }
 
         /// `f` sees `format`'s bytes, `GlobalSize` long; `None` when absent or unlockable.

@@ -831,22 +831,16 @@ where
                     return;
                 }
             }
-            // With bytes behind the 101, keep the C++ WebSocket alive whatever the
-            // `open` listeners and their microtasks do to it. Taken after 'upgrade':
-            // C++ has one slot, and a listener that spins the event loop re-enters
-            // this function.
+            // After 'upgrade': a listener that spins the event loop re-enters here, and C++ has one slot.
             overflow_owner = this
                 .cpp_websocket()
                 .filter(|_| is_101 && full.len() > head_len)
                 .map(|ws| CppWebSocketRef::new(&ws));
             Self::process_response(this, response, &full[head_len..]);
         }
-        // The connected client parses those bytes after the microtasks of `open`,
-        // like a later read. Under a nested event-loop spin (`expect().resolves`,
-        // a `Bun.build` plugin) the scope above was not the outermost and did not
-        // drain them.
         if let Some(ws) = overflow_owner {
             let event_loop = vm.event_loop_mut();
+            // Under a nested event-loop spin (`expect().resolves`) the scope above drained nothing.
             if event_loop.entered_event_loop_count > 0 {
                 let _ = event_loop.drain_microtasks();
             }

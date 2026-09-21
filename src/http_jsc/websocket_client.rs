@@ -103,8 +103,7 @@ pub struct WebSocket<const SSL: bool> {
     pub(crate) payload_length_frame_bytes: Cell<[u8; 8]>,
     pub(crate) payload_length_frame_len: Cell<u8>,
 
-    /// Bytes the upgrade client read past the 101 (handshake overflow), until
-    /// `deliver_initial_data` parses them or `handle_data` gets there first.
+    /// Handshake overflow (bytes the upgrade client read past the 101), until parsed.
     initial_data: Cell<Option<Vec<u8>>>,
     pub(crate) deflate: RefCell<Option<Box<WebSocketDeflate>>>,
 
@@ -527,8 +526,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Bumps the intrusive refcount and derefs on Drop.
         let _guard = RefPtr::from_this(this);
 
-        // An `open` listener that spins the event loop lets a read in before
-        // `deliver_initial_data`; the handshake overflow still comes first.
+        // An `open` listener that spins the event loop lets a read in ahead of `deliver_initial_data`.
         if this.parse_initial_data() {
             // If we disconnected for any reason in the re-entrant case, we should just ignore the data
             if this.cpp_websocket().is_none() || !this.has_tcp() {
@@ -539,8 +537,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.handle_data_loop(data_);
     }
 
-    /// Parse the handshake overflow if it is still pending. Returns whether it
-    /// was. The caller holds a ref guard.
+    /// Returns whether the handshake overflow was still pending. The caller holds a ref guard.
     fn parse_initial_data(&self) -> bool {
         let Some(initial_data) = self.initial_data.take() else {
             return false;
@@ -553,9 +550,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         true
     }
 
-    /// The upgrade client calls this (through C++) after the microtask
-    /// checkpoint that follows the `open` event, so a frame that arrived in
-    /// the same read as the 101 is dispatched like one from a later read.
+    /// Called by the upgrade client (through C++) after the microtask checkpoint that follows `open`.
     pub(crate) fn deliver_initial_data(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
         this.parse_initial_data();

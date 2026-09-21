@@ -182,9 +182,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// Have the connected client, if there still is one, parse the
-    /// `buffered_data` it got from `did_connect*`. No scope of its own: each
-    /// message it dispatches gets a microtask checkpoint, as on a socket read.
+    /// No event-loop scope here: each message gets its own microtask checkpoint, as on a socket read.
     pub(crate) fn deliver_initial_data(&self) {
         WebSocket__deliverInitialData(self);
     }

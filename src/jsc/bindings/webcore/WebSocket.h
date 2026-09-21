@@ -211,8 +211,7 @@ public:
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
     void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
     void didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
-    // The connected client parses the `bufferedData` didConnect*() gave it. The upgrade client
-    // calls this after the microtask checkpoint that follows the open event.
+    // The connected client parses didConnect*()'s bufferedData; called after the microtasks of open.
     void deliverInitialData();
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
 

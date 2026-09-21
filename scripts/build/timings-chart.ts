@@ -466,13 +466,16 @@ const client = `
       var b = run.bars[i];
       tip.textContent = "";
       html("b", b.label, tip);
-      html("div", run.lanes[b.lane].name + " · rule " + b.rule + (b.pool ? " · pool " + b.pool : ""), tip);
+      html("div", "rule " + b.rule + (b.pool ? " · pool " + b.pool : ""), tip);
       html("div", ms(b.end - b.start) + " · from " + ms(b.start) + " to " + ms(b.end), tip);
-      if (b.blocker === undefined) html("div", "nothing it reads was made by this run", tip);
+      // What it was waiting on, and then how long it sat before starting: the first is dependencies, the second is
+      // a full pool or no free job slot.
+      if (b.blocker === undefined) html("div", "needed nothing this run made", tip);
       else {
         var blocker = run.bars[b.blocker];
-        html("div", "started " + ms(b.waited) + " after " + blocker.label +
-          (b.readyAt < blocker.end ? " released what it needs" : " finished"), tip);
+        html("div", "last thing it needed: " + blocker.label +
+          (b.readyAt < blocker.end ? " (ready " + ms(b.readyAt - blocker.start) + " into it)" : ""), tip);
+        html("div", "started " + ms(b.waited) + " after that was ready", tip);
       }
       if (b.released !== undefined) html("div", "dependents can start after " + ms(b.released), tip);
       if (b.step !== undefined) html("div", "critical path step " + (b.step + 1) + ": holds up the next for " + ms(b.blocksNextForMs), tip);

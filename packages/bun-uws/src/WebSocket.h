@@ -63,8 +63,11 @@ public:
     using Super::getNativeHandle;
 
     /* WebSocket close cannot be an alias to AsyncSocket::close since
-     * we need to check first if it was shut down by remote peer */
-    us_socket_t *close() {
+     * we need to check first if it was shut down by remote peer.
+     * flush = false drops what publish() queued and what a handler corked. An
+     * open handler that threw needs it: after a synchronous upgrade the cork
+     * still holds the 101, and that handshake must not complete. */
+    us_socket_t *close(bool flush = true) {
         if (us_socket_is_closed((us_socket_t *) this)) {
             return nullptr;
         }
@@ -73,7 +76,9 @@ public:
             return nullptr;
         }
 
-        flushBeforeForcedClose();
+        if (flush) {
+            flushBeforeForcedClose();
+        }
         return us_socket_close((us_socket_t *) this, 0, nullptr);
     }
 

@@ -766,6 +766,50 @@ describe("Server", () => {
     });
   });
 
+  // A masked client frame with a payload under 126 bytes.
+  const clientFrame = (opcode: number, text: string) => {
+    const payload = Buffer.from(text);
+    const mask = Buffer.from([1, 2, 3, 4]);
+    return Buffer.concat([
+      Buffer.from([0x80 | opcode, 0x80 | payload.length]),
+      mask,
+      payload.map((byte, i) => byte ^ mask[i & 3]),
+    ]);
+  };
+
+  // Opens a raw TCP connection, sends the websocket handshake, runs
+  // `afterHandshake` once the response has arrived, and resolves when the
+  // connection ends: `status` is the response's status line ("" when the server
+  // sent none) and `frames` is every byte that followed the response.
+  function rawClient(port: number, afterHandshake: (socket: net.Socket) => void) {
+    const { promise, resolve, reject } = Promise.withResolvers<{ status: string; frames: string }>();
+    let received = Buffer.alloc(0);
+    let shookHands = false;
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(
+        "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
+          "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      );
+    });
+    socket.on("data", chunk => {
+      received = Buffer.concat([received, chunk]);
+      if (!shookHands && received.includes("\r\n\r\n")) {
+        shookHands = true;
+        afterHandshake(socket);
+      }
+    });
+    socket.on("error", reject);
+    socket.on("close", () => {
+      const text = received.toString("latin1");
+      const headEnd = text.indexOf("\r\n\r\n");
+      resolve({
+        status: text.slice(0, Math.max(text.indexOf("\r\n"), 0)),
+        frames: headEnd === -1 ? "" : text.slice(headEnd + 4),
+      });
+    });
+    return promise;
+  }
+
   // A protocol error fails the connection from inside the frame parser. A
   // legal frame earlier in the same read has already run its handler, and what
   // that handler sent is still in the cork buffer.
@@ -787,41 +831,42 @@ describe("Server", () => {
       },
     });
 
-    const frame = (opcode: number, text: string) => {
-      const payload = Buffer.from(text);
-      const mask = Buffer.from([1, 2, 3, 4]);
-      return Buffer.concat([
-        Buffer.from([0x80 | opcode, 0x80 | payload.length]),
-        mask,
-        payload.map((byte, i) => byte ^ mask[i & 3]),
-      ]);
-    };
-
-    const afterHandshake = Promise.withResolvers<string>();
-    let received = Buffer.alloc(0);
-    let wroteFrames = false;
-    const socket = net.connect(server.port, "127.0.0.1", () => {
-      socket.write(
-        "GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
-          "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
-      );
-    });
-    socket.on("data", chunk => {
-      received = Buffer.concat([received, chunk]);
-      if (!wroteFrames && received.includes("\r\n\r\n")) {
-        wroteFrames = true;
-        // One write, so one read on the server: a text frame, then a
-        // continuation frame with no message to continue (RFC 6455 5.4).
-        socket.write(Buffer.concat([frame(0x1, "legal"), frame(0x0, "orphan")]));
-      }
-    });
-    socket.on("error", afterHandshake.reject);
-    socket.on("close", () =>
-      afterHandshake.resolve(received.subarray(received.indexOf("\r\n\r\n") + 4).toString("latin1")),
+    // One write, so one read on the server: a text frame, then a continuation
+    // frame with no message to continue (RFC 6455 5.4).
+    const sent = rawClient(server.port, socket =>
+      socket.write(Buffer.concat([clientFrame(0x1, "legal"), clientFrame(0x0, "orphan")])),
     );
 
-    const [echoed, closeCode] = await Promise.all([afterHandshake.promise, serverClosed.promise]);
-    expect({ echoed, closeCode }).toEqual({ echoed: "\x81\x05legal", closeCode: 1006 });
+    const [{ frames }, closeCode] = await Promise.all([sent, serverClosed.promise]);
+    expect({ frames, closeCode }).toEqual({ frames: "\x81\x05legal", closeCode: 1006 });
+  });
+
+  // An open handler that throws fails the connection. After a synchronous
+  // upgrade the 101 response is still corked at that point. It must stay
+  // unsent: the client sees a failed handshake, not "open" and then "close".
+  it.concurrent("an open handler that throws fails the handshake", async () => {
+    const thrown = new Error("open threw");
+    const serverError = Promise.withResolvers<unknown>();
+    using server = serve({
+      port: 0,
+      fetch(req, server) {
+        if (server.upgrade(req)) return;
+        return new Response("no", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send("before the throw");
+          throw thrown;
+        },
+        message() {},
+        error(error) {
+          serverError.resolve(error);
+        },
+      },
+    });
+
+    const [response, error] = await Promise.all([rawClient(server.port, () => {}), serverError.promise]);
+    expect({ response, error }).toEqual({ response: { status: "", frames: "" }, error: thrown });
   });
 
   describe("websocket", () => {

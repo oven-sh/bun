@@ -738,19 +738,19 @@ extern "C"
     return *uws->getUserData();
   }
 
-  void uws_ws_close(int ssl, uws_websocket_t *ws)
+  void uws_ws_close(int ssl, uws_websocket_t *ws, bool flush)
   {
     if (ssl)
     {
       TLSWebSocket *uws =
           (TLSWebSocket *)ws;
-      uws->close();
+      uws->close(flush);
     }
     else
     {
       TCPWebSocket *uws =
           (TCPWebSocket *)ws;
-      uws->close();
+      uws->close(flush);
     }
   }
 

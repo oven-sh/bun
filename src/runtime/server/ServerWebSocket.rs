@@ -472,9 +472,11 @@ impl ServerWebSocket {
                 // we un-gracefully close the connection if there was an exception
                 // we don't want any event handlers to fire after this for anything other than error()
                 // https://github.com/oven-sh/bun/issues/1480
-                // (`close()` re-enters `on_close`, which skips its own
+                // (The close re-enters `on_close`, which skips its own
                 // accounting because the closed flag is already set.)
-                self.websocket().close();
+                // No flush: after a synchronous upgrade the cork still holds
+                // the 101, and a client whose open() threw must not see "open".
+                self.websocket().close_without_flush();
                 closed_here = true;
                 this_value.unprotect();
             }

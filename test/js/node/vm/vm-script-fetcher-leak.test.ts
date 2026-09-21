@@ -1,6 +1,7 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { expectMaxObjectTypeCount } from "harness";
+import { bunRun, expectMaxObjectTypeCount, isWindows } from "harness";
+import { join } from "node:path";
 import vm from "node:vm";
 
 // Regression: NodeVMScriptFetcher held its owner via JSC::Strong, forming a
@@ -56,4 +57,32 @@ describe("node:vm NodeVMScriptFetcher leak", () => {
 
     await expectMaxObjectTypeCount(expect, "Script", baseline + 20);
   });
+});
+
+// importModuleDynamically and its referrer live as long as code that can still import(), no longer.
+describe("node:vm importModuleDynamically lifetime", () => {
+  const fixture = join(import.meta.dir, "vm-import-callback-lifetime-fixture.js");
+  const expected: Record<string, object> = {
+    "leak-script": { alive: 0 },
+    "leak-compileFunction": { alive: 0 },
+    "leak-module": { alive: 0 },
+    "alive-hostFunction": { contextCollected: true, result: "hooked", referrer: "Script" },
+    "alive-compiledBeforeRun": { result: "hooked", referrer: "Script" },
+    "alive-module": { result: "hooked", referrer: "SourceTextModule" },
+    "freed-perScriptClosures": { alive: 0 },
+    "stringFilename": { result: "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING" },
+  };
+
+  test.concurrent.each(Object.keys(expected))("%s", async scenario => {
+    expect(await bunRun([fixture, scenario])).toSpawn(JSON.stringify(expected[scenario]));
+  });
+
+  // collectContinuously is very slow under Windows + ASAN in CI (see sourcetextmodule-link-gc.test.ts).
+  test.concurrent.skipIf(isWindows).each(["alive-hostFunction", "alive-compiledBeforeRun", "alive-module"])(
+    "%s while collecting continuously",
+    async scenario => {
+      const result = await bunRun([fixture, scenario], { BUN_JSC_collectContinuously: "1" });
+      expect(result).toSpawn(JSON.stringify(expected[scenario]));
+    },
+  );
 });

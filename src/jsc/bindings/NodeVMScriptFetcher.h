@@ -3,8 +3,11 @@
 #include "root.h"
 
 #include <JavaScriptCore/ScriptFetcher.h>
+#include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakHandleOwner.h>
 #include <JavaScriptCore/WeakInlines.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/Scope.h>
 
 namespace Bun {
@@ -16,7 +19,12 @@ public:
 
     Type fetcherType() const final { return Type::NodeVM; }
 
-    JSC::JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
+    JSC::JSValue dynamicImportCallback() const
+    {
+        if (auto* cell = m_dynamicImportCallback.get())
+            return JSC::JSValue(cell);
+        return JSC::jsUndefined();
+    }
 
     JSC::JSValue owner() const
     {
@@ -27,7 +35,7 @@ public:
     void owner(JSC::VM&, JSC::JSValue value)
     {
         if (value.isCell())
-            m_owner = JSC::Weak<JSC::JSCell>(value.asCell());
+            m_owner = makeWeak(value.asCell());
         else
             m_owner.clear();
     }
@@ -41,8 +49,31 @@ public:
         });
     }
 
+    template<typename Visitor>
+    static void visitSource(Visitor& visitor, const JSC::SourceCode& source)
+    {
+        visitor.addOpaqueRoot(source.provider()->sourceOrigin().fetcher());
+    }
+
 private:
-    JSC::Strong<JSC::Unknown> m_dynamicImportCallback;
+    // Alive while code from this source can still import(), as in Node.js:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/utils.js#L151-L164
+    class CodeIsAlive final : public JSC::WeakHandleOwner {
+        bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* fetcher, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason) final
+        {
+            if (reason) [[unlikely]]
+                *reason = "node:vm code is alive"_s;
+            return visitor.containsOpaqueRoot(fetcher);
+        }
+    };
+
+    JSC::Weak<JSC::JSCell> makeWeak(JSC::JSCell* cell)
+    {
+        static NeverDestroyed<CodeIsAlive> codeIsAlive;
+        return JSC::Weak<JSC::JSCell>(cell, &codeIsAlive.get(), this);
+    }
+
+    JSC::Weak<JSC::JSCell> m_dynamicImportCallback;
     // m_owner is the NodeVMScript / JSFunction / module wrapper that holds this
     // fetcher via m_source -> SourceProvider -> SourceOrigin -> RefPtr<fetcher>.
     // A Strong handle here would form an uncollectable cycle (the owner keeps
@@ -52,11 +83,12 @@ private:
     JSC::Weak<JSC::JSCell> m_owner;
     bool m_isUsingDefaultLoader = false;
 
-    NodeVMScriptFetcher(JSC::VM& vm, JSC::JSValue dynamicImportCallback, JSC::JSValue owner)
-        : m_dynamicImportCallback(vm, dynamicImportCallback)
+    NodeVMScriptFetcher(JSC::VM&, JSC::JSValue dynamicImportCallback, JSC::JSValue owner)
     {
+        if (dynamicImportCallback && dynamicImportCallback.isCell())
+            m_dynamicImportCallback = makeWeak(dynamicImportCallback.asCell());
         if (owner.isCell())
-            m_owner = JSC::Weak<JSC::JSCell>(owner.asCell());
+            m_owner = makeWeak(owner.asCell());
     }
 };
 

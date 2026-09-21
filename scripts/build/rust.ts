@@ -37,7 +37,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
-import { computeCpuTargetFlags } from "./flags.ts";
+import { computeCpuTargetFlags, rustLtoInLink } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { envify } from "./rust/cargo-env.ts";
 import { emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
@@ -495,19 +495,14 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // -Qunused-arguments above only covers the clang-driver case. Real linker
   // errors are unaffected (they fail the link, not the lint).
   rustflags.push(`-Alinker_messages`);
-  if (cfg.crossLangLto) {
-    // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
-    // so the final lld LTO link sees through Rust↔C++ call edges. The shape
-    // of that bitcode must match the platform's C++ LTO mode — thin
-    // (per-CGU, ThinLTO-summaried) on darwin, fat (pre-merged by rustc,
-    // summary-less) on ELF — selected via the CARGO_PROFILE_RELEASE_LTO
-    // override in the env block below.
+  if (rustLtoInLink(cfg)) {
+    // Every release build but ASan's: the crates carry ThinLTO bitcode, not machine code, and bun's link optimises
+    // it. Where cross-language LTO is on that is one ThinLTO graph with the C/C++ and JSC, and importing works across
+    // the languages; elsewhere (FreeBSD, Android, Windows arm64, `--lto=off`) it is ThinLTO over the crates alone.
+    // Thin, not fat: a pre-merged fat module cannot take part in a thin link's importing, and the backends run in
+    // parallel. The release profile's `lto = "off"` is what leaves each crate's bitcode with its summary.
     //
-    // Bitcode-format compatibility: lld must be able to read rustc's bitcode.
-    // LLVM bitcode is forward-compatible (newer reads older), so this works
-    // when the linker's LLVM ≥ rustc's bundled LLVM. resolveConfig() swaps
-    // `cfg.ld` to rustc's bundled rust-lld when rustc's LLVM major is ahead
-    // of clang's (the wantRustLld block in config.ts).
+    // The linker has to read rustc's bitcode, which rests on rustc's LLVM and clang's being the same major version.
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
@@ -519,7 +514,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // unconditionally above — under LTO it doubles as making rustc's bitcode
     // link go through the LTO-aware linker our final link uses, not BFD
     // `/usr/bin/ld`.)
-    if (!cfg.darwin && !cfg.windows) {
+    if (cfg.crossLangLto && !cfg.darwin && !cfg.windows) {
       // Rust functions default to carrying the `uwtable(async)` attribute.
       // When the LTO inliner inlines such a callee into one of our C++
       // callers (compiled without unwind tables), the caller inherits the
@@ -589,24 +584,9 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     CARGO_TERM_COLOR: "always",
     [`CARGO_TARGET_${envify(triple)}_LINKER`]: linker,
   };
-  if (cfg.crossLangLto) {
-    // Every crossLangLto platform links ThinLTO, so leave each crate's per-CGU
-    // bitcode with its ThinLTO summary intact: the whole link is one uniform
-    // ThinLTO graph and cross-module importing works across Rust↔C++/JSC.
-    // `fat` would pre-merge the crates into one summary-less blob the thin
-    // link can't import from. (The workspace `[profile.release] lto = "fat"`
-    // exists for non-LTO release builds, where the rust .a is linked as
-    // already-codegen'd machine code and still wants intra-Rust inlining.)
-    env.CARGO_PROFILE_RELEASE_LTO = "off";
-  } else if (cfg.asan) {
-    // release-asan has `cfg.lto` forced off (config.ts), but without this
-    // override Cargo.toml's `[profile.release] lto = "fat"` still applies —
-    // rustc merges every crate into one module and codegens it serially, on
-    // IR that ASAN instrumentation has already ~doubled. That's the 15-min
-    // cargo step vs 4m36s for the linker-plugin-lto build (which defers
-    // codegen to lld). ASAN builds don't need intra-Rust LTO; turn it off.
-    env.CARGO_PROFILE_RELEASE_LTO = "off";
-    // With LTO off, `codegen-units = 1` only serializes each crate's LLVM pass over the doubled IR; nothing built with ASAN ships, so take cargo's release default instead.
+  if (cfg.asan) {
+    // ASan links machine code (no LTO), so `codegen-units = 1` only serializes each crate's LLVM pass over IR the
+    // instrumentation has about doubled; nothing built with ASan ships, so take cargo's release default instead.
     env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
   }
   if (cfg.assertions) {

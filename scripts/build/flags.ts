@@ -963,17 +963,6 @@ export const linkerFlags: Flag[] = [
     desc: "LTO codegen at -Os (matches compile-side opt level)",
   },
   {
-    // With `lto` off the C/C++ objects are machine code and the Rust crates are still bitcode (rust/units.ts
-    // ltoArgs: the release profile's `lto = "fat"`), so this link's LTO is rustc's fat LTO over the crates, run by
-    // the linker, and these say what rustc ran: the crates' `opt-level = 3` for the pipeline and for instruction
-    // selection (lld: 2 for both unless told), and LLVM's MergeFunctions pass, which rustc adds at -O2 and above
-    // with aliases (rustc_codegen_ssa back/write.rs, rustc_codegen_llvm llvm_util.rs) and lld's pipeline only runs
-    // on request. Measured on FreeBSD x64 (`bun`, main 88.38 MB): 88.87 MB without these, 88.40 MB with.
-    flag: ["-Wl,--lto-O3", "-Wl,--lto-CGO3", "-Wl,-mllvm,-enable-merge-functions", "-Wl,-mllvm,-mergefunc-use-aliases"],
-    when: c => linkLtoIsRustOnly(c) && c.unix && (!c.darwin || c.crossTarget !== undefined),
-    desc: "Rust-only LTO in the link: rustc's level and MergeFunctions (lld)",
-  },
-  {
     // rustc compiles Android's thread-locals as emulated TLS (its target spec: bionic has ELF TLS from API 29 and
     // bun targets 28). That is an option of rustc's code generator, not something the bitcode carries, and here
     // the linker generates the crates' code. Without it the Rust thread-locals become a PT_TLS segment and, on
@@ -982,11 +971,6 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,-mllvm,-emulated-tls",
     when: c => linkLtoIsRustOnly(c) && c.abi === "android",
     desc: "Rust-only LTO in the link: emulated TLS, as rustc generates for Android",
-  },
-  {
-    flag: ["/opt:lldlto=3", "/opt:lldltocgo=3", "/mllvm:-enable-merge-functions", "/mllvm:-mergefunc-use-aliases"],
-    when: c => linkLtoIsRustOnly(c) && c.windows,
-    desc: "Rust-only LTO in the link: rustc's level and MergeFunctions (lld-link)",
   },
 
   // ─── PGO (link-side) ───
@@ -1537,11 +1521,16 @@ export const linkerFlags: Flag[] = [
 ];
 
 /**
- * The link's LTO covers the Rust crates and nothing else: a release build without ASan (where rust.ts leaves the
- * release profile's `lto = "fat"` in force) whose C/C++ is compiled without LTO.
+ * Release Rust reaches the link as ThinLTO bitcode (rust.ts) and the linker optimises it: together with the C/C++
+ * where `lto` is on, by itself where it is off. ASan builds link machine code.
  */
+export function rustLtoInLink(c: Config): boolean {
+  return c.release && !c.asan;
+}
+
+/** The link's LTO covers the Rust crates and nothing else: the C/C++ is compiled without LTO. */
 function linkLtoIsRustOnly(c: Config): boolean {
-  return c.release && !c.asan && !c.lto;
+  return rustLtoInLink(c) && !c.lto;
 }
 
 /**

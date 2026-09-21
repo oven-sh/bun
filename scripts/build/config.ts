@@ -1024,12 +1024,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // while rustc's LLVM is ahead of clang's. Both halves still LTO
   // independently when this is false — only the Rust↔C++ inlining is lost.
   // CI cross-compiles both from Linux, where the swap below applies.
-  // (aarch64-musl used to be gated too: LLVM's `globalopt` segfaulted on the
-  // per-crate `bun_runtime` bitcode module during the merged link, CI build
-  // #53109. That bitcode shape no longer exists — the Rust side is one fat,
-  // pre-merged module since the CARGO_PROFILE_RELEASE_LTO=fat switch — so
-  // the gate was lifted; see the deleted "globalopt-crash-aarch64-musl"
-  // workarounds.ts entry if it ever needs to come back.)
   // Darwin cross uses the same rust-lld swap as ELF: rustc's sysroot ships
   // `gcc-ld/ld64.lld` (rust-lld in the Mach-O flavor, built against rustc's
   // LLVM), which findRustLld() already resolves for darwin targets, so the

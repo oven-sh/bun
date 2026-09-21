@@ -735,7 +735,11 @@ test("a worker exiting with an unobserved transform's pull queued frees the pipe
       async function round(n) {
         for (let i = 0; i < n; i++) {
           const worker = new Worker(new URL("./worker.js", import.meta.url).href);
-          await new Promise(resolve => worker.addEventListener("close", resolve));
+          // A worker that fails would leak nothing and pass: fail the run instead.
+          await new Promise((resolve, reject) => {
+            worker.addEventListener("close", resolve);
+            worker.addEventListener("error", event => reject(new Error(event.message)));
+          });
         }
         Bun.gc(true);
         return process.memoryUsage.rss();

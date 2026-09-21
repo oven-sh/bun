@@ -84,6 +84,9 @@ pub(crate) fn remap_stack_frame_positions(
     frames: *mut ZigStackFrame,
     frames_count: usize,
 ) {
+    // The collector thread is not otherwise a Bun thread: give it the per-thread output source that a warning about a
+    // missing or malformed source map would write through (idempotent; no JS ever runs there).
+    bun_core::output::Source::configure_thread_no_js();
     // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
     // the raw ptr because it forwards to the C++-side remapper.
     unsafe { vm.remap_stack_frame_positions(frames, frames_count) };

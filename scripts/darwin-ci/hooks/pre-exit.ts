@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { succeeds } from "../lib/shell";
 import { tart } from "../lib/tart";
 
-let failed = false;
+// best effort: a guest that will not delete is logged and left for the next job or the nightly cleanup, and never
+// changes this job's status (a non-zero pre-exit would fail a job whose tests passed, and every later job on the host)
 async function reap(name: string, action: () => Promise<void>): Promise<void> {
   try {
     await action();
   } catch (error) {
-    failed = true;
     console.error(`pre-exit: could not remove ${name}: ${error}`);
   }
 }
@@ -29,4 +29,3 @@ for (const name of readdirSync(vms).filter((name: string) => name.startsWith("bk
     console.log(`pre-exit: reaped orphan guest ${name}`);
   });
 }
-process.exit(failed ? 1 : 0);

@@ -44,18 +44,5 @@ export function guest(ip: string) {
     syncTo: (localDir: string, remoteDir: string) =>
       run(["rsync", "-a", "--delete", ...rsh, `${localDir}/`, `${target}:${remoteDir}/`]),
 
-    collectReports: (remoteDir: string, localDir: string) =>
-      run([
-        "rsync",
-        "-a",
-        ...rsh,
-        "--include=*/",
-        "--include=*.xml",
-        "--include=*.junit",
-        "--exclude=*",
-        "--prune-empty-dirs",
-        `${target}:${remoteDir}/`,
-        `${localDir}/`,
-      ]),
   };
 }

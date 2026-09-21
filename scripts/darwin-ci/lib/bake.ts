@@ -67,6 +67,6 @@ async function promote(staging: string, image: string): Promise<void> {
       if (hadPrevious) await tart.rename(previous, image);
       throw error;
     }
+    await tart.destroy(previous);
   });
-  await tart.destroy(previous);
 }

@@ -1,28 +1,12 @@
 import type { Subprocess } from "bun";
-import { readlinkSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { config } from "./config";
 import { poll, portOpen, probe, run, runInheritOrThrow, sleep, spawn, succeeds } from "./shell";
 
 const bin = config.tart.bin;
-// a symlink whose target is the holder's pid: creation is atomic and carries the owner in one syscall
-const imageLock = "/tmp/tart-image.lock";
-
-function lockOwner(): number | undefined {
-  try {
-    return Number(readlinkSync(imageLock));
-  } catch {
-    return undefined;
-  }
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
+// lockf(1) holds a flock(2) on this file for as long as its child runs, and the kernel drops the lock when the child
+// exits. The child is a `cat` reading our pipe, so the lock ends when we close the pipe or when this process dies:
+// a crashed or killed job cannot leave a stale lock, and there is no pid to go stale or be reused after a reboot.
+const imageLock = "/tmp/tart-image.flock";
 
 export const tart = {
   pull: (image: string) => runInheritOrThrow([bin, "pull", image]),
@@ -64,27 +48,24 @@ export const tart = {
     }
   },
 
-  // concurrent clones of one image race, and so does swapping the image out under a clone; macOS has no flock(1)
+  // concurrent clones of one image race, and so does swapping the image out under a clone
   async withImageLock<T>(fn: () => Promise<T>): Promise<T> {
-    for (;;) {
-      try {
-        symlinkSync(String(process.pid), imageLock);
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-        const owner = lockOwner();
-        if (owner !== undefined && !processAlive(owner)) {
-          console.log(`${imageLock} held by dead pid ${owner}; removing`);
-          rmSync(imageLock, { force: true });
-          continue;
-        }
-        await sleep(1000);
-      }
+    const holder = Bun.spawn(["/usr/bin/lockf", "-k", imageLock, "/bin/sh", "-c", "echo locked; exec cat >/dev/null"], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const reader = holder.stdout.getReader();
+    const { value } = await reader.read();
+    reader.releaseLock();
+    if (!value || !new TextDecoder().decode(value).startsWith("locked")) {
+      throw new Error(`lockf ${imageLock} exited ${await holder.exited} without taking the lock`);
     }
     try {
       return await fn();
     } finally {
-      if (lockOwner() === process.pid) unlinkSync(imageLock);
+      holder.stdin.end();
+      await holder.exited;
     }
   },
 

@@ -67,14 +67,6 @@ async function runInGuest(): Promise<number> {
     `BUILDKITE_AGENT_JOB_API_TOKEN=${shellQuote(env.BUILDKITE_AGENT_JOB_API_TOKEN ?? "")}`,
   ];
   const status = await g.run(`${jobEnv.join(" ")} /bin/bash ~/job.sh`, forward);
-
-  console.log("--- :outbox_tray: collect reports");
-  try {
-    await g.collectReports("work", checkout);
-  } catch (error) {
-    // the tests decide the step; a failed copy loses only the reports, so it is shown and not returned
-    console.log(`--- :warning: could not collect test reports\n${error}`);
-  }
   return status;
 }
 

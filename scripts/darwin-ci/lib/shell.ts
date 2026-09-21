@@ -22,13 +22,23 @@ export type SpawnOptions = {
   env?: Record<string, string | undefined>;
 };
 
+// Bun.spawn throws ENOENT for a missing executable; report it the way a shell does, as exit 127, so a probe of a
+// tool that is not installed yet (buildkite-agent on a fresh host) is an answer and not a crash
+const notFound = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
+
 export async function spawn(argv: string[], { stdin, ...where }: SpawnOptions = {}): Promise<Result> {
-  const proc = Bun.spawn(argv, {
-    ...where,
-    stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  let proc;
+  try {
+    proc = Bun.spawn(argv, {
+      ...where,
+      stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch (error) {
+    if (notFound(error)) return { exitCode: 127, stdout: "", stderr: `${argv[0]}: not found` };
+    throw error;
+  }
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
@@ -47,8 +57,14 @@ export async function run(argv: string[], options?: SpawnOptions): Promise<strin
 }
 
 // stdio passed through, for long-running commands whose progress the operator wants to see
-export function runInherit(argv: string[], where: Omit<SpawnOptions, "stdin"> = {}): Promise<number> {
-  return Bun.spawn(argv, { ...where, stdin: "ignore", stdout: "inherit", stderr: "inherit" }).exited;
+export async function runInherit(argv: string[], where: Omit<SpawnOptions, "stdin"> = {}): Promise<number> {
+  try {
+    return await Bun.spawn(argv, { ...where, stdin: "ignore", stdout: "inherit", stderr: "inherit" }).exited;
+  } catch (error) {
+    if (!notFound(error)) throw error;
+    console.error(`${argv[0]}: not found`);
+    return 127;
+  }
 }
 
 export async function runInheritOrThrow(argv: string[], options?: Omit<SpawnOptions, "stdin">): Promise<void> {
@@ -87,7 +103,8 @@ export async function sudoWrite(
   mode = "644",
   owner = "root:wheel",
 ): Promise<void> {
-  await run(["sudo", "tee", path], { stdin: content });
+  // created 0600 (umask 077), so a token is never readable by others before the chmod below
+  await run(["sudo", "/bin/sh", "-c", 'umask 077 && exec tee "$1" >/dev/null', "sh", path], { stdin: content });
   await run(["sudo", "chown", owner, path]);
   await run(["sudo", "chmod", mode, path]);
 }

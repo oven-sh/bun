@@ -131,5 +131,8 @@ export async function installBareAgent(): Promise<void> {
 // bootout returns before a busy agent has finished its cancel grace period, and bootstrap fails with EIO until it has
 async function unload(target: string): Promise<void> {
   await spawn(["sudo", "launchctl", "bootout", target]);
-  await poll(30, 2000, async () => ((await succeeds(["sudo", "launchctl", "print", target])) ? undefined : true));
+  const unloaded = await poll(30, 2000, async () =>
+    (await succeeds(["sudo", "launchctl", "print", target])) ? undefined : true,
+  );
+  if (!unloaded) fail(`${target} is still loaded after 60s; launchctl bootstrap would fail with EIO`);
 }

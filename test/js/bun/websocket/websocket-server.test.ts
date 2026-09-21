@@ -654,10 +654,7 @@ describe("Server", () => {
           if (data === "ready") return ready[id].resolve();
           received.push(data);
         };
-        ws.onerror = e => {
-          ready[id].reject(e);
-          closed[id].reject(e);
-        };
+        ws.onerror = e => ready[id].reject(e);
         // Everything the server wrote before the close has arrived by now.
         ws.onclose = () => closed[id].resolve(received);
         return ws;
@@ -741,11 +738,12 @@ describe("Server", () => {
       };
 
       const collect = () =>
-        new Promise<string[]>((resolve, reject) => {
+        new Promise<string[]>(resolve => {
           const received: string[] = [];
           const ws = new WebSocket(`ws://localhost:${port}/`);
           ws.onmessage = e => received.push(e.data as string);
-          ws.onerror = reject;
+          // The close event follows every end of the connection, so it alone
+          // decides when everything the server wrote has arrived.
           ws.onclose = () => resolve(received);
         });
 

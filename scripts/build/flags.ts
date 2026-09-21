@@ -1386,6 +1386,14 @@ export const linkerFlags: Flag[] = [
     desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
   },
   {
+    // The release objects carry the address-significance table safe ICF reads (`-faddrsig` above,
+    // `-Cllvm-args=-addrsig` for Rust). The crates reach this link as one ThinLTO module each, so the copies of a
+    // function that several crates instantiate are only merged if the linker folds them.
+    flag: "-Wl,--icf=safe",
+    when: c => c.freebsd && c.release,
+    desc: "Identical-code-folding (safe)",
+  },
+  {
     // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage
     // build driven by scripts/build-pgo.ts) clang AND rustc emit `.text.hot` /
     // `.text.unlikely` section prefixes from *measured* execution counts.

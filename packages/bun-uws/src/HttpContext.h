@@ -620,6 +620,15 @@ private:
                 ((HttpResponse<SSL> *) s)->resetTimeout();
             }
 
+            /* Bun.serve: park what follows this request if the handler left its
+             * response pending. The body callback below derives this again at the
+             * end of the message, but the parser does not call it for every message:
+             * a head with Content-Length: 0 that was completed from the fallback
+             * buffer (split across reads) gets no end-of-message callback. */
+            if constexpr (!IsNodeHttp) {
+                httpResponseData->parkAtNextBoundary = cannotDispatchAnotherRequest(httpResponseData);
+            }
+
             /* Continue parsing */
             return s;
 
@@ -693,12 +702,11 @@ private:
                 }
             }
 
-            /* Bun.serve: the request message is complete (a bodiless request gets an
-             * empty fin right after dispatch), so the next request boundary is what
-             * the parser reaches next. The handler may have completed the response
-             * anywhere up to here, synchronously or from inside this body callback,
-             * which is why the decision to parse or park what follows is taken now
-             * and not at dispatch. */
+            /* Bun.serve: the request message is complete, so the next request
+             * boundary is what the parser reaches next. The handler may have
+             * completed the response anywhere up to here, also from inside this
+             * body callback, so the decision taken at dispatch to parse or park
+             * what follows is taken again now. */
             if constexpr (!IsNodeHttp) {
                 if (fin) {
                     httpResponseData->parkAtNextBoundary = cannotDispatchAnotherRequest(httpResponseData);

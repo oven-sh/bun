@@ -471,6 +471,32 @@ it("a request pipelined behind a request body that the handler is still consumin
   });
 });
 
+// The parser reports the end of a request message to the server, and that is
+// where the server decides to hold what follows. It reports no end for a head
+// that declares Content-Length: 0 and was completed from the parser's buffer for
+// a head split across reads, so the decision must not depend on that report.
+it("a request pipelined behind a split head with Content-Length: 0 waits for the response", async () => {
+  const handler = holdingHandler();
+  using server = Bun.serve({ ...tcp, fetch: handler.fetch });
+  using client = await RawClient.connect(tcpOnly.target(server, ""));
+
+  client.write("POST /hold HTTP/1.1\r\nHost: x\r\nContent-Le");
+  // The server has read the first part of the head once this is answered.
+  await probe(tcpOnly, server, "");
+  client.write("ngth: 0\r\n\r\n" + request("/after"));
+  await Promise.race([handler.entered("/hold"), client.until(c => c.closed)]);
+  await probe(tcpOnly, server, "");
+  expect({ hits: handler.hits, closed: client.closed }).toEqual({ hits: ["/probe", "/hold", "/probe"], closed: false });
+
+  handler.release("/hold");
+  await client.until(c => c.responses.length === 2);
+  expect({ hits: handler.hits, closed: client.closed, responses: client.responses.map(summarize) }).toEqual({
+    hits: ["/probe", "/hold", "/probe", "/after"],
+    closed: false,
+    responses: [ok("body of /hold"), ok("body of /after")],
+  });
+});
+
 // The held bytes are re-parsed from the top when they are released: a request
 // with a body gets its body back, and whatever is behind it is held again while
 // that request's own response is pending (here until a Connection: close request

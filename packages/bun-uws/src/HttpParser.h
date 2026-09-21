@@ -638,10 +638,11 @@ struct HttpResponseData;
          * also holds while bytes are already parked, so later reads queue up behind
          * them and replay (HttpContext::replayParkedRequestBytes) keeps wire order.
          *
-         * Bun.serve: HttpContext::onData derives it (at entry and after each
-         * request's body fin) from cannotDispatchAnotherRequest: requests pipelined
-         * behind a response that is still being produced or drained wait for it.
-         * Reads are paused while bytes are parked, bounding them to one recv.
+         * Bun.serve: HttpContext::onData derives it (at entry, after each dispatch
+         * and after each request's body fin) from cannotDispatchAnotherRequest:
+         * requests pipelined behind a response that is still being produced or
+         * drained wait for it. Reads are paused while bytes are parked, bounding
+         * them to one recv.
          *
          * node:http flood prevention: set on the pause edge alongside
          * HTTP_NODE_READS_PAUSED (which stays set through the replay) and cleared for

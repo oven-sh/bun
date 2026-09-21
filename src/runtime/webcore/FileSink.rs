@@ -38,8 +38,6 @@ pub struct FileSink {
     pub(crate) source: JsCell<streams::SourceHandle>,
     pub(crate) done: Cell<bool>,
     pub(crate) started: Cell<bool>,
-    /// `end()` or `close()` was called: the sink is finished because it was closed, whatever that flush did.
-    ended: Cell<bool>,
     pub(crate) must_be_kept_alive_until_eof: Cell<bool>,
     /// `to_result` returned `Backpressure` to a ByteStream; drain callbacks resume it.
     pub(crate) source_pending_pull: Cell<bool>,
@@ -560,7 +558,7 @@ impl FileSink {
         let Some(global) = self.js_global() else {
             return;
         };
-        let error = match self.stream_error.get() {
+        let error = match self.stream_error.replace(None) {
             Some(err) => Some(err.to_js(global)),
             None => self.pipe.get().error(),
         };
@@ -873,9 +871,6 @@ impl FileSink {
         }
 
         self.done.set(false);
-        // How the last run finished belongs to that run: `finished()` must not report it for this one.
-        self.ended.set(false);
-        self.stream_error.set(None);
         self.started.set(true);
         self.source.with_mut(|s| s.start());
         sys::Result::Ok(())
@@ -1026,8 +1021,7 @@ impl FileSink {
         // A flush takes no new chunk from the caller; a pending one reports the
         // bytes it pushed out. It only reaches here when no write is pending.
         match self.to_result(rc, flushed) {
-            // The writer had already finished, with an error: the flush fails with it.
-            streams::Writable::Err(err) => sys::Result::Err(err),
+            streams::Writable::Err(_) => unreachable!(),
             result => sys::Result::Ok(result.to_js(cx)),
         }
     }
@@ -1115,7 +1109,7 @@ impl FileSink {
 
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
-            return self.finished();
+            return streams::Writable::Done;
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
@@ -1159,7 +1153,7 @@ impl FileSink {
 
     pub(crate) fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
-            return self.finished();
+            return streams::Writable::Done;
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
@@ -1176,7 +1170,7 @@ impl FileSink {
 
     pub(crate) fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
-            return self.finished();
+            return streams::Writable::Done;
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
@@ -1229,7 +1223,6 @@ impl FileSink {
     }
 
     pub(crate) fn end(&self, _err: Option<sys::Error>) -> sys::Result<()> {
-        self.ended.set(true);
         if self.done.get() {
             return sys::Result::Ok(());
         }
@@ -1298,7 +1291,6 @@ impl FileSink {
     }
 
     pub(crate) fn end_from_js(&self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
-        self.ended.set(true);
         if self.done.get() {
             if self.pending.get().state == streams::PendingState::Pending {
                 if let streams::WritableFuture::Promise { strong, .. } = &self.pending.get().future
@@ -1520,19 +1512,6 @@ impl FileSink {
         (buffered_after + written).saturating_sub(buffered_before) as u64 // @truncate
     }
 
-    /// What a write to a finished sink reports. A sink that was closed is `Done`, as it always was. One that
-    /// failed while it was open reports the error it failed with: `Done` reads as "nothing written, nothing
-    /// wrong", and a write after a reader hung up would be lost without a word.
-    fn finished(&self) -> streams::Writable {
-        if self.ended.get() {
-            return streams::Writable::Done;
-        }
-        match self.stream_error.get() {
-            Some(streams::StreamError::Error(err)) => streams::Writable::Err(err.clone()),
-            _ => streams::Writable::Done,
-        }
-    }
-
     /// `accepted` is what the pending slot is credited with when `write_result`
     /// is `Pending`: a write's full chunk, or the bytes a flush pushed out. It
     /// is ignored for every other result.
@@ -1542,7 +1521,7 @@ impl FileSink {
                 if amt > 0 {
                     return streams::Writable::OwnedAndDone(amt as u64);
                 }
-                self.finished()
+                streams::Writable::Done
             }
             WriteResult::Wrote(amt) => {
                 if amt > 0 {
@@ -1608,7 +1587,6 @@ impl FileSink {
             source: JsCell::new(streams::SourceHandle::default()),
             done: Cell::new(false),
             started: Cell::new(false),
-            ended: Cell::new(false),
             must_be_kept_alive_until_eof: Cell::new(false),
             source_pending_pull: Cell::new(false),
             pollable: Cell::new(false),

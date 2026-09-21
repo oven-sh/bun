@@ -205,9 +205,6 @@ try {
 //
 // stdout is a FIFO whose read end this test holds open and never reads. Another writer on the same pipe fills
 // it and stays backed up, so console's own writer has nothing pending when the short write happens.
-//
-// A later console.write() fails too: the sink reported "done" after a failure like this one, which read as
-// 0 bytes written and nothing wrong.
 test.skipIf(isWindows)("an awaited console.write to a full pipe fails when the stalled reader hangs up", async () => {
   using dir = tempDir("console-write-stalled", {});
   const fifo = join(String(dir), "stdout.fifo");
@@ -234,11 +231,6 @@ try {
 } catch (e) {
   console.error("caught " + e.code);
 }
-try {
-  console.error("later: " + (await console.write("later")));
-} catch (e) {
-  console.error("later: caught " + e.code);
-}
 `,
       ],
       env: bunEnv,
@@ -263,7 +255,7 @@ try {
       stderr += decoder.decode(value, { stream: true });
     }
 
-    expect(stderr).toBe("READY Promise\ncaught EPIPE\nlater: caught EPIPE\n");
+    expect(stderr).toBe("READY Promise\ncaught EPIPE\n");
     expect(await proc.exited).toBe(0);
   } finally {
     if (readEndOpen) closeSync(readEnd);

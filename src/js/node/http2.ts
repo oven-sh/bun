@@ -2215,6 +2215,7 @@ function streamOnResume(this: Http2Stream) {
 // A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
 // HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
 function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
+  if (this[kNeverAnnounced]) return;
   setImmediate(rstNextTick.bind(session, this.id, code));
 }
 function uncorkNT(stream: Http2Stream) {
@@ -2542,6 +2543,8 @@ class Http2Stream extends Duplex {
         // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
         // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
         this.once("ready", sendRstOnReady.bind(this, session, code));
+      } else if (this[kNeverAnnounced]) {
+        // The peer never saw this id: nothing to reset.
       } else if (this.writableFinished || code) {
         setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
@@ -4018,6 +4021,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       // Emit the frameError event with the frame type and error code
       process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+      setImmediate(closeAfterFrameError, self, stream, errorCode);
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
@@ -5015,6 +5019,8 @@ class ClientHttp2Session extends Http2Session {
     frameError: withStreamFrame(
       (self: ClientHttp2Session, stream: ClientHttp2Stream, frameType: number, errorCode: number) => {
         if (!self || typeof stream !== "object") return;
+        // The refused HEADERS never reached the wire: no RST_STREAM for an idle id.
+        stream[kNeverAnnounced] = true;
         // Emit the frameError event with the frame type and error code
         process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
       },
@@ -6575,6 +6581,15 @@ function onErrorSecureServerSession(err, socket) {
 
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
   stream.emit("frameError", frameType, errorCode);
+}
+// node's onFrameError (lib/internal/http2/core.js#L661-L681 at v26.3.0). Both calls are no-ops once closed.
+function closeAfterFrameError(session: ServerHttp2Session, stream: ServerHttp2Stream, code: number) {
+  if (!stream.destroyed && !stream.headersSent) {
+    // No response HEADERS went out, so the writable must not end with a DATA frame. Reset first.
+    session[bunHTTP2Native]?.rstStream(stream.id, code);
+  }
+  stream.close(code);
+  session.close();
 }
 class Http2SecureServer extends tls.Server {
   timeout = 0;

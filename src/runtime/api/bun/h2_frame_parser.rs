@@ -1962,11 +1962,88 @@ impl AbortListener for SignalRef {
     }
 }
 
+/// Header fields staged so a block can be measured before any of them reaches the HPACK encoder.
+#[derive(Default)]
+struct HeaderList {
+    bytes: Vec<u8>,
+    fields: Vec<HeaderField>,
+}
+
+struct HeaderField {
+    name_len: usize,
+    value_len: usize,
+    never_index: bool,
+}
+
+impl HeaderList {
+    fn push(
+        &mut self,
+        name: &[u8],
+        value: &[u8],
+        never_index: bool,
+    ) -> Result<(), bun_alloc::AllocError> {
+        self.bytes
+            .try_reserve(name.len() + value.len())
+            .map_err(|_| bun_alloc::AllocError)?;
+        self.fields
+            .try_reserve(1)
+            .map_err(|_| bun_alloc::AllocError)?;
+        self.bytes.extend_from_slice(name);
+        self.bytes.extend_from_slice(value);
+        self.fields.push(HeaderField {
+            name_len: name.len(),
+            value_len: value.len(),
+            never_index,
+        });
+        Ok(())
+    }
+
+    /// nghttp2_hd_deflate_bound: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_hd.c#L1578-L1603
+    fn deflate_bound(&self) -> usize {
+        12 + self.fields.len() * 12 + self.bytes.len()
+    }
+
+    /// A 1xx `:status`: the final response still follows on the same stream.
+    fn is_informational(&self) -> bool {
+        self.iter()
+            .any(|(name, value, _)| name == b":status" && value.len() == 3 && value[0] == b'1')
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8], bool)> {
+        let mut offset = 0usize;
+        self.fields.iter().map(move |field| {
+            let name_end = offset + field.name_len;
+            let value_end = name_end + field.value_len;
+            let name = &self.bytes[offset..name_end];
+            let value = &self.bytes[name_end..value_end];
+            offset = value_end;
+            (name, value, field.never_index)
+        })
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — core methods
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
+    /// Stages the field when `request()` has to measure the whole block first, else encodes it.
+    fn encode_or_stage_header(
+        &self,
+        staged: &mut Option<HeaderList>,
+        encoded_headers: &mut Vec<u8>,
+        name: &[u8],
+        value: &[u8],
+        never_index: bool,
+    ) -> crate::Result<()> {
+        match staged {
+            Some(list) => Ok(list.push(name, value, never_index)?),
+            None => self
+                .encode_header_into_list(encoded_headers, name, value, never_index)
+                .map(|_| ()),
+        }
+    }
+
     /// Encodes a single header into the ArrayList, growing if needed.
     /// Returns the number of bytes written, or error on failure.
     ///
@@ -5386,6 +5463,10 @@ impl H2FrameParser {
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
+        // JS can still end a stream in the tick that reset it. A reset stream sends nothing.
+        if stream.state == StreamState::CLOSED {
+            return Ok(JSValue::UNDEFINED);
+        }
 
         stream.wait_for_trailers = false;
         let _ = this.send_data(
@@ -5554,6 +5635,10 @@ impl H2FrameParser {
         // The header/sensitive-object getters and value coercions below can run user JS
         // while `stream` is borrowed.
         let mut stream = this.enter_stream_dispatch(stream_ptr);
+        // JS can still send trailers in the tick that reset the stream. A reset stream sends nothing.
+        if stream.state == StreamState::CLOSED {
+            return Ok(JSValue::UNDEFINED);
+        }
 
         let Some(headers_obj) = headers_arg.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
@@ -5671,7 +5756,7 @@ impl H2FrameParser {
                             triggering_id,
                             ErrorCode::NO_ERROR,
                             b"",
-                            this.last_stream_id.get(),
+                            this.last_peer_stream_id.get(),
                             true,
                         );
                         Ok(Some(JSValue::UNDEFINED))
@@ -6484,6 +6569,8 @@ impl H2FrameParser {
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
+        // maxSendHeaderBlockLength is checked on the whole block before the encoder sees it.
+        let mut staged = (this.max_send_header_block_length.get() != 0).then(HeaderList::default);
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
         let stream_id: u32 =
@@ -6604,7 +6691,8 @@ impl H2FrameParser {
                         BStr::new(value)
                     );
 
-                    if let Err(err) = this.encode_header_into_list(
+                    if let Err(err) = this.encode_or_stage_header(
+                        &mut staged,
                         &mut encoded_headers,
                         validated_name,
                         value,
@@ -6774,7 +6862,8 @@ impl H2FrameParser {
                             BStr::new(value)
                         );
 
-                        if let Err(err) = this.encode_header_into_list(
+                        if let Err(err) = this.encode_or_stage_header(
+                            &mut staged,
                             &mut encoded_headers,
                             validated_name,
                             value,
@@ -6844,7 +6933,8 @@ impl H2FrameParser {
                         BStr::new(value)
                     );
 
-                    if let Err(err) = this.encode_header_into_list(
+                    if let Err(err) = this.encode_or_stage_header(
+                        &mut staged,
                         &mut encoded_headers,
                         validated_name,
                         value,
@@ -6870,7 +6960,6 @@ impl H2FrameParser {
                 }
             }
         }
-        let encoded_size = encoded_headers.len();
 
         let Some(stream_ptr) = this.handle_received_stream_id(stream_id) else {
             return Ok(JSValue::js_number(-1.0));
@@ -7071,35 +7160,69 @@ impl H2FrameParser {
             }
             return Ok(JSValue::js_number(stream_id as f64));
         }
-        let mut length: usize = encoded_size;
         if has_priority {
-            length += 5;
             flags |= HeadersFrameFlags::PRIORITY as u8;
         }
 
-        bun_output::scoped_log!(H2FrameParser, "request encoded_size {}", encoded_size);
-
-        // Check if headers block exceeds maxSendHeaderBlockLength
-        if this.max_send_header_block_length.get() != 0
-            && encoded_size > this.max_send_header_block_length.get() as usize
+        // Like nghttp2, priority bytes always counted: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2095-L2101
+        if let Some(staged) = &staged
+            && staged.deflate_bound() + StreamPriority::BYTE_SIZE
+                > this.max_send_header_block_length.get() as usize
         {
+            if this.is_server.get() {
+                let identifier = stream.get_identifier();
+                identifier.ensure_still_alive();
+                // The JS handler closes the session gracefully, like node's onFrameError.
+                this.dispatch_with_2_extra(
+                    JSH2FrameParser::Gc::onFrameError,
+                    identifier,
+                    JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                    JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+                );
+                // DATA cannot follow a refused final response. A refused 1xx block keeps the stream open.
+                if !staged.is_informational() {
+                    this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
+                }
+                return Ok(JSValue::js_number(stream_id as f64));
+            }
+
+            // Client: the request never reached the wire, nghttp2 refuses it locally.
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::REFUSED_STREAM.0;
-
+            let identifier = stream.get_identifier();
+            identifier.ensure_still_alive();
+            stream.free_resources::<false>(this);
             this.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onFrameError,
-                stream.get_identifier(),
+                identifier,
                 JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
                 JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
             );
-
             this.dispatch_with_extra(
                 JSH2FrameParser::Gc::onStreamError,
-                stream.get_identifier(),
+                identifier,
                 JSValue::js_number(stream.rst_code as f64),
             );
             return Ok(JSValue::js_number(stream_id as f64));
         }
+
+        if let Some(staged) = &staged {
+            for (name, value, never_index) in staged.iter() {
+                if let Err(err) =
+                    this.encode_header_into_list(&mut encoded_headers, name, value, never_index)
+                {
+                    if matches!(err, crate::Error::Alloc(_)) {
+                        return Err(
+                            global_object.throw(format_args!("Failed to allocate header buffer"))
+                        );
+                    }
+                    this.schedule_header_compression_session_error();
+                    return Ok(JSValue::js_number(stream_id as f64));
+                }
+            }
+        }
+        let encoded_size = encoded_headers.len();
+        bun_output::scoped_log!(H2FrameParser, "request encoded_size {}", encoded_size);
 
         let actual_max_frame_size = this
             .remote_settings
@@ -7290,7 +7413,6 @@ impl H2FrameParser {
             // TODO: should we make use of this in the future? We validate it.
         }
 
-        let _ = length;
         Ok(JSValue::js_number(stream_id as f64))
     }
 

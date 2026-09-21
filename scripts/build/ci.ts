@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { basename, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getJson, isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
+import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { readTextSymbols } from "../orderfile/generate.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
@@ -716,6 +716,12 @@ const NUMBER_PROBE_BUDGET = 200;
 const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 30_000;
 
 /**
+ * How long a build looks for an order file to inherit. Every build does, and the file is an optimization: past
+ * this, a Buildkite that is slow to answer costs the build its ordering, not its time. Finding one takes seconds.
+ */
+const INHERIT_BUDGET_MS = 120_000;
+
+/**
  * The CI facts the order-file decisions depend on. Passed in rather than read
  * from `process.env` inside, so the decisions are pure and testable.
  */
@@ -752,16 +758,22 @@ export function reportNothingToInherit(cfg: Config): void {
   const msg =
     `${orderFileArtifact(cfg)}: no recent build of the main branch published it, so this build links unordered. ` +
     `The target's trace-order step publishes it after each main build; that step is failing or missing.`;
-  console.log(`~ symbol order: ${msg}`);
+  warnAboutOrderFile("nothing to inherit, shipping unordered", msg);
+}
+
+/** The build is fine and its binary correct, only fatter in resident pages: a line in the log and a warning on the build page. */
+function warnAboutOrderFile(title: string, message: string): void {
+  console.log(`~ symbol order: ${message}`);
   if (!isBuildkite) return;
   reportAnnotationToBuildkite({
+    // Not an error: a red annotation would read as a failed build.
     style: "warning",
     priority: 5,
     label: "symbol order file",
     content: formatAnnotationToHtml({
       filename: "scripts/build/ci.ts",
-      title: "symbol order file: nothing to inherit, shipping unordered",
-      content: msg,
+      title: `symbol order file: ${title}`,
+      content: message,
       source: "build",
       level: "warning",
     }),
@@ -806,19 +818,24 @@ export interface BuildLookups {
   redirect(url: string): Promise<string | null>;
 }
 
-const buildkiteLookups: BuildLookups = {
+/** The lookups, against buildkite.com, until `signal` aborts them: a request that is cut short finds nothing. */
+const buildkiteLookups = (signal: AbortSignal): BuildLookups => ({
   async build(url) {
-    const { error, body } = await getJson(url);
-    return error ? undefined : (body as BuildJson);
+    try {
+      const response = await fetch(url, { signal });
+      return response.ok ? ((await response.json()) as BuildJson) : undefined;
+    } catch {
+      return undefined;
+    }
   },
   async redirect(url) {
     try {
-      return (await fetch(url, { redirect: "manual" })).headers.get("location");
+      return (await fetch(url, { redirect: "manual", signal })).headers.get("location");
     } catch {
       return null;
     }
   },
-};
+});
 
 /**
  * Builds of the main branch that might have published an order file, nearest first.
@@ -826,7 +843,7 @@ const buildkiteLookups: BuildLookups = {
  */
 export async function* candidateBuilds(
   ctx: OrderFileContext,
-  lookups: BuildLookups = buildkiteLookups,
+  lookups: BuildLookups,
 ): AsyncGenerator<{ id: string; number: number | undefined }> {
   const { mainBranch: branch, buildUrl } = ctx;
   if (!branch || !buildUrl) return;
@@ -880,7 +897,9 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
   const downloaded = resolve(cfg.buildDir, artifact);
   let tried = 0;
 
-  for await (const build of candidateBuilds(ctx)) {
+  const outOfTime = AbortSignal.timeout(INHERIT_BUDGET_MS);
+  for await (const build of candidateBuilds(ctx, buildkiteLookups(outOfTime))) {
+    if (outOfTime.aborted) break;
     tried++;
     // No --step: exactly one step per build publishes the target-unique name,
     // the target's trace-order step (.buildkite/ci.ts).
@@ -909,8 +928,11 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
     return true;
   }
 
-  const what =
-    tried === 0 ? "found no earlier build to inherit from" : `none of the ${tried} builds tried published it`;
+  const what = outOfTime.aborted
+    ? "gave up looking for a build to inherit from"
+    : tried === 0
+      ? "found no earlier build to inherit from"
+      : `none of the ${tried} builds tried published it`;
   console.log(`~ symbol order: ${what} (${since(start)})`);
   return false;
 }
@@ -967,7 +989,8 @@ export function verifyOrderFileApplied(cfg: Config, ctx: OrderFileContext, exe: 
   // Where a typical function sits. Ordering does not move this.
   const control = median(sorted([...addresses.values()].map(address => address - textBase)));
 
-  const fail = (message: string, hint: string) => console.log(`~ symbol order: ${message} — ${hint}`);
+  const fail = (message: string, hint: string) =>
+    warnAboutOrderFile("the link did not honour it", `${orderFileArtifact(cfg)}: ${message} — ${hint}`);
 
   const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)}MB`;
   const rate = offsets.length / wanted.length;

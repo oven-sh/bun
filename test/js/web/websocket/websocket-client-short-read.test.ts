@@ -1,6 +1,6 @@
 import { type Socket, TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tls } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tls } from "harness";
 import { once } from "node:events";
 import { WebSocket } from "ws";
 
@@ -643,6 +643,50 @@ describe("WebSocket frames in the same read as the 101", () => {
     } finally {
       ws.close();
     }
+  });
+
+  // The nested event loop can see the end of the stream before the open listener returns.
+  describe("an open listener that spins the event loop with the end of the stream behind them", () => {
+    async function eventsOf(glued: Uint8Array, afterHandshake: (socket: Socket<{ request: string }>) => void) {
+      using server = rawServer({ glued, afterHandshake });
+
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      const ws = new globalThis.WebSocket(server.url);
+      ws.addEventListener("open", () => {
+        events.push("open");
+        // Two turns of the event loop, each with a poll of the socket.
+        expect(new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)))).resolves.toBeUndefined();
+      });
+      ws.addEventListener("message", event => events.push(`message ${event.data}`));
+      ws.addEventListener("error", () => events.push("error"));
+      ws.addEventListener("close", event => {
+        events.push(`close ${event.code} clean=${event.wasClean}`);
+        closed.resolve();
+      });
+      await closed.promise;
+      return events;
+    }
+
+    // Windows: a socket that closes while its own data callback spins the event loop is freed under
+    // the outer dispatch (libuv.c does not count tick_depth). A debug build segfaults, with or without this fix.
+    test.skipIf(isWindows)("a Close frame, then FIN", async () => {
+      const glued = Buffer.concat([textFrame("last words"), closeFrame(1000)]);
+      expect(await eventsOf(glued, socket => socket.end())).toEqual([
+        "open",
+        "message last words",
+        "close 1000 clean=true",
+      ]);
+    });
+
+    // Only Linux is known to keep received bytes readable once the reset is in.
+    test.skipIf(!isLinux)("a reset", async () => {
+      expect(await eventsOf(textFrame("last words"), socket => socket.terminate())).toEqual([
+        "open",
+        "message last words",
+        "close 1006 clean=false",
+      ]);
+    });
   });
 
   test("a peer that ends the connection right behind them still gets them delivered", async () => {

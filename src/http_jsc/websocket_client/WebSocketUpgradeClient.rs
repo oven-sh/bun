@@ -838,12 +838,12 @@ where
                 .map(|ws| CppWebSocketRef::new(&ws));
             Self::process_response(this, response, &full[head_len..]);
         }
+        // Under a nested event-loop spin (`expect().resolves`) the scope above drained nothing.
+        let event_loop = vm.event_loop_mut();
+        if is_101 && event_loop.entered_event_loop_count > 0 {
+            let _ = event_loop.drain_microtasks();
+        }
         if let Some(ws) = overflow_owner {
-            let event_loop = vm.event_loop_mut();
-            // Under a nested event-loop spin (`expect().resolves`) the scope above drained nothing.
-            if event_loop.entered_event_loop_count > 0 {
-                let _ = event_loop.drain_microtasks();
-            }
             ws.deliver_initial_data();
         }
     }

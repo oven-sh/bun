@@ -464,6 +464,16 @@ Before Bun 1.2, the lockfile was binary and called `bun.lockb`. To upgrade an ol
 
 ## Cache
 
+Bun caches registry metadata (the manifest of each package) for 5 minutes. To fetch fresh metadata before that, for example after you publish a new version, use `--force`. It asks the registry again for every package and rewrites the cached manifests:
+
+```bash
+bun install --force
+# or, for one package
+bun add <pkg> --force
+```
+
+`bun install --no-cache` skips the manifest cache for one run. To turn the manifest cache off for a project, set `disableManifest = true` under `[install.cache]` in `bunfig.toml`. See [Global cache](/pm/global-cache).
+
 To delete the cache:
 
 ```bash
@@ -471,6 +481,10 @@ bun pm cache rm
 # or
 rm -rf ~/.bun/install/cache
 ```
+
+<Warning>
+This also deletes the [global store](/pm/global-store) at `<cache>/links/`. Every project with `globalStore = true` symlinks into that directory. Run `bun install` again in each of them afterwards. To refresh stale metadata, use `--force` instead.
+</Warning>
 
 ## Platform-specific backends
 

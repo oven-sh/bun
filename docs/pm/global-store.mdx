@@ -138,6 +138,10 @@ Tools that scan `node_modules` without following symlinks, or that compare file 
 
 Each unique `(package, version, resolved-dependency-set)` triple gets one directory in `<cache>/links/`. Across many projects that's a large net win: one copy on disk instead of one per checkout. But the store does grow over time as new versions and new peer-dependency combinations land. Run `bun pm cache rm` to clear the cache including the global store; the next install repopulates only what that project needs.
 
+<Warning>
+`bun pm cache rm` deletes `<cache>/links/`. Every project that uses the global store symlinks into that directory, so each of them breaks until you run `bun install` in it again. Do not run `bun pm cache rm` to refresh stale registry metadata. Use `bun install --force` or `bun add <pkg> --force` instead. See [Cache](/pm/cli/install#cache).
+</Warning>
+
 ### Concurrency
 
 Multiple `bun install` processes (parallel CI jobs, concurrent workspace builds) may race to populate the same global entry. Each process builds the entire entry (package files, dependency symlinks, bin links) under a private `<entry>.tmp-<random>/` staging directory. As the final step, it renames that directory into place. The loser of the rename sees `EEXIST` and discards its identical staging tree. A writer that crashes mid-build leaves only an unreferenced staging directory that the next install ignores. A published entry is therefore always complete; there is no separate completeness sentinel.

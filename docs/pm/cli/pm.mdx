@@ -332,6 +332,10 @@ To clear Bun's global module cache:
 bun pm cache rm
 ```
 
+This deletes everything in the cache directory, including the [global store](/pm/global-store) at `<cache>/links/`. Every project with `globalStore = true` symlinks into that directory, so run `bun install` again in each of them afterwards.
+
+To refresh stale registry metadata without deleting the cache, use `bun install --force` or `bun add <pkg> --force`. See [Cache](/pm/cli/install#cache).
+
 ## migrate
 
 To migrate another package manager's lockfile without installing anything:

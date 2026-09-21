@@ -594,8 +594,32 @@ impl FileReader {
         }
     }
 
+    /// The JS stream was errored with `reason`. A native reader that waits now fails with it.
+    pub(crate) fn error_native_consumer(&self, reason: jsc::JSValue) {
+        // SAFETY: see `parent()`.
+        let _pin = unsafe { SourcePin::new(self.parent()) };
+        let global = self.parent_const().global_this();
+        let err = streams::StreamError::JSValue(jsc::strong::Optional::create(reason, global));
+        let sink = *self.sink.get();
+        if sink.is_some() {
+            self.detach_sink(Some(&err));
+            sink.end(Some(err));
+        } else if self.pending.get().state == streams::PendingState::Pending {
+            self.pending
+                .with_mut(|p| p.result = streams::Result::Err(err));
+            self.pending.with_mut(|p| p.run());
+        }
+    }
+
     pub(crate) fn on_cancel(&self) {
+        // A sink still wired here must fail, not see an EOF and commit a truncated body.
+        let sink = *self.sink.get();
         self.unpipe_without_deref();
+        if sink.is_some() {
+            sink.end(Some(streams::StreamError::AbortReason(
+                jsc::CommonAbortReason::UserAbort,
+            )));
+        }
         if self.done.get() {
             return;
         }

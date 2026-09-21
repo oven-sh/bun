@@ -292,6 +292,8 @@ impl ReadableStream {
         let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
         if let Some(bytes) = self.ptr.bytes() {
             bytes.error_native_consumer(reason);
+        } else if let Some(file) = self.ptr.file() {
+            file.error_native_consumer(reason);
         }
         self.done();
         result

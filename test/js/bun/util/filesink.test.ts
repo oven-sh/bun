@@ -1200,7 +1200,7 @@ try {
 // A chunk below the writer's chunk size is buffered and reported as written. The next, larger write sends the
 // buffer and itself to the fd together, and used to report all of it: the buffered bytes were counted twice.
 // The fourth write is not ASCII, which takes the writer's Latin-1 path.
-it("a write() that flushes earlier buffered chunks reports its own bytes", async () => {
+it.concurrent("a write() that flushes earlier buffered chunks reports its own bytes", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1237,12 +1237,14 @@ console.error(JSON.stringify(counts));
 //
 // Not on Windows, where this script has always died that way: a write goes to the pipe at once there, so each
 // one fails on the spot with a rejected Promise of its own.
-it.skipIf(isWindows)("writes that are not awaited keep the script running after the reader has gone", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+it.concurrent.skipIf(isWindows)(
+  "writes that are not awaited keep the script running after the reader has gone",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
 const sink = Bun.stdout.writer();
 sink.write("first\\n");
 sink.flush();
@@ -1253,20 +1255,21 @@ for (let batch = 0; batch < 20; batch++) {
 }
 console.error("finished");
 `,
-    ],
-    env: bunEnv,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const reader = proc.stdout.getReader();
-  await reader.read();
-  await reader.cancel();
-  proc.stdin.write("x");
-  await proc.stdin.end();
+    const reader = proc.stdout.getReader();
+    await reader.read();
+    await reader.cancel();
+    proc.stdin.write("x");
+    await proc.stdin.end();
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("finished\n");
-  expect(exitCode).toBe(0);
-});
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("finished\n");
+    expect(exitCode).toBe(0);
+  },
+);

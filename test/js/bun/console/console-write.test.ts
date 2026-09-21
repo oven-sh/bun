@@ -152,7 +152,7 @@ try {
 // A later console.write() still fails. With a short argument left in the buffer by the failed call, the sink was
 // marked finished when that was flushed, and later writes reported 0 bytes and no error.
 const big = `Buffer.alloc(1024 * 1024, "a").toString()`;
-test.each([
+test.concurrent.each([
   ["two large arguments", `${big}, ${big}`],
   ["a large argument, then a short one", `${big}, "\\n"`],
   ["a short argument, then a large one", `"\\n", ${big}`],
@@ -205,19 +205,21 @@ try {
 //
 // stdout is a FIFO whose read end this test holds open and never reads. Another writer on the same pipe fills
 // it and stays backed up, so console's own writer has nothing pending when the short write happens.
-test.skipIf(isWindows)("an awaited console.write to a full pipe fails when the stalled reader hangs up", async () => {
-  using dir = tempDir("console-write-stalled", {});
-  const fifo = join(String(dir), "stdout.fifo");
-  mkfifo(fifo, 0o600);
-  const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
-  const writeEnd = openSync(fifo, constants.O_WRONLY);
-  let readEndOpen = true;
-  try {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+test.concurrent.skipIf(isWindows)(
+  "an awaited console.write to a full pipe fails when the stalled reader hangs up",
+  async () => {
+    using dir = tempDir("console-write-stalled", {});
+    const fifo = join(String(dir), "stdout.fifo");
+    mkfifo(fifo, 0o600);
+    const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    const writeEnd = openSync(fifo, constants.O_WRONLY);
+    let readEndOpen = true;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
 process.on("unhandledRejection", e => {
   console.error("unhandledRejection " + e?.code);
 });
@@ -232,54 +234,57 @@ try {
   console.error("caught " + e.code);
 }
 `,
-      ],
-      env: bunEnv,
-      stdout: writeEnd,
-      stderr: "pipe",
-    });
-    closeSync(writeEnd);
+        ],
+        env: bunEnv,
+        stdout: writeEnd,
+        stderr: "pipe",
+      });
+      closeSync(writeEnd);
 
-    const reader = proc.stderr.getReader();
-    const decoder = new TextDecoder();
-    let stderr = "";
-    while (!stderr.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      stderr += decoder.decode(value, { stream: true });
-    }
-    closeSync(readEnd);
-    readEndOpen = false;
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      stderr += decoder.decode(value, { stream: true });
-    }
+      const reader = proc.stderr.getReader();
+      const decoder = new TextDecoder();
+      let stderr = "";
+      while (!stderr.includes("READY")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stderr += decoder.decode(value, { stream: true });
+      }
+      closeSync(readEnd);
+      readEndOpen = false;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stderr += decoder.decode(value, { stream: true });
+      }
 
-    expect(stderr).toBe("READY Promise\ncaught EPIPE\n");
-    expect(await proc.exited).toBe(0);
-  } finally {
-    if (readEndOpen) closeSync(readEnd);
-  }
-});
+      expect(stderr).toBe("READY Promise\ncaught EPIPE\n");
+      expect(await proc.exited).toBe(0);
+    } finally {
+      if (readEndOpen) closeSync(readEnd);
+    }
+  },
+);
 
 // console.write(big, 123) throws for the argument that is not something to write, after the first one has become
 // the sink's pending write. That write's Promise was made inside the call and never reaches the caller, so when
 // the write later fails nobody can have handled it: it must not be reported as an unhandled rejection.
 //
 // stdout is a FIFO whose read end this test holds open and never reads, then closes.
-test.skipIf(isWindows)("console.write that throws for a later argument leaves no unhandled rejection", async () => {
-  using dir = tempDir("console-write-bad-argument", {});
-  const fifo = join(String(dir), "stdout.fifo");
-  mkfifo(fifo, 0o600);
-  const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
-  const writeEnd = openSync(fifo, constants.O_WRONLY);
-  let readEndOpen = true;
-  try {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+test.concurrent.skipIf(isWindows)(
+  "console.write that throws for a later argument leaves no unhandled rejection",
+  async () => {
+    using dir = tempDir("console-write-bad-argument", {});
+    const fifo = join(String(dir), "stdout.fifo");
+    mkfifo(fifo, 0o600);
+    const readEnd = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    const writeEnd = openSync(fifo, constants.O_WRONLY);
+    let readEndOpen = true;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
 process.on("unhandledRejection", e => {
   console.error("unhandledRejection " + e?.code);
 });
@@ -292,36 +297,37 @@ try {
 console.error("READY");
 process.stdin.once("data", () => console.error("end"));
 `,
-      ],
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: writeEnd,
-      stderr: "pipe",
-    });
-    closeSync(writeEnd);
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: writeEnd,
+        stderr: "pipe",
+      });
+      closeSync(writeEnd);
 
-    const reader = proc.stderr.getReader();
-    const decoder = new TextDecoder();
-    let stderr = "";
-    while (!stderr.includes("READY")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      stderr += decoder.decode(value, { stream: true });
-    }
-    closeSync(readEnd);
-    readEndOpen = false;
-    // The child's event loop sees the hang-up before it sees this byte on stdin.
-    proc.stdin.write("x");
-    await proc.stdin.end();
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      stderr += decoder.decode(value, { stream: true });
-    }
+      const reader = proc.stderr.getReader();
+      const decoder = new TextDecoder();
+      let stderr = "";
+      while (!stderr.includes("READY")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stderr += decoder.decode(value, { stream: true });
+      }
+      closeSync(readEnd);
+      readEndOpen = false;
+      // The child's event loop sees the hang-up before it sees this byte on stdin.
+      proc.stdin.write("x");
+      await proc.stdin.end();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stderr += decoder.decode(value, { stream: true });
+      }
 
-    expect(stderr).toBe("caught ERR_INVALID_ARG_TYPE\nREADY\nend\n");
-    expect(await proc.exited).toBe(0);
-  } finally {
-    if (readEndOpen) closeSync(readEnd);
-  }
-});
+      expect(stderr).toBe("caught ERR_INVALID_ARG_TYPE\nREADY\nend\n");
+      expect(await proc.exited).toBe(0);
+    } finally {
+      if (readEndOpen) closeSync(readEnd);
+    }
+  },
+);

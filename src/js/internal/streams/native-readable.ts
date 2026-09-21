@@ -12,6 +12,7 @@ const transferToNativeReadable = $newCppFunction(
   1,
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
+const { runAfterTickDrain } = require("internal/process/after_tick_drain");
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
@@ -20,6 +21,15 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
+const kSawEof = Symbol("sawEof");
+const kReadEvents = Symbol("readEvents");
+const kReadEventsHead = Symbol("readEventsHead");
+const kReadEventQueued = Symbol("readEventQueued");
+
+// What a read gave, in the order Node would report it: see `kReadEvents`.
+const kChunkEvent = 0;
+const kEofEvent = 1;
+const kErrorEvent = 2;
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -49,6 +59,12 @@ interface NativeReadable extends NodeReadable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
+  [kSawEof]: boolean;
+  // "libuv-handle" only: pairs of (kind, value) that wait for a drain of their own, from `kReadEventsHead` on.
+  // At most the results of one `_read`: the next pull waits until they are delivered.
+  [kReadEvents]: unknown[] | undefined;
+  [kReadEventsHead]: number;
+  [kReadEventQueued]: boolean;
   debugId: number;
 }
 
@@ -65,12 +81,34 @@ interface NativePtr {
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
+// `nodeSource` names what feeds the equivalent stream in Node.
+//
+// "libuv-handle": child_process stdio, a net.Socket over a pipe in Node. Node
+// reports each chunk, the EOF, a read error and the close from a libuv
+// callback of its own, and runs every nextTick and promise job between two of
+// them (internal/process/after_tick_drain.ts). One native read here can give
+// several of those events, and `_read` runs inside a nextTick or a promise
+// job. So each event waits for `runAfterTickDrain`, unless nobody listens.
+// https://github.com/nodejs/node/blob/v24.9.0/lib/internal/stream_base_commons.js#L166-L233
+//
+// "webstream": Readable.fromWeb. Node pushes each chunk from the promise job
+// of a `reader.read()`, and gets the EOF from a later read. Here a chunk is
+// pushed as it arrives: inside `_read` when the read is synchronous (so a
+// 'data' listener's nextTicks run before its promise jobs, unlike Node),
+// inside the promise job otherwise. Only the EOF waits for `runAfterTickDrain`.
+// https://github.com/nodejs/node/blob/v24.9.0/lib/internal/webstreams/adapters.js#L544-L555
+function constructNativeReadable(
+  readableStream: ReadableStream,
+  options,
+  nodeSource: "libuv-handle" | "webstream",
+): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = (readableStream as any).$bunNativePtr;
   $assert(typeof bunNativePtr === "object", "Invalid native ptr");
 
-  const stream = new Readable(options) as NativeReadable;
+  const isHandle = nodeSource === "libuv-handle";
+  // A net.Socket emits 'close' itself, from the close callback of its handle: see `destroy`.
+  const stream = new Readable(isHandle ? { ...options, emitClose: false } : options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
 
@@ -86,6 +124,10 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
+  stream[kSawEof] = false;
+  stream[kReadEvents] = isHandle ? [] : undefined;
+  stream[kReadEventsHead] = 0;
+  stream[kReadEventQueued] = false;
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -142,7 +184,12 @@ function read(this: NativeReadable, maxToRead: number) {
   // not paused from a previous `push()===false` (readStart, like net.Socket).
   // Runs even when a pull promise is outstanding so that promise can resolve.
   if (ptr) ptr.setFlowing?.(true);
-  if (this[kPendingRead]) {
+  if (this[kPendingRead] || this[kSawEof]) {
+    return;
+  }
+  const events = this[kReadEvents];
+  // The events of the last read come first, and push() has not said yet if it wants more.
+  if (events !== undefined && events.length !== 0) {
     return;
   }
   if (!ptr) {
@@ -158,17 +205,25 @@ function read(this: NativeReadable, maxToRead: number) {
       this[kHighWaterMark] = Math.min(this[kHighWaterMark], result);
     }
     if ($isTypedArrayView(result) && result.byteLength > 0) {
-      pushAndCheck(this, result);
+      deliverChunk(this, result);
     }
     const drainResult = ptr.drain();
     this[kConstructed] = true;
     $debug(`[${this.debugId}] drain result: ${drainResult?.byteLength ?? "null"}`);
     if ((drainResult?.byteLength ?? 0) > 0) {
-      pushAndCheck(this, drainResult);
+      deliverChunk(this, drainResult);
     }
   }
   const chunk = getRemainingChunk(this, maxToRead);
-  var result = ptr.pull(chunk, this[kCloseState]);
+  var result;
+  try {
+    result = ptr.pull(chunk, this[kCloseState]);
+  } catch (error) {
+    if (events === undefined) throw error;
+    // The chunks that this read already got come before the error.
+    queueReadEvent(this, events, kErrorEvent, error);
+    return;
+  }
   $assert(result !== undefined);
   $debug(
     `[${this.debugId}] pull ${chunk?.byteLength} bytes, result: ${$isPromise(result) ? "<pending>" : $isTypedArrayView(result) ? `<${result.byteLength} bytes>` : result}, closeState: ${this[kCloseState][0]}`,
@@ -184,7 +239,8 @@ function read(this: NativeReadable, maxToRead: number) {
         this[kRemainingChunk] = handleResult(this, result, chunk, this[kCloseState][0]);
       },
       reason => {
-        errorOrDestroy(this, reason);
+        if (events === undefined) errorOrDestroy(this, reason);
+        else queueReadEvent(this, events, kErrorEvent, reason);
       },
     );
   } else {
@@ -201,7 +257,7 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undef
     return handleNumberResult(stream, result, chunk, isClosed);
   } else if (typeof result === "boolean") {
     $debug(`[${stream.debugId}] handleResult(${result})`, chunk, isClosed);
-    process.nextTick(pushEof, stream);
+    deliverEof(stream);
     return (chunk?.byteLength ?? 0) > 0 ? chunk : undefined;
   } else if ($isTypedArrayView(result)) {
     if (result.byteLength >= stream[kHighWaterMark] && !stream[kHasResized] && !isClosed) {
@@ -213,7 +269,8 @@ function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undef
   }
 }
 
-// EOF is pushed a tick after the last chunk. After a destroy() in between, Node emits 'close' without 'end'.
+// The EOF waits for the nextTicks and promise jobs of the last chunk's listeners. After a destroy()
+// in between, Node emits 'close' without 'end'.
 function pushEof(stream: NativeReadable) {
   if (!stream.destroyed) stream.push(null);
 }
@@ -228,17 +285,92 @@ function pushAndCheck(stream: NativeReadable, chunk: any) {
   }
 }
 
+function deliverChunk(stream: NativeReadable, chunk: any) {
+  const events = stream[kReadEvents];
+  // Without a 'data' or 'readable' listener nobody sees an order, and a read() call must get the
+  // bytes now: Node reads a child's pipe from the start, so there they are in the buffer already.
+  if (
+    events === undefined ||
+    (events.length === 0 && stream.listenerCount("data") === 0 && stream.listenerCount("readable") === 0)
+  ) {
+    pushAndCheck(stream, chunk);
+  } else {
+    queueReadEvent(stream, events, kChunkEvent, chunk);
+  }
+}
+
+// The EOF can come in the same read as the last chunk. Node gets it in a read
+// of its own, after the nextTicks and promise jobs of that chunk's listeners.
+function deliverEof(stream: NativeReadable) {
+  stream[kSawEof] = true;
+  const events = stream[kReadEvents];
+  if (events === undefined) runAfterTickDrain(pushEof, stream);
+  else queueReadEvent(stream, events, kEofEvent, undefined);
+}
+
+function queueReadEvent(stream: NativeReadable, events: unknown[], kind: number, value: unknown) {
+  $arrayPush(events, kind);
+  $arrayPush(events, value);
+  queueReadEventDelivery(stream);
+}
+
+function queueReadEventDelivery(stream: NativeReadable) {
+  if (stream[kReadEventQueued]) return;
+  stream[kReadEventQueued] = true;
+  runAfterTickDrain(deliverReadEvent, stream);
+}
+
+function deliverReadEvent(stream: NativeReadable) {
+  stream[kReadEventQueued] = false;
+  const events = stream[kReadEvents]!;
+  // Node reports nothing more for a handle that is closed.
+  if (stream.destroyed) {
+    events.length = 0;
+    stream[kReadEventsHead] = 0;
+    return;
+  }
+  const head = stream[kReadEventsHead];
+  const kind = events[head];
+  const value = events[head + 1];
+  if (head + 2 === events.length) {
+    events.length = 0;
+    stream[kReadEventsHead] = 0;
+  } else {
+    stream[kReadEventsHead] = head + 2;
+    // Before the push, so that a listener that throws does not strand the events behind this one.
+    queueReadEventDelivery(stream);
+  }
+  if (kind === kEofEvent) {
+    stream.push(null);
+  } else if (kind === kErrorEvent) {
+    errorOrDestroy(stream, value);
+  } else {
+    let threw = true;
+    try {
+      pushAndCheck(stream, value);
+      threw = false;
+    } finally {
+      // The throw of a 'data' listener skipped the maybeReadMore() of push(). Node's handle reads on.
+      if (threw) process.nextTick(readAfterListenerThrew, stream);
+    }
+  }
+}
+
+function readAfterListenerThrew(stream: NativeReadable) {
+  if (!stream.destroyed) stream.read(0);
+}
+
 function handleNumberResult(stream: NativeReadable, result: number, chunk: any, isClosed: boolean) {
   if (result > 0) {
     const slice = chunk.subarray(0, result);
     chunk = slice.byteLength < chunk.byteLength ? chunk.subarray(result) : undefined;
     if (slice.byteLength > 0) {
-      pushAndCheck(stream, slice);
+      deliverChunk(stream, slice);
     }
   }
 
   if (isClosed) {
-    process.nextTick(pushEof, stream);
+    deliverEof(stream);
   }
 
   return chunk;
@@ -246,11 +378,11 @@ function handleNumberResult(stream: NativeReadable, result: number, chunk: any, 
 
 function handleArrayBufferViewResult(stream: NativeReadable, result: any, chunk: any, isClosed: boolean) {
   if (result.byteLength > 0) {
-    pushAndCheck(stream, result);
+    deliverChunk(stream, result);
   }
 
   if (isClosed) {
-    process.nextTick(pushEof, stream);
+    deliverEof(stream);
   }
 
   return chunk;
@@ -261,10 +393,17 @@ function adjustHighWaterMark(stream: NativeReadable) {
   stream[kHasResized] = true;
 }
 
-function destroy(this: NativeReadable, error: any, cb: () => void) {
+function destroy(this: NativeReadable, error: any, cb: (error?: any) => void) {
   const ptr = this.$bunNativePtr;
   if (ptr) {
     ptr.cancel(error);
+  }
+  if (this[kReadEvents] !== undefined) {
+    // As net.Socket: `_destroy` calls back at once, so 'error' comes in the next tick, and 'close'
+    // comes from the close callback of the handle, a libuv callback of its own.
+    if (cb) cb(error);
+    runAfterTickDrain(emitClose, this);
+    return;
   }
   dropReadAhead(this);
   if (cb) {
@@ -273,7 +412,11 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   }
 }
 
-// `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not.
+function emitClose(stream: NativeReadable) {
+  stream.emit("close");
+}
+
+// `_read()` of a "webstream" source pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not.
 function dropReadAhead(stream: NativeReadable) {
   const state = stream._readableState;
   // Paused: Node has this buffered too, and a later read() returns it.

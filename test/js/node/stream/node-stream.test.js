@@ -1,6 +1,7 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
+import { once } from "node:events";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
@@ -386,6 +387,56 @@ it("Readable.fromWeb", async () => {
     chunks.push(chunk);
   }
   expect(Buffer.concat(chunks).toString()).toBe("Hello World!\n");
+});
+
+// These web streams have a native source, which gives the last bytes and the EOF in one read.
+// A nextTick of the listener is not in the order: Node pushes every fromWeb chunk from a promise
+// job, so its promise jobs run first. Bun pushes a synchronous read from the nextTick that reads.
+describe("Readable.fromWeb of a native stream", () => {
+  const sources = [
+    ["Blob", () => new Blob(["AAAABB"]).stream()],
+    ["Response body", () => new Response("AAAABB").body],
+    ["Bun.file", dir => Bun.file(join(dir, "file.txt")).stream()],
+  ];
+
+  it.each(sources)("%s: 'end' comes after the promise jobs of the last 'data' listeners", async (_, makeWebStream) => {
+    using dir = tempDir("fromweb-end-order", { "file.txt": "AAAABB" });
+    const events = [];
+    const readable = Readable.fromWeb(makeWebStream(String(dir)));
+    readable.on("data", async chunk => {
+      events.push(`data(${chunk})`);
+      await null;
+      events.push("job");
+      await null;
+      events.push("job2");
+    });
+    readable.on("end", () => events.push("end"));
+    await once(readable, "close");
+    expect(events).toEqual(["data(AAAABB)", "job", "job2", "end"]);
+  });
+
+  it.each(sources)(
+    "%s: no 'end' after a promise job of the last 'data' listener destroys it",
+    async (_, makeWebStream) => {
+      using dir = tempDir("fromweb-end-order", { "file.txt": "AAAABB" });
+      const events = [];
+      const readable = Readable.fromWeb(makeWebStream(String(dir)));
+      readable.on("data", async chunk => {
+        events.push(`data(${chunk})`);
+        await null;
+        readable.destroy();
+        events.push("destroy");
+      });
+      readable.on("end", () => events.push("end"));
+      const { promise, resolve } = Promise.withResolvers();
+      finished(readable, resolve);
+      const [error] = await Promise.all([promise, once(readable, "close")]);
+      expect({ events, code: error?.code }).toEqual({
+        events: ["data(AAAABB)", "destroy"],
+        code: "ERR_STREAM_PREMATURE_CLOSE",
+      });
+    },
+  );
 });
 
 // fromWeb assigns stream.$bunNativePtr on the node Readable. When user code grafts

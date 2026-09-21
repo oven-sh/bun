@@ -637,18 +637,25 @@ describe("spawn()", () => {
 
       // The descriptor under a TLS session carries TLS records: a child that reads it gets ciphertext, and
       // what a child writes to it reaches the peer as a broken record. Node throws the same error.
+      // The message names the socket's class and nothing more: an inspected TLSSocket reaches the key and
+      // the passphrase of its server or of its connect options.
       it("rejects a tls.TLSSocket", async () => {
         using ends = await bothEnds(tls.createServer(tlsCert), port =>
           tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }),
         );
+        const rejection = expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "The argument 'stdio' is invalid. Received '[TLSSocket]'",
+        });
         for (const socket of ends.sockets) {
           for (const stdio of [
             [socket, "ignore", "ignore"],
             ["ignore", socket, "ignore"],
           ] satisfies StdioOptions[]) {
             const options = { env: bunEnv, stdio };
-            expect(() => spawn(bunExe(), ["-e", ""], options)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
-            expect(() => spawnSync(bunExe(), ["-e", ""], options)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+            expect(() => spawn(bunExe(), ["-e", ""], options)).toThrow(rejection);
+            expect(() => spawnSync(bunExe(), ["-e", ""], options)).toThrow(rejection);
           }
         }
       });

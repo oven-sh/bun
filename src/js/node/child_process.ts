@@ -1754,7 +1754,10 @@ function streamFdOf(item): number | undefined {
   if (typeof itemFd === "number") return itemFd;
 
   // The descriptor under a tls.TLSSocket carries TLS records, not the stream's bytes. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1063-L1083
-  if (typeof item[Symbol.for("::buntls::")] === "function") throw $ERR_INVALID_ARG_VALUE("stdio", item);
+  if (typeof item[Symbol.for("::buntls::")] === "function") {
+    // The message gets the class name only: a fully inspected TLSSocket reaches its key and passphrase.
+    throw $ERR_INVALID_ARG_VALUE("stdio", require("internal/util/inspect").inspect(item, { depth: -1 }));
+  }
 
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;

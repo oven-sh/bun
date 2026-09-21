@@ -17,15 +17,13 @@
         "react-dom": "18.3.1",
         "source-map-js": "1.2.1",
         "typescript": "6.0.2",
+        "undici-types": "8.3.0",
       },
     },
     "packages/bun-types": {
       "name": "bun-types",
       "dependencies": {
         "@types/node": "*",
-      },
-      "devDependencies": {
-        "undici-types": "*",
       },
     },
   },

@@ -1519,7 +1519,19 @@ impl FileSink {
                 }
                 streams::Writable::Temporary(amt as u64)
             }
-            WriteResult::Err(err) => streams::Writable::Err(err),
+            WriteResult::Err(err) => {
+                // A backpressured `write()` left its promise outstanding. `Writable::Err` becomes a
+                // second, already rejected promise, and the caller of `write()` is awaiting the first:
+                // the failure would be reported twice, once as an unhandled rejection. As in `end()`,
+                // the outstanding promise gets the error and the caller gets that promise.
+                if self.pending.get().state == streams::PendingState::Pending {
+                    self.pending
+                        .with_mut(|p| p.result = streams::Writable::Err(err));
+                    self.run_pending_later();
+                    return streams::Writable::Pending(self.pending.as_ptr());
+                }
+                streams::Writable::Err(err)
+            }
             WriteResult::Pending(_) => {
                 if !self.must_be_kept_alive_until_eof.get() {
                     self.must_be_kept_alive_until_eof.set(true);

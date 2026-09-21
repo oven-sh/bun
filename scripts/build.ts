@@ -38,7 +38,16 @@ import {
   uploadArtifacts,
 } from "./build/ci.ts";
 import { formatConfig, formatConfigUnchanged, type Config, type PartialConfig } from "./build/config.ts";
-import { configOf, configure, reconfigure, type ConfigureInput } from "./build/configure.ts";
+import {
+  codegenConfigOf,
+  configOf,
+  configure,
+  configureCodegen,
+  modeOf,
+  reconfigure,
+  reconfigureCodegen,
+  type ConfigureInput,
+} from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
 import { ninjaIfPresent } from "./build/ninja-release.ts";
 import { STREAM_FD } from "./build/stream.ts";
@@ -77,7 +86,8 @@ async function main(): Promise<void> {
   // A ninja tool (`-t query <target>`, `-t deps <object>`, `-t commands`, …) inspects what the last configure and
   // build left behind, so it runs on the build directory as it is, with the ninja the build runs.
   if (args.ninjaTool !== undefined) {
-    const { cfg } = configOf({ profile: args.profile, overrides: args.overrides });
+    const toolInput: ConfigureInput = { profile: args.profile, overrides: args.overrides };
+    const cfg = modeOf(toolInput) === "codegen" ? codegenConfigOf(toolInput) : configOf(toolInput).cfg;
     if (!existsSync(join(cfg.buildDir, "build.ninja"))) {
       throw new BuildError(`${cfg.buildDir} has not been configured`, {
         hint: "Build it, or configure it with --configure-only, using the same profile flags.",
@@ -129,8 +139,24 @@ async function main(): Promise<void> {
     // ninja's generator rule replaying a previous configure (`regen`, configure.ts): just rewrite build.ninja.
     // ninja's own [N/M] line already says "reconfigure"; the CI prelude and the local summary would be noise
     // in the middle of a build log.
-    await reconfigure(input);
+    await (modeOf(input) === "codegen" ? reconfigureCodegen(input) : reconfigure(input));
     return;
+  }
+
+  // mode=codegen: the code generators and nothing else. No toolchain was looked for, and none of what the two
+  // paths below do around a native build (artifacts, the symbol order file, a binary to run) applies.
+  if (modeOf(input) === "codegen") {
+    if (args.execArgs.length > 0) {
+      throw new BuildError("mode=codegen builds no binary to run", { hint: "Drop the positional args." });
+    }
+    const result = await configureCodegen(input);
+    if (!args.quiet) {
+      process.stderr.write(`codegen only → ${result.cfg.codegenDir} (configured in ${result.elapsed}ms)\n`);
+    }
+    if (args.configureOnly) return;
+    const ninja = spawnSync(result.ninja, ninjaArgv(result.cfg), { stdio: "inherit" });
+    if (ninja.error) throw new BuildError("Failed to run ninja", { cause: ninja.error });
+    process.exit(ninja.status ?? 1);
   }
 
   if (isCI) {
@@ -668,7 +694,7 @@ Options:
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
-                                  buildDir, mode (full|cpp-only|link-only),
+                                  buildDir, mode (full|cpp-only|link-only|codegen),
                                   unifiedSources, timeTrace, os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)

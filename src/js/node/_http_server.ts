@@ -84,7 +84,7 @@ const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 // only created on the first request, and emission is gated per-request on the
 // category, so this is near-zero cost when tracing is off.
 const kHttpTraceCat = "node,node.http";
-let traceEvents = null;
+let traceEvents: typeof import("internal/trace_events").default;
 function traceServerRequestStart(http_res) {
   traceEvents ??= require("internal/trace_events");
   if (!traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) return;
@@ -129,7 +129,7 @@ function setCloseCallback(self, callback) {
 
 function assignSocketInternal(self, socket) {
   if (socket._httpMessage) {
-    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+    throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = self;
   setCloseCallback(socket, onServerResponseClose);
@@ -269,6 +269,14 @@ function connectionListener(this: Server, socket) {
   });
 }
 
+type NodeHTTPServer = import("node:http").Server;
+interface Server extends NodeHTTPServer {
+  maxHeaderSize: number | undefined;
+  insecureHTTPParser: boolean | undefined;
+  httpValidation?: "strict" | "relaxed" | "insecure";
+  requireHostHeader: boolean;
+  httpAllowHalfOpen: boolean;
+}
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -618,7 +626,7 @@ Server.prototype.listen = function () {
         address: socketPath ?? (boundHost && boundHost.address) ?? null,
         addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
       };
-      process.send(message, undefined, kInternalSendOptions);
+      process.send!(message, undefined, kInternalSendOptions);
     });
 
     server[kRealListen](tls, port, host, socketPath, true);
@@ -1173,6 +1181,7 @@ Server.prototype.setTimeout = function (msecs, callback) {
   return this;
 };
 
+type NodeHTTPResponseAbortEvent = import("internal/http").NodeHTTPResponseAbortEvent;
 function onServerRequestEvent(this: NodeHTTPServerSocket, event: NodeHTTPResponseAbortEvent) {
   const socket: NodeHTTPServerSocket = this;
   switch (event) {
@@ -1470,9 +1479,25 @@ function onSocketTimeoutTimerExpired(socket) {
 // the native NodeHTTP handle, not a net handle.
 let NodeHTTPServerSocket;
 type NodeHTTPServerSocket = InstanceType<ReturnType<typeof getNodeHTTPServerSocket>>;
+type NetSocketPrototypeAccessors =
+  | "bufferSize"
+  | "bytesWritten"
+  | "localAddress"
+  | "localFamily"
+  | "localPort"
+  | "pending"
+  | "readyState"
+  | "remoteAddress"
+  | "remoteFamily"
+  | "remotePort";
+type NetSocket = import("node:net").Socket;
+interface NetSocketBase extends Pick<NetSocket, NetSocketPrototypeAccessors>, NetSocket {}
+interface NetSocketConstructor {
+  new (options?: import("node:net").SocketConstructorOpts & import("node:stream").DuplexOptions): NetSocketBase;
+}
 function getNodeHTTPServerSocket() {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
-  const { Socket: NetSocket } = require("node:net");
+  const { Socket: NetSocket }: { Socket: NetSocketConstructor } = require("node:net");
   NodeHTTPServerSocket = class Socket extends NetSocket {
     bytesRead = 0;
     connecting = false;
@@ -1483,7 +1508,7 @@ function getNodeHTTPServerSocket() {
     [kKeepAliveIdleStart] = undefined;
     [kBytesWritten] = 0;
     [kHandle];
-    [kUpgradeIncoming] = undefined;
+    [kUpgradeIncoming]: import("node:http").IncomingMessage | undefined = undefined;
     server: Server;
     _httpMessage;
     _secureEstablished = false;
@@ -1492,6 +1517,9 @@ function getNodeHTTPServerSocket() {
     _paused = false;
     #pendingCallback = null;
     #pendingAbortMessage;
+    declare encrypted: boolean;
+    declare _writableState: { emitClose: boolean; decodeStrings: boolean };
+    declare _readableState: { emitClose: boolean };
     constructor(server: Server, handle, encrypted) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
       // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
@@ -1713,7 +1741,7 @@ function getNodeHTTPServerSocket() {
       return this.writableLength;
     }
 
-    connect(_port, _host, _connectListener) {
+    connect(_port?, _host?, _connectListener?) {
       return this;
     }
 
@@ -1868,9 +1896,13 @@ function getNodeHTTPServerSocket() {
       this.address().family = val;
     }
 
-    resetAndDestroy() {}
+    resetAndDestroy() {
+      return this;
+    }
 
-    setKeepAlive(_enable = false, _initialDelay = 0) {}
+    setKeepAlive(_enable = false, _initialDelay = 0) {
+      return this;
+    }
 
     setNoDelay(_noDelay = true) {
       return this;
@@ -1879,7 +1911,7 @@ function getNodeHTTPServerSocket() {
     // Like Node.js's net.Socket#setTimeout (setStreamTimeout): an unref'd
     // inactivity timer that emits 'timeout' on this socket. server.setTimeout,
     // server.keepAliveTimeout, req.setTimeout and res.setTimeout all funnel here.
-    setTimeout(msecs, callback) {
+    setTimeout(msecs, callback?) {
       if (this.destroyed) {
         return this;
       }
@@ -1916,7 +1948,7 @@ function getNodeHTTPServerSocket() {
       return this;
     }
 
-    setEncoding(_encoding) {
+    setEncoding(_encoding): never {
       const err = new Error("Changing the socket encoding is not allowed per RFC7230 Section 3.");
       err.code = "ERR_HTTP_SOCKET_ENCODING";
       throw err;
@@ -3215,7 +3247,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
         // headers-already-sent) leave the state unset; anything after that
         // point threw with headers already on the wire, exactly like
         // handle.end throwing after handle.writeHead succeeded.
-        const code = e?.code;
+        const code = (e as { code?: string } | null | undefined)?.code;
         if (
           code !== "ERR_STREAM_ALREADY_FINISHED" &&
           code !== "ERR_HTTP_HEADERS_SENT" &&
@@ -3611,7 +3643,7 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
 
 ServerResponse.prototype.assignSocket = function (socket) {
   if (socket._httpMessage) {
-    throw $ERR_HTTP_SOCKET_ASSIGNED("Socket already assigned");
+    throw $ERR_HTTP_SOCKET_ASSIGNED();
   }
   socket._httpMessage = this;
   socket.once("close", onServerResponseClose);
@@ -3737,7 +3769,7 @@ function emitServerSocketEOFNT(self, req) {
 
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 
-function callWriteHeadIfObservable(self, headerState, fromEnd) {
+function callWriteHeadIfObservable(self, headerState, fromEnd?) {
   if (
     headerState === NodeHTTPHeaderState.none &&
     !(self.writeHead === OriginalWriteHeadFn && self._implicitHeader === OriginalImplicitHeadFn)

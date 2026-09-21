@@ -23,6 +23,8 @@ export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
+/** `codegen` runs the code generators and nothing else; it resolves a {@link CodegenConfig}, not a {@link Config}. */
+export type Mode = BuildMode | "codegen";
 export type WebKitMode = "prebuilt" | "local";
 /** The package manager for the package.json files the build installs. */
 export type PackageManager = "bun" | "npm";
@@ -194,6 +196,11 @@ export interface Config {
   /** Generated code output, e.g. buildDir/codegen/. */
   codegenDir: string;
   /**
+   * The type declarations generated for src/js (`src/js/builtins.d.ts` references them): `build/types/`. They are made
+   * from source alone, so every profile writes the same files to the one place, like `vendor/`.
+   */
+  typesDir: string;
+  /**
    * Persistent cache for dep tarballs and builds: `--cacheDir`, else
    * `$BUN_BUILD_CACHE_DIR`, else the default (see `sharedCacheDir`; CI keeps
    * it inside the build directory).
@@ -356,7 +363,7 @@ export interface PartialConfig {
   arch?: Arch;
   abi?: Abi;
   buildType?: BuildType;
-  mode?: BuildMode;
+  mode?: Mode;
   lto?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
@@ -419,11 +426,20 @@ export interface PartialConfig {
   webkitVersion?: string;
 }
 
+/** The JavaScript tools: all that the code generators run with. */
+export interface JsToolchain {
+  bun: string;
+  /** Found only when the build installs with npm. */
+  npm?: string | undefined;
+  jsRuntime: string;
+  esbuild: string;
+}
+
 /**
  * Resolved toolchain — found by tool discovery, passed in separately so
  * tests can mock it out.
  */
-export interface Toolchain {
+export interface Toolchain extends JsToolchain {
   cc: string;
   cxx: string;
   /**
@@ -479,11 +495,6 @@ export interface Toolchain {
   objdump: string | undefined;
   cxxfilt: string | undefined;
   dsymutil: string | undefined;
-  bun: string;
-  /** Found only when the build installs with npm. */
-  npm?: string | undefined;
-  jsRuntime: string;
-  esbuild: string;
   ccache: string | undefined;
   cmake: string;
   /** Cargo executable. Required only if a rust dep (lolhtml) is being built. */
@@ -751,45 +762,27 @@ export function sharedCacheDir(cwd: string): string {
   return resolve(bunInstall, "build-cache");
 }
 
-export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
-  const host = detectHost();
-
-  // ─── Target platform ───
-  const os = partial.os ?? host.os;
-  // Windows hosts: process.arch can be wrong under emulation (x64 bun on
-  // arm64 hardware). Ask the compiler what it targets — CMake does the same
-  // in project() to set CMAKE_SYSTEM_PROCESSOR. The found clang's default
-  // target is what we actually build for. Cross-compiles from a unix host
-  // skip this (the host clang-cl's default arch is just the host's).
-  const compilerArch = os === "windows" && host.os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
-  const arch = partial.arch ?? compilerArch ?? host.arch;
+/**
+ * The part of the config that no native tool is needed for: the build type, where things go, the JavaScript tools,
+ * and what build_options.rs is generated from. resolveConfig() and resolveCodegenConfig() both start from it.
+ */
+function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js: JsToolchain) {
   const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : undefined;
 
   const linux = os === "linux";
   const darwin = os === "darwin";
   const windows = os === "windows";
   const freebsd = os === "freebsd";
-  const unix = linux || darwin || freebsd;
-  const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
   // Darwin target on a non-darwin host (Linux CI box building macOS
   // binaries). Same host-clang + --target/-isysroot model as Android/FreeBSD,
   // with ld64.lld doing the Mach-O link. See the cross block further down.
   const darwinCross = darwin && host.os !== "darwin";
-  // Windows target on a non-Windows host (clang-cl + lld-link + xwin
-  // sysroot). See the cross block further down.
-
-  // Platform file conventions — MSVC style on Windows, Unix everywhere else.
-  const exeSuffix = windows ? ".exe" : "";
-  const objSuffix = windows ? ".obj" : ".o";
-  const libPrefix = windows ? "" : "lib";
-  const libSuffix = windows ? ".lib" : ".a";
 
   // ─── Build type ───
   const buildType = partial.buildType ?? "Debug";
   const debug = buildType === "Debug";
   const release = buildType === "Release" || buildType === "RelWithDebInfo" || buildType === "MinSizeRel";
-  const smol = buildType === "MinSizeRel";
 
   // ─── Environment ───
   // Explicit (not auto-detected from env) — matches CMake's optionx(CI DEFAULT OFF).
@@ -799,9 +792,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // still gets collapsible logs but not CI build flags.
   const ci = partial.ci ?? false;
   const buildkite = partial.buildkite ?? false;
-
-  // ─── Features ───
-  // Each is resolved exactly once here.
 
   // ASAN: default on for debug builds on arm64 macOS or linux
   const asanDefault = debug && ((darwin && arm64) || linux);
@@ -824,6 +814,190 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // with ASSERT_ENABLED=1, the struct layouts mismatch → crashes. CMake's
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
+
+  // ─── Paths ───
+  const cwd = findRepoRoot();
+  // Windows cross-compiles get their own default build dir — the native
+  // build of the same profile (build/debug, build/release) already holds
+  // host-target objects at the same obj/ paths, and mixing COFF into an ELF
+  // build dir (or vice versa) forces a full rebuild each time you switch.
+  const crossWindowsSuffix = windows && host.os !== "windows" ? `-windows-${arch}` : "";
+  // mode=codegen writes a manifest and a compile_commands.json with no native edges in them, so it gets a
+  // directory of its own: build/debug is where clangd reads compile_commands.json.
+  const codegenSuffix = partial.mode === "codegen" ? "-codegen" : "";
+  const defaultBuildDirName =
+    computeBuildDirName({ debug, release, asan, assertions }) + crossWindowsSuffix + codegenSuffix;
+  const buildDir =
+    partial.buildDir !== undefined
+      ? isAbsolute(partial.buildDir)
+        ? partial.buildDir
+        : resolve(cwd, partial.buildDir)
+      : resolve(cwd, "build", defaultBuildDirName);
+  const codegenDir = resolve(buildDir, "codegen");
+  const typesDir = resolve(cwd, "build", "types");
+  // Local builds share one cache across checkouts and profiles so
+  // ccache/tarballs/webkit reuse one another's work. CI stays per-build so
+  // runners remain hermetic and `rm -rf build/` is a full reset — unless
+  // $BUN_BUILD_CACHE_DIR says where the cache is, which holds everywhere.
+  const cacheDir =
+    partial.cacheDir !== undefined
+      ? isAbsolute(partial.cacheDir)
+        ? partial.cacheDir
+        : resolve(cwd, partial.cacheDir)
+      : ci && !process.env.BUN_BUILD_CACHE_DIR
+        ? resolve(buildDir, "cache")
+        : sharedCacheDir(cwd);
+
+  const packageManager = partial.packageManager ?? "bun";
+  if (packageManager !== "bun" && packageManager !== "npm") {
+    throw new BuildError(`Unknown packageManager: ${packageManager}`, { hint: "Use bun or npm" });
+  }
+  assert(packageManager === "bun" || js.npm !== undefined, "packageManager=npm needs toolchain.npm");
+
+  // ─── What build_options.rs is generated from (buildOptionsRs.ts) ───
+  const canary = partial.canary ?? true;
+  const canaryRevision = canary ? "1" : "0";
+  const fuzzilli = partial.fuzzilli ?? false;
+  const pkgJsonPath = resolve(cwd, "package.json");
+  const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
+  const version = pkgJson.version;
+  const revision = getGitRevision(cwd, debug && !ci ? buildDir : undefined);
+  // Default from versions.ts. Override via --nodejs-version=<v> to test a bump.
+  const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
+
+  return {
+    bun: js.bun,
+    npm: packageManager === "npm" ? js.npm : undefined,
+    jsRuntime: js.jsRuntime,
+    esbuild: js.esbuild,
+    canary,
+    canaryRevision,
+    fuzzilli,
+    version,
+    revision,
+    nodejsVersion,
+    abi,
+    linux,
+    darwin,
+    windows,
+    freebsd,
+    darwinCross,
+    buildType,
+    debug,
+    release,
+    ci,
+    buildkite,
+    asan,
+    assertions,
+    cwd,
+    buildDir,
+    codegenDir,
+    typesDir,
+    cacheDir,
+    packageManager,
+  };
+}
+
+/**
+ * The fields of {@link Config} the code generators read. They need bun, the root install and perl, and no compiler,
+ * linker, cmake or cargo. codegen.ts takes this type, so a generator that starts reading a native tool does not compile.
+ */
+export type CodegenFields = Pick<
+  Config,
+  | "host"
+  | "os"
+  | "abi"
+  | "x64"
+  | "debug"
+  | "cwd"
+  | "buildDir"
+  | "codegenDir"
+  | "typesDir"
+  | "cacheDir"
+  | "packageManager"
+  | "assertions"
+  | "canary"
+  | "canaryRevision"
+  | "fuzzilli"
+  | "version"
+  | "revision"
+  | "nodejsVersion"
+  | keyof JsToolchain
+>;
+
+/** What `mode: "codegen"` resolves: {@link CodegenFields}, with none of the native tools looked for. */
+export type CodegenConfig = CodegenFields & { mode: "codegen" };
+
+export function resolveCodegenConfig(partial: PartialConfig, toolchain: JsToolchain): CodegenConfig {
+  const host = detectHost();
+  const os = partial.os ?? host.os;
+  const arch = partial.arch ?? host.arch;
+  const { linux, darwin, windows, freebsd, darwinCross, buildType, release, ci, buildkite, asan, ...base } =
+    resolveBase(partial, host, os, arch, toolchain);
+  return { ...base, mode: "codegen", host, os, x64: arch === "x64" };
+}
+
+export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Config {
+  assert(partial.mode !== "codegen", "mode=codegen resolves a CodegenConfig: resolveCodegenConfig()");
+  const host = detectHost();
+
+  // ─── Target platform ───
+  const os = partial.os ?? host.os;
+  // Windows hosts: process.arch can be wrong under emulation (x64 bun on
+  // arm64 hardware). Ask the compiler what it targets — CMake does the same
+  // in project() to set CMAKE_SYSTEM_PROCESSOR. The found clang's default
+  // target is what we actually build for. Cross-compiles from a unix host
+  // skip this (the host clang-cl's default arch is just the host's).
+  const compilerArch = os === "windows" && host.os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
+  const arch = partial.arch ?? compilerArch ?? host.arch;
+  const {
+    abi,
+    linux,
+    darwin,
+    windows,
+    freebsd,
+    darwinCross,
+    buildType,
+    debug,
+    release,
+    ci,
+    buildkite,
+    asan,
+    assertions,
+    cwd,
+    buildDir,
+    codegenDir,
+    typesDir,
+    cacheDir,
+    packageManager,
+    canary,
+    canaryRevision,
+    fuzzilli,
+    version,
+    revision,
+    nodejsVersion,
+    bun,
+    npm,
+    jsRuntime,
+    esbuild,
+  } = resolveBase(partial, host, os, arch, toolchain);
+
+  const unix = linux || darwin || freebsd;
+  const x64 = arch === "x64";
+  const arm64 = arch === "aarch64";
+  // Windows target on a non-Windows host (clang-cl + lld-link + xwin
+  // sysroot). See the cross block further down.
+
+  // Platform file conventions — MSVC style on Windows, Unix everywhere else.
+  const exeSuffix = windows ? ".exe" : "";
+  const objSuffix = windows ? ".obj" : ".o";
+  const libPrefix = windows ? "" : "lib";
+  const libSuffix = windows ? ".lib" : ".a";
+
+  const smol = buildType === "MinSizeRel";
+
+  // ─── Features ───
+  // Each is resolved exactly once here (asan and assertions: in resolveBase).
 
   // LTO (ThinLTO across bun, JSC and the Rust side): on for every release
   // build without assertions or ASAN, locally as in CI, so a local release
@@ -917,8 +1091,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const logs = partial.logs ?? debug;
 
   const baseline = partial.baseline ?? x64;
-  const canary = partial.canary ?? true;
-  const canaryRevision = canary ? "1" : "0";
 
   // Whether bun:sqlite and node:sqlite link the bundled sqlite3 directly
   // (LAZY_LOAD_SQLITE=0) or dlopen the system library at runtime. macOS
@@ -937,7 +1109,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
-  const fuzzilli = partial.fuzzilli ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -945,32 +1116,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const socketFaultInjection = partial.socketFaultInjection ?? asan;
 
   // ─── Paths ───
-  const cwd = findRepoRoot();
-  // Windows cross-compiles get their own default build dir — the native
-  // build of the same profile (build/debug, build/release) already holds
-  // host-target objects at the same obj/ paths, and mixing COFF into an ELF
-  // build dir (or vice versa) forces a full rebuild each time you switch.
-  const crossWindowsSuffix = windows && host.os !== "windows" ? `-windows-${arch}` : "";
-  const defaultBuildDirName = computeBuildDirName({ debug, release, asan, assertions }) + crossWindowsSuffix;
-  const buildDir =
-    partial.buildDir !== undefined
-      ? isAbsolute(partial.buildDir)
-        ? partial.buildDir
-        : resolve(cwd, partial.buildDir)
-      : resolve(cwd, "build", defaultBuildDirName);
-  const codegenDir = resolve(buildDir, "codegen");
-  // Local builds share one cache across checkouts and profiles so
-  // ccache/tarballs/webkit reuse one another's work. CI stays per-build so
-  // runners remain hermetic and `rm -rf build/` is a full reset — unless
-  // $BUN_BUILD_CACHE_DIR says where the cache is, which holds everywhere.
-  const cacheDir =
-    partial.cacheDir !== undefined
-      ? isAbsolute(partial.cacheDir)
-        ? partial.cacheDir
-        : resolve(cwd, partial.cacheDir)
-      : ci && !process.env.BUN_BUILD_CACHE_DIR
-        ? resolve(buildDir, "cache")
-        : sharedCacheDir(cwd);
   const vendorDir = resolve(cwd, "vendor");
 
   // ─── Validation ───
@@ -1129,23 +1274,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   }
 
   // ─── Versioning ───
-  const pkgJsonPath = resolve(cwd, "package.json");
-  const pkgJson = JSON.parse(readFileSync(pkgJsonPath, "utf8")) as { version: string };
-  const version = pkgJson.version;
-  const revision = getGitRevision(cwd, debug && !ci ? buildDir : undefined);
-
   // Defaults from versions.ts. Override via --webkit-version=<hash> etc.
   // to test a branch before bumping the pinned default.
-  const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
-
-  const packageManager = partial.packageManager ?? "bun";
-  if (packageManager !== "bun" && packageManager !== "npm") {
-    throw new BuildError(`Unknown packageManager: ${packageManager}`, { hint: "Use bun or npm" });
-  }
-  assert(packageManager === "bun" || toolchain.npm !== undefined, "packageManager=npm needs toolchain.npm");
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.
@@ -1259,6 +1392,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cwd,
     buildDir,
     codegenDir,
+    typesDir,
     cacheDir,
     vendorDir,
     cc: toolchain.cc,
@@ -1288,10 +1422,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     objdump: toolchain.objdump,
     cxxfilt: toolchain.cxxfilt,
     dsymutil: toolchain.dsymutil,
-    bun: toolchain.bun,
-    npm: packageManager === "npm" ? toolchain.npm : undefined,
-    jsRuntime: toolchain.jsRuntime,
-    esbuild: toolchain.esbuild,
+    bun,
+    npm,
+    jsRuntime,
+    esbuild,
     ccache: toolchain.ccache,
     cmake: toolchain.cmake,
     cargo: toolchain.cargo,

@@ -134,7 +134,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 **Iterate on a dependency from a local checkout** — `bun bd --local-deps=mimalloc=~/code/mimalloc …` builds that dep from the clone instead of the pinned tarball (no fetch, no patches; edits rebuild incrementally). Any `github-archive` dep the graph compiles (not lolhtml or rust-argon2 — cargo reads those via `Cargo.toml`); details in `deps/README.md`.
 
-**Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Use the `codegen` rule: it runs the script with `cfg.jsRuntime`, so the script must run under node and bun. Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppHeaders` if it's a header. `emitCodegen()` builds `cppAll` from those groups at the end, so do not push to it).
+**Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Use the `codegen` rule: it runs the script with `cfg.jsRuntime`, so the script must run under node and bun. Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppHeaders` if it's a header. `emitCodegen()` builds `cppAll` from those groups at the end, so do not push to it). A type declaration `src/js/builtins.d.ts` references goes in `cfg.typesDir` and the `generatedTypes` group. The functions take `CodegenFields`: a config field a generator newly reads is added to that `Pick` and must be one `resolveBase()` can decide without a native tool.
 
 **Add a ninja rule** — add its name to `ruleVars` in `ninja.ts` with the `$variables` its text reads, and `n.rule()` it in the module's `registerXxxRules()`. `n.build({ rule, vars })` is typed by the table, and configure fails if the table and the rule's text disagree. Text that needs other variables on some platform is another rule (`pch` / `pch_msvc`). ninja's own bindings (`pool`, `depfile`, `early_output_prefix`) are fields of the build statement, not `vars`.
 
@@ -179,6 +179,18 @@ For `mode: "full"` (the normal case):
 
 Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (Rust units + poll build-cpp + download archive → link). The pipeline's `build-bun` step uses `archive-link` (`ci-build` profile): the full graph on one agent, linking from the same archive `cpp-only` produces, with the archive, libbun_runtime.a and dep libs uploaded from ninja edges as soon as each exists.
 
+### `mode: "codegen"` — the code generators alone
+
+`--mode=codegen` configures a graph of the codegen steps only, default target `codegen`, for what needs their outputs and no binary. It has a build directory of its own (`build/debug-codegen`): its manifest and `compile_commands.json` have no native edges in them, and `build/debug` is where clangd reads `compile_commands.json`. `bun run build:types` (`--mode=codegen --target=generated-types`) is what `lint.yml` runs before typechecking `src/js`.
+
+**`build/types/` (`cfg.typesDir`)** holds the type declarations `src/js/builtins.d.ts` references: `generated.d.ts`, `ErrorCode.d.ts`, `ZigGeneratedClasses.d.ts`, `WebCoreJSBuiltins.d.ts`. They are made from source alone (byte-identical between debug and release), so they do not live under a profile's build directory: every profile's graph declares the same files there, the way a dep's `vendor/<name>/.ref` is, and any build keeps them current for the editor. They are declared outputs of the edges that write them (`CodegenOutputs.generatedTypes`, target `generated-types`), so ninja regenerates one that is deleted or whose edge inputs changed. `src/runtime/bake/generated.ts` (the dev server's message enums, which the bake project imports) is in the same target, declared by the bake codegen edge that writes it.
+
+It is configured by `configureCodegen()`, not `configure()`, and resolves a `CodegenConfig`, not a `Config`:
+
+- `resolveJsToolchain()` looks for bun and the root install's esbuild. No compiler, linker, cmake or cargo is looked for, no SDK or sysroot is fetched, and `.cargo/config.toml` is not written. perl is required (the LUT steps).
+- `CodegenFields` (`config.ts`) is the `Pick` of `Config` the generators read, and `codegen.ts` takes that type, so a generator that starts reading a native tool does not compile.
+- `resolveBase()` decides the build type, the paths, the JavaScript tools and what `build_options.rs` is generated from, for both `resolveConfig()` and `resolveCodegenConfig()`.
+
 ### Phase 3 — Execute
 
 - **CI:** collapsible log groups, spawn ninja with `spawnWithAnnotations` (parses compiler errors into Buildkite annotations), upload/download artifacts.
@@ -191,8 +203,8 @@ Split CI modes: `rust-only` (path deps+codegen+rustc units → libbun_runtime.a)
 | File                           | Owns                                                                                                                                                                    |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `build.ts` (parent dir)        | CLI entry — parse args, call configure, spawn ninja, optionally exec                                                                                                    |
-| `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                                                                                                      |
-| `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`                                                                                                    |
+| `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`; `configureCodegen()` for `mode: "codegen"`                                                                          |
+| `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`; `CodegenFields`/`CodegenConfig`, `resolveCodegenConfig()`                                         |
 | `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                                                                          |
 | `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing, `checkImageTools()`                                                                            |
 | `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                                                                      |

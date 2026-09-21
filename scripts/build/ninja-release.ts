@@ -26,21 +26,24 @@ import { downloadWithRetry, extractZip } from "./download.ts";
 import { describeError } from "./error.ts";
 import { formatElapsed, nameColor } from "./tty.ts";
 
+/** All that finding the ninja needs: also what `mode: "codegen"` resolves. */
+type NinjaConfig = Pick<Config, "host" | "cacheDir">;
+
 const release = pins.bunNinja;
 
 /** Where a CI image has the pinned ninja (the `bunNinja` tool of ci-images/spec.ts); undefined for a host no image is baked for. */
-function bakedNinjaPath(cfg: Config): string | undefined {
+function bakedNinjaPath(cfg: NinjaConfig): string | undefined {
   const dir = (locations.bunNinja as Record<string, string>)[cfg.host.os];
   return dir === undefined ? undefined : join(dir, `ninja${cfg.host.exeSuffix}`);
 }
 
 /** Where the pinned ninja lives once fetched: `<cacheDir>/ninja/<tag>/ninja[.exe]`. */
-function fetchedNinjaPath(cfg: Config): string {
+function fetchedNinjaPath(cfg: NinjaConfig): string {
   return join(cfg.cacheDir, "ninja", release.tag, `ninja${cfg.host.exeSuffix}`);
 }
 
 /** The pinned ninja already on this machine: the image's, else a previously fetched one. */
-function presentNinja(cfg: Config): string | undefined {
+function presentNinja(cfg: NinjaConfig): string | undefined {
   const baked = bakedNinjaPath(cfg);
   if (baked !== undefined && existsSync(baked)) return baked;
   const fetched = fetchedNinjaPath(cfg);
@@ -65,7 +68,7 @@ function whyNotRunnable(ninja: string): string | undefined {
  * It has to be the same ninja the driver runs: ninja versions disagree on the `.ninja_log` format, and one
  * that finds a log it considers too old or too new rewrites or deletes it, which makes the next build a full one.
  */
-export function ninjaIfPresent(cfg: Config): string {
+export function ninjaIfPresent(cfg: NinjaConfig): string {
   const present = presentNinja(cfg);
   return present !== undefined && whyNotRunnable(present) === undefined ? present : "ninja";
 }
@@ -79,7 +82,7 @@ export function ninjaIfPresent(cfg: Config): string {
  * A fetch reports itself the way a prebuilt dependency's edge does (`[WebKit] fetching …`,
  * `[WebKit] extracted to …`), on stderr like those: stdout is the built program's under build-then-exec.
  */
-export async function ensureNinja(cfg: Config): Promise<string> {
+export async function ensureNinja(cfg: NinjaConfig): Promise<string> {
   const say = (line: string) => process.stderr.write(`${nameColor("ninja", "[ninja]")} ${line}\n`);
   const pinned = presentNinja(cfg) ?? (await fetchNinja(cfg, say));
   if (pinned === undefined) return "ninja";
@@ -90,7 +93,7 @@ export async function ensureNinja(cfg: Config): Promise<string> {
 }
 
 /** Fetch the pinned release into the build cache. Undefined (after saying why) when that is not possible. */
-async function fetchNinja(cfg: Config, say: (line: string) => void): Promise<string | undefined> {
+async function fetchNinja(cfg: NinjaConfig, say: (line: string) => void): Promise<string | undefined> {
   const path = fetchedNinjaPath(cfg);
   const host = `${cfg.host.os}-${cfg.host.arch}`;
   const sha256 = (release.sha256 as Record<string, string>)[host];

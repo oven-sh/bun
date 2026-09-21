@@ -412,6 +412,167 @@ test("node-fetch fetch() rejects for a Writable request body", async () => {
   expect(await response.catch(e => e.code)).toBe("ERR_STREAM_CANNOT_PIPE");
 });
 
+test("node-fetch Request accepts an old-style Stream body", async () => {
+  const legacy = new stream.Stream();
+  const request = new Request("http://localhost/", { method: "POST", body: legacy });
+  const text = request.text();
+  legacy.emit("data", Buffer.from("hello "));
+  legacy.emit("data", Buffer.from("world"));
+  legacy.emit("end");
+  expect(await text).toBe("hello world");
+});
+
+// node-fetch has no `keepalive` option, which the native Request refuses with a stream body.
+test("node-fetch Request with an old-style Stream body reads the members that init inherits", async () => {
+  const init = Object.create({ method: "POST", headers: { "x-id": "1" }, keepalive: true });
+  init.body = new stream.Stream();
+  const request = new Request("http://localhost/", init);
+  const text = request.text();
+  init.body.emit("data", Buffer.from("hello world"));
+  init.body.emit("end");
+  expect({ method: request.method, id: request.headers.get("x-id"), text: await text }).toEqual({
+    method: "POST",
+    id: "1",
+    text: "hello world",
+  });
+});
+
+// Each body method has to begin the read before it returns, because this source sends in the same tick.
+// The body "1" is JSON, and it is a form with the one key "1".
+test.each([
+  ["arrayBuffer", body => Buffer.from(body).toString()],
+  ["blob", body => body.text()],
+  ["bytes", body => Buffer.from(body).toString()],
+  ["formData", body => [...body.keys()].join()],
+  ["json", body => String(body)],
+  ["textStream", async body => (await Array.fromAsync(body)).join("")],
+])("node-fetch Request %s() reads an old-style Stream body that sends at once", async (method, toText) => {
+  const legacy = new stream.Stream();
+  const headers = { "content-type": "application/x-www-form-urlencoded" };
+  const request = new Request("http://localhost/", { method: "POST", headers, body: legacy });
+  const body = request[method]();
+  legacy.emit("data", Buffer.from("1"));
+  legacy.emit("end");
+  expect(await toText(await body)).toBe("1");
+});
+
+test("node-fetch Request clone() reads an old-style Stream body that sends at once", async () => {
+  const legacy = new stream.Stream();
+  const request = new Request("http://localhost/", { method: "POST", body: legacy });
+  const text = request.clone().text();
+  legacy.emit("data", Buffer.from("hello world"));
+  legacy.emit("end");
+  expect([await text, await request.text()]).toEqual(["hello world", "hello world"]);
+});
+
+test("node-fetch Request takes over the old-style Stream body of a Request that sends at once", async () => {
+  const legacy = new stream.Stream();
+  const input = new Request("http://localhost/", { method: "POST", body: legacy });
+  const text = new Request(input, { headers: { "x-id": "1" } }).text();
+  legacy.emit("data", Buffer.from("hello world"));
+  legacy.emit("end");
+  expect(await text).toBe("hello world");
+});
+
+test("node-fetch fetch() sends the old-style Stream body of a Request", async () => {
+  using server = serveRequestBody();
+  const legacy = new stream.Stream();
+  const response = fetch2(new Request(server.url, { method: "POST", body: legacy }));
+  legacy.emit("data", Buffer.from("hello "));
+  legacy.emit("data", Buffer.from("world"));
+  legacy.emit("end");
+  expect(await (await response).text()).toBe("hello world");
+});
+
+test.each([true, false])(
+  "node-fetch Request rejects the body read when an old-style Stream body fails (own error listener: %p)",
+  async ownListener => {
+    const legacy = new stream.Stream();
+    if (ownListener) legacy.on("error", () => {});
+    const request = new Request("http://localhost/", { method: "POST", body: legacy });
+    const text = request.text();
+    legacy.emit("data", Buffer.from("hello "));
+    const error = new Error("integrity check failed");
+    legacy.emit("error", error);
+    expect(await text.catch(e => e)).toBe(error);
+  },
+);
+
+test("node-fetch Request rejects the body read when an old-style Stream body failed before the read", async () => {
+  const legacy = new stream.Stream();
+  const request = new Request("http://localhost/", { method: "POST", body: legacy });
+  const error = new Error("integrity check failed");
+  legacy.emit("error", error);
+  expect(await request.text().catch(e => e)).toBe(error);
+});
+
+test("node-fetch fetch() rejects when the old-style Stream body of a Request fails", async () => {
+  using server = serveRequestBody();
+  const legacy = new stream.Stream();
+  // With its own listener, a build that ignores the stream fails on the assertion and not with the fetch in flight.
+  legacy.on("error", () => {});
+  const response = fetch2(new Request(server.url, { method: "POST", body: legacy }));
+  legacy.emit("data", Buffer.from("hello "));
+  const error = new Error("upload failed");
+  legacy.emit("error", error);
+  expect(await response.catch(e => e)).toBe(error);
+});
+
+test("node-fetch Request rejects the body read for a Writable body", async () => {
+  const request = new Request("http://localhost/", { method: "POST", body: discard() });
+  expect(await request.text().catch(e => e.code)).toBe("ERR_STREAM_CANNOT_PIPE");
+});
+
+// Like form-data's CombinedStream: the source sends its data when it is piped, and only once.
+class SendsWhenPiped extends stream.Stream {
+  pipe(destination) {
+    super.pipe(destination);
+    if (!this.sent) {
+      this.sent = true;
+      this.emit("data", Buffer.from("hello world"));
+      this.emit("end");
+    }
+    return destination;
+  }
+}
+
+// Some callers build a Request only to look at it, and send the same init with fetch(url, init) later.
+// As in node-fetch, the Request must not read the source before something uses its body.
+test("node-fetch Request leaves an old-style Stream body alone until the body is used", async () => {
+  using server = serveRequestBody();
+  const init = { method: "POST", body: new SendsWhenPiped() };
+  const request = new Request(server.url, init);
+  // A body stream that reads ahead takes the data within this turn of the event loop.
+  await new Promise(resolve => setImmediate(resolve));
+  expect(init.body.sent).toBeUndefined();
+  const response = await fetch2(request.url, init);
+  expect(await response.text()).toBe("hello world");
+});
+
+test("node-fetch fetch() with a body in init leaves the old-style Stream body of the Request alone", async () => {
+  using server = serveRequestBody();
+  const source = new SendsWhenPiped();
+  const response = await fetch2(new Request(server.url, { method: "POST", body: source }), { body: "from init" });
+  expect({ text: await response.text(), sent: source.sent }).toEqual({ text: "from init", sent: undefined });
+});
+
+test("node-fetch Request does not read an old-style Stream body that was canceled", async () => {
+  const source = new SendsWhenPiped();
+  const request = new Request("http://localhost/", { method: "POST", body: source });
+  await request.body.cancel();
+  expect({ code: await request.text().catch(e => e.code), sent: source.sent }).toEqual({
+    code: "ERR_BODY_ALREADY_USED",
+    sent: undefined,
+  });
+});
+
+// The global fetch() cannot tell the Request that it uses the body. Its first read of the body starts the source.
+test("global fetch() sends the old-style Stream body of a node-fetch Request", async () => {
+  using server = serveRequestBody();
+  const response = await Bun.fetch(new Request(server.url, { method: "POST", body: new SendsWhenPiped() }));
+  expect(await response.text()).toBe("hello world");
+});
+
 test("node-fetch json() resolves null for a body that is the JSON text null", async () => {
   using server = Bun.serve({ port: 0, fetch: () => new Response("null") });
   expect(await (await fetch2(server.url)).json()).toBeNull();

@@ -18,6 +18,14 @@ type WebResponseConstructor = new (
 ) => Omit<globalThis.Response, keyof WebResponseMembers> & WebResponseMembers;
 interface WebRequestMembers {
   readonly url: string;
+  clone(): globalThis.Request;
+  arrayBuffer(): Promise<ArrayBuffer>;
+  blob(): Promise<globalThis.Blob>;
+  bytes(): Promise<Uint8Array>;
+  formData(): Promise<globalThis.FormData>;
+  json(): Promise<any>;
+  text(): Promise<string>;
+  textStream(): ReadableStream<string>;
 }
 type WebRequestConstructor = new (
   input: string | URL | globalThis.Request,
@@ -32,6 +40,7 @@ const FormData: typeof globalThis.FormData = bindings[4];
 const File: typeof globalThis.File = bindings[5];
 const nativeFetch = Bun.fetch;
 const JSONParse = JSON.parse;
+const ObjectCreate = Object.create;
 
 // node-fetch extends from URLSearchParams in their implementation...
 // https://github.com/node-fetch/node-fetch/blob/8b3320d2a7c07bce4afc6b2bf6c3bbddda85b01f/src/headers.js#L44
@@ -144,11 +153,72 @@ class Response extends WebResponse {
 var ResponsePrototype = Response.prototype;
 
 const kUrl = Symbol("kUrl");
+const kStartBody = Symbol("kStartBody");
+
+// node-fetch reads a stream body when the body is used, not in the constructor: a caller can build a Request
+// only to look at it and send the same init with fetch(url, init). `start` begins the read at once, for a source
+// that emits in the same tick. A consumer that cannot call it (the global fetch, request.body) begins the read
+// with its first pull.
+function lazyBodyFromOldStyleStream(source: import("node:stream").Stream) {
+  let reader: ReadableStreamDefaultReader | undefined;
+  // The source failed, or the body was canceled, before the read began. The source is then never read.
+  let finished = false;
+  let failure: unknown;
+  // As in node-fetch, the source has an "error" listener from the constructor on.
+  source.on("error", err => {
+    if (!reader && !finished) {
+      finished = true;
+      failure = err;
+    }
+  });
+  function start() {
+    if (reader || finished) return;
+    try {
+      reader = require("node:stream").Readable.toWeb(readableFromOldStyleStream(source)).getReader();
+    } catch (err) {
+      // A pipe() that throws fails the body, not the caller of text() or fetch().
+      finished = true;
+      failure = err;
+    }
+  }
+  const stream = new ReadableStream(
+    {
+      async pull(controller) {
+        start();
+        if (!reader) return controller.error(failure);
+        const { done, value } = await reader.read();
+        if (done) controller.close();
+        else controller.enqueue(value);
+      },
+      cancel(reason) {
+        if (reader) return reader.cancel(reason);
+        finished = true;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return { stream, start };
+}
 
 class Request extends WebRequest {
   [kUrl]?: string;
+  declare [kStartBody]?: () => void;
 
   constructor(input, init) {
+    // The native Request reads a Node stream through Symbol.asyncIterator. A stream without one
+    // (form-data's CombinedStream) would become the text "[object Object]".
+    const body = init?.body;
+    let startBody: (() => void) | undefined;
+    if (typeof body?.pipe === "function" && !body[Symbol.asyncIterator]) {
+      if (body instanceof require("node:stream").Stream) {
+        const lazy = lazyBodyFromOldStyleStream(body);
+        // Not a copy, because `init` can inherit its members. `keepalive` is hidden: node-fetch has no such
+        // option, and the native Request refuses it with a ReadableStream body.
+        init = ObjectCreate(init, { body: { value: lazy.stream }, keepalive: { value: undefined } });
+        startBody = lazy.start;
+      }
+    }
+
     // node-fetch is relaxed with the URL, for example, it allows "/" as a valid URL.
     // If it's not a valid URL, use a placeholder URL during construction.
     // See: https://github.com/oven-sh/bun/issues/4947
@@ -158,10 +228,54 @@ class Request extends WebRequest {
     } else {
       super(input, init);
     }
+    if (startBody) this[kStartBody] = startBody;
+    // Without a body in init, the new Request takes over the body of a Request input, which reads it.
+    else if (body == null) input?.[kStartBody]?.();
   }
 
   get url() {
     return this[kUrl] ?? super.url;
+  }
+
+  // clone() and the body methods use the body. Each begins the read before it returns.
+  clone() {
+    this?.[kStartBody]?.();
+    return super.clone();
+  }
+
+  arrayBuffer() {
+    this?.[kStartBody]?.();
+    return super.arrayBuffer();
+  }
+
+  blob() {
+    this?.[kStartBody]?.();
+    return super.blob();
+  }
+
+  bytes() {
+    this?.[kStartBody]?.();
+    return super.bytes();
+  }
+
+  formData() {
+    this?.[kStartBody]?.();
+    return super.formData();
+  }
+
+  json() {
+    this?.[kStartBody]?.();
+    return super.json();
+  }
+
+  text() {
+    this?.[kStartBody]?.();
+    return super.text();
+  }
+
+  textStream() {
+    this?.[kStartBody]?.();
+    return super.textStream();
   }
 }
 
@@ -191,6 +305,8 @@ async function fetch(
       init = { ...init, body: Readable.toWeb(readable) };
     }
   }
+  // A Request sends its own body unless init has one.
+  if (initBody == null) url?.[kStartBody]?.();
   const response = await nativeFetch.$call(undefined, url, init);
   Object.setPrototypeOf(response, ResponsePrototype);
   response[kFetched] = true;

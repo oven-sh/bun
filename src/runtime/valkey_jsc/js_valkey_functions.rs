@@ -97,13 +97,6 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
 /// Shared epilog for every Valkey prototype method: build a `Command`,
 /// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
 /// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
-///
-/// All 7 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
-/// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
-/// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
-/// `send_unsubscribe_request_and_cleanup`, …) duplicated this 15-line block
-/// byte-identically; the only per-caller variation is the args slice, the
-/// `meta` flags, and the error-message prefix.
 #[inline]
 fn send_cmd(
     this: &JSValkeyClient,
@@ -135,7 +128,7 @@ fn send_cmd(
 pub(crate) mod compile {
     use super::*;
 
-    #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) enum ClientStateRequirement {
         /// The client must not be a subscriber (not in subscription mode).
         NotSubscriber,
@@ -143,17 +136,257 @@ pub(crate) mod compile {
         DontCare,
     }
 
-    pub(crate) fn test_correct_state<const REQ: ClientStateRequirement>(
-        this: &JSValkeyClient,
-        js_client_prototype_function_name: &[u8],
-    ) -> JsResult<()> {
-        match REQ {
-            ClientStateRequirement::NotSubscriber => {
-                require_not_subscriber(this, js_client_prototype_function_name)
-            }
+    pub(crate) fn test_correct_state(this: &JSValkeyClient, spec: &CmdSpec) -> JsResult<()> {
+        match spec.state {
+            ClientStateRequirement::NotSubscriber => require_not_subscriber(this, spec.name),
             ClientStateRequirement::DontCare => Ok(()),
         }
     }
+}
+
+/// Everything that distinguishes one `cmd_*!` prototype method from another
+/// of the same shape. Each method owns one `static CmdSpec` and hands it to
+/// the shared `*_impl` body for its shape, so the body is compiled once.
+pub(crate) struct CmdSpec {
+    /// JS-visible method name (`RedisClient.prototype.<name>`), ASCII.
+    name: &'static [u8],
+    /// Wire command, e.g. `b"SDIFFSTORE"`.
+    command: &'static [u8],
+    /// Argument names for `throw_invalid_argument_type`; unused slots are `""`.
+    arg_names: [&'static str; 3],
+    state: compile::ClientStateRequirement,
+    meta: CommandMeta,
+    err_msg: &'static str,
+}
+
+#[inline(never)]
+fn noargs_impl(
+    this: &JSValkeyClient,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    spec: &CmdSpec,
+) -> JsResult<JSValue> {
+    compile::test_correct_state(this, spec)?;
+    send_cmd(
+        this,
+        global,
+        frame.this(),
+        spec.command,
+        CommandArgs::Args(&[]),
+        spec.meta,
+        spec.err_msg,
+    )
+}
+
+#[inline(never)]
+fn key_impl(
+    this: &JSValkeyClient,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    spec: &CmdSpec,
+) -> JsResult<JSValue> {
+    compile::test_correct_state(this, spec)?;
+
+    let Some(key) = from_js(global, frame.argument(0))? else {
+        return Err(global.throw_invalid_argument_type(
+            bname(spec.name),
+            spec.arg_names[0],
+            "string or buffer",
+        ));
+    };
+    send_cmd(
+        this,
+        global,
+        frame.this(),
+        spec.command,
+        CommandArgs::Args(&[key]),
+        spec.meta,
+        spec.err_msg,
+    )
+}
+
+#[inline(never)]
+fn key_varargs_impl(
+    this: &JSValkeyClient,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    spec: &CmdSpec,
+) -> JsResult<JSValue> {
+    compile::test_correct_state(this, spec)?;
+
+    if frame.argument(0).is_undefined_or_null() {
+        return Err(global.throw_missing_arguments_value(&[spec.arg_names[0]]));
+    }
+
+    let arguments = frame.arguments();
+    let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
+
+    for arg in arguments {
+        if arg.is_undefined_or_null() {
+            continue;
+        }
+
+        let Some(another) = from_js(global, *arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                bname(spec.name),
+                "additional arguments",
+                "string or buffer",
+            ));
+        };
+        args.push(another);
+    }
+    send_cmd(
+        this,
+        global,
+        frame.this(),
+        spec.command,
+        CommandArgs::Args(&args),
+        spec.meta,
+        spec.err_msg,
+    )
+}
+
+#[inline(never)]
+fn key_value_impl(
+    this: &JSValkeyClient,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    spec: &CmdSpec,
+) -> JsResult<JSValue> {
+    compile::test_correct_state(this, spec)?;
+
+    let Some(key) = from_js(global, frame.argument(0))? else {
+        return Err(global.throw_invalid_argument_type(
+            bname(spec.name),
+            spec.arg_names[0],
+            "string or buffer",
+        ));
+    };
+    let Some(value) = from_js(global, frame.argument(1))? else {
+        return Err(global.throw_invalid_argument_type(
+            bname(spec.name),
+            spec.arg_names[1],
+            "string or buffer",
+        ));
+    };
+    send_cmd(
+        this,
+        global,
+        frame.this(),
+        spec.command,
+        CommandArgs::Args(&[key, value]),
+        spec.meta,
+        spec.err_msg,
+    )
+}
+
+#[inline(never)]
+fn key_value_value2_impl(
+    this: &JSValkeyClient,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    spec: &CmdSpec,
+) -> JsResult<JSValue> {
+    compile::test_correct_state(this, spec)?;
+
+    let Some(key) = from_js(global, frame.argument(0))? else {
+        return Err(global.throw_invalid_argument_type(
+            bname(spec.name),
+            spec.arg_names[0],
+            "string or buffer",
+        ));
+    };
+    let Some(value) = from_js(global, frame.argument(1))? else {
+        return Err(global.throw_invalid_argument_type(
+            bname(spec.name),
+            spec.arg_names[1],
+            "string or buffer",
+        ));
+    };
+    let Some(value2) = from_js(global, frame.argument(2))? else {
+        return Err(global.throw_invalid_argument_type(
+            bname(spec.name),
+            spec.arg_names[2],
+            "string or buffer",
+        ));
+    };
+    send_cmd(
+        this,
+        global,
+        frame.this(),
+        spec.command,
+        CommandArgs::Args(&[key, value, value2]),
+        spec.meta,
+        spec.err_msg,
+    )
+}
+
+#[inline(never)]
+fn strings_varargs_impl(
+    this: &JSValkeyClient,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    spec: &CmdSpec,
+) -> JsResult<JSValue> {
+    compile::test_correct_state(this, spec)?;
+
+    let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
+
+    for arg in frame.arguments() {
+        let Some(another) = from_js(global, *arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                bname(spec.name),
+                "additional arguments",
+                "string or buffer",
+            ));
+        };
+        args.push(another);
+    }
+    send_cmd(
+        this,
+        global,
+        frame.this(),
+        spec.command,
+        CommandArgs::Args(&args),
+        spec.meta,
+        spec.err_msg,
+    )
+}
+
+#[inline(never)]
+fn key_value_varargs_impl(
+    this: &JSValkeyClient,
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    spec: &CmdSpec,
+) -> JsResult<JSValue> {
+    compile::test_correct_state(this, spec)?;
+
+    let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
+
+    for arg in frame.arguments() {
+        if arg.is_undefined_or_null() {
+            continue;
+        }
+
+        let Some(another) = from_js(global, *arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                bname(spec.name),
+                "additional arguments",
+                "string or buffer",
+            ));
+        };
+        args.push(another);
+    }
+    send_cmd(
+        this,
+        global,
+        frame.this(),
+        spec.command,
+        CommandArgs::Args(&args),
+        spec.meta,
+        spec.err_msg,
+    )
 }
 
 // Note: each command-shape generator is a `macro_rules!` that emits a
@@ -164,272 +397,128 @@ pub(crate) mod compile {
 // cmd_key_value_value2! (key: RedisKey, value: RedisValue, value2: RedisValue),
 // cmd_strings_varargs! (...strings: string[]),
 // cmd_key_value_varargs! (key: RedisKey, value: RedisValue, ...args: RedisValue)
+//
+// Every generator accepts optional trailing `, meta = <const expr>` and
+// `, err = <literal>` arguments; the defaults are `CommandMeta::DEFAULT` and
+// `"Failed to send <COMMAND>"`.
 
-macro_rules! cmd_noargs {
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
+macro_rules! cmd_spec {
+    ($name:literal, $command:literal, $args:expr, $state:ident) => {
+        cmd_spec!($name, $command, $args, $state, meta = CommandMeta::DEFAULT)
+    };
+    ($name:literal, $command:literal, $args:expr, $state:ident, err = $err:literal) => {
+        cmd_spec!(
+            $name,
+            $command,
+            $args,
+            $state,
+            meta = CommandMeta::DEFAULT,
+            err = $err
+        )
+    };
+    ($name:literal, $command:literal, $args:expr, $state:ident, meta = $meta:expr) => {
+        cmd_spec!(
+            $name,
+            $command,
+            $args,
+            $state,
+            meta = $meta,
+            err = concat!("Failed to send ", $command)
+        )
+    };
+    ($name:literal, $command:literal, $args:expr, $state:ident, meta = $meta:expr, err = $err:expr) => {
+        CmdSpec {
+            name: $name,
+            command: $command.as_bytes(),
+            arg_names: $args,
+            state: compile::ClientStateRequirement::$state,
+            meta: $meta,
+            err_msg: $err,
+        }
+    };
+}
+
+macro_rules! cmd_method {
+    ($fn_name:ident, $imp:ident, $spec:expr) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
             this: &Self,
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&[]),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
+            static SPEC: CmdSpec = $spec;
+            $imp(this, global, frame, &SPEC)
         }
+    };
+}
+
+macro_rules! cmd_noargs {
+    ($fn_name:ident, $name:literal, $command:literal, $state:ident $($rest:tt)*) => {
+        cmd_method!(
+            $fn_name,
+            noargs_impl,
+            cmd_spec!($name, $command, ["", "", ""], $state $($rest)*)
+        );
     };
 }
 
 macro_rules! cmd_key {
-    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let Some(key) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg0_name,
-                    "string or buffer",
-                ));
-            };
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&[key]),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
+    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident $($rest:tt)*) => {
+        cmd_method!(
+            $fn_name,
+            key_impl,
+            cmd_spec!($name, $command, [$arg0_name, "", ""], $state $($rest)*)
+        );
     };
 }
 
 macro_rules! cmd_key_varargs {
-    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            if frame.argument(0).is_undefined_or_null() {
-                return Err(global.throw_missing_arguments_value(&[$arg0_name]));
-            }
-
-            let arguments = frame.arguments();
-            let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
-
-            for arg in arguments {
-                if arg.is_undefined_or_null() {
-                    continue;
-                }
-
-                let Some(another) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        bname($name),
-                        "additional arguments",
-                        "string or buffer",
-                    ));
-                };
-                args.push(another);
-            }
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&args),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
+    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident $($rest:tt)*) => {
+        cmd_method!(
+            $fn_name,
+            key_varargs_impl,
+            cmd_spec!($name, $command, [$arg0_name, "", ""], $state $($rest)*)
+        );
     };
 }
 
 macro_rules! cmd_key_value {
-    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let Some(key) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg0_name,
-                    "string or buffer",
-                ));
-            };
-            let Some(value) = from_js(global, frame.argument(1))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg1_name,
-                    "string or buffer",
-                ));
-            };
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&[key, value]),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
+    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $state:ident $($rest:tt)*) => {
+        cmd_method!(
+            $fn_name,
+            key_value_impl,
+            cmd_spec!($name, $command, [$arg0_name, $arg1_name, ""], $state $($rest)*)
+        );
     };
 }
 
 macro_rules! cmd_key_value_value2 {
-    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $arg2_name:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let Some(key) = from_js(global, frame.argument(0))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg0_name,
-                    "string or buffer",
-                ));
-            };
-            let Some(value) = from_js(global, frame.argument(1))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg1_name,
-                    "string or buffer",
-                ));
-            };
-            let Some(value2) = from_js(global, frame.argument(2))? else {
-                return Err(global.throw_invalid_argument_type(
-                    bname($name),
-                    $arg2_name,
-                    "string or buffer",
-                ));
-            };
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&[key, value, value2]),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
+    ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $arg1_name:literal, $arg2_name:literal, $state:ident $($rest:tt)*) => {
+        cmd_method!(
+            $fn_name,
+            key_value_value2_impl,
+            cmd_spec!($name, $command, [$arg0_name, $arg1_name, $arg2_name], $state $($rest)*)
+        );
     };
 }
 
 macro_rules! cmd_strings_varargs {
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
-        cmd_strings_varargs!($fn_name, $name, $command, $state, CommandMeta::default());
-    };
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
-
-            for arg in frame.arguments() {
-                let Some(another) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        bname($name),
-                        "additional arguments",
-                        "string or buffer",
-                    ));
-                };
-                args.push(another);
-            }
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&args),
-                $meta,
-                concat!("Failed to send ", $command),
-            )
-        }
+    ($fn_name:ident, $name:literal, $command:literal, $state:ident $($rest:tt)*) => {
+        cmd_method!(
+            $fn_name,
+            strings_varargs_impl,
+            cmd_spec!($name, $command, ["", "", ""], $state $($rest)*)
+        );
     };
 }
 
 macro_rules! cmd_key_value_varargs {
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
-        #[bun_jsc::host_fn(method)]
-        pub fn $fn_name(
-            this: &Self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
-
-            let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
-
-            for arg in frame.arguments() {
-                if arg.is_undefined_or_null() {
-                    continue;
-                }
-
-                let Some(another) = from_js(global, *arg)? else {
-                    return Err(global.throw_invalid_argument_type(
-                        bname($name),
-                        "additional arguments",
-                        "string or buffer",
-                    ));
-                };
-                args.push(another);
-            }
-            send_cmd(
-                this,
-                global,
-                frame.this(),
-                $command.as_bytes(),
-                CommandArgs::Args(&args),
-                CommandMeta::default(),
-                concat!("Failed to send ", $command),
-            )
-        }
+    ($fn_name:ident, $name:literal, $command:literal, $state:ident $($rest:tt)*) => {
+        cmd_method!(
+            $fn_name,
+            key_value_varargs_impl,
+            cmd_spec!($name, $command, ["", "", ""], $state $($rest)*)
+        );
     };
 }
 
@@ -483,45 +572,24 @@ impl JSValkeyClient {
         Ok(promise_to_js(promise))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn get(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"get")?;
+    cmd_key!(
+        get,
+        b"get",
+        "GET",
+        "key",
+        NotSubscriber,
+        err = "Failed to send GET command"
+    );
 
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("get", "key", "string or buffer"));
-        };
-        send_cmd(
-            this,
-            global,
-            frame.this(),
-            b"GET",
-            CommandArgs::Args(&[key]),
-            CommandMeta::default(),
-            "Failed to send GET command",
-        )
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_buffer(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"getBuffer")?;
-
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("getBuffer", "key", "string or buffer"));
-        };
-        send_cmd(
-            this,
-            global,
-            frame.this(),
-            b"GET",
-            CommandArgs::Args(&[key]),
-            CommandMeta::RETURN_AS_BUFFER | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send GET command",
-        )
-    }
+    cmd_key!(
+        get_buffer,
+        b"getBuffer",
+        "GET",
+        "key",
+        NotSubscriber,
+        meta = CommandMeta::RETURN_AS_BUFFER.union(CommandMeta::SUPPORTS_AUTO_PIPELINING),
+        err = "Failed to send GET command"
+    );
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn set(
@@ -575,72 +643,33 @@ impl JSValkeyClient {
         )
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn incr(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"incr")?;
+    cmd_key!(
+        incr,
+        b"incr",
+        "INCR",
+        "key",
+        NotSubscriber,
+        err = "Failed to send INCR command"
+    );
 
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("incr", "key", "string or buffer"));
-        };
-        send_cmd(
-            this,
-            global,
-            frame.this(),
-            b"INCR",
-            CommandArgs::Args(&[key]),
-            CommandMeta::default(),
-            "Failed to send INCR command",
-        )
-    }
+    cmd_key!(
+        decr,
+        b"decr",
+        "DECR",
+        "key",
+        NotSubscriber,
+        err = "Failed to send DECR command"
+    );
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn decr(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"decr")?;
-
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("decr", "key", "string or buffer"));
-        };
-        send_cmd(
-            this,
-            global,
-            frame.this(),
-            b"DECR",
-            CommandArgs::Args(&[key]),
-            CommandMeta::default(),
-            "Failed to send DECR command",
-        )
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn exists(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"exists")?;
-
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("exists", "key", "string or buffer"));
-        };
-        // Send EXISTS command with special Exists type for boolean conversion
-        send_cmd(
-            this,
-            global,
-            frame.this(),
-            b"EXISTS",
-            CommandArgs::Args(&[key]),
-            CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send EXISTS command",
-        )
-    }
+    cmd_key!(
+        exists,
+        b"exists",
+        "EXISTS",
+        "key",
+        NotSubscriber,
+        meta = CommandMeta::RETURN_AS_BOOL.union(CommandMeta::SUPPORTS_AUTO_PIPELINING),
+        err = "Failed to send EXISTS command"
+    );
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn expire(
@@ -695,27 +724,14 @@ impl JSValkeyClient {
         )
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn ttl(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"ttl")?;
-
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("ttl", "key", "string or buffer"));
-        };
-        send_cmd(
-            this,
-            global,
-            frame.this(),
-            b"TTL",
-            CommandArgs::Args(&[key]),
-            CommandMeta::default(),
-            "Failed to send TTL command",
-        )
-    }
+    cmd_key!(
+        ttl,
+        b"ttl",
+        "TTL",
+        "key",
+        NotSubscriber,
+        err = "Failed to send TTL command"
+    );
 
     // Implement srem (remove value from a set)
     #[bun_jsc::host_fn(method)]
@@ -805,28 +821,14 @@ impl JSValkeyClient {
         )
     }
 
-    // Implement smembers (get all members of a set)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn smembers(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"smembers")?;
-
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("smembers", "key", "string or buffer"));
-        };
-        send_cmd(
-            this,
-            global,
-            frame.this(),
-            b"SMEMBERS",
-            CommandArgs::Args(&[key]),
-            CommandMeta::default(),
-            "Failed to send SMEMBERS command",
-        )
-    }
+    cmd_key!(
+        smembers,
+        b"smembers",
+        "SMEMBERS",
+        "key",
+        NotSubscriber,
+        err = "Failed to send SMEMBERS command"
+    );
 
     // Implement spop (pop a random member from a set)
     #[bun_jsc::host_fn(method)]
@@ -912,35 +914,16 @@ impl JSValkeyClient {
         )
     }
 
-    // Implement sismember (check if value is member of a set)
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn sismember(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"sismember")?;
-
-        let Some(key) = from_js(global, frame.argument(0))? else {
-            return Err(global.throw_invalid_argument_type("sismember", "key", "string or buffer"));
-        };
-        let Some(value) = from_js(global, frame.argument(1))? else {
-            return Err(global.throw_invalid_argument_type(
-                "sismember",
-                "value",
-                "string or buffer",
-            ));
-        };
-        send_cmd(
-            this,
-            global,
-            frame.this(),
-            b"SISMEMBER",
-            CommandArgs::Args(&[key, value]),
-            CommandMeta::RETURN_AS_BOOL | CommandMeta::SUPPORTS_AUTO_PIPELINING,
-            "Failed to send SISMEMBER command",
-        )
-    }
+    cmd_key_value!(
+        sismember,
+        b"sismember",
+        "SISMEMBER",
+        "key",
+        "value",
+        NotSubscriber,
+        meta = CommandMeta::RETURN_AS_BOOL.union(CommandMeta::SUPPORTS_AUTO_PIPELINING),
+        err = "Failed to send SISMEMBER command"
+    );
 
     // Implement hmget (get multiple values from hash)
     #[bun_jsc::host_fn(method)]
@@ -1685,14 +1668,14 @@ impl JSValkeyClient {
         b"psubscribe",
         "PSUBSCRIBE",
         DontCare,
-        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST
+        meta = CommandMeta::DEFAULT.union(CommandMeta::SUBSCRIPTION_REQUEST)
     );
     cmd_strings_varargs!(
         punsubscribe,
         b"punsubscribe",
         "PUNSUBSCRIBE",
         DontCare,
-        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST
+        meta = CommandMeta::DEFAULT.union(CommandMeta::SUBSCRIPTION_REQUEST)
     );
     cmd_strings_varargs!(pubsub, b"pubsub", "PUBSUB", DontCare);
     cmd_strings_varargs!(copy, b"copy", "COPY", NotSubscriber);

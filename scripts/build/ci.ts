@@ -312,28 +312,56 @@ function upload(paths: string[], cwd: string): void {
 }
 
 /**
- * `timings`, or under Buildkite `timings-<step key>`: every build step of a build uploads its own, and the step's key
- * is what tells them apart (two steps can share a target and a mode: `linux-x64` and `linux-x64-asan`).
+ * The timings chart's file: `timings.html`, or under Buildkite a name with the step's key in it. Every build step of
+ * a build uploads its own, and the key is what tells them apart (two steps can share a target and a mode:
+ * `linux-x64` and `linux-x64-asan`).
  */
-export function timingsFileStem(): string {
-  return isBuildkite ? `timings-${process.env.BUILDKITE_STEP_KEY}` : "timings";
+export function timingsChartName(): string {
+  return isBuildkite ? chartOfStep(process.env.BUILDKITE_STEP_KEY!) : "timings.html";
 }
+
+const chartOfStep = (stepKey: string): string => `timings-${stepKey}.html`;
 
 /**
  * Put a build step's timings chart where someone looking at the build finds it: uploaded as an artifact, which
- * Buildkite serves as a page, and linked from the build page (one annotation for the build, a link per step).
+ * Buildkite serves as a page, and linked from the build page, in one annotation that folds away.
+ *
+ * Every build step has a chart and no step runs after them all, so each writes the whole annotation: it records its
+ * chart in the build's meta-data and lists every chart recorded so far. Two steps finishing together can each list
+ * the charts it saw, and the later write may be the one that saw fewer; so a step looks again after writing and
+ * writes again if the list grew. The last write of all was then checked against a list that had every chart.
  */
 export function publishTimings(cfg: Config, chart: string): void {
-  const artifact = relative(cfg.buildDir, chart);
   // The link resolves only once the artifact exists.
-  upload([artifact], cfg.buildDir);
-  reportAnnotationToBuildkite({
-    style: "info",
-    priority: 1,
-    label: "build timings",
-    content: `<p>build timings: <a href="artifact://${artifact}">${process.env.BUILDKITE_STEP_KEY}</a></p>\n`,
-  });
+  upload([relative(cfg.buildDir, chart)], cfg.buildDir);
+  run(
+    ["buildkite-agent", "meta-data", "set", `${TIMINGS_META_DATA}${process.env.BUILDKITE_STEP_KEY}`, "1"],
+    cfg.buildDir,
+  );
+  const recorded = (): string[] => {
+    const keys = spawnSync("buildkite-agent", ["meta-data", "keys"], { encoding: "utf8" });
+    if (keys.status !== 0) throw new BuildError(`buildkite-agent meta-data keys exited with code ${keys.status}`);
+    const all = keys.stdout.split("\n").map(k => k.trim());
+    return all
+      .filter(k => k.startsWith(TIMINGS_META_DATA))
+      .map(k => k.slice(TIMINGS_META_DATA.length))
+      .sort();
+  };
+  for (let written: string[] = [], steps = recorded(); steps.join() !== written.join(); steps = recorded()) {
+    const links = steps.map(step => `<li><a href="artifact://${chartOfStep(step)}">${step}</a></li>`);
+    reportAnnotationToBuildkite({
+      style: "info",
+      priority: 1,
+      label: "build timings",
+      append: false,
+      content: `<details>\n<summary>⏱️ Build timings — ${steps.length} charts</summary>\n<ul>\n${links.join("\n")}\n</ul>\n</details>\n`,
+    });
+    written = steps;
+  }
 }
+
+/** The build's meta-data key of a step that uploaded a timings chart, before the step's key. */
+const TIMINGS_META_DATA = "timings:";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Link-only post-link: features.json + packaging + upload

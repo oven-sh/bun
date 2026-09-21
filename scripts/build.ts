@@ -40,7 +40,7 @@ import {
   reportOrderFileFailure,
   shouldGenerateOrderFile,
   spawnWithAnnotations,
-  timingsFileStem,
+  timingsChartName,
   uploadArtifacts,
   verifyOrderFileApplied,
 } from "./build/ci.ts";
@@ -358,7 +358,7 @@ function reportTimings(cfg: Config, write: (text: string) => void): void {
   const build = loadBuild(cfg);
   write(formatReport(build, { bold, dim }));
   if (build.runs.length === 0) return;
-  const chart = join(cfg.buildDir, `${timingsFileStem()}.html`);
+  const chart = join(cfg.buildDir, timingsChartName());
   writeFileSync(chart, chartHtml(build));
   write(
     `\n${bold("chart")}  ${relative(process.cwd(), chart)}` +

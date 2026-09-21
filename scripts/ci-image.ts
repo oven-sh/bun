@@ -1,231 +1,51 @@
 #!/usr/bin/env node
 
-// The image commands CI runs from the hosted `build-image` queue on a
-// `[build images]` / `[publish images]` build (see "CI image lifecycle" in
-// .buildkite/ci.ts). They only work in CI: the cloud credentials are Buildkite
-// cluster secrets.
+// The cloud side of CI's machine images (scripts/build/ci-images): whether an
+// image exists, waiting for one, and baking a Windows one. These only work in
+// CI: the cloud credentials are Buildkite cluster secrets.
 //
-//   bake-image --arch=<x64|aarch64> --name=<image name>
-//     Bake the Windows image on Azure with Packer (scripts/packer/).
-//   wait-image --name=<ami name> --build=<build number> [--timeout-minutes=N]
-//     Block until the Linux AMI a `…-bake-image` step produced is available.
+//   bake-image --key=<image key> --name=<image name>
+//     Bake a Windows image on Azure with Packer, from the bake directory
+//     build/ci-images/<key>/ that the pipeline step generated and uploaded,
+//     and publish the record the bake wrote. This has to be the
+//     step's only command: see bakeWindowsImage.
+//   wait-image --os=<linux|windows> --name=<image name> [--timeout-minutes=N]
+//     Block until the image of that name can be booted.
 
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import type { Arch } from "./agent.ts";
-import { requireCommand, run, which } from "./agent.ts";
-import { getBranch, getSecret } from "./buildkite.ts";
-
-const PACKER_VERSION = "1.15.0";
-
-async function getAzureToken(tenantId: string, clientId: string, clientSecret: string): Promise<string> {
-  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${encodeURIComponent(clientSecret)}&scope=https://management.azure.com/.default`,
-  });
-  if (!response.ok) throw new Error(`Azure auth failed: ${response.status}`);
-  const data = (await response.json()) as { access_token: string };
-  return data.access_token;
-}
+import { getArch, requireCommand, run } from "./agent.ts";
+import {
+  type WindowsImage,
+  bakeDirectory,
+  imageRecordName,
+  packerVariables,
+  pins,
+  windowsBake,
+} from "./build/ci-images/spec.ts";
+import { getEnv, getSecret } from "./buildkite.ts";
 
 /**
- * Packer handles VM creation, bootstrap, sysprep and gallery capture over
- * WinRM.
+ * `failed` is an image that holds its name and will never boot. A failed
+ * Linux image is replaced when the next bake of the name finishes; a failed
+ * Windows version is deleted by the next bake.
  */
-async function buildWindowsImage(arch: Arch, imageDefName: string): Promise<void> {
-  const templateName = arch === "aarch64" ? "windows-arm64" : "windows-x64";
-  const templateDir = resolve(import.meta.dirname, "packer");
-
-  const clientId = getSecret("AZURE_CLIENT_ID");
-  const clientSecret = getSecret("AZURE_CLIENT_SECRET");
-  const subscriptionId = getSecret("AZURE_SUBSCRIPTION_ID");
-  const tenantId = getSecret("AZURE_TENANT_ID");
-  const resourceGroup = getSecret("AZURE_RESOURCE_GROUP");
-  const location = getSecret("AZURE_LOCATION");
-  const galleryName = getSecret("AZURE_GALLERY_NAME");
-
-  const galleryArch = arch === "aarch64" ? "Arm64" : "x64";
-  console.log(`[packer] Ensuring gallery image definition: ${imageDefName}`);
-  const galleryPath = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/galleries/${galleryName}/images/${imageDefName}`;
-  const token = await getAzureToken(tenantId, clientId, clientSecret);
-  const defResponse = await fetch(`https://management.azure.com${galleryPath}?api-version=2024-03-03`, {
-    method: "PUT",
-    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      location: location,
-      properties: {
-        osType: "Windows",
-        osState: "Generalized",
-        hyperVGeneration: "V2",
-        architecture: galleryArch,
-        identifier: { publisher: "bun", offer: `windows-${arch}-ci`, sku: imageDefName },
-        features: [
-          { name: "DiskControllerTypes", value: "SCSI, NVMe" },
-          { name: "SecurityType", value: "TrustedLaunch" },
-        ],
-      },
-    }),
-  });
-  if (!defResponse.ok && defResponse.status !== 409) {
-    throw new Error(`Failed to create gallery image definition: ${defResponse.status} ${await defResponse.text()}`);
-  }
-
-  // Packer's azure-arm shared_image_gallery_destination always writes
-  // image_version 1.0.0 and 409s if it already exists, so a re-run of
-  // [publish images] would fail on every Windows variant that already
-  // succeeded.
-  // CAUTION: this deletes the live version BEFORE Packer has produced a
-  // replacement. If this job is canceled or dies mid-bake, CI is left with
-  // no Windows image until a publish run completes.
-  const versionPath = `${galleryPath}/versions/1.0.0`;
-  const existing = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (existing.ok) {
-    console.log(`[packer] Deleting existing gallery image version 1.0.0 of ${imageDefName} before re-publish`);
-    const del = await fetch(`https://management.azure.com${versionPath}?api-version=2024-03-03`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (del.status === 202) {
-      const op = del.headers.get("Azure-AsyncOperation") ?? del.headers.get("Location");
-      for (let i = 0; op && i < 120; i++) {
-        await new Promise(r => setTimeout(r, 10_000));
-        const poll = await fetch(op, { headers: { Authorization: `Bearer ${token}` } });
-        const body = (await poll.json().catch(() => ({}))) as { status?: string };
-        if (body.status === "Succeeded") break;
-        if (body.status === "Failed") throw new Error(`Delete of ${versionPath} failed: ${JSON.stringify(body)}`);
-      }
-    } else if (!del.ok && del.status !== 404) {
-      throw new Error(`Failed to delete existing gallery image version: ${del.status} ${await del.text()}`);
-    }
-  }
-
-  const packerBin = await ensurePacker();
-
-  console.log("[packer] Initializing plugins...");
-  await run([packerBin, "init", templateDir]);
-
-  const branch = getBranch() ?? "";
-  console.log(`[packer] Building ${templateName} image: ${imageDefName}`);
-  const packerArgs = [
-    "build",
-    "-only",
-    `azure-arm.${templateName}`,
-    "-var",
-    `client_id=${clientId}`,
-    "-var",
-    `client_secret=${clientSecret}`,
-    "-var",
-    `subscription_id=${subscriptionId}`,
-    "-var",
-    `tenant_id=${tenantId}`,
-    "-var",
-    // Dedicated build RG in southcentralus so Packer's 4-core bake VMs don't
-    // contend with CI runners for the eastus2 Ddsv6/Dpdsv6 quota.
-    `resource_group=${resourceGroup}-PACKER`,
-    "-var",
-    `gallery_resource_group=${resourceGroup}`,
-    "-var",
-    `location=${location}`,
-    "-var",
-    `gallery_name=${galleryName}`,
-    "-var",
-    `image_name=${imageDefName}`,
-    "-var",
-    `bootstrap_script=${resolve(import.meta.dirname, "bootstrap.ps1")}`,
-    // The image's agent service is uploaded from this checkout.
-    "-var",
-    `agent_script=${resolve(import.meta.dirname, "agent.ts")}`,
-    "-var",
-    `repo_ref=${/^[\w./-]+$/.test(branch) ? branch : "main"}`,
-    templateDir,
-  ];
-
-  // Packer's azure-arm builder cleans up its temp pkr* resources on SIGINT/SIGTERM, but only
-  // if the signal actually reaches the packer process and it is given time to finish the Azure
-  // deletes. run() does not forward signals, so a Buildkite cancel would orphan the whole
-  // VM/NIC/IP/disk/vnet/NSG/keyvault stack in the build RG. Spawn directly and forward.
-  const child = spawn(packerBin, packerArgs, {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      ARM_CLIENT_ID: clientId,
-      ARM_CLIENT_SECRET: clientSecret,
-      ARM_SUBSCRIPTION_ID: subscriptionId,
-      ARM_TENANT_ID: tenantId,
-    },
-  });
-  let cancelled = false;
-  const forward = (signal: NodeJS.Signals) => {
-    cancelled = true;
-    console.log(`[packer] received ${signal}, forwarding to packer for Azure cleanup...`);
-    child.kill(signal);
-  };
-  process.on("SIGINT", forward);
-  process.on("SIGTERM", forward);
-  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>(done =>
-    child.on("close", (c, s) => done([c, s])),
-  );
-  process.off("SIGINT", forward);
-  process.off("SIGTERM", forward);
-  if (cancelled) {
-    console.log("[packer] cleanup after cancel finished");
-    process.exit(1);
-  }
-  if (code !== 0) {
-    throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
-  }
-
-  console.log(`[packer] Image built successfully: ${imageDefName}`);
-}
-
-/** Packer from PATH, else downloaded into the temp dir. */
-async function ensurePacker(): Promise<string> {
-  const packerPath = which(["packer"]);
-  if (packerPath) {
-    console.log("[packer] Found:", packerPath);
-    return packerPath;
-  }
-
-  const localPacker = join(tmpdir(), "packer");
-  if (existsSync(localPacker)) {
-    return localPacker;
-  }
-
-  const platform = process.platform === "win32" ? "windows" : process.platform;
-  const packerArch = process.arch === "arm64" ? "arm64" : "amd64";
-  const url = `https://releases.hashicorp.com/packer/${PACKER_VERSION}/packer_${PACKER_VERSION}_${platform}_${packerArch}.zip`;
-
-  console.log(`[packer] Downloading Packer ${PACKER_VERSION}...`);
-  const zipPath = join(tmpdir(), "packer.zip");
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Failed to download Packer: ${response.status}`);
-  writeFileSync(zipPath, Buffer.from(await response.arrayBuffer()));
-
-  await run(["unzip", "-o", zipPath, "-d", tmpdir()]);
-  chmodSync(localPacker, 0o755);
-
-  console.log(`[packer] Installed Packer ${PACKER_VERSION}`);
-  return localPacker;
-}
+export type ImageState = "available" | "pending" | "failed" | "missing";
 
 interface AwsImage {
   ImageId: string;
   State: string;
-  CreationDate: string;
-  StateReason?: { Message?: string };
 }
 
-function describeImages(filters: string[]): AwsImage[] {
+function getLinuxImageState(name: string): ImageState {
   const { error, status, stdout, stderr } = spawnSync(
     requireCommand("aws"),
-    ["ec2", "describe-images", "--owners", "self", "--filters", ...filters, "--output", "json"],
+    ["ec2", "describe-images", "--owners", "self", "--filters", `Name=name,Values=${name}`, "--output", "json"],
     {
       encoding: "utf8",
       // The aws CLI gets these and nothing else of this job's environment.
@@ -241,85 +61,267 @@ function describeImages(filters: string[]): AwsImage[] {
     throw new Error(`aws ec2 describe-images failed: ${stderr?.trim() ?? error?.message}`, { cause: error });
   }
   const { Images } = JSON.parse(stdout) as { Images: AwsImage[] };
-  return Images;
+  const states = new Set(Images.map(({ State }) => State));
+  if (states.has("available")) return "available";
+  if (states.has("pending")) return "pending";
+  return states.size ? "failed" : "missing";
+}
+
+type Azure = {
+  token: string;
+  subscriptionId: string;
+  resourceGroup: string;
+  galleryName: string;
+  location: string;
+};
+
+async function getAzure(): Promise<Azure> {
+  const tenantId = getSecret("AZURE_TENANT_ID");
+  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: getSecret("AZURE_CLIENT_ID"),
+      client_secret: getSecret("AZURE_CLIENT_SECRET"),
+      scope: "https://management.azure.com/.default",
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Azure auth failed: ${response.status}`);
+  }
+  const { access_token: token } = (await response.json()) as { access_token: string };
+  return {
+    token,
+    subscriptionId: getSecret("AZURE_SUBSCRIPTION_ID"),
+    resourceGroup: getSecret("AZURE_RESOURCE_GROUP"),
+    galleryName: getSecret("AZURE_GALLERY_NAME"),
+    location: getSecret("AZURE_LOCATION"),
+  };
+}
+
+/** A request to the gallery image definition `name`, or to a path under it. */
+function galleryRequest(azure: Azure, name: string, path: string, init?: RequestInit): Promise<Response> {
+  const { subscriptionId, resourceGroup, galleryName, token } = azure;
+  const definition = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/galleries/${galleryName}/images/${name}`;
+  return fetch(`https://management.azure.com${definition}${path}?api-version=2024-03-03`, {
+    ...init,
+    headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+}
+
+/** Packer publishes a Windows image as one fixed version of the gallery image definition named after it. */
+const galleryVersion = `/versions/${windowsBake.galleryVersion}`;
+
+async function getWindowsImageState(azure: Azure, name: string): Promise<ImageState> {
+  const response = await galleryRequest(azure, name, galleryVersion);
+  if (response.status === 404) {
+    return "missing";
+  }
+  if (!response.ok) {
+    throw new Error(`Azure gallery lookup of ${name} failed: ${response.status} ${await response.text()}`);
+  }
+  const { properties } = (await response.json()) as { properties: { provisioningState: string } };
+  switch (properties.provisioningState) {
+    case "Succeeded":
+      return "available";
+    case "Failed":
+      return "failed";
+    default:
+      return "pending";
+  }
+}
+
+export async function getImageState(os: "linux" | "windows", name: string): Promise<ImageState> {
+  return os === "windows" ? getWindowsImageState(await getAzure(), name) : getLinuxImageState(name);
+}
+
+async function waitImage(os: "linux" | "windows", name: string, timeoutMinutes: number): Promise<void> {
+  const deadline = Date.now() + timeoutMinutes * 60_000;
+  let lastState: ImageState | undefined;
+  console.log(`Waiting for image ${name}...`);
+  while (Date.now() < deadline) {
+    const state = await getImageState(os, name);
+    if (state !== lastState) {
+      console.log(`${new Date().toISOString()} ${name}: ${state}`);
+    }
+    if (state === "available") {
+      return;
+    }
+    // A bake that was started and then failed or was discarded; the build is annotated with why.
+    if (state === "failed" || (state === "missing" && lastState === "pending")) {
+      throw new Error(`Image ${name} will not become available (${state})`);
+    }
+    lastState = state;
+    await new Promise(done => setTimeout(done, 30_000));
+  }
+  throw new Error(`Image ${name} was not available after ${timeoutMinutes} minutes (last state: ${lastState})`);
+}
+
+/** The pinned Packer, downloaded and checked: whatever `packer` the machine has is not what the image was hashed with. */
+async function downloadPacker(): Promise<string> {
+  const { version, sha256 } = pins.packer;
+  const arch = getArch();
+  const url = `https://releases.hashicorp.com/packer/${version}/packer_${version}_linux_${arch === "x64" ? "amd64" : "arm64"}.zip`;
+  console.log(`[packer] Downloading Packer ${version}...`);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to download ${url}: ${response.status}`);
+  }
+  const zip = Buffer.from(await response.arrayBuffer());
+  const actual = createHash("sha256").update(zip).digest("hex");
+  if (actual !== sha256[arch]) {
+    throw new Error(`${url} has sha256 ${actual}, expected ${sha256[arch]}`);
+  }
+  const zipPath = join(tmpdir(), "packer.zip");
+  writeFileSync(zipPath, zip);
+  await run(["unzip", "-o", "-q", zipPath, "packer", "-d", tmpdir()]);
+  const packer = join(tmpdir(), "packer");
+  chmodSync(packer, 0o755);
+  return packer;
 }
 
 /**
- * Block until the Linux AMI produced by a `…-bake-image` step (see
- * getLinuxBuildImageSteps in .buildkite/ci.ts) is available. The AMI carries
- * the number of the build that baked it.
- * @returns the AMI id
+ * Packer creates the VM, uploads the bake directory, runs bootstrap.ps1, runs
+ * Sysprep and publishes to the gallery.
+ *
+ * The step runs this and nothing else. When a step has several commands the
+ * agent runs them in a shell, and a cancel ends that shell without this
+ * process or Packer ever seeing the signal, so Packer deletes nothing and the
+ * VM it made keeps its cores until someone removes it by hand. So the download
+ * before the bake and the upload after it happen in here.
  */
-async function waitImage(name: string, build: string, timeoutMinutes: number): Promise<string> {
-  // Match on the build number too: an older image that merely shares the
-  // name (the previous `-vN` being re-published) is not the one to wait for.
-  const filters = [`Name=name,Values=${name}`, `Name=tag:buildkite:build-number,Values=${build}`];
-  const deadline = Date.now() + timeoutMinutes * 60_000;
-  let lastState: string | undefined;
-  let seen: string | undefined;
-  console.log(`Waiting for image ${name} (build ${build})...`);
-  while (Date.now() < deadline) {
-    const images = describeImages(filters);
-    const [image] = images.sort((a, b) => (a.CreationDate < b.CreationDate ? 1 : -1));
-    const state = image?.State ?? (seen ? "gone" : "not created yet");
-    if (state !== lastState) {
-      console.log(`${new Date().toISOString()} ${name}: ${state}${image ? ` (${image.ImageId})` : ""}`);
-      lastState = state;
-    }
-    if (image && state === "available") {
-      return image.ImageId;
-    }
-    // failed/invalid/error: imaging failed. gone/deregistered: it failed and
-    // was already cleaned up (the build is annotated with why). Either way
-    // this image is not going to appear.
-    if (["failed", "invalid", "error", "deregistered", "gone"].includes(state)) {
-      const reason = image?.StateReason?.Message ?? "discarded after a failed create, see the build annotation";
-      throw new Error(`Image ${name} for build ${build} will not become available (${state}): ${reason}`);
-    }
-    seen ||= image?.ImageId;
-    await new Promise(done => setTimeout(done, 30_000));
+async function bakeWindowsImage(key: string, name: string, timeoutMinutes: number): Promise<void> {
+  await run(["buildkite-agent", "artifact", "download", `${bakeDirectory(key)}/*`, "."]);
+  const directory = resolve(bakeDirectory(key));
+  const image = JSON.parse(readFileSync(join(directory, "image.json"), "utf8")) as WindowsImage;
+  const azure = await getAzure();
+
+  const state = await getWindowsImageState(azure, name);
+  if (state === "available") {
+    console.log(`[packer] ${name} already exists`);
+    return;
   }
-  throw new Error(
-    `Image ${name} for build ${build} was not available after ${timeoutMinutes} minutes (last state: ${lastState})`,
+  if (state === "pending") {
+    // Another build found the name missing at the same time and is baking it.
+    await waitImage("windows", name, timeoutMinutes);
+    return;
+  }
+
+  console.log(`[packer] Ensuring gallery image definition: ${name}`);
+  const definition = await galleryRequest(azure, name, "", {
+    method: "PUT",
+    body: JSON.stringify({
+      location: azure.location,
+      properties: {
+        osType: "Windows",
+        osState: "Generalized",
+        hyperVGeneration: "V2",
+        architecture: image.arch === "aarch64" ? "Arm64" : "x64",
+        identifier: { publisher: "bun", offer: `windows-${image.arch}-ci`, sku: name },
+        features: [
+          { name: "DiskControllerTypes", value: "SCSI, NVMe" },
+          { name: "SecurityType", value: "TrustedLaunch" },
+        ],
+      },
+    }),
+  });
+  if (!definition.ok && definition.status !== 409) {
+    throw new Error(`Failed to create gallery image definition: ${definition.status} ${await definition.text()}`);
+  }
+
+  if (state === "failed") {
+    // Packer refuses to publish over a version that exists, and this one never became an image.
+    console.log(`[packer] Deleting the failed version of ${name}`);
+    const deleted = await galleryRequest(azure, name, galleryVersion, { method: "DELETE" });
+    if (!deleted.ok) {
+      throw new Error(`Failed to delete the failed version of ${name}: ${deleted.status} ${await deleted.text()}`);
+    }
+    while ((await getWindowsImageState(azure, name)) !== "missing") {
+      await new Promise(done => setTimeout(done, 10_000));
+    }
+  }
+
+  const packer = await downloadPacker();
+  const template = join(directory, "image.pkr.hcl");
+  await run([packer, "init", template]);
+
+  const values: Record<(typeof packerVariables)[number], string> = {
+    client_id: getSecret("AZURE_CLIENT_ID"),
+    client_secret: getSecret("AZURE_CLIENT_SECRET"),
+    subscription_id: azure.subscriptionId,
+    tenant_id: getSecret("AZURE_TENANT_ID"),
+    // Its own resource group, in a region where the bake's VM does not
+    // compete with CI's machines for quota.
+    resource_group: `${azure.resourceGroup}-PACKER`,
+    gallery_resource_group: azure.resourceGroup,
+    gallery_name: azure.galleryName,
+    location: azure.location,
+    image_name: name,
+    bake_directory: directory,
+    repo_commit: getEnv("BUILDKITE_COMMIT"),
+  };
+  const args = ["build", ...packerVariables.flatMap(variable => ["-var", `${variable}=${values[variable]}`]), template];
+
+  // Packer deletes the VM, disk and network it created when it is
+  // interrupted, but only if the signal reaches it and it is given the time:
+  // run() does not forward signals, so this spawns it directly.
+  console.log(`[packer] Baking ${name}`);
+  const child = spawn(packer, args, { stdio: "inherit" });
+  let cancelled = false;
+  const forward = (signal: NodeJS.Signals) => {
+    cancelled = true;
+    console.log(`[packer] received ${signal}, forwarding to packer for Azure cleanup...`);
+    child.kill(signal);
+  };
+  process.on("SIGINT", forward);
+  process.on("SIGTERM", forward);
+  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>(done =>
+    child.on("close", (c, s) => done([c, s])),
   );
+  process.off("SIGINT", forward);
+  process.off("SIGTERM", forward);
+  if (cancelled) {
+    process.exit(1);
+  }
+  if (code !== 0) {
+    throw new Error(`packer build exited with ${signal ? `signal ${signal}` : `code ${code}`}`);
+  }
+  console.log(`[packer] Baked ${name}`);
+  // What the bake installed, to read from the build's page without starting a machine from the image.
+  await run(["buildkite-agent", "artifact", "upload", `${bakeDirectory(key)}/${imageRecordName}`]);
 }
 
 async function main(): Promise<void> {
   const { positionals, values } = parseArgs({
     allowPositionals: true,
     options: {
-      "arch": { type: "string" },
+      "key": { type: "string" },
       "name": { type: "string" },
-      "build": { type: "string" },
-      "timeout-minutes": { type: "string", default: "110" },
+      "os": { type: "string" },
+      "timeout-minutes": { type: "string" },
     },
   });
   const [command] = positionals;
+  const { key, name, os } = values;
+  const timeoutMinutes = parseInt(values["timeout-minutes"] ?? "");
 
-  if (command === "wait-image") {
-    const { name, build } = values;
-    if (!name || !build) {
-      throw new Error("wait-image needs --name=<ami name> --build=<build number>");
-    }
-    const imageId = await waitImage(name, build, parseInt(values["timeout-minutes"]));
-    console.log(`Image available: ${name} -> ${imageId}`);
+  if (command === "wait-image" && name && (os === "linux" || os === "windows") && timeoutMinutes) {
+    await waitImage(os, name, timeoutMinutes);
     return;
   }
-
-  if (command === "bake-image") {
-    const { arch, name } = values;
-    if ((arch !== "x64" && arch !== "aarch64") || !name) {
-      throw new Error("bake-image needs --arch=<x64|aarch64> --name=<image name>");
-    }
-    await buildWindowsImage(arch, name);
+  if (command === "bake-image" && key && name && timeoutMinutes) {
+    await bakeWindowsImage(key, name, timeoutMinutes);
     return;
   }
 
   const scriptPath = relative(process.cwd(), fileURLToPath(import.meta.url));
   throw new Error(
-    `Usage: ./${scriptPath} bake-image --arch=<x64|aarch64> --name=<image name>\n` +
-      `       ./${scriptPath} wait-image --name=<ami name> --build=<build number> [--timeout-minutes=N]`,
+    `Usage: ./${scriptPath} bake-image --key=<image key> --name=<image name> --timeout-minutes=N\n` +
+      `       ./${scriptPath} wait-image --os=<linux|windows> --name=<image name> --timeout-minutes=N`,
   );
 }
 
-await main();
+if (import.meta.main) {
+  await main();
+}

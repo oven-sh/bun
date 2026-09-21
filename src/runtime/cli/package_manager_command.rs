@@ -461,8 +461,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         Global::crash();
                     }
                 };
-                // `<cache>/links` is the global store of isolated installs. Every
-                // project with `globalStore = true` symlinks into it.
                 let has_global_store =
                     bun_sys::directory_exists_at(rm_dir.fd(), bun_core::zstr!("links"))
                         .unwrap_or(false);

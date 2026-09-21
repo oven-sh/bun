@@ -5621,17 +5621,15 @@ impl NodeFS {
                                 // On Windows, this may happen if trying to mkdir replacing a file
                                 #[cfg(windows)]
                                 {
-                                    let errno = match directory_exists_at_os_path(
-                                        FD::INVALID,
-                                        parent,
-                                    ) {
-                                        // is a directory. break.
-                                        Ok(true) => None,
-                                        Ok(false) => Some(E::ENOTDIR as _),
-                                        // The parent exists but the probe could not read it.
-                                        // Node reports the stat error here.
-                                        Err(probe_err) => Some(probe_err.errno),
-                                    };
+                                    let errno =
+                                        match directory_exists_at_os_path(FD::INVALID, parent) {
+                                            // is a directory. break.
+                                            Ok(true) => None,
+                                            Ok(false) => Some(E::ENOTDIR as _),
+                                            // The parent exists but the probe could not read it.
+                                            // Node reports the stat error here.
+                                            Err(probe_err) => Some(probe_err.errno),
+                                        };
                                     if let Some(errno) = errno {
                                         // SAFETY: `working_mem` is not used after this return; the
                                         // re-derived &mut PathBuffer is scoped to the call.

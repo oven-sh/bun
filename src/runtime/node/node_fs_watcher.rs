@@ -209,11 +209,26 @@ impl FSWatchTaskPosix {
     }
 
     /// JS thread: deliver each batched event to the listener.
+    ///
+    /// A batch is how the watcher thread posts; the listener must not see it.
+    /// Node makes one `MakeCallback` per event, so the nextTicks and promise
+    /// reactions one event queued run before the next event:
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/fs_event_wrap.cc#L239
+    /// `run_callback` runs no checkpoint inside a task (`tick()` holds the
+    /// entered count), so this loop does. The task queue runs the checkpoint
+    /// after the last event.
     pub(crate) fn run(&mut self) -> JsResult<()> {
         let ctx: *const FSWatcher = self.ctx();
         // SAFETY: BACKREF — the FSWatcher outlives its tasks.
         let _unref = scopeguard::guard((), |()| unsafe { (*ctx).unref_task() });
         for i in 0..self.count as usize {
+            if i > 0 {
+                let vm = self.ctx().global_this.bun_vm();
+                if vm.event_loop_mut().drain_microtasks().is_err() {
+                    // The VM is stopping: the rest of the batch is dropped with the task.
+                    return Ok(());
+                }
+            }
             // SAFETY: entries [0..count) were written by `append`.
             let entry = unsafe { self.entries[i].assume_init_ref() };
             let emitted = match &entry.event {

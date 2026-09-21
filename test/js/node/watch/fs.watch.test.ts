@@ -12,7 +12,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -252,6 +252,77 @@ describe("fs.watch", () => {
       fs.writeFileSync(filepath, "world");
     });
   }, 10000);
+
+  // The OS hands over several events at once (a rename is two events from one
+  // syscall), and node still makes one callback per event: what the listener
+  // queued for one event has run by the time the next event arrives.
+  function burstEndingWithLast(root: string) {
+    for (const name of ["a", "b", "c", "d", "e", "f", "g", "last"]) {
+      fs.writeFileSync(path.join(root, name + ".tmp"), "x");
+      fs.renameSync(path.join(root, name + ".tmp"), path.join(root, name));
+    }
+  }
+
+  test("nextTicks and microtasks queued by the listener run before the next event", async () => {
+    using dir = tempDir("fs-watch-checkpoint", {});
+    const root = String(dir);
+    const order: string[] = [];
+    const expected: string[] = [];
+    const { promise: sawLast, resolve, reject } = Promise.withResolvers<void>();
+    let events = 0;
+    const watcher = fs.watch(root, (_eventType, filename) => {
+      const i = events++;
+      expected.push(`event ${i}`, `nextTick ${i}`, `microtask ${i}`);
+      order.push(`event ${i}`);
+      process.nextTick(() => order.push(`nextTick ${i}`));
+      queueMicrotask(() => order.push(`microtask ${i}`));
+      if (filename === "last") resolve();
+    });
+    watcher.once("error", reject);
+    const interval = repeat(() => burstEndingWithLast(root));
+    try {
+      await sawLast;
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+    expect(order).toEqual(expected);
+  });
+
+  test("a once('change') listener re-armed after an await sees every event", async () => {
+    using dir = tempDir("fs-watch-once-loop", {});
+    const root = String(dir);
+    const { promise: sawLast, resolve, reject } = Promise.withResolvers<void>();
+    const watcher = fs.watch(root);
+    let emitted = 0;
+    watcher.on("change", (_eventType, filename) => {
+      emitted++;
+      if (filename === "last") resolve();
+    });
+    watcher.once("error", reject);
+
+    const stop = new AbortController();
+    let seen = 0;
+    const consumer = (async () => {
+      for (;;) {
+        await once(watcher, "change", { signal: stop.signal });
+        seen++;
+      }
+    })();
+    // Stays handled when the test fails before it gets to await the consumer.
+    consumer.catch(() => {});
+
+    const interval = repeat(() => burstEndingWithLast(root));
+    try {
+      await sawLast;
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+      stop.abort();
+    }
+    await expect(consumer).rejects.toMatchObject({ name: "AbortError" });
+    expect({ seen }).toEqual({ seen: emitted });
+  });
 
   test("should error on invalid path", done => {
     try {

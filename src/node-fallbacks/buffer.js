@@ -762,8 +762,7 @@ function bidirectionalIndexOf(buffer, val, byteOffset, encoding, dir) {
   // Node.js truncates toward zero before it resolves a negative offset. `|| 0` turns -0 into 0.
   byteOffset = Math.trunc(byteOffset) || 0;
 
-  // For a string, Node.js drops the odd last byte of a UTF-16 haystack before it resolves the offset:
-  // https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L990-L992
+  // Like Node.js IndexOfString: for a string, drop the odd last byte of a UTF-16 buffer before the offset is resolved.
   let length = buffer.length;
   if (typeof val === "string" && isUtf16le(encoding)) length -= length % 2;
 
@@ -810,8 +809,7 @@ function arrayIndexOf(arr, val, byteOffset, encoding, dir) {
   let valLength = val.length;
 
   if (isUtf16le(encoding)) {
-    // Node.js checks in bytes that `val` fits, then searches whole 2-byte units:
-    // https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L1158-L1175
+    // Like Node.js IndexOfBuffer: check in bytes that `val` fits, then search whole 2-byte units.
     const searchEnd = arr.length - (arr.length % 2);
     if (val.length < 2 || val.length > searchEnd || (dir && byteOffset + val.length > searchEnd)) {
       return -1;

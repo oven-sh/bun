@@ -533,10 +533,7 @@ pub mod windows_stdio {
             }
         }
 
-        // Put back only a codepage this process changed. The console is
-        // shared: in `bun a | bun b`, `b` starts after `a` already switched
-        // it to UTF-8. If `b` wrote that value back at exit, the console
-        // would stay at UTF-8 after `a` restored the original (#43660).
+        // Only undo a change this process made (#43660).
         let out_cp = CONSOLE_OUTPUT_CODEPAGE.load(Ordering::Relaxed);
         let in_cp = CONSOLE_CODEPAGE.load(Ordering::Relaxed);
         if out_cp != 0 && out_cp != CP_UTF8 {

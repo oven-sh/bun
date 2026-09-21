@@ -2028,6 +2028,8 @@ enum StreamState {
   // callback). Until then no 'error' listener can exist, so stream errors must not be emitted:
   // node never constructs the JS stream object before a complete header block arrives.
   Delivered = 1 << 8, // 100000000 = 256
+  // The server reset the stream with NO_ERROR. It stays alive only for its reader.
+  PeerReset = 1 << 9, // 1000000000 = 512
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2193,6 +2195,19 @@ function markStreamClosed(stream: Http2Stream) {
 
     markWritableDone(stream);
   }
+}
+// Like node's closeStream, without end(): a write() before _destroy would raise ERR_STREAM_WRITE_AFTER_END.
+function abortOpenWritable(stream: Http2Stream) {
+  if (stream._writableState.ending || stream[kPush] || stream.aborted) return;
+  stream[kAborted] = true;
+  stream.emit("aborted");
+}
+const kPeerResetWrite = Symbol("peerResetWrite");
+// Holds a write to a stream the peer reset, so backpressure stops the source. _destroy fails it.
+function holdWriteAfterPeerReset(stream: Http2Stream, callback): boolean {
+  if ((stream[bunHTTP2StreamStatus] & StreamState.PeerReset) === 0) return false;
+  stream[kPeerResetWrite] = callback;
+  return true;
 }
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
@@ -2648,6 +2663,11 @@ class Http2Stream extends Duplex {
         onServerStreamErrorChannel.publish({ stream: this, error: err });
       }
     }
+    const heldWrite = this[kPeerResetWrite];
+    if (heldWrite !== undefined) {
+      this[kPeerResetWrite] = undefined;
+      process.nextTick(heldWrite, $ERR_STREAM_DESTROYED("write"));
+    }
     callback(err);
   }
 
@@ -2676,13 +2696,16 @@ class Http2Stream extends Duplex {
     const session = this[bunHTTP2Session];
     if (session) {
       const native = session[bunHTTP2Native];
-      if (native) {
-        if (this instanceof ServerHttp2Stream && !this.headersSent && (this.id & 1) === 0) {
-          // A locally-pushed (even-id) stream ended before respond() (HEAD/endStream pushes): an
-          // empty DATA frame would precede the response HEADERS on the wire. respond() forces
-          // endStream for these streams, so END_STREAM rides on the HEADERS frame and the
-          // onStreamEnd(5) dispatch completes this callback through markWritableDone.
-          this[bunHTTP2StreamFinal] = callback;
+      if (native && (status & StreamState.PeerReset) === 0) {
+        if (this instanceof ServerHttp2Stream && !this.headersSent) {
+          // RFC 9113 §8.1: a response begins with HEADERS, so no DATA frame can end the stream here.
+          if ((this.id & 1) === 0) {
+            // A pushed stream: the END_STREAM on respond()'s HEADERS completes this callback.
+            this[bunHTTP2StreamFinal] = callback;
+          } else {
+            this[bunHTTP2StreamStatus] |= StreamState.FinalCalled | StreamState.WritableClosed;
+            callback();
+          }
           return;
         }
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
@@ -2817,6 +2840,7 @@ class Http2Stream extends Duplex {
       this.once("ready", this._writev.bind(this, data, callback));
       return;
     }
+    if (holdWriteAfterPeerReset(this, callback)) return;
     const writevPerf = this[kPerfState];
     if (writevPerf !== undefined) {
       if (writevPerf.firstByteSent === 0) writevPerf.firstByteSent = performance.now() - writevPerf.start;
@@ -2879,6 +2903,7 @@ class Http2Stream extends Duplex {
       this.once("ready", this._write.bind(this, chunk, encoding, callback));
       return;
     }
+    if (holdWriteAfterPeerReset(this, callback)) return;
     const writePerf = this[kPerfState];
     if (writePerf !== undefined) {
       if (writePerf.firstByteSent === 0) writePerf.firstByteSent = performance.now() - writePerf.start;
@@ -2964,7 +2989,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
     if (onError) onError(err);
     else {
-      this.respond(headers, options);
+      if (!this.destroyed && !this.closed) this.respond(headers, options);
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -2983,7 +3008,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
       else {
-        this.respond(headers, options);
+        if (!this.destroyed && !this.closed) this.respond(headers, options);
         this.destroy(err);
       }
       return;
@@ -3311,7 +3336,7 @@ class ServerHttp2Stream extends Http2Stream {
   }
 
   respondWithFile(path, headers, options) {
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3371,7 +3396,7 @@ class ServerHttp2Stream extends Http2Stream {
         throw err;
       }
     }
-    if (this.destroyed) {
+    if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
@@ -3498,7 +3523,7 @@ class ServerHttp2Stream extends Http2Stream {
     session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers: any, options?: any) {
-    if (this.destroyed || this.session === undefined) {
+    if (this.destroyed || this.closed || this.session === undefined) {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
 
@@ -3604,7 +3629,9 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NO_CONTENT ||
       statusCode === HTTP_STATUS_RESET_CONTENT ||
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
-      this.headRequest === true
+      this.headRequest === true ||
+      // _final ran before any HEADERS went out, so this frame ends the stream (node: EMPTY_PAYLOAD).
+      (this[bunHTTP2StreamStatus] & StreamState.WritableClosed) !== 0
     ) {
       // When endStream is true the HEADERS frame itself carries END_STREAM
       // and the stream moves to HALF_CLOSED_LOCAL inside native request().
@@ -5036,13 +5063,14 @@ class ClientHttp2Session extends Http2Session {
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
-    streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
+    // `peerReset`: a RST_STREAM(NO_ERROR) from the server closed the stream, not an END_STREAM.
+    streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number, peerReset?) => {
       if (!self || typeof stream !== "object") return;
       if (state === 7 && stream[kSendingTrailers]) {
         // The trailer frame submitted by an in-flight sendTrailers() fully closed the stream:
         // re-queue the close so it is not observable from inside sendTrailers() (node defers the
         // submission itself via setImmediate, see kSendingTrailers).
-        process.nextTick(ClientHttp2Session.#Handlers.streamEnd, self, stream, state);
+        process.nextTick(ClientHttp2Session.#Handlers.streamEnd, self, stream, state, peerReset);
         return;
       }
       if (state == 6 || state == 7) {
@@ -5056,15 +5084,19 @@ class ClientHttp2Session extends Http2Session {
 
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+        stream[bunHTTP2StreamStatus] |= peerReset
+          ? StreamState.NativeClosed | StreamState.PeerReset
+          : StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
+        if (peerReset) abortOpenWritable(stream);
         if (stream.readable && !stream.rstCode) {
           // Clean close while data is still buffered on the readable side: node defers the
           // destroy until the consumer drains it ('end'), so a late-attaching reader does not
           // lose data.
           stream.once("end", destroySelfOnEnd);
         } else if (
+          !peerReset &&
           (stream.writableEnded || stream[kEndingWithChunk]) &&
           !stream.writableFinished &&
           !stream.destroyed

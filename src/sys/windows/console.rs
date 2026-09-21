@@ -111,7 +111,7 @@ fn write_chunk(fd: Fd, bytes: &[u8], utf16: &mut [u16]) -> Maybe<()> {
 /// before any byte was consumed, so the caller falls back to `WriteFile`.
 /// `Some(Ok(n))`: `n` bytes consumed, an incomplete trailing sequence is held
 /// in [`PENDING`] for the next write and counts as consumed.
-pub fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
+pub(crate) fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
     let slot = console_slot(fd)?;
     let pending = &PENDING[slot];
     let utf16 = &mut [0u16; CHUNK_UNITS];
@@ -164,33 +164,4 @@ pub fn write(fd: Fd, buf: &[u8]) -> Option<Maybe<usize>> {
         pending.store(pack(&rest[rest.len() - tail_len..]), Ordering::Relaxed);
     }
     Some(Ok(buf.len()))
-}
-
-/// [`write`] over a list of buffers.
-pub fn writev(fd: Fd, bufs: &[crate::PlatformIoVecConst]) -> Option<Maybe<usize>> {
-    console_slot(fd)?;
-    let mut total = 0usize;
-    for buf in bufs {
-        // SAFETY: the caller built each iovec from a live `&[u8]`.
-        let bytes = unsafe { core::slice::from_raw_parts(buf.base, buf.len as usize) };
-        if bytes.is_empty() {
-            continue;
-        }
-        match write(fd, bytes) {
-            Some(Ok(n)) => {
-                total += n;
-                if n < bytes.len() {
-                    break;
-                }
-            }
-            Some(Err(err)) => return Some(Err(err)),
-            None => {
-                if total == 0 {
-                    return None;
-                }
-                break;
-            }
-        }
-    }
-    Some(Ok(total))
 }

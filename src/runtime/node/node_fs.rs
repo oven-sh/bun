@@ -666,26 +666,6 @@ mod _async_tasks {
             self.global_object.get()
         }
 
-        /// Finish without a libuv request: store `result` and run the
-        /// completion on the next event loop tick.
-        ///
-        /// # Safety
-        /// `T` must be the concrete `R` of this `F` (the identity cast below).
-        unsafe fn complete_now<T>(task: &mut Self, result: Maybe<T>) -> JSValue {
-            debug_assert_eq!(
-                core::mem::size_of::<Maybe<R>>(),
-                core::mem::size_of::<Maybe<T>>()
-            );
-            // SAFETY: identity write, caller contract.
-            unsafe { core::ptr::write((&raw mut task.result).cast::<Maybe<T>>(), result) };
-            let task_ptr: *mut Self = task;
-            task.global_object()
-                .bun_vm()
-                .event_loop_mut()
-                .enqueue_task(bun_jsc::Task::init(task_ptr));
-            task.promise.value()
-        }
-
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             binding: &Binding,
@@ -812,19 +792,6 @@ mod _async_tasks {
                     let off = (buf.len()).min(args.offset as usize);
                     let buf = &buf[off..];
                     let buf = &buf[..buf.len().min(args.length as usize)];
-                    if args.position.is_none()
-                        && let Some(result) = sys::windows::console::write(args.fd, buf)
-                    {
-                        // SAFETY: `R == ret::Write` for this `F`.
-                        return unsafe {
-                            Self::complete_now(
-                                task,
-                                result.map(|n| ret::Write {
-                                    bytes_written: n as u64,
-                                }),
-                            )
-                        };
-                    }
                     let bufs = [uv::uv_buf_t::init(buf)];
                     // SAFETY: see Read arm.
                     let rc = unsafe {
@@ -875,32 +842,19 @@ mod _async_tasks {
                     let fd = args.fd.uv();
                     let bufs = &args.buffers.buffers;
                     if bufs.is_empty() {
-                        // SAFETY: `R == ret::Writev == ret::Write` for this `F`.
-                        return unsafe {
-                            Self::complete_now::<ret::Writev>(
-                                task,
+                        // SAFETY: identity write — `R == ret::Writev == ret::Write` for this `F`.
+                        unsafe {
+                            core::ptr::write(
+                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Writev>,
                                 Ok(ret::Write { bytes_written: 0 }),
                             )
                         };
-                    }
-                    // SAFETY: `PlatformIoVec` and `PlatformIoVecConst` are
-                    // layout-identical on Windows (asserted in bun_sys).
-                    let const_bufs = unsafe {
-                        &*(bufs.as_slice() as *const [sys::PlatformIoVec]
-                            as *const [sys::PlatformIoVecConst])
-                    };
-                    if args.position.is_none()
-                        && let Some(result) = sys::windows::console::writev(args.fd, const_bufs)
-                    {
-                        // SAFETY: `R == ret::Writev == ret::Write` for this `F`.
-                        return unsafe {
-                            Self::complete_now::<ret::Writev>(
-                                task,
-                                result.map(|n| ret::Write {
-                                    bytes_written: n as u64,
-                                }),
-                            )
-                        };
+                        let task_ptr: *mut Self = task;
+                        task.global_object()
+                            .bun_vm()
+                            .event_loop_mut()
+                            .enqueue_task(bun_jsc::Task::init(task_ptr));
+                        return task.promise.value();
                     }
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
                     let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();

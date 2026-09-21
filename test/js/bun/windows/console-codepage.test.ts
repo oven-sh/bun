@@ -48,41 +48,28 @@ describe.skipIf(!isWindows)("Windows console codepage", () => {
   test("console output does not depend on the console output codepage", async () => {
     const { output, exitCode } = await runInConsole(`
       ${ffiSetup}
-      const fs = require("node:fs");
       // 437 is the OEM codepage on every Windows install. A console that
       // decodes UTF-8 bytes with it renders "日本語" as "µùÑµ£¼Φ¬₧".
       if (k32.symbols.SetConsoleOutputCP(437) === 0) throw new Error("SetConsoleOutputCP failed");
       console.log("log=日本語");
       console.error("error=日本語");
       process.stdout.write("stdout=日本語\\n");
-      fs.writeSync(1, "writeSync=日本語\\n");
       // One character split across two writes, as a buffered writer that
       // flushes on a byte count does.
       const bytes = Buffer.from("日");
-      fs.writeSync(1, "split=");
-      fs.writeSync(1, bytes.subarray(0, 1));
-      fs.writeSync(1, bytes.subarray(1));
-      fs.writeSync(1, "\\n");
+      process.stdout.write("split=");
+      process.stdout.write(bytes.subarray(0, 1));
+      process.stdout.write(bytes.subarray(1));
+      process.stdout.write("\\n");
       // A byte that is not UTF-8 must not hold back the text after it.
-      fs.writeSync(1, Buffer.from([0x6c, 0x61, 0x74, 0x69, 0x6e, 0x3d, 0xe9]));
-      fs.writeSync(1, "|next\\n");
-      await Bun.write(Bun.stdout, "bunwrite=日本語\\n");
-      await new Promise((resolve, reject) =>
-        fs.write(1, "fswrite=日本語\\n", err => (err ? reject(err) : resolve())),
-      );
-      await new Promise((resolve, reject) =>
-        fs.writev(1, [Buffer.from("fswritev="), Buffer.from("日本語\\n")], err => (err ? reject(err) : resolve())),
-      );
+      process.stdout.write(Buffer.from([0x6c, 0x61, 0x74, 0x69, 0x6e, 0x3d, 0xe9]));
+      process.stdout.write("|next\\n");
     `);
     expect(output).toContain("log=日本語");
     expect(output).toContain("error=日本語");
     expect(output).toContain("stdout=日本語");
-    expect(output).toContain("writeSync=日本語");
     expect(output).toContain("split=日");
     expect(output).toContain("latin=\uFFFD|next");
-    expect(output).toContain("bunwrite=日本語");
-    expect(output).toContain("fswrite=日本語");
-    expect(output).toContain("fswritev=日本語");
     expect(exitCode).toBe(0);
   });
 

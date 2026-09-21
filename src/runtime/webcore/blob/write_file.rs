@@ -1087,21 +1087,6 @@ mod windows_impl {
             }
 
             // SAFETY: caller contract — `this` is live.
-            let fd = Fd::from_uv(unsafe { (*this).fd });
-            if let Some(result) = bun_sys::windows::console::write(fd, remain) {
-                match result {
-                    Ok(n) => {
-                        // SAFETY: caller contract — `this` is live.
-                        unsafe { (*this).total_written += n };
-                        // SAFETY: same contract as this call.
-                        return unsafe { Self::do_write_loop(this, uv_loop) };
-                    }
-                    // SAFETY: caller contract — `this` is live; consumed here.
-                    Err(err) => return Err(unsafe { Self::throw(this, err) }),
-                }
-            }
-
-            // SAFETY: caller contract — `this` is live.
             unsafe {
                 (*this).uv_bufs[0].base = remain.as_ptr().cast_mut();
                 (*this).uv_bufs[0].len = remain.len() as u32;

@@ -5528,8 +5528,7 @@ impl NodeFS {
                 // a directory or not, so it is checked.
                 E::EISDIR | E::EEXIST => {
                     return match directory_exists_at_os_path(FD::INVALID, path) {
-                        // The path exists, but the probe could not read it (for example
-                        // ACCESS_DENIED on Windows). Node reports the stat error here.
+                        // Like node: a failed stat of the existing path reports the stat error.
                         Err(probe_err) => Err(sys::Error {
                             errno: probe_err.errno,
                             syscall: sys::Tag::mkdir,
@@ -5626,8 +5625,6 @@ impl NodeFS {
                                             // is a directory. break.
                                             Ok(true) => None,
                                             Ok(false) => Some(E::ENOTDIR as _),
-                                            // The parent exists but the probe could not read it.
-                                            // Node reports the stat error here.
                                             Err(probe_err) => Some(probe_err.errno),
                                         };
                                     if let Some(errno) = errno {

@@ -1215,8 +1215,9 @@ export const linkerFlags: Flag[] = [
     // linker deletes after the link, which would leave the debug map dangling
     // and the dSYM empty. -object_path_lto persists the LTO-codegen'd object
     // at a stable path inside the build dir and points the debug map at it.
+    // The link holds bitcode with `lto` off too: the Rust crates (linkLtoIsRustOnly).
     flag: c => `-Wl,-object_path_lto,${c.buildDir}/${bunExeName(c)}.lto.o`,
-    when: c => c.darwin && c.lto,
+    when: c => c.darwin && (c.lto || linkLtoIsRustOnly(c)),
     desc: "Persist the LTO-generated object so dsymutil can extract its DWARF into the dSYM",
   },
   {

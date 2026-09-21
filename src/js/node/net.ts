@@ -3037,7 +3037,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   if (heldError !== undefined) {
     // The connection is already gone: node's write(2) fails on the reset, and the unread bytes go with the socket.
     this[kHeldError] = undefined;
-    process.nextTick(failWrite, this, heldError.errno, callback);
+    const errno = heldError.errno;
+    process.nextTick(failWrite, this, typeof errno === "number" && errno < 0 ? errno : uv().UV_ECONNRESET, callback);
     return false;
   }
   if (!socket) {

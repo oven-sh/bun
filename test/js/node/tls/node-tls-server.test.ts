@@ -2694,24 +2694,35 @@ it("an accepted socket emits 'close' when a write is the first to see the peer's
   //
   // The server is a child process so that it can stop polling: it reports the accepted
   // socket, then blocks on stdin until this process has reset the connection.
+  //
+  // A socket that never closes gives no event to wait for, so a second connection asks.
+  // Its handshake takes several turns of the server's loop, and the reset socket closes in
+  // the first of them or not at all. The server reports when the second connection arrives.
   const serverScript = `
     const tls = require("node:tls");
     const fs = require("node:fs");
     const events = [];
+    let accepted;
     const server = tls.createServer(${JSON.stringify(COMMON_CERT)}, socket => {
-      socket.on("error", () => events.push("error"));
-      socket.on("close", hadError => {
-        events.push("close:" + hadError);
+      if (accepted) {
         server.getConnections((err, connections) => {
           console.log(JSON.stringify({ events, connections }));
+          // Also the first socket, so that this process exits when it never closed.
+          accepted.destroy();
+          socket.destroy();
           server.close();
         });
-      });
+        return;
+      }
+      accepted = socket;
+      socket.on("error", () => events.push("error"));
+      socket.on("close", hadError => events.push("close:" + hadError));
       socket.resume();
       fs.writeSync(1, "accepted\\n");
       fs.readSync(0, Buffer.alloc(1));
       // More than the TLS layer takes once the wire rejects a record, so the rest is parked.
       socket.write(Buffer.alloc(1 << 20));
+      fs.writeSync(1, "wrote\\n");
     });
     server.listen(0, "127.0.0.1", () => fs.writeSync(1, "port=" + server.address().port + "\\n"));
   `;
@@ -2726,6 +2737,7 @@ it("an accepted socket emits 'close' when a write is the first to see the peer's
   const stderrText = proc.stderr.text();
   let stdout = "";
   let raw: net.Socket | undefined;
+  let probe: net.Socket | undefined;
   let reset = false;
   for await (const chunk of proc.stdout) {
     stdout += Buffer.from(chunk).toString();
@@ -2741,10 +2753,17 @@ it("an accepted socket emits 'close' when a write is the first to see the peer's
       proc.stdin.write("x");
       proc.stdin.flush();
     }
+    if (port && !probe && stdout.includes("wrote\n")) {
+      probe = connect({ port: Number(port[1]), host: "127.0.0.1", rejectUnauthorized: false });
+      probe.on("error", () => {});
+    }
   }
   const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+  probe?.destroy();
   expect(stderr).toBe("");
   const lines = stdout.trim().split("\n");
-  expect(JSON.parse(lines[lines.length - 1])).toEqual({ events: ["error", "close:true"], connections: 0 });
+  // The one connection left is the second one.
+  expect(JSON.parse(lines[lines.length - 1])).toEqual({ events: ["error", "close:true"], connections: 1 });
+  expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });

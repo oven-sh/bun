@@ -389,7 +389,11 @@ let priorityDeprecationWarned = false;
 let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
+// The stream's opening frame (PUSH_PROMISE, request HEADERS) never reached the wire: the peer considers the id idle, so no frame may follow.
 const kNeverAnnounced = Symbol("neverAnnounced");
+// pushPromise() result for a block over the send limit that was not sent (PUSH_PROMISE_OVER_SEND_LIMIT in h2_frame_parser.rs).
+const kPushPromiseOverSendLimit = -2;
+const kFrameTypePushPromise = 0x5;
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
 // takes precedence over the destroy code when streams are torn down.
@@ -2453,7 +2457,7 @@ class Http2Stream extends Duplex {
 
   get state() {
     const session = this[bunHTTP2Session];
-    if (session && !session.destroyed && typeof this.#id === "number") {
+    if (session && !session.destroyed && typeof this.#id === "number" && !this[kNeverAnnounced]) {
       return session[bunHTTP2Native]?.getStreamState(this.#id) ?? {};
     }
     // node reports an empty object while the stream is still pending (no id yet) and once the
@@ -2480,7 +2484,7 @@ class Http2Stream extends Duplex {
 
   get endAfterHeaders() {
     const session = this[bunHTTP2Session];
-    if (session) {
+    if (session && !this[kNeverAnnounced]) {
       return session[bunHTTP2Native]?.getEndAfterHeaders(this.#id) || false;
     }
     return false;
@@ -3073,7 +3077,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   const sink = new Stream.Writable({
     write(chunk, _encoding, cb) {
       const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
-      if (!native || stream.destroyed || stream.closed) {
+      if (!native || stream.destroyed || stream.closed || stream[kNeverAnnounced]) {
         cb();
         return;
       }
@@ -3181,6 +3185,11 @@ class ServerHttp2Stream extends Http2Stream {
   // user-facing writable while the file is still being written natively, so it must
   // never install the hook - the early 'finish' would RST and truncate the transfer.
   _final(callback) {
+    if (this[kNeverAnnounced]) {
+      // No END_STREAM to send. close() and destroy() settle the writable, as they do in node.
+      this[bunHTTP2StreamFinal] = callback;
+      return;
+    }
     this.once("finish", serverStreamOnFinish);
     super._final(callback);
   }
@@ -3192,12 +3201,15 @@ class ServerHttp2Stream extends Http2Stream {
     if (!this.headersSent && !this.destroyed && !this.closed && this.session !== undefined) {
       this.respond();
     }
+    // A never-announced push sends no DATA. Like nghttp2, accept the chunk and drop it.
+    if (this[kNeverAnnounced]) return callback();
     super._write(chunk, encoding, callback);
   }
   _writev(data, callback) {
     if (!this.headersSent && !this.destroyed && !this.closed && this.session !== undefined) {
       this.respond();
     }
+    if (this[kNeverAnnounced]) return callback();
     super._writev(data, callback);
   }
   pushStream(headers, options, callback) {
@@ -3296,6 +3308,13 @@ class ServerHttp2Stream extends Http2Stream {
       process.nextTick(callback, null, pushedStream, headers);
       return;
     }
+    // Only the push fails. nghttp2 refuses it when the session next sends, so until then node treats it like a push that was sent.
+    const overSendLimit = pushResult === kPushPromiseOverSendLimit;
+    if (overSendLimit && pushedStream) {
+      pushedStream[kNeverAnnounced] = true;
+      session[kReleaseUnannouncedStream](pushId);
+      setImmediate(failUnannouncedPush, pushedStream);
+    }
     // node: a HEAD push (or options.endStream) carries no response body, so the pushed stream's
     // writable side is already ended when the callback runs; respond() then forces endStream so
     // END_STREAM rides on the response HEADERS frame.
@@ -3311,6 +3330,9 @@ class ServerHttp2Stream extends Http2Stream {
       }
     }
     process.nextTick(callback, null, pushedStream, headers);
+    if (overSendLimit) {
+      onServerFrameError(session, this, kFrameTypePushPromise, constants.NGHTTP2_FRAME_SIZE_ERROR);
+    }
   }
 
   respondWithFile(path, headers, options) {
@@ -3498,7 +3520,7 @@ class ServerHttp2Stream extends Http2Stream {
       ArrayPrototypePush.$call(this[kInfoHeaders], headers);
     }
 
-    session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
+    if (!this[kNeverAnnounced]) session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
   }
   respond(headers: any, options?: any) {
     if (this.destroyed || this.session === undefined) {
@@ -3630,10 +3652,11 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
+    const native = this[kNeverAnnounced] ? undefined : session[bunHTTP2Native];
     if (typeof options === "undefined") {
-      session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames);
+      native?.request(this.id, undefined, wireHeaders, sensitiveNames);
     } else {
-      session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames, options);
+      native?.request(this.id, undefined, wireHeaders, sensitiveNames, options);
       // Only track waitForTrailers when the HEADERS frame above did NOT end
       // the stream. Status codes 204/205/304 and HEAD requests force
       // endStream=true earlier in this method, which means the native
@@ -4019,9 +4042,7 @@ class ServerHttp2Session extends Http2Session {
     // peer-initiated stream's captured frame equals what every handler sees.
     frameError(self: ServerHttp2Session, stream: ServerHttp2Stream, frameType: number, errorCode: number) {
       if (!self || typeof stream !== "object") return;
-      // Emit the frameError event with the frame type and error code
-      process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
-      setImmediate(closeAfterFrameError, self, stream, errorCode);
+      onServerFrameError(self, stream, frameType, errorCode);
     },
     aborted(self: ServerHttp2Session, stream: ServerHttp2Stream, error: any, old_state: number) {
       if (!self || typeof stream !== "object") return;
@@ -6570,6 +6591,11 @@ function onErrorSecureServerSession(err, socket) {
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
   stream.emit("frameError", frameType, errorCode);
 }
+// A frame of `stream` that a server session did not send: a native onFrameError, or a refused PUSH_PROMISE.
+function onServerFrameError(session: ServerHttp2Session, stream: ServerHttp2Stream, frameType: number, code: number) {
+  process.nextTick(emitFrameErrorEventNT, stream, frameType, code);
+  setImmediate(closeAfterFrameError, session, stream, code);
+}
 // node's onFrameError (lib/internal/http2/core.js#L661-L681 at v26.3.0). Both calls are no-ops once closed.
 function closeAfterFrameError(session: ServerHttp2Session, stream: ServerHttp2Stream, code: number) {
   if (!stream.destroyed && !stream.headersSent) {
@@ -6578,6 +6604,13 @@ function closeAfterFrameError(session: ServerHttp2Session, stream: ServerHttp2St
   }
   stream.close(code);
   session.close();
+}
+// nghttp2 closes the promised stream of an unsent PUSH_PROMISE with INTERNAL_ERROR: https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_session.c#L2897-L2904
+function failUnannouncedPush(pushedStream: ServerHttp2Stream) {
+  if (pushedStream.destroyed) return;
+  // A stream that user code closed keeps its code: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L602-L603
+  if (!pushedStream.closed) pushedStream.rstCode = NGHTTP2_INTERNAL_ERROR;
+  pushedStream.destroy();
 }
 class Http2SecureServer extends tls.Server {
   timeout = 0;

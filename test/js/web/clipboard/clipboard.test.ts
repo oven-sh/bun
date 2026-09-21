@@ -1359,6 +1359,7 @@ describe.skipIf(!machineHasClipboard || !isMacOS)("macOS pasteboard interop", ()
 // concurrent.
 const CF_TEXT = 1;
 const CF_UNICODETEXT = 13;
+const CF_DIB = 8;
 const CF_DIBV5 = 17;
 // GMEM_MOVEABLE | GMEM_ZEROINIT, so any allocation past the payload reads as NUL.
 const GHND = 0x0042;
@@ -1667,6 +1668,26 @@ describe.skipIf(!isWindows || win32 === null)("Win32 backend", () => {
       bitCount: dib.readUInt16LE(14),
       pixel: [...dib.subarray(124, 128)],
     }).toEqual({ headerSize: 124, width: 1, height: 1, bitCount: 32, pixel: [255, 0, 0, 127] });
+  });
+
+  test("a bitmap-only clipboard (a screenshot, Paint) reads as image/png", async () => {
+    // BITMAPINFOHEADER, then one 24-bit BGR pixel padded to a 4-byte row.
+    const dib = Buffer.alloc(44);
+    dib.writeUInt32LE(40, 0);
+    dib.writeInt32LE(1, 4);
+    dib.writeInt32LE(1, 8);
+    dib.writeUInt16LE(1, 12);
+    dib.writeUInt16LE(24, 14);
+    dib.writeUInt32LE(4, 20);
+    dib.set([255, 0, 0], 40);
+    raw().setRaw([{ format: CF_DIB, bytes: dib }]);
+    const [item] = await readAll();
+    const png = item["image/png"] as Buffer;
+    expect({
+      types: item.types,
+      signature: png.subarray(0, 8).toString("hex"),
+      size: [png.readUInt32BE(16), png.readUInt32BE(20)],
+    }).toEqual({ types: ["image/png"], signature: "89504e470d0a1a0a", size: [1, 1] });
   });
 
   test("a PNG placed by another process reads back byte-exact", async () => {

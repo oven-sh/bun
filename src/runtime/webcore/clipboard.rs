@@ -560,6 +560,20 @@ mod platform {
         }
     }
 
+    /// A bitmap-only clipboard (a screenshot, Paint) still offers PNG, as a
+    /// TIFF-only pasteboard does on macOS.
+    fn png_from_dib(clipboard: &mut OpenedClipboard) -> Option<Vec<u8>> {
+        use crate::image::codecs::{self, DecodeHint, EncodeOptions, Format};
+        let bmp = crate::image::backend_wic::dib_as_bmp(clipboard).ok()??;
+        let image = codecs::decode(&bmp, codecs::DEFAULT_MAX_PIXELS, DecodeHint::default()).ok()?;
+        let options = EncodeOptions {
+            format: Format::Png,
+            ..Default::default()
+        };
+        let png = codecs::encode(&image.rgba, image.width, image.height, options).ok()?;
+        Some(png.as_slice().to_vec())
+    }
+
     fn read_type(clipboard: &mut OpenedClipboard, mime: Mime) -> Option<Vec<u8>> {
         for format in read_formats(mime).into_iter().flatten() {
             // Memory another app left unlockable reads as absent.
@@ -574,6 +588,9 @@ mod platform {
             }) {
                 return bytes;
             }
+        }
+        if mime == Mime::ImagePng {
+            return png_from_dib(clipboard);
         }
         None
     }

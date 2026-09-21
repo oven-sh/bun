@@ -981,13 +981,20 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
             }
         }
     }
-    // 2. Packed DIB — needs a synthetic BITMAPFILEHEADER so the BMP sniffer
-    //    and decoder accept it. CF_DIBV5 first (carries alpha mask). The
-    //    clipboard is writable by any local process, so treat the payload as
-    //    hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
-    //    the format, not panic the process.
+    // 2. Packed DIB.
+    Ok(dib_as_bmp(&mut clipboard)?)
+}
+
+/// The clipboard's packed DIB — needs a synthetic BITMAPFILEHEADER so the BMP
+/// sniffer and decoder accept it. CF_DIBV5 first (carries alpha mask). The
+/// clipboard is writable by any local process, so treat the payload as
+/// hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
+/// the format, not panic the process.
+pub(crate) fn dib_as_bmp(
+    clipboard: &mut OpenedClipboard,
+) -> Result<Option<Vec<u8>>, bun_alloc::AllocError> {
     for cf in [CF_DIBV5, CF_DIB] {
-        let Some(mut buf) = dup_global::<14>(&mut clipboard, cf)? else {
+        let Some(mut buf) = dup_global::<14>(clipboard, cf)? else {
             continue;
         };
         if buf.len() < 14 + 40 || buf.len() as u64 > u32::MAX as u64 {

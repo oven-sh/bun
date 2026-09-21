@@ -10,7 +10,12 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Config } from "../../scripts/build/config.ts";
-import type { MetadataPackage, RustPlan, UnitGraphUnit } from "../../scripts/build/rust/plan.ts";
+import {
+  PLAN_VERSION,
+  type MetadataPackage,
+  type RustPlan,
+  type UnitGraphUnit,
+} from "../../scripts/build/rust/plan.ts";
 import { parseBuildScriptOutput, rustcInvocation, writeDepfile } from "../../scripts/build/rust/run.ts";
 import { parseToml } from "../../scripts/build/rust/toml.ts";
 import {
@@ -329,7 +334,7 @@ describe("buildRustGraph + unitManifest", () => {
     splitDebuginfo: [],
   });
   const planWith = (rustflags: string[]): RustPlan => ({
-    version: 4,
+    version: PLAN_VERSION,
     plannedWith: {
       cwd: "/ws",
       cargo: "cargo",

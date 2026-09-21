@@ -2196,8 +2196,7 @@ impl BlobExt for Blob {
             }
             _ => {
                 blob = Blob::get::<false, true>(global_this, args[0])?;
-                // `new Blob([file])` dupes the File, File-ness included. The
-                // result is a plain Blob: no name, no lastModified.
+                // A File part keeps its name, lastModified and File-ness across the dupe.
                 blob.is_jsdom_file.set(false);
                 blob.name.set(BunString::DEAD);
                 blob.last_modified.set(0.0);
@@ -3986,9 +3985,7 @@ pub(crate) extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob
     )
 }
 
-/// `this` is the impl behind a C++ `WebCore::Blob` (a FormData entry's private
-/// dupe, a WebSocket message), never a Blob that JS holds. A non-empty entry
-/// filename wins over the name the dupe inherited from a File.
+/// `this` is a C++ `WebCore::Blob`'s private impl, never a Blob that JS holds.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &BunString) {
     this.is_jsdom_file.set(true);

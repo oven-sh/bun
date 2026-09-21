@@ -290,15 +290,22 @@ describe.skipIf(skip)("node:http2 transport write errors", () => {
   // phase "request": the failing send is a later request() on an idle session.
   // phase "connect": it is inside the connect flush, which sends the preface
   // (the first send) and then the queued request's HEADERS (the second).
+  //
+  // Only an errno the kernel sets on the socket is reported, because a read would
+  // return the same one. ETIMEDOUT is one of those and keeps its identity. Any other
+  // send errno keeps the plain close ("sustained errno" in socket-syscall-fault.test.ts).
   const cases = [
-    { errno: "EPIPE", phase: "request" },
-    { errno: "ECONNRESET", phase: "request" },
-    { errno: "ECONNRESET", phase: "connect" },
+    { errno: "EPIPE", phase: "request", reported: "ECONNRESET" },
+    { errno: "ECONNRESET", phase: "request", reported: "ECONNRESET" },
+    { errno: "ETIMEDOUT", phase: "request", reported: "ETIMEDOUT" },
+    { errno: "ECONNRESET", phase: "connect", reported: "ECONNRESET" },
   ];
-  test.each(cases)("send → $errno during the $phase flush is reported as ECONNRESET", async ({ errno, phase }) => {
-    // The client runs in a subprocess: the fault rules are process-global, so
-    // the raw peer below has to live in a process that is not faulted.
-    const fixture = `
+  test.each(cases)(
+    "send → $errno during the $phase flush is reported as $reported",
+    async ({ errno, phase, reported }) => {
+      // The client runs in a subprocess: the fault rules are process-global, so
+      // the raw peer below has to live in a process that is not faulted.
+      const fixture = `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
       const http2 = require("node:http2");
       const state = { streamError: null, sessionError: null, rstCode: null };
@@ -328,35 +335,36 @@ describe.skipIf(skip)("node:http2 transport write errors", () => {
         console.log(JSON.stringify({ ...state, ...destroyed }));
       });
     `;
-    const frame = (type: number, flags: number) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
-    const server = net.createServer(socket => {
-      socket.on("error", () => {});
-      socket.write(frame(4, 0)); // empty SETTINGS
-      socket.once("data", () => socket.write(frame(4, 1))); // ACK the client's SETTINGS
-    });
-    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
-    try {
-      const port = (server.address() as import("node:net").AddressInfo).port;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture],
-        env: { ...bunEnv, H2_PEER_PORT: String(port), H2_FAULT_ERRNO: errno, H2_FAULT_PHASE: phase },
-        stdout: "pipe",
-        stderr: "pipe",
+      const frame = (type: number, flags: number) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
+      const server = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.write(frame(4, 0)); // empty SETTINGS
+        socket.once("data", () => socket.write(frame(4, 1))); // ACK the client's SETTINGS
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout.trim())).toEqual({
-        streamError: "ECONNRESET",
-        sessionError: "ECONNRESET",
-        rstCode: http2.constants.NGHTTP2_INTERNAL_ERROR,
-        sessionDestroyed: true,
-        streamDestroyed: true,
-      });
-      expect(exitCode).toBe(0);
-    } finally {
-      server.close();
-    }
-  });
+      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+      try {
+        const port = (server.address() as import("node:net").AddressInfo).port;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: { ...bunEnv, H2_PEER_PORT: String(port), H2_FAULT_ERRNO: errno, H2_FAULT_PHASE: phase },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({
+          streamError: reported,
+          sessionError: reported,
+          rstCode: http2.constants.NGHTTP2_INTERNAL_ERROR,
+          sessionDestroyed: true,
+          streamDestroyed: true,
+        });
+        expect(exitCode).toBe(0);
+      } finally {
+        server.close();
+      }
+    },
+  );
 
   test("a server session whose response write fails closes quietly", async () => {
     // A client that vanishes is routine for a server, and it has nobody to report it to.

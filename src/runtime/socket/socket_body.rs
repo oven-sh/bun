@@ -81,22 +81,32 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
-/// One peer reset gives a different send errno per platform: linux reports
-/// `ECONNRESET`, darwin `EPIPE`. Report the one code the read side reports
-/// everywhere. Any other errno keeps its identity.
-#[cfg(not(windows))]
+/// The close code for a send errno, or 0 for a plain close. Only an errno the
+/// kernel set on the socket is reported, because a read would return the same
+/// one (the peer-gone set of `us_socket_write_check_error`). One peer reset
+/// is `ECONNRESET` on linux and `EPIPE` on darwin: both report as the former.
 fn dead_transport_close_code(errno: c_int) -> c_int {
-    if errno == sys::SystemErrno::EPIPE as c_int || errno == sys::SystemErrno::ECONNABORTED as c_int
-    {
-        return sys::SystemErrno::ECONNRESET as c_int;
+    use sys::SystemErrno as E;
+    #[cfg(not(windows))]
+    let known = E::init(i64::from(errno));
+    // A WSA code. `read_error_from_close_code` maps it for JS.
+    #[cfg(windows)]
+    let known = E::init(errno.unsigned_abs());
+    match known {
+        #[cfg(not(windows))]
+        Some(E::EPIPE | E::ECONNABORTED) => E::ECONNRESET as c_int,
+        #[cfg(windows)]
+        Some(E::EPIPE | E::ECONNABORTED) => errno,
+        Some(
+            E::ECONNRESET
+            | E::ENOTCONN
+            | E::ETIMEDOUT
+            | E::ENETDOWN
+            | E::ENETUNREACH
+            | E::EHOSTUNREACH,
+        ) => errno,
+        _ => 0,
     }
-    errno
-}
-
-/// `read_error_from_close_code` already collapses the Windows codes.
-#[cfg(windows)]
-fn dead_transport_close_code(errno: c_int) -> c_int {
-    errno
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -932,9 +942,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// ended the connection. A plain close would reach JS as a clean EOF.
     pub(crate) fn close_after_fatal_send(&self, errno: c_int) {
         let socket = self.socket.get();
+        let code = dead_transport_close_code(errno);
         // 0, 1 and 2 collide with `CloseCode`, which `on_close` filters out.
-        if errno > 2 {
-            socket.close_with_error_code(dead_transport_close_code(errno));
+        if code > 2 {
+            socket.close_with_error_code(code);
         } else {
             socket.close(uws::CloseCode::Normal);
         }
